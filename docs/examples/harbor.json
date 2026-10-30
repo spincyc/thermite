@@ -1,0 +1,18 @@
+{
+  "$schema": "https://spincyc.github.io/thermite/theme.schema.json",
+  "name": "harbor",
+  "description": "thermite with a sea-glass accent: the torch stays molten, the controls turn teal",
+  "extends": "thermite",
+  "dark": {
+    "accent": "#4fc1c9",
+    "accent-ink": "#04191b",
+    "focus": "#9be7ea",
+    "hues": ["#4fc1c9", "#7fd18b", "#d2a4ec", "#ffc24a", "#ff8a4c"]
+  },
+  "light": {
+    "accent": "#11707a",
+    "accent-ink": "#ffffff",
+    "focus": "#0b5960",
+    "hues": ["#11707a", "#2e7d32", "#7b3fa0", "#9a6700", "#c2410c"]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "../theme.schema.json",
+  "name": "contrast",
+  "description": "thermite at the highest contrast: black and white grounds, every color at 7:1 or more",
+  "extends": "thermite",
+  "dark": {
+    "bg": "#000000",
+    "surface": "#0d0d0d",
+    "raised": "#1a1a1a",
+    "line": "#8a8a8a",
+    "text": "#ffffff",
+    "muted": "#d9d9d9",
+    "faint": "#a6a6a6",
+    "accent": "#ff9a4d",
+    "accent-ink": "#000000",
+    "focus": "#ffe14d",
+    "ok": "#7dff8a",
+    "busy": "#ffe14d",
+    "bad": "#ff8a7a",
+    "info": "#9ee3ff",
+    "hues": ["#9ee3ff", "#7dff8a", "#e6b3ff", "#ffe14d", "#ff9a4d"]
+  },
+  "light": {
+    "bg": "#ffffff",
+    "surface": "#f5f5f5",
+    "raised": "#ffffff",
+    "line": "#595959",
+    "text": "#000000",
+    "muted": "#262626",
+    "faint": "#595959",
+    "accent": "#8f2a00",
+    "accent-ink": "#ffffff",
+    "focus": "#6b3d00",
+    "ok": "#0b5d1e",
+    "busy": "#6b4a00",
+    "bad": "#9e0000",
+    "info": "#0a4a5c",
+    "flame": "#b83a00",
+    "hues": ["#0a4a5c", "#0b5d1e", "#5a1f80", "#6b4a00", "#8f2a00"]
+  }
+}

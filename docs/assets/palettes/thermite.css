@@ -1,0 +1,87 @@
+/* thermite theme thermite: rust, aluminum and molten iron: soot and ash grounds, a molten-orange accent, aluminum blue as the cool counterpoint */
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --th-bg: #120e0c;
+  --th-surface: #1c1613;
+  --th-raised: #28201b;
+  --th-line: #3d3029;
+  --th-text: #f6ede3;
+  --th-muted: #b9a797;
+  --th-faint: #7a685b;
+  --th-accent: #ff7a1f;
+  --th-accent-ink: #1a0e06;
+  --th-focus: #ffc24a;
+  --th-ok: #7fd18b;
+  --th-busy: #ffc24a;
+  --th-bad: #ff5c4a;
+  --th-info: #8ec3d6;
+  --th-flame: #ff5a1f;
+  --th-glow: #ffa62b;
+  --th-core: #fff1c9;
+  --th-spark: #ffe08a;
+  --th-metal: #a3afb7;
+  --th-metal-shade: #5f6c75;
+  --th-hue-1: #8ec3d6;
+  --th-hue-2: #7fd18b;
+  --th-hue-3: #d2a4ec;
+  --th-hue-4: #ffc24a;
+  --th-hue-5: #ff8a4c;
+}
+[data-theme="light"] {
+  color-scheme: light;
+  --th-bg: #faf5ee;
+  --th-surface: #f2eadf;
+  --th-raised: #ffffff;
+  --th-line: #e0d3c2;
+  --th-text: #23170f;
+  --th-muted: #6b5646;
+  --th-faint: #a08b79;
+  --th-accent: #c2410c;
+  --th-accent-ink: #ffffff;
+  --th-focus: #b45309;
+  --th-ok: #2e7d32;
+  --th-busy: #9a6700;
+  --th-bad: #c62828;
+  --th-info: #2f6577;
+  --th-flame: #e4570f;
+  --th-glow: #f59e0b;
+  --th-core: #ffe7a8;
+  --th-spark: #f59e0b;
+  --th-metal: #5b6b75;
+  --th-metal-shade: #34414a;
+  --th-hue-1: #2f6577;
+  --th-hue-2: #2e7d32;
+  --th-hue-3: #7b3fa0;
+  --th-hue-4: #9a6700;
+  --th-hue-5: #c2410c;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --th-bg: #faf5ee;
+    --th-surface: #f2eadf;
+    --th-raised: #ffffff;
+    --th-line: #e0d3c2;
+    --th-text: #23170f;
+    --th-muted: #6b5646;
+    --th-faint: #a08b79;
+    --th-accent: #c2410c;
+    --th-accent-ink: #ffffff;
+    --th-focus: #b45309;
+    --th-ok: #2e7d32;
+    --th-busy: #9a6700;
+    --th-bad: #c62828;
+    --th-info: #2f6577;
+    --th-flame: #e4570f;
+    --th-glow: #f59e0b;
+    --th-core: #ffe7a8;
+    --th-spark: #f59e0b;
+    --th-metal: #5b6b75;
+    --th-metal-shade: #34414a;
+    --th-hue-1: #2f6577;
+    --th-hue-2: #2e7d32;
+    --th-hue-3: #7b3fa0;
+    --th-hue-4: #9a6700;
+    --th-hue-5: #c2410c;
+  }
+}
