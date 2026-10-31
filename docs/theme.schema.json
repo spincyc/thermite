@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://spincyc.github.io/thermite/theme.schema.json",
   "title": "thermite theme",
-  "description": "The colors of thermite's front ends and torch: a color for each role, in a dark and a light mode. A theme that `extends` another gives only the roles it changes.",
+  "description": "The colors of thermite's front ends and flaming bowl: a color for each role, in a dark and a light mode. A theme that `extends` another gives only the roles it changes.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -96,29 +96,37 @@
           "$ref": "#/$defs/color",
           "description": "neutral notices"
         },
+        "ember": {
+          "$ref": "#/$defs/color",
+          "description": "deep ember accents around the flame"
+        },
         "flame": {
           "$ref": "#/$defs/color",
-          "description": "the torch's outer flame"
+          "description": "the bowl's flame contour"
         },
         "glow": {
           "$ref": "#/$defs/color",
-          "description": "the torch's inner flame"
+          "description": "the flame's warm glow"
         },
         "core": {
           "$ref": "#/$defs/color",
-          "description": "the torch's white-hot core"
+          "description": "the hot inner flame stroke"
         },
         "spark": {
           "$ref": "#/$defs/color",
-          "description": "the torch's spark"
+          "description": "brief sparks above the bowl"
         },
         "metal": {
           "$ref": "#/$defs/color",
-          "description": "the torch's handle and rim"
+          "description": "the bowl's metal rim and cup"
         },
         "metal-shade": {
           "$ref": "#/$defs/color",
-          "description": "the torch's bowl and grip bands"
+          "description": "shaded metal accents"
+        },
+        "rust": {
+          "$ref": "#/$defs/color",
+          "description": "warm rust accents"
         },
         "hues": {
           "type": "array",

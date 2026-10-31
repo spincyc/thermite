@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>Cameras · thermite</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="cameras.css">
+  <link rel="stylesheet" href="shell.css">
+  <script src="appearance.js"></script>
+  <script defer src="cameras.js"></script>
+  <script defer src="shell.js"></script>
+</head>
+<body data-thermite-page="cameras">
+  <main class="cameras" data-camera-app>
+    <header class="camera-header">
+      <a class="camera-brand" href="./" aria-label="thermite remote"><img src="icon.svg" alt="" width="32" height="32"><span>thermite</span></a>
+      <nav aria-label="Views"><a href="./">Remote</a><span aria-current="page">Cameras</span><a href="topology.html">Topology</a><button type="button" data-camera-theme aria-label="Change color theme">◐</button></nav>
+    </header>
+    <section class="camera-intro">
+      <div><p class="eyebrow">Around the house</p><h1>Cameras</h1><p class="muted" data-camera-count>Reading cameras…</p></div>
+      <div class="camera-tools"><label>Show <select data-camera-filter><option value="all">All cameras</option><option value="doorbells">Doorbells</option></select></label><button type="button" data-camera-refresh>Refresh status</button></div>
+    </section>
+    <p class="camera-notice" data-camera-preview hidden>Preview · no camera access</p>
+    <p class="camera-notice" data-camera-alert role="status">Reading cameras…</p>
+    <div class="camera-workspace">
+      <section class="camera-grid" data-camera-grid aria-label="Choose a camera"></section>
+      <section class="camera-viewer" data-camera-viewer aria-labelledby="camera-title" hidden>
+        <header><div><h2 id="camera-title" data-camera-title></h2><p class="muted" data-camera-meta></p></div><span class="camera-connection" data-camera-connection>Unknown</span></header>
+        <div class="camera-media">
+          <video data-camera-video controls playsinline muted hidden></video>
+          <img data-camera-image alt="Requested camera snapshot" hidden>
+          <p data-media-message role="status">Choose Snapshot or Live view.</p>
+        </div>
+        <div class="camera-media-tools"><button type="button" data-camera-snapshot>Snapshot</button><button type="button" class="primary" data-camera-live>Live view</button><label class="sr-only" for="camera-quality">Live view quality</label><select id="camera-quality" data-camera-quality></select><button type="button" data-camera-stop disabled>Stop</button></div>
+        <dl class="camera-facts"><div><dt>Recording</dt><dd data-camera-recording>Unknown</dd></div><div><dt>Last motion received</dt><dd data-camera-motion-time>Not reported</dd></div><div data-camera-ring-row hidden><dt>Last doorbell ring</dt><dd data-camera-ring-time>Not reported</dd></div></dl>
+        <p class="camera-privacy">Video starts only when you choose it. One live view at a time; no microphone access. Leaving this page or hiding it stops media.</p>
+      </section>
+    </div>
+  </main>
+  <noscript><p>The camera view needs JavaScript.</p></noscript>
+</body>
+</html>

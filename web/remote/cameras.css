@@ -1,0 +1,62 @@
+/* The house's theme, with quiet status cards and one explicit media view. */
+:root { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--th-text); background: var(--th-bg); color-scheme: dark; }
+[data-theme="light"] { color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--th-bg); min-height: 100dvh; }
+[hidden] { display: none !important; }
+button, select, a { -webkit-tap-highlight-color: transparent; }
+button, select { min-height: 44px; font: inherit; color: inherit; border: 1px solid var(--th-line); border-radius: 9px; background: var(--th-surface); padding: 9px 13px; }
+button, select, a { touch-action: manipulation; }
+button { cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+button:hover:not(:disabled), a:hover { border-color: var(--th-accent); }
+:focus-visible { outline: 3px solid var(--th-focus); outline-offset: 3px; }
+a { color: inherit; text-decoration: none; }
+.cameras { max-width: 1600px; margin: auto; padding: 0 clamp(16px,4vw,56px) 40px; }
+.camera-header { min-height: 82px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--th-line); }
+.camera-brand { display: flex; align-items: center; gap: 10px; font-weight: 680; letter-spacing: .01em; min-width: 0; }
+.camera-brand img { border-radius: 10px; flex: none; }
+.camera-brand span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.camera-header nav { display: flex; align-items: center; gap: 8px; font-size: 14px; flex: none; }
+.camera-header nav a, .camera-header nav span { padding: 13px 12px; border-radius: 9px; }
+.camera-header [aria-current] { background: var(--th-surface); color: var(--th-accent); }
+.camera-header button { min-width: 44px; }
+.camera-intro { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding: 32px 0 24px; }
+h1, h2, p { margin: 0; }
+h1 { font-size: 30px; font-weight: 600; letter-spacing: -.035em; margin: 6px 0 8px; }
+h2 { font-size: 22px; letter-spacing: -.02em; }
+.eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .17em; color: var(--th-muted); }
+.muted { font-size: 13px; color: var(--th-muted); line-height: 1.6; }
+.camera-tools { display: flex; align-items: center; gap: 12px; }
+.camera-tools label { display: flex; align-items: center; gap: 8px; color: var(--th-muted); font-size: 13px; }
+.camera-notice { padding: 13px 16px; margin-bottom: 18px; border: 1px solid var(--th-line); border-radius: 9px; color: var(--th-muted); font-size: 14px; }
+.camera-workspace { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(400px, 1.2fr); gap: 24px; align-items: start; }
+.camera-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.camera-card { display: flex; flex-direction: column; align-items: start; text-align: left; padding: 17px; min-width: 0; gap: 6px; background: var(--th-surface); box-shadow: none; }
+.camera-card[aria-pressed="true"] { border-color: var(--th-accent); background: var(--th-raised); box-shadow: none; }
+.camera-card__type { color: var(--th-muted); text-transform: uppercase; letter-spacing: .12em; font-size: 9px; }
+.camera-card__name { font-size: 15px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.camera-card__location { color: var(--th-muted); font-size: 11px; }
+.camera-card__status { margin-top: 8px; font-size: 12px; }
+.camera-card__motion { color: var(--th-muted); font-size: 11px; }
+[data-tone="ok"] { color: var(--th-ok); }
+[data-tone="bad"] { color: var(--th-bad); }
+.camera-viewer { padding: 22px; border: 1px solid var(--th-line); border-radius: 12px; background: var(--th-surface); position: sticky; top: 18px; min-width: 0; }
+.camera-viewer header { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 18px; }
+.camera-viewer header p { margin-top: 5px; }
+.camera-connection { font-size: 12px; padding-top: 5px; white-space: nowrap; }
+.camera-media { aspect-ratio: 16/9; background: var(--th-bg); border: 1px solid var(--th-line); border-radius: 9px; display: grid; place-items: center; overflow: hidden; position: relative; }
+.camera-media video, .camera-media img { width: 100%; height: 100%; object-fit: contain; position: absolute; inset: 0; }
+.camera-media p { padding: 20px; color: var(--th-muted); font-size: 13px; text-align: center; }
+.camera-media:has(video:not([hidden]), img:not([hidden])) p { position: absolute; bottom: 0; left: 0; background: rgb(0 0 0 / .68); color: #eee; width: 100%; padding: 7px; pointer-events: none; font-size: 11px; }
+.camera-media-tools { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 0 18px; }
+.camera-media-tools button, .camera-media-tools select { font-size: 13px; }
+.primary { background: var(--th-accent); color: var(--th-accent-ink); border-color: transparent; }
+.camera-facts { display: grid; gap: 12px; margin: 0; border-top: 1px solid var(--th-line); padding-top: 18px; font-size: 12px; }
+.camera-facts div { display: flex; justify-content: space-between; gap: 20px; }
+.camera-facts dt { color: var(--th-muted); }
+.camera-facts dd { margin: 0; text-align: right; }
+.camera-privacy { margin-top: 22px; font-size: 11px; line-height: 1.6; color: var(--th-muted); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+@media(max-width: 1000px) { .camera-workspace { grid-template-columns: minmax(0,1fr); } .camera-viewer { position: static; grid-row: 1; } .camera-grid { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+@media(max-width: 600px) { .camera-intro { align-items: start; flex-direction: column; padding-top: 24px; gap: 18px; } .camera-tools { width: 100%; justify-content: space-between; gap: 6px; } .camera-tools select, .camera-tools button { font-size: 12px; padding: 9px; } .camera-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .camera-card { padding: 14px; } .camera-viewer { padding: 16px; } .camera-header { gap: 10px; } .camera-brand span { font-size: 14px; } .camera-header nav { gap: 1px; font-size: 12px; } .camera-header nav a, .camera-header nav span { padding: 13px 9px; } }

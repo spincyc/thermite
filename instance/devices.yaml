@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "rooms": {
+    "example_west": {
+      "label": "Example West",
+      "tag": "Room"
+    },
+    "example_east": {
+      "label": "Example East",
+      "tag": "Room"
+    }
+  },
+  "devices": [
+    {
+      "id": "example_tv",
+      "room": "example_west",
+      "kind": "tv",
+      "name": "Example Tv",
+      "ip": "192.0.2.10",
+      "mac": "02:00:00:00:00:0a",
+      "make": "Sony",
+      "model": "Example TV",
+      "controls": {
+        "observe": [
+          "sony_rest"
+        ],
+        "control": [
+          "sony_ip_control"
+        ]
+      }
+    },
+    {
+      "id": "example_player",
+      "room": "example_west",
+      "kind": "streamer",
+      "name": "Example Player",
+      "ip": "192.0.2.11",
+      "mac": "02:00:00:00:00:0b",
+      "make": "Apple",
+      "model": "Example Player",
+      "controls": {
+        "control": [
+          "pyatv_http"
+        ]
+      }
+    },
+    {
+      "id": "example_display",
+      "room": "example_east",
+      "kind": "tv",
+      "name": "Example Display",
+      "ip": "192.0.2.12",
+      "mac": "02:00:00:00:00:0c",
+      "make": "Sony",
+      "model": "Example Display",
+      "controls": {
+        "observe": [
+          "sony_rest"
+        ],
+        "control": [
+          "sony_ip_control"
+        ]
+      }
+    },
+    {
+      "id": "example_computer",
+      "room": "example_east",
+      "kind": "computer",
+      "name": "Example Computer",
+      "ip": "192.0.2.13",
+      "mac": "02:00:00:00:00:0d",
+      "model": "Computer",
+      "controls": {}
+    },
+    {
+      "id": "example_matrix",
+      "room": "example_west",
+      "kind": "hdmi_matrix",
+      "name": "Example Matrix",
+      "ip": "192.0.2.14",
+      "mac": "02:00:00:00:00:0e",
+      "model": "HDMI matrix",
+      "controls": {
+        "control": [
+          "bk808_http"
+        ]
+      }
+    }
+  ],
+  "routing": {
+    "hdmi_matrix": "example_matrix",
+    "hdmi_off_input": 8,
+    "usb_off_host": 4,
+    "sources": {
+      "example_player": {
+        "label": "Player"
+      },
+      "example_computer": {
+        "label": "Computer",
+        "hdmi_input": 1
+      }
+    },
+    "rooms": {
+      "example_west": {
+        "hdmi_output": 1,
+        "sources": [
+          "example_player",
+          "example_computer"
+        ],
+        "display": {
+          "device": "example_tv",
+          "input": "hdmi2",
+          "sources": {
+            "example_player": "hdmi1"
+          }
+        }
+      },
+      "example_east": {
+        "hdmi_output": 2,
+        "sources": [
+          "example_computer"
+        ],
+        "display": {
+          "device": "example_display",
+          "input": "hdmi2"
+        }
+      }
+    }
+  }
+}

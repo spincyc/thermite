@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spincyc.github.io/thermite/theme.schema.json",
+  "title": "thermite theme",
+  "description": "The colors of thermite's front ends and flaming bowl: a color for each role, in a dark and a light mode. A theme that `extends` another gives only the roles it changes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "lowercase letters, digits and hyphens"},
+    "description": {"type": "string"},
+    "extends": {"type": "string", "description": "a built-in theme's name (thermite, contrast) or a theme file, relative to this one"},
+    "dark": {"$ref": "#/$defs/mode"},
+    "light": {"$ref": "#/$defs/mode"}
+  },
+  "$defs": {
+    "color": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+    "mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bg": {"$ref": "#/$defs/color", "description": "the page or terminal background"},
+        "surface": {"$ref": "#/$defs/color", "description": "panels and sheets on the background"},
+        "raised": {"$ref": "#/$defs/color", "description": "keys, cards and anything raised above a surface"},
+        "line": {"$ref": "#/$defs/color", "description": "borders and dividers"},
+        "text": {"$ref": "#/$defs/color", "description": "body text"},
+        "muted": {"$ref": "#/$defs/color", "description": "secondary text"},
+        "faint": {"$ref": "#/$defs/color", "description": "hints, disabled text and decoration"},
+        "accent": {"$ref": "#/$defs/color", "description": "the brand color: links, the current choice, primary buttons"},
+        "accent-ink": {"$ref": "#/$defs/color", "description": "text on accent"},
+        "focus": {"$ref": "#/$defs/color", "description": "the keyboard focus ring"},
+        "ok": {"$ref": "#/$defs/color", "description": "done, online"},
+        "busy": {"$ref": "#/$defs/color", "description": "working, waiting"},
+        "bad": {"$ref": "#/$defs/color", "description": "failed, offline, a problem"},
+        "info": {"$ref": "#/$defs/color", "description": "neutral notices"},
+        "ember": {"$ref": "#/$defs/color", "description": "deep ember accents around the flame"},
+        "flame": {"$ref": "#/$defs/color", "description": "the bowl's flame contour"},
+        "glow": {"$ref": "#/$defs/color", "description": "the flame's warm glow"},
+        "core": {"$ref": "#/$defs/color", "description": "the hot inner flame stroke"},
+        "spark": {"$ref": "#/$defs/color", "description": "brief sparks above the bowl"},
+        "metal": {"$ref": "#/$defs/color", "description": "the bowl's metal rim and cup"},
+        "metal-shade": {"$ref": "#/$defs/color", "description": "shaded metal accents"},
+        "rust": {"$ref": "#/$defs/color", "description": "warm rust accents"},
+        "hues": {"type": "array", "items": {"$ref": "#/$defs/color"}, "minItems": 5, "maxItems": 5, "description": "panel colors, in order"}
+      }
+    }
+  }
+}

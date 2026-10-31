@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "example_computer",
+      "label": "Example Computer",
+      "room": "example_east",
+      "kind": "computer",
+      "model": "Computer"
+    },
+    {
+      "id": "example_display",
+      "label": "Example Display",
+      "room": "example_east",
+      "kind": "tv",
+      "make": "Sony",
+      "model": "Example Display"
+    },
+    {
+      "id": "example_matrix",
+      "label": "Example Matrix (HDMI matrix)",
+      "room": "example_west",
+      "kind": "hdmi_matrix",
+      "model": "HDMI matrix"
+    },
+    {
+      "id": "example_player",
+      "label": "Example Player",
+      "room": "example_west",
+      "kind": "streamer",
+      "make": "Apple",
+      "model": "Example Player"
+    },
+    {
+      "id": "example_tv",
+      "label": "Example Tv",
+      "room": "example_west",
+      "kind": "tv",
+      "make": "Sony",
+      "model": "Example TV"
+    }
+  ],
+  "rooms": [
+    {
+      "id": "example_east",
+      "label": "Example East",
+      "location": "example_east",
+      "devices": [
+        "example_computer",
+        "example_display"
+      ]
+    },
+    {
+      "id": "example_west",
+      "label": "Example West",
+      "location": "example_west",
+      "devices": [
+        "example_matrix",
+        "example_player",
+        "example_tv"
+      ]
+    }
+  ],
+  "routes": {
+    "example_east": {
+      "example_computer": {
+        "label": "Computer",
+        "nodes": [
+          {
+            "device": "example_computer",
+            "label": "Example Computer",
+            "role": "source"
+          },
+          {
+            "device": "example_matrix",
+            "label": "Example Matrix (HDMI matrix)",
+            "role": "matrix",
+            "input": 1,
+            "output": 2
+          },
+          {
+            "device": "example_display",
+            "label": "Example Display",
+            "role": "display",
+            "input": "hdmi2",
+            "zone": "main"
+          }
+        ]
+      }
+    },
+    "example_west": {
+      "example_computer": {
+        "label": "Computer",
+        "nodes": [
+          {
+            "device": "example_computer",
+            "label": "Example Computer",
+            "role": "source"
+          },
+          {
+            "device": "example_matrix",
+            "label": "Example Matrix (HDMI matrix)",
+            "role": "matrix",
+            "input": 1,
+            "output": 1
+          },
+          {
+            "device": "example_tv",
+            "label": "Example Tv",
+            "role": "display",
+            "input": "hdmi2",
+            "zone": "main"
+          }
+        ]
+      },
+      "example_player": {
+        "label": "Player",
+        "nodes": [
+          {
+            "device": "example_player",
+            "label": "Example Player",
+            "role": "source"
+          },
+          {
+            "device": "example_tv",
+            "label": "Example Tv",
+            "role": "display",
+            "input": "hdmi1",
+            "zone": "main"
+          }
+        ]
+      }
+    }
+  },
+  "edges": [
+    {
+      "id": "video-1acac70e8acc88edcf8d97db5b7f61713e311de7512b14a1dff95734497c7625",
+      "from": "example_computer",
+      "to": "example_matrix",
+      "kind": "video",
+      "toPort": 1,
+      "rooms": [
+        "example_east",
+        "example_west"
+      ],
+      "sources": [
+        "example_computer"
+      ]
+    },
+    {
+      "id": "video-62102dc6a704a62144375d19507535c91b0fc834a05d312855452cdc130ffc13",
+      "from": "example_matrix",
+      "to": "example_display",
+      "kind": "video",
+      "fromPort": 2,
+      "toPort": "hdmi2",
+      "rooms": [
+        "example_east"
+      ],
+      "sources": [
+        "example_computer"
+      ]
+    },
+    {
+      "id": "video-756cc5e50c8db70a4273a146944496ba2d7dc677684cff8fa0c8cb67cf4b7b1f",
+      "from": "example_matrix",
+      "to": "example_tv",
+      "kind": "video",
+      "fromPort": 1,
+      "toPort": "hdmi2",
+      "rooms": [
+        "example_west"
+      ],
+      "sources": [
+        "example_computer"
+      ]
+    },
+    {
+      "id": "video-c1e65af47c84216fa1d99d340efc2c5f40f9aa8ffa82222d45a2d21fff0a2ba7",
+      "from": "example_player",
+      "to": "example_tv",
+      "kind": "video",
+      "toPort": "hdmi1",
+      "rooms": [
+        "example_west"
+      ],
+      "sources": [
+        "example_player"
+      ]
+    }
+  ]
+}

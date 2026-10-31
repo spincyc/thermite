@@ -1,0 +1,10 @@
+/.scratch/
+/var/
+/build/
+/conf/
+/metrics/
+/deploy/
+/.venv/
+__pycache__/
+*.pyc
+node_modules/

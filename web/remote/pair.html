@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>thermite · Pairing</title>
+  <meta name="description" content="Pair the house's TVs and streamers with thermite, one at a time.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#120e0c">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="remote.css">
+  <link rel="stylesheet" href="pair.css">
+  <link rel="stylesheet" href="shell.css">
+  <script src="appearance.js"></script>
+  <script src="shell.js" defer></script>
+  <script src="pair.js" defer></script>
+</head>
+<body class="pair-page" data-thermite-page="pairing">
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M9 13.5 4.5 9 9 4.5"/><path d="M4.5 9h10a5 5 0 0 1 0 10H11"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.3v.2"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8v.2"/></symbol>
+    <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="currentColor"/></symbol>
+  </svg>
+
+  <main class="pair">
+    <header class="pair__head">
+      <span class="torch pair__torch"><img src="mark.svg" width="44" height="35" alt="thermite"></span>
+      <a class="pair__back" href="./">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-back"></use></svg>
+        <span>Remotes</span>
+      </a>
+      <h1 class="pair__title">Pair TVs and streamers</h1>
+      <p class="pair__help">Stand where you can see the screen, press Pair, then type the code it shows.</p>
+    </header>
+
+    <p class="pair__mock" id="mock-note" hidden>Sample devices: this page is running in demo mode, so nothing is sent. The codes 1234 and A1B2C3 are accepted.</p>
+    <p class="alert pair__alert" id="alert" role="status" hidden>
+      <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-warn"></use></svg>
+      <span id="alert-text"></span>
+    </p>
+
+    <div class="pair__rooms" id="rooms" aria-label="Pairing devices" role="region" tabindex="0" aria-busy="true">
+      <p class="pair__empty">Looking for TVs and streamers&hellip;</p>
+    </div>
+  </main>
+
+  <div class="sr-only" id="announcer" aria-live="polite" aria-atomic="true"></div>
+
+  <noscript><p class="noscript">The Pairing page needs JavaScript.</p></noscript>
+</body>
+</html>

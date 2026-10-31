@@ -1,0 +1,352 @@
+/*
+ * The Pairing page (pair.html). Loaded after remote.css and built on its
+ * tokens and themes. Rows keep the same columns on phones, with horizontal
+ * scrolling inside the table rather than turning devices into cards.
+ */
+
+.pair-page {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.pair {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+  padding:
+    calc(env(safe-area-inset-top) + var(--space-4))
+    calc(env(safe-area-inset-right) + var(--space-4))
+    calc(env(safe-area-inset-bottom) + var(--space-7))
+    calc(env(safe-area-inset-left) + var(--space-4));
+}
+
+.pair__head {
+  margin-bottom: var(--space-5);
+}
+
+.pair__torch {
+  float: right;
+  margin-top: 7px;
+}
+
+.pair__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  margin-left: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-row);
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.pair__back .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.pair__title {
+  margin: var(--space-2) 0 var(--space-2);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.2;
+}
+
+.pair__help {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.pair__mock {
+  margin: 0 0 var(--space-4);
+  padding: 10px 14px;
+  border: 0;
+  border-left: 2px solid var(--panel-border);
+  border-radius: var(--radius-row);
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.pair__mock[hidden] {
+  display: none;
+}
+
+.pair__alert {
+  margin: 0 0 var(--space-4);
+  font-size: 13px;
+}
+
+.pair__empty {
+  color: var(--ink-muted);
+}
+
+.pair__rooms {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border: 0;
+  border-top: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.pair-table {
+  width: 100%;
+  min-width: 850px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+.pair-table__caption {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.pair-table td,
+.pair-table th {
+  padding: 6px 12px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.pair-table thead th {
+  padding: 0 12px;
+  background: var(--sheet-bg);
+}
+
+.pair-table__room { width: 17%; }
+.pair-table__device { width: 25%; }
+.pair-table__model { width: 22%; }
+.pair-table__status { width: 18%; }
+.pair-table__actions { width: 18%; }
+
+.pair-table__sort {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 4px 0;
+  border: 0;
+  color: var(--ink-muted);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.pair-table th[aria-sort="ascending"] .pair-table__sort,
+.pair-table th[aria-sort="descending"] .pair-table__sort {
+  color: var(--accent);
+}
+
+.pair-table__sort:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.pair-device__room,
+.pair-device__model,
+.pair-device__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pair-device__label {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pair-device__model {
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.pair-device__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.pair-device__status:focus {
+  outline: none;
+}
+
+.pair-device__status .icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.pair-device__status[data-tone="ok"] {
+  color: var(--ok);
+}
+
+.pair-device__status[data-tone="bad"] {
+  color: var(--bad);
+}
+
+.pair-device__status[data-tone="busy"] .icon {
+  color: var(--led-busy);
+}
+
+.pair-device__note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 15px;
+  background: var(--panel-hover);
+}
+
+.pair-device__note[hidden] {
+  display: none;
+}
+
+.pair-device__note[data-tone="ok"] {
+  color: var(--ok);
+}
+
+.pair-device__note[data-tone="bad"] {
+  color: var(--bad);
+  background: var(--bad-soft);
+}
+
+.pair-device__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pair-device__detail[hidden],
+.pair-device__idle[hidden],
+.pair-table[hidden] {
+  display: none;
+}
+
+.pair-device .button,
+.pair-device__detail .button {
+  min-height: 44px;
+  margin: 0;
+  font-size: 14px;
+  padding: 7px 12px;
+}
+
+.pair-device .button[hidden],
+.pair-device__detail .button[hidden] {
+  display: none;
+}
+
+.pair-device .button:disabled,
+.pair-device__detail .button:disabled {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+}
+
+.pair-device__idle { color: var(--ink-muted); font-size: 13px; }
+.pair-device__detail > td { padding: 0; background: var(--panel-hover); }
+.pair-device__body { display: grid; gap: var(--space-2); max-width: 700px; padding: 12px; }
+
+.button--primary {
+  border-color: transparent;
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.button--quiet {
+  font-weight: 550;
+  color: var(--ink);
+  background: transparent;
+}
+
+.pair-confirm {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: 8px;
+  background: var(--panel-hover);
+}
+
+.pair-confirm[hidden] {
+  display: none;
+}
+
+.pair-confirm__text {
+  margin: 0;
+  font-size: 15px;
+}
+
+.pair-code {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.pair-code[hidden] {
+  display: none;
+}
+
+.pair-code__label {
+  font-weight: 600;
+}
+
+.pair-code__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.pair-code__input {
+  width: 100%;
+  min-height: 56px;
+  padding: 0 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-row);
+  color: var(--ink);
+  background: var(--well);
+  box-shadow: var(--well-edge);
+  font-family: var(--font-mono);
+  font-size: 28px;
+  letter-spacing: 0.25em;
+}
+
+.pair-code__input--hex {
+  text-transform: uppercase;
+}
+
+.pair-code__input:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.pair-code__send {
+  padding: 0 var(--space-5);
+}
+
+.pair-code__rule,
+.pair-code__hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+@media (min-width: 820px) {
+  .pair {
+    padding-top: var(--space-4);
+  }
+}

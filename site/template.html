@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}}</title>
+  <meta name="description" content="{{description}}">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/palettes/thermite.css" id="palette-css">
+  <link rel="stylesheet" href="assets/site.css">
+  <script>
+    // Theme and palette before the first paint, so a light page never flashes dark.
+    (function () {
+      var theme, palette, names = "{{palette_names}}".split(" ");
+      try {
+        theme = localStorage.getItem("thermite.theme");
+        palette = localStorage.getItem("thermite.palette");
+      } catch (error) { /* storage blocked */ }
+      if (theme !== "light" && theme !== "dark") {
+        theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+      if (names.indexOf(palette) >= 0) {
+        document.getElementById("palette-css").href = "assets/palettes/" + palette + ".css";
+      }
+    })();
+  </script>
+</head>
+<body class="page-{{slug}}">
+  <a class="skip" href="#main">Skip to the content</a>
+  <header class="bar">
+    <a class="brand" href="index.html" aria-label="thermite, home">{{torch}}<span>thermite</span></a>
+    <nav aria-label="Pages">{{nav}}</nav>
+    <button class="theme" id="theme" type="button" aria-label="Switch to the light theme">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>
+    </button>
+  </header>
+  <main id="main">
+{{content}}
+  </main>
+  <footer class="foot">
+    <span class="foot-mark">{{torch}} thermite · simple parts, joined</span>
+    <span>© 2026. All rights reserved.</span>
+  </footer>
+  <script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-<p align="center"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/torch-light.svg"><img src="docs/assets/torch.svg" width="64" alt=""></picture></p>
+<p align="center"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/torch-light.svg"><img src="docs/assets/torch.svg" width="80" alt="thermite's shallow bowl of fire"></picture></p>
 
 <h1 align="center">thermite</h1>
 
@@ -13,6 +13,10 @@ thermite turns one plain file describing your house (its rooms, TVs, speakers an
 - **A remote on every screen.** The same remote on a phone, a desktop and a terminal.
 - **No cloud.** It talks to your devices on your own network.
 - **Your colors.** A dark and a light mode, or a theme of your own.
+
+## Source and your private site
+
+This public checkout contains the program and a fictional example, not a production house. Keep your real inventory and host settings in a separate private site checkout. Production deployment installs a committed revision: generate and commit `conf/`, `metrics/` and `deploy/` only in that private checkout before using the deployment recipe below. Those outputs are ignored here; do not publish your house configuration upstream.
 
 ## In four commands
 
@@ -29,7 +33,22 @@ thermite remote         # the remote, in your terminal
 
 - [The docs](https://spincyc.github.io/thermite/): getting started, every command, colors.
 - [Questions](FAQ.md), answered briefly.
+- [The bowl and colors](https://spincyc.github.io/thermite/colors.html): one drawing, charcoal and pewter, with copper heat.
 
 ## Status
 
-Early. For now this repository holds the docs; the code follows. All rights reserved.
+Under active development. The guide describes the available tools and their checks. All rights reserved.
+
+## Run the example
+
+The included `instance/` describes fictional devices at documentation-only addresses. Replace those files with your own inventory before using a real runtime.
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m unittest tests.test_public -q
+.venv/bin/python bin/thermite generate
+.venv/bin/python bin/thermite validate
+```
+
+Configuration, documentation and these tests run offline. Running a native test runtime or installing services is a separate explicit command and requires the pinned downloads. The terminal remote additionally needs Node.js and its locked package; the Apple TV helper has its own hashed dependency lock.

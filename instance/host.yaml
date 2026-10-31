@@ -1,0 +1,11 @@
+{
+  "state_root": "/srv/thermite",
+  "timezone": "Etc/UTC",
+  "http_port": 8080,
+  "https_port": 8443,
+  "uid": 9001,
+  "gid": 9001,
+  "metrics": {
+    "units": []
+  }
+}

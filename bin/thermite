@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""thermite, the area's one program: `thermite VERB ...` runs main() of
+lib/oh_cli/<verb>.py (lib/oh_cli/__init__.py). `thermite --help` lists the
+verbs."""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+from oh_cli import run  # noqa: E402
+
+sys.exit(run(Path(__file__).name, sys.argv[1:]))

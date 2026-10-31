@@ -1,0 +1,76 @@
+/* Shared application frame; page controls keep their existing behavior. */
+body.thermite-app { --thermite-nav-width: 176px; display: block; margin: 0; padding: 0; min-width: 0; min-height: 100dvh; font-family: system-ui,-apple-system,"Segoe UI",sans-serif; font-size: 14px; line-height: 1.5; color: var(--th-text); background: var(--th-bg); -webkit-font-smoothing: antialiased; }
+.thermite-shell,.thermite-shell *,.thermite-content,.thermite-content * { box-sizing: border-box; }
+.thermite-shell { position: fixed; inset: 0 auto 0 0; z-index: 30; width: var(--thermite-nav-width); display: flex; flex-direction: column; align-items: stretch; gap: 32px; padding: 24px 12px; border-right: 1px solid var(--th-line); background: var(--th-bg); }
+.thermite-shell a { color: var(--th-text); text-decoration: none; }
+.thermite-shell .thermite-brand { display: flex; align-items: center; gap: 8px; padding: 0 8px; min-height: 32px; font-size: 16px; font-weight: 550; letter-spacing: -.025em; }
+.thermite-brand img { width: 44px; height: 35px; object-fit: contain; flex: none; }
+[data-theme="light"] .thermite-brand img { content: url("mark-light.svg"); }
+.thermite-navigation { display: flex; flex-direction: column; align-items: stretch; gap: 4px; margin: 0; font-size: 13px; }
+.thermite-navigation .thermite-nav-link { display: flex; align-items: center; min-height: 40px; padding: 9px 13px; border-radius: 6px; background: transparent; }
+.thermite-navigation .thermite-nav-child { margin: -2px 0 10px 13px; padding-left: 14px; min-height: 34px; border-left: 1px solid var(--th-line); border-radius: 0 6px 6px 0; color: var(--th-muted); font-size: 12px; }
+.thermite-navigation .thermite-nav-link:hover { background: var(--th-raised); }
+.thermite-navigation .thermite-nav-link[aria-current="page"] { background: var(--th-surface); color: var(--th-accent); font-weight: 600; }
+.thermite-navigation [data-parent-active] { color: var(--th-accent); }
+.thermite-shell button { font: inherit; min-height: 36px; padding: 7px 10px; border: 1px solid var(--th-line); border-radius: 7px; color: var(--th-text); background: transparent; cursor: pointer; }
+.thermite-shell .thermite-theme { width: 38px; margin: auto 8px 0; font-size: 18px; }
+.thermite-shell .thermite-menu { display: none; }
+.thermite-shell :focus-visible,.thermite-pagebar :focus-visible { outline: 2px solid var(--th-focus); outline-offset: 2px; }
+.thermite-content { margin-left: var(--thermite-nav-width); min-width: 0; }
+.thermite-pagebar { display: flex; align-items: center; min-height: 56px; padding: 0 24px; border-bottom: 1px solid var(--th-line); }
+.thermite-breadcrumbs { display: flex; align-items: center; gap: 10px; color: var(--th-muted); font-size: 12px; }
+.thermite-breadcrumbs a { color: inherit; text-decoration: none; padding: 0; }
+.thermite-breadcrumbs [aria-current] { color: var(--th-text); background: transparent; padding: 0; }
+.thermite-content > :is(.topology,.cameras,.pair,.thermite-home,.thermite-security) { width: 100%; max-width: 1800px; margin: 0 auto; padding: 24px 28px 40px; }
+.thermite-app :is(.site-header,.camera-header,.pair__back,.pair__torch,.remote__torch,.remote__mark) { display: none; }
+.thermite-app .pair__head { margin-bottom: 18px; }
+.thermite-app :is(.intro,.camera-intro) { padding-top: 0; }
+.thermite-app .app { width: 100%; margin: 0 auto; padding: 16px 20px; min-height: calc(100dvh - 56px); }
+.thermite-app .app > .panel { min-width: 0; }
+.thermite-app .link--pair { display: none; }
+@media(min-width:820px) {
+  .thermite-app .app { grid-template-columns: minmax(170px,1fr) minmax(300px,384px); justify-content: start; gap: 16px; min-height: 0; max-height: calc(100dvh - 56px); }
+  .thermite-app .app > .panel--rooms { width: auto; }
+}
+@media(min-width:1200px) {
+  .thermite-app .app { grid-template-columns: minmax(180px,1fr) minmax(320px,384px) minmax(220px,1.2fr); }
+  .thermite-app .app > .sidebar { width: auto; }
+}
+@media(max-width:1179px) {
+  .thermite-shell { position: sticky; inset: auto; top: 0; width: 100%; height: 56px; padding: 8px 16px; flex-direction: row; align-items: center; gap: 12px; border-right: none; border-bottom: 1px solid var(--th-line); }
+  .thermite-shell .thermite-brand { padding: 0; margin-right: auto; }
+  .thermite-shell .thermite-menu { display: block; }
+  .thermite-shell .thermite-theme { margin: 0; }
+  .thermite-navigation { display: none; position: absolute; top: 55px; left: 0; width: min(260px,100vw); padding: 14px; background: var(--th-surface); border: 1px solid var(--th-line); border-left: 0; border-radius: 0 0 9px 0; box-shadow: 0 12px 24px #0002; }
+  .thermite-shell.is-open .thermite-navigation { display: flex; }
+  .thermite-content { margin-left: 0; }
+  .thermite-pagebar { min-height: 38px; padding: 0 16px; }
+  .thermite-app .app { max-height: calc(100dvh - 94px); }
+}
+@media(max-width:819px) {
+  .thermite-content > :is(.topology,.cameras,.pair,.thermite-home,.thermite-security) { padding: 16px 14px 28px; }
+  .thermite-app .app { padding: 0; min-height: calc(100dvh - 94px); max-height: none; }
+  .thermite-app .remote { min-height: calc(100dvh - 94px); }
+}
+.thermite-home h1,.thermite-security h1 { margin: 0 0 8px; font-size: 30px; font-weight: 550; letter-spacing: -.04em; }
+.thermite-home::before { content: ""; float: right; width: 120px; height: 96px; margin: 0 0 12px 24px; background: url("mark.svg") center/contain no-repeat; }
+[data-theme="light"] .thermite-home::before { background-image: url("mark-light.svg"); }
+.thermite-home h2 { margin: 0 0 8px; font-size: 19px; font-weight: 550; letter-spacing: -.025em; }
+.thermite-home p,.thermite-security p { color: var(--th-muted); font-size: 13px; line-height: 1.6; margin: 0 0 18px; }
+.thermite-modules { clear: both; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 28px; margin: 28px 0 36px; }
+.thermite-module { display: flex; flex-direction: column; gap: 5px; padding: 18px 0; border: 0; border-bottom: 1px solid var(--th-line); border-radius: 0; color: var(--th-text); text-decoration: none; }
+.thermite-module:hover { border-color: var(--th-accent); }
+.thermite-module:hover strong { color: var(--th-accent); }
+.thermite-module strong { font-size: 15px; font-weight: 550; }
+.thermite-module span { font-size: 12px; color: var(--th-muted); }
+.thermite-room-scroll { max-width: 100%; overflow-x: auto; }
+.thermite-rooms { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.thermite-rooms th,.thermite-rooms td { text-align: left; border-bottom: 1px solid var(--th-line); padding: 11px 10px; }
+.thermite-rooms th { font-size: 11px; color: var(--th-muted); font-weight: 500; }
+.thermite-rooms a { color: var(--th-text); text-decoration: none; }
+.thermite-room-state { color: var(--th-muted); }
+.thermite-content :is(button,select,input,table) { font-family: inherit; }
+.thermite-content :is(a,button,select,input):focus-visible { outline: 2px solid var(--th-focus); outline-offset: 3px; }
+.thermite-not-connected { display: flex; align-items: center; gap: 10px; padding: 18px 0; font-size: 17px; }
+.thermite-not-connected::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--th-muted); }
+@media(max-width:600px) { .thermite-home::before { width: 96px; height: 77px; margin-left: 16px; } .thermite-modules { grid-template-columns: minmax(0,1fr); } }

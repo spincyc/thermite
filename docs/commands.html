@@ -29,8 +29,8 @@
 <body class="page-commands">
   <a class="skip" href="#main">Skip to the content</a>
   <header class="bar">
-    <a class="brand" href="index.html" aria-label="thermite, home"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 96" width="18" height="27" role="img" aria-label="thermite"><title>thermite</title><path fill="var(--th-flame)" d="M19 44 C13 38 12 28 17 20 C19 26 22 29 25 29 C22 20 27 11 34 3 C35 11 40 16 41 23 C43 21 46 19 48 16 C52 26 51 37 45 44 Z"/><path fill="var(--th-glow)" d="M23 44 C19 39 19 32 23 27 C25 31 27 32 29 31 C28 24 31 17 35 12 C37 19 39 24 39 29 C41 28 43 27 44 25 C46 32 45 39 41 44 Z"/><path fill="var(--th-core)" d="M27 44 C25 40 26 35 30 31 C31 28 33 25 34 21 C36 26 39 31 38 36 C38 40 37 42 36 44 Z"/><path fill="var(--th-spark)" d="M53 3 L54.6 7.4 L59 9 L54.6 10.6 L53 15 L51.4 10.6 L47 9 L51.4 7.4 Z"/><path fill="var(--th-metal)" d="M15 44 L49 44 L48 48 L16 48 Z"/><path fill="var(--th-metal-shade)" d="M17 48 L47 48 C45 53 41 56 38 57 L26 57 C23 56 19 53 17 48 Z"/><path fill="var(--th-metal)" d="M26 57 L38 57 L35 90 C35 93 29 93 29 90 Z"/><path fill="var(--th-metal-shade)" d="M26.4 63 L37.6 63 L37.2 67 L26.8 67 Z"/><path fill="var(--th-metal-shade)" d="M27.4 74 L36.6 74 L36.2 78 L27.8 78 Z"/></svg><span>thermite</span></a>
-    <nav aria-label="Pages"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="commands.html" aria-current="page">Commands</a><a href="colors.html">Colors</a><a href="faq.html">FAQ</a></nav>
+    <a class="brand" href="index.html" aria-label="thermite, home"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg><span>thermite</span></a>
+    <nav aria-label="Pages"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="dashboards.html">Dashboards</a><a href="commands.html" aria-current="page">Commands</a><a href="colors.html">Colors</a><a href="faq.html">FAQ</a></nav>
     <button class="theme" id="theme" type="button" aria-label="Switch to the light theme">
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>
     </button>
@@ -40,21 +40,21 @@
 <p>One program, <code>thermite</code>, with a verb for each job. Every verb answers <code>--help</code> (or <code>thermite help VERB</code>) with what it does, its switches and examples; this page is that help, word for word.</p>
 <h2 id="house">The house file, and what is generated from it</h2>
 <table class="verbs"><tbody><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that conf/ agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
-<h2 id="test">Test on a test openHAB, never production</h2>
-<table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test openHAB; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run openHAB from a copy of conf/ on 127.0.0.1:18080</td></tr></tbody></table>
-<h2 id="production">Production openHAB on this host</h2>
-<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install openHAB on this host, asking before each sudo command</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>move openHAB and the Apple TV helper here to the pinned versions</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop openHAB here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>install a commit&#x27;s conf/ and Apple TV helper here</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE on a running openHAB</td></tr></tbody></table>
+<h2 id="test">Test on a test runtime, never production</h2>
+<table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:18080</td></tr></tbody></table>
+<h2 id="production">Production runtime on this host</h2>
+<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, asking before each sudo command</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>upgrade thermite and the Apple TV helper here to the pinned versions</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>install a commit&#x27;s conf/ and Apple TV helper here</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
-<table class="verbs"><tbody><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with openHAB, or check the Sony TVs&#x27; keys</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper openHAB calls</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
-<table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the torch and the color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the flaming bowl mark and color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
 <h2 id="program">This program</h2>
-<table class="verbs"><tbody><tr><td><a href="#version"><code>thermite version</code></a></td><td>thermite&#x27;s version, and openHAB&#x27;s: pinned, and running here</td></tr><tr><td><a href="#completion"><code>thermite completion</code></a></td><td>print a completion script for bash, zsh or fish</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#version"><code>thermite version</code></a></td><td>thermite&#x27;s version, and runtime&#x27;s: pinned, and running here</td></tr><tr><td><a href="#completion"><code>thermite completion</code></a></td><td>print a completion script for bash, zsh or fish</td></tr></tbody></table>
 <h2 id="overview">thermite --help</h2>
 <pre class="help">usage: thermite VERB [ACTION] [SWITCHES]
 
-thermite runs a house on openHAB from one house file: it generates openHAB&#x27;s
-configuration, tests it on a test openHAB, installs it, and drives the
+thermite controls a house from one house file: it generates the runtime&#x27;s
+configuration, tests it on a test runtime, installs it, and drives the
 remotes. One program, a verb for each job; `thermite help VERB` explains one.
 
 the house file, and what is generated from it:
@@ -62,32 +62,33 @@ the house file, and what is generated from it:
   validate             check the house file, and that conf/ agrees with it
   lint                 refuse credentials in Git, and docs naming a missing make target
 
-test on a test openHAB, never production:
-  test                 boot conf/ on a test openHAB; test routing and the controls end to end
-  sandbox              run openHAB from a copy of conf/ on 127.0.0.1:18080
+test on a test runtime, never production:
+  test                 boot conf/ on a test runtime; test routing and the controls end to end
+  sandbox              run a thermite sandbox from a copy of conf/ on 127.0.0.1:18080
 
-production openHAB on this host:
-  install              install openHAB on this host, asking before each sudo command
-  upgrade              move openHAB and the Apple TV helper here to the pinned versions
-  uninstall            stop openHAB here and remove its units; --purge deletes its state
+production runtime on this host:
+  install              install thermite on this host, asking before each sudo command
+  upgrade              upgrade thermite and the Apple TV helper here to the pinned versions
+  uninstall            stop thermite here and remove its units; --purge deletes its state
   deploy               install a commit&#x27;s conf/ and Apple TV helper here
   rollback             deploy the commit deployed before the current one, or another
   status               what is deployed and running here, against this checkout
   history              this host&#x27;s deploys, numbered, the latest last
-  health               read-only: every Thing ONLINE on a running openHAB
+  health               read-only: every Thing ONLINE in the runtime
 
 the house&#x27;s devices:
   discover             scan the LAN read-only and compare it with the house file
-  pair                 pair a TV with openHAB, or check the Sony TVs&#x27; keys
-  apple-tv             run the Apple TV helper openHAB calls
+  pair                 pair a TV with runtime, or check the Sony TVs&#x27; pairing
+  cameras              read camera status, or configure native Protect bridges privately
+  apple-tv             run the Apple TV helper runtime calls
 
 front ends, themes and docs:
   remote               the house remote in a terminal
-  theme                the torch and the color themes: show, check, export
+  theme                the flaming bowl mark and color themes: show, check, export
   docs                 build the docs site, or export it to the thermite repository
 
 this program:
-  version              thermite&#x27;s version, and openHAB&#x27;s: pinned, and running here
+  version              thermite&#x27;s version, and runtime&#x27;s: pinned, and running here
   completion           print a completion script for bash, zsh or fish
 
 switches that mean the same in every verb that has them:
@@ -98,7 +99,7 @@ switches that mean the same in every verb that has them:
   --timeout SECONDS                 how long to wait
   --house FILE                      the house file (default: instance/devices.yaml)
   --production | --sandbox | --url URL
-                                    which openHAB: this host&#x27;s, the sandbox&#x27;s, or one at URL
+                                    which runtime: this host&#x27;s, the sandbox&#x27;s, or one at URL
   --theme NAME|FILE                 the colors: a built-in theme&#x27;s name or a theme file
   --dark | --light                  which of the theme&#x27;s two modes
 
@@ -117,28 +118,30 @@ examples:
   thermite generate                 after any change to the house file or lib/
   thermite test boot                before a deploy: does conf/ load cleanly?
   thermite deploy --dry-run         what a deploy would change here
-  thermite upgrade -n               what moving to the pinned openHAB would run here
+  thermite upgrade -n               what moving to the pinned runtime would run here
   thermite remote --mock            the remote in a terminal, sending nothing
-  thermite theme show               the torch, in this terminal&#x27;s colors
+  thermite theme show               the flaming bowl, in this terminal&#x27;s colors
   thermite help sandbox             one verb&#x27;s actions, switches and examples
   thermite completion bash          tab completion for bash (thermite help completion)
 </pre>
 <section class="verb" id="generate"><h3><code>thermite generate</code></h3><p>Write conf/ from the house file, and deploy/&#x27;s systemd units.</p><pre class="help">usage: thermite generate [-h] [--check] [--house FILE] [--conf DIR]
 
-Generate conf/ from the house file (instance/devices.yaml), and deploy/&#x27;s
-systemd units from versions.json and the host file (instance/host.yaml).
-Both are generated: change the house file, the host file, versions.json or
-lib/, then run this; never edit conf/ or deploy/ by hand.
+Generate conf/ from the house file (instance/devices.yaml), metrics/ (the
+Prometheus, blackbox_exporter, Grafana and exporter configuration, and the
+dashboards) from the house file and the host file (instance/host.yaml), and
+deploy/&#x27;s systemd units from versions.json and the host file. All three are
+generated: change the house file, the host file, versions.json or lib/,
+then run this; never edit conf/, metrics/ or deploy/ by hand.
 
 It validates the house file first and writes nothing while it has a
-problem. Writing never deletes: a file under conf/ that nothing generates
-is reported and makes the exit status 1.
+problem. Writing never deletes: a file under conf/ or metrics/ that nothing
+generates is reported and makes the exit status 1.
 
 options:
   -h, --help     show this help message and exit
-  --check        change nothing; exit 1 if conf/ or deploy/ is stale
+  --check        change nothing; exit 1 if conf/, metrics/ or deploy/ is stale
   --house FILE   the house file (default: instance/devices.yaml)
-  --conf DIR     the openHAB conf directory (default: conf/)
+  --conf DIR     the runtime conf directory (default: conf/)
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -146,14 +149,14 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
-  0  conf/ and deploy/ are what the house file, the host file and
+  0  conf/, metrics/ and deploy/ are what the house file, the host file and
      versions.json generate (with --check: and nothing was written)
   1  the house file has a problem, a file is stale or missing (with
-     --check), or conf/ holds a file nothing generates
+     --check), or conf/ or metrics/ holds a file nothing generates
   2  a wrong switch, or a file that cannot be read
 
 examples:
-  thermite generate                 validate the house file, then write every file under conf/ and deploy/ that differs
+  thermite generate                 validate the house file, then write every file under conf/, metrics/ and deploy/ that differs
   thermite generate --check         change nothing; name every stale, missing or stray file
 </pre>
 </section>
@@ -164,7 +167,7 @@ Check instance/devices.yaml, and that conf/ agrees with it.
 options:
   -h, --help     show this help message and exit
   --house FILE   the house file (default: instance/devices.yaml)
-  --conf DIR     the openHAB conf directory (default: conf/)
+  --conf DIR     the runtime conf directory (default: conf/)
   --json         print the report as JSON
 
 switches every verb takes:
@@ -204,9 +207,9 @@ examples:
   thermite lint                     scan the area&#x27;s files Git has or would add, and check the docs&#x27; make targets
 </pre>
 </section>
-<section class="verb" id="test"><h3><code>thermite test</code></h3><p>Boot conf/ on a test openHAB; test routing and the controls end to end.</p><pre class="help">usage: thermite test [-h] [--timeout SECONDS] [--house FILE] ACTION ...
+<section class="verb" id="test"><h3><code>thermite test</code></h3><p>Boot conf/ on a test runtime; test routing and the controls end to end.</p><pre class="help">usage: thermite test [-h] [--timeout SECONDS] [--house FILE] ACTION ...
 
-Test conf/ on a test openHAB, the pinned distribution on 127.0.0.1:18081,
+Test conf/ on a test runtime, the pinned distribution on 127.0.0.1:18081,
 never production: `boot` boots conf/ and reports how it loads (thermite
 deploy installs only a conf/ that passed it); `routing` and `controls`
 generate a conf from the house file that drives simulated matrices and
@@ -214,21 +217,21 @@ devices on 127.0.0.1, and test the room Source selectors and the remote
 page&#x27;s controls end to end.
 
 Without an action it runs all three, in that order, since they share the
-test openHAB, reports each, and exits with the worst status. Then
+test runtime, reports each, and exits with the worst status. Then
 --timeout applies to each, and --house to routing and controls (boot tests
 conf/ itself). An action&#x27;s own switches go after it: thermite help test boot.
 
 options:
   -h, --help         show this help message and exit
-  --timeout SECONDS  seconds to wait for each test&#x27;s openHAB (default: 300)
+  --timeout SECONDS  seconds to wait for each test&#x27;s runtime (default: 300)
   --house FILE       the house file (default: instance/devices.yaml)
 
 actions:
   ACTION
-    boot             boot conf/ on a test openHAB and report how it loads
+    boot             boot conf/ on a test runtime and report how it loads
     routing          the room Source selectors end to end, against simulated matrices
-    controls         receiver, streamer, projector and TV controls end to end, against
-                     simulated devices
+    controls         receiver, streamer, projector and TV controls, plus Sonos Item
+                     contracts, against stand-ins
 
 switches every verb takes:
   -q, --quiet        print only errors
@@ -238,7 +241,7 @@ switches every verb takes:
 exit status:
   0  every test passed
   1  a test failed
-  2  openHAB could not be booted or queried
+  2  runtime could not be booted or queried
 
 examples:
   thermite test                     boot, routing and controls, one after the other
@@ -251,18 +254,20 @@ examples:
                           [--stall SECONDS] [--rebuild] [--require-online] [--json]
                           [--keep]
 
-Boot conf/ on a test openHAB and report how it loads.
+Boot conf/ on a test runtime and report how it loads.
 
-Boot a test openHAB (the pinned distribution, see thermite sandbox) on
+Boot a test runtime (the pinned distribution, see thermite sandbox) on
 CONF, on 127.0.0.1:18081 (HTTPS 18444, Karaf console 18102) so it can run
 beside the sandbox. It boots on var/boot-check/conf, a copy of CONF in which
 every HTTP binding channel is READONLY (oh_render.read_only), so it polls the
 real matrices but cannot switch them. Wait for the add-ons in
 CONF/services/addons.cfg and for Things to settle (none waiting for a
 handler, and no status change for --settle seconds, or 2s once every Thing
-is ONLINE), then report the openHAB version, requested vs installed add-ons,
+is ONLINE), then report the runtime version, requested vs installed add-ons,
 Things by status/statusDetail, the Item count, model problems (DSL and YAML
-files, scripts that fail to load) and other ERROR records from openhab.log.
+files, scripts that fail to load) and other ERROR records from openhab.log,
+and that /rest/metrics/prometheus (the Metrics add-on, which Prometheus
+scrapes) answers with every runtime series the dashboards chart.
 If Things still wait for a handler and neither they nor the start level
 change for --stall seconds, stop waiting and fail on them.
 
@@ -276,7 +281,7 @@ speakers cannot reach it and they may only report at the binding&#x27;s
 
 Each run starts from a copy of a warmed userdata in var/boot-check/template/
 (OSGi cache built, add-ons installed, admin user and API token created), so
-openHAB starts without downloading anything. The template is built on the
+runtime starts without downloading anything. The template is built on the
 first run and again whenever addons.cfg or a runtime pin changes, or with
 --rebuild; that run takes about a minute longer.
 
@@ -288,7 +293,7 @@ disposable copy, so it is killed if it has not stopped within 3s.
 
 options:
   -h, --help         show this help message and exit
-  --conf DIR         the openHAB conf directory (default: conf/)
+  --conf DIR         the runtime conf directory (default: conf/)
   --timeout SECONDS  seconds to wait for the whole check (default: 300)
   --settle SECONDS   seconds Things must stay unchanged (default: 5)
   --stall SECONDS    stop waiting once Things without a handler and the start level stay
@@ -311,7 +316,7 @@ exit status:
   2  the instance could not be booted or queried
 
 examples:
-  thermite test boot                boot conf/ on a test openHAB and report how it loads
+  thermite test boot                boot conf/ on a test runtime and report how it loads
   thermite test boot --require-online
                                     also wait for every device, and fail on any Thing not ONLINE
   thermite test boot --json --keep  the report as JSON; leave the instance running
@@ -325,22 +330,22 @@ house. Generate conf/ from the house file, keep only what routing needs
 (the model, the matrix and HDMI switch Things, rules and Items, the Source
 selectors and routing.js, All off), point those Things and rules at
 simulated matrices on 127.0.0.1 (lib/oh_matrix_sim.py), simulate the rooms&#x27;
-receivers, displays and actions with plain Items that take what they are
-sent, boot a test openHAB on that as thermite test boot does, and check
-that:
+receivers, displays, source power and actions with plain Items that take
+what they are sent, boot a test runtime on that as thermite test boot does,
+and check that:
 
 1. each room&#x27;s Source reads back what its HDMI switch and HDMI output show,
-   and openHAB wrote nothing to a matrix while it started;
+   and runtime wrote nothing to a matrix while it started;
 2. choosing every source a room offers (all rooms at once, round by round)
    routes the room&#x27;s HDMI output, HDMI switch and USB device ports as the
-   routing says, powers its receiver and display (off for Off) and puts
-   them on their inputs, sends its actions, has each source&#x27;s input present
-   the EDID of a room showing it (the idle EDID once none does), and a
-   choice the room does not offer sends nothing;
+   routing says, wakes the chosen source, powers its receiver and display
+   (off for Off) and puts them on their inputs, sends its actions, has each
+   source&#x27;s input present the EDID of a room showing it (the idle EDID
+   once none does), and a choice the room does not offer sends nothing;
 3. a switch made at the matrix, at a room&#x27;s HDMI switch (a keypad, the
    front panel, a web page) or at its receiver or display shows up in that
    room&#x27;s Source, an input the room does not offer shows as UNDEF, a
-   receiver or display turned off there shows as Off, and openHAB writes
+   receiver or display turned off there shows as Off, and runtime writes
    nothing for any of them;
 4. with two rooms on one source, the last to choose it wins, the first
    gets it back when that room turns off, and the idle EDID follows once
@@ -351,13 +356,12 @@ that:
    login, as a phone uses it, reads a room&#x27;s Source, sends a choice and
    hears it read back on the event stream;
 7. All off, sent as the page sends it, turns every room Off as a choice
-   of Off would (all_off.js; the devices&#x27; power Items are not in this
-   conf, so it names them as missing);
+   of Off would (all_off.js; devices outside the routing are omitted);
 8. the simulated matrices heard only the comheads each Thing or rule may send (no
    fixed setting such as scaler or HDCP) and refused none;
 9. openhab.log holds no ERROR and no model problem.
 
-It uses the test openHAB of thermite test boot (127.0.0.1:18081) and its
+It uses the test runtime of thermite test boot (127.0.0.1:18081) and its
 warmed userdata, so it cannot run beside it.
 
 options:
@@ -373,7 +377,7 @@ switches every verb takes:
 exit status:
   0  every step passed
   1  a step failed
-  2  openHAB could not be booted or queried
+  2  runtime could not be booted or queried
 
 examples:
   thermite test routing             every room&#x27;s Source selector, against simulated matrices on 127.0.0.1
@@ -382,26 +386,28 @@ examples:
 </pre></details>
 <details id="test-controls"><summary><code>thermite test controls</code></summary><pre class="help">usage: thermite test controls [-h] [--timeout SECONDS] [--house FILE]
 
-Receiver, streamer, projector and TV controls end to end, against simulated devices.
+Receiver, streamer, projector and TV controls, plus Sonos Item contracts, against stand-ins.
 
-Prove the controls the remote page drives (web/remote) work, end to end,
+Prove the remote and routing controls work, end to end,
 without touching the house. Generate conf/ from the house file, keep only
-the Things, Items and rules of the devices openHAB controls (every
-integration&#x27;s remote()), point each at a simulated device on 127.0.0.1 with
-the integration&#x27;s aim(), boot a test openHAB on that as thermite test boot
+the Things, Items and rules of the devices runtime controls (every
+integration&#x27;s remote(), plus its stage() input where the page has no input
+selector), point each at a simulated device on 127.0.0.1 with
+the integration&#x27;s aim(), boot a test runtime on that as thermite test boot
 does, and check that:
 
 1. the kept conf names no address of a real device;
 2. every Thing is ONLINE, every control Item reads what its simulated
-   device shows, and openHAB sent them no command while it started;
+   device shows, and runtime sent them no command while it started;
 3. power, every input, a volume, mute and every remote key reach the
    simulated device as that device&#x27;s own command, and are read back;
-4. a volume above the device&#x27;s limit, which the page never sends, is held
-   to the limit, and an unknown key sends nothing;
+4. a volume above the configured limit is held to it. A full-range Sonos
+   Dimmer reaches 100 and rejects 110 at REST without a device write;
+   an unknown key sends nothing;
 5. each device&#x27;s Mute (Input on a projector), pressed as the page presses
    it, reaches its simulated device within REACH seconds and is read back on the
    page&#x27;s event stream within its integration&#x27;s READ_BACK plus SLACK; the
-   log shows every time and the CPU openHAB used meanwhile;
+   log shows every time and the CPU runtime used meanwhile;
 6. with no login, as a phone uses it, a command is accepted and its
    read-back heard on the remote page&#x27;s event stream (all its topics);
 7. All off, pressed as the page presses it, turns every device with a
@@ -409,7 +415,17 @@ does, and check that:
    conf, so it names them as missing);
 8. openhab.log holds no ERROR and no model problem.
 
-It uses the test openHAB of thermite test boot (127.0.0.1:18081) and its
+One Sony TV is also paired again through the CLI and its pairing Items.
+Its result must acknowledge that new command, and neither native log may
+record the pairing command or its PIN.
+
+Sonos uses an explicitly labelled Item/rule-contract replay over loopback
+HTTP, with fake UDNs. This checks profiles, keys, limits and UI read-back;
+it does not simulate or claim native Sonos UPnP/SOAP protocol coverage.
+Native discovery/channel status and idempotent real-binding validation are
+separate deployment checks.
+
+It uses the test runtime of thermite test boot (127.0.0.1:18081) and its
 warmed userdata, so it cannot run beside thermite test boot or thermite
 test routing.
 
@@ -426,7 +442,7 @@ switches every verb takes:
 exit status:
   0  every step passed
   1  a step failed
-  2  openHAB could not be booted or queried
+  2  runtime could not be booted or queried
 
 examples:
   thermite test controls            every control the remote page drives, against simulated devices on 127.0.0.1
@@ -434,9 +450,9 @@ examples:
                                     give a slow host longer to boot
 </pre></details>
 </section>
-<section class="verb" id="sandbox"><h3><code>thermite sandbox</code></h3><p>Run openHAB from a copy of conf/ on 127.0.0.1:18080.</p><pre class="help">usage: thermite sandbox [-h] ACTION ...
+<section class="verb" id="sandbox"><h3><code>thermite sandbox</code></h3><p>Run a thermite sandbox from a copy of conf/ on 127.0.0.1:18080.</p><pre class="help">usage: thermite sandbox [-h] ACTION ...
 
-Run a local openHAB sandbox from the distribution zip and a Temurin JRE, both
+Run a local runtime sandbox from the distribution zip and a Temurin JRE, both
 pinned in versions.json and cached under build/sandbox/. No root, container
 runtime or system Java is needed.
 
@@ -452,7 +468,7 @@ channel is READONLY, the receivers&#x27; Items are display-only and the
 projector&#x27;s rule sends nothing (oh_render.read_only): it reads the matrices
 and the devices under control but cannot command them, and every other
 read-write channel is guarded in conf/ itself.
-`reload` refreshes the copy after `thermite generate`; the running openHAB
+`reload` refreshes the copy after `thermite generate`; the running sandbox
 picks the change up.
 
 `start --live` is a test instance for the house instead: its copy of conf/
@@ -460,16 +476,16 @@ is unchanged, so its Source selectors switch the real matrices and its
 remote drives the devices under control (the Apple TVs through thermite
 apple-tv serve; every other control stays guarded in conf/), and HTTP and HTTPS
 listen on every interface, so phones on the LAN reach it on port 18080 of
-this host. Anyone on the LAN can then do what openHAB&#x27;s implicit &#x27;user&#x27; role
+this host. Anyone on the LAN can then do what the runtime&#x27;s implicit &#x27;user&#x27; role
 allows, choosing sources and driving those devices included; administration
 still needs the admin login. `reload` keeps the mode the sandbox was started in;
-stop and start it to change modes. It refuses to start while production openHAB runs
+stop and start it to change modes. It refuses to start while production runtime runs
 on this host (it answers on 127.0.0.1 at instance/host.yaml&#x27;s http_port, or
 openhab.service is up): two live instances would fight over the same
-devices and pairings. It cannot see a production openHAB on another host;
+devices and pairings. It cannot see a production runtime on another host;
 make sure none runs before starting one.
 
-State lives in var/sandbox/: conf/, userdata/ (openHAB&#x27;s userdata, initialised
+State lives in var/sandbox/: conf/, userdata/ (the runtime&#x27;s userdata, initialised
 from the distribution template when empty), openhab.pid, console.log,
 api-token and admin-password.
 
@@ -492,7 +508,7 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 REST authentication:
-  openHAB 5 lets anonymous clients use &#x27;user&#x27; endpoints (implicit user role)
+  runtime 5 lets anonymous clients use &#x27;user&#x27; endpoints (implicit user role)
   but needs an administrator for others, such as /rest/addons. After the REST
   API answers, `start` logs into the local Karaf console (runtime/bin/client
   as the distribution&#x27;s console user openhab/habopen, 127.0.0.1:18101 only)
@@ -516,12 +532,12 @@ first boot:
   --fresh recovers). start then waits for the add-ons in conf&#x27;s
   services/addons.cfg to install. If the start level stays below 30 or
   Things stay UNINITIALIZED/HANDLER_MISSING_ERROR or NOT_YET_READY for 60s
-  after that, start restarts openHAB once on the same userdata.
+  after that, start restarts runtime once on the same userdata.
 
 stopping:
   Karaf shutdown hangs for minutes (Jetty stopping its selectors in
   WebClientFactoryImpl.deactivate, jUPnP unsubscribing from every device),
-  so stop sends SIGKILL after --timeout. openHAB runs with Equinox saving its
+  so stop sends SIGKILL after --timeout. runtime runs with Equinox saving its
   bundle database one second after a change, so a kill loses no add-on
   installed more than a few seconds earlier. If a killed sandbox does not
   start again normally, use start --fresh.
@@ -560,7 +576,7 @@ Start the sandbox in the background and wait for REST.
 
 options:
   -h, --help         show this help message and exit
-  --conf DIR         the openHAB conf directory (default: conf/)
+  --conf DIR         the runtime conf directory (default: conf/)
   --userdata DIR     userdata directory (default: var/sandbox/userdata)
   --fresh            empty userdata first (only if it is below var/)
   --timeout SECONDS  seconds to wait for REST (default: 300)
@@ -584,7 +600,7 @@ Refresh var/sandbox/conf from conf/, in the mode the sandbox started in.
 
 options:
   -h, --help     show this help message and exit
-  --conf DIR     the openHAB conf directory (default: conf/)
+  --conf DIR     the runtime conf directory (default: conf/)
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -592,7 +608,7 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite sandbox reload           after thermite generate; the running openHAB picks it up
+  thermite sandbox reload           after thermite generate; the running sandbox picks it up
 </pre></details>
 <details id="sandbox-stop"><summary><code>thermite sandbox stop</code></summary><pre class="help">usage: thermite sandbox stop [-h] [--timeout SECONDS]
 
@@ -649,9 +665,9 @@ examples:
                                     production&#x27;s log (state_root: the host file)
 </pre></details>
 </section>
-<section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install openHAB on this host, asking before each sudo command.</p><pre class="help">usage: thermite install [-h] [-n]
+<section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, asking before each sudo command.</p><pre class="help">usage: thermite install [-h] [-n]
 
-Install openHAB on this host, the one you run it on. Run
+Install thermite on this host, the one you run it on. Run
 it as your user, from a clone of this repository, wherever that clone is:
 it is safe to run again at any time. It finds this host&#x27;s name and address
 and your user as it runs; instance/host.yaml holds only what is the same on
@@ -660,7 +676,7 @@ any host (the state root, the ports, the openhab ids, the time zone).
 Each step first checks whether it is done and skips it if so:
 preconditions, packages, the openhab user and group with you in it, the
 state directory and its directories, the boot check, the deploy of HEAD,
-the systemd units, the services, openHAB answering, the API token, and a
+the systemd units, the services, runtime answering, the API token, and a
 read-only check at the end. A command that needs root is shown before it
 runs, under sudo, and runs only if you answer y. After a no, a failure or
 Ctrl-C, run it again and it goes on from there.
@@ -682,28 +698,36 @@ examples:
   thermite install                  install, asking before each sudo command; safe to rerun
 </pre>
 </section>
-<section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Move openHAB and the Apple TV helper here to the pinned versions.</p><pre class="help">usage: thermite upgrade [-h] [-n]
+<section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Upgrade thermite and the Apple TV helper here to the pinned versions.</p><pre class="help">usage: thermite upgrade [-h] [-n]
 
-Move openHAB and the Apple TV helper on this host to the versions
-versions.json pins and the units deploy/ holds, as of HEAD. thermite
-install must have run here first. Run it as your user, from the clone
-install ran from; it is safe to run again at any time.
+Move runtime, the Apple TV helper and the metrics services (Prometheus,
+node_exporter, blackbox_exporter, the runtime exporter, Grafana) on this
+host to the versions versions.json pins and the units deploy/ holds, as of
+HEAD. thermite install must have run here first. Run it as your user, from
+the clone install ran from; it is safe to run again at any time. A host
+installed before the metrics existed gets them here.
 
 Each step first checks whether it is done and skips it if so:
 preconditions (deploy/ is what thermite generate writes, and this area is
 committed); what changes: each installed unit against deploy/, and the
-openHAB image the installed unit runs against the pinned one (when nothing
-differs it says so and stops); the boot test of HEAD&#x27;s conf/; a backup,
-with openHAB stopped, of the state&#x27;s conf and userdata into
+runtime image the installed unit runs against the pinned one (when nothing
+differs it says so and stops); the boot test of HEAD&#x27;s conf/; when
+runtime&#x27;s own units change, a backup, with runtime stopped, of the state&#x27;s
+conf, userdata and Grafana&#x27;s data into
 &lt;state&gt;/backups/&lt;UTC time&gt;-openhab-&lt;installed version&gt;.tar.gz (without
-userdata/cache and userdata/tmp, which openHAB rebuilds); the changed units
-and systemctl daemon-reload; the services whose units changed restarted;
-the deploy of HEAD, if it is not what is deployed; openHAB answering; and
-a read-only check (thermite health --production and thermite status).
+userdata/cache and userdata/tmp, which runtime rebuilds, and without
+Prometheus&#x27; samples); the metrics directories; the changed units and
+systemctl daemon-reload; the services whose units changed restarted; the
+deploy of HEAD, if it is not what is deployed; runtime answering; the API
+token and Grafana&#x27;s admin password installed for the metrics services,
+which are then (re)started; Prometheus with every target up and Grafana
+answering; and a read-only check (thermite health --production and
+thermite status).
 
-A command that needs root is shown before it runs, under sudo, and runs
-only if you answer y. After a no, a failure or Ctrl-C, run it again and it
-goes on from there. --dry-run only reads: it reports each step and what it
+Before any changes, one y/n question approves the whole upgrade run,
+including its sudo commands. Each command is still shown before it runs.
+After a no, a failure or Ctrl-C, run it again and it goes on from there,
+asking once again. --dry-run only reads: it reports each step and what it
 would run. An agent uses only that: agents never run sudo.
 
 options:
@@ -717,32 +741,35 @@ switches every verb takes:
 
 going back:
   It prints where the backup is and the commands that restore it. To go
-  back to the commit deployed before, restore the backup (openHAB stays
+  back to the commit deployed before, restore the backup (runtime stays
   stopped), then run thermite upgrade from that commit, which installs its
-  units and starts openHAB on them (thermite install, in a commit from
+  units and starts runtime on them (thermite install, in a commit from
   before thermite upgrade).
 
 exit status:
   0  upgraded, or nothing differs
   1  a step failed, the owner said no, or a precondition does not hold
-  2  openHAB is not installed here yet (thermite install), or run as root
+  2  runtime is not installed here yet (thermite install), or run as root
 
 examples:
   thermite upgrade -n               what upgrading would do here; runs nothing
-  thermite upgrade                  upgrade, asking before each sudo command; safe to rerun
+  thermite upgrade                  upgrade, asking once for the whole run; safe to rerun
 </pre>
 </section>
-<section class="verb" id="uninstall"><h3><code>thermite uninstall</code></h3><p>Stop openHAB here and remove its units; --purge deletes its state.</p><pre class="help">usage: thermite uninstall [-h] [-n] [--purge]
+<section class="verb" id="uninstall"><h3><code>thermite uninstall</code></h3><p>Stop thermite here and remove its units; --purge deletes its state.</p><pre class="help">usage: thermite uninstall [-h] [-n] [--purge]
 
-Undo thermite install on this host, as apt remove does: stop openHAB, the
-Apple TV helper and its restart path (and disable the path unit), remove the
-four unit files thermite install installed, and systemctl daemon-reload.
-openHAB&#x27;s services come from quadlets, which systemd generates from those
-files, so removing them is what keeps them from starting at the next boot.
+Undo thermite install on this host, as apt remove does: stop runtime, the
+Apple TV helper, the metrics services (Prometheus, node_exporter,
+blackbox_exporter, the runtime exporter, Grafana) and their restart paths
+(and disable the path units), remove the unit files thermite install
+installed, and systemctl daemon-reload. The services come from quadlets,
+which systemd generates from those files, so removing them is what keeps
+them from starting at the next boot.
 
 It keeps the state root (conf, userdata, secrets, the deploy records and
-backups), the openhab user and group, the packages and the images, and says
-so: thermite install puts openHAB back on the same state. --purge, as apt
+backups, Prometheus&#x27; samples, Grafana&#x27;s data and the metrics secrets), the
+openhab user and group, the packages and the images, and says so: thermite
+install puts runtime and the metrics back on the same state. --purge, as apt
 purge does, also deletes the state root; before that step it shows the path
 and asks you to type it, on top of the y before each sudo command.
 
@@ -754,7 +781,7 @@ options:
   -h, --help     show this help message and exit
   -n, --dry-run  report what it would do; change nothing
   --purge        also delete the state root: conf, userdata, secrets, deploy records,
-                 backups
+                 backups, metrics
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -763,22 +790,31 @@ switches every verb takes:
 
 examples:
   thermite uninstall -n             what uninstalling would do here; runs nothing
-  thermite uninstall                stop openHAB and remove its units, keeping its state
+  thermite uninstall                stop thermite and the metrics and remove their units, keeping the state
   thermite uninstall -n --purge     what deleting the state too would do
 </pre>
 </section>
 <section class="verb" id="deploy"><h3><code>thermite deploy</code></h3><p>Install a commit&#x27;s conf/ and Apple TV helper here.</p><pre class="help">usage: thermite deploy [-h] [-n] [--force] [--state DIR] [REV]
 
-Production openHAB runs on the host thermite install ran on, from its state
+Production runtime runs on the host thermite install ran on, from its state
 directory (the host file&#x27;s state_root). Run this there. It installs one
 commit into the state, as you, without root:
 
-  - the commit&#x27;s conf/ into &lt;state&gt;/conf, which openHAB reloads by itself
+  - the commit&#x27;s conf/ into &lt;state&gt;/conf, which runtime reloads by itself
     (no restart);
   - the Apple TV helper&#x27;s files (bin/thermite and the code and pins
     its apple-tv verb runs) into &lt;state&gt;/atv/app; when they change it writes
     &lt;state&gt;/deploy/atv-restart, and openhab-atv-restart.path restarts
     openhab-atv.service;
+  - the commit&#x27;s metrics/ into &lt;state&gt;/metrics and the metrics exporter&#x27;s
+    code into &lt;state&gt;/exporter/app, once thermite install or upgrade has
+    made them. Prometheus and blackbox_exporter reload a changed
+    configuration (POST /-/reload; one not running yet reads it when it
+    starts), Grafana rereads its dashboards by itself, and a change to the
+    exporter&#x27;s code or Grafana&#x27;s settings writes &lt;state&gt;/deploy/metrics-restart,
+    and openhab-metrics-restart.path restarts those two. A commit from
+    before the metrics (no metrics/ or no exporter) leaves both as the last
+    deploy installed them;
   - a record in &lt;state&gt;/deploy/deployed.json and a line in
     &lt;state&gt;/deploy/history (thermite history lists them).
 
@@ -788,7 +824,7 @@ boot on this host. It writes only what differs, deletes only files
 an earlier deploy installed, and leaves alone anything else in the state.
 
 You need to be in the openhab group. Changing the units themselves (an
-openHAB upgrade, a new image) needs root, so thermite upgrade does it:
+runtime upgrade, a new image) needs root, so thermite upgrade does it:
 thermite status says when an installed unit differs from deploy/. To put
 back the commit deployed before, use thermite rollback.
 
@@ -825,7 +861,7 @@ boot test. Any other commit needs thermite test boot to have passed on its
 conf/ here, or --force.
 
 A deploy never changes the systemd units. When the commit&#x27;s deploy/ holds
-other units than the installed ones (an older openHAB pin, or a helper
+other units than the installed ones (an older runtime pin, or a helper
 unit from before the apple-tv verb, which runs `atv serve`), it warns and
 names what the owner installs for that commit to run as it did.
 
@@ -858,10 +894,12 @@ examples:
 
 Report, read-only, what runs here: the commit thermite deploy installed
 (and whether HEAD is it, or how many commits after it), whether the
-installed conf/ and Apple TV helper still match that deploy, whether each
-installed systemd unit matches deploy/ (the owner installs one that
-differs, with thermite upgrade), the services, whether openHAB answers,
-and the last deploys (thermite history lists more).
+installed conf/, Apple TV helper, metrics/ and metrics exporter still match
+that deploy, whether each installed systemd unit matches deploy/ (the owner
+installs one that differs, with thermite upgrade), the services, whether
+runtime answers, Grafana&#x27;s address on the LAN and whether it answers,
+Prometheus&#x27; scrape targets (up of all), and the last deploys (thermite
+history lists more).
 
 options:
   -h, --help     show this help message and exit
@@ -873,7 +911,7 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite status                   the deployed commit against HEAD, the units, the services, openHAB
+  thermite status                   the deployed commit against HEAD, the units, the services, runtime
   thermite status --state /tmp/state
                                     the same for a state root somewhere else
 </pre>
@@ -909,27 +947,29 @@ examples:
                                     the deploys of a state root somewhere else
 </pre>
 </section>
-<section class="verb" id="health"><h3><code>thermite health</code></h3><p>Read-only: every Thing ONLINE on a running openHAB.</p><pre class="help">usage: thermite health [-h] (--production | --sandbox | --url URL) [--token-file FILE]
+<section class="verb" id="health"><h3><code>thermite health</code></h3><p>Read-only: every Thing ONLINE in the runtime.</p><pre class="help">usage: thermite health [-h] (--production | --sandbox | --url URL) [--token-file FILE]
                        [--allow-offline ID [ID ...]] [--addons FILE] [--timeout SECONDS]
                        [--json]
 
-Read-only checks against a running openHAB: every Thing ONLINE, Items whose
+Read-only checks against the running runtime: every Thing ONLINE, Items whose
 state is NULL or UNDEF, and the installed add-ons (compared with an
 addons.cfg when --addons is given). Only GET requests are sent.
 
-openHAB 5 answers /rest/things and /rest/addons only with credentials; pass
+The runtime answers /rest/things and /rest/addons only with credentials; pass
 an API token file (the sandbox writes var/sandbox/api-token). --sandbox
 checks the sandbox on 127.0.0.1:18080, with that token when it exists.
---production checks production openHAB on this host, on 127.0.0.1 at
+--production checks production runtime on this host, on 127.0.0.1 at
 instance/host.yaml&#x27;s http_port, with the token bin/thermite install saved in
-var/&lt;this host&#x27;s name&gt;/api-token.
+var/&lt;this host&#x27;s name&gt;/api-token, and the metrics services beside it:
+Prometheus ready with every scrape target up, and Grafana answering.
+Before thermite upgrade has installed them it says they are not installed yet.
 
 options:
   -h, --help                   show this help message and exit
-  --production                 production openHAB on this host
+  --production                 production runtime on this host
   --sandbox                    the sandbox, http://127.0.0.1:18080 (thermite sandbox)
-  --url URL                    openHAB at URL, e.g. http://openhab.example:8080
-  --token-file FILE            file holding an openHAB API token
+  --url URL                    runtime at URL, e.g. http://thermite.example:8080
+  --token-file FILE            file holding a runtime API token
   --allow-offline ID [ID ...]  Thing UIDs that may be offline
   --addons FILE                fail if an add-on listed in this addons.cfg is missing
   --timeout SECONDS            seconds to wait for each answer (default: 15)
@@ -943,8 +983,10 @@ switches every verb takes:
 
 exit status:
   0  every Thing ONLINE (or allowed) and no requested add-on missing
-  1  a Thing not ONLINE and not allowed, or a requested add-on missing
-  2  openHAB could not be queried (unreachable, the token refused, or 401/403
+  1  a Thing not ONLINE and not allowed, a requested add-on missing, or
+     (--production) the metrics services installed but not answering, or a
+     scrape target down
+  2  runtime could not be queried (unreachable, the token refused, or 401/403
      without a token)
 
 Items in NULL/UNDEF are reported but do not fail the check; Group Items
@@ -952,11 +994,11 @@ without an aggregation function are skipped, since they never carry state.
 
 examples:
   thermite health --sandbox         check the sandbox, with its API token
-  thermite health --production      check production openHAB on this host, with the token the install saved
+  thermite health --production      check production runtime on this host, with the token the install saved
   thermite health --sandbox --addons conf/services/addons.cfg
                                     also fail if an add-on conf/ asks for is not installed
-  thermite health --url http://openhab.example:8080 --json
-                                    openHAB at that URL, without a token, as JSON
+  thermite health --url http://thermite.example:8080 --json
+                                    runtime at that URL, without a token, as JSON
 </pre>
 </section>
 <section class="verb" id="discover"><h3><code>thermite discover</code></h3><p>Scan the LAN read-only and compare it with the house file.</p><pre class="help">usage: thermite discover [-h] [--no-ping] [--quick] [--output DIR] [--json]
@@ -982,52 +1024,48 @@ examples:
   thermite discover --json          the comparison as JSON
 </pre>
 </section>
-<section class="verb" id="pair"><h3><code>thermite pair</code></h3><p>Pair a TV with openHAB, or check the Sony TVs&#x27; keys.</p><pre class="help">usage: thermite pair [-h] [--check] [--production | --sandbox] [--force] [--house FILE]
+<section class="verb" id="pair"><h3><code>thermite pair</code></h3><p>Pair a TV with runtime, or check the Sony TVs&#x27; pairing.</p><pre class="help">usage: thermite pair [-h] [--check] [--production | --sandbox] [--house FILE]
                      [--timeout SECONDS]
                      [DEVICE] [CODE]
 
-Pair a device with openHAB, as its integration in the house file
+Pair a device with thermite, as its integration in the house file
 (instance/devices.yaml) needs:
 
-  - a Sony TV under sony_rest_psk control: openHAB commands it with the
-    pre-shared key set on the TV. On the TV: Settings, Network (and
-    Internet), Home network, IP control: Authentication &quot;Normal and
-    Pre-Shared Key&quot;, then the key, and Remote Start on so that the TV
-    answers in standby (the menu path varies by model). This asks for that
-    key without showing it, checks that the TV takes it with a request that
-    changes nothing (getPlayingContentInfo), and stores it, mode 0640, as
-    sony-psk/&lt;device id&gt; in the secrets directory: production&#x27;s (secrets/
-    in its state, which the openHAB container reads), or with --sandbox
-    var/secrets/, which a sandbox reads. openHAB uses it from its next
-    request; nothing restarts. --check asks each TV the same way with its
-    stored key. A key is never shown, logged or put in Git.
+  - a Sony TV under sony_ip_control control: thermite commands it over
+    Sony&#x27;s IP control once the TV has registered thermite, with a PIN it
+    shows. On the TV: Settings, Network (and Internet), Home network, IP
+    control: Authentication &quot;Normal&quot;, and Remote Start on so that it
+    answers, and turns on, from standby (the menu path varies by model).
+    Stand at the TV: this asks thermite (production, or with --sandbox the
+    sandbox) to have the TV show four digits, through the TV&#x27;s Pairing
+    Items, as the Pairing page does, then asks for the digits and sends
+    them back. thermite keeps the TV&#x27;s registration in its own userdata;
+    the PIN is never shown, logged or put in Git. With CODE it sends four
+    digits the TV shows already. --check reads each TV&#x27;s pairing status.
   - an Android TV or Google TV under androidtv_googletv control, with
     --sandbox: the binding reaches a TV only once the TV trusts its
     certificate, kept in the sandbox&#x27;s userdata/androidtv/. Stand at the
-    TV: without CODE it asks the TV to show six letters and digits; with
-    CODE it sends them (the Karaf console&#x27;s openhab:androidtv &lt;Thing UID&gt;
-    pincode REQUEST|CODE) and waits for the Thing to come ONLINE.
+    TV: without CODE it asks the TV to show six letters and digits, once
+    the TV&#x27;s pairing port (the Thing&#x27;s port + 1) connects; with CODE it
+    sends them (the Karaf console&#x27;s openhab:androidtv &lt;Thing UID&gt; pincode
+    REQUEST|CODE) and waits for the Thing to come ONLINE.
     Production pairs it from the remote&#x27;s Pairing screen (thermite remote
     --pair) or the Pairing page.
   - an Apple TV: it pairs from the remote&#x27;s Pairing screen or the Pairing
     page, through the Apple TV helper (thermite apple-tv).
 
-A Sony TV that is also an Android TV gets its key first; with --sandbox
-it is then asked for a pairing code, which `thermite pair DEVICE CODE
---sandbox` sends.
-
 positional arguments:
   DEVICE             the device&#x27;s id in the house file
-  CODE               an Android TV&#x27;s six letters and digits (omit to ask the TV for
-                     them)
+  CODE               the code the device shows: a Sony TV&#x27;s four digits, an Android TV&#x27;s
+                     six letters and digits (omit to ask the device for them)
 
 options:
   -h, --help         show this help message and exit
-  --check            change nothing; exit 1 if a Sony TV&#x27;s stored key (DEVICE&#x27;s, or any
+  --check            change nothing; exit 1 if a Sony TV&#x27;s pairing (DEVICE&#x27;s, or any
                      one&#x27;s) is stale
-  --production       production: its keys, in its state on this host (default)
-  --sandbox          the sandbox: its keys, in var/secrets/, and its Android TV pairings
-  --force            store a Sony TV&#x27;s key even when the TV does not answer
+  --production       production thermite on this host, with the API token bin/thermite
+                     install saved (default)
+  --sandbox          the sandbox, and its Android TV pairings
   --house FILE       the house file (default: instance/devices.yaml)
   --timeout SECONDS  seconds to wait for an Android TV to come ONLINE after its code
                      (default: 30)
@@ -1038,27 +1076,171 @@ switches every verb takes:
   --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
-  0  done: the key is stored, every TV checked takes its key, the TV was
-     asked for a code, or it is paired
-  1  a TV refused the key, did not answer, has no key stored, or is not
-     ONLINE after its code
-  2  the house file is invalid, no such device, the key could not be
-     stored, the sandbox is not running, or the device pairs elsewhere
+  0  done: the TV is paired, every TV checked is paired, or the TV was
+     asked for a code
+  1  a TV showed no PIN, refused the PIN, did not answer, is not paired,
+     its pairing port does not connect, or it is not ONLINE after its code
+  2  the house file is invalid, no such device, thermite could not be
+     reached or has no such Items, the sandbox is not running, or the
+     device pairs elsewhere
 
 examples:
-  thermite pair living_room_tv      ask for the key set on that Sony TV, check it and store it
+  thermite pair living_room_tv      have that Sony TV show a PIN, then type it to pair it with production
   thermite pair living_room_tv --sandbox
-                                    the sandbox&#x27;s key, then ask the TV to show a pairing code
-  thermite pair living_room_tv A1B2C3 --sandbox
+                                    the same with the sandbox
+  thermite pair living_room_tv 1234
+                                    send the PIN the TV shows already
+  thermite pair bedroom_tv --sandbox
+                                    ask an Android TV to show a pairing code
+  thermite pair bedroom_tv A1B2C3 --sandbox
                                     send the code it shows; wait for it to come ONLINE
-  thermite pair --check             whether every Sony TV takes its stored key
-  thermite pair --check living_room_tv --sandbox
-                                    the same for one TV, with the sandbox&#x27;s key
+  thermite pair --check             whether every Sony TV is paired with production
 </pre>
 </section>
-<section class="verb" id="apple-tv"><h3><code>thermite apple-tv</code></h3><p>Run the Apple TV helper openHAB calls.</p><pre class="help">usage: thermite apple-tv [-h] ACTION ...
+<section class="verb" id="cameras"><h3><code>thermite cameras</code></h3><p>Read camera status, or configure native Protect bridges privately.</p><pre class="help">usage: thermite cameras [-h] ACTION ...
 
-openHAB has no Apple TV binding, so openHAB rules drive the Apple TVs
+Show the house&#x27;s UniFi Protect cameras, or configure their native runtime
+bridges. Homebridge and Apple Home are independent and stay in place.
+
+`configure` stores a local console login and an existing Protect API token
+in the runtime&#x27;s private configuration database. It never creates, renews
+or deletes a console API key. The native NVR&#x27;s autoManageToken is always
+false. Passwords and API tokens are prompted without echo or read from
+files; they are never arguments, output or generated configuration.
+
+The native binding manages WebRTC stream sessions when explicitly enabled
+with configure or streams; see docs/cameras.md for resource and permission needs.
+
+options:
+  -h, --help     show this help message and exit
+
+actions:
+  ACTION
+    list         read the configured camera status
+    configure    configure native Protect privately
+    streams      enable or stop native camera WebRTC sessions
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite cameras list             read the configured cameras&#x27; status
+  thermite cameras configure --dry-run
+                                    show the bridge plan without reading credentials or changing anything
+  thermite cameras configure --stream-camera CAMERA_ID
+                                    privately configure Protect, initially streaming one camera from cameras list
+  thermite cameras streams --all    enable native WebRTC for all configured cameras after the first camera is verified
+  thermite cameras streams --none   stop native WebRTC sessions while keeping status and snapshots
+  thermite cameras configure --homebridge /var/lib/homebridge/config.json --protect-token-file var/protect-token
+                                    reuse the existing console login and an explicitly supplied mode-0600 Protect token
+</pre>
+<details id="cameras-list"><summary><code>thermite cameras list</code></summary><pre class="help">usage: thermite cameras list [-h] [--house FILE] [--production | --url URL]
+                             [--runtime-token-file FILE] [--json]
+
+Read the configured camera status.
+
+options:
+  -h, --help                 show this help message and exit
+  --house FILE               the house file (default: instance/devices.yaml)
+  --production               production runtime on this host (default)
+  --url URL                  runtime at URL, e.g. http://thermite.example:8080
+  --runtime-token-file FILE  a mode-0600 API token for --url
+  --json                     print the report as JSON
+
+switches every verb takes:
+  -q, --quiet                print only errors
+  -v, --verbose              also print, on stderr, the commands and HTTP requests it
+                             runs
+  --no-color                 no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite cameras list             read the configured cameras&#x27; status
+  thermite cameras configure --dry-run
+                                    show the bridge plan without reading credentials or changing anything
+  thermite cameras configure --stream-camera CAMERA_ID
+                                    privately configure Protect, initially streaming one camera from cameras list
+  thermite cameras streams --all    enable native WebRTC for all configured cameras after the first camera is verified
+  thermite cameras streams --none   stop native WebRTC sessions while keeping status and snapshots
+  thermite cameras configure --homebridge /var/lib/homebridge/config.json --protect-token-file var/protect-token
+                                    reuse the existing console login and an explicitly supplied mode-0600 Protect token
+</pre></details>
+<details id="cameras-configure"><summary><code>thermite cameras configure</code></summary><pre class="help">usage: thermite cameras configure [-h] [--house FILE] [--production | --url URL]
+                                  [--runtime-token-file FILE] [-n] [--homebridge FILE]
+                                  [--protect-token-file FILE] [--stream-camera ID]
+
+Configure native Protect privately.
+
+options:
+  -h, --help                 show this help message and exit
+  --house FILE               the house file (default: instance/devices.yaml)
+  --production               production runtime on this host (default)
+  --url URL                  runtime at URL, e.g. http://thermite.example:8080
+  --runtime-token-file FILE  a mode-0600 API token for --url
+  -n, --dry-run              report what it would do; change nothing
+  --homebridge FILE          read the matching local console login from this Homebridge
+                             configuration
+  --protect-token-file FILE  read an existing Protect API token from this mode-0600 file
+  --stream-camera ID         enable WebRTC for this camera initially; repeat for several
+                             (default: status and snapshots only)
+
+switches every verb takes:
+  -q, --quiet                print only errors
+  -v, --verbose              also print, on stderr, the commands and HTTP requests it
+                             runs
+  --no-color                 no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite cameras list             read the configured cameras&#x27; status
+  thermite cameras configure --dry-run
+                                    show the bridge plan without reading credentials or changing anything
+  thermite cameras configure --stream-camera CAMERA_ID
+                                    privately configure Protect, initially streaming one camera from cameras list
+  thermite cameras streams --all    enable native WebRTC for all configured cameras after the first camera is verified
+  thermite cameras streams --none   stop native WebRTC sessions while keeping status and snapshots
+  thermite cameras configure --homebridge /var/lib/homebridge/config.json --protect-token-file var/protect-token
+                                    reuse the existing console login and an explicitly supplied mode-0600 Protect token
+</pre></details>
+<details id="cameras-streams"><summary><code>thermite cameras streams</code></summary><pre class="help">usage: thermite cameras streams [-h] [--house FILE] [--production | --url URL]
+                                [--runtime-token-file FILE] (--all | --none |
+                                --camera ID) [-n]
+
+Enable or stop native camera WebRTC sessions.
+
+options:
+  -h, --help                 show this help message and exit
+  --house FILE               the house file (default: instance/devices.yaml)
+  --production               production runtime on this host (default)
+  --url URL                  runtime at URL, e.g. http://thermite.example:8080
+  --runtime-token-file FILE  a mode-0600 API token for --url
+  --all                      enable native WebRTC for every configured camera
+  --none                     disable all native WebRTC sessions; keep status and
+                             snapshots
+  --camera ID                enable only this camera; repeat for several
+  -n, --dry-run              report what it would do; change nothing
+
+switches every verb takes:
+  -q, --quiet                print only errors
+  -v, --verbose              also print, on stderr, the commands and HTTP requests it
+                             runs
+  --no-color                 no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite cameras list             read the configured cameras&#x27; status
+  thermite cameras configure --dry-run
+                                    show the bridge plan without reading credentials or changing anything
+  thermite cameras configure --stream-camera CAMERA_ID
+                                    privately configure Protect, initially streaming one camera from cameras list
+  thermite cameras streams --all    enable native WebRTC for all configured cameras after the first camera is verified
+  thermite cameras streams --none   stop native WebRTC sessions while keeping status and snapshots
+  thermite cameras configure --homebridge /var/lib/homebridge/config.json --protect-token-file var/protect-token
+                                    reuse the existing console login and an explicitly supplied mode-0600 Protect token
+</pre></details>
+</section>
+<section class="verb" id="apple-tv"><h3><code>thermite apple-tv</code></h3><p>Run the Apple TV helper runtime calls.</p><pre class="help">usage: thermite apple-tv [-h] ACTION ...
+
+The runtime has no native Apple TV binding, so thermite drives the Apple TVs
 through this helper: a small HTTP service that keeps one pyatv Companion
 connection open per Apple TV and sends keys, power and app launches over it
 (lib/oh_atv.py documents the API).
@@ -1087,7 +1269,7 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 pairing:
-  Pairing happens from the openHAB Pairing page, through this helper: the
+  Pairing happens from the thermite Pairing page, through this helper: the
   page asks for a code (POST /devices/&lt;id&gt;/pair), the Apple TV shows four
   digits, and the page sends them back. Nothing is typed here. The
   Companion credential that pairing yields is stored in --secrets DIR
@@ -1096,7 +1278,7 @@ pairing:
 
 localhost only:
   The API has no authentication, and whoever reaches it can pair with and
-  drive every Apple TV. openHAB runs on the same host, so it listens on
+  drive every Apple TV. thermite runs on the same host, so it listens on
   127.0.0.1:8099 and refuses a non-loopback --listen unless --allow-remote
   is given.
 
@@ -1150,7 +1332,7 @@ switches every verb takes:
   --no-color          no color in what it prints (as NO_COLOR=1 does)
 
 pairing:
-  Pairing happens from the openHAB Pairing page, through this helper: the
+  Pairing happens from the thermite Pairing page, through this helper: the
   page asks for a code (POST /devices/&lt;id&gt;/pair), the Apple TV shows four
   digits, and the page sends them back. Nothing is typed here. The
   Companion credential that pairing yields is stored in --secrets DIR
@@ -1159,7 +1341,7 @@ pairing:
 
 localhost only:
   The API has no authentication, and whoever reaches it can pair with and
-  drive every Apple TV. openHAB runs on the same host, so it listens on
+  drive every Apple TV. thermite runs on the same host, so it listens on
   127.0.0.1:8099 and refuses a non-loopback --listen unless --allow-remote
   is given.
 
@@ -1170,25 +1352,39 @@ examples:
 </pre></details>
 </section>
 <section class="verb" id="remote"><h3><code>thermite remote</code></h3><p>The house remote in a terminal.</p><pre class="help">usage: thermite remote [-h] [--production | --sandbox | --url URL | --mock] [--setup]
-                       [--pair] [--room ID] [--choose SOURCE] [--dark | --light]
-                       [--volume {slider,buttons}] [--latency MS] [--matrix-down]
-                       [--state FILE]
+                       [--pair] [--room ID] [--choose SOURCE] [--theme NAME|FILE]
+                       [--dark | --light] [--volume {slider,buttons}] [--still] [--log |
+                       --no-log] [--latency MS] [--matrix-down] [--state FILE]
 
-The remote page&#x27;s remote in a terminal, in the style of btop: rooms, the
-bubbles of the room&#x27;s sources and devices, the remote of the device the
-buttons control, the info panel, the input list, All off and a Pairing
-screen, by keyboard and mouse. It runs the page&#x27;s own house.js, remotes.js,
+The thermite terminal starts on a landing page with Remotes, Security,
+Cameras and Site views. Remotes contains rooms, sources, device controls,
+Signal and audio, and a menu for pairing TVs and streamers. Security shows
+connection status; an unconfigured system is labelled Not connected.
+It runs the page&#x27;s own house.js, remotes.js,
 backend.js, session.js and pair.js from web/remote/ under node, so both
-front ends drive openHAB the same way (tui/remote/README.md).
+front ends drive thermite the same way (tui/remote/README.md).
 
-By default it talks to production openHAB on this host (127.0.0.1 at
+By default it talks to production thermite on this host (127.0.0.1 at
 instance/host.yaml&#x27;s http_port), with no login, as a phone&#x27;s remote page
 does: choosing a source really switches the room. --sandbox talks to
 the sandbox on 127.0.0.1:18080 and --mock to the page&#x27;s mock backend,
 which sends nothing.
 
---no-color and NO_COLOR reach it in its environment, but it draws in its
-theme&#x27;s colors all the same: blessed, which draws it, does not read NO_COLOR.
+Its colors are a thermite theme&#x27;s, as the remote page&#x27;s are: the house
+file&#x27;s `theme` (thermite&#x27;s own without one), or --theme; --dark (the
+default) and --light pick its mode, and t switches it. Where the window has
+the space, Home shows a small, wide and shallow bowl of flaming thermite
+beside its title: a fine contour with brief sparks, still with --still. Remotes has no
+flame animation. It draws in
+24-bit color where the terminal shows it (COLORTERM=truecolor, known terminals, tmux
+with RGB) and in xterm&#x27;s 256 colors otherwise; THERMITE_REMOTE_COLOR=256,
+truecolor or none overrides that, and --no-color or NO_COLOR draws without
+color. --still, or THERMITE_REMOTE_STILL, stops what moves; a switches it.
+
+The log pane is shown when the window has room. --no-log hides it and
+gives its rows to the controls; --log shows it for this run. L switches it
+and keeps the choice. Hiding the pane keeps collecting the same action
+and status messages, so they are there when it is shown again.
 
 The first run (and --setup) installs the pinned blessed from
 tui/remote/package-lock.json into build/tui-remote with npm ci
@@ -1196,26 +1392,34 @@ tui/remote/package-lock.json into build/tui-remote with npm ci
 
 options:
   -h, --help                 show this help message and exit
-  --production               production openHAB on this host (default)
+  --production               production runtime on this host (default)
   --sandbox                  the sandbox, http://127.0.0.1:18080 (thermite sandbox)
-  --url URL                  openHAB at URL, e.g. http://openhab.example:8080
+  --url URL                  runtime at URL, e.g. http://thermite.example:8080
   --mock                     the remote page&#x27;s mock backend, which sends nothing
   --setup                    only install the pinned blessed into build/tui-remote, then
                              exit
   --pair                     start on the Pairing screen
   --room ID                  start in this room (else the last one used, then the first)
-  --choose SOURCE            choose this source in the room at start; on openHAB this
+  --choose SOURCE            choose this source in the room at start; on thermite this
                              really switches it
+  --theme NAME|FILE          the colors: a built-in theme&#x27;s name or a theme file
+                             (default: the house file&#x27;s theme, else thermite)
   --dark                     the theme&#x27;s dark mode for this run (t switches and keeps
                              it)
   --light                    the theme&#x27;s light mode for this run (t switches and keeps
                              it)
   --volume {slider,buttons}  the volume as a slider or as the + and - keys (v switches
                              and keeps it)
+  --still                    nothing moves (as THERMITE_REMOTE_STILL=1 does); a switches
+                             it and keeps it
+  --log                      show the log pane when the window has room, for this run (L
+                             switches and keeps it)
+  --no-log                   hide the log pane and give its rows to the controls, for
+                             this run
   --latency MS               mock only: how long a choice takes (default 600)
   --matrix-down              mock only: start with the HDMI matrix not answering
-  --state FILE               where the last room, the volume mode and the theme&#x27;s mode
-                             are kept (default var/tui-remote/state.json)
+  --state FILE               where the last room, volume mode, theme mode, motion and
+                             log visibility are kept (default var/tui-remote/state.json)
 
 switches every verb takes:
   -q, --quiet                print only errors
@@ -1227,23 +1431,30 @@ keys:
   as on the page: arrows D-pad, Enter OK, Backspace or Esc Back, + and -
   volume, M mute, P play/pause, 0 Off, 1-9 a source, [ and ] the room;
   and Tab to move the focus, Space to press it, r rooms, i info,
-  v volume slider, t theme, F1 remote, F2 Pairing, ? help, q quit.
+  v volume slider, t theme, a motion, L log pane,
+  F1 Home, F2 Remotes, F3 Security, F4 Cameras, F5 Site;
+  within Remotes, F6 or Ctrl-P opens Pair devices;
+  ? help, q quit.
 
 examples:
-  thermite remote                   production openHAB on this host: a choice really switches the room
+  thermite remote                   thermite landing page on this host; Remotes choices really switch rooms
   thermite remote --mock            the page&#x27;s mock backend, which sends nothing
   thermite remote --sandbox --room living_room
                                     the sandbox, starting in the living room
   thermite remote --pair            start on the Pairing screen
-  thermite remote --url http://openhab.example:8080 --light
-                                    openHAB on another host, light
+  thermite remote --url http://thermite.example:8080 --light
+                                    thermite on another host, light
+  thermite remote --mock --theme contrast
+                                    in the high-contrast theme
+  thermite remote --no-log          give the log pane&#x27;s rows to the controls; L shows it again
   thermite remote --setup           only install the pinned blessed, then exit
 </pre>
 </section>
-<section class="verb" id="theme"><h3><code>thermite theme</code></h3><p>The torch and the color themes: show, check, export.</p><pre class="help">usage: thermite theme [-h] ACTION ...
+<section class="verb" id="theme"><h3><code>thermite theme</code></h3><p>The flaming bowl mark and color themes: show, check, export.</p><pre class="help">usage: thermite theme [-h] ACTION ...
 
-thermite&#x27;s mark is a torch, drawn once and shown two ways: as SVG on the
-web and as half-block characters in a terminal. Its colors, and the front
+thermite&#x27;s mark is a bowl of flame, drawn once and shown two ways: as SVG on the
+web and in a terminal as braille dots, eight to a character, for the flame
+and quadrant blocks for the metal. Its colors, and the front
 ends&#x27;, come from a theme: a color for each role (the background, text,
 the accent, the flame...) in a dark and a light mode.
 
@@ -1257,10 +1468,10 @@ options:
 
 actions:
   ACTION
-    show         draw the torch and a theme&#x27;s swatches in this terminal
+    show         draw the flaming bowl and a theme&#x27;s swatches in this terminal
     list         the built-in themes
     check        check theme files: their shape, and that text stays readable
-    export       write the theme or the torch for another program
+    export       write the theme or the flaming bowl for another program
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -1272,12 +1483,12 @@ a theme file:
    &quot;dark&quot;: {&quot;accent&quot;: &quot;#4fb3bf&quot;, &quot;accent-ink&quot;: &quot;#06181b&quot;},
    &quot;light&quot;: {&quot;accent&quot;: &quot;#1f6f78&quot;}}
 
-  Roles: bg, surface, raised, line, text, muted, faint, accent, accent-ink, focus, ok, busy, bad, info, flame, glow, core, spark, metal, metal-shade, and hues
+  Roles: bg, surface, raised, line, text, muted, faint, accent, accent-ink, focus, ok, busy, bad, info, ember, flame, glow, core, spark, metal, metal-shade, rust, and hues
   (five panel colors). Colors are #rrggbb. theme.schema.json, beside the
   built-in themes, describes the shape for an editor.
 
 examples:
-  thermite theme show               the torch and the default theme, in this terminal
+  thermite theme show               the flaming bowl and the default theme, in this terminal
   thermite theme show --light --size large
                                     the light mode, larger
   thermite theme check my-theme.json
@@ -1288,7 +1499,7 @@ examples:
 <details id="theme-show"><summary><code>thermite theme show</code></summary><pre class="help">usage: thermite theme show [-h] [--theme NAME|FILE] [--dark | --light]
                            [--size {small,medium,large}] [--color {auto,always,never}]
 
-Draw the torch and a theme&#x27;s swatches in this terminal.
+Draw the flaming bowl and a theme&#x27;s swatches in this terminal.
 
 options:
   -h, --help                   show this help message and exit
@@ -1296,7 +1507,7 @@ options:
                                (default: thermite)
   --dark                       the theme&#x27;s dark mode (default)
   --light                      the theme&#x27;s light mode
-  --size {small,medium,large}  small, medium or large: 12, 16 or 24 columns (default:
+  --size {small,medium,large}  small, medium or large: 8, 12 or 16 rows (default:
                                medium)
   --color {auto,always,never}  auto: color when this is a terminal and neither NO_COLOR
                                nor --no-color is set; --no-color beats always (default:
@@ -1354,10 +1565,10 @@ examples:
                              [--size {small,medium,large}] [--out FILE]
                              FORMAT
 
-Write the theme or the torch for another program.
+Write the theme or the flaming bowl for another program.
 
 positional arguments:
-  FORMAT                       css, json, svg, icon, cells
+  FORMAT                       css, json, svg, mark, icon, png, cells
 
 options:
   -h, --help                   show this help message and exit
@@ -1377,16 +1588,20 @@ switches every verb takes:
 formats:
   css     the theme as CSS custom properties (--th-&lt;role&gt;), both modes
   json    the theme with everything it extends filled in
-  svg     the torch, in one mode&#x27;s colors
-  icon    the torch on a rounded tile, as an app icon
-  cells   the terminal drawing as JSON rows of [upper, lower] roles
+  svg     the flaming bowl, in one mode&#x27;s colors
+  mark    the same bowl without a tile, cropped for page headers
+  icon    the flaming bowl on a rounded tile, as an app icon
+  png     the flaming bowl on a square tile, 180 px, as an iOS home-screen icon (PNG)
+  cells   the terminal drawing as JSON rows of [character, fg, bg] cells
 
 examples:
   thermite theme export css         the default theme as CSS
   thermite theme export svg --light --out torch.svg
-                                    the torch for a light page
+                                    the flaming bowl for a light page
   thermite theme export icon --theme my-theme.json
                                     an app icon in your colors
+  thermite theme export png --out apple-touch-icon.png
+                                    the same for an iPhone&#x27;s home screen
 </pre></details>
 </section>
 <section class="verb" id="docs"><h3><code>thermite docs</code></h3><p>Build the docs site, or export it to the thermite repository.</p><pre class="help">usage: thermite docs [-h] ACTION ...
@@ -1416,6 +1631,12 @@ switches every verb takes:
 export writes docs/ (the site), README.md, FAQ.md and the Pages workflow
 into a checkout of the thermite repository, and removes files under docs/
 that the site no longer has. Commit and push there to publish.
+
+--with-code also exports the reviewed portable source and a fictional
+sample house. It checks privacy and runs offline configuration, help,
+theme, docs and lint checks before writing any destination file. It starts
+no device connection or native runtime. Only previously managed source
+files can be removed; unrelated files and license terms stay untouched.
 
 examples:
   thermite docs serve               preview the site at http://127.0.0.1:8000/
@@ -1457,13 +1678,14 @@ examples:
   thermite docs serve               at http://127.0.0.1:8000/
   thermite docs serve --port 0      on any free port; it prints which
 </pre></details>
-<details id="docs-check"><summary><code>thermite docs check</code></summary><pre class="help">usage: thermite docs check [-h] [--to DIR]
+<details id="docs-check"><summary><code>thermite docs check</code></summary><pre class="help">usage: thermite docs check [-h] [--to DIR] [--with-code]
 
 Build the site in memory and refuse anything naming this house.
 
 options:
   -h, --help     show this help message and exit
   --to DIR       a checkout of the thermite repository to compare
+  --with-code    also check the portable source and fictional sample
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -1475,13 +1697,14 @@ examples:
   thermite docs check --to ../thermite
                                     and exit 1 if that checkout&#x27;s copy is stale
 </pre></details>
-<details id="docs-export"><summary><code>thermite docs export</code></summary><pre class="help">usage: thermite docs export [-h] --to DIR [-n]
+<details id="docs-export"><summary><code>thermite docs export</code></summary><pre class="help">usage: thermite docs export [-h] --to DIR [--with-code] [-n]
 
 Write the site, README.md and FAQ.md into the thermite repository.
 
 options:
   -h, --help     show this help message and exit
   --to DIR       a checkout of the thermite repository
+  --with-code    include checked portable source and a fictional sample house
   -n, --dry-run  report what it would do; change nothing
 
 switches every verb takes:
@@ -1496,18 +1719,18 @@ examples:
                                     write them; then commit and push there
 </pre></details>
 </section>
-<section class="verb" id="version"><h3><code>thermite version</code></h3><p>Thermite&#x27;s version, and openHAB&#x27;s: pinned, and running here.</p><pre class="help">usage: thermite version [-h] [--json] [--timeout SECONDS]
+<section class="verb" id="version"><h3><code>thermite version</code></h3><p>Thermite&#x27;s version, and runtime&#x27;s: pinned, and running here.</p><pre class="help">usage: thermite version [-h] [--json] [--timeout SECONDS]
 
 Print thermite&#x27;s version and the commit of this checkout it runs from
-(`, modified` when the area&#x27;s tracked files differ from it), the openHAB
-version versions.json pins, and the one production openHAB on this host
+(`, modified` when the area&#x27;s tracked files differ from it), the runtime
+version versions.json pins, and the one production runtime on this host
 reports, or that nothing answers there. thermite --version (-V) prints only
 the first line; without Git, or outside a repository, it has no commit.
 
 options:
   -h, --help         show this help message and exit
   --json             print the report as JSON
-  --timeout SECONDS  seconds to wait for production openHAB to answer (default: 2)
+  --timeout SECONDS  seconds to wait for production runtime to answer (default: 2)
 
 switches every verb takes:
   -q, --quiet        print only errors
@@ -1515,7 +1738,7 @@ switches every verb takes:
   --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite version                  thermite&#x27;s version, the pinned openHAB and the one running here
+  thermite version                  thermite&#x27;s version, the pinned runtime and the one running here
   thermite version --json           the same, as JSON
   thermite --version                only thermite&#x27;s
 </pre>
@@ -1563,7 +1786,7 @@ examples:
 
   </main>
   <footer class="foot">
-    <span class="foot-mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 96" width="18" height="27" role="img" aria-label="thermite"><title>thermite</title><path fill="var(--th-flame)" d="M19 44 C13 38 12 28 17 20 C19 26 22 29 25 29 C22 20 27 11 34 3 C35 11 40 16 41 23 C43 21 46 19 48 16 C52 26 51 37 45 44 Z"/><path fill="var(--th-glow)" d="M23 44 C19 39 19 32 23 27 C25 31 27 32 29 31 C28 24 31 17 35 12 C37 19 39 24 39 29 C41 28 43 27 44 25 C46 32 45 39 41 44 Z"/><path fill="var(--th-core)" d="M27 44 C25 40 26 35 30 31 C31 28 33 25 34 21 C36 26 39 31 38 36 C38 40 37 42 36 44 Z"/><path fill="var(--th-spark)" d="M53 3 L54.6 7.4 L59 9 L54.6 10.6 L53 15 L51.4 10.6 L47 9 L51.4 7.4 Z"/><path fill="var(--th-metal)" d="M15 44 L49 44 L48 48 L16 48 Z"/><path fill="var(--th-metal-shade)" d="M17 48 L47 48 C45 53 41 56 38 57 L26 57 C23 56 19 53 17 48 Z"/><path fill="var(--th-metal)" d="M26 57 L38 57 L35 90 C35 93 29 93 29 90 Z"/><path fill="var(--th-metal-shade)" d="M26.4 63 L37.6 63 L37.2 67 L26.8 67 Z"/><path fill="var(--th-metal-shade)" d="M27.4 74 L36.6 74 L36.2 78 L27.8 78 Z"/></svg> thermite</span>
+    <span class="foot-mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg> thermite · simple parts, joined</span>
     <span>© 2026. All rights reserved.</span>
   </footer>
   <script src="assets/site.js"></script>

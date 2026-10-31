@@ -1,0 +1,103 @@
+{
+  "_comment": "Pinned inputs for the openHAB sandbox (bin/thermite sandbox fetch) and the production image. Change versions only together with their checksums and digests.",
+  "openhab": {
+    "version": "5.2.3",
+    "distribution": {
+      "url": "https://github.com/openhab/openhab-distro/releases/download/5.2.3/openhab-5.2.3.zip",
+      "size": 125386093,
+      "sha256": "32ed95f1b310eecdd59b6f88225fb8ecc3d9ec01e618533f3b2758ae4714089c",
+      "sha1": "d917fde881873ddea362c76698bd8c7a44bf79ac"
+    },
+    "image": {
+      "ref": "docker.io/openhab/openhab:5.2.3-debian",
+      "digest": "sha256:fa50a6934dfd5bcbf21db18af66f2558f58c6c493ba23bdeb7a894e764507a99",
+      "platforms": {
+        "linux/amd64": "sha256:f6894fa89478aef90b346b8cacafc6347426fefe5073facc7006d83e08a45237",
+        "linux/arm64": "sha256:1423029b751dba9432a0052d009b5ce47ef959ea1576464931020e42e5fc7a93"
+      }
+    }
+  },
+  "atv_helper": {
+    "image": {
+      "ref": "docker.io/library/python:3.14.10-slim-trixie",
+      "digest": "sha256:3cabfd7d7aaf394e6040e79fa1eec6ca1c52b74ed9188650472695d9a9326999",
+      "platforms": {
+        "linux/amd64": "sha256:ec6a14df5b63e3fbb3498e3240f7f640c230f9dca67683d23265db3866697f2d",
+        "linux/arm64": "sha256:29434a59c93070e470f84663e4289026e04644ea44b5220ef7e07d653318ca1f"
+      }
+    }
+  },
+  "prometheus": {
+    "version": "3.15.1",
+    "image": {
+      "ref": "quay.io/prometheus/prometheus:v3.15.1",
+      "digest": "sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2",
+      "platforms": {
+        "linux/amd64": "sha256:d445d1806b38f85b5c394a1b87f94113fde0473b45245922c2e8b1bd41fa68ae",
+        "linux/arm64": "sha256:13020b7e520d56fef031135b91f5635888de441d6c4cfda3608bfbf6f4916dcb"
+      }
+    }
+  },
+  "node_exporter": {
+    "version": "1.12.1",
+    "image": {
+      "ref": "quay.io/prometheus/node-exporter:v1.12.1",
+      "digest": "sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
+      "platforms": {
+        "linux/amd64": "sha256:da83fae85603c4e47e6c68369a7d746e2dda683dc35ea2e234b4f171e0d92798",
+        "linux/arm64": "sha256:c9ef89f9464f09e7234decaae68a80ab856ff0014435677a99fd48b03dd410ea"
+      }
+    }
+  },
+  "blackbox_exporter": {
+    "version": "0.29.1",
+    "image": {
+      "ref": "quay.io/prometheus/blackbox-exporter:v0.29.1",
+      "digest": "sha256:ea1c7aa3ef3f307cd03e85f34abb604478ccb90b567fc690da0cd9776da76b13",
+      "platforms": {
+        "linux/amd64": "sha256:66eae352a79e6f677aeddd8c25a9bdb017586dc5fbd230f22329213d891f94bd",
+        "linux/arm64": "sha256:bcc3bd71004dcca622fcff5330b36b6c126fc0779145e92b3209c84ce8939a57"
+      }
+    }
+  },
+  "grafana": {
+    "version": "13.3.0",
+    "image": {
+      "ref": "docker.io/grafana/grafana:13.3.0",
+      "digest": "sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205",
+      "platforms": {
+        "linux/amd64": "sha256:6e5d306338670f381a942f1c50d3c266bf71531e5ddd9ee4fc1a133dac5ce63d",
+        "linux/arm64": "sha256:868b6ae6642ec09a71a1273d4c0eb952856c1f421137b33e26038e629ee3c208"
+      }
+    }
+  },
+  "java": {
+    "vendor": "temurin",
+    "version": "21.0.13+9",
+    "image_type": "jre",
+    "os": "linux",
+    "arch": "x64",
+    "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jre_x64_linux_hotspot_21.0.13_9.tar.gz",
+    "size": 52181297,
+    "sha256": "a535a1df9c6284d9618872984e026ae0352d1f7e9e0605425c0e6114f47351dd"
+  },
+  "_sources": {
+    "retrieved": "2026-10-28",
+    "openhab.distribution.url": "GitHub release openhab/openhab-distro tag 5.2.3 (published 2026-10-10T08:03:40Z), https://github.com/openhab/openhab-distro/releases/tag/5.2.3",
+    "openhab.distribution.sha256": "Computed locally over the downloaded zip; equals the GitHub release asset digest (api.github.com/repos/openhab/openhab-distro/releases/tags/5.2.3) and openHAB's Artifactory checksum https://openhab.jfrog.io/artifactory/libs-release-local/org/openhab/distro/openhab/5.2.3/openhab-5.2.3.zip.sha256",
+    "openhab.distribution.sha1": "Computed locally; equals https://openhab.jfrog.io/artifactory/libs-release-local/org/openhab/distro/openhab/5.2.3/openhab-5.2.3.zip.sha1 (openHAB release artifacts are not on Maven Central after 3.0.1)",
+    "openhab.image.digest": "Docker-Content-Digest of the manifest list for openhab/openhab:5.2.3-debian from registry-1.docker.io/v2 (anonymous pull token from auth.docker.io); matches hub.docker.com/v2/repositories/openhab/openhab/tags/5.2.3-debian (last_updated 2026-10-10T03:49:47Z)",
+    "openhab.image.platforms": "Per-platform manifest digests listed in that manifest list",
+    "atv_helper.image.digest": "Docker-Content-Digest of the image index for library/python:3.14.10-slim-trixie from registry-1.docker.io/v2 (anonymous pull token from auth.docker.io), retrieved 2026-10-29; its images are those of 3.14-slim-trixie (created 2026-10-28T01:53:41Z, base debian:trixie-slim). Python 3.14 matches the cp314 wheels in lib/requirements-pyatv.txt",
+    "atv_helper.image.platforms": "Per-platform manifest digests listed in that image index",
+    "prometheus.image.digest": "Docker-Content-Digest of the manifest list for prometheus/prometheus:v3.15.1 from quay.io/v2 (anonymous pull token from quay.io/v2/auth), retrieved 2026-10-30; the official image the Prometheus project publishes on quay.io (and docker.io/prom)",
+    "node_exporter.image.digest": "Docker-Content-Digest of the manifest list for prometheus/node-exporter:v1.12.1 from quay.io/v2 (anonymous pull token from quay.io/v2/auth), retrieved 2026-10-30",
+    "blackbox_exporter.image.digest": "Docker-Content-Digest of the manifest list for prometheus/blackbox-exporter:v0.29.1 from quay.io/v2 (anonymous pull token from quay.io/v2/auth), retrieved 2026-10-30",
+    "grafana.image.digest": "Docker-Content-Digest of the manifest list for grafana/grafana:13.3.0 (Grafana OSS) from registry-1.docker.io/v2 (anonymous pull token from auth.docker.io), retrieved 2026-10-30",
+    "prometheus.image.platforms": "Per-platform manifest digests listed in that manifest list",
+    "node_exporter.image.platforms": "Per-platform manifest digests listed in that manifest list",
+    "blackbox_exporter.image.platforms": "Per-platform manifest digests listed in that manifest list",
+    "grafana.image.platforms": "Per-platform manifest digests listed in that manifest list",
+    "java.sha256": "Adoptium API api.adoptium.net/v3/assets/latest/21/hotspot (jre, linux, x64) and the published https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jre_x64_linux_hotspot_21.0.13_9.tar.gz.sha256.txt"
+  }
+}

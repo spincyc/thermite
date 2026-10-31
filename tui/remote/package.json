@@ -1,0 +1,10 @@
+{
+  "name": "openhab-remote-tui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The house remote in a terminal (README.md); bin/thermite remote installs its one package into build/tui-remote",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "blessed": "0.1.81"
+  }
+}

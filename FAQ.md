@@ -36,10 +36,10 @@ Not yet. Bringing the house into Apple Home through openHAB is planned.
 
 One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node.js for the terminal remote. `thermite install` sets up openHAB itself.
 
-### Why "thermite", and why a torch?
+### Why "thermite", and why a bowl?
 
-Thermite is rust and aluminum. Lit, it burns hot enough to cut through steel: ordinary parts, a lot of heat. That is the idea, open software cutting through closed systems, and the torch carries the flame.
+The name refers to aluminothermic metalworking. The shallow bowl, metal rim and small flame express the craft of joining parts into something useful. The [design notes](https://spincyc.github.io/thermite/colors.html) explain the historical reference and shared drawing.
 
 ### Can I use it?
 
-Not yet. thermite is early, and all rights are reserved while it settles.
+thermite is under active development. Start with the sample house and the checks in [Get started](https://spincyc.github.io/thermite/start.html); review the project's current terms before redistributing it. All rights are reserved.

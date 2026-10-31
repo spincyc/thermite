@@ -1,0 +1,653 @@
+{
+  "version": 1,
+  "devices": {
+    "example_matrix": {
+      "kind": "bk808_http",
+      "items": [
+        "example_matrix_input_signal",
+        "example_matrix_output_signal"
+      ],
+      "maxAgeSeconds": 15,
+      "readings": [
+        {
+          "category": "edid",
+          "label": "Input 1 presented EDID",
+          "item": "example_matrix_input_signal",
+          "path": [
+            "values",
+            "edid",
+            "1"
+          ],
+          "port": {
+            "direction": "input",
+            "number": 1
+          }
+        },
+        {
+          "category": "edid",
+          "label": "Input 2 presented EDID",
+          "item": "example_matrix_input_signal",
+          "path": [
+            "values",
+            "edid",
+            "2"
+          ],
+          "port": {
+            "direction": "input",
+            "number": 2
+          }
+        },
+        {
+          "category": "edid",
+          "label": "Input 3 presented EDID",
+          "item": "example_matrix_input_signal",
+          "path": [
+            "values",
+            "edid",
+            "3"
+          ],
+          "port": {
+            "direction": "input",
+            "number": 3
+          }
+        },
+        {
+          "category": "edid",
+          "label": "Input 4 presented EDID",
+          "item": "example_matrix_input_signal",
+          "path": [
+            "values",
+            "edid",
+            "4"
+          ],
+          "port": {
+            "direction": "input",
+            "number": 4
+          }
+        },
+        {
+          "category": "edid",
+          "label": "Input 5 presented EDID",
+          "item": "example_matrix_input_signal",
+          "path": [
+            "values",
+            "edid",
+            "5"
+          ],
+          "port": {
+            "direction": "input",
+            "number": 5
+          }
+        },
+        {
+          "category": "edid",
+          "label": "Input 6 presented EDID",
+          "item": "example_matrix_input_signal",
+          "path": [
+            "values",
+            "edid",
+            "6"
+          ],
+          "port": {
+            "direction": "input",
+            "number": 6
+          }
+        },
+        {
+          "category": "edid",
+          "label": "Input 7 presented EDID",
+          "item": "example_matrix_input_signal",
+          "path": [
+            "values",
+            "edid",
+            "7"
+          ],
+          "port": {
+            "direction": "input",
+            "number": 7
+          }
+        },
+        {
+          "category": "edid",
+          "label": "Input 8 presented EDID",
+          "item": "example_matrix_input_signal",
+          "path": [
+            "values",
+            "edid",
+            "8"
+          ],
+          "port": {
+            "direction": "input",
+            "number": 8
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 1 sink connection",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "connected",
+            "1"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 1
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 1 scaler setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "scaler",
+            "1"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 1
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 1 HDR processing setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdr",
+            "1"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 1
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 1 HDCP setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdcp",
+            "1"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 1
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 2 sink connection",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "connected",
+            "2"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 2
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 2 scaler setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "scaler",
+            "2"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 2
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 2 HDR processing setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdr",
+            "2"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 2
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 2 HDCP setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdcp",
+            "2"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 2
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 3 sink connection",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "connected",
+            "3"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 3
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 3 scaler setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "scaler",
+            "3"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 3
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 3 HDR processing setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdr",
+            "3"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 3
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 3 HDCP setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdcp",
+            "3"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 3
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 4 sink connection",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "connected",
+            "4"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 4
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 4 scaler setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "scaler",
+            "4"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 4
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 4 HDR processing setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdr",
+            "4"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 4
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 4 HDCP setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdcp",
+            "4"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 4
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 5 sink connection",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "connected",
+            "5"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 5
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 5 scaler setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "scaler",
+            "5"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 5
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 5 HDR processing setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdr",
+            "5"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 5
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 5 HDCP setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdcp",
+            "5"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 5
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 6 sink connection",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "connected",
+            "6"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 6
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 6 scaler setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "scaler",
+            "6"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 6
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 6 HDR processing setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdr",
+            "6"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 6
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 6 HDCP setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdcp",
+            "6"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 6
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 7 sink connection",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "connected",
+            "7"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 7
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 7 scaler setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "scaler",
+            "7"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 7
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 7 HDR processing setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdr",
+            "7"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 7
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 7 HDCP setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdcp",
+            "7"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 7
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 8 sink connection",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "connected",
+            "8"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 8
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 8 scaler setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "scaler",
+            "8"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 8
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 8 HDR processing setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdr",
+            "8"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 8
+          }
+        },
+        {
+          "category": "processing",
+          "label": "Output 8 HDCP setting",
+          "item": "example_matrix_output_signal",
+          "path": [
+            "values",
+            "hdcp",
+            "8"
+          ],
+          "port": {
+            "direction": "output",
+            "number": 8
+          }
+        }
+      ],
+      "label": "Example Matrix (HDMI matrix)"
+    }
+  },
+  "rooms": {
+    "example_west": {
+      "label": "Example West",
+      "sources": {
+        "example_player": {
+          "label": "Player",
+          "nodes": [
+            {
+              "device": "example_player",
+              "label": "Example Player",
+              "role": "source"
+            },
+            {
+              "device": "example_tv",
+              "label": "Example Tv",
+              "role": "display",
+              "input": "hdmi1",
+              "zone": "main"
+            }
+          ]
+        },
+        "example_computer": {
+          "label": "Computer",
+          "nodes": [
+            {
+              "device": "example_computer",
+              "label": "Example Computer",
+              "role": "source"
+            },
+            {
+              "device": "example_matrix",
+              "label": "Example Matrix (HDMI matrix)",
+              "role": "matrix",
+              "input": 1,
+              "output": 1
+            },
+            {
+              "device": "example_tv",
+              "label": "Example Tv",
+              "role": "display",
+              "input": "hdmi2",
+              "zone": "main"
+            }
+          ]
+        }
+      }
+    },
+    "example_east": {
+      "label": "Example East",
+      "sources": {
+        "example_computer": {
+          "label": "Computer",
+          "nodes": [
+            {
+              "device": "example_computer",
+              "label": "Example Computer",
+              "role": "source"
+            },
+            {
+              "device": "example_matrix",
+              "label": "Example Matrix (HDMI matrix)",
+              "role": "matrix",
+              "input": 1,
+              "output": 2
+            },
+            {
+              "device": "example_display",
+              "label": "Example Display",
+              "role": "display",
+              "input": "hdmi2",
+              "zone": "main"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

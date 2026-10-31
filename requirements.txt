@@ -1,0 +1,2 @@
+# Base configuration and documentation dependency. Optional helpers have their own locks.
+PyYAML>=6.0,<7

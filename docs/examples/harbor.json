@@ -1,7 +1,7 @@
 {
   "$schema": "https://spincyc.github.io/thermite/theme.schema.json",
   "name": "harbor",
-  "description": "thermite with a sea-glass accent: the torch stays molten, the controls turn teal",
+  "description": "thermite with a sea-glass accent: the bowl keeps its heat, the controls turn teal",
   "extends": "thermite",
   "dark": {
     "accent": "#4fc1c9",

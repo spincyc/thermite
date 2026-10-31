@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "statusGroup": "house_camera_status",
+  "pollSeconds": 5,
+  "cameras": []
+}

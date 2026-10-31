@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="dark light">
+  <title>Home · thermite</title><link rel="icon" href="icon.svg" type="image/svg+xml"><link rel="stylesheet" href="theme.css"><link rel="stylesheet" href="shell.css">
+  <script src="appearance.js"></script>
+  <script defer src="house.js"></script><script defer src="remotes.js"></script><script defer src="activity.js"></script><script defer src="backend.js"></script><script defer src="shell.js"></script><script defer src="home.js"></script>
+</head>
+<body data-thermite-page="home">
+  <main class="thermite-home">
+    <h1>Home</h1><p>Your home, in one place.</p>
+    <div class="thermite-modules">
+      <a class="thermite-module" href="./" data-thermite-link="remotes"><strong>Remotes</strong><span>Rooms, sources and device controls</span></a>
+      <a class="thermite-module" href="security.html" data-thermite-link="security"><strong>Security</strong><span>Security system · Not connected</span></a>
+      <a class="thermite-module" href="cameras.html" data-thermite-link="cameras"><strong>Cameras</strong><span>Camera status and viewing</span></a>
+      <a class="thermite-module" href="topology.html" data-thermite-link="site"><strong>Site</strong><span>Configured video and USB connections</span></a>
+    </div>
+    <h2>Rooms</h2><p data-home-status role="status">Reading reported sources…</p>
+    <div class="thermite-room-scroll"><table class="thermite-rooms"><thead><tr><th scope="col">Room</th><th scope="col">Reported source</th><th scope="col">Status</th></tr></thead><tbody data-home-rooms></tbody></table></div>
+  </main>
+  <noscript><p>Enable JavaScript to read room status. The module links remain available.</p></noscript>
+</body>
+</html>

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>Site topology · thermite</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="topology.css">
+  <link rel="stylesheet" href="shell.css">
+  <script src="appearance.js"></script>
+  <script defer src="house.js"></script>
+  <script defer src="remotes.js"></script>
+  <script defer src="activity.js"></script>
+  <script defer src="backend.js"></script>
+  <script defer src="shell.js"></script>
+  <script defer src="topology.js"></script>
+</head>
+<body data-thermite-page="site">
+  <main class="topology">
+    <header class="site-header">
+      <a class="brand" href="./"><img src="icon.svg" alt="" width="32" height="32"><span>thermite</span></a>
+      <nav aria-label="Views"><a href="./">Remote</a><a href="cameras.html">Cameras</a><span aria-current="page">Topology</span><button type="button" data-theme-toggle aria-label="Change color theme">◐</button></nav>
+    </header>
+    <section class="intro">
+      <div><p class="eyebrow">The connected house</p><h1>Site topology</h1><p class="muted">Configured video and USB connections. Explore any route without switching a source.</p></div>
+      <p class="inventory-count" data-count>Reading the map…</p>
+    </section>
+    <section class="toolbar" aria-label="Map filters">
+      <label>Room<select data-room aria-label="Room"><option value="">Whole house</option></select></label>
+      <label>Explore source<select data-source aria-label="Explore source"><option value="">All configured routes</option></select></label>
+      <div class="zoom" role="group" aria-label="Map zoom"><button type="button" data-zoom="out" aria-label="Zoom out">−</button><button type="button" data-zoom="fit">Fit</button><button type="button" data-zoom="in" aria-label="Zoom in">+</button></div>
+    </section>
+    <div class="map-status"><p data-status role="status">Reading reported room sources…</p><span class="read-only">Explore only · no source switching</span></div>
+    <p class="notice" data-alert role="status" hidden></p>
+    <details class="source-catalogue" data-catalogue>
+      <summary><span>Sources</span><span class="muted" data-source-count></span></summary>
+      <p class="muted catalogue-note">Choose a source to preview its configured chains. Shared sources serve more than one room.</p>
+      <div class="source-groups"><section><h2>Shared sources</h2><div class="source-cards" data-shared-sources></div></section><section><h2>Room-local sources</h2><div class="source-cards" data-local-sources></div></section></div>
+    </details>
+    <div class="chain-panels">
+      <section class="chain-panel video-panel" aria-labelledby="video-title">
+        <header class="chain-panel__header"><div><p class="eyebrow">Picture path</p><h2 id="video-title">Video chains</h2></div><span class="panel-count" data-video-count></span></header>
+        <p class="panel-note">Status describes the room’s source report, not device power or HDMI lock. Select a column heading to sort.</p>
+        <div class="table-region" data-video data-map tabindex="0" role="region" aria-label="Video chains; scroll horizontally to compare stages"><table class="topology-table video-table"><caption class="sr-only">Configured video paths and reported room source status</caption><thead data-video-head></thead><tbody data-video-body></tbody></table></div>
+      </section>
+      <section class="chain-panel data-panel" aria-labelledby="data-title">
+        <header class="chain-panel__header"><div><p class="eyebrow">USB connections</p><h2 id="data-title">Data chains</h2></div><span class="panel-count" data-data-count></span></header>
+        <p class="panel-note">Known computer → matrix host cables. Device-port assignments are shown separately; peripheral identities and network wiring are not recorded.</p>
+        <div class="table-region" data-data tabindex="0" role="region" aria-label="Configured USB assignments; scroll horizontally to compare columns"><table class="topology-table data-table"><caption class="sr-only">Configured USB host cables and room device-port assignments; USB state is not observed</caption><thead data-data-head></thead><tbody data-data-body></tbody></table></div>
+      </section>
+    </div>
+    <p class="map-note">Devices can appear in more than one configured chain. These are repeated views of the same inventory device, not additional hardware.</p>
+    <section class="details">
+      <details class="text-paths"><summary>Accessible configured paths</summary><h2 data-path-title>Room paths</h2><p class="muted" data-path-note></p><div data-paths></div></details>
+      <aside class="device-detail" data-device-detail><p class="eyebrow">Inspect a connection</p><h2>Select a device</h2><p class="muted">Device cards show their native input and output ports. Select one for its full inventory details and recorded links.</p></aside>
+    </section>
+    <details class="unlinked"><summary data-unlinked-count>Other inventory devices</summary><p class="muted">No video or USB connection is recorded for these devices. This does not imply that they are disconnected or powered off.</p><ul data-unlinked></ul></details>
+  </main>
+  <noscript><p>The topology map needs JavaScript.</p></noscript>
+</body>
+</html>
