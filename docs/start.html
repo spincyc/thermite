@@ -68,11 +68,17 @@ thermite install             # take them; it asks before anything that needs sud
 thermite deploy              # put the tested configuration in place
 thermite status              # what runs, and whether it matches
 thermite upgrade --dry-run   # later: what moving to newer pinned versions would do</code></pre>
-<h2 id="4-pair-your-devices">4. Pair your devices</h2>
+<h2 id="4-set-up-site-access">4. Set up site access</h2>
+<p>The web and terminal clients share site accounts. Admins manage users, roles and room schedules; ordinary users control unlocked rooms, and viewers have read-only access. A scheduled lock has an expected room state that thermite reconciles while the lock is active.</p>
+<p>Run <code>thermite access stage --help</code> to prepare a private, persistent site release. Staging needs a trusted TLS certificate, a service-owned native API credential, the generated remote assets, an explicit site hostname and a separate persistent <code>--state</code> directory. Reuse that state across releases to preserve users and policies. Staging writes the service units and an activation checklist; it does not start them or migrate the database.</p>
+<p>Bootstrap the first admin locally from that release with <code>thermite access bootstrap --config &lt;release&gt;/config.json --user admin</code>. Password prompts are hidden. Before activating, follow the checklist to close direct native HTTP, HTTPS and websocket access, disable implicit grants, and preserve device callbacks such as Sonos. Accounts do not protect a separate native listener left open.</p>
+<p>After activation, admins can use Settings and Users in either client. Other users can see room settings but cannot change them. Locks reconcile supported device reports; passive equipment and stale readings remain explicitly unverified.</p>
+<h2 id="5-pair-your-devices">5. Pair your devices</h2>
 <p>Some devices need a one-time handshake: they show a code on screen, which you type into Remotes → Pair devices. On a compatible Sony TV, set IP control's Authentication to Normal and turn on Remote Start; the menu path varies by model. Pairing availability depends on the device's firmware, and thermite reports failures on its pairing page. A Sony TV can also be paired from a terminal:</p>
 <pre><code class="language-sh">thermite pair living_room_tv</code></pre>
-<h2 id="5-use-it">5. Use it</h2>
-<ul><li>On a phone or a computer, open <code>http://&lt;thermite's address&gt;:8080/static/remote/home.html</code>.</li><li>In a terminal, run <code>thermite remote</code>. Both start with Home, with Remotes, Security, Cameras and Site views.</li></ul>
+<h2 id="6-use-it">6. Use it</h2>
+<ul><li>On a phone or a computer, open <code>https://&lt;site hostname&gt;:9443/static/remote/home.html</code> and sign in.</li><li>In a terminal, run <code>thermite access login --url https://&lt;site hostname&gt;:9443 --user &lt;username&gt;</code>, then <code>thermite remote --url https://&lt;site hostname&gt;:9443</code>. Both clients start with Home, with Remotes, Security, Cameras and Site views.</li></ul>
+<p>Use <code>--ca-file</code> at login when your site uses a private CA. The terminal stores its revocable credential in a private file. Native runtime access is an explicit owner/testing option (<code>thermite remote --native</code>); authentication failures never select it automatically.</p>
 <h2 id="when-something-goes-wrong">When something goes wrong</h2>
 <ul><li><code>thermite health --production</code> lists every device that isn't online.</li><li><code>thermite rollback</code> puts the previously deployed version back; <code>thermite history</code> lists them.</li><li>Every command explains itself: <code>thermite help &lt;command&gt;</code>. The <a href="commands.html">commands page</a> has them all.</li><li><code>thermite version</code> shows which thermite and which openHAB you run, and <code>thermite completion bash</code> (or <code>zsh</code>, <code>fish</code>) gives your shell tab completion.</li></ul>
 

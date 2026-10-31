@@ -51,7 +51,17 @@ thermite status              # what runs, and whether it matches
 thermite upgrade --dry-run   # later: what moving to newer pinned versions would do
 ```
 
-## 4. Pair your devices
+## 4. Set up site access
+
+The web and terminal clients share site accounts. Admins manage users, roles and room schedules; ordinary users control unlocked rooms, and viewers have read-only access. A scheduled lock has an expected room state that thermite reconciles while the lock is active.
+
+Run `thermite access stage --help` to prepare a private, persistent site release. Staging needs a trusted TLS certificate, a service-owned native API credential, the generated remote assets, an explicit site hostname and a separate persistent `--state` directory. Reuse that state across releases to preserve users and policies. Staging writes the service units and an activation checklist; it does not start them or migrate the database.
+
+Bootstrap the first admin locally from that release with `thermite access bootstrap --config <release>/config.json --user admin`. Password prompts are hidden. Before activating, follow the checklist to close direct native HTTP, HTTPS and websocket access, disable implicit grants, and preserve device callbacks such as Sonos. Accounts do not protect a separate native listener left open.
+
+After activation, admins can use Settings and Users in either client. Other users can see room settings but cannot change them. Locks reconcile supported device reports; passive equipment and stale readings remain explicitly unverified.
+
+## 5. Pair your devices
 
 Some devices need a one-time handshake: they show a code on screen, which you type into Remotes → Pair devices. On a compatible Sony TV, set IP control's Authentication to Normal and turn on Remote Start; the menu path varies by model. Pairing availability depends on the device's firmware, and thermite reports failures on its pairing page. A Sony TV can also be paired from a terminal:
 
@@ -59,10 +69,12 @@ Some devices need a one-time handshake: they show a code on screen, which you ty
 thermite pair living_room_tv
 ```
 
-## 5. Use it
+## 6. Use it
 
-- On a phone or a computer, open `http://<thermite's address>:8080/static/remote/home.html`.
-- In a terminal, run `thermite remote`. Both start with Home, with Remotes, Security, Cameras and Site views.
+- On a phone or a computer, open `https://<site hostname>:9443/static/remote/home.html` and sign in.
+- In a terminal, run `thermite access login --url https://<site hostname>:9443 --user <username>`, then `thermite remote --url https://<site hostname>:9443`. Both clients start with Home, with Remotes, Security, Cameras and Site views.
+
+Use `--ca-file` at login when your site uses a private CA. The terminal stores its revocable credential in a private file. Native runtime access is an explicit owner/testing option (`thermite remote --native`); authentication failures never select it automatically.
 
 ## When something goes wrong
 

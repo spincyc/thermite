@@ -29,6 +29,7 @@ TARGET = "html/remote"
 #: Every file the page loads; README.md stays behind.
 FILES = ("index.html", "theme.css", "remote.css", "house.js", "remotes.js", "activity.js", "activity.json", "diagnostics.js", "diagnostics.json", "backend.js", "session.js", "log.js", "remote.js",
          "appearance.js", "shell.js", "shell.css", "home.html", "home.js", "security.html",
+         "access.js", "access-ui.js", "access.css", "access.html", "users.html", "settings.html",
          "manifest.webmanifest", "icon.svg", "mark.svg", "mark-light.svg", "apple-touch-icon.png", "pair.html", "pair.js", "pair.css",
          "cameras.html", "cameras.js", "cameras.css", "cameras.json", "topology.html", "topology.js", "topology.css", "topology.json")
 #: The files of FILES drawn from the theme, and the `thermite theme export`

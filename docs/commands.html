@@ -47,7 +47,7 @@
 <h2 id="devices">The house&#x27;s devices</h2>
 <table class="verbs"><tbody><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
-<table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the flaming bowl mark and color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#access"><code>thermite access</code></a></td><td>site login, local identity bootstrap, HTTPS service and room policies</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the flaming bowl mark and color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
 <h2 id="program">This program</h2>
 <table class="verbs"><tbody><tr><td><a href="#version"><code>thermite version</code></a></td><td>thermite&#x27;s version, and runtime&#x27;s: pinned, and running here</td></tr><tr><td><a href="#completion"><code>thermite completion</code></a></td><td>print a completion script for bash, zsh or fish</td></tr></tbody></table>
 <h2 id="overview">thermite --help</h2>
@@ -84,6 +84,7 @@ the house&#x27;s devices:
 
 front ends, themes and docs:
   remote               the house remote in a terminal
+  access               site login, local identity bootstrap, HTTPS service and room policies
   theme                the flaming bowl mark and color themes: show, check, export
   docs                 build the docs site, or export it to the thermite repository
 
@@ -1351,10 +1352,11 @@ examples:
                                     as the helper&#x27;s container runs it
 </pre></details>
 </section>
-<section class="verb" id="remote"><h3><code>thermite remote</code></h3><p>The house remote in a terminal.</p><pre class="help">usage: thermite remote [-h] [--production | --sandbox | --url URL | --mock] [--setup]
-                       [--pair] [--room ID] [--choose SOURCE] [--theme NAME|FILE]
-                       [--dark | --light] [--volume {slider,buttons}] [--still] [--log |
-                       --no-log] [--latency MS] [--matrix-down] [--state FILE]
+<section class="verb" id="remote"><h3><code>thermite remote</code></h3><p>The house remote in a terminal.</p><pre class="help">usage: thermite remote [-h] [--production | --sandbox | --url URL | --mock] [--native]
+                       [--setup] [--pair] [--room ID] [--choose SOURCE]
+                       [--theme NAME|FILE] [--dark | --light]
+                       [--volume {slider,buttons}] [--still] [--log | --no-log]
+                       [--latency MS] [--matrix-down] [--state FILE]
 
 The thermite terminal starts on a landing page with Remotes, Security,
 Cameras and Site views. Remotes contains rooms, sources, device controls,
@@ -1396,6 +1398,8 @@ options:
   --sandbox                  the sandbox, http://127.0.0.1:18080 (thermite sandbox)
   --url URL                  runtime at URL, e.g. http://thermite.example:8080
   --mock                     the remote page&#x27;s mock backend, which sends nothing
+  --native                   explicitly use the native runtime instead of site
+                             authentication (owner/testing only)
   --setup                    only install the pinned blessed into build/tui-remote, then
                              exit
   --pair                     start on the Pairing screen
@@ -1449,6 +1453,214 @@ examples:
   thermite remote --no-log          give the log pane&#x27;s rows to the controls; L shows it again
   thermite remote --setup           only install the pinned blessed, then exit
 </pre>
+</section>
+<section class="verb" id="access"><h3><code>thermite access</code></h3><p>Site login, local identity bootstrap, HTTPS service and room policies.</p><pre class="help">usage: thermite access [-h] ACTION ...
+
+Run a site&#x27;s authenticated HTTPS boundary and room-policy worker, or log
+this terminal into a site. Bootstrap is local and prompts privately for the first
+admin password. Staging prepares persistent code, private authority, a pinned
+environment, and owner-installable units; it starts no service.
+
+The gateway is not an effective authorization boundary until every bypassing
+native listener is sealed and device callbacks are preserved. Staging reports
+that owner activation checklist explicitly.
+
+options:
+  -h, --help     show this help message and exit
+
+actions:
+  ACTION
+    bootstrap    initialize the first admin locally
+    serve        serve one HTTPS site
+    worker       run the single room-policy worker
+    callbacks    run the explicitly configured plaintext UPnP NOTIFY listener
+    login        log this terminal into a site
+    logout       revoke this terminal&#x27;s site credential
+    status       read this terminal&#x27;s current site identity and policies
+    stage        prepare a persistent release and owner-installable units
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access login --url https://thermite.example:9443 --user operator
+                                    save this site&#x27;s personal credential privately
+  thermite access bootstrap --config /srv/thermite/config.json --user admin
+                                    initialize one site&#x27;s first admin locally
+  thermite access serve --config /srv/thermite/config.json
+                                    serve the compiled site over verified TLS
+  thermite access worker --config /srv/thermite/config.json
+                                    run the single supervised room-policy worker
+</pre>
+<details id="access-bootstrap"><summary><code>thermite access bootstrap</code></summary><pre class="help">usage: thermite access bootstrap [-h] --config CONFIG --user USER
+
+Initialize the first admin locally.
+
+options:
+  -h, --help       show this help message and exit
+  --config CONFIG  private site service configuration
+  --user USER      first admin&#x27;s username
+
+switches every verb takes:
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access bootstrap --config /srv/thermite/config.json --user admin
+                                    initialize one site&#x27;s first admin locally
+</pre></details>
+<details id="access-serve"><summary><code>thermite access serve</code></summary><pre class="help">usage: thermite access serve [-h] --config CONFIG
+
+Serve one HTTPS site.
+
+options:
+  -h, --help       show this help message and exit
+  --config CONFIG  private site service configuration
+
+switches every verb takes:
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access serve --config /srv/thermite/config.json
+                                    serve the compiled site over verified TLS
+</pre></details>
+<details id="access-worker"><summary><code>thermite access worker</code></summary><pre class="help">usage: thermite access worker [-h] --config CONFIG
+
+Run the single room-policy worker.
+
+options:
+  -h, --help       show this help message and exit
+  --config CONFIG  private site service configuration
+
+switches every verb takes:
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access worker --config /srv/thermite/config.json
+                                    run the single supervised room-policy worker
+</pre></details>
+<details id="access-callbacks"><summary><code>thermite access callbacks</code></summary><pre class="help">usage: thermite access callbacks [-h] --config CONFIG
+
+Run the explicitly configured plaintext UPnP NOTIFY listener.
+
+options:
+  -h, --help       show this help message and exit
+  --config CONFIG  private mode0600 callback-only configuration
+
+switches every verb takes:
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access callbacks --config /srv/thermite/release/callbacks.json
+                                    run only verified callback paths and peers
+</pre></details>
+<details id="access-login"><summary><code>thermite access login</code></summary><pre class="help">usage: thermite access login [-h] --url URL --user USER [--ca-file CA_FILE] [--json]
+
+Log this terminal into a site.
+
+options:
+  -h, --help         show this help message and exit
+  --url URL          site&#x27;s HTTPS origin
+  --user USER        site username
+  --ca-file CA_FILE  trusted private CA certificate file
+  --json             print the report as JSON
+
+switches every verb takes:
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access login --url https://thermite.example:9443 --user operator
+                                    use this site&#x27;s private terminal credential
+</pre></details>
+<details id="access-logout"><summary><code>thermite access logout</code></summary><pre class="help">usage: thermite access logout [-h] --url URL [--json]
+
+Revoke this terminal&#x27;s site credential.
+
+options:
+  -h, --help     show this help message and exit
+  --url URL      site&#x27;s HTTPS origin
+  --json         print the report as JSON
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access logout --url https://thermite.example:9443
+                                    use this site&#x27;s private terminal credential
+</pre></details>
+<details id="access-status"><summary><code>thermite access status</code></summary><pre class="help">usage: thermite access status [-h] --url URL [--room ROOM] [--json]
+
+Read this terminal&#x27;s current site identity and policies.
+
+options:
+  -h, --help     show this help message and exit
+  --url URL      site&#x27;s HTTPS origin
+  --room ROOM    also read this room&#x27;s policy (repeatable)
+  --json         print the report as JSON
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access status --url https://thermite.example:9443
+                                    use this site&#x27;s private terminal credential
+</pre></details>
+<details id="access-stage"><summary><code>thermite access stage</code></summary><pre class="help">usage: thermite access stage [-h] --destination DESTINATION --state STATE [--house FILE]
+                             --assets ASSETS --runtime-url RUNTIME_URL
+                             --runtime-token-file RUNTIME_TOKEN_FILE --tls-cert TLS_CERT
+                             --tls-key TLS_KEY --allowed-host ALLOWED_HOSTS
+                             [--bind-host BIND_HOST] [--port PORT] [--timezone TIMEZONE]
+                             [--service-user USER] [--wheelhouse WHEELHOUSE]
+                             [--callbacks CALLBACKS] [--json]
+
+Prepare a persistent release and owner-installable units.
+
+options:
+  -h, --help                    show this help message and exit
+  --destination DESTINATION     new persistent release directory outside this checkout
+  --state STATE                 site-owned mode0700 state directory outside releases and
+                                source checkouts; reuse on upgrades
+  --house FILE                  the house file (default: instance/devices.yaml)
+  --assets ASSETS               complete deployed native conf/html/remote directory
+  --runtime-url RUNTIME_URL     explicit native loopback HTTP origin
+  --runtime-token-file RUNTIME_TOKEN_FILE
+                                service-owned mode0600 native bearer file
+  --tls-cert TLS_CERT           owner-managed TLS certificate chain
+  --tls-key TLS_KEY             service-owned mode0600 TLS private key
+  --allowed-host ALLOWED_HOSTS  exact HTTP Host name (repeatable; no wildcard)
+  --bind-host BIND_HOST         HTTPS listener address (default: all IPv4 interfaces)
+  --port PORT                   unprivileged HTTPS port (default: 9443)
+  --timezone TIMEZONE           site&#x27;s IANA timezone (default: UTC)
+  --service-user USER           existing unprivileged unit user (default: current user)
+  --wheelhouse WHEELHOUSE       install pinned dependencies offline from this directory
+  --callbacks CALLBACKS         optional private mode0600 exact callback map; stage a
+                                separate disabled listener unit
+  --json                        print the report as JSON
+
+switches every verb takes:
+  -q, --quiet                   print only errors
+  -v, --verbose                 also print, on stderr, the commands and HTTP requests it
+                                runs
+  --no-color                    no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access stage --help      list the explicit custody and listener inputs
+</pre></details>
 </section>
 <section class="verb" id="theme"><h3><code>thermite theme</code></h3><p>The flaming bowl mark and color themes: show, check, export.</p><pre class="help">usage: thermite theme [-h] ACTION ...
 

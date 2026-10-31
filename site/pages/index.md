@@ -12,7 +12,7 @@
   <div class="card"><h3>One house file</h3><p>Rooms, devices and how they connect, in one plain file. Everything else is made from it.</p></div>
   <div class="card"><h3>Try before you touch</h3><p>Every change boots on a throwaway openHAB first. Nothing reaches the house until you say so.</p></div>
   <div class="card"><h3>A remote on every screen</h3><p>The same remote on a phone, a desktop and a terminal. When something can't be done, it says why.</p></div>
-  <div class="card"><h3>Yours, on your network</h3><p>No cloud account and no subscription. It talks to your devices directly.</p></div>
+  <div class="card"><h3>Yours, on your network</h3><p>Core integrations work locally without a cloud account. Optional cloud providers use their own services and accounts.</p></div>
 </div>
 
 ## How it works

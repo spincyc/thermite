@@ -24,6 +24,8 @@ const RETRY_STATUS = new Set([404, 408, 425, 429]);
 class EventSource {
   constructor(url, init) {
     this.url = String(url);
+    this.headers = Object.assign({}, init && init.headers);
+    this.httpStatus = null;
     this.readyState = CONNECTING;
     this.onopen = null;
     this.onmessage = null;
@@ -60,7 +62,7 @@ class EventSource {
     if (this.readyState === CLOSED) return;
     const target = new URL(this.url);
     const client = target.protocol === "https:" ? https : http;
-    const headers = { Accept: "text/event-stream", "Cache-Control": "no-cache" };
+    const headers = { ...this.headers, Accept: "text/event-stream", "Cache-Control": "no-cache" };
     if (this.lastEventId) headers["Last-Event-ID"] = this.lastEventId;
     let ended = false;
     const end = (fatal) => {
@@ -71,6 +73,7 @@ class EventSource {
       else this.lost();
     };
     const request = client.get(target, { headers: headers }, (response) => {
+      this.httpStatus = response.statusCode;
       const type = String(response.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
       if (response.statusCode !== 200 || type !== "text/event-stream") {
         response.resume();
@@ -128,7 +131,7 @@ class EventSource {
   lost() {
     if (this.readyState === CLOSED) return;
     this.readyState = CONNECTING;
-    this.dispatch("error", { type: "error" });
+    this.dispatch("error", { type: "error", status: this.httpStatus });
     if (this.readyState === CLOSED) return;
     this.timer = setTimeout(() => this.connect(), this.retry);
   }
@@ -136,7 +139,7 @@ class EventSource {
   fail() {
     if (this.readyState === CLOSED) return;
     this.readyState = CLOSED;
-    this.dispatch("error", { type: "error" });
+    this.dispatch("error", { type: "error", status: this.httpStatus });
   }
 
   close() {

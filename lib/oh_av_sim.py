@@ -96,6 +96,8 @@ class Receiver(Device):
         self.mute = mute
         self.source = source
         self.surround = surround
+        # The verified main-zone display enum: 1 absolute, 2 relative dB.
+        self.volume_scale = 1
         #: Zone number -> {"power", "source", "volume" (dB), "mute"}.
         self.zone = {n: {"power": False, "source": "SOURCE", "volume": -40, "mute": False}
                      for n in range(2, zones + 1)}
@@ -108,6 +110,10 @@ class Receiver(Device):
         if method == "GET" and url.path == "/goform/Deviceinfo.xml":
             return _xml(f"<Device_Info><DeviceZones>{self.zones}</DeviceZones>"
                         f"<ModelName>*{escape(self.model)}</ModelName></Device_Info>")
+        if method == "GET" and url.path == "/ajax/globals/get_config" and url.query == "type=12":
+            return _xml(f"<listGlobals><MainZone><Volume>{round(self.volume * 10)}</Volume>"
+                        f"<VolumeScale>{self.volume_scale}</VolumeScale>"
+                        f"<Max>{self.MAX_VOLUME * 10}</Max></MainZone></listGlobals>")
         if method == "GET" and url.path in self.LEGACY:
             return 403, "text/html", b"<html><body>403 Forbidden</body></html>"
         zone = self.ZONE_LITE.fullmatch(url.path)

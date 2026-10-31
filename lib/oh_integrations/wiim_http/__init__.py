@@ -225,7 +225,8 @@ def remote(device: dict) -> dict | None:
     return {
         "key": f"{ident}_key",
         "mute": f"{ident}_mute",
-        "volume": {"item": f"{ident}_volume", "max": volume_max(device), "step": 2, "unit": "", "offset": 0},
+        "volume": {"item": f"{ident}_volume", "max": volume_max(device), "step": 2, "unit": "", "offset": 0,
+                   "native": {"min": 0, "max": MAX_VOLUME, "step": 1}},
         "input": {"item": f"{ident}_input", "options": [list(pair) for pair in INPUTS]},
     }
 

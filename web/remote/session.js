@@ -182,6 +182,18 @@
     // ---- state -------------------------------------------------------------
 
     function onEvent(event) {
+      if (event.type === "access") {
+        if (event.unauthorized) {
+          closeDiagnostics();
+          for (const cache of [signalViews, signalConfirmed, signalSince]) Object.keys(cache).forEach((id) => delete cache[id]);
+          cancel(fader.timer); cancel(fader.release); cancel(muteRelease); cancel(allOffArmed.timer);
+          Object.assign(fader, { room: null, device: null, value: null, at: 0, dragging: false, sent: null, sentTo: null, timer: 0, release: 0 });
+          muteRelease = 0; inputsOf = null; offArmed = null; allOffArmed.at = 0; allOffArmed.timer = 0;
+          Object.keys(devices).forEach((id) => delete devices[id]);
+          Object.keys(states).forEach((id) => { states[id] = { room: id, value: "NULL", pending: null, status: "unknown", reason: "" }; });
+        }
+        emit(event); emit({ type: "change" }); return;
+      }
       if (event.type === "activity") {
         emit(event);
         return;
@@ -269,6 +281,7 @@
       const room = roomsById[id] || rooms[0];
       if (!room) return null;
       current = room;
+      if (backend.access && !backend.access.native) backend.access.watchRoom(room.id);
       store.set("remote.room", room.id);
       if (signalOpen) { signalRoom = room.id; refreshDiagnostics(); }
       return room;
@@ -458,7 +471,12 @@
       const audio = current && current.audio;
       if (!audio) return;
       if (final) fader.dragging = false;
-      held(audio.id, Number(value));
+      const control = Remote.controlOf(house, audio.id);
+      if (!control || !control.volume) return;
+      const volume = control.volume;
+      const number = Number(value);
+      if (!Number.isFinite(number)) return;
+      held(audio.id, Remote.volumeValue(volume, number));
       if (!fader.timer) sendVolume();
     }
 
@@ -498,7 +516,10 @@
       let caption = audio ? audio.short : "No audio";
       if (audio && !volume) caption += " · not connected";
       else if (volume && value === null) caption += state && state.volume === "UNDEF" ? " · not answering" : " · reading…";
-      else if (volume) caption += " · " + Remote.volumeText(volume, value);
+      else if (volume) caption += " · " + Remote.volumeText(volume, value, state && state.volumeScale);
+      if (volume && volume.native && volume.max < volume.native.max) {
+        caption += " · limit " + Remote.volumeText(volume, volume.max, state && state.volumeScale);
+      }
       if (volume && isMuted) caption += " · muted";
       return {
         audio: audio,
@@ -508,12 +529,14 @@
         muted: control && control.mute && state ? isMuted : null,
         value: value,
         max: volume ? volume.max : 100,
+        min: volume && volume.native ? volume.native.min : 0,
+        step: volume ? Remote.volumeStep(volume) : 1,
         disabled: value === null,
         fill: volume ? Math.min(100, ((value === null ? 0 : value) / volume.max) * 100) : 0,
         dragging: fader.dragging,
         caption: caption,
         label: "Volume" + (audio ? ", " + audio.short : ""),
-        text: volume && value !== null ? Remote.volumeText(volume, value) : caption
+        text: volume && value !== null ? Remote.volumeText(volume, value, state && state.volumeScale) : caption
       };
     }
 
@@ -733,6 +756,8 @@
       sliderShown: sliderShown,
       setVolumeMode: setVolumeMode,
       toggleVolumeMode: () => setVolumeMode(volumeMode === "slider" ? "buttons" : "slider"),
+      access: backend.access || null,
+      controlAllowed: () => !backend.access || backend.access.canControl(current && current.id),
       audioView: audioView,
       controls: controls,
       activeTarget: activeTarget,

@@ -72,6 +72,7 @@ VERBS = {
     "cameras": ("devices", "read camera status, or configure native Protect bridges privately"),
     "apple-tv": ("devices", "run the Apple TV helper runtime calls"),
     "remote": ("use", "the house remote in a terminal"),
+    "access": ("use", "site login, local identity bootstrap, HTTPS service and room policies"),
     "theme": ("use", "the flaming bowl mark and color themes: show, check, export"),
     "docs": ("use", "build the docs site, or export it to the thermite repository"),
     "version": ("program", "thermite's version, and runtime's: pinned, and running here"),

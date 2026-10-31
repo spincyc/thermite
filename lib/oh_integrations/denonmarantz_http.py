@@ -108,6 +108,7 @@ KEYS = {
 SIGNAL_MODELS = frozenset({"CINEMA 60", "CINEMA 30"})
 SIGNAL_POLL = 10
 SIGNAL_PATH = "/goform/AppCommand0300.xml"
+VOLUME_DISPLAY_PATH = "/ajax/globals/get_config?type=12"
 SIGNAL_FIELDS = {
     "audio": ("GetAudioInfo", {"inputmode": ("audio", "Audio input mode"),
                               "output": ("audio", "Audio destination"),
@@ -136,7 +137,26 @@ def signal_js(kind: str) -> str:
 def files(devices: list[dict], house: House) -> dict[str, str]:
     if not any(diagnostics(device) for device in devices):
         return {}
-    return {f"transform/marantz-{kind}-signal.js": diag.script_file(signal_js(kind)) for kind in SIGNAL_FIELDS}
+    return {**{f"transform/marantz-{kind}-signal.js": diag.script_file(signal_js(kind)) for kind in SIGNAL_FIELDS},
+            "transform/marantz-volume-display.js": diag.script_file(volume_display_js())}
+
+
+def volume_display_uid(device: dict) -> str:
+    return f"http:url:volume_display:{device['id']}"
+
+
+def volume_display_js() -> str:
+    """Select only the main zone's verified display enum, never a zone-2 fallback."""
+    return r'''|(function () {
+  if (typeof input !== 'string' || input.length > 65536 || /<!/i.test(input)) return 'UNDEF';
+  var root = /^\s*(?:<\?xml[^?]*\?>\s*)?<listGlobals\b[^>]*>([\s\S]*)<\/listGlobals>\s*$/.exec(input);
+  if (!root) return 'UNDEF';
+  var main = root[1].match(/<MainZone\b[^>]*>[\s\S]*?<\/MainZone>/g);
+  if (!main || main.length !== 1 || (root[1].match(/<MainZone\b/g) || []).length !== 1) return 'UNDEF';
+  var scales = main[0].match(/<VolumeScale\b[^>]*>\s*[12]\s*<\/VolumeScale>/g);
+  if (!scales || scales.length !== 1 || (main[0].match(/<VolumeScale\b/g) || []).length !== 1) return 'UNDEF';
+  return />\s*1\s*</.test(scales[0]) ? 'absolute' : 'relative';
+})()'''
 
 
 def diagnostics(device: dict) -> dict | None:
@@ -167,6 +187,16 @@ def _render_signal(device: dict, house: House, out: YamlFile) -> None:
     for kind in SIGNAL_FIELDS:
         out.items[f"{device['id']}_{kind}_signal"] = diag.snapshot_item(
             device, uid, kind, f"Main-zone {kind} signal snapshot")
+    display_uid = volume_display_uid(device)
+    out.things[display_uid] = {
+        "label": f"{house.label(device)} read-only volume display",
+        "location": house.room_label(device["room"]),
+        "config": {"baseURL": f"http://{device['ip']}:11080{VOLUME_DISPLAY_PATH}", "refresh": SIGNAL_POLL,
+                   "timeout": 3000, "delay": 0, "stateMethod": "GET", "strictErrorHandling": True},
+        "channels": {"scale": diag.channel("Main-zone volume display", "marantz-volume-display.js")},
+    }
+    out.items[f"{device['id']}_volume_scale"] = point(device["id"], "String", "Volume display",
+        ["Status", "SoundVolume"], f"{display_uid}:scale", guarded=True)
 
 
 def thing_uid(device: dict) -> str:
@@ -211,7 +241,7 @@ def _lookup_js(table: dict[str, str], otherwise: str = "null") -> str:
 def volume_js(cap: float) -> str:
     """Inline JS: a volume command held to `cap`; null (nothing sent) for
     anything but a number, INCREASE and DECREASE among them."""
-    return f"|/^\\d+(\\.\\d+)?$/.test(input) ? String(Math.min(Number(input), {json.dumps(cap)})) : null"
+    return f"|/^\\d+(\\.\\d+)?$/.test(input) ? String(Math.min(Math.round(Number(input) * 2) / 2, {json.dumps(cap)})) : null"
 
 
 def input_js(device: dict, zone: int | None = None) -> str:
@@ -285,7 +315,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     items[f"{ident}_main_volume"] = _control(
         ident, "Dimmer", "Main Zone Volume", ["Control", "SoundVolume"], f"{uid}:mainZone#volume",
         link={"toItemScript": "|input", "commandFromItemScript": volume_js(cap)}, icon="soundvolume",
-        state={"min": 0, "max": cap})
+        state={"min": 0, "max": cap, "step": 0.5})
     items[f"{ident}_main_mute"] = _control(ident, "Switch", "Main Zone Mute", ["Control", "SoundVolume"],
                                            f"{uid}:mainZone#mute", icon="soundvolume_mute")
     items[f"{ident}_main_input"] = _control(
@@ -326,8 +356,11 @@ def remote(device: dict) -> dict | None:
         "key": f"{ident}_key",
         "power": f"{ident}_main_power",
         "mute": f"{ident}_main_mute",
-        "volume": {"item": f"{ident}_main_volume", "max": volume_max(device), "step": 1, "unit": "dB",
-                   "offset": DB_OFFSET},
+        "volume": {"item": f"{ident}_main_volume", "max": volume_max(device), "step": 0.5, "unit": "",
+                   "offset": 0, "precision": 1, "native": {"min": 0, "max": MAX_VOLUME, "step": 0.5},
+                   "displayMode": {"item": f"{ident}_volume_scale" if diagnostics(device) else None,
+                       "modes": {"absolute": {"unit": "", "offset": 0},
+                                 "relative": {"unit": "dB", "offset": DB_OFFSET, "minimum": "---.- dB"}}}},
         "input": {"item": f"{ident}_main_input", "options": [list(pair) for pair in inputs(device)]},
     }
 
@@ -342,4 +375,6 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     if diagnostics(device) is not None:
         text = retarget(text, FILE, f"http:url:{device['id']}", lambda thing: thing["config"].update(
             baseURL=f"http://{address}{SIGNAL_PATH}"))
+        text = retarget(text, FILE, volume_display_uid(device), lambda thing: thing["config"].update(
+            baseURL=f"http://{address}{VOLUME_DISPLAY_PATH}"))
     return {**files, FILE: text}

@@ -83,4 +83,7 @@ KINDS = {
     "computer": "Computer",
     "camera": "Camera",
     "doorbell": "Doorbell",
+    "thermostat": "Thermostat",
+    "climate_gateway": "ControlDevice",
+    "climate_endpoint": "HVAC",
 }

@@ -109,6 +109,7 @@ hr { border: 0; border-top: 1px solid var(--th-line); margin: 2.5rem 0; }
 
 code {
   font: 0.86em/1.5 var(--mono);
+  overflow-wrap: anywhere;
   background: var(--th-surface);
   border: 1px solid var(--th-line);
   border-radius: 6px;
@@ -215,6 +216,7 @@ details[open] summary { color: var(--th-text); }
 
 .term {
   display: inline-block;
+  max-width: 100%;
   padding: 1rem 1.4rem;
   margin: 0 0 1.1rem;
   background: var(--th-bg);
@@ -222,7 +224,7 @@ details[open] summary { color: var(--th-text); }
   border-radius: var(--radius);
   box-shadow: inset 0 0 0 4px var(--th-surface);
 }
-.term svg { display: block; width: calc(var(--cols) * 0.62rem); height: auto; }
+.term svg { display: block; width: calc(var(--cols) * 0.62rem); max-width: 100%; height: auto; }
 
 .palettes { display: grid; gap: 1rem; margin: 0 0 1.5rem; }
 .palette-card {
@@ -256,7 +258,8 @@ details[open] summary { color: var(--th-text); }
   vertical-align: -0.1rem;
   box-shadow: inset 0 0 0 1px rgb(127 127 127 / 0.4);
 }
-table.roles td:nth-child(3), table.roles td:nth-child(4) { white-space: nowrap; }
+table.roles { display: block; max-width: 100%; overflow-x: auto; }
+table.roles td:first-child, table.roles td:nth-child(3), table.roles td:nth-child(4) { white-space: nowrap; }
 
 /* ---- the foot --------------------------------------------------------- */
 

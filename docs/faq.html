@@ -44,11 +44,11 @@
 <h3 id="what-can-it-control">What can it control?</h3>
 <p>TVs, streaming boxes, AV receivers, projectors, speakers, and HDMI and USB switchers, each over its own network control. More kinds of devices are on the way.</p>
 <h3 id="does-it-need-the-internet">Does it need the internet?</h3>
-<p>No. It talks to your devices on your own network. Some devices need their maker's app once, to set them up.</p>
+<p>Core AV controls run on your own network. Downloads and cloud-based integrations need internet access. Some devices also need their maker's app for setup.</p>
 <h3 id="can-trying-it-break-my-house">Can trying it break my house?</h3>
-<p>Not by accident. Every change boots on a throwaway openHAB first (<code>thermite test boot</code>), and nothing reaches the house until you run <code>thermite deploy</code>. If a change turns out wrong, <code>thermite rollback</code> puts the previous one back.</p>
+<p>Generating and validating configuration do not send device commands. Deployment installs a committed configuration after its native boot check (<code>thermite test boot</code>); <code>thermite rollback</code> restores the previous deployment. Remotes, pairing and explicit device commands act on the selected runtime, so use the mock remote or a sandbox when trying controls without changing the house.</p>
 <h3 id="where-are-passwords-kept">Where are passwords kept?</h3>
-<p>Outside the house file, in a private folder only openHAB can read. They never go into Git, and <code>thermite lint</code> checks that none slipped in.</p>
+<p>Outside the house file and Git, in private service and client stores. Site passwords are stored as hashes; terminal clients keep revocable tokens in owned private files. <code>thermite lint</code> scans source and configuration for accidentally embedded credentials.</p>
 <h3 id="can-i-change-the-colors">Can I change the colors?</h3>
 <p>Yes. <code>--theme contrast</code> gives the most contrast. A theme file of your own can change only what you want, and <code>thermite theme check</code> warns you when something would be hard to read. See <a href="colors.html">Colors</a>.</p>
 <h3 id="does-it-work-with-apple-home">Does it work with Apple Home?</h3>

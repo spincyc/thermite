@@ -7,13 +7,16 @@
     { id: "pairing", label: "Pair devices", href: "pair.html", parent: "remotes" },
     { id: "security", label: "Security", href: "security.html" },
     { id: "cameras", label: "Cameras", href: "cameras.html" },
-    { id: "site", label: "Site", href: "topology.html" }
+    { id: "site", label: "Site", href: "topology.html" },
+    { id: "settings", label: "Room settings", href: "settings.html" },
+    { id: "users", label: "Users & roles", href: "users.html", admin: true },
+    { id: "access", label: "Account", href: "access.html" }
   ];
   function href(id, search = "", room) {
     const page = pages.find(entry => entry.id === id) || pages[0];
     const params = new URLSearchParams();
-    if (new URLSearchParams(search).get("backend") === "mock") params.set("backend", "mock");
-    if (id === "remotes" && typeof room === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(room)) params.set("room", room);
+    if (["mock", "native"].includes(new URLSearchParams(search).get("backend"))) params.set("backend", new URLSearchParams(search).get("backend"));
+    if (["remotes", "settings"].includes(id) && typeof room === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(room)) params.set("room", room);
     return page.href + (params.size ? "?" + params.toString() : "");
   }
   global.ThermiteShell = { pages, href };
@@ -43,6 +46,7 @@
   pages.forEach(entry => {
     const a = link(entry, "thermite-nav-link" + (entry.parent ? " thermite-nav-child" : ""));
     a.dataset.view = entry.id;
+    if (entry.admin) { a.hidden = true; a.dataset.adminOnly = ""; }
     if (entry.id === current) a.setAttribute("aria-current", "page");
     if (entry.id === page.parent) a.dataset.parentActive = "true";
     nav.appendChild(a);
@@ -75,5 +79,10 @@
   if (!main) return;
   main.before(shell, content); content.appendChild(main);
   body.classList.add("thermite-app");
+  const access = global.ThermiteAccess && global.ThermiteAccess.client;
+  if (access) access.ready().then(() => {
+    shell.querySelectorAll("[data-admin-only]").forEach((link) => { link.hidden = !access.canEdit(); });
+    shell.querySelectorAll('[data-view="pairing"]').forEach((link) => { link.hidden = !access.has("pairing.manage"); });
+  }).catch(() => {});
   document.querySelectorAll("[data-thermite-link]").forEach(a => { a.href = href(a.dataset.thermiteLink, location.search); });
 })(globalThis);

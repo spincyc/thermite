@@ -156,7 +156,8 @@ def build(house: House, hints: dict | None = None) -> dict:
         if "devices" not in hint:
             members = [d for d, spec in devices.items() if spec["room"] == physical]
         row = {"id": ident, "label": routing.room_label(data, ident), "sources": sources,
-               "display": display, "audio": audio, "devices": members}
+               "display": display, "audio": audio, "devices": members,
+               "routeProblem": routing.problem_item_name(ident)}
         if physical != ident:
             row["room"] = physical
         selected_order = [s for s in hint.get("order") or [] if s in sources or s == "off"]

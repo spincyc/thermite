@@ -19,7 +19,8 @@ function content(g, width, ctx, height) {
   const columns = width >= 88 ? 2 : 1, gap = 2;
   const cardWidth = Math.max(10, Math.floor((width - 4 - gap * (columns - 1)) / columns));
   const cardHeight = columns === 1 ? 3 : 6;
-  MODULES.forEach((module, index) => {
+  const modules = MODULES;
+  modules.forEach((module, index) => {
     const x = 2 + (index % columns) * (cardWidth + gap), top = y + Math.floor(index / columns) * (cardHeight + 1);
     const key = "home:" + module.id;
     const active = ctx.ui.focusVisible && ctx.ui.focus === key;
@@ -30,7 +31,7 @@ function content(g, width, ctx, height) {
       g.put(x, top + row, "│" + " ".repeat(cardWidth - 2) + "│", style);
     }
     g.put(x, top + cardHeight - 1, "╰" + "─".repeat(cardWidth - 2) + "╯", style);
-    const compact = { remote: "Rooms, devices & pairing", security: "Not connected", cameras: "Status & viewing", topology: "Configured connections" };
+    const compact = { remote: "Rooms, devices & pairing", security: "Not connected", cameras: "Status & viewing", topology: "Configured connections", settings: "Schedules", users: "Accounts & grants", account: "Sign-in & access" };
     g.put(x + 2, top + 1, fit(module.key + "  " + module.label + (columns === 1 ? " · " + compact[module.id] : ""), cardWidth - 4), style + "+bold");
     if (columns > 1) {
       wrap(module.detail, Math.max(4, cardWidth - 4)).slice(0, 2).forEach((part, row) => g.put(x + 2, top + 2 + row, part, style));
@@ -38,7 +39,14 @@ function content(g, width, ctx, height) {
     }
     g.hit(x, top, cardWidth, cardHeight, hit);
   });
-  y += Math.ceil(MODULES.length / columns) * (cardHeight + 1) + 1;
+  y += Math.ceil(modules.length / columns) * (cardHeight + 1) + 1;
+  const accessLinks = [["settings", "F7 Settings"], ...(ctx.access?.canEdit() ? [["users", "F8 Users"]] : []), ["account", "F9 Account"]];
+  let accessX = 2;
+  accessLinks.forEach(([screen, label]) => {
+    if (accessX + label.length > width - 2) { y++; accessX = 2; }
+    const key = "home:" + screen;
+    g.put(accessX, y, label, ctx.ui.focus === key ? "row.focus" : "link", { kind: "screen", screen, key, focus: true, label }); accessX += label.length + 3;
+  }); y += 2;
   line("Rooms · reported sources", "section");
   if (!ctx.ui.ready) { line("Reading rooms…"); return y; }
   const nameWidth = Math.min(25, Math.max(10, Math.floor((width - 5) * .4)));
@@ -52,7 +60,7 @@ function content(g, width, ctx, height) {
     g.hit(1, y++, width - 2, 1, { kind: "home-room", room: room.id, key, focus: true,
       label: room.label + ", " + shown.spoken + ". Open Remotes" });
   });
-  const used = y + 1;
+  const used = y;
   // The existing compact mark belongs to Home's quiet hero space. Never
   // displace cards or the complete room summary to make room for it.
   const spec = ctx.look && ctx.look.torch;

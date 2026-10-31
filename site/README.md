@@ -11,7 +11,7 @@ thermite turns one plain file describing your house (its rooms, TVs, speakers an
 - **One house file.** Rooms, devices and how they connect, in one place. Everything else is made from it.
 - **Safe changes.** Every change boots on a throwaway openHAB first; a bad one rolls back with one command.
 - **A remote on every screen.** The same remote on a phone, a desktop and a terminal.
-- **No cloud.** It talks to your devices on your own network.
+- **Local by default.** Core integrations talk directly to devices on your network. Optional cloud providers require their own services and accounts.
 - **Your colors.** A dark and a light mode, or a theme of your own.
 
 ## In four commands

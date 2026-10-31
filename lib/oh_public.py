@@ -28,6 +28,15 @@ from oh_features import remote_model, remote_cameras, remote_topology, remote_di
 MANIFEST = ".thermite-export.json"
 SOURCE_FILES = (
     'bin/thermite',
+    'lib/oh_access/README.md',
+    'lib/oh_access/__init__.py',
+    'lib/oh_access/callback_service.py',
+    'lib/oh_access/callbacks.py',
+    'lib/oh_access/client.py',
+    'lib/oh_access/files.py',
+    'lib/oh_access/service.py',
+    'lib/oh_access/staging.py',
+    'lib/oh_access/worker.py',
     'lib/oh_adcp_sim.py',
     'lib/oh_atv.py',
     'lib/oh_atv_sim.py',
@@ -37,6 +46,7 @@ SOURCE_FILES = (
     'lib/oh_brand/palettes/thermite.json',
     'lib/oh_brand/theme.schema.json',
     'lib/oh_cli/__init__.py',
+    'lib/oh_cli/access.py',
     'lib/oh_cli/apple_tv.py',
     'lib/oh_cli/cameras.py',
     'lib/oh_cli/completion.py',
@@ -59,6 +69,8 @@ SOURCE_FILES = (
     'lib/oh_cli/upgrade.py',
     'lib/oh_cli/validate.py',
     'lib/oh_cli/version.py',
+    'lib/oh_climate/__init__.py',
+    'lib/oh_climate/nuheat_api.py',
     'lib/oh_conf.py',
     'lib/oh_deploy.py',
     'lib/oh_discover.py',
@@ -77,6 +89,24 @@ SOURCE_FILES = (
     'lib/oh_features/routing/__init__.py',
     'lib/oh_features/routing/routing.js',
     'lib/oh_googletv_sim.py',
+    'lib/oh_identity/README.md',
+    'lib/oh_identity/__init__.py',
+    'lib/oh_identity/apps.py',
+    'lib/oh_identity/asgi.py',
+    'lib/oh_identity/auth.py',
+    'lib/oh_identity/composition.py',
+    'lib/oh_identity/migrations/0001_initial.py',
+    'lib/oh_identity/migrations/__init__.py',
+    'lib/oh_identity/models.py',
+    'lib/oh_identity/policy_store.py',
+    'lib/oh_identity/runtime.py',
+    'lib/oh_identity/services.py',
+    'lib/oh_identity/settings.py',
+    'lib/oh_identity/state.py',
+    'lib/oh_identity/streams.py',
+    'lib/oh_identity/transport.py',
+    'lib/oh_identity/urls.py',
+    'lib/oh_identity/views.py',
     'lib/oh_install/__init__.py',
     'lib/oh_install/model.py',
     'lib/oh_install/runner.py',
@@ -117,10 +147,16 @@ SOURCE_FILES = (
     'lib/oh_metrics/exporter.py',
     'lib/oh_public.py',
     'lib/oh_render.py',
+    'lib/oh_room_policy/__init__.py',
+    'lib/oh_room_policy/model.py',
+    'lib/oh_room_policy/plan.py',
+    'lib/oh_room_policy/schedule.py',
+    'lib/oh_room_policy/worker.py',
     'lib/oh_sandbox.py',
     'lib/oh_secrets.py',
     'lib/oh_semantic.py',
     'lib/oh_site.py',
+    'lib/oh_site_contract.py',
     'lib/oh_sonos_sim.py',
     'lib/oh_sony_sim.py',
     'lib/oh_testing/__init__.py',
@@ -128,6 +164,7 @@ SOURCE_FILES = (
     'lib/oh_testing/controls.py',
     'lib/oh_testing/routing.py',
     'lib/requirements-pyatv.txt',
+    'lib/requirements-site.txt',
     'site/FAQ.md',
     'site/README.md',
     'site/examples/harbor.json',
@@ -139,9 +176,11 @@ SOURCE_FILES = (
     'site/site.css',
     'site/site.js',
     'site/template.html',
+    'tui/remote/administration.js',
     'tui/remote/app.js',
     'tui/remote/cameras.js',
     'tui/remote/controller.js',
+    'tui/remote/credentials.js',
     'tui/remote/events.js',
     'tui/remote/grid.js',
     'tui/remote/landing.js',
@@ -157,6 +196,10 @@ SOURCE_FILES = (
     'tui/remote/torch.js',
     'tui/remote/view.js',
     'versions.json',
+    'web/remote/access-ui.js',
+    'web/remote/access.css',
+    'web/remote/access.html',
+    'web/remote/access.js',
     'web/remote/activity.js',
     'web/remote/appearance.js',
     'web/remote/apple-touch-icon.png',
@@ -179,12 +222,14 @@ SOURCE_FILES = (
     'web/remote/remotes.js',
     'web/remote/security.html',
     'web/remote/session.js',
+    'web/remote/settings.html',
     'web/remote/shell.css',
     'web/remote/shell.js',
     'web/remote/theme.css',
     'web/remote/topology.css',
     'web/remote/topology.html',
     'web/remote/topology.js',
+    'web/remote/users.html',
 )
 OMITTED = {"control4", "dhcp-reservations", "matrix-settings"}
 PROTOCOL_IPS = {"0.0.0.0", "127.0.0.1", "224.0.0.251", "239.255.255.250", "255.255.255.255"}
@@ -483,6 +528,25 @@ def bundle(doc_files: dict[str, bytes], area: Path = oh_cli.AREA) -> dict[str, b
         out[f"web/remote/{filename}"] = _data(manifest)
     out["web/remote/README.md"] = b"# Web remote\n\nRun `bin/thermite generate` after editing the house file. The generated page is served by the runtime under /static/remote/. Source previews use the fictional sample; `?backend=mock` sends no commands.\n"
     out["tui/remote/README.md"] = b"# Terminal remote\n\nRun `bin/thermite remote --mock` for a fictional house without device commands. Node.js and the locked blessed package are required. Run `bin/thermite generate` after editing the house file; the terminal prefers that generated house model.\n"
+    # Development-only identity fixtures are deliberately outside this source
+    # manifest. Keep the public instructions executable from the shipped tree.
+    identity_readme = out["lib/oh_identity/README.md"].decode()
+    private_tests = (
+        "Run the actual tests (including real-file SQLite concurrency, no runtime/device\n"
+        "calls): set THERMITE_IDENTITY_STATE to a 0700 scratch directory, PYTHONPATH=lib,\n"
+        "DJANGO_SETTINGS_MODULE=oh_identity.test_settings, then\n"
+        "`python -m django test oh_identity --noinput`. This package's tests are explicit\n"
+        "Django tests; they do not silently skip when the framework is absent.\n")
+    portable_tests = (
+        "## Testing\n\nRun `make check` from the repository root for the shipped portable\n"
+        "configuration, documentation and offline smoke checks. Full identity\n"
+        "development fixtures and their Django test settings are not included\n"
+        "in this portable source export.\n")
+    if identity_readme.endswith(private_tests) and identity_readme.count(private_tests) == 1:
+        identity_readme = identity_readme[:-len(private_tests)] + portable_tests
+    elif not (identity_readme.endswith(portable_tests) and identity_readme.count(portable_tests) == 1):
+        raise PublicError("Identity test instructions changed; review portable README adaptation")
+    out["lib/oh_identity/README.md"] = identity_readme.encode()
     out["Makefile"] = MAKEFILE.encode()
     out["requirements.txt"] = b"# Base configuration and documentation dependency. Optional helpers have their own locks.\nPyYAML>=6.0,<7\n"
     out[".gitignore"] = b"/.scratch/\n/var/\n/build/\n/conf/\n/metrics/\n/deploy/\n/.venv/\n__pycache__/\n*.pyc\nnode_modules/\n"

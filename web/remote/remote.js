@@ -83,7 +83,7 @@
     }
     if (!ready) return;
     if (event.type === "diagnostics") return updateSignal();
-    if (event.type === "change") update();
+    if (event.type === "change" || event.type === "access") update();
     else if (event.type === "audio") updateAudio();
     else if (event.type === "device") {
       updateAudio();
@@ -98,6 +98,7 @@
     const current = session.current();
     if (!current) return;
     all("[data-room-name]").forEach((node) => { node.textContent = current.label; });
+    all('.thermite-nav-link[data-view="settings"]').forEach((link) => { link.href = globalThis.ThermiteShell.href("settings", location.search, current.id); });
     document.title = current.label + " · thermite";
     $("#room-switch").setAttribute("aria-label", "Room: " + current.label + ". Choose another room");
     updateRoomLists();
@@ -107,6 +108,13 @@
     updateSimulation();
     updateSignal();
     syncSignal();
+    const allowed = session.controlAllowed();
+    all('[data-action="all-off"]').forEach((button) => { button.disabled = Boolean(backend.access && !backend.access.has("room.control")); });
+    all('[data-button], [data-choose], [data-action="control"], [data-action="input"]').forEach((button) => {
+      if (!allowed && !button.hasAttribute("data-policy-disabled")) { button.dataset.policyDisabled = String(button.disabled); button.disabled = true; }
+      else if (allowed && button.hasAttribute("data-policy-disabled")) { button.disabled = button.dataset.policyDisabled === "true"; delete button.dataset.policyDisabled; }
+    });
+    if (!allowed) { $("[data-fader-input]").disabled = true; $("#alert").hidden = false; $("#alert-text").textContent = [$("#alert-text").textContent, "Read-only · account permission or room schedule"].filter(Boolean).join(" · "); }
   }
 
   function buildRoomLists() {
@@ -349,7 +357,9 @@
     if (!view.slider) return;
     const range = $("[data-fader-input]");
     range.max = String(view.max);
-    range.disabled = view.disabled;
+    range.min = String(view.min);
+    range.step = String(view.step);
+    range.disabled = view.disabled || !session.controlAllowed();
     if (view.value !== null && !view.dragging) range.value = String(view.value);
     range.style.setProperty("--fill", view.fill + "%");
     range.setAttribute("aria-label", view.label);

@@ -17,6 +17,7 @@
 
 const View = require("./view");
 const Topology = require("./topology");
+const Access = require("./administration");
 
 const TOAST_MS = 1900;
 const FLASH_MS = 140;
@@ -44,7 +45,7 @@ function create(options) {
   const hints = Session.keyHints();
 
   const ui = {
-    screen: ["home", "remote", "security", "cameras", "topology", "pairing"].includes(options.screen) ? options.screen : "home",
+    screen: ["home", "remote", "security", "cameras", "topology", "pairing", "settings", "users", "account"].includes(options.screen) ? options.screen : "home",
     overlay: null,
     focus: null,
     focusVisible: false,
@@ -69,6 +70,7 @@ function create(options) {
     error: null,
     ready: false
   };
+  const access = Access.create(options.access, options.house, changed);
   const pairing = { backend: null, selected: null, codes: {}, alert: null, loaded: false, mock: Boolean(ui.target.mock), notes: {}, announce: "", sortField: "room", sortDescending: false };
   const cameras = { backend: null, selected: null, link: null };
   const topology = { backend: null, room: null, source: null, link: null };
@@ -107,7 +109,7 @@ function create(options) {
     if (options.backend && "connected" in options.backend) ui.connected = options.backend.connected;
     return {
       session: session, Session: Session, Remote: options.Remote, layouts: options.layouts, house: options.house,
-      Pairing: Pairing, hints: hints, ui: ui, pairing: pairing, cameras: cameras, topology: topology, look: options.look || null,
+      Pairing: Pairing, hints: hints, ui: ui, access, pairing: pairing, cameras: cameras, topology: topology, look: options.look || null,
       now: now(), still: ui.still, animate: undefined
     };
   }
@@ -127,8 +129,7 @@ function create(options) {
       ui.clock = clock();
       changed();
     }, TICK_MS);
-    if (ui.screen === "pairing") openPairing();
-    return session.start(roomId)
+    return Promise.resolve(options.access ? options.access.ready() : null).then(() => { if (ui.screen === "pairing") openPairing(); return session.start(roomId); })
       .then(() => {
         if (stopped) return;
         ui.ready = true;
@@ -137,12 +138,14 @@ function create(options) {
         ui.focusVisible = true;
         if (ui.screen === "cameras") openCameras();
         if (ui.screen === "topology") openTopology();
+        if (["settings", "users", "account"].includes(ui.screen)) access.open(ui.screen, session.current()?.id);
         changed();
         if (chosen) session.choose(chosen);
       })
       .catch((error) => {
         if (stopped) return;
         ui.error = "The remote could not start: " + String((error && error.message) || error);
+        if (options.access && !options.access.native) { ui.screen = "account"; ui.overlay = null; ui.pane = "account"; access.state.kind = "account"; access.state.error = ui.error; }
         changed();
       });
   }
@@ -196,6 +199,13 @@ function create(options) {
   }
 
   function onSession(event) {
+    if (event.type === "access" && event.unauthorized) {
+      ui.log = []; ui.toast = null; ui.announce = ""; ui.error = "Your sign-in has ended. Run thermite access login again.";
+      pairing.codes = {}; pairing.notes = {}; if (pairing.backend) pairing.backend.stop(); pairing.backend = null; pairing.loaded = false;
+      if (cameras.backend) cameras.backend.stop();
+      access.cancel(); access.state.users = []; access.state.roles = []; access.state.policy = null;
+      access.state.kind = "account"; access.state.error = ui.error; ui.screen = "account"; ui.overlay = null; ui.pane = "account"; ui.focus = null;
+    }
     if (event.type === "activity") {
       activity(event);
       changed();
@@ -248,6 +258,9 @@ function create(options) {
   }
 
   function openPairing() {
+    if (options.access && !options.access.native && options.access.current() && !options.access.has("pairing.manage")) {
+      pairing.alert = "Only administrators can pair devices."; pairing.loaded = true; changed(); return;
+    }
     if (pairing.backend) {
       pairing.backend.refresh().catch(() => null);
       return;
@@ -300,6 +313,9 @@ function create(options) {
 
   function render(width, height) {
     size = { width: width, height: height };
+    if (access.state.form && ui.overlay?.kind !== "access-form") {
+      ui.returnPane = ui.pane; ui.overlay = { kind: "access-form", title: access.state.form.kind === "policy" ? "Room schedule" : (access.state.form.id ? "Edit " : "Add ") + access.state.form.kind }; ui.pane = "sheet:access-form"; ui.focus = null;
+    } else if (!access.state.form && ui.overlay?.kind === "access-form") { ui.overlay = null; ui.pane = ui.screen; ui.focus = null; }
     const current = ui.ready && session.current();
     const nextContext = current ? current.id + ":" + session.state(current.id).value : null;
     if (nextContext !== signalContext) {
@@ -432,6 +448,7 @@ function create(options) {
   }
 
   function applySourceCursor() {
+    if (session.controlAllowed && !session.controlAllowed()) return toast("Read-only", "Account permission or room schedule");
     const room = session.current().id;
     const list = session.bubbles(session.controls());
     const id = ui.sourceCursor[room] || session.state(room).value;
@@ -530,6 +547,7 @@ function create(options) {
   }
 
   function setScreen(name) {
+    access.cancel();
     if (stopped) return;
     if (ui.screen === name && !ui.overlay) return;
     stopRepeat();
@@ -556,6 +574,7 @@ function create(options) {
     if (name === "pairing") openPairing();
     if (name === "cameras") openCameras();
     if (name === "topology") openTopology();
+    if (["settings", "users", "account"].includes(name)) access.open(name, session.current()?.id);
     render(size.width, size.height);
     changed();
   }
@@ -588,6 +607,14 @@ function create(options) {
     if (hit.kind.startsWith("pair-") || ["send-code", "new-code", "code"].includes(hit.kind)) {
       if (ui.screen !== "pairing") return;
     }
+    if (session.controlAllowed && !session.controlAllowed() && (["key", "control", "input"].includes(hit.kind) || hit.kind === "bubble" && hit.item?.choose)) {
+      return toast("Read-only", "Account permission or room schedule");
+    }
+    if (hit.kind === "access-action" || hit.kind === "access-field") {
+      if (hit.action === "settings" || hit.action === "users") setScreen(hit.action);
+      else { access.activate(hit); changed(); }
+      return;
+    }
     switch (hit.kind) {
       case "pair-sort":
         if (!pairing.backend || pairing.backend.view(pairing.selected)?.confirm || !View.PAIR_FIELDS.includes(hit.field)) return;
@@ -617,6 +644,7 @@ function create(options) {
         if (ui.overlay && ui.overlay.kind === "rooms") closeSheet();
         break;
       case "all-off":
+        if (options.access && !options.access.has("room.control")) return toast("Read-only", "Your account cannot control rooms");
         if (session.allOff() && ui.overlay) closeSheet();
         break;
       case "screen":
@@ -706,6 +734,7 @@ function create(options) {
   }
 
   function pressKey(candidates) {
+    if (session.controlAllowed && !session.controlAllowed()) return toast("Read-only", "Account permission or room schedule");
     const button = session.pressKey(candidates);
     flash("key:" + button);
   }
@@ -732,21 +761,23 @@ function create(options) {
   }
 
   function slideBy(name) {
+    if (session.controlAllowed && !session.controlAllowed()) return;
     const view = session.audioView();
     if (view.disabled) return;
     const step = RANGE[name];
     let value = view.value;
-    if (step === "min") value = 0;
+    if (step === "min") value = view.min || 0;
     else if (step === "max") value = view.max;
     else if (step === "page") value += view.max / 10;
     else if (step === "-page") value -= view.max / 10;
-    else value += step;
-    session.slide(Math.round(Math.max(0, Math.min(view.max, value))), true);
+    else value += step * (view.step || 1);
+    session.slide(options.Remote.volumeValue({ max: view.max, native: { min: view.min, step: view.step } }, value), true);
   }
 
   function sliderValue(entry, x) {
     const fraction = Math.max(0, Math.min(1, (x - entry.x) / Math.max(1, entry.w - 1)));
-    return Math.round(fraction * entry.hit.max);
+    return options.Remote.volumeValue({ max: entry.hit.max, native: { min: entry.hit.min, step: entry.hit.step } },
+      (entry.hit.min || 0) + fraction * (entry.hit.max - (entry.hit.min || 0)));
   }
 
   // ---- the Pairing screen ----------------------------------------------
@@ -848,6 +879,13 @@ function create(options) {
 
   function sheetKey(ch, key) {
     const name = key.name;
+    if (ui.overlay.kind === "access-form") {
+      if (name === "escape") { access.cancel(); return closeSheet(); }
+      if (["up", "down"].includes(name)) return moveControl(name === "up" ? -1 : 1);
+      if (name === "enter" || name === "space") { const hit = focusedHit(); if (hit) activate(hit); return; }
+      if (name === "pageup" || name === "pagedown") return pageScroll(name === "pageup" ? -1 : 1);
+      return;
+    }
     if (name === "escape") {
       closeSheet();
       return;
@@ -905,6 +943,7 @@ function create(options) {
       }
     }
     if (ch && /^[0-9]$/.test(ch)) {
+      if (session.controlAllowed && !session.controlAllowed()) return;
       const choice = session.chooseDigit(ch);
       if (choice) flash("bubble:" + choice);
       return;
@@ -941,6 +980,7 @@ function create(options) {
     if (stopped) return;
     const keyEvent = event || {};
     const name = keyEvent.name;
+    if (ui.overlay?.kind === "access-form" && access.key(ch, keyEvent, focusedHit())) return;
     // blessed reports Enter twice, as "enter" and "return".
     if (name === "return") return;
     if (keyEvent.ctrl && name === "c") return quit();
@@ -952,6 +992,9 @@ function create(options) {
     if (name === "f3") return setScreen("security");
     if (name === "f4") return setScreen("cameras");
     if (name === "f5") return setScreen("topology");
+    if (name === "f7") return setScreen("settings");
+    if (name === "f8") return setScreen("users");
+    if (name === "f9") return setScreen("account");
     if ((name === "f6" || keyEvent.ctrl && name === "p") && ui.screen === "remote") return setScreen("pairing");
     if (ui.overlay) return sheetKey(ch, keyEvent);
     if (ch === "?") return openSheet("help");
@@ -964,7 +1007,10 @@ function create(options) {
     const name = event.name;
     if (name === "escape") return setScreen("home");
     if (name === "pageup" || name === "pagedown") return pageScroll(name === "pageup" ? -1 : 1);
-    if (ui.screen === "home") {
+    if (["settings", "users", "account"].includes(ui.screen)) {
+      if (["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
+      if (name === "enter" || name === "space") { const hit = focusedHit(); if (hit) activate(hit); }
+    } else if (ui.screen === "home") {
       if (["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
       if (name === "enter" || name === "space") { const hit = focusedHit(); if (hit) activate(hit); }
     } else if (ui.screen === "cameras") {
@@ -1061,6 +1107,7 @@ function create(options) {
         ui.paneFocus[ui.pane] = hit.key;
       }
       if (hit.kind === "slider" && ui.screen === "remote") {
+        if (session.controlAllowed && !session.controlAllowed()) return;
         dragging = entry;
         session.setDragging(true);
         session.slide(sliderValue(entry, x), false);

@@ -42,6 +42,9 @@ const TUI_SHORTCUTS = [
   [["F4"], "Cameras"],
   [["F5"], "Site"],
   [["F6", "Ctrl-P"], "Pair devices (Remotes)"],
+  [["F7"], "Room settings"],
+  [["F8"], "Users & roles"],
+  [["F9"], "Account"],
   [["?"], "Help"],
   [["q"], "Quit"]
 ];
@@ -226,13 +229,13 @@ function header(frame, ctx, width) {
   let at = width >= 100 ? g.put(0, 0, " thermite ", "header.title") : 0;
   const tabs = [["home", "F1", "Home"], ["remote", "F2", "Remotes"], ["security", "F3", "Security"], ["cameras", "F4", "Cameras"], ["topology", "F5", "Site"]];
   if (width < 48) {
-    const label = ctx.ui.screen === "pairing" ? "Remotes / Pair devices" : tabs.find(tab => tab[0] === ctx.ui.screen)[2];
+    const label = ctx.ui.screen === "pairing" ? "Remotes / Pair devices" : tabs.find(tab => tab[0] === ctx.ui.screen)?.[2] || ({ settings: "Room settings", users: "Users & roles", account: "Account" })[ctx.ui.screen] || "Home";
     at = g.put(1, 0, fit("thermite · " + label, width - 2), "header.title");
   } else tabs.forEach((tab) => {
     const current = ctx.ui.screen === tab[0] || tab[0] === "remote" && remotes;
     const key = "tab:" + tab[0];
     const style = focused(ctx, key) ? "key.focus" : current ? "tab.current" : "tab";
-    const label = width >= 76 ? tab[2] : { home: "Home", remote: "AV", security: "Sec", cameras: "Cam", topology: "Site" }[tab[0]];
+    const label = width >= 76 ? tab[2] : { home: "Home", remote: "AV", security: "Sec", cameras: "Cam", topology: "Site", settings: "Set", users: "Users", account: "Me" }[tab[0]];
     const size = length(" " + tab[1] + " " + label + " ");
     if (at + size + 1 > width) return;
     at = g.put(at, 0, " ", "header");
@@ -242,6 +245,7 @@ function header(frame, ctx, width) {
       : { kind: "screen", screen: tab[0], key, focus: true, label: tab[2] + " page (" + tab[1] + ")" };
     g.hit(at - size, 0, size, 1, hit);
   });
+  if (["settings", "users", "account"].includes(ctx.ui.screen)) at = g.put(at + 1, 0, fit("› " + ({ settings: "Room settings", users: "Users & roles", account: "Account" })[ctx.ui.screen], Math.max(0, width - at - 2)), "tab.current");
   if (remotes && width - at >= 23) at = g.put(at + 1, 0, ctx.ui.screen === "pairing" ? " › Pair devices " : " F6 Pair devices ",
     focused(ctx, "remotes:pairing") ? "key.focus" : "tab", { kind: "screen", screen: "pairing", key: "remotes:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
   if (ctx.ui.screen === "remote" && frame.layout.sheets) {
@@ -350,7 +354,10 @@ function pageScreen(frame, ctx, rect) {
     home: ["thermite", Landing.content],
     security: ["Security", Landing.security],
     cameras: ["Cameras", Cameras.content],
-    topology: ["Site topology", Topology.content]
+    topology: ["Site topology", Topology.content],
+    settings: ["Room settings", (g, w, ctx) => ctx.access.content(g, w, ctx)],
+    users: ["Users & roles", (g, w, ctx) => ctx.access.content(g, w, ctx)],
+    account: ["Account", (g, w, ctx) => ctx.access.content(g, w, ctx)]
   };
   const [title, content] = pages[ctx.ui.screen] || pages.home;
   frame.layout = { page: ctx.ui.screen };
@@ -450,7 +457,7 @@ function roomsContent(g, w, ctx) {
   y += 1;
   const armed = session.allOffArmed();
   const text = armed ? "Press again to confirm" : "All off";
-  const style = focused(ctx, "all-off") ? "key.focus" : armed ? "danger.armed" : "danger";
+  const style = ctx.session.access && !ctx.session.access.has("room.control") ? "dim" : focused(ctx, "all-off") ? "key.focus" : armed ? "danger.armed" : "danger";
   rounded(g, 1, y, text, Math.min(w - 2, length(text) + 4), style,
     { kind: "all-off", key: "all-off", focus: true, label: armed ? "Press again: turn off every room and device" : "All off: every room and every device thermite powers" });
   return y + 3;
@@ -466,6 +473,7 @@ function keyLabel(ctx, id) {
 }
 
 function keyStyle(ctx, id, options) {
+  if (ctx.session.controlAllowed && !ctx.session.controlAllowed()) return "dim";
   const key = "key:" + id;
   if (ctx.ui.pressed[key]) return "key.pressed";
   if (focused(ctx, key)) return "key.focus";
@@ -554,6 +562,7 @@ function remoteContent(frame, g, w, ctx) {
   const target = session.activeTarget(list);
   const state = session.state(current.id);
   let y = 0;
+  if (session.controlAllowed && !session.controlAllowed()) y = paragraph(g, 2, y, w - 4, "Read-only · account permission or room schedule", "dim");
   const shown = session.view(current, state);
   if (shown.problem) y = paragraph(g, 2, y, w - 4, "\u26a0 " + shown.problem, "alert");
   const remote = session.remoteOf(target);
@@ -786,7 +795,7 @@ function lower(g, ctx, w, y, remote, target) {
     const track = compact ? width - 12 : Math.max(4, width - 13 - room);
     const focus = focused(ctx, "slider");
     meter(g, x, y + 1, track, view, focus);
-    g.hit(x, y + 1, track, 1, { kind: "slider", key: "slider", focus: true, max: view.max,
+    g.hit(x, y + 1, track, 1, { kind: "slider", key: "slider", focus: true, max: view.max, min: view.min, step: view.step,
       label: view.label + ": " + view.text + "  (\u2190 \u2192 Home End when focused)" });
     if (!compact) g.put(x + track + 1, y + 1, value, view.muted ? "tone.busy+bold" : focus ? "meter.value.focus" : "meter.value");
   } else {
@@ -955,6 +964,7 @@ function sheet(frame, ctx, width, height) {
   frame.grid.hit(0, 0, width, height, { kind: "dismiss" });
   const w = Math.min(width - 2, ["signal", "topology"].includes(overlay.kind) ? 100 : ["info", "help", "cameras"].includes(overlay.kind) ? 66 : 50);
   const content = {
+    "access-form": (inner, iw) => ctx.access.formContent(inner, iw, ctx),
     rooms: (inner, iw) => roomsContent(inner, iw, ctx),
     info: (inner, iw) => infoContent(inner, iw, ctx),
     inputs: (inner, iw) => inputsContent(inner, iw, ctx),
@@ -1096,6 +1106,7 @@ function pairListContent(g, w, ctx) {
   if (ctx.pairing.mock) {
     y = paragraph(g, 1, y, w - 2, "Mock · sample devices; codes 1234 / A1B2C3", "dim");
   }
+  if (!backend && ctx.pairing.alert) { g.put(1, y, "Pairing unavailable for this account", "dim"); return; }
   if (!backend || !ctx.pairing.loaded) {
     g.put(1, y, "Reading the devices\u2026", "dim");
     return;
@@ -1132,6 +1143,7 @@ function pairCardContent(g, w, ctx, narrow) {
   const backend = pairing.backend;
   let y = 0;
   if (pairing.alert) y = paragraph(g, 1, y, w - 2, "\u26a0 " + pairing.alert, "alert") + 1;
+  if (!backend && pairing.alert) return y;
   if (!backend || !pairing.loaded) {
     g.put(1, y, "Reading thermite devices\u2026", "dim");
     return;

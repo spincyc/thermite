@@ -12,8 +12,11 @@ carries the state too, so it is read back at once.
 
 Items, per Apple TV:
 
-- `<id>_power` (Switch): ON while awake, OFF asleep, UNDEF while the helper
-  or the Apple TV does not answer; ON and OFF wake it or put it to sleep.
+- `<id>_power` (Switch): the last native report, ON awake, OFF asleep,
+  UNDEF while unavailable or unknown; ON and OFF wake it or put it to sleep.
+- `<id>_power_reported_at` (DateTime, read only): when the helper acquired
+  its current native power snapshot or push. Polls and command acknowledgements
+  retain that time; no timestamp means power cannot be freshly verified.
 - `<id>_key` (String): a remote button id: a Siri Remote button (PRESSES)
   or an app it opens (APPS); any other id is dropped.
 - `<id>_pairing` and `<id>_pairing_status` (oh_integrations._pairing): REQUEST
@@ -51,7 +54,8 @@ ASSETS: dict[str, str] = {}
 #: Where the rule reaches the helper: on the openHAB host itself, never the
 #: LAN (bin/thermite apple-tv serve listens on 127.0.0.1 only).
 HELPER = "http://127.0.0.1:8099"
-#: Seconds from a command to its read-back: none, the helper answers it with the new state.
+#: Seconds from a command to its read-back: none, the helper returns its native
+#: cached state. An acknowledgement does not imply a new power observation.
 READ_BACK = 0
 RULE = "automation/js/pyatv_http.js"
 SOURCE = Path(__file__).resolve().parent / "pyatv_http.js"
@@ -100,6 +104,10 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     ident = device["id"]
     out.items[f"{ident}_power"] = {"type": "Switch", "label": "Power", "icon": "screen", "groups": [ident],
                                    "tags": ["Control", "Power"], "autoupdate": False}
+    out.items[f"{ident}_power_reported_at"] = {
+        "type": "DateTime", "label": "Native power reported", "groups": [ident], "tags": ["Status"],
+        "autoupdate": False, "metadata": {"stateDescription": {"config": {"readOnly": True}}},
+    }
     out.items[f"{ident}_key"] = {"type": "String", "label": "Remote Key", "groups": [ident], "tags": ["Control"],
                                  "autoupdate": False}
     _pairing.render(device, house, out, NAME, **PAIRING)
@@ -145,6 +153,13 @@ def wake_item(device: dict) -> str | None:
     """The Item ON wakes the Apple TV with, when a room chooses it
     (oh_features.routing); None unless controlled."""
     return f"{device['id']}_power" if uses(device, PHASE, NAME) else None
+
+
+def native_power_observation(device: dict) -> dict | None:
+    """Native power with its helper acquisition time, never a command ACK time."""
+    if not uses(device, PHASE, NAME):
+        return None
+    return {"item": f"{device['id']}_power", "reported_at": f"{device['id']}_power_reported_at"}
 
 
 def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:

@@ -15,7 +15,8 @@ globalThis.REMOTE_HOUSE = {
         "example_tv",
         "example_player",
         "example_matrix"
-      ]
+      ],
+      "routeProblem": "loc_example_west_source_problem"
     },
     {
       "id": "example_east",
@@ -28,7 +29,8 @@ globalThis.REMOTE_HOUSE = {
       "devices": [
         "example_display",
         "example_computer"
-      ]
+      ],
+      "routeProblem": "loc_example_east_source_problem"
     }
   ],
   "sources": {

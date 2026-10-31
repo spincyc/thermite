@@ -40,6 +40,10 @@ def item_name(room: str) -> str:
     return f"loc_{room}_source"
 
 
+def problem_item_name(room: str) -> str:
+    return f"loc_{room}_source_problem"
+
+
 def home(data: dict, room: str) -> str:
     """The inventory room a routed room is in: its `room`, else its id."""
     return data["routing"]["rooms"][room].get("room", room)
@@ -758,6 +762,18 @@ def table(data: dict) -> dict:
                         "readback": {value: source for source, value in (spec.get("sources") or {}).items()}}
                        for spec, stage in reversed(stages(data, room))],
         }
+        checks = {}
+        raw = rooms[room]
+        for item, action in ([(raw["hdmi"], "read matrix output input")] if raw["hdmi"] else []) + (
+                [(raw["switch"]["item"], "read selected input")] if raw["switch"] else []) + [
+                (stage[field], action) for stage in raw["stages"]
+                for field, action in (("power", "read power"), ("input", "read selected input"))]:
+            ident = next((ident for ident in sorted(devices, key=len, reverse=True) if item.startswith(ident + "_")), None)
+            if ident:
+                device = devices[ident]
+                checks[item] = {"device": ident, "label": device.get("name") or device.get("model") or ident,
+                                "model": device.get("model") or "", "action": action}
+        raw["diagnosis"] = {"item": problem_item_name(room), "checks": checks}
     return {"rooms": rooms, "edid": edid_table(data), "off": OFF}
 
 
@@ -820,6 +836,11 @@ def render(house: House, conf: Conf) -> None:
     out = conf.yaml_file(ITEMS, HEADER)
     for room in routing["rooms"]:
         out.items[item_name(room)] = source_item(data, room)
+        out.items[problem_item_name(room)] = {
+            "type": "String", "label": "Source readback problem", "groups": [f"loc_{home(data, room)}"],
+            "tags": ["Status"], "autoupdate": False,
+            "metadata": {"stateDescription": {"config": {"readOnly": True}}},
+        }
     sources = routing["sources"].values()
     _label_ports(conf, devices[routing["hdmi_matrix"]],
                  {routing["hdmi_off_input"]: "Off",

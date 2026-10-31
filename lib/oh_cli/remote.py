@@ -128,6 +128,8 @@ def target(arguments: argparse.Namespace) -> list[str]:
         return ["--url", arguments.url.rstrip("/")]
     if arguments.sandbox:
         return ["--url", oh_cli.SANDBOX_URL]
+    if not getattr(arguments, "native", False):
+        return ["--url", os.environ.get("THERMITE_SITE_URL", "https://localhost:9443")]
     import oh_deploy as deploy
 
     return ["--url", deploy.production_url(deploy.load(AREA)[1])]
@@ -136,6 +138,8 @@ def target(arguments: argparse.Namespace) -> list[str]:
 def node_argv(arguments: argparse.Namespace, node: str = "node", build: Path = BUILD) -> list[str]:
     argv = [node, str(TUI / "main.js"), "--modules", str(modules(build)), "--state", str(arguments.state)]
     argv += target(arguments)
+    if getattr(arguments, "native", False) or arguments.sandbox:
+        argv.append("--native")
     if arguments.pair:
         argv.append("--pair")
     if arguments.still:
@@ -176,6 +180,8 @@ def look(chosen) -> str:
 def parser() -> argparse.ArgumentParser:
     parser = oh_cli.command("remote", DESCRIPTION, EXAMPLES, NOTES)
     oh_cli.add_target(parser, "production", "sandbox", "url", "mock", default="production")
+    parser.add_argument("--native", action="store_true",
+                        help="explicitly use the native runtime instead of site authentication (owner/testing only)")
     parser.add_argument("--setup", action="store_true",
                         help="only install the pinned blessed into build/tui-remote, then exit")
     parser.add_argument("--pair", action="store_true", help="start on the Pairing screen")
@@ -203,6 +209,22 @@ def parser() -> argparse.ArgumentParser:
                         help="where the last room, volume mode, theme mode, motion and log visibility are kept "
                              "(default var/tui-remote/state.json)")
     return parser
+
+
+def launch_environment(arguments, chosen):
+    """Only credential/CA paths cross to Node; personal tokens stay in files."""
+    environment = {**os.environ, LOOK: look(chosen)}
+    if arguments.mock or arguments.sandbox or arguments.native:
+        environment.pop("THERMITE_REMOTE_TOKEN_FILE", None)
+        return environment
+    from oh_access import client
+    url = target(arguments)[1]
+    path, _ = client.load(url)
+    environment["THERMITE_REMOTE_TOKEN_FILE"] = str(path)
+    ca = client.saved_ca(path)
+    if ca:
+        environment["NODE_EXTRA_CA_CERTS"] = ca
+    return environment
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -234,6 +256,11 @@ def main(argv: list[str] | None = None) -> int:
         if status:
             return status
     command = node_argv(arguments, node)
+    try:
+        environment = launch_environment(arguments, chosen)
+    except ValueError:
+        print("thermite remote: log in with thermite access login, or explicitly choose --native for owner/testing access", file=sys.stderr)
+        return 2
     oh_cli.trace_run(command)
-    os.execve(node, command, {**os.environ, LOOK: look(chosen)})
+    os.execve(node, command, environment)
     return 0

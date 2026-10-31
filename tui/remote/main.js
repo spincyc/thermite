@@ -24,6 +24,7 @@ const { EventSource } = require("./events");
 const { fileStore } = require("./store");
 const Cameras = require("./cameras");
 const Topology = require("./topology");
+const Credentials = require("./credentials");
 const fs = require("fs");
 const { spawn } = require("child_process");
 
@@ -39,7 +40,7 @@ function openBrowser(url) {
 }
 
 const VALUES = ["modules", "state", "url", "room", "choose", "mode", "volume", "latency"];
-const FLAGS = { mock: "mock", pair: "pair", "matrix-down": "matrixDown", still: "still" };
+const FLAGS = { mock: "mock", pair: "pair", "matrix-down": "matrixDown", still: "still", native: "native" };
 const STILL = "THERMITE_REMOTE_STILL";
 const CHOICES = { mode: ["dark", "light"], volume: ["slider", "buttons"] };
 
@@ -55,6 +56,7 @@ function parse(argv) {
     else if (VALUES.includes(name) && index + 1 < argv.length) args[name] = argv[++index];
     else throw new Error("unknown argument: " + argv[index]);
   }
+  if (args.mock && args.native) throw new Error("--native requires --url");
   if (args.mock === Boolean(args.url)) throw new Error("needs one of --url URL and --mock");
   Object.keys(CHOICES).forEach((name) => {
     if (args[name] != null && !CHOICES[name].includes(args[name])) {
@@ -88,25 +90,31 @@ function assemble(args, env) {
   const shared = options.shared || Shared.load();
   const store = options.store || (args.state ? fileStore(args.state) : memoryStore());
   const Source = options.EventSource || EventSource;
+  const environ = options.environ || process.env;
+  const credential = args.mock || args.native ? null : Credentials.read(environ.THERMITE_REMOTE_TOKEN_FILE, args.url);
+  const access = args.mock ? shared.Access.create({ mock: true, base: "http://127.0.0.1" }) : options.access || shared.Access.create({ base: args.url, fetch: options.fetch || globalThis.fetch,
+    token: credential && credential.token, native: args.native === true });  // lint: allow — credential read from the private token file
+  const request = access && !access.native ? access.fetch : options.fetch;
+  const Events = access && !access.native ? access.eventSource(Source) : Source;
   const timers = {};
   ["now", "setTimeout", "clearTimeout", "setInterval", "clearInterval"].forEach((name) => {
     if (options[name]) timers[name] = options[name];
   });
   const backend = shared.Remote.create(shared.house, args.mock
     ? { backend: "mock", latency: args.latency != null ? Number(args.latency) : undefined, answering: !args.matrixDown }
-    : { backend: "openhab", base: args.url, fetch: options.fetch, EventSource: Source });
+    : { backend: "openhab", base: args.url, access, fetch: request, EventSource: Events });
   const session = shared.Session.create(Object.assign({
     backend: backend, house: shared.house, layouts: shared.layouts, store: store, volume: args.volume
   }, timers));
   const createPairing = () => shared.Pairing.create(Object.assign({
-    backend: args.mock ? "mock" : "openhab", base: args.url || "", fetch: options.fetch, EventSource: Source, location: null
+    backend: args.mock ? "mock" : "openhab", base: args.url || "", fetch: request, EventSource: Events, location: null
   }, timers.setTimeout ? { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } : {},
   timers.now ? { now: timers.now } : {}));
   const controller = Controller.create(Object.assign({
-    session: session, Session: shared.Session, Pairing: shared.Pairing, Remote: shared.Remote,
+    session: session, Session: shared.Session, Pairing: shared.Pairing, Remote: shared.Remote, access,
     layouts: shared.layouts, house: shared.house, store: store, backend: backend, createPairing: createPairing,
-    createCameras: () => Cameras.create({ base: args.url || "", mock: args.mock, fetch: options.fetch, ...timers }),
-    createTopology: () => Topology.create({ base: args.url || "", mock: args.mock, fetch: options.fetch,
+    createCameras: () => Cameras.create({ base: args.url || "", mock: args.mock, fetch: request, ...timers }),
+    createTopology: () => Topology.create({ base: args.url || "", mock: args.mock, fetch: request,
       manifest: options.topologyManifest }),
     openTopology: (room, source) => {
       const url = Topology.url(args.url, room, source, args.mock);
@@ -128,7 +136,7 @@ function assemble(args, env) {
     onChange: options.onChange,
     onQuit: options.onQuit
   }, timers));
-  return { shared: shared, store: store, backend: backend, session: session, controller: controller };
+  return { access, shared: shared, store: store, backend: backend, session: session, controller: controller };
 }
 
 function main(argv) {

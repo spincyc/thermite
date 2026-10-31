@@ -211,7 +211,7 @@
         label: control.label,
         device: device(house, control.device),
         actions: control.actions.map((action) => ({ id: action[0], label: action[1] })),
-        connected: false
+        connected: control.connected === true
       }))
     };
   }
@@ -277,6 +277,9 @@
       if (!control) return;
       if (control.power) items[control.power] = [id, "power"];
       if (control.volume) items[control.volume.item] = [id, "volume"];
+      if (control.volume && control.volume.displayMode && control.volume.displayMode.item) {
+        items[control.volume.displayMode.item] = [id, "volumeScale"];
+      }
       if (control.mute) items[control.mute] = [id, "mute"];
       if (control.input) items[control.input.item] = [id, "input"];
     });
@@ -297,16 +300,30 @@
     return Number.isFinite(value) ? value : null;
   }
 
+  function volumeStep(spec) {
+    const step = Number(spec && spec.native && spec.native.step);
+    return Number.isFinite(step) && step > 0 ? step : 1;
+  }
+
   function held(spec, value) {
-    return Math.min(spec.max, Math.max(0, value));
+    const min = spec.native && Number.isFinite(spec.native.min) ? spec.native.min : 0;
+    const max = Math.min(spec.max, spec.native && Number.isFinite(spec.native.max) ? spec.native.max : spec.max);
+    const step = volumeStep(spec);
+    return Math.min(max, Math.max(min, Math.round((Math.min(max, Math.max(min, value)) - min) / step) * step + min));
   }
 
   // A volume as the device shows it: -28.0 dB on a receiver, 30 on a WiiM.
-  function volumeText(spec, value) {
-    if (value === null || value === undefined) return "";
-    const shown = Math.round((value + (spec.offset || 0)) * 10) / 10;
-    const digits = spec.unit === "dB" ? 1 : 0;
-    return (shown < 0 ? "\u2212" : "") + Math.abs(shown).toFixed(digits) + (spec.unit ? " " + spec.unit : "");
+  function volumeText(spec, value, scale) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return "";
+    const display = spec.displayMode;
+    const mode = display && display.modes && Object.prototype.hasOwnProperty.call(display.modes, scale)
+      ? display.modes[scale] : null;
+    const format = mode || spec;
+    if (mode && Number(value) === (spec.native ? spec.native.min : 0) && mode.minimum) return mode.minimum;
+    const shown = Math.round((Number(value) + (format.offset || 0)) * 10) / 10;
+    const digits = Number.isInteger(spec.precision) ? spec.precision : format.unit === "dB" ? 1 : 0;
+    return (shown < 0 ? "\u2212" : "") + Math.abs(shown).toFixed(digits)
+      + (format.unit ? " " + format.unit : "") + (display && !mode ? " (native)" : "");
   }
 
   // What a press sends to a device with a control: {field, item, command,
@@ -320,8 +337,8 @@
       const from = aimed("volume") !== null ? aimed("volume") : level(state.volume);
       if (from === null) throw new Error("The volume of the " + target.label + " is not known yet");
       const to = held(spec, from + (button === "volume_up" ? spec.step : -spec.step));
-      if (to === from) return { note: (to === spec.max ? "At its limit, " : "At its lowest, ") + volumeText(spec, to) };
-      return { field: "volume", item: spec.item, command: String(to), volume: to, note: volumeText(spec, to) };
+      if (to === from) return { note: (to === spec.max ? "At its limit, " : "At its lowest, ") + volumeText(spec, to, state.volumeScale) };
+      return { field: "volume", item: spec.item, command: String(to), volume: to, note: volumeText(spec, to, state.volumeScale) };
     }
     if (button === "mute") {
       if (!control.mute) return missing("mute");
@@ -370,6 +387,21 @@
     return "current";
   }
 
+  function sourceProblem(house, raw) {
+    const fallback = "No current source readback; waiting for device diagnostics";
+    let issue;
+    try { issue = JSON.parse(raw); } catch (_) { return fallback; }
+    if (!issue || issue.version !== 1 || !house.devices[issue.device]
+        || !["read selected input", "read matrix output input", "read power"].includes(issue.action)
+        || !["unavailable", "unsupported_input"].includes(issue.reason)) return fallback;
+    const device = house.devices[issue.device];
+    const name = device.label + (device.model && !device.label.includes(device.model) ? " (" + device.model + ")" : "");
+    const reported = typeof issue.reported === "string" && /^(?:\d+|hdmi\d+|tv)$/.test(issue.reported)
+      ? "input " + issue.reported : "an unsupported input";
+    return name + ": " + issue.action + " — " + (issue.reason === "unavailable"
+      ? "no current report (the device may be offline)" : reported + " is not offered in this room");
+  }
+
   function settled(promise) {
     try {
       return Promise.resolve(promise());
@@ -390,8 +422,7 @@
         value: item.value,
         pending: item.pending,
         status: status,
-        reason: status === "unavailable"
-          ? "The matrix or a device here is not answering, or shows an input this room does not offer" : ""
+        reason: status === "unavailable" ? sourceProblem(this.house, item.diagnosis) : ""
       };
     },
     getRooms: function () {
@@ -467,7 +498,7 @@
         const number = Number(value);
         if (value === null || value === "" || !Number.isFinite(number)) throw new Error("Not a volume: " + value);
         const to = held(control.volume, number);
-        result.note = volumeText(control.volume, to);
+        result.note = volumeText(control.volume, to, this.devices[room.audio].volumeScale);
         result.volume = to;
         return this.send(room.audio, { field: "volume", item: control.volume.item, command: String(to), volume: to }, result);
       });
@@ -493,10 +524,13 @@
     },
     deviceSnapshot: function (deviceId) {
       const state = this.devices[deviceId];
-      return {
+      const snapshot = {
         device: deviceId, power: state.power, volume: state.volume, mute: state.mute, input: state.input,
         level: level(state.volume)
       };
+      const control = controlOf(this.house, deviceId);
+      if (control.volume && control.volume.displayMode) snapshot.volumeScale = state.volumeScale || NULL_STATE;
+      return snapshot;
     },
     // The volume or mute last sent, until the device reports it or AIM_MS pass.
     aimed: function (deviceId, field) {
@@ -579,6 +613,7 @@
       const state = this.devices[id];
       if (control.power) state.power = "ON";
       if (control.volume) state.volume = String(Math.round(control.volume.max * 0.6));
+      if (control.volume && control.volume.displayMode) state.volumeScale = "absolute";
       if (control.mute) state.mute = "OFF";
       if (control.input) state.input = control.input.options[0][0];
     });
@@ -706,6 +741,8 @@
   function OpenHabBackend(house, settings) {
     const config = settings || {};
     this.house = house;
+    this.access = config.access || (global.ThermiteAccess && global.ThermiteAccess.client) || null;
+    if (typeof document !== "undefined" && !this.access) throw new Error("The access client could not load. Reload thermite.");
     this.base = config.base || "";
     this.fetch = config.fetch || ((url, init) => global.fetch(url, init));
     this.EventSource = config.EventSource || global.EventSource;
@@ -713,6 +750,8 @@
     this.listeners = [];
     this.items = {};
     this.byItem = Object.create(null);
+    this.routeProblemItems = Object.create(null);
+    this.routeProblemRevisions = Object.create(null);
     this.sourceRevisions = Object.create(null);
     this.readLifecycle = 0;
     this.timers = {};
@@ -736,12 +775,25 @@
       this.items[room.id] = { value: NULL_STATE, pending: null };
       this.sourceRevisions[room.id] = 0;
       this.byItem[sourceItem(room.id)] = room.id;
+      if (room.routeProblem) {
+        this.routeProblemItems[room.routeProblem] = room.id;
+        this.routeProblemRevisions[room.routeProblem] = 0;
+      }
     });
     this.aims = {};
     this.problems = {};
     this.devices = unread(house);
     this.controlItems = controlItems(house);
     this.problemItems = problemItems(house);
+    if (this.access && !this.access.native) {
+      this.access.subscribe((event) => {
+        if (event.type === "unauthorized") {
+          this.stop(); this.connected = false; this.devices = unread(house); this.problems = {}; this.aims = {}; this.activity = null;
+          Object.values(this.items).forEach((item) => { item.value = NULL_STATE; item.pending = null; });
+        }
+        this.emit({ type: "access", unauthorized: event.type === "unauthorized" });
+      });
+    }
     if (config.activityManifest && global.RemoteActivity) {
       this.activateActivity(config.activityManifest);
       this.activityReady = Promise.resolve();
@@ -762,7 +814,10 @@
     }
     return this.fetch(this.base + path, init).then((response) => {
       if (!response.ok) throw new Error("thermite answered " + response.status + " to " + method + " " + path);
-      return response.text();
+      return response.text().then((text) => {
+        if (this.stopped && this.access && !this.access.native) throw global.ThermiteAccess.problem("session_expired", 401);
+        return text;
+      });
     });
   };
 
@@ -838,8 +893,11 @@
     return this.request("GET", "/rest/items/" + sourceItem(roomId) + "/state").then((text) => {
       // An SSE update or a later read/choice can overtake this response.
       // Return the current snapshot without emitting or seeding older data.
-      if (current()) this.update(roomId, text.trim());
-      return this.snapshot(roomId);
+      const accepted = current();
+      if (accepted) this.update(roomId, text.trim());
+      const room = findRoom(this.house, roomId);
+      return accepted && this.items[roomId].value === UNDEF && room.routeProblem
+        ? this.readRouteProblem(room.routeProblem).then(() => this.snapshot(roomId)) : this.snapshot(roomId);
     }, (error) => {
       if (!current()) return this.snapshot(roomId);
       throw error;
@@ -858,7 +916,7 @@
   // Every room, control and problem again: after (re)connecting, an update may have been missed.
   OpenHabBackend.prototype.readAll = function () {
     const rooms = this.house.rooms.map((room) => this.read(room.id));
-    const controls = this.watched().map((item) =>
+    const controls = this.watched().map((item) => this.routeProblemItems[item] ? this.readRouteProblem(item) :
       this.request("GET", "/rest/items/" + item + "/state").then((text) => this.updateItem(item, text.trim())));
     return Promise.all(rooms.concat(controls).map((reading) => reading.catch((error) => {
       console.warn(error);
@@ -868,10 +926,28 @@
 
   // Every Item a control is read from, then every problem Item.
   OpenHabBackend.prototype.watched = function () {
-    return Object.keys(this.controlItems).concat(Object.keys(this.problemItems));
+    return Object.keys(this.controlItems).concat(Object.keys(this.problemItems), Object.keys(this.routeProblemItems));
+  };
+
+  OpenHabBackend.prototype.readRouteProblem = function (item) {
+    const revision = ++this.routeProblemRevisions[item], lifecycle = this.readLifecycle;
+    return this.request("GET", "/rest/items/" + item + "/state").then((text) => {
+      if (!this.stopped && this.active && lifecycle === this.readLifecycle && revision === this.routeProblemRevisions[item])
+        this.updateRouteProblem(item, text.trim());
+    }).catch(() => null);
+  };
+
+  OpenHabBackend.prototype.updateRouteProblem = function (item, value) {
+    const room = this.routeProblemItems[item];
+    if (!room) return;
+    this.routeProblemRevisions[item] += 1;
+    if (this.items[room].diagnosis === value) return;
+    this.items[room].diagnosis = value;
+    this.emitState(room);
   };
 
   OpenHabBackend.prototype.updateItem = function (item, value) {
+    if (this.routeProblemItems[item]) { this.updateRouteProblem(item, value); return; }
     if (this.activity) this.activity.seed(item, value);
     const entry = this.controlItems[item];
     if (entry) this.updateDevice(entry[0], entry[1], value);
@@ -977,6 +1053,7 @@
   };
 
   OpenHabBackend.prototype.stop = function () {
+    if (this.access) this.access.stop();
     this.stopped = true;
     this.readLifecycle += 1;
     this.cancelDiagnostics();
@@ -1001,12 +1078,12 @@
     if (this.activity) this.activity.accept(event.topic, event.payload);
     const match = UPDATE_TOPIC.exec(event.topic || "");
     // Unknown Items and all command payloads are ignored before inner parsing.
-    if (!match || !(this.byItem[match[1]] || this.controlItems[match[1]] || this.problemItems[match[1]])) return;
+    if (!match || !(this.byItem[match[1]] || this.controlItems[match[1]] || this.problemItems[match[1]] || this.routeProblemItems[match[1]])) return;
     try { payload = JSON.parse(event.payload); } catch (error) { return; }
     if (!match || !payload || payload.value === undefined) return;
     const roomId = this.byItem[match[1]];
     if (roomId) this.update(roomId, String(payload.value));
-    else if (this.controlItems[match[1]] || this.problemItems[match[1]]) this.updateItem(match[1], String(payload.value));
+    else this.updateItem(match[1], String(payload.value));
   };
 
   // A read-back: it confirms a pending choice when it shows that source, or
@@ -1038,7 +1115,8 @@
       return Promise.reject(error);
     }
     const confirmed = this.expectChoice(roomId, sourceId);
-    return this.request("POST", "/rest/items/" + sourceItem(roomId), sourceId).then(() => {
+    return (this.access && !this.access.native ? this.access.command(roomId, "source", sourceId)
+      : this.request("POST", "/rest/items/" + sourceItem(roomId), sourceId)).then(() => {
       this.choiceSent(roomId, sourceId);
       return confirmed;
     }, (error) => {
@@ -1085,6 +1163,13 @@
   // device off. The rooms switch to Off as after choose(); the devices show
   // it as they are read back.
   OpenHabBackend.prototype.allOff = function () {
+    if (this.access && !this.access.native) return this.access.allOff().then((answer) => {
+      const accepted = Array.isArray(answer.accepted) ? answer.accepted : [];
+      const skipped = Array.isArray(answer.skipped) ? answer.skipped : [];
+      accepted.filter((room) => this.items[room]).forEach((room) => { this.expectChoice(room, OFF); this.choiceSent(room, OFF); });
+      return { label: "All off", note: accepted.length + " rooms accepted" + (skipped.length ? "; " + skipped.length + " skipped" : ""),
+        accepted, skipped, sent: accepted.length > 0, tag: "" };
+    });
     const rooms = this.notOff();
     rooms.forEach((roomId) => this.expectChoice(roomId, OFF));
     return this.request("POST", "/rest/items/" + ALL_OFF, "ON").then(() => {
@@ -1098,6 +1183,18 @@
     });
   };
 
+  OpenHabBackend.prototype.operate = function (roomId, controlId, actionId) {
+    if (!this.access || this.access.native) return Common.operate.call(this, roomId, controlId, actionId);
+    return settled(() => {
+      const result = operation(this.house, roomId, controlId, actionId);
+      const control = findRoom(this.house, roomId).controls.find((entry) => entry.id === controlId);
+      if (control.connected !== true) return result;
+      return this.access.command(roomId, "control." + control.device, actionId).then(() => {
+        result.sent = true; result.note = "Accepted"; return result;
+      });
+    });
+  };
+
   // Control4 drives some room devices and nothing drives others yet: say only what holds for all.
   OpenHabBackend.prototype.unsent = function (result) {
     result.note = "thermite does not control the " + result.device.label + " yet";
@@ -1107,7 +1204,9 @@
 
   OpenHabBackend.prototype.send = function (deviceId, step, result) {
     this.aim(deviceId, step);
-    return this.request("POST", "/rest/items/" + step.item, step.command).then(() => {
+    return (this.access && !this.access.native
+      ? this.access.command(result.room, deviceId + "." + step.field, step.field === "volume" ? Number(step.command) : step.command)
+      : this.request("POST", "/rest/items/" + step.item, step.command)).then(() => {
       result.sent = true;
       return result;
     }, (error) => {
@@ -1132,6 +1231,8 @@
     controlsFor: controlsFor,
     controlOf: controlOf,
     volumeText: volumeText,
+    volumeValue: held,
+    volumeStep: volumeStep,
     showing: showing,
     buttonsOf: buttonsOf,
     sourceItem: sourceItem,

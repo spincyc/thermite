@@ -14,15 +14,15 @@ TVs, streaming boxes, AV receivers, projectors, speakers, and HDMI and USB switc
 
 ### Does it need the internet?
 
-No. It talks to your devices on your own network. Some devices need their maker's app once, to set them up.
+Core AV controls run on your own network. Downloads and cloud-based integrations need internet access. Some devices also need their maker's app for setup.
 
 ### Can trying it break my house?
 
-Not by accident. Every change boots on a throwaway openHAB first (`thermite test boot`), and nothing reaches the house until you run `thermite deploy`. If a change turns out wrong, `thermite rollback` puts the previous one back.
+Generating and validating configuration do not send device commands. Deployment installs a committed configuration after its native boot check (`thermite test boot`); `thermite rollback` restores the previous deployment. Remotes, pairing and explicit device commands act on the selected runtime, so use the mock remote or a sandbox when trying controls without changing the house.
 
 ### Where are passwords kept?
 
-Outside the house file, in a private folder only openHAB can read. They never go into Git, and `thermite lint` checks that none slipped in.
+Outside the house file and Git, in private service and client stores. Site passwords are stored as hashes; terminal clients keep revocable tokens in owned private files. `thermite lint` scans source and configuration for accidentally embedded credentials.
 
 ### Can I change the colors?
 
