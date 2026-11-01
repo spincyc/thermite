@@ -88,6 +88,7 @@ SOURCE_FILES = (
     'lib/oh_features/remote_topology.py',
     'lib/oh_features/routing/__init__.py',
     'lib/oh_features/routing/routing.js',
+    'lib/oh_features/threadpools.py',
     'lib/oh_googletv_sim.py',
     'lib/oh_identity/README.md',
     'lib/oh_identity/__init__.py',
