@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 
+import oh_access_mode
 import oh_brand as brand
 from oh_conf import LIB, Conf, House
 
@@ -29,7 +30,7 @@ TARGET = "html/remote"
 #: Every file the page loads; README.md stays behind.
 FILES = ("index.html", "theme.css", "remote.css", "house.js", "remotes.js", "activity.js", "activity.json", "diagnostics.js", "diagnostics.json", "backend.js", "session.js", "log.js", "remote.js",
          "appearance.js", "shell.js", "shell.css", "home.html", "home.js", "security.html",
-         "access.js", "access-ui.js", "access.css", "access.html", "users.html", "settings.html",
+         "access-config.js", "access.js", "access-ui.js", "access.css", "access.html", "users.html", "settings.html",
          "manifest.webmanifest", "icon.svg", "mark.svg", "mark-light.svg", "apple-touch-icon.png", "pair.html", "pair.js", "pair.css",
          "cameras.html", "cameras.js", "cameras.css", "cameras.json", "topology.html", "topology.js", "topology.css", "topology.json")
 #: The files of FILES drawn from the theme, and the `thermite theme export`
@@ -79,6 +80,8 @@ def render(house: House, conf: Conf) -> None:
     for name in FILES:
         if name == "house.js":
             conf.files[f"{TARGET}/{name}"] = remote_model.script(house, remote_model.presentation(SOURCE / name))
+        elif name == "access-config.js":
+            conf.files[f"{TARGET}/{name}"] = oh_access_mode.script(house.data)
         elif name == "activity.json":
             conf.files[f"{TARGET}/{name}"] = json.dumps(remote_activity.manifest(house, conf), separators=(",", ":")) + "\n"
         elif name == "diagnostics.json":

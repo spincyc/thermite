@@ -28,20 +28,23 @@
       routes[room] = Object.create(null);
       for (const [source, route] of Object.entries(sources)) {
         if (!ID.test(source) || !route || !Array.isArray(route.nodes) || route.nodes.length > 32) throw new Error("The topology map is unavailable.");
-        const path = route.nodes.map(node => {
+        function readNodes(nodes) { return nodes.map(node => {
           if (!node || !seen.has(node.device)) throw new Error("The topology map is unavailable.");
           return { device: node.device, label: text(node.label) || node.device, role: text(node.role), input: port(node.input), output: port(node.output), zone: port(node.zone) };
-        });
+        }); }
+        const path = readNodes(route.nodes);
+        if (route.audioNodes != null && (!Array.isArray(route.audioNodes) || route.audioNodes.length > 32)) throw new Error("The topology map is unavailable.");
+        const audioNodes = readNodes(route.audioNodes || []);
         const usb = (Array.isArray(route.usb) ? route.usb : []).filter(entry => entry && seen.has(entry.device)).map(entry => ({
           device: entry.device, host: port(entry.host), ports: (Array.isArray(entry.ports) ? entry.ports : []).map(port).filter(Boolean)
         }));
-        routes[room][source] = { label: text(route.label) || source, nodes: path, usb };
+        routes[room][source] = { label: text(route.label) || source, nodes: path, usb, ...(audioNodes.length ? { audioNodes } : {}) };
       }
     }
     const edgeIds = new Set();
     const edges = raw.edges.map(edge => {
       if (!edge || !text(edge.id) || edgeIds.has(edge.id) || !seen.has(edge.from) || !seen.has(edge.to)
-          || !["video", "usb"].includes(edge.kind) || !Array.isArray(edge.rooms) || !Array.isArray(edge.sources)) throw new Error("The topology map is unavailable.");
+          || !["video", "audio", "usb"].includes(edge.kind) || !Array.isArray(edge.rooms) || !Array.isArray(edge.sources)) throw new Error("The topology map is unavailable.");
       edgeIds.add(edge.id);
       return { id: text(edge.id), from: edge.from, to: edge.to, kind: edge.kind, fromPort: port(edge.fromPort), toPort: port(edge.toPort),
         rooms: edge.rooms.filter(id => roomIds.has(id)), sources: edge.sources.filter(id => ID.test(id)) };
@@ -52,8 +55,9 @@
   function carries(edge, route) {
     if (edge.kind === "usb") return route.nodes[0] && route.nodes[0].device === edge.from
       && route.usb.some(entry => entry.device === edge.to && entry.host === edge.toPort);
-    return route.nodes.some((node, index) => {
-      const next = route.nodes[index + 1];
+    const chain = edge.kind === "audio" ? route.audioNodes || [] : route.nodes;
+    return chain.some((node, index) => {
+      const next = chain[index + 1];
       return next && node.device === edge.from && next.device === edge.to
         && node.output === edge.fromPort && next.input === edge.toPort;
     });
@@ -72,15 +76,15 @@
     const edges = model.edges.filter(edge => room || source ? paths.some(path => carries(edge, path.route)) : true)
       .map(edge => ({ ...edge, confirmed: paths.some(path => path.confirmed && carries(edge, path.route)) }));
     const included = new Set(edges.flatMap(edge => [edge.from, edge.to]));
-    paths.forEach(path => path.route.nodes.forEach(node => included.add(node.device)));
-    const active = new Set(paths.filter(path => path.confirmed).flatMap(path => path.route.nodes.map(node => node.device)));
+    paths.forEach(path => path.route.nodes.concat(path.route.audioNodes || []).forEach(node => included.add(node.device)));
+    const active = new Set(paths.filter(path => path.confirmed).flatMap(path => path.route.nodes.concat(path.route.audioNodes || []).map(node => node.device)));
     return { nodes: model.nodes.filter(node => included.has(node.id)).map(node => ({ ...node, confirmed: active.has(node.id) })), edges, paths };
   }
 
   function layout(model, view, vertical = false) {
     const ranks = new Map(), levels = { source: 0, matrix: 1, switch: 1, receiver: 2, observer: 3, display: 4 };
     for (const sources of Object.values(model.routes)) for (const route of Object.values(sources)) {
-      route.nodes.forEach(node => { if (own(levels, node.role)) ranks.set(node.device, levels[node.role]); });
+      route.nodes.concat(route.audioNodes || []).forEach(node => { if (own(levels, node.role)) ranks.set(node.device, levels[node.role]); });
       route.usb.forEach(entry => ranks.set(entry.device, 1));
     }
     const columns = Array.from({ length: 5 }, () => []);
@@ -133,7 +137,7 @@
     return [...groups.values()];
   }
 
-  const VIDEO_COLUMNS = [["room", "Room"], ["status", "Status"], ["source", "Source"], ["matrix", "Matrix"], ["switch", "Switch"], ["receiver", "Receiver"], ["observer", "Link observer"], ["display", "Display"]];
+  const VIDEO_COLUMNS = [["room", "Room"], ["status", "Status"], ["source", "Source"], ["matrix", "Matrix"], ["switch", "Switch"], ["receiver", "Receiver"], ["observer", "Link observer"], ["display", "Display"], ["audio", "Separate audio"]];
   const DATA_COLUMNS = [["source", "Source"], ["usb", "USB matrix / HOST"], ["room", "Room"], ["ports", "DEVICE ports"], ["status", "Status"]];
 
   function compactLabel(model, node) {
@@ -162,6 +166,7 @@
     return view.paths.map(path => {
       const roles = {};
       for (const role of ["matrix", "switch", "receiver", "observer", "display"]) roles[role] = path.route.nodes.filter(node => node.role === role);
+      roles.audio = (path.route.audioNodes || []).filter(node => node.role !== "source");
       const status = routeStatus(model, path.room, path.source, states[path.room], connected);
       const room = model.rooms.find(entry => entry.id === path.room)?.label || path.room;
       const sort = { room, source: path.route.label, status: status.label };
@@ -245,7 +250,7 @@
     model.edges.filter(edge => edge.from === id || edge.to === id).forEach(edge => {
       const direction = edge.from === id ? "To " : "From ", peer = edge.from === id ? edge.to : edge.from;
       const ports = [edge.fromPort ? "out " + edge.fromPort : "", edge.toPort ? "in " + edge.toPort : ""].filter(Boolean).join(" → ");
-      links.appendChild(element("li", {}, direction + deviceLabel(peer) + " · " + (edge.kind === "usb" ? "USB" : "Video") + (ports ? " · " + ports : "")));
+      links.appendChild(element("li", {}, direction + deviceLabel(peer) + " · " + (edge.kind === "usb" ? "USB" : edge.kind === "audio" ? "Audio" : "Video") + (ports ? " · " + ports : "")));
     });
     detail.appendChild(links);
     draw();
@@ -354,6 +359,7 @@
     view.paths.forEach(path => {
       const row = element("li", { class: "route-row" });
       row.append(element("h3", {}, roomLabel(path.room) + " · " + path.route.label), element("p", {}, path.route.nodes.map(node => node.label + (nativePorts(node) ? " [" + nativePorts(node) + "]" : "")).join(" → ")));
+      if (path.route.audioNodes) row.appendChild(element("p", {}, "Configured audio · " + path.route.audioNodes.map(node => node.label + (nativePorts(node) ? " [" + nativePorts(node) + "]" : "")).join(" → ")));
       path.route.usb.forEach(usb => row.appendChild(element("p", {}, "Configured USB · " + deviceLabel(usb.device) + " HOST " + usb.host + " · DEVICE ports " + usb.ports.join(", "))));
       list.appendChild(row);
     });

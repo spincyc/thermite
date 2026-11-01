@@ -224,7 +224,9 @@
   if (typeof module !== "undefined" && module.exports) module.exports = exported;
   if (typeof document === "undefined") return;
   const params = new URLSearchParams(location.search), nativeFetch = global.fetch.bind(global), NativeEvents = global.EventSource;
-  const client = exported.client = create({ fetch: nativeFetch, native: params.get("backend") === "native", mock: params.get("backend") === "mock",
+  const site = global.THERMITE_ACCESS_CONFIG;
+  const siteNative = site && site.version === 1 && site.mode === "native";
+  const client = exported.client = create({ fetch: nativeFetch, native: params.get("backend") !== "mock" && (params.get("backend") === "native" || siteNative), mock: params.get("backend") === "mock",
     onUnauthorized() {
       if (document.body && document.body.dataset.thermitePage === "access") return;
       document.querySelectorAll("main,.app").forEach((main) => { const message = document.createElement("p"); message.textContent = "Sign in to thermite to continue."; main.replaceChildren(message); });

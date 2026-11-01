@@ -165,7 +165,7 @@ def diagnostics(device: dict) -> dict | None:
         return None
     items = [f"{device['id']}_{kind}_signal" for kind in SIGNAL_FIELDS]
     readings = [{"category": category, "label": label, "item": f"{device['id']}_{kind}_signal",
-                 "path": ["values", field], "zone": "main"}
+                 "path": ["values", field], "zone": "main", "media": kind}
                 for kind, (_, fields) in SIGNAL_FIELDS.items() for field, (category, label) in fields.items()]
     return {"kind": NAME, "items": items, "maxAgeSeconds": 30, "readings": readings}
 

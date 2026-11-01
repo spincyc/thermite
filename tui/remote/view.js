@@ -996,6 +996,7 @@ function signalContent(g, w, ctx) {
   if (!model) return paragraph(g, 1, y, w - 2, "Reading the confirmed signal path\u2026", "dim");
   y = paragraph(g, 1, y, w - 2, model.room.label + " \u00b7 " + (model.source ? model.source.label : "Source unknown"), "strong");
   if (model.route && model.route.length) y = paragraph(g, 1, y, w - 2, model.route.map((step) => step.label).join(" → "), "dim");
+  if (model.audioRoute && model.audioRoute.length) y = paragraph(g, 1, y, w - 2, "Audio · " + model.audioRoute.map((step) => step.label).join(" → "), "dim");
   if (model.pending) y = paragraph(g, 1, y, w - 2, "Switching to " + model.pending.label + "; readings still describe the confirmed source.", "tone.busy") + 1;
   const groups = [["video", "Current video"], ["audio", "Current audio"], ["path", "Configured path"],
     ["edid", "EDID capabilities"], ["processing", "Processing & settings"]];

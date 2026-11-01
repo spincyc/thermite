@@ -26,14 +26,17 @@
     function route(roomId, sourceId) {
       const room = OWN(manifest.rooms, roomId) ? manifest.rooms[roomId] : null;
       const source = room && OWN(room.sources, sourceId) ? room.sources[sourceId] : null;
-      return { room: room, source: source, nodes: source && Array.isArray(source.nodes) ? source.nodes : [] };
+      return { room: room, source: source, nodes: source && Array.isArray(source.nodes) ? source.nodes : [],
+        audioNodes: source && Array.isArray(source.audioNodes) ? source.audioNodes : [] };
     }
     function readings(roomId, sourceId) {
-      return route(roomId, sourceId).nodes.flatMap((node) => {
+      const path = route(roomId, sourceId);
+      return path.nodes.concat(path.audioNodes.map(node => Object.assign({}, node, { audioOnly: true }))).flatMap((node) => {
         const provider = OWN(manifest.devices, node.device) ? manifest.devices[node.device] : null;
         if (!provider || !Array.isArray(provider.items) || !Array.isArray(provider.readings)) return [];
         return provider.readings.filter((reading) => {
           if (!reading || !CATEGORIES.includes(reading.category) || reading.category === "path") return false;
+          if (node.audioOnly && reading.category !== "audio" && reading.media !== "audio") return false;
           if (!ITEM.test(reading.item) || SECRET.test(reading.item) || !provider.items.includes(reading.item)) return false;
           if (!Array.isArray(reading.path) || reading.path.length > 8) return false;
           if (reading.zone && reading.zone !== node.zone) return false;
@@ -55,10 +58,16 @@
         ["input", "output", "zone"].forEach((key) => { if (node[key] != null) copy[key] = text(node[key]); });
         return copy;
       });
+      const audioNodes = chosen.audioNodes.map(node => ({ device: node.device, label: text(node.label), role: node.role,
+        ...(node.input != null ? { input: text(node.input) } : {}), ...(node.output != null ? { output: text(node.output) } : {}) }));
       nodes.forEach((node) => {
         const ports = [node.input != null ? "input " + node.input : "", node.output != null ? "output " + node.output : "",
           node.zone && node.zone !== "main" ? "zone " + node.zone : ""].filter(Boolean).join(" · ");
         sections.path.push(row(node.role, node.label + (ports ? " · " + ports : ""), "reported", { basis: "configured", device: node.device }));
+      });
+      audioNodes.forEach(node => {
+        const ports = [node.input != null ? "input " + node.input : "", node.output != null ? "output " + node.output : ""].filter(Boolean).join(" · ");
+        sections.path.push(row("Audio " + node.role, node.label + (ports ? " · " + ports : ""), "reported", { basis: "configured", device: node.device }));
       });
       if (!nodes.length) sections.path.push(row("Path", sourceId === "off" ? "Room is off" : "Source not reported", "not_reported", { basis: "configured" }));
       const activeReadings = readings(roomId, sourceId);
@@ -111,7 +120,7 @@
         source: chosen.source ? { id: sourceId, label: text(chosen.source.label) } : null, pending: pending,
         availability: measured.some((row) => row.availability === "reported") ? "reported"
           : measured.some((row) => row.availability === "unavailable") ? "unavailable" : "not_reported",
-        updatedAt: at, route: nodes, sections: sections };
+        updatedAt: at, route: nodes, ...(audioNodes.length ? { audioRoute: audioNodes } : {}), sections: sections };
     }
     return { items: items, project: project };
   }

@@ -1366,9 +1366,10 @@ It runs the page&#x27;s own house.js, remotes.js,
 backend.js, session.js and pair.js from web/remote/ under node, so both
 front ends drive thermite the same way (tui/remote/README.md).
 
-By default it talks to production thermite on this host (127.0.0.1 at
-instance/host.yaml&#x27;s http_port), with no login, as a phone&#x27;s remote page
-does: choosing a source really switches the room. --sandbox talks to
+By default it uses the authenticated site (THERMITE_SITE_URL, or
+https://localhost:9443). A site with access.mode: native instead uses its
+production runtime without login; --native explicitly selects that testing
+mode for this run. Choosing a source really switches the room. --sandbox talks to
 the sandbox on 127.0.0.1:18080 and --mock to the page&#x27;s mock backend,
 which sends nothing.
 

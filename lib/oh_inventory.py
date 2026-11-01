@@ -83,10 +83,11 @@ def validate(data: object) -> list[str]:
     # Imported here: the integration modules import lib/oh_conf.py, which
     # imports this module.
     import oh_integrations
+    import oh_access_mode
 
     if not isinstance(data, dict) or data.get("version") != 1:
         return ["devices.yaml: version must be 1"]
-    problems = validate_rooms(data.get("rooms") or {})
+    problems = validate_rooms(data.get("rooms") or {}) + oh_access_mode.validate(data)
     rooms = data.get("rooms") if isinstance(data.get("rooms"), dict) else {}
     allowed = oh_integrations.allowed()
     seen: dict[str, dict[str, str]] = {"id": {}, "ip": {}, "mac": {}, "c4_item": {}}

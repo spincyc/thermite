@@ -67,13 +67,16 @@ def manifest(house: House, conf: Conf) -> dict:
         routes[room_id] = {}
         for source_id, path in sorted(room["sources"].items()):
             route = {"label": path["label"], "nodes": copy.deepcopy(path["nodes"])}
-            for before, after in zip(path["nodes"], path["nodes"][1:]):
-                ports = {}
-                if before.get("output") is not None:
-                    ports["fromPort"] = before["output"]
-                if after.get("input") is not None:
-                    ports["toPort"] = after["input"]
-                edge("video", before["device"], after["device"], room_id, source_id, **ports)
+            if path.get("audioNodes"):
+                route["audioNodes"] = copy.deepcopy(path["audioNodes"])
+            for kind, chain in (("video", path["nodes"]), ("audio", path.get("audioNodes", []))):
+                for before, after in zip(chain, chain[1:]):
+                    ports = {}
+                    if before.get("output") is not None:
+                        ports["fromPort"] = before["output"]
+                    if after.get("input") is not None:
+                        ports["toPort"] = after["input"]
+                    edge(kind, before["device"], after["device"], room_id, source_id, **ports)
             usb = _usb(config, routed_rooms[room_id], source_id)
             if usb:
                 route["usb"] = usb

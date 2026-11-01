@@ -176,6 +176,12 @@
     }
     await reload();
   }
+  if (client.native) {
+    document.querySelectorAll("form, [data-policy-room], [data-policy-reload], .access-toolbar").forEach((item) => { item.hidden = true; });
+    document.querySelectorAll(".access-login > p:not([data-access-status])").forEach((item) => { item.hidden = true; });
+    status("Accounts and room schedules are paused in native testing mode.");
+    return;
+  }
   if (page === "access") login().catch((error) => status(error.message, true));
   else client.ready().then(() => page === "users" ? users() : policy()).catch((error) => status(error.message, true));
 })(globalThis);

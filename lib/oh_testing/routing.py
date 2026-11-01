@@ -227,14 +227,17 @@ class Check:
         HDMI switches on the matrix; USB parked."""
         hdmi = self.sims[self.routing["hdmi_matrix"]]
         for entry in self.routing["rooms"].values():
-            if "hdmi_output" in entry:
-                hdmi.set(entry["hdmi_output"], self.routing["hdmi_off_input"])
+            for key in ("hdmi_output", "hdmi_audio_output"):
+                if key in entry:
+                    hdmi.set(entry[key], self.routing["hdmi_off_input"])
             switch = entry.get("hdmi_switch")
             if switch is not None and "matrix_input" in switch:
                 self.sims[switch["device"]].set(switch.get("output", 0), switch["matrix_input"])
         room = next(r for r in self.table if self.table[r]["hdmi"] and self.matrix_choices(r))
         source = self.number(self.matrix_choices(room)[0])
         hdmi.set(self.routing["rooms"][room]["hdmi_output"], source)
+        if "hdmi_audio_output" in self.routing["rooms"][room]:
+            hdmi.set(self.routing["rooms"][room]["hdmi_audio_output"], source)
         if self.edid is not None:
             for number in self.edid["inputs"]:
                 if self.edid["idle"] is not None:
@@ -334,27 +337,36 @@ class Check:
 
         if any(reported(stage["power"]) == "OFF" for stage in stages):
             return routing.OFF
+        if self.table[room].get("audioHdmi") and any(reported(stage["power"]) != "ON" for stage in stages):
+            return "UNDEF"
+
+        def selected(choice):
+            return choice if all(reported(item) == str(value) for item, value in self.table[room]["inputs"].get(choice, [])) else "UNDEF"
+
         for stage in stages:
             value = reported(stage["input"])
             if value is None:
                 return "UNDEF"
             if value in stage["readback"]:
-                return stage["readback"][value]
-            if value != stage["feed"]:
+                return selected(stage["readback"][value])
+            if value != stage["feed"] and value not in stage.get("bySource", {}).values():
                 return "UNDEF"
         switch = self.table[room]["switch"]
         if switch is not None:
             ident, port = self.ports[switch["item"]]
             current = None if ident in silent else str(self.sims[ident].get(port))
             if current in switch["readback"]:
-                return switch["readback"][current]
+                return selected(switch["readback"][current])
             if current != switch["matrix"]:
                 return "UNDEF"
         if self.table[room]["hdmi"] is None or self.routing["hdmi_matrix"] in silent:
             return "UNDEF"
         output = self.routing["rooms"][room]["hdmi_output"]
         current = self.sims[self.routing["hdmi_matrix"]].get(output)
-        return self.table[room]["readback"].get(str(current), "UNDEF")
+        audio = self.routing["rooms"][room].get("hdmi_audio_output")
+        if audio is not None and self.sims[self.routing["hdmi_matrix"]].get(audio) != current:
+            return "UNDEF"
+        return selected(self.table[room]["readback"].get(str(current), "UNDEF"))
 
     def uid(self, ident: str) -> str:
         return self.modules[ident].thing_uid(self.devices[ident])
@@ -478,6 +490,8 @@ class Check:
         output = self.routing["rooms"][room]["hdmi_output"]
         source = next(s for s in self.matrix_choices(room) if self.number(s) != hdmi.get(output))
         hdmi.set(output, self.number(source))
+        if "hdmi_audio_output" in self.routing["rooms"][room]:
+            hdmi.set(self.routing["rooms"][room]["hdmi_audio_output"], self.number(source))
         self.sources({room: source})
         offered = {int(k) for k in self.table[room]["readback"]}
         inputs = self.modules[self.routing["hdmi_matrix"]].ports(self.devices[self.routing["hdmi_matrix"]])[0]

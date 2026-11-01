@@ -68,9 +68,18 @@ def _rooms(house: House) -> dict:
                 if stage.get("passive") is True:
                     node(stage["device"], role)
                     continue
-                port = (stage.get("sources") or {}).get(source_id, stage.get("input"))
+                port = (stage.get("sources") or {}).get(source_id,
+                        (stage.get("input_by_source") or {}).get(source_id, stage.get("input")))
                 node(stage["device"], role, input=port, zone=stage.get("zone") or "main")
-            paths[source_id] = {"label": sources[source_id]["label"], "nodes": nodes}
+            path = {"label": sources[source_id]["label"], "nodes": nodes}
+            if room.get("hdmi_audio_output") is not None and not (local_display or local_receiver or local_switch):
+                # Two HDMI cables carry the same source: video bypasses the
+                # receiver, while a separate matrix output feeds its audio.
+                path["audioNodes"] = [copy.deepcopy(nodes[0]),
+                                      {**copy.deepcopy(nodes[1]), "output": room["hdmi_audio_output"]},
+                                      *[copy.deepcopy(node) for node in nodes if node["role"] == "receiver"]]
+                path["nodes"] = [node for node in nodes if node["role"] != "receiver"]
+            paths[source_id] = path
         rooms[room_id] = {"label": routing.room_label(house.data, room_id), "sources": paths}
     return rooms
 
@@ -91,8 +100,9 @@ def validate(data: dict) -> list[str]:
     try:
         rooms = _rooms(house)
         edges = {(a["device"], b["device"]) for room in rooms.values() for path in room["sources"].values()
-                 for a, b in zip(path["nodes"], path["nodes"][1:])}
-        routed = {node["device"] for room in rooms.values() for path in room["sources"].values() for node in path["nodes"]}
+                 for chain in (path["nodes"], path.get("audioNodes", [])) for a, b in zip(chain, chain[1:])}
+        routed = {node["device"] for room in rooms.values() for path in room["sources"].values()
+                  for node in path["nodes"] + path.get("audioNodes", [])}
         described = providers(house)
     except (KeyError, TypeError, AttributeError):
         # The owning routing/inventory validators report malformed paths.
@@ -142,10 +152,13 @@ def manifest(house: House, conf: Conf) -> dict:
                  for entry in (house.data.get("diagnostics") or {}).get("observers", [])}
     for room in rooms.values():
         for path in room["sources"].values():
-            nodes, observed = path["nodes"], []
-            for index, current in enumerate(nodes):
-                observed.append(current)
-                if index + 1 < len(nodes) and (ident := observers.get((current["device"], nodes[index + 1]["device"]))):
-                    observed.append({"device": ident, "label": house.label(devices[ident]), "role": "observer"})
-            path["nodes"] = observed
+            for key in ("nodes", "audioNodes"):
+                if key not in path:
+                    continue
+                nodes, observed = path[key], []
+                for index, current in enumerate(nodes):
+                    observed.append(current)
+                    if index + 1 < len(nodes) and (ident := observers.get((current["device"], nodes[index + 1]["device"]))):
+                        observed.append({"device": ident, "label": house.label(devices[ident]), "role": "observer"})
+                path[key] = observed
     return {"version": 1, "devices": descriptions, "rooms": rooms}

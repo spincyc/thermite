@@ -28,11 +28,11 @@ EDID_KEYS = {"idle"}
 #: A room's devices that a choice powers and switches, in the order the
 #: signal reaches them: the screen is the last.
 STAGES = ("receiver", "display")
-STAGE_KEYS = {"device", "zone", "input", "sources"}
+STAGE_KEYS = {"device", "zone", "input", "input_by_source", "sources"}
 #: The room keys of what its other devices are sent on any source, and on
 #: Off. Not `on` and `off`: YAML reads those as true and false.
 ACTIONS = ("on_actions", "off_actions")
-ROOM_KEYS = {"room", "label", "hdmi_output", "hdmi_switch", "usb", "usb_only", "sources", "sleep_sources", "edid",
+ROOM_KEYS = {"room", "label", "hdmi_output", "hdmi_audio_output", "hdmi_switch", "usb", "usb_only", "sources", "sleep_sources", "edid",
              *STAGES, *ACTIONS}
 
 
@@ -228,11 +228,16 @@ def validate(data: object) -> list[str]:
             problems.append(f"{where}: must be a mapping")
             continue
         fed = "hdmi_output" in entry
-        if fed and port(f"{where}.hdmi_output", entry.get("hdmi_output"), hdmi_outputs):
-            if entry["hdmi_output"] in outputs:
-                problems.append(f"{where}.hdmi_output: {entry['hdmi_output']} already used by "
-                                f"{outputs[entry['hdmi_output']]}")
-            outputs.setdefault(entry["hdmi_output"], room)
+        for key in ("hdmi_output", "hdmi_audio_output"):
+            if key in entry and port(f"{where}.{key}", entry[key], hdmi_outputs):
+                if entry[key] in outputs:
+                    problems.append(f"{where}.{key}: {entry[key]} already used by {outputs[entry[key]]}")
+                outputs.setdefault(entry[key], room)
+        if "hdmi_audio_output" in entry:
+            if not fed or "receiver" not in entry:
+                problems.append(f"{where}.hdmi_audio_output: needs hdmi_output and receiver")
+            if "hdmi_switch" in entry:
+                problems.append(f"{where}.hdmi_audio_output: a split output cannot also use hdmi_switch")
         usb = entry.get("usb", {})
         if not isinstance(usb, dict):
             problems.append(f"{where}.usb: must map USB matrices to device ports")
@@ -449,6 +454,16 @@ def _stage_problems(where: str, spec: object, offered: list, sources: dict, devi
             if input_ in taken:
                 problems.append(f"{at}: {input_} already used by {taken[input_]}")
             taken.setdefault(input_, source)
+    overrides = spec.get("input_by_source", {})
+    if not isinstance(overrides, dict):
+        problems.append(f"{where}.input_by_source: must map offered upstream sources to inputs")
+        overrides = {}
+    for source, input_ in overrides.items():
+        at = f"{where}.input_by_source.{source}"
+        if not upstream or source not in offered or source not in sources or source in cabled:
+            problems.append(f"{at}: must name an offered source upstream of this stage")
+        if value(at, input_) and input_ in taken and taken[input_] != "input":
+            problems.append(f"{at}: {input_} is already a locally cabled source input")
     for key in sorted(set(spec) - STAGE_KEYS):
         problems.append(f"{where}: unknown key '{key}'")
     return problems
@@ -632,8 +647,9 @@ def commands(data: dict, room: str, choice: str) -> list[list]:
     hdmi_input = routing["hdmi_off_input"] if choice in _local(entry) else source.get("hdmi_input",
                                                                                          routing["hdmi_off_input"])
     out = []
-    if "hdmi_output" in entry:
-        out.append([_port_item(devices, routing["hdmi_matrix"], entry["hdmi_output"]), hdmi_input])
+    for key in ("hdmi_output", "hdmi_audio_output"):
+        if key in entry:
+            out.append([_port_item(devices, routing["hdmi_matrix"], entry[key]), hdmi_input])
     if switch is not None and (local or "matrix_input" in switch):
         out.append([_switch_item(devices, switch), switch["inputs"][choice] if local else switch["matrix_input"]])
     only = (entry.get("usb_only") or {}).get(choice)
@@ -692,7 +708,7 @@ def inputs(data: dict, room: str, choice: str) -> list[list]:
         if choice in cabled:
             out.append([stage["input"], cabled[choice]])
             break
-        out.append([stage["input"], spec["input"]])
+        out.append([stage["input"], spec.get("input_by_source", {}).get(choice, spec["input"])])
     return out
 
 
@@ -762,9 +778,14 @@ def table(data: dict) -> dict:
                         "readback": {value: source for source, value in (spec.get("sources") or {}).items()}}
                        for spec, stage in reversed(stages(data, room))],
         }
+        if "hdmi_audio_output" in entry:
+            rooms[room]["audioHdmi"] = _port_item(devices, routing["hdmi_matrix"], entry["hdmi_audio_output"])
+        for raw_stage, (spec, _) in zip(rooms[room]["stages"], reversed(stages(data, room))):
+            if spec.get("input_by_source"):
+                raw_stage["bySource"] = dict(spec["input_by_source"])
         checks = {}
         raw = rooms[room]
-        for item, action in ([(raw["hdmi"], "read matrix output input")] if raw["hdmi"] else []) + (
+        for item, action in ([(raw[key], "read matrix output input") for key in ("hdmi", "audioHdmi") if raw.get(key)]) + (
                 [(raw["switch"]["item"], "read selected input")] if raw["switch"] else []) + [
                 (stage[field], action) for stage in raw["stages"]
                 for field, action in (("power", "read power"), ("input", "read selected input"))]:

@@ -47,6 +47,7 @@
     const a = link(entry, "thermite-nav-link" + (entry.parent ? " thermite-nav-child" : ""));
     a.dataset.view = entry.id;
     if (entry.admin) { a.hidden = true; a.dataset.adminOnly = ""; }
+    if (global.ThermiteAccess?.client?.native && ["settings", "users", "access"].includes(entry.id)) { a.hidden = true; a.dataset.nativeUnavailable = ""; }
     if (entry.id === current) a.setAttribute("aria-current", "page");
     if (entry.id === page.parent) a.dataset.parentActive = "true";
     nav.appendChild(a);
@@ -81,7 +82,7 @@
   body.classList.add("thermite-app");
   const access = global.ThermiteAccess && global.ThermiteAccess.client;
   if (access) access.ready().then(() => {
-    shell.querySelectorAll("[data-admin-only]").forEach((link) => { link.hidden = !access.canEdit(); });
+    shell.querySelectorAll("[data-admin-only]").forEach((link) => { link.hidden = access.native || !access.canEdit(); });
     shell.querySelectorAll('[data-view="pairing"]').forEach((link) => { link.hidden = !access.has("pairing.manage"); });
   }).catch(() => {});
   document.querySelectorAll("[data-thermite-link]").forEach(a => { a.href = href(a.dataset.thermiteLink, location.search); });

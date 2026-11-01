@@ -12,7 +12,7 @@ function create(client, house, changed) {
     state.kind = kind; state.room = room || state.room || house.rooms[0]?.id; state.form = null;
     state.loading = true; state.error = ""; const turn = ++generation; changed();
     try {
-      if (!client || client.native) throw new Error("Access is not configured in native mode.");
+      if (!client || client.native) return;
       await client.ready();
       if (kind === "settings") { const value = await client.loadPolicy(state.room); if (turn === generation) state.policy = value; }
       else if (kind === "users" && canEdit()) {
@@ -35,7 +35,7 @@ function create(client, house, changed) {
     };
     if (state.error) { line(state.error, "alert"); y++; }
     if (state.loading) { line("Reading access settings…"); return y; }
-    if (!client || client.native) { line("Use thermite access login, then connect to your access service."); return y; }
+    if (!client || client.native) { line("Accounts and room schedules are paused in native testing mode."); return y; }
     if (state.kind === "account") {
       const user = client.current(); line(user ? "Signed in as " + user.username : "Not signed in", "strong");
       if (!user) { line("Run thermite access login for this address, then reopen the remote."); return y; }
@@ -181,6 +181,6 @@ function create(client, house, changed) {
     }
     return false;
   }
-  return { state, open, content, formContent, activate, key, cancel: () => { generation++; state.loading = false; if (state.form?.data) state.form.data.password = ""; state.form = null; }, canEdit };
+  return { native: !client || client.native, state, open, content, formContent, activate, key, cancel: () => { generation++; state.loading = false; if (state.form?.data) state.form.data.password = ""; state.form = null; }, canEdit };
 }
 module.exports = { create };

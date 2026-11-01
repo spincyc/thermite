@@ -503,8 +503,9 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
         name = routing.item_name(zone)
         paths[name] = {"label": entry["label"], "sources": {}}
         for source, path in entry["sources"].items():
-            paths[name]["sources"][source] = [n["device"] for n in path["nodes"]]
-            for node in path["nodes"]:
+            nodes = path["nodes"] + path.get("audioNodes", [])
+            paths[name]["sources"][source] = list(dict.fromkeys(n["device"] for n in nodes))
+            for node in nodes:
                 device_checks(node["device"], {"item": name, "source": source}, node)
     for ident, device in devices.items():
         if device.get("kind") in ("hdmi_matrix", "usb_matrix", "hdmi_switch"):

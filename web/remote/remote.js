@@ -542,6 +542,7 @@
       panel.appendChild(node("p", { class: "signal__source" }, model.source ? model.source.label
         : source ? source.label : confirmed === "off" ? "Off" : "Source unknown"));
       if (model.route && model.route.length) panel.appendChild(node("p", { class: "signal__route" }, model.route.map((step) => step.label).join(" → ")));
+      if (model.audioRoute && model.audioRoute.length) panel.appendChild(node("p", { class: "signal__route" }, "Audio · " + model.audioRoute.map((step) => step.label).join(" → ")));
       if (model.pending) panel.appendChild(node("p", { class: "info__note" }, "Switching to " + model.pending.label + "; readings still describe the confirmed source."));
       const groups = [["video", "Current video"], ["audio", "Current audio"], ["path", "Configured path"],
         ["edid", "EDID capabilities"], ["processing", "Processing & settings"]];

@@ -40,13 +40,13 @@ function content(g, width, ctx, height) {
     g.hit(x, top, cardWidth, cardHeight, hit);
   });
   y += Math.ceil(modules.length / columns) * (cardHeight + 1) + 1;
-  const accessLinks = [["settings", "F7 Settings"], ...(ctx.access?.canEdit() ? [["users", "F8 Users"]] : []), ["account", "F9 Account"]];
+  const accessLinks = ctx.access?.native ? [] : [["settings", "F7 Settings"], ...(ctx.access?.canEdit() ? [["users", "F8 Users"]] : []), ["account", "F9 Account"]];
   let accessX = 2;
   accessLinks.forEach(([screen, label]) => {
     if (accessX + label.length > width - 2) { y++; accessX = 2; }
     const key = "home:" + screen;
     g.put(accessX, y, label, ctx.ui.focus === key ? "row.focus" : "link", { kind: "screen", screen, key, focus: true, label }); accessX += label.length + 3;
-  }); y += 2;
+  }); if (accessLinks.length) y += 2;
   line("Rooms · reported sources", "section");
   if (!ctx.ui.ready) { line("Reading rooms…"); return y; }
   const nameWidth = Math.min(25, Math.max(10, Math.floor((width - 5) * .4)));

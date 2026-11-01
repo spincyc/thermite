@@ -36,9 +36,10 @@ It runs the page's own house.js, remotes.js,
 backend.js, session.js and pair.js from web/remote/ under node, so both
 front ends drive thermite the same way (tui/remote/README.md).
 
-By default it talks to production thermite on this host (127.0.0.1 at
-instance/host.yaml's http_port), with no login, as a phone's remote page
-does: choosing a source really switches the room. --sandbox talks to
+By default it uses the authenticated site (THERMITE_SITE_URL, or
+https://localhost:9443). A site with access.mode: native instead uses its
+production runtime without login; --native explicitly selects that testing
+mode for this run. Choosing a source really switches the room. --sandbox talks to
 the sandbox on 127.0.0.1:18080 and --mock to the page's mock backend,
 which sends nothing.
 
@@ -120,6 +121,20 @@ def setup(build: Path = BUILD, tui: Path = TUI, npm: str | None = None) -> int:
     return 0
 
 
+def native_mode(arguments: argparse.Namespace) -> bool:
+    """An explicit target cannot inherit a different local site's testing mode."""
+    if arguments.mock:
+        return False
+    if getattr(arguments, "native", False) or arguments.sandbox:
+        return True
+    if arguments.url or os.environ.get("THERMITE_SITE_URL"):
+        return False
+    import oh_access_mode
+    import oh_inventory
+
+    return oh_access_mode.mode(oh_inventory.load(oh_cli.HOUSE) or {}) == "native"
+
+
 def target(arguments: argparse.Namespace) -> list[str]:
     """Which backend main.js uses: --mock, or a thermite controller's URL."""
     if arguments.mock:
@@ -128,7 +143,7 @@ def target(arguments: argparse.Namespace) -> list[str]:
         return ["--url", arguments.url.rstrip("/")]
     if arguments.sandbox:
         return ["--url", oh_cli.SANDBOX_URL]
-    if not getattr(arguments, "native", False):
+    if not native_mode(arguments):
         return ["--url", os.environ.get("THERMITE_SITE_URL", "https://localhost:9443")]
     import oh_deploy as deploy
 
@@ -138,7 +153,7 @@ def target(arguments: argparse.Namespace) -> list[str]:
 def node_argv(arguments: argparse.Namespace, node: str = "node", build: Path = BUILD) -> list[str]:
     argv = [node, str(TUI / "main.js"), "--modules", str(modules(build)), "--state", str(arguments.state)]
     argv += target(arguments)
-    if getattr(arguments, "native", False) or arguments.sandbox:
+    if native_mode(arguments):
         argv.append("--native")
     if arguments.pair:
         argv.append("--pair")
@@ -214,7 +229,7 @@ def parser() -> argparse.ArgumentParser:
 def launch_environment(arguments, chosen):
     """Only credential/CA paths cross to Node; personal tokens stay in files."""
     environment = {**os.environ, LOOK: look(chosen)}
-    if arguments.mock or arguments.sandbox or arguments.native:
+    if arguments.mock or native_mode(arguments):
         environment.pop("THERMITE_REMOTE_TOKEN_FILE", None)
         return environment
     from oh_access import client
@@ -255,8 +270,8 @@ def main(argv: list[str] | None = None) -> int:
         status = setup()
         if status:
             return status
-    command = node_argv(arguments, node)
     try:
+        command = node_argv(arguments, node)
         environment = launch_environment(arguments, chosen)
     except ValueError:
         print("thermite remote: log in with thermite access login, or explicitly choose --native for owner/testing access", file=sys.stderr)

@@ -205,6 +205,12 @@ function content(g, width, ctx) {
   if (preview) {
     y += 1; line("Selected path · " + preview.label + " · configured preview", "strong");
     line(preview.route.nodes.map(node => plain(node.label) + (ports(node).length ? " [" + ports(node).join(" · ") + "]" : "")).join(" → "), "base");
+    if (preview.route.audioNodes) line("Audio · " + preview.route.audioNodes.map(node => plain(node.label) + (ports(node).length ? " [" + ports(node).join(" · ") + "]" : "")).join(" → "), "base");
+  }
+  const audio = rows.filter(row => row.route.audioNodes && row.route.audioNodes.length);
+  if (audio.length) {
+    y += 1; line("Separate audio branches · configured", "hotkey+bold");
+    audio.forEach(row => line(row.label + " · " + row.route.audioNodes.slice(1).map(node => plain(node.label) + " [" + ports(node).join(" · ") + "]").join(" → "), "base"));
   }
   y += 1; line("Data rows · USB · Configured only", "tone.ok+bold");
   const usb = rows.flatMap(row => (row.route.usb || []).map(entry => ({ row, entry })));
