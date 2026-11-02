@@ -18,10 +18,10 @@ from oh_install.model import Action, Check, Command, Step, Task
 from oh_install.system import System
 
 #: Podman runs openHAB; Git and make carry the deploys; Python with PyYAML
-#: runs this area's tools, and Node.js the tests of its rules.
+#: runs this area's tools; Node.js and npm support the terminal remote.
 PACKAGES = {
-    "pacman": ("podman", "git", "make", "python", "python-yaml", "nodejs"),
-    "apt-get": ("podman", "git", "make", "python3", "python3-yaml", "nodejs"),
+    "pacman": ("podman", "git", "make", "python", "python-yaml", "nodejs", "npm"),
+    "apt-get": ("podman", "git", "make", "python3", "python3-yaml", "nodejs", "npm"),
 }
 #: Quadlets need Podman 4.4.
 PODMAN = (4, 4)
