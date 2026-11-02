@@ -1,6 +1,6 @@
 # Get started
 
-thermite runs on one Linux machine on your home network, next to openHAB. You describe the house, thermite does the rest, and you check each step before it touches anything.
+thermite runs on one Linux machine on your home network, next to openHAB. You describe the house, generate its configuration and check each step before installing it. Current application builds are development version `0.1.0.dev0`.
 
 ## What you need
 
@@ -8,9 +8,25 @@ thermite runs on one Linux machine on your home network, next to openHAB. You de
 - Podman, Python 3.11 or later and Git. Node.js for the terminal remote.
 - Your devices on the same network, each with a fixed address.
 
+## Install the application
+
+From the reviewed public source checkout, install thermite in a dedicated Python environment:
+
+```sh
+python3 -m venv ~/.venvs/thermite
+~/.venvs/thermite/bin/python -m pip install .
+. ~/.venvs/thermite/bin/activate
+thermite init ~/my-thermite-site
+cd ~/my-thermite-site
+```
+
+You can also install a reviewed wheel with `python -m pip install /path/to/thermite_app-0.1.0.dev0-py3-none-any.whl`. PyYAML is the application's configuration dependency; runtime downloads, the terminal's locked Node package and optional service dependencies have their own explicit setup steps.
+
+The installed program stays separate from your private site. `init` writes a fictional inventory, sample host settings, runtime pins and a private launcher. It does not create a Git repository, contact devices, install services or activate accounts. Commands recognize the site in the current directory; use `thermite --site /path/to/site ...` elsewhere.
+
 ## 1. Describe the house
 
-The public checkout includes a fictional example. Keep real inventory and host settings in a separate private site checkout. Deployment installs committed files: generate and privately commit `conf/`, `metrics/` and `deploy/` before installing. These outputs are ignored in the public checkout; keep your house configuration out of the public repository.
+Edit `instance/devices.yaml` and `instance/host.yaml` in your new private site. Its initial devices are fictional; replace them before commissioning real hardware. Create a private Git repository for this site. Deployment installs committed files: generate and privately commit the site manifest, configuration, launcher, pins, `conf/`, `metrics/` and `deploy/` before installing. Never publish house facts or generated private outputs to the public thermite repository.
 
 The house file lists the rooms and the devices in them. A room with a TV looks like this:
 
@@ -37,6 +53,7 @@ devices:
 
 ```sh
 thermite generate        # write openHAB's files from the house file
+thermite validate        # check inventory and generated files
 thermite test boot       # boot a throwaway openHAB on them and report what loads
 thermite sandbox start   # or keep one running, to click around in
 ```
@@ -51,9 +68,11 @@ thermite status              # what runs, and whether it matches
 thermite upgrade --dry-run   # later: what moving to newer pinned versions would do
 ```
 
+The existing complete source-checkout workflow remains available. An installed private site additionally pins an exact application version and release digest. To change the application, install its reviewed package, then run `thermite init --upgrade /path/to/site`; configuration, state and cached older releases are preserved. Generate, validate and privately commit the result before deployment. Runtime pins and application upgrades are separate. Keep `var/application-releases/` for rollback: a missing or modified release is refused, not downloaded or silently replaced.
+
 ## 4. Set up site access
 
-The web and terminal clients share site accounts. Admins manage users, roles and room schedules; ordinary users control unlocked rooms, and viewers have read-only access. A scheduled lock has an expected room state that thermite reconciles while the lock is active.
+Authenticated access is the fictional site's default. The web and terminal clients share site accounts once the owner explicitly commissions that boundary. Admins manage users, roles and room schedules; ordinary users control unlocked rooms, and viewers have read-only access. A scheduled lock has an expected room state that thermite reconciles while the lock is active. Installing the application does not activate this service or protect an existing native listener.
 
 Run `thermite access stage --help` to prepare a private, persistent site release. Staging needs a trusted TLS certificate, a service-owned native API credential, the generated remote assets, an explicit site hostname and a separate persistent `--state` directory. Reuse that state across releases to preserve users and policies. Staging writes the service units and an activation checklist; it does not start them or migrate the database.
 

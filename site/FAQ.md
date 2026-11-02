@@ -34,7 +34,15 @@ Not yet. Bringing the house into Apple Home through openHAB is planned.
 
 ### What does it need to run?
 
-One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node.js for the terminal remote. `thermite install` sets up openHAB itself.
+One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node.js for the terminal remote. Install the reviewed application in a dedicated Python environment, then use `thermite init` to create a separate private site. `thermite install` prepares the native runtime only after its explicit checks and owner-controlled steps.
+
+### Where does my house configuration belong?
+
+In a private site, separate from the installed application and the public repository. Keep real inventory, host settings and generated outputs in private Git; credentials and runtime state stay outside Git. `init` starts with fictional devices and activates no service. The [getting-started guide](https://spincyc.github.io/thermite/start.html) explains the boundary.
+
+### How do application upgrades and rollback work?
+
+A private site pins the application's version and exact release digest. Install the reviewed new package, run `thermite init --upgrade /path/to/site`, then generate, validate and privately commit before deployment. Configuration and state are preserved. Rollback uses the older private revision's exact cached application release, so keep that cache. Runtime version pins are separate; no missing artifact is silently substituted.
 
 ### Why "thermite", and why a bowl?
 
