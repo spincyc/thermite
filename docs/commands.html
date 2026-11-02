@@ -58,43 +58,43 @@ configuration, tests it on a test runtime, installs it, and drives the
 remotes. One program, a verb for each job; `thermite help VERB` explains one.
 
 the house file, and what is generated from it:
-  init                 create a private site, or pin an installed application upgrade
-  generate             write conf/ from the house file, and deploy/&#x27;s systemd units
-  validate             check the house file, and that conf/ agrees with it
-  lint                 refuse credentials in Git, and docs naming a missing make target
+  init          create a private site, or pin an installed application upgrade
+  generate      write conf/ from the house file, and deploy/&#x27;s systemd units
+  validate      check the house file, and that conf/ agrees with it
+  lint          refuse credentials in Git, and docs naming a missing make target
 
 test on a test runtime, never production:
-  test                 boot conf/ on a test runtime; test routing and the controls end to end
-  sandbox              run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615
+  test          boot conf/ on a test runtime; test routing and the controls end to end
+  sandbox       run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615
 
 production runtime on this host:
-  install              install thermite on this host, asking before each sudo command
-  upgrade              upgrade thermite and the Apple TV helper here to the pinned versions
-  uninstall            stop thermite here and remove its units; --purge deletes its state
-  deploy               install a commit&#x27;s conf/ and Apple TV helper here
-  rollback             deploy the commit deployed before the current one, or another
-  status               what is deployed and running here, against this checkout
-  history              this host&#x27;s deploys, numbered, the latest last
-  health               read-only: every Thing ONLINE in the runtime
+  install       install thermite on this host, asking before each sudo command
+  upgrade       upgrade thermite and the Apple TV helper here to the pinned versions
+  uninstall     stop thermite here and remove its units; --purge deletes its state
+  deploy        install a commit&#x27;s conf/ and Apple TV helper here
+  rollback      deploy the commit deployed before the current one, or another
+  status        what is deployed and running here, against this checkout
+  history       this host&#x27;s deploys, numbered, the latest last
+  health        read-only: every Thing ONLINE in the runtime
 
 the house&#x27;s devices:
-  discover             scan the LAN read-only and compare it with the house file
-  pair                 pair a TV with runtime, or check the Sony TVs&#x27; pairing
-  cameras              read camera status, or configure native Protect bridges privately
-  apple-tv             run the Apple TV helper runtime calls
-  ir-profile           validate verified IR keys or print an iTach packet without transmitting
+  discover      scan the LAN read-only and compare it with the house file
+  pair          pair a TV with runtime, or check the Sony TVs&#x27; pairing
+  cameras       read camera status, or configure native Protect bridges privately
+  apple-tv      run the Apple TV helper runtime calls
+  ir-profile    validate verified IR keys or print an iTach packet without transmitting
 
 front ends, themes and docs:
-  remote               the house remote in a terminal
-  access               site login, local identity bootstrap, HTTPS service and room policies
-  theme                the flaming bowl mark and color themes: show, check, export
-  docs                 build the docs site, or export it to the thermite repository
+  remote        the house remote in a terminal
+  access        site login, local identity bootstrap, HTTPS service and room policies
+  theme         the flaming bowl mark and color themes: show, check, export
+  docs          build the docs site, or export it to the thermite repository
 
 this program:
-  version              thermite&#x27;s version, and runtime&#x27;s: pinned, and running here
-  package              build a privacy-checked portable application wheel
-  iso                  build a bootable installer for a dedicated Thermite machine
-  completion           print a completion script for bash, zsh or fish
+  version       thermite&#x27;s version, and runtime&#x27;s: pinned, and running here
+  package       build a privacy-checked portable application wheel
+  iso           build a bootable installer for a dedicated Thermite machine
+  completion    print a completion script for bash, zsh or fish
 
 switches that mean the same in every verb that has them:
   --site DIR                        select a private site (also THERMITE_SITE; before or after the verb)
@@ -1716,7 +1716,7 @@ examples:
                                     use this site&#x27;s private terminal credential
 </pre></details>
 <details id="access-stage"><summary><code>thermite access stage</code></summary><pre class="help">usage: thermite access stage [-h] --destination DESTINATION --state STATE
-                             [--plan-directory PLAN_DIRECTORY] [--house FILE]
+                             --plan-directory PLAN_DIRECTORY [--house FILE]
                              --assets ASSETS --runtime-url RUNTIME_URL
                              --runtime-token-file RUNTIME_TOKEN_FILE --tls-cert TLS_CERT
                              --tls-key TLS_KEY --allowed-host ALLOWED_HOSTS
@@ -1733,8 +1733,8 @@ options:
                                 source checkouts; reuse on upgrades
   --plan-directory PLAN_DIRECTORY
                                 new operator-owned plan directory under an existing
-                                mode0700 parent; saves stage.json and a replayable
-                                handoff.sh
+                                mode0700 parent; saves the receipt, safe custody helper
+                                and replayable handoff.sh
   --house FILE                  the house file (default: instance/devices.yaml)
   --assets ASSETS               complete deployed native conf/html/remote directory
   --runtime-url RUNTIME_URL     explicit native loopback HTTP origin

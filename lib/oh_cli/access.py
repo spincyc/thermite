@@ -40,19 +40,14 @@ def hidden_password(prompt="Password: ", *, confirm=False):
 def print_stage(result, args):
     target = Path(os.path.abspath(Path(result.get("destination", args.destination)).expanduser()))
     commands = result.get("ownership_commands", [])
-    paths = sum(len(command) - 5 for command in commands if command[:2] == ["sudo", "chown"])
+    paths = result.get("custody_paths", 0)
     print("Staged release: " + str(target))
     print("Persistent state: " + str(result.get("persistent_state", args.state)))
     print(f"Custody: {paths} private paths; {len(commands)} ownership commands for thermite:thermite.")
-    if args.plan_directory is not None:
-        plan = Path(os.path.abspath(args.plan_directory.expanduser()))
-        print("Full receipt: " + str(plan / "stage.json"))
-        print("Review: " + shlex.join(["more", str(plan / "handoff.sh")]))
-        print("Hand off and verify: " + shlex.join(["sh", str(plan / "handoff.sh")]))
-    else:
-        print("Full receipt: " + str(target / "stage.json"))
-        print("Review its ownership_commands and save an operator-owned copy before handoff.")
-        print("For a replayable handoff.sh, pass --plan-directory DIR when staging a new release.")
+    plan = Path(os.path.abspath(args.plan_directory.expanduser()))
+    print("Full receipt: " + str(plan / "stage.json"))
+    print("Review: " + shlex.join(["more", str(plan / "handoff.sh")]))
+    print("Hand off and verify: " + shlex.join(["sh", str(plan / "handoff.sh")]))
     if result.get("bootstrap_command"):
         print("Only for a new site: " + shlex.join(result["bootstrap_command"]))
     print("Before activation:")
@@ -83,7 +78,7 @@ def main(argv=None):
     sub = oh_cli.action(commands, "stage", "prepare a persistent release and owner-installable units", examples=[("thermite access stage --help", "list the explicit custody and listener inputs")])
     sub.add_argument("--destination", required=True, type=Path, help="new persistent release directory outside this checkout")
     sub.add_argument("--state", required=True, type=Path, help="site-owned mode0700 state directory outside releases and source checkouts; reuse on upgrades")
-    sub.add_argument("--plan-directory", type=Path, help="new operator-owned plan directory under an existing mode0700 parent; saves stage.json and a replayable handoff.sh")
+    sub.add_argument("--plan-directory", required=True, type=Path, help="new operator-owned plan directory under an existing mode0700 parent; saves the receipt, safe custody helper and replayable handoff.sh")
     oh_cli.add_house(sub)
     sub.add_argument("--assets", required=True, type=Path, help="complete deployed native conf/html/remote directory")
     sub.add_argument("--runtime-url", required=True, help="explicit native loopback HTTP origin")

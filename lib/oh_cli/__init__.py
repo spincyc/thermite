@@ -480,7 +480,7 @@ def version_line(area: Path = AREA) -> str:
 def overview(verbs: Sequence[str] | None = None) -> str:
     """`thermite --help`, listing `verbs` (default: every one)."""
     verbs = list(VERBS) if verbs is None else verbs
-    width = max(len(verb) for verb in VERBS) + 4
+    width = max((len(verb) for verb in verbs), default=0) + 4
     lines = [
         f"usage: {PROGRAM} VERB [ACTION] [SWITCHES]",
         "",

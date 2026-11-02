@@ -129,6 +129,12 @@ for readiness. Both HTTP Things must become ONLINE and the real metrics checks
 must succeed. Record failures as failures. A stopped or failed step is resumed by
 rerunning the installer after addressing its cause.
 
+For a fresh native state, retain the preparation message confirming that its
+temporary cache-priming JVM fully exited before native service startup. A
+failed priming marker is a failed run requiring diagnosis; preserve its logs
+and state. The subsequent authenticated readiness check must pass without
+removing add-ons or replacing credentials.
+
 Set up the authenticated gateway.
 
 Follow [HTTPS and accounts](../../docs/installation.md#set-up-https-and-accounts),

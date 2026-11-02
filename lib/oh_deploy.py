@@ -278,16 +278,22 @@ HEADER = [
 # Verified against image revision 86fb030402531b52bbdc80329d841f96f5d7896e
 # (the config of versions.json's linux/amd64 image), not a moving image tag.
 OPENHAB_UPDATE_SHA256 = "a6f09a576ae7ad4c6187ecd7ebcdd00d60b6b06ff073c8e52261bf8ca3129386"
+NATIVE_PRIME_MARKER = ".thermite-prime-incomplete"
+NATIVE_PRIME_WAIT = 180
+NATIVE_PRIME_STOP_WAIT = 60
+NATIVE_PRIME_POLL = 1
 
 
-def _openhab_initialize() -> str:
+def _openhab_initialize(*, track_fresh: bool = False) -> str:
     return " ".join((
         'test "$(id -u)" -ne 0 || { echo "openHAB must run as thermite, never root" >&2; exit 1; };',
         'umask 0077;',
+        *(['thermite_new_userdata=0;'] if track_fresh else []),
         'for name in conf userdata; do',
         'target="$OPENHAB_HOME/$name";',
         'if test -z "$(ls -A "$target")"; then',
         'cp -R --no-preserve=ownership "$OPENHAB_HOME/dist/$name/." "$target/";',
+        *(['if test "$name" = userdata; then thermite_new_userdata=1; fi;'] if track_fresh else []),
         'if test "$name" = conf; then chmod -R ug+rwX,o-rwx "$target"; fi;',
         'fi;',
         'done;',
@@ -296,10 +302,18 @@ def _openhab_initialize() -> str:
     ))
 
 
+def _openhab_prime_guard() -> str:
+    return (f'if test -e "$OPENHAB_USERDATA/{NATIVE_PRIME_MARKER}" || '
+            f'test -L "$OPENHAB_USERDATA/{NATIVE_PRIME_MARKER}"; then '
+            'echo "Incomplete fresh native cache priming; inspect the retained marker and logs before explicit recovery. No cache or credentials were removed." >&2; '
+            'exit 1; fi;')
+
+
 def openhab_start() -> str:
     """The entire container payload, including initialization, is non-root."""
     return " ".join((
         _openhab_initialize(),
+        _openhab_prime_guard(),
         'cmp -s "$OPENHAB_USERDATA/etc/version.properties" "$OPENHAB_HOME/dist/userdata/etc/version.properties" ||',
         '{ echo "Native userdata needs offline preparation; run thermite upgrade" >&2; exit 1; };',
         'rm -f "$OPENHAB_USERDATA/tmp/instances/instance.properties";',
@@ -311,8 +325,80 @@ def openhab_start() -> str:
     ))
 
 
+def _openhab_prime_cache() -> str:
+    """Prime fresh, authority-free userdata without upstream's overlapping JVMs.
+
+    Established restores intentionally omit cache. They use normal startup and
+    authenticated readiness instead: even empty file conf would load managed
+    rules/Things from their jsondb. Never launch or force-stop those in a prepare
+    command. A failed fresh primer retains its cache, lock, logs and marker for
+    explicit recovery; neither preparation nor normal startup may reuse it.
+    """
+    return " ".join((
+        'thermite_prime_cache() {',
+        'if test -d "$OPENHAB_USERDATA/cache/org.eclipse.osgi"; then return 0; fi;',
+        'if test "$thermite_new_userdata" != 1; then',
+        'echo "Skipping offline cache priming for existing userdata without cache; normal owner-approved startup and authenticated readiness will validate it.";',
+        'return 0; fi;',
+        'if test -d "$OPENHAB_USERDATA/jsondb"; then',
+        'managed="$(find "$OPENHAB_USERDATA/jsondb" -type f -name \'*.json\' -print -quit)";',
+        'if test -n "$managed"; then echo "Skipping offline cache priming: managed jsondb state exists."; return 0; fi; fi;',
+        'if test -n "$(ls -A "$OPENHAB_HOME/addons")"; then',
+        'echo "Skipping offline cache priming: local add-on files exist."; return 0; fi;',
+        'mkdir -p "$OPENHAB_USERDATA/tmp";',
+        'prime="$(mktemp -d "$OPENHAB_USERDATA/tmp/thermite-prime.XXXXXX")";',
+        f'prime_marker="$OPENHAB_USERDATA/{NATIVE_PRIME_MARKER}";',
+        '(set -C; printf "Fresh native cache priming incomplete; logs: %s\\n" "$prime" > "$prime_marker");',
+        'lock="$OPENHAB_USERDATA/cache-refresh-lock";',
+        '(set -C; : > "$lock") || { echo "Native cache refresh lock already exists; inspect before recovery." >&2; return 1; };',
+        'mkdir -p "$prime/conf/services" "$prime/logs";',
+        'printf "# no add-ons while the fresh OSGi cache is primed\\n" > "$prime/conf/services/addons.cfg";',
+        # The normal listener step follows preparation. Keep the temporary
+        # authority-free server on loopback with ephemeral ports meanwhile.
+        'shell_cfg="$OPENHAB_USERDATA/etc/org.apache.karaf.shell.cfg";',
+        "sed -i '/^[[:space:]]*sshHost[[:space:]]*=/d; /^[[:space:]]*sshPort[[:space:]]*=/d' \"$shell_cfg\";",
+        'printf "\\nsshHost = 127.0.0.1\\nsshPort = 0\\n" >> "$shell_cfg";',
+        'rm -f "$OPENHAB_USERDATA/tmp/instances/instance.properties";',
+        'printf "0\\n" > "$OPENHAB_USERDATA/openhab-start-level";',
+        'prime_pid="";',
+        'thermite_stop_prime() {',
+        'test -n "$prime_pid" || return 0;',
+        'kill -TERM "$prime_pid" 2>/dev/null || :;',
+        f'left={NATIVE_PRIME_STOP_WAIT};',
+        'while kill -0 "$prime_pid" 2>/dev/null && test "$left" -gt 0; do',
+        f'sleep {NATIVE_PRIME_POLL}; left=$((left - 1)); done;',
+        'if kill -0 "$prime_pid" 2>/dev/null; then',
+        'echo "Fresh authority-free cache primer did not stop within its grace; terminating it and retaining the incomplete cache for explicit recovery." >&2;',
+        'kill -KILL "$prime_pid" 2>/dev/null || :; wait "$prime_pid" 2>/dev/null || :; prime_pid=""; return 1; fi;',
+        'prime_exit=0; wait "$prime_pid" || prime_exit=$?; prime_pid="";',
+        'test "$prime_exit" = 0 || test "$prime_exit" = 143;',
+        '};',
+        "trap 'prime_result=$?; thermite_stop_prime || prime_result=1; exit \"$prime_result\"' EXIT;",
+        "trap 'exit 130' INT HUP; trap 'exit 143' TERM;",
+        'KARAF_EXEC=exec OPENHAB_CONF="$prime/conf" OPENHAB_LOGDIR="$prime/logs"',
+        'OPENHAB_HTTP_ADDRESS=127.0.0.1 OPENHAB_HTTP_PORT=0 OPENHAB_HTTPS_PORT=0',
+        'EXTRA_JAVA_OPTS="${EXTRA_JAVA_OPTS:-} -Duser.home=$OPENHAB_USERDATA -Declipse.stateSaveDelayInterval=1000"',
+        '"$OPENHAB_HOME/runtime/bin/karaf" server > "$prime/console.log" 2>&1 & prime_pid=$!;',
+        f'left={NATIVE_PRIME_WAIT}; ready=0;',
+        'while kill -0 "$prime_pid" 2>/dev/null && test "$left" -gt 0; do',
+        'level="$(cat "$OPENHAB_USERDATA/openhab-start-level" 2>/dev/null || :)";',
+        'case "$level" in ""|*[!0-9]*) ;; *) if test "$level" -ge 10; then ready=1; break; fi ;; esac;',
+        f'sleep {NATIVE_PRIME_POLL}; left=$((left - 1)); done;',
+        'if test "$ready" != 1; then echo "Fresh native cache primer did not reach start level 10; inspect retained logs." >&2; return 1; fi;',
+        'thermite_stop_prime || return 1;',
+        'test -d "$OPENHAB_USERDATA/cache/org.eclipse.osgi" || { echo "Native primer exited without an OSGi cache." >&2; return 1; };',
+        'printf "0\\n" > "$OPENHAB_USERDATA/openhab-start-level";',
+        'rm -f "$lock";',
+        'rm -rf -- "$prime";',
+        'rm -f "$prime_marker";',
+        'trap - EXIT INT HUP TERM;',
+        'echo "Fresh native OSGi cache primed; the temporary JVM has fully exited.";',
+        '}; thermite_prime_cache;',
+    ))
+
+
 def openhab_prepare() -> str:
-    """Offline, explicit userdata upgrade using the pinned upstream updater.
+    """Upgrade offline, then prime only newly initialized authority-free userdata.
 
     Its only root requirement is an initial identity guard. All mutable paths
     belong to thermite, so remove that exact guard from a hash-checked copy
@@ -320,8 +406,10 @@ def openhab_prepare() -> str:
     review before its hash is accepted here.
     """
     return " ".join((
-        _openhab_initialize(),
-        'if cmp -s "$OPENHAB_USERDATA/etc/version.properties" "$OPENHAB_HOME/dist/userdata/etc/version.properties"; then exit 0; fi;',
+        _openhab_initialize(track_fresh=True),
+        _openhab_prime_guard(),
+        'export JAVA_HOME="$(find /usr/lib/jvm -mindepth 1 -maxdepth 1 -type d | head -n 1)";',
+        'if ! cmp -s "$OPENHAB_USERDATA/etc/version.properties" "$OPENHAB_HOME/dist/userdata/etc/version.properties"; then (',
         f'printf "{OPENHAB_UPDATE_SHA256}  /openhab/runtime/bin/update\\n" | sha256sum -c -;',
         'mkdir -p "$OPENHAB_BACKUPS" "$OPENHAB_LOGDIR";',
         'backup="$(mktemp "$OPENHAB_BACKUPS/thermite-before-$(date -u +%Y%m%dT%H%M%S)-XXXXXX.tar")";',
@@ -330,9 +418,10 @@ def openhab_prepare() -> str:
         'trap \'rm -f "$prepared"\' EXIT;',
         "sed '/^  # Ask to run as root/,/^  fi$/d' /openhab/runtime/bin/update > \"$prepared\";",
         '! grep -Fq \'Please run this script as root!\' "$prepared";',
-        'export JAVA_HOME="$(find /usr/lib/jvm -mindepth 1 -maxdepth 1 -type d | head -n 1)";',
         'sh -e "$prepared";',
         'cmp -s "$OPENHAB_USERDATA/etc/version.properties" "$OPENHAB_HOME/dist/userdata/etc/version.properties"',
+        '); fi;',
+        _openhab_prime_cache(),
     ))
 
 

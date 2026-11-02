@@ -120,6 +120,21 @@ runtime UI link printed by the installer to create its administrative login
 and API token. The token prompt hides the paste and saves it privately.
 Log out and back in after the installer adds you to the service group.
 
+For newly initialized native userdata, preparation builds the OSGi cache
+with empty add-on configuration and waits for that temporary JVM to exit
+before starting the real runtime. This avoids the upstream first-start
+cache race. Existing userdata without a cache uses normal startup, so
+offline preparation does not run its managed rules or Things.
+
+After validating the API token, installation waits for the required add-ons,
+Thing handlers and authenticated native metrics. Unchanged known first-start
+handler symptoms can prompt one reviewed restart of `openhab.service` within
+the startup budget. Configuration and authentication errors require fixing
+their reported cause. A persistent failure stops installation and retains
+userdata and credentials. Failed fresh cache priming also retains its
+`.thermite-prime-incomplete` marker and logs; inspect them before explicit
+recovery. Preparation and normal startup refuse that incomplete cache.
+
 On a slow machine or under software CPU emulation, give the boot check a
 longer startup budget, then rerun the installer:
 
@@ -197,7 +212,8 @@ release, installs hash-pinned dependencies and writes units for
 `User=thermite` and `Group=thermite`. It starts no service and runs no
 privileged command.
 
-Stage saves a private receipt and `handoff.sh` in the operator-owned plan
+The required plan directory holds a private receipt, custody helper and
+`handoff.sh` in the operator-owned plan
 directory. Review the script, then run it as your ordinary account:
 
 ```sh
@@ -205,7 +221,10 @@ more "$PLAN/handoff.sh"
 sh "$PLAN/handoff.sh"
 ```
 
-Only its explicit administrative commands use sudo. The script gives the
+Only its explicit administrative commands use sudo. The helper validates
+the finite manifest without following symlinks and changes opened files
+through their descriptors, so replay cannot follow a replaced path outside
+the release. The script gives the
 listed release and new-state files to `thermite:thermite`, with directories
 and executables at 0700 and other files at 0600, then verifies custody as the
 service user. It stops on failure; fix the reported cause and rerun the same
@@ -248,12 +267,13 @@ configuration and activation checks; the
 explains native access settings.
 
 After resolving the activation requirements printed by stage (also saved in
-`$PLAN/stage.json`), install and enable its two units as the
-host administrator:
+`$PLAN/stage.json`), install the operator-owned unit copies and enable them
+as the host administrator. Keep using the copies in the protected plan;
+the service owns the release after handoff:
 
 ```sh
-sudo install -o root -g root -m 0644 "$ACCESS_ROOT/releases/first/units/thermite-access.service" /etc/systemd/system/
-sudo install -o root -g root -m 0644 "$ACCESS_ROOT/releases/first/units/thermite-access-worker.service" /etc/systemd/system/
+sudo install -o root -g root -m 0644 "$PLAN/units/thermite-access.service" /etc/systemd/system/
+sudo install -o root -g root -m 0644 "$PLAN/units/thermite-access-worker.service" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now thermite-access.service thermite-access-worker.service
 bin/thermite access login --url "https://$SITE_HOST:13600" --user admin

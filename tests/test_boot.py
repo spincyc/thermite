@@ -6,8 +6,11 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import socketserver
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
 from unittest import mock
@@ -62,7 +65,7 @@ class BootReadiness(unittest.TestCase):
             if self.handler:
                 return self.handler(path)
             return self.response(path)
-        stack.enter_context(mock.patch.object(lib.Http, "request", request))
+        stack.enter_context(mock.patch.object(boot.ReportHttp, "_request", request))
 
     def reset(self):
         self.now, self.asked, self.calls, self.handler = 0.0, [], collections.Counter(), None
@@ -88,7 +91,7 @@ class BootReadiness(unittest.TestCase):
 
     def test_every_unavailable_collection_route_discards_snapshot_and_requires_fresh_settling(self):
         for route in ROUTES:
-            for status in (404, 503, 0):
+            for status in (404, 503, 0, "truncated"):
                 with self.subTest(route=route, status=status):
                     self.reset()
                     state = {"collecting": False, "failed": False}
@@ -99,6 +102,8 @@ class BootReadiness(unittest.TestCase):
                             state.update(collecting=False, failed=True)
                             if status == 0:
                                 raise urllib.error.URLError("private upstream sentinel")
+                            if status == "truncated":
+                                raise boot.http.client.IncompleteRead(b"private upstream sentinel", 10)
                             raise urllib.error.HTTPError("http://private.invalid/secret", status, "private sentinel", {}, None)
                         code, data = self.response(path)
                         if not state["failed"]:
@@ -255,6 +260,76 @@ class BootReadiness(unittest.TestCase):
         self.assertEqual(self.calls[ROOT], 1)
         self.assertEqual(self.now, self.args.timeout)
         self.stop.assert_called_once_with(self.inst, timeout=3, log=mock.ANY)
+
+
+class ReportTransport(unittest.TestCase):
+    @contextlib.contextmanager
+    def server(self, respond):
+        stopping = threading.Event()
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                self.connection.settimeout(2)
+                try:
+                    while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+                        pass
+                    respond(self.connection, stopping)
+                except OSError:
+                    # Deadline tests intentionally close a response mid-write.
+                    pass
+
+        server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+        worker.start()
+        try:
+            with mock.patch.object(boot.urllib.request, "getproxies", return_value={}):
+                yield f"http://127.0.0.1:{server.server_address[1]}"
+        finally:
+            stopping.set()
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive(), "loopback HTTP server did not stop")
+
+    def test_truncated_body_is_retryable_and_next_request_can_succeed(self):
+        calls = []
+        payload = json.dumps({"runtimeInfo": {"version": "test-runtime"}}).encode()
+
+        def respond(connection, stopping):
+            calls.append(True)
+            if len(calls) == 1:
+                connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\n\r\n{")
+            else:
+                connection.sendall(f"HTTP/1.1 200 OK\r\nContent-Length: {len(payload)}\r\n\r\n".encode() + payload)
+
+        with self.server(respond) as url:
+            client = boot.ReportHttp(url, None, time.monotonic() + 2)
+            with self.assertRaisesRegex(boot.ReportUnavailable, "connection failure"):
+                client.get_json(ROOT)
+            self.assertEqual(client.get_json(ROOT), {"runtimeInfo": {"version": "test-runtime"}})
+        self.assertEqual(len(calls), 2)
+
+    def test_absolute_deadline_interrupts_headers_and_body_that_keep_arriving(self):
+        for phase in ("headers", "body"):
+            with self.subTest(phase=phase):
+                def respond(connection, stopping):
+                    prefix = (b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nX-Slow: " if phase == "headers" else
+                              b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+                    connection.sendall(prefix)
+                    for _ in range(100):
+                        connection.sendall(b" ")
+                        if stopping.wait(0.04):
+                            return
+                    connection.sendall(b"\r\n\r\n" if phase == "headers" else b"")
+
+                with self.server(respond) as url:
+                    started = time.monotonic()
+                    client = boot.ReportHttp(url, None, started + 0.3)
+                    with self.assertRaisesRegex(boot.ReportError, "deadline.*rest") as failed:
+                        client.get_json(ROOT)
+                    elapsed = time.monotonic() - started
+                    self.assertNotIsInstance(failed.exception, boot.ReportUnavailable)
+                    self.assertLess(elapsed, 0.9, f"{phase} reception exceeded its absolute deadline")
 
 
 if __name__ == "__main__":

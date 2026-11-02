@@ -7,6 +7,8 @@ from __future__ import annotations
 import dataclasses
 import getpass
 import grp
+import http.client
+import json
 import os
 import platform
 import pwd
@@ -15,6 +17,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -55,6 +58,15 @@ class Unit:
     active: str
     enabled: str
     since: float | None = None
+    #: Stable systemd active-enter monotonic timestamp, in microseconds.
+    generation: int | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class NativeProbe:
+    status: int
+    value: object = None
+    problem: str | None = None
 
 
 class System:
@@ -90,13 +102,15 @@ class System:
     def which(self, name: str) -> str | None:
         return shutil.which(name)
 
-    def capture(self, argv: Sequence[str]) -> tuple[int, str]:
+    def capture(self, argv: Sequence[str], *, timeout: float | None = None) -> tuple[int, str]:
         """Exit status and output of a read-only command; 127 if it is missing."""
         oh_cli.trace_run(argv)
         try:
-            out = subprocess.run(list(argv), capture_output=True, text=True, check=False)
+            out = subprocess.run(list(argv), capture_output=True, text=True, check=False, timeout=timeout)
         except FileNotFoundError:
             return 127, ""
+        except subprocess.TimeoutExpired:
+            return 124, ""
         return out.returncode, out.stdout
 
     def group(self, key: str | int) -> Group | None:
@@ -152,20 +166,50 @@ class System:
                 return False
         return True
 
-    def unit(self, name: str) -> Unit:
-        code, out = self.capture(["systemctl", "show", name,
-                                  "--property=ActiveState,UnitFileState,ActiveEnterTimestampMonotonic"])
+    def unit(self, name: str, *, timeout: float | None = None) -> Unit:
+        argv = ["systemctl", "show", name, "--property=ActiveState,UnitFileState,ActiveEnterTimestampMonotonic"]
+        code, out = self.capture(argv, timeout=timeout) if timeout is not None else self.capture(argv)
         values = dict(line.split("=", 1) for line in out.splitlines() if "=" in line) if code == 0 else {}
         monotonic = int(values.get("ActiveEnterTimestampMonotonic") or 0)
         # systemd counts on CLOCK_MONOTONIC, as time.monotonic() does.
         since = time.time() - time.monotonic() + monotonic / 1e6 if monotonic else None
-        return Unit(values.get("ActiveState", "unknown"), values.get("UnitFileState", ""), since)
+        return Unit(values.get("ActiveState", "unknown"), values.get("UnitFileState", ""), since, monotonic or None)
 
     def openhab_version(self, url: str) -> str | None:
         return deploy.openhab_version(url)
 
     def token_status(self, url: str, token: str) -> int | None:
         return deploy.token_status(url, token)
+
+    def native_probe(self, url: str, token: str, path: str, deadline: float, *, json_body: bool = True) -> NativeProbe:
+        """One authenticated read, bounded through headers/body by the startup deadline."""
+        from oh_testing.boot import ReportError, ReportHttp
+
+        remaining = deadline - self.clock()
+        if remaining <= 0:
+            return NativeProbe(0, problem="startup deadline expired")
+        # Reuse the report reader's per-receive deadline enforcement, while
+        # retaining status codes needed to distinguish auth and metrics readiness.
+        client = ReportHttp(url, token, deadline)
+        client.timeout = min(5, remaining)
+        try:
+            status, body = client._request("GET", path)
+            client.remaining(path)
+        except urllib.error.HTTPError as exc:
+            status, body = exc.code, b""
+            exc.close()
+        except (OSError, urllib.error.URLError, http.client.HTTPException):
+            return NativeProbe(0)
+        except ReportError:
+            return NativeProbe(0, problem="startup deadline expired")
+        if self.clock() >= deadline:
+            return NativeProbe(0, problem="startup deadline expired")
+        if status != 200 or not json_body:
+            return NativeProbe(status)
+        try:
+            return NativeProbe(status, json.loads(body.decode("utf-8")))
+        except (ValueError, UnicodeError, RecursionError):
+            return NativeProbe(status, problem="malformed JSON")
 
     def metrics_health(self, host: dict, address: str | None) -> deploy.MetricsHealth:
         return deploy.metrics_health(host, address)
@@ -195,13 +239,16 @@ class System:
         self.said = text
         print(text, flush=True)
 
-    def run(self, argv: Sequence[str], cwd: Path) -> int:
+    def run(self, argv: Sequence[str], cwd: Path, *, timeout: float | None = None) -> int:
         oh_cli.trace_run(argv, cwd)
         try:
-            return subprocess.run(list(argv), cwd=cwd, check=False).returncode
+            return subprocess.run(list(argv), cwd=cwd, check=False, timeout=timeout).returncode
         except FileNotFoundError:
             self.say(f"   {argv[0]}: no such program on this host")
             return 127
+        except subprocess.TimeoutExpired:
+            self.say("   command exceeded the remaining startup allowance; inspect the native service before retrying")
+            return 124
 
     def write_private(self, path: Path, text: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

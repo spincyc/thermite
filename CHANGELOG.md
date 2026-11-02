@@ -17,10 +17,17 @@ rollback. Existing complete Git checkouts retain their deployment behavior.
   console readiness, authentication and graceful cache shutdown.
 - Missing container images download before service startup, with visible
   progress, so first-time transfers do not consume systemd's launch timeout.
+- Fresh native userdata builds its initial cache without add-ons and waits
+  for the priming JVM to exit. Authenticated readiness checks add-ons, Thing
+  handlers and metrics before proceeding; incomplete cache preparation fails
+  closed and preserves its diagnostic marker.
 - Failed access staging removes its partial release so the same operation
   can be retried while preserving previous releases and persistent state.
 - Access staging saves a private, reviewable ownership script that the owner
   can resume, followed by service-user verification before activation.
+- Access staging requires a trusted operator plan. Its custody helper rejects
+  replaced paths and applies ownership through file descriptors, keeping
+  handoff replay inside the reviewed release and state manifest.
 - Access service units now use directive-specific systemd path escaping,
   including literal spaces, quotes and environment-variable characters.
 - The policy worker configures its identity database before importing models

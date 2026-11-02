@@ -39,7 +39,8 @@ def require_service_account():
 
 def private_directory(value):
     path = Path(value).expanduser().absolute()
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    # Ancestors need search permission, not permission to list their names.
+    flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
     descriptor = os.open(path.anchor, flags)
     try:
         for part in path.parts[1:]:
@@ -61,7 +62,11 @@ def private_directory(value):
                         raise AccessError("Private directory changed during creation")
                     # mkdir inherits SGID from a shared parent even with mode
                     # 0700. Normalize only the directory this call created.
-                    os.fchmod(child, 0o700)
+                    writable = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=child)
+                    try:
+                        os.fchmod(writable, 0o700)
+                    finally:
+                        os.close(writable)
                 current = os.stat(part, dir_fd=descriptor, follow_symlinks=False)
                 if not os.path.samestat(current, os.fstat(child)):
                     raise AccessError("Private directory changed during creation")

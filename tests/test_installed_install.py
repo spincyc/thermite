@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import shlex
 import sys
 import tempfile
@@ -16,7 +17,8 @@ from oh_install import steps
 
 class InstalledInstall(unittest.TestCase):
     def setUp(self):
-        scratch = AREA.parents[1] / ".scratch/service-access/installed"; scratch.mkdir(parents=True, exist_ok=True)
+        scratch = Path(os.environ.get("TMPDIR", AREA.parents[1] / ".scratch/service-access/installed"))
+        scratch.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="installed-", dir=scratch)
         self.addCleanup(self.temporary.cleanup)
         self.site = Path(self.temporary.name) / "private site"
@@ -83,12 +85,19 @@ class InstalledInstall(unittest.TestCase):
                                     assets=assets, runtime_url="http://127.0.0.1:13601",
                                     runtime_token_file=root / "bearer", tls_cert=root / "cert", tls_key=root / "key",
                                     allowed_hosts=["site.example"], bind_host="127.0.0.1", port=13600,
-                                    timezone="Etc/UTC", install_environment=False)
+                                    timezone="Etc/UTC", install_environment=False,
+                                    plan_directory=root / "operator-plan")
         self.assertEqual((target / "program/lib/reviewed.py").read_text(), "# application resource\n")
         self.assertEqual((target / "program/bin/thermite").read_text(), "# application launcher\n")
         self.assertFalse((self.site / "lib").exists())
         location.assert_called_once_with(root / "identity-state", target, self.site)
         self.assertFalse(receipt["activated"])
+        installs = [command for command in receipt["activation_commands"] if command[:2] == ["sudo", "install"]]
+        self.assertEqual(len(installs), 2)
+        for command in installs:
+            source = Path(command[-2])
+            self.assertEqual(source.parent, root / "operator-plan/units")
+            self.assertEqual(source.read_bytes(), (target / "units" / source.name).read_bytes())
         run.assert_not_called()
 
 

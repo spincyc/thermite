@@ -153,30 +153,6 @@ def _inventory(root, *, release=False):
     return result
 
 
-def _batches(paths, maximum=16000):
-    batch, length = [], 0
-    for path in paths:
-        text = str(path)
-        if batch and length + len(text) > maximum:
-            yield batch
-            batch, length = [], 0
-        batch.append(text)
-        length += len(text) + 1
-    if batch:
-        yield batch
-
-
-def _handoff(inventory):
-    commands = []
-    for mode in (0o600, 0o700):
-        for batch in _batches(path for path, wanted in inventory if wanted == mode):
-            commands.append(["sudo", "chmod", format(mode, "04o"), "--", *batch])
-    # The root is handed over last; no command relies on operator traversal later.
-    for batch in _batches(path for path, _ in reversed(inventory)):
-        commands.append(["sudo", "chown", "--no-dereference", ACCOUNT + ":" + GROUP, "--", *batch])
-    return commands
-
-
 def verify(config_path):
     """Read-only commissioning check, run under the same identity as the units."""
     from .service import load_config
@@ -212,7 +188,7 @@ def _same_release(parent, name, descriptor):
 
 @contextmanager
 def _directory_descriptor(path):
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
     descriptor = os.open(path.anchor, flags)
     try:
         for part in path.parts[1:]:
@@ -230,6 +206,18 @@ def _private_plan_parent(descriptor):
         raise AccessError("Plan parent must already be owned by this operator and mode 0700")
 
 
+def _trusted_plan_ancestors(path):
+    # A private immediate parent is insufficient below a service-writable
+    # ancestor: thermite could rename that parent and substitute root code.
+    for ancestor in (path, *path.parents):
+        with _directory_descriptor(ancestor) as descriptor:
+            info = os.fstat(descriptor)
+            writable = stat.S_IMODE(info.st_mode) & 0o022
+            sticky_root = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+            if info.st_uid not in {0, os.geteuid()} or writable and not sticky_root:
+                raise AccessError("Plan ancestors must be owned by root or the operator and protected from replacement")
+
+
 def _plan_location(plan, target, state):
     _systemd_text(plan)  # Also reject line/control characters in script metadata.
     if any(_overlap(plan, root) for root in (target, state)):
@@ -240,6 +228,7 @@ def _plan_location(plan, target, state):
     try:
         with _directory_descriptor(plan.parent) as descriptor:
             _private_plan_parent(descriptor)
+        _trusted_plan_ancestors(plan.parent)
     except OSError:
         raise AccessError("Plan parent must already exist without symlinks and be private to this operator") from None
     for ancestor in plan.parents:
@@ -305,7 +294,7 @@ def _handoff_script(receipt):
             "trap 'handoff_status=$?; if [ \"$handoff_status\" -ne 0 ]; then "
             "printf \"%s\\n\" \"Handoff stopped. Fix the failed command and run this same handoff.sh again. Bootstrap and activation were not run.\" >&2; fi; exit \"$handoff_status\"' 0\n"
             "trap 'exit 130' INT\ntrap 'exit 143' TERM\n"
-            "\n# 1. Account checks, private modes, then finite root-last ownership.\n"
+            "\n# 1. Account checks, then validated descriptor-anchored custody.\n"
             "printf '%s\\n' 'Applying the reviewed thermite:thermite ownership plan.'\n" +
             "\n".join(shlex.join(command) for command in receipt["ownership_commands"]) +
             "\n\n# 2. Read-only verification as the thermite service account.\n"
@@ -314,11 +303,13 @@ def _handoff_script(receipt):
             "\nprintf '%s\\n' 'Custody verified. Bootstrap only a new site; complete the activation checklist before installing or starting units.'\n")
 
 
-def _export_plan(descriptor, receipt):
+def _export_plan(descriptor, receipt, custody, unit_sources=None):
     files = {"stage.json": json.dumps(receipt, indent=2, allow_nan=False) + "\n",
-             "handoff.sh": _handoff_script(receipt)}
-    for name, content in files.items():
-        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
+             "handoff.sh": _handoff_script(receipt),
+             "custody.json": json.dumps(custody, separators=(",", ":"), allow_nan=False) + "\n",
+             "custody.py": Path(__file__).with_name("custody.py").read_text()}
+    def write(parent, name, content):
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "wb", closefd=False) as stream:
@@ -327,6 +318,18 @@ def _export_plan(descriptor, receipt):
                 os.fsync(stream.fileno())
         finally:
             os.close(fd)
+    for name, content in files.items():
+        write(descriptor, name, content)
+    # Activation is privileged too: never install root units from the release
+    # after its service account has acquired permission to replace their bytes.
+    os.mkdir("units", mode=0o700, dir_fd=descriptor)
+    units_descriptor = os.open("units", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+    try:
+        os.fchmod(units_descriptor, 0o700)
+        for name, content in (unit_sources or {}).items():
+            write(units_descriptor, name, content)
+    finally:
+        os.close(units_descriptor)
 
 
 def stage(destination, *, state, house, assets, runtime_url, runtime_token_file, tls_cert, tls_key,
@@ -339,13 +342,14 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     """
     from .service import compile_contract, load_config
     from oh_paths import PROGRAM, SITE, SITE_FILE
+    if plan_directory is None:
+        raise AccessError("An operator-owned --plan-directory is required for a safe, replayable custody handoff")
     area = _absolute(area or SITE)
     resources = PROGRAM if (area / SITE_FILE).is_file() else area
     target = _absolute(destination)
     state = _absolute(state)
-    plan = _absolute(plan_directory) if plan_directory is not None else None
-    if plan is not None:
-        _plan_location(plan, target, state)
+    plan = _absolute(plan_directory)
+    _plan_location(plan, target, state)
     if target.exists() or target.is_symlink():
         raise AccessError("Stage into a new persistent release directory")
     if target == area or area in target.parents:
@@ -374,7 +378,7 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     _state_directory(state, uid, gid)
     with ExitStack() as attempt:
         release_descriptor = attempt.enter_context(_new_release(target))
-        plan_descriptor = attempt.enter_context(_new_release(plan, purpose="Plan", private_parent=True)) if plan is not None else None
+        plan_descriptor = attempt.enter_context(_new_release(plan, purpose="Plan", private_parent=True))
         private_directory(target)
         private_directory(target / "secrets")
         private_directory(target / "units")
@@ -444,7 +448,7 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
                    str(target / "program/bin/thermite"), "access"]
         receipt["verification_command"] = [*command, "verify", "--config", str(target / "config.json")]
         receipt["bootstrap_command"] = [*command, "bootstrap", "--config", str(target / "config.json"), "--user", "<admin-user>"]
-        receipt["activation_commands"] = [["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(target / "units" / name), "/etc/systemd/system/" + name] for name in generated_units] + [
+        receipt["activation_commands"] = [["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(plan / "units" / name), "/etc/systemd/system/" + name] for name in generated_units] + [
             ["sudo", "systemctl", "daemon-reload"], ["sudo", "systemctl", "enable", "--now", *generated_units]]
         json_private(target / "stage.json", {})
         release_inventory = _inventory(target, release=True)
@@ -452,16 +456,18 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
             if mode is not None:
                 path.chmod(mode)
         state_inventory = _inventory(state) if state.stat().st_uid == os.geteuid() else []
+        receipt["custody_paths"] = len(release_inventory) + len(state_inventory)
+        receipt["custody_manifest"] = str(plan / "custody.json")
         receipt["ownership_commands"] = [["getent", "passwd", ACCOUNT], ["getent", "group", GROUP], ["id", ACCOUNT],
-                                         *_handoff([*release_inventory, *state_inventory])]
+                                         ["sudo", "/usr/bin/python3", "-I", "-S", str(plan / "custody.py"), str(plan / "custody.json")]]
         receipt["owner_commands"] = [*receipt["ownership_commands"], receipt["verification_command"], *receipt["activation_commands"]]
         json_private(target / "stage.json", receipt)
-        if plan_descriptor is not None:
-            _export_plan(plan_descriptor, receipt)
-            # Check while both contexts are open, so either replacement fails
-            # the entire attempt without deleting the replacing directory.
-            for path, descriptor, purpose in ((plan, plan_descriptor, "Plan"), (target, release_descriptor, "Release")):
-                with _directory_descriptor(path.parent) as parent:
-                    if not _same_release(parent, path.name, descriptor):
-                        raise AccessError(purpose + " path changed during staging; refusing to remove its replacement")
+        from .custody import manifest
+        _export_plan(plan_descriptor, receipt, manifest([release_inventory, state_inventory], uid, gid), generated_units)
+        # Check while both contexts are open, so either replacement fails
+        # the entire attempt without deleting the replacing directory.
+        for path, descriptor, purpose in ((plan, plan_descriptor, "Plan"), (target, release_descriptor, "Release")):
+            with _directory_descriptor(path.parent) as parent:
+                if not _same_release(parent, path.name, descriptor):
+                    raise AccessError(purpose + " path changed during staging; refusing to remove its replacement")
         return receipt

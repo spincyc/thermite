@@ -922,6 +922,149 @@ class Token(Step):
         return f"openHAB refused that token (HTTP {status})"
 
 
+class _RestartBeforeDeadline:
+    """Keep runner's root approval, checking its elapsed time before execution."""
+
+    def __init__(self, system, deadline):
+        self.system, self.deadline = system, deadline
+
+    def __getattr__(self, name):
+        return getattr(self.system, name)
+
+    def run(self, argv, area):
+        remaining = self.deadline - self.system.clock()
+        if remaining <= 0:
+            self.system.say("   startup allowance expired during approval; no restart was requested")
+            return 1
+        return self.system.run(argv, area, timeout=remaining)
+
+
+class NativeReady(Step):
+    title = "Authenticated native add-ons, Thing handlers and metrics ready"
+    grace = 60
+    addons_path = "/rest/addons?serviceId=all"
+    things_path = "/rest/things?summary=true"
+    metrics_path = "/rest/metrics/prometheus"
+
+    def __init__(self, context: Context):
+        from oh_sandbox import addon_uids, read_requested_addons
+        self.context = context
+        self.required = set(addon_uids(read_requested_addons(context.area / "conf")))
+        self.deadline = None
+        self.signature = None
+        self.since = None
+        self.restarted = False
+        self.previous_generation = None
+        self.problem = None
+
+    def reset(self):
+        self.signature = self.since = None
+
+    def snapshot(self, system: System) -> tuple[Check, tuple | None]:
+        from oh_sandbox import FAIL_DETAILS, HANDLER_PENDING_DETAILS, installed_addon_uids
+        if self.deadline is None:
+            self.deadline = system.clock() + WAIT
+        if system.clock() >= self.deadline:
+            return Check(False, "", "native readiness exceeded the 15-minute startup allowance; inspect journalctl -u openhab.service"), None
+        token = Token(self.context).saved(system)
+        if not token:
+            return Check(False, "", "native readiness requires the saved, validated API token; nothing was changed"), None
+        if self.previous_generation is not None:
+            unit = system.unit("openhab.service", timeout=max(0.001, self.deadline - system.clock()))
+            if unit.active != "active" or unit.generation is None or unit.generation <= self.previous_generation:
+                return Check(False, "waiting for the requested restart to reach a new active service generation"), None
+
+        values = {}
+        for path in (self.addons_path, self.things_path, self.metrics_path):
+            found = system.native_probe(self.context.url, token, path, self.deadline,
+                                        json_body=path != self.metrics_path)
+            if found.status in (401, 403):
+                return Check(False, "", f"authenticated native readiness was refused (HTTP {found.status}); keep the saved credential and check access"), None
+            if found.problem == "malformed JSON":
+                return Check(False, "", f"native readiness: {path} returned malformed JSON"), None
+            if found.status == 0 or (found.status == 404 and path != self.metrics_path) or 500 <= found.status <= 599:
+                return Check(False, f"waiting for a complete native readiness snapshot ({path} unavailable)"), None
+            if found.status != 200 and not (path == self.metrics_path and found.status == 404):
+                return Check(False, "", f"native readiness: {path} answered HTTP {found.status}"), None
+            values[path] = found
+        if system.clock() >= self.deadline:
+            return Check(False, "", "native readiness exceeded the 15-minute startup allowance; inspect journalctl -u openhab.service"), None
+
+        addons, things = values[self.addons_path].value, values[self.things_path].value
+        valid_addons = isinstance(addons, list) and all(isinstance(row, dict) and type(row.get("installed")) is bool
+            and (isinstance(row.get("uid"), str) and bool(row["uid"])
+                 or all(isinstance(row.get(key), str) and bool(row[key]) for key in ("type", "id"))) for row in addons)
+        valid_things = isinstance(things, list) and all(isinstance(row, dict) and isinstance(row.get("UID"), str)
+            and bool(row["UID"]) and isinstance(row.get("statusInfo"), dict)
+            and isinstance(row["statusInfo"].get("status"), str) and bool(row["statusInfo"]["status"])
+            and (row["statusInfo"].get("statusDetail") is None or isinstance(row["statusInfo"]["statusDetail"], str)) for row in things)
+        if not valid_addons or not valid_things:
+            return Check(False, "", "native readiness returned an invalid add-on or Thing JSON shape"), None
+        if any(row["statusInfo"].get("statusDetail") in FAIL_DETAILS for row in things):
+            return Check(False, "", "native Things report a configuration error; fix the configuration before retrying; no recovery restart was requested"), None
+        installed = installed_addon_uids(addons)
+        missing = sorted(self.required - installed)
+        if missing:
+            return Check(False, "waiting for required add-ons: " + ", ".join(missing)), None
+        pending = [row for row in things if row["statusInfo"]["status"] == "UNINITIALIZED"
+                   and row["statusInfo"].get("statusDetail") in HANDLER_PENDING_DETAILS]
+        metrics_status = values[self.metrics_path].status
+        if not pending and metrics_status == 200:
+            return Check(True, "required add-ons installed, no missing Thing handlers, and authenticated native metrics answer"), None
+        detail = f"required add-ons installed; {len(pending)} Thing handler(s) waiting; native metrics HTTP {metrics_status}"
+        signature = (tuple(sorted(installed)), tuple(sorted((row["UID"], row["statusInfo"]["status"],
+                     row["statusInfo"].get("statusDetail") or "NONE") for row in things)), metrics_status) if pending else None
+        return Check(False, detail), signature
+
+    def check(self, system: System) -> Check:
+        found, signature = self.snapshot(system)
+        self.problem = found.problem
+        if signature is None:
+            self.reset()
+        elif signature != self.signature:
+            self.signature, self.since = signature, system.clock()
+        # A dry-run may reach this before its planned token creation/replacement.
+        # Describe the current report, then let the actual task enforce terminal
+        # authentication/configuration errors without retrying those failures.
+        return Check(found.done, found.detail or found.problem)
+
+    def actions(self, system: System) -> list[Action]:
+        return [Task(f"wait within the {WAIT // 60}-minute native startup allowance; offer at most one approved "
+                     "same-state restart after unchanged known first-start handler symptoms for 60 seconds", self.wait)]
+
+    def wait(self, system: System) -> int:
+        from oh_install import runner
+        if self.problem:
+            system.say("   " + self.problem)
+            return 1
+        while True:
+            found = self.check(system)
+            if self.problem:
+                system.say("   " + self.problem)
+                return 1
+            if found.done:
+                return 0
+            if not self.restarted and self.since is not None and system.clock() - self.since >= self.grace:
+                generation = system.unit("openhab.service", timeout=max(0.001, self.deadline - system.clock())).generation
+                if generation is None:
+                    system.say("   cannot verify the native service generation; no recovery restart was requested")
+                    return 1
+                self.restarted = True
+                system.say("   installed add-ons still have unchanged missing/not-yet-ready handlers; "
+                           "one restart may recover this first-start condition without replacing userdata or credentials")
+                command = Command(("systemctl", "--no-block", "restart", "openhab.service"), root=True)
+                code = runner.perform(command, _RestartBeforeDeadline(system, self.deadline), self.context.area)
+                if code is None or code:
+                    return code or 1
+                self.previous_generation = generation
+                self.reset()
+            left = self.deadline - system.clock()
+            if left <= 0:
+                system.say("   native readiness exceeded the startup allowance; inspect journalctl -u openhab.service")
+                return 1
+            system.sleep(min(POLL, left))
+
+
 class Verify(Step):
     title = "Read-only check"
     always = True
@@ -1152,7 +1295,7 @@ def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     openHAB runs without the metrics gets them here."""
     return [WhatChanges(plan_), Preconditions(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
             Account(context), StateDirectories(context), MetricsDirectories(context),
-            Units(context), NativePreparation(context), Deploy(context), Restart(context), Answers(context),
+            Units(context), NativePreparation(context), Deploy(context), Restart(context), Answers(context), Token(context), NativeReady(context),
             *metrics_steps(context, restart=True), Verify(context)]
 
 
@@ -1249,4 +1392,4 @@ def install(context: Context) -> list[Step]:
     """Every step, in order."""
     return [Preconditions(context), Committed(context), Packages(), Account(context), StateDirectories(context),
             MetricsDirectories(context), BootTest(context), Units(context), NativePreparation(context), Deploy(context), Services(context),
-            Answers(context), Token(context), *metrics_steps(context), Verify(context)]
+            Answers(context), Token(context), NativeReady(context), *metrics_steps(context), Verify(context)]
