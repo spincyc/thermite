@@ -42,5 +42,6 @@ Application services run as the non-login user and group `thermite`, with UID/GI
 - [Commands](https://spincyc.github.io/thermite/commands.html): every command, with examples. `thermite help <command>` works in your shell.
 - [Questions](FAQ.md): requirements, privacy and upgrades.
 - [Colors](https://spincyc.github.io/thermite/colors.html): light and dark modes, accessible themes and the bowl mark.
+- [Hardware endpoint design](design/hardware-endpoints.md): proposed standalone Radxa USB and IR endpoints, with Yoke and ADK reuse.
 
 Under active development, version `0.1.0.dev0`. All rights reserved.
