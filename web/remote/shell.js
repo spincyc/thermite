@@ -68,14 +68,11 @@
     if (event.key === "Escape") { shell.classList.remove("is-open"); menu.setAttribute("aria-expanded", "false"); menu.focus(); }
     event.stopPropagation();
   });
-  shell.append(brand, menu, nav, theme);
   const content = node("div", "thermite-content");
-  const bar = node("header", "thermite-pagebar");
   const crumbs = node("nav", "thermite-breadcrumbs"); crumbs.setAttribute("aria-label", "Page hierarchy");
   if (page.parent) { crumbs.append(link(pages.find(entry => entry.id === page.parent)), node("span", "", "›")); }
   const active = node("span", "", page.label); active.setAttribute("aria-current", "page"); crumbs.append(active);
-  bar.appendChild(crumbs);
-  content.appendChild(bar);
+  shell.append(brand, crumbs, menu, nav, theme);
   const main = document.querySelector("main, .app");
   if (!main) return;
   main.before(shell, content); content.appendChild(main);
