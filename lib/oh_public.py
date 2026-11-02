@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import io
 import html
+import hashlib
 import ipaddress
 import json
 import os
@@ -16,6 +17,7 @@ from pathlib import Path, PurePosixPath
 import re
 import socket
 import subprocess
+import struct
 import sys
 import tempfile
 import tokenize
@@ -31,10 +33,18 @@ SOURCE_FILES = (
     'pyproject.toml',
     'CHANGELOG.md',
     'docs/packaging.md',
+    'docs/installation.md',
+    'docs/iso.md',
+    'docs/ports.md',
+    'iso/bootstrap.py',
+    'iso/first-boot.txt',
+    'iso/inputs.json',
     'lib/oh_paths.py',
     'lib/oh_release.py',
     'lib/oh_package.py',
     'lib/oh_init.py',
+    'lib/oh_iso.py',
+    'lib/oh_ports.py',
     'lib/oh_access/README.md',
     'lib/oh_access/__init__.py',
     'lib/oh_access/callback_service.py',
@@ -55,6 +65,7 @@ SOURCE_FILES = (
     'lib/oh_cli/__init__.py',
     'lib/oh_cli/init.py',
     'lib/oh_cli/package.py',
+    'lib/oh_cli/iso.py',
     'lib/oh_cli/access.py',
     'lib/oh_cli/apple_tv.py',
     'lib/oh_cli/cameras.py',
@@ -202,6 +213,12 @@ SOURCE_FILES = (
     'lib/requirements-site.txt',
     'site/FAQ.md',
     'site/README.md',
+    'site/capture-docs.py',
+    'site/capture-docs.cjs',
+    'site/capture-docs.md',
+    'site/assets/screenshots/manifest.json',
+    'site/assets/screenshots/web-remote.png',
+    'site/assets/screenshots/terminal-remote.png',
     'site/examples/harbor.json',
     'site/pages.yml',
     'site/pages/colors.md',
@@ -223,6 +240,9 @@ SOURCE_FILES = (
     'tests/androidtv_maintenance_probe.cjs',
     'tests/backend_item_read_order_harness.js',
     'tests/test_backend_item_read_order.py',
+    'tests/test_ports.py',
+    'tests/test_iso.py',
+    'tests/test_installed_install.py',
     'tui/remote/administration.js',
     'tui/remote/app.js',
     'tui/remote/cameras.js',
@@ -318,7 +338,8 @@ def demo() -> dict:
 
 
 def demo_host() -> dict:
-    return {"state_root": "/srv/thermite", "timezone": "Etc/UTC", "http_port": 8080, "https_port": 8443,
+    from oh_ports import HTTP_PORT, HTTPS_PORT
+    return {"state_root": "/srv/thermite", "timezone": "Etc/UTC", "http_port": HTTP_PORT, "https_port": HTTPS_PORT,
             "uid": 9001, "gid": 9001, "metrics": {"units": []}}
 
 
@@ -531,7 +552,7 @@ MAKEFILE = '''PYTHON ?= python3
 help:
 \t@$(PYTHON) bin/thermite --help
 check:
-\t@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest tests.test_public -q
+\t@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s tests -t . -q
 generate:
 \t@$(PYTHON) bin/thermite generate
 docs:
@@ -610,18 +631,8 @@ def bundle(doc_files: dict[str, bytes], area: Path = oh_cli.PROGRAM_ROOT) -> dic
     out[".github/workflows/pages.yml"] = workflow.replace(marker,
         "      - run: python3 -m pip install -r requirements.txt\n"
         "      - run: make check\n" + marker).encode()
-    readme = out.get("README.md", b"# thermite\n").decode()
-    readme = readme.replace("Early. For now this repository holds the docs; the code follows. All rights reserved.",
-                            "Under active development. The portable source and fictional example are included. All rights reserved.")
-    private_site = """## Source and your private site
-
-This public checkout contains the program and a fictional example, not a production house. Keep your real inventory and host settings in a separate private site checkout. Production deployment installs a committed revision: generate and commit `conf/`, `metrics/` and `deploy/` only in that private checkout before using the deployment recipe below. Those outputs are ignored here; do not publish your house configuration upstream.
-
-"""
-    readme = readme.replace("## In four commands", private_site + "## In four commands")
-    readme += """\n## Run the example\n\nThe included `instance/` describes fictional devices at documentation-only addresses. Replace those files with your own inventory before using a real runtime.\n\n```sh\npython3 -m venv .venv\n.venv/bin/pip install -r requirements.txt\n.venv/bin/python -m unittest tests.test_public -q\n.venv/bin/python bin/thermite generate\n.venv/bin/python bin/thermite validate\n```\n\nConfiguration, documentation and these tests run offline. Running a native test runtime or installing services is a separate explicit command and requires the pinned downloads. The terminal remote additionally needs Node.js and its locked package; the Apple TV helper has its own hashed dependency lock.\n"""
-    readme += """\n## Install the application separately\n\nThis reviewed public source can also be installed with `python -m pip install .` in a dedicated virtual environment. Run `thermite init /path/to/private-site`, then `thermite --site /path/to/private-site generate` and `validate`. The installed program stays separate from the site's configuration, output and runtime state. A private site pins an exact application release; keep its configuration and generated outputs in private Git. Application upgrades are explicit and preserve cached releases for rollback. See [application and private-site packaging](docs/packaging.md) for the full boundary. These development builds are versioned `0.1.0.dev0`; installation does not commission a house or activate services.\n"""
-    out["README.md"] = readme.encode()
+    # site/README.md is the complete public README. Keeping installation and
+    # preview instructions there gives both publication paths the same text.
     # Default source previews are canonical generated assets, never an opaque image copy.
     out["web/remote/theme.css"] = oh_brand.css().encode()
     out["web/remote/icon.svg"] = oh_brand.svg(tile=True).encode()
@@ -634,6 +645,42 @@ This public checkout contains the program and a fictional example, not a product
     if problems:
         raise PublicError("public source refused:\n" + "\n".join(problems))
     return out
+
+
+def _screenshots(files: dict[str, bytes]) -> dict[str, str]:
+    """Permit only the two reviewed captures of the public fictional inventory.
+
+    Their manifest travels with source and built docs. It records provenance
+    and catches accidental image substitution; image contents are reviewed
+    when updating the captures, since the text privacy scan cannot read pixels.
+    """
+    manifests = [files[path] for path in (
+        "site/assets/screenshots/manifest.json", "docs/assets/screenshots/manifest.json") if path in files]
+    if not manifests:
+        return {}
+    if any(value != manifests[0] for value in manifests):
+        raise ValueError("screenshot manifests differ")
+    data = json.loads(manifests[0])
+    inventory = (json.dumps(demo(), sort_keys=True, separators=(",", ":")) + "\n").encode()
+    names = {"web-remote.png", "terminal-remote.png"}
+    if (data.get("version") != 1 or data.get("mode") != "mock" or data.get("inventory") != "oh_public.demo()"
+            or data.get("inventory_sha256") != hashlib.sha256(inventory).hexdigest()
+            or set(data.get("files", {})) != names):
+        raise ValueError("screenshots must use the public demo inventory")
+    approved = {}
+    for name in names:
+        entry = data["files"][name]
+        for prefix in ("site/assets/screenshots/", "docs/assets/screenshots/"):
+            path = prefix + name
+            if path not in files:
+                continue
+            image = files[path]
+            if (len(image) < 24 or image[:8] != b"\x89PNG\r\n\x1a\n" or image[12:16] != b"IHDR"
+                    or list(struct.unpack(">II", image[16:24])) != [entry["width"], entry["height"]]
+                    or hashlib.sha256(image).hexdigest() != entry["sha256"]):
+                raise ValueError(f"screenshot differs from its capture manifest: {path}")
+            approved[path] = entry["sha256"]
+    return approved
 
 
 def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] | None = None) -> list[str]:
@@ -649,6 +696,11 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
     body_offset = len(layouts_source) - len(layout_body)
     layout_spans = [(body_offset + match.start(1), body_offset + match.end(1)) for match in declarations]
     problems = []
+    try:
+        screenshots = _screenshots(files)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        screenshots = {}
+        problems.append("screenshots: invalid or inconsistent capture manifest")
     for name, value in sorted(files.items()):
         path = PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts or name.startswith(("var/", "build/", "conf/", "metrics/", "deploy/")):
@@ -657,7 +709,7 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
         try:
             text = value.decode("utf-8")
         except UnicodeDecodeError:
-            if name != "web/remote/apple-touch-icon.png" or value != oh_brand.png():
+            if name not in screenshots and (name != "web/remote/apple-touch-icon.png" or value != oh_brand.png()):
                 problems.append(f"{name}: unapproved binary asset")
             continue
         for match in IP.findall(text):
@@ -785,7 +837,7 @@ def _target(root: Path, name: str) -> Path:
         raise PublicError("unsafe managed export path")
     allowed = {MANIFEST, "README.md", "FAQ.md", "Makefile", "requirements.txt", "versions.json", ".gitignore", "pyproject.toml", "CHANGELOG.md",
                ".github/workflows/pages.yml"}
-    if name not in allowed and path.parts[0] not in {"docs", "bin", "lib", "site", "web", "tui", "tests", "instance"}:
+    if name not in allowed and path.parts[0] not in {"docs", "bin", "lib", "site", "web", "tui", "tests", "instance", "iso"}:
         raise PublicError("path is outside the managed public source trees")
     target = root / name
     if any(p.is_symlink() for p in [target, *target.parents] if p != root.parent):

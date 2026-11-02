@@ -1,4 +1,4 @@
-"""Test conf/ on a test runtime on 127.0.0.1:18081, never production.
+"""Test conf/ on a test runtime on 127.0.0.1:13618, never production.
 
     thermite test [--timeout SECONDS] [--house FILE]
                      boot, routing and controls, one after the other
@@ -18,7 +18,7 @@ from oh_testing import boot, controls, routing
 ACTIONS = {"boot": boot, "routing": routing, "controls": controls}
 
 DESCRIPTION = """\
-Test conf/ on a test runtime, the pinned distribution on 127.0.0.1:18081,
+Test conf/ on a test runtime, the pinned distribution on 127.0.0.1:13618,
 never production: `boot` boots conf/ and reports how it loads (thermite
 deploy installs only a conf/ that passed it); `routing` and `controls`
 generate a conf from the house file that drives simulated matrices and

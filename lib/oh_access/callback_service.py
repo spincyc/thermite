@@ -6,6 +6,9 @@ import. The owner must verify every native callback path and publishing peer.
 
 import ipaddress
 import json
+from urllib.parse import urlsplit
+
+import oh_ports
 
 from . import AccessError
 from .callbacks import CallbackRelay, MAX_HEADER_BYTES
@@ -34,8 +37,7 @@ def load_config(path, *, runtime_url=None):
         address = ipaddress.ip_address(data["bind_host"])
         if not isinstance(address, ipaddress.IPv4Address) or address.is_unspecified or address.is_multicast or address.is_loopback or str(address) != data["bind_host"]:
             raise ValueError()
-        if type(data["port"]) is not int or not 1024 <= data["port"] <= 65535:
-            raise ValueError()
+        oh_ports.listener("callbacks", data["port"], upstream=urlsplit(data["upstream"]).port)
         if not isinstance(data["hosts"], list) or data["hosts"] != [str(address) + ":" + str(data["port"])]:
             raise ValueError()
         if not isinstance(data["upstream"], str):

@@ -17,7 +17,7 @@ from oh_install.system import System
 
 DESCRIPTION = """\
 Install thermite on this host, the one you run it on. Run
-it as your user, from a clone of this repository, wherever that clone is:
+it as your user, from a committed private site or a complete source checkout:
 it is safe to run again at any time. It finds this host's name and address
 and your user as it runs; instance/host.yaml holds only what is the same on
 any host (the state root, the ports, the openhab ids, the time zone).

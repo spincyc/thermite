@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import argparse
 import html
+from html.parser import HTMLParser
 import json
+import posixpath
 import re
 import socket
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import oh_brand as brand
 import oh_cli
@@ -27,13 +30,21 @@ SOURCE = oh_cli.PROGRAM_ROOT / "site"
 SITE_URL = "https://spincyc.github.io/thermite/"
 #: (page, title in the navigation, <title>, description)
 PAGES = (
-    ("index", "Home", "thermite", "Run your whole house on open software."),
-    ("start", "Get started", "Get started", "Describe the house, try it, install it, use it."),
+    ("index", "Home", "thermite", "Home automation you can own."),
+    ("start", "Get started", "Get started", "Try the example, install thermite, and connect your devices."),
     ("dashboards", "Dashboards", "Dashboards", "The history of the house, openHAB and its machine, in Grafana."),
     ("commands", "Commands", "Commands", "Every thermite command, its switches and examples."),
     ("colors", "Colors", "Colors and the bowl", "The bowl, the themes, and themes of your own."),
     ("faq", "FAQ", "Questions", "Short answers about thermite."),
+    ("installation", "Installation", "Server installation", "Install thermite on an existing Linux server."),
+    ("iso", "Standalone ISO", "Standalone ISO", "Build bootable installation media for a dedicated thermite machine."),
+    ("ports", "Ports", "Network ports", "thermite's service ports and network exposure."),
+    ("packaging", "Application releases", "Application releases and private sites", "Install and upgrade thermite while keeping your private site separate."),
+    ("screenshots", "Screenshots", "Documentation screenshots", "Reproduce the screenshots using fictional inventory and the actual clients."),
 )
+DOCUMENT_PAGES = {name: oh_cli.PROGRAM_ROOT / "docs" / f"{name}.md"
+                  for name in ("installation", "iso", "ports", "packaging")}
+DOCUMENT_PAGES["screenshots"] = SOURCE / "capture-docs.md"
 EXAMPLES = ("harbor",)
 TOP = ("README.md", "FAQ.md")
 HOST_FILE = AREA / "instance/host.yaml"
@@ -310,7 +321,7 @@ def fill(text: str) -> str:
 def page(name: str, content: str) -> str:
     template = (SOURCE / "template.html").read_text(encoding="utf-8")
     nav = "".join(f'<a href="{p}.html"{" aria-current=\"page\"" if p == name else ""}>{label}</a>'
-                  for p, label, _, _ in PAGES)
+                  for p, label, _, _ in PAGES if p not in DOCUMENT_PAGES)
     _, _, title, description = next(p for p in PAGES if p[0] == name)
     out = template
     for key, value in (("{{title}}", f"{title} · thermite" if name != "index" else "thermite"),
@@ -326,11 +337,17 @@ def build() -> dict[str, bytes]:
         if name == "commands":
             content = commands_page()
         else:
-            source = SOURCE / ("FAQ.md" if name == "faq" else f"pages/{name}.md")
+            source = DOCUMENT_PAGES.get(name, SOURCE / ("FAQ.md" if name == "faq" else f"pages/{name}.md"))
             content = markdown(fill(source.read_text(encoding="utf-8")))
         files[f"{name}.html"] = page(name, content).encode("utf-8")
     for asset in ("site.css", "site.js"):
         files[f"assets/{asset}"] = (SOURCE / asset).read_bytes()
+    screenshots = SOURCE / "assets/screenshots"
+    manifest = json.loads((screenshots / "manifest.json").read_text())
+    for name in (*manifest["files"], "manifest.json"):
+        if Path(name).name != name:
+            raise ValueError("Screenshot manifest contains an unsafe filename")
+        files[f"assets/screenshots/{name}"] = (screenshots / name).read_bytes()
     files["assets/torch.svg"] = brand.svg(size=64).encode("utf-8")
     files["assets/torch-light.svg"] = brand.svg(mode="light", size=64).encode("utf-8")
     files["assets/icon.svg"] = brand.svg(tile=True, size=512).encode("utf-8")
@@ -407,7 +424,7 @@ def guard(files: dict[str, bytes], facts: set[str], words: list[str] | None = No
     """What in `files` names this house: addresses (but documentation and
     loopback ones), MACs, `facts` as whole words, `words` anywhere."""
     words = private_words() if words is None else words
-    problems = []
+    problems = local_links(files)
     ordered = sorted(facts, key=len, reverse=True)
     pattern = (re.compile(r"(?<![\w.:-])(" + "|".join(re.escape(f) for f in ordered) + r")(?![\w:-])")
                if ordered else None)
@@ -427,6 +444,42 @@ def guard(files: dict[str, bytes], facts: set[str], words: list[str] | None = No
             if word in text:
                 problems.append(f"{path}: a private word: {word}")
     return problems
+
+
+def local_links(files: dict[str, bytes]) -> list[str]:
+    """Check every generated HTML link, image and local fragment in memory."""
+    class References(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.links, self.ids = [], set()
+
+        def handle_starttag(self, tag, attributes):
+            values = dict(attributes)
+            if values.get("id"):
+                self.ids.add(values["id"])
+            if tag in {"a", "link"} and values.get("href"):
+                self.links.append(values["href"])
+            if values.get("src"):
+                self.links.append(values["src"])
+
+    pages = {}
+    for name, value in files.items():
+        if name.endswith(".html"):
+            parser = References()
+            parser.feed(value.decode())
+            pages[name] = parser
+    problems = []
+    for name, page in pages.items():
+        for link in page.links:
+            url = urlsplit(link)
+            if url.scheme or url.netloc:
+                continue
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(name), unquote(url.path))) if url.path else name
+            if target not in files:
+                problems.append(f"{name}: missing local link: {link}")
+            elif url.fragment and target in pages and unquote(url.fragment) not in pages[target].ids:
+                problems.append(f"{name}: missing local anchor: {link}")
+    return sorted(set(problems))
 
 
 def repository_files() -> dict[str, bytes]:

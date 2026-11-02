@@ -1,25 +1,25 @@
 # Application releases and private sites
 
-Thermite supports both an existing complete source checkout and an installed
-application with a separate private site. These remain development builds,
-versioned `0.1.0.dev0`. Installation does not start a runtime, discover devices,
-configure credentials, enable accounts, or change a house.
+Thermite supports a complete source checkout and an installed application
+with a separate private site. These are development builds, currently
+`0.1.0.dev0`. Follow [installation](installation.md) for a Linux server or
+[ISO installation](iso.md) for a bare machine.
 
-## Install and initialize
+## Package the application
 
-Build a wheel from a complete source checkout with
-`thermite package --out .scratch/releases`. The builder first creates the
-reviewed public artifact and runs its privacy gate. It packages that explicit
-program list and fictional example, never the real inventory or generated
-configuration. The wheel has ordinary Python metadata and a `thermite` console
-entry point. PyYAML is its configuration dependency; Node.js, the locked
-terminal package, native runtime downloads and optional service dependencies
-remain separate explicit setup steps.
+From source, run `python3 bin/thermite package --out .scratch/releases`.
+The builder creates a wheel with ordinary Python metadata and the
+`thermite` console entry point. It includes the public program, documentation
+and fictional example; it excludes private inventory, credentials and runtime
+state. The public source also supports `python -m pip install .`.
 
-The public export also supports `python -m pip install .`. Use a dedicated
-virtual environment, outside the private site. To install a previously built
-wheel without accessing a package index, install its PyYAML dependency first
-and use `python -m pip install --no-index --no-deps /path/to/thermite_app.whl`.
+Use a dedicated virtual environment outside the private site. PyYAML is the
+application's configuration dependency. Node.js, the locked terminal package,
+native runtime downloads and service dependencies have separate setup steps.
+For an offline wheel installation, supply PyYAML first, then run
+`python -m pip install --no-index --no-deps /path/to/thermite_app.whl`.
+
+## Initialize a site
 
 ```sh
 thermite init /path/to/private-site
@@ -27,82 +27,66 @@ thermite --site /path/to/private-site generate
 thermite --site /path/to/private-site validate
 ```
 
-`init` requires a new or empty directory and writes a fictional inventory,
+Init requires a new or empty directory. It writes a fictional inventory,
 sample host settings, runtime pins, a private launcher, a small Makefile and
-`thermite-site.json`. The directory is private; configuration files are mode 0600.
-It rejects symlinks, overlap with the installed program and existing user
-files. Edit the sample before commissioning real hardware. Authentication is
-the example's default; init never changes an existing site's explicit mode.
+`thermite-site.json`. Configuration files are mode 0600. It rejects symlinks,
+application overlap and existing user files. Replace the example before
+commissioning hardware. Init creates no account or service and does not
+initialize or publish Git.
 
-`--site DIR` or `THERMITE_SITE` selects the private site. An installed command
-also recognizes a site manifest in its current directory or an ancestor.
-Without a site, help, theme and documentation commands work, while commands
-that would create configuration or state refuse. Complete source checkouts
-without a site manifest retain their existing paths and behavior.
+Select a site with `--site DIR`, `THERMITE_SITE`, or by working inside its
+directory. The private launcher also selects its site and Python environment.
+Help, themes, documentation, packaging and ISO builds work without a site;
+commands that create configuration or state require one. Complete source
+checkouts retain their original behavior.
 
-Program resources are read-only: integrations, templates, web assets, terminal
-source, themes and dependency locks come from the installed application.
-Inventory, custom themes and IR profiles, generated `conf/`, `metrics/`,
-`deploy/`, caches and runtime state belong to the selected site. The terminal
-receives the generated site's house model explicitly. It never silently uses
-the installed example after generation.
+The application supplies integrations, templates, web assets, terminal source,
+themes and dependency locks. The private site owns inventory, custom themes,
+IR profiles, generated `conf/`, `metrics/`, `deploy/`, caches and runtime state.
+Keep its configuration, manifest and generated outputs in private Git;
+`var/` and `build/` stay ignored. Production installation still requires a
+clean committed site and the native boot test.
 
-## Private Git deployment and application upgrades
+## Update and roll back
 
-A separate site still needs private Git for production installation and
-deployment. Init does not create, commit or publish a repository. Commit the
-site manifest, real configuration, pins, launcher, Makefile and generated
-outputs only to that private repository. `var/` and `build/` remain ignored.
-Existing clean-commit, generated-output, native boot, pairing-log protection
-and owner-controlled installation gates remain in place. Installing a wheel
-does not bypass any of them.
+A site's manifest pins an application version and the exact release digest.
+The release manifest lists program files and SHA256 values. Changed, missing,
+extra or symlinked program files fail validation. The installed application
+is not a writable configuration directory.
 
-The site manifest pins both an application version and the digest of a release
-manifest. A version match alone is insufficient. A release lists every
-program file and its SHA256; changed, missing, extra or symlinked program
-files are rejected. The installer caches complete verified releases below
-the site's `var/application-releases/`, outside Git, and never overwrites a
-prior release. Keep that cache for rollback.
+Install a new application artifact in its environment, then explicitly run:
 
-Ordinary installer-created bytecode caches are accepted only as regular cache
-files mapped to listed Python sources. The trusted installed and source
-launchers select a fresh, never-created cache prefix before importing program
-modules, and disable bytecode writes. Existing caches are therefore inert;
-cache symlinks, unknown cache files and nested cache directories are rejected.
-The Python interpreter and installed bootstrap remain trusted. This integrity
-check is not a sandbox against an adversary who controls those components.
+```sh
+thermite init --upgrade /path/to/private-site
+thermite --site /path/to/private-site generate
+thermite --site /path/to/private-site validate
+```
 
-Upgrade the application in its virtual environment, then explicitly run
-`thermite init --upgrade /path/to/private-site`. This caches the new release
-and changes the site's application requirement and generated launcher only.
-It preserves inventory, host settings, runtime pins, generated outputs,
-credentials, data and older releases. A customized launcher is refused for
-manual review. Internal symlinks in the launcher's or release cache's paths
-are refused before any upgrade write. Generate and validate again, commit the new private revision,
-then use the normal owner-controlled install/upgrade/deploy workflow.
+This updates the application requirement and launcher while preserving
+inventory, runtime pins, generated outputs, credentials and state. A
+customized launcher is refused for manual review. Commit the resulting site
+revision, then review the normal runtime upgrade/deploy plan.
 
-For a separate site, deployment takes `conf/`, `metrics/` and the application
-lock from the selected private Git revision. It copies only the finite helper
-and exporter program files from that revision's verified release into the
-existing production locations. A rollback resolves the older revision's exact
-cached release; it does not substitute whatever package is installed now.
-Missing or modified rollback artifacts fail before configuration or helper
-writes. Deployment never downloads a missing release automatically.
+Verified application releases are cached under
+`var/application-releases/`. Retain that cache and the original release
+artifacts for rollback. Deployment resolves configuration and the application
+requirement from the selected private Git revision, then copies the finite
+helper/exporter program files from that revision's cached release. Rollback
+uses that older release. A missing or modified artifact fails before deployment
+writes; deployment never downloads a substitute automatically.
 
-An original complete Git checkout continues to deploy its own committed
-configuration and program files exactly as before. Production directory names,
-service units and persistent identity/TLS state are not relocated by packaging.
+Existing complete Git checkouts continue deploying their own committed program
+and configuration. Packaging does not relocate production data or service
+units. Program integrity assumes a trusted Python interpreter and installed
+bootstrap; it does not protect against an administrator changing them.
 
-## Offline evidence
+## Offline verification
 
-The packaging tests build a deterministic wheel and exercise the real public
-PEP517 build entry point. They install the wheel into an isolated virtual
-environment, run from an unrelated directory with network calls blocked,
-initialize and edit a separate site, generate/validate, reject an incompatible
-requirement and confirm installed program hashes remain unchanged.
-
-Two private Git fixture revisions select distinct application releases. The
-test deploys into a synthetic local state directory, rolls back to the older
-helper bytes and verifies a tampered old release is rejected before writes.
-It starts no native runtime or service and sends no device command. Real
-installation and commissioning remain separate owner-controlled checks.
+The packaging tests build deterministic wheels through both the package API
+and public PEP517 entry point. They install outside the checkout with network
+calls blocked, initialize a separate site, generate and validate, and confirm
+that application resources remain unchanged. Two private fixture revisions
+exercise exact helper rollback and reject a tampered old release before writes.
+ISO tests additionally check installer confirmation settings and an offline
+bootstrap into a synthetic filesystem. These tests start no runtime or device
+operation; actual boot and commissioning have separate acceptance checks.

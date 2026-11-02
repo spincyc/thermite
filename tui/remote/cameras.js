@@ -15,7 +15,7 @@ function create(options = {}) {
 }
 
 function url(base, ident, mock) {
-  const target = new URL(base || "http://127.0.0.1:8080");
+  const target = new URL(base || "http://127.0.0.1:13601");
   target.pathname = target.pathname.replace(/\/+$/, "") + "/static/remote/cameras.html";
   target.username = target.password = "";
   target.search = mock ? "?backend=mock" : "";

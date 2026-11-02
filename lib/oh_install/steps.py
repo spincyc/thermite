@@ -12,6 +12,7 @@ from pathlib import Path
 
 import oh_deploy as deploy
 import oh_logging
+import oh_ports
 import oh_metrics as metrics
 from oh_install.model import Action, Check, Command, Step, Task
 from oh_install.system import System
@@ -103,6 +104,7 @@ class Context:
 
     def ports(self) -> dict[str, list[int]]:
         """The ports each service listens on."""
+        oh_ports.effective(self.host)
         return {"openhab.service": [self.host["http_port"], self.host["https_port"], deploy.KARAF_PORT,
                                     deploy.LSP_PORT],
                 "openhab-atv.service": [deploy.HELPER_PORT],
@@ -113,6 +115,19 @@ def busy_ports(context: Context, system: System) -> list[int]:
     """The ports a service that is not running needs and something else holds."""
     return [port for service, ports in context.ports().items() if system.unit(service).active != "active"
             for port in ports if not system.port_free(port)]
+
+
+def application(context: Context, *args: str) -> tuple[str, ...]:
+    """Use the selected site's application, including through sg and sudo.
+
+    A private site's launcher is tied to its Python environment. The system
+    python and a relative source Makefile cannot substitute for that release.
+    Original source checkouts retain their established commands.
+    """
+    from oh_paths import PROGRAM, SITE_FILE
+    if (context.area / SITE_FILE).is_file():
+        return (sys.executable, str(PROGRAM / "bin/thermite"), "--site", str(context.area), *args)
+    return ("bin/thermite", *args)
 
 
 class Preconditions(Step):
@@ -310,7 +325,36 @@ class BootTest(Step):
                             "about 180 MB")
 
     def actions(self, system: System) -> list[Action]:
-        return [Command(("make", "openhab-test", "TEST=boot"))]
+        from oh_paths import SITE_FILE
+        argv = (application(self.context, "test", "boot") if (self.context.area / SITE_FILE).is_file()
+                else ("make", "openhab-test", "TEST=boot"))
+        return [Command(argv)]
+
+
+class NativeListeners(Step):
+    title = "Use Thermite's native console listener on loopback"
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def check(self, system: System) -> Check:
+        data = system.read_bytes(self.context.layout.userdata / oh_ports.SHELL_CFG)
+        if oh_ports.native_configured_bytes(data):
+            return Check(True, f"Karaf listens on 127.0.0.1:{oh_ports.KARAF_PORT}")
+        return Check(False, f"set Karaf to 127.0.0.1:{oh_ports.KARAF_PORT} while openHAB is stopped")
+
+    def actions(self, system: System) -> list[Action]:
+        from oh_paths import PROGRAM
+        running = system.unit("openhab.service").active not in ("inactive", "failed", "unknown")
+        actions: list[Action] = []
+        if running:
+            actions.append(Command(("systemctl", "stop", "openhab.service"), root=True))
+        actions.append(Command(("python3", str(PROGRAM / "lib/oh_ports.py"),
+                                str(self.context.layout.userdata), "--http-port", str(self.context.host["http_port"]),
+                                "--uid", str(self.context.host["uid"]), "--gid", str(self.context.host["gid"])), root=True))
+        if running:
+            actions.append(Command(("systemctl", "start", "openhab.service"), root=True))
+        return actions
 
 
 class PairingLogging(Step):
@@ -336,7 +380,7 @@ class PairingLogging(Step):
         actions: list[Action] = []
         if system.stat(self.template / oh_logging.RELATIVE) is None:
             # A boot receipt can outlive a tidied runtime cache.
-            actions.append(Command(("bin/thermite", "sandbox", "fetch")))
+            actions.append(Command(application(self.context, "sandbox", "fetch")))
         running = system.unit("openhab.service").active not in ("inactive", "failed", "unknown")
         if running:
             actions.append(Command(("systemctl", "stop", "openhab.service"), root=True))
@@ -373,16 +417,20 @@ class Deploy(Step):
         return Check(False, f"deployed: {commit[:12] if commit else 'nothing yet'}; HEAD is {head[:12]}")
 
     def actions(self, system: System) -> list[Action]:
-        argv = ("make", "openhab-deploy")
+        from oh_paths import SITE_FILE
+        installed = (self.context.area / SITE_FILE).is_file()
+        argv = application(self.context, "deploy") if installed else ("make", "openhab-deploy")
+        checks = [Command(application(self.context, *args)) for args in
+                  (("generate", "--check"), ("validate",), ("lint",))] if installed else []
         if self.context.host["gid"] in system.process_groups():
-            return [Command(argv)]
+            return [*checks, Command(argv)]
         # usermod -aG takes effect at the next login. sg gives this one
         # command the group now. Arch has no sg (util-linux ships only
         # newgrp, which cannot run one command); sudo -u can, since it sets
         # the user's groups afresh from the group database.
         if system.which("sg"):
-            return [Command(("sg", NAME, "-c", shlex.join(argv)))]
-        return [Command(("-u", system.login(), *argv), root=True)]
+            return [*checks, Command(("sg", NAME, "-c", shlex.join(argv)))]
+        return [*checks, Command(("-u", system.login(), *argv), root=True)]
 
 
 class Units(Step):
@@ -705,7 +753,8 @@ class Verify(Step):
         return Check(False, "every Thing ONLINE, and what is deployed against this checkout")
 
     def actions(self, system: System) -> list[Action]:
-        return [Command(("bin/thermite", "health", "--production")), Command(("bin/thermite", "status"))]
+        return [Command(application(self.context, "health", "--production")),
+                Command(application(self.context, "status"))]
 
 
 # --------------------------------------------------------------------------
@@ -721,7 +770,10 @@ class Committed(Step):
     def check(self, system: System) -> Check:
         area = self.context.area
         problems = []
-        code, _ = system.capture([sys.executable, str(area / "bin/thermite"), "generate", "--check"])
+        from oh_paths import SITE_FILE
+        argv = (application(self.context, "generate", "--check") if (area / SITE_FILE).is_file()
+                else (sys.executable, str(area / "bin/thermite"), "generate", "--check"))
+        code, _ = system.capture(argv)
         if code:
             problems.append("conf/ or deploy/ is not what the house file and versions.json generate: "
                             "run thermite generate, then commit")
@@ -907,7 +959,7 @@ def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     """The upgrade's steps after its preconditions, in order. A host where
     openHAB runs without the metrics gets them here."""
     return [WhatChanges(plan_), BootTest(context), Backup(context, stamp, plan_.installed_version),
-            MetricsDirectories(context), PairingLogging(context), Units(context), Restart(context), Deploy(context), Answers(context),
+            MetricsDirectories(context), PairingLogging(context), NativeListeners(context), Units(context), Restart(context), Deploy(context), Answers(context),
             *metrics_steps(context, restart=True), Verify(context)]
 
 
@@ -1003,5 +1055,5 @@ def uninstall(context: Context, purge: bool = False) -> list[Step]:
 def install(context: Context) -> list[Step]:
     """Every step, in order."""
     return [Preconditions(context), Packages(), Account(context), StateDirectories(context),
-            MetricsDirectories(context), BootTest(context), PairingLogging(context), Deploy(context), Units(context), Services(context),
+            MetricsDirectories(context), BootTest(context), PairingLogging(context), NativeListeners(context), Deploy(context), Units(context), Services(context),
             Answers(context), Token(context), *metrics_steps(context), Verify(context)]

@@ -2,35 +2,43 @@
 
 <h1 align="center">thermite</h1>
 
-<p align="center">Run your whole house on open software.</p>
+<p align="center">Home automation you can own.</p>
 
-thermite turns one plain file describing your house (its rooms, TVs, speakers and switches) into a working [openHAB](https://www.openhab.org/) setup, with a remote for your phone and one for your terminal. It replaces closed, dealer-installed systems with parts you own.
+Describe your rooms, devices and connections in one file. thermite builds your [openHAB](https://www.openhab.org/) configuration and gives you everyday controls in a web app and a terminal.
+
+## See it
+
+<p><img src="docs/assets/screenshots/web-remote.png" width="100%" alt="thermite web remote in dark mode, showing the fictional Example West room and its player controls"></p>
+
+The web app: room and source selection, device controls, and signal information in one place.
+
+<p><img src="docs/assets/screenshots/terminal-remote.png" width="100%" alt="thermite terminal remote showing the same fictional room and player"></p>
+
+The terminal remote uses the same controls and room model. Both screenshots show **demo mode with fictional inventory**, captured from the actual clients. [Capture recipe](https://spincyc.github.io/thermite/screenshots.html).
 
 ## What you get
 
-- **One house file.** Rooms, devices and how they connect, in one place. Everything else is made from it.
-- **Safe changes.** Every change boots on a throwaway openHAB first; a bad one rolls back with one command.
-- **A remote on every screen.** The same remote on a phone, a desktop and a terminal.
-- **Local by default.** Core integrations talk directly to devices on your network. Optional cloud providers require their own services and accounts.
-- **Your colors.** A dark and a light mode, or a theme of your own.
+- **One house file.** Rooms, devices and their connections stay together; thermite generates the runtime configuration.
+- **Checked deployments.** Validate the configuration, check openHAB startup, and restore an earlier deployment with `thermite rollback`.
+- **Controls on every screen.** Use your phone, desktop browser or terminal to choose sources and control devices.
+- **Local control.** Core integrations communicate on your network. Optional cloud integrations use their providers' services.
+- **Your own site.** Keep real inventory and generated configuration in private Git, separate from the application.
 
-## In four commands
+## Choose an installation
 
-```sh
-thermite generate       # build openHAB's setup from the house file
-thermite test boot      # try it on a throwaway openHAB
-thermite deploy         # install it
-thermite remote         # the remote, in your terminal
-```
+| Where thermite will run | Start here |
+|---|---|
+| An existing Linux server | [Server installation](https://spincyc.github.io/thermite/installation.html) |
+| A dedicated machine | [Build and install the standalone ISO](https://spincyc.github.io/thermite/iso.html) |
+| A development machine, with fictional devices | [Try the example](https://spincyc.github.io/thermite/start.html#try-the-example) |
 
-`thermite help` lists every command; `thermite help <command>` explains one, with examples.
+This checkout contains the application and a fictional example. Keep your real house configuration in a separate private site; `thermite init` creates one. Installing the application and commissioning a running house are separate steps.
 
-## Learn more
+## Explore
 
-- [The docs](https://spincyc.github.io/thermite/): getting started, every command, colors.
-- [Questions](FAQ.md), answered briefly.
-- [The bowl and colors](https://spincyc.github.io/thermite/colors.html): one drawing, charcoal and pewter, with copper heat.
+- [Get started](https://spincyc.github.io/thermite/start.html): try the example, install, and connect your devices.
+- [Commands](https://spincyc.github.io/thermite/commands.html): every command, with examples. `thermite help <command>` works in your shell.
+- [Questions](FAQ.md): requirements, privacy and upgrades.
+- [Colors](https://spincyc.github.io/thermite/colors.html): light and dark modes, accessible themes and the bowl mark.
 
-## Status
-
-Under active development. The guide describes the available tools and their checks. All rights reserved.
+Under active development, version `0.1.0.dev0`. All rights reserved.

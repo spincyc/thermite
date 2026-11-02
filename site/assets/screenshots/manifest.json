@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "mode": "mock",
+  "inventory": "oh_public.demo()",
+  "inventory_sha256": "6fb6e87cde009fe3c54d8fcd671a5008e7d078bfabb96047f1f850b271ce1488",
+  "capture": "site/capture-docs.py; Chromium web render and actual PTY output rendered by xterm.js",
+  "files": {
+    "web-remote.png": {
+      "sha256": "b19105f90ea0195632073f8d0a57ce2a83093d7c4e8de6e4661fa0008c897510",
+      "width": 1440,
+      "height": 1000
+    },
+    "terminal-remote.png": {
+      "sha256": "54ba6c24a2b5d0e34768e249f3892e7b19358d2b1b52640ead0360108c54ee7a",
+      "width": 1232,
+      "height": 880
+    }
+  }
+}

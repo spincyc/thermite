@@ -3,7 +3,7 @@ PYTHON ?= python3
 help:
 	@$(PYTHON) bin/thermite --help
 check:
-	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest tests.test_public -q
+	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s tests -t . -q
 generate:
 	@$(PYTHON) bin/thermite generate
 docs:

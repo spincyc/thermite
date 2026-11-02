@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import oh_cli
+import oh_ports
 from oh_cli import AREA, PROGRAM_ROOT
 
 TUI = PROGRAM_ROOT / "tui/remote"
@@ -37,10 +38,10 @@ backend.js, session.js and pair.js from web/remote/ under node, so both
 front ends drive thermite the same way (tui/remote/README.md).
 
 By default it uses the authenticated site (THERMITE_SITE_URL, or
-https://localhost:9443). A site with access.mode: native instead uses its
+https://localhost:13600). A site with access.mode: native instead uses its
 production runtime without login; --native explicitly selects that testing
 mode for this run. Choosing a source really switches the room. --sandbox talks to
-the sandbox on 127.0.0.1:18080 and --mock to the page's mock backend,
+the sandbox on 127.0.0.1:13615 and --mock to the page's mock backend,
 which sends nothing.
 
 Its colors are a thermite theme's, as the remote page's are: the house
@@ -80,7 +81,7 @@ EXAMPLES = (
     ("thermite remote --mock", "the page's mock backend, which sends nothing"),
     ("thermite remote --sandbox --room living_room", "the sandbox, starting in the living room"),
     ("thermite remote --pair", "start on the Pairing screen"),
-    ("thermite remote --url http://thermite.example:8080 --light", "thermite on another host, light"),
+    ("thermite remote --url http://thermite.example:13601 --light", "thermite on another host, light"),
     ("thermite remote --mock --theme contrast", "in the high-contrast theme"),
     ("thermite remote --no-log", "give the log pane's rows to the controls; L shows it again"),
     ("thermite remote --setup", "only install the pinned blessed, then exit"),
@@ -144,7 +145,7 @@ def target(arguments: argparse.Namespace) -> list[str]:
     if arguments.sandbox:
         return ["--url", oh_cli.SANDBOX_URL]
     if not native_mode(arguments):
-        return ["--url", os.environ.get("THERMITE_SITE_URL", "https://localhost:9443")]
+        return ["--url", os.environ.get("THERMITE_SITE_URL", f"https://localhost:{oh_ports.ACCESS_PORT}")]
     import oh_deploy as deploy
 
     return ["--url", deploy.production_url(deploy.load(AREA)[1])]

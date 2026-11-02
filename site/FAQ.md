@@ -2,7 +2,7 @@
 
 ### What is thermite?
 
-Software that runs a house. You describe the house once, and thermite sets up openHAB, the open-source home hub, to match. It also gives you remotes for it.
+Home automation built around openHAB. Describe your rooms, devices and connections in one file; thermite generates the configuration and gives you controls in a web app and a terminal.
 
 ### Do I need to know openHAB?
 
@@ -34,7 +34,11 @@ Not yet. Bringing the house into Apple Home through openHAB is planned.
 
 ### What does it need to run?
 
-One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node.js for the terminal remote. Install the reviewed application in a dedicated Python environment, then use `thermite init` to create a separate private site. `thermite install` prepares the native runtime only after its explicit checks and owner-controlled steps.
+One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node.js and npm for the terminal remote. You can [install on an existing server](https://spincyc.github.io/thermite/installation.html), or [build a standalone ISO](https://spincyc.github.io/thermite/iso.html) for a dedicated machine. Both paths keep your private site separate from the application.
+
+### Are the screenshots from a real house?
+
+They show the actual clients in demo mode with fictional inventory. The simulated controls send no commands to real devices. You can reproduce the images with the [capture recipe](https://spincyc.github.io/thermite/screenshots.html), or try the terminal with `thermite remote --mock`.
 
 ### Where does my house configuration belong?
 

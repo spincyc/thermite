@@ -58,7 +58,7 @@ and check that:
    fixed setting such as scaler or HDCP) and refused none;
 9. openhab.log holds no ERROR and no model problem.
 
-It uses the test runtime of thermite test boot (127.0.0.1:18081) and its
+It uses the test runtime of thermite test boot (127.0.0.1:13618) and its
 warmed userdata, so it cannot run beside it.
 """
 

@@ -77,7 +77,7 @@ it does not simulate or claim native Sonos UPnP/SOAP protocol coverage.
 Native discovery/channel status and idempotent real-binding validation are
 separate deployment checks.
 
-It uses the test runtime of thermite test boot (127.0.0.1:18081) and its
+It uses the test runtime of thermite test boot (127.0.0.1:13618) and its
 warmed userdata, so it cannot run beside thermite test boot or thermite
 test routing.
 """

@@ -72,7 +72,9 @@ from typing import Any
 
 from oh_paths import SITE as AREA
 SECRETS = AREA / "var/secrets/pyatv"
-LISTEN = "127.0.0.1:8099"
+from oh_ports import HELPER_PORT, listener
+
+LISTEN = f"127.0.0.1:{HELPER_PORT}"
 #: pyatv RemoteControl methods a key name may call.
 KEYS = frozenset({
     "up", "down", "left", "right", "select", "menu", "home", "top_menu", "play_pause", "play", "pause",
@@ -644,6 +646,11 @@ def parse_listen(value: str) -> tuple[str, int]:
         raise argparse.ArgumentTypeError(f"{value!r} is not IP:PORT") from None
     if not sep or not 0 <= number <= 65535:
         raise argparse.ArgumentTypeError(f"{value!r} is not IP:PORT")
+    if number:
+        try:
+            listener("helper", number)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from None
     return host, number
 
 

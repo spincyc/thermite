@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Standalone ISO · thermite</title>
+  <meta name="description" content="Build bootable installation media for a dedicated thermite machine.">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/palettes/thermite.css" id="palette-css">
+  <link rel="stylesheet" href="assets/site.css">
+  <script>
+    // Theme and palette before the first paint, so a light page never flashes dark.
+    (function () {
+      var theme, palette, names = "contrast thermite harbor".split(" ");
+      try {
+        theme = localStorage.getItem("thermite.theme");
+        palette = localStorage.getItem("thermite.palette");
+      } catch (error) { /* storage blocked */ }
+      if (theme !== "light" && theme !== "dark") {
+        theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+      if (names.indexOf(palette) >= 0) {
+        document.getElementById("palette-css").href = "assets/palettes/" + palette + ".css";
+      }
+    })();
+  </script>
+</head>
+<body class="page-iso">
+  <a class="skip" href="#main">Skip to the content</a>
+  <header class="bar">
+    <a class="brand" href="index.html" aria-label="thermite, home"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg><span>thermite</span></a>
+    <nav aria-label="Pages"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="dashboards.html">Dashboards</a><a href="commands.html">Commands</a><a href="colors.html">Colors</a><a href="faq.html">FAQ</a></nav>
+    <button class="theme" id="theme" type="button" aria-label="Switch to the light theme">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>
+    </button>
+  </header>
+  <main id="main">
+<h1 id="bootable-installer-iso">Bootable installer ISO</h1>
+<p>The Thermite ISO combines the pinned Ubuntu Server 24.04.5 LTS amd64 installer with the reviewed Thermite application and a checksum-pinned PyYAML wheel. It is a hybrid BIOS/UEFI installation image. Build it as an ordinary user; neither root nor a container daemon is required.</p>
+<p>The image installs Ubuntu and the application. It asks the owner to choose the target disk, network configuration and login account. It contains no private inventory, default password, API token or automatic disk selection. The runtime is commissioned after first boot, following <a href="installation.html">installation</a>, with Internet access for packages, runtime downloads and container images.</p>
+<h2 id="build">Build</h2>
+<p>Install <code>xorriso</code> using your build host's package manager. From an installed Thermite application or reviewed source tree:</p>
+<pre><code class="language-sh">thermite iso fetch --cache .scratch/iso/cache
+thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso</code></pre>
+<p>In a source checkout, substitute <code>python3 bin/thermite</code> for <code>thermite</code>. Allow roughly 12 GB of free build space. Fetch downloads the base image and PyYAML over HTTPS, then verifies their exact SHA256 values in <code>iso/inputs.json</code>. A corrupt existing cache fails and is not overwritten. Build reads only those cached inputs. The application wheel is built from the privacy-checked public payload, including its fictional init templates; the selected private site is never copied into the image.</p>
+<p>The output is <code>thermite.iso</code>, <code>thermite.iso.sha256</code> and <code>thermite.iso.json</code>. The receipt records the base digest, application release and wheel digests. Existing outputs are refused. To rebuild, choose a new output filename. An interrupted build without a checksum/receipt is incomplete. Keep all three completed files together and verify the image before use:</p>
+<pre><code class="language-sh">cd .scratch/iso
+sha256sum --check thermite.iso.sha256</code></pre>
+<p>The application release is tied to the exact reviewed program bytes. Build the final image after all application and documentation edits. Remastering changes the overall ISO hash. The builder checks the repository's pinned base SHA256; it does not verify Ubuntu's detached signature. That signature can be verified separately against Ubuntu's release key. The generated checksum detects changes to your built image. The builder replays upstream's boot metadata and refreshes Ubuntu's media checksum list for every replaced or added file.</p>
+<h2 id="install-a-machine">Install a machine</h2>
+<ol><li>Attach the ISO to a new VM, or write it to a USB device using a tool that shows the destination device and asks before overwriting it. Thermite intentionally supplies no command that guesses a USB or system disk.</li><li>Boot the image and choose the Ubuntu Server install entry. Keep the bundled installer version when offered an update. Every normal installer screen remains interactive.</li><li>Select the intended disk, inspect the proposed storage layout, and accept Ubuntu's explicit destructive-storage confirmation only when it is right. Existing data on selected partitions can be destroyed at this point.</li><li>Create your own owner login and network configuration. No account or password is supplied by Thermite. Standard Ubuntu Server is the reference installation source. The base OS and Thermite payload can be installed offline; skip unavailable mirrors/updates if necessary.</li><li>Complete installation, remove the installer medium and reboot from the installed disk. Log in with the account you created.</li></ol>
+<p>The build adds no <code>autoinstall</code> kernel flag, storage plan or identity section. The native install configuration explicitly keeps all ordinary screens interactive. Thermite's only installation hook runs after Ubuntu has installed the selected target: it copies the bundled wheels, verifies them, creates <code>/opt/thermite/venv</code> without pip or network access, and adds the <code>thermite</code> command and login instructions. It does not partition disks or start runtime services.</p>
+<h2 id="first-boot">First boot</h2>
+<p>The login message points to <code>/opt/thermite/FIRST-BOOT.txt</code>. Run <code>thermite --version</code>, then follow <a href="installation.html">installation</a> from “Create your private site.” The owner edits the example, initializes private Git, commits generated configuration, and reviews <code>thermite install --dry-run</code> before installing runtime services.</p>
+<p>The ISO's environment contains no pip. To update it using pip, the owner can install Ubuntu's <code>python3-venv</code> package, then run <code>sudo /opt/thermite/venv/bin/python3 -m ensurepip</code> and install a new reviewed wheel there. Keep application and private site backups and complete the explicit site upgrade described in <a href="packaging.html">packaging</a>.</p>
+<h2 id="validation-and-limits">Validation and limits</h2>
+<p>Offline tests exercise seed safety, boot configuration patching, input checksums, wheel extraction into a synthetic filesystem and the installed launcher from outside the source tree. An actual image build additionally requires the pinned multi-GB base and xorriso. A VM boot test must inspect the firmware boot, installer UI, storage confirmation and installed first boot; a successful remaster command alone does not prove those behaviors.</p>
+<p>Hardware boot, complete disk installation, Secure Boot, firmware drivers and runtime commissioning require acceptance on the intended hardware. This development recipe does not claim those checks solely from offline tests.</p>
+<p>The implementation follows the official <a href="https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html">Subiquity interactive configuration</a>, <a href="https://canonical-subiquity.readthedocs-hosted.com/en/latest/howto/autoinstall-quickstart.html">installer confirmation behavior</a> and <a href="https://manpages.debian.org/trixie/xorriso/xorriso.1.en.html">xorriso boot image replay</a>. Base checksums come from <a href="https://releases.ubuntu.com/24.04/SHA256SUMS">Ubuntu</a> and the Python dependency from <a href="https://pypi.org/project/PyYAML/6.0.3/">PyPI</a>.</p>
+
+  </main>
+  <footer class="foot">
+    <span class="foot-mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg> thermite · simple parts, joined</span>
+    <span>© 2026. All rights reserved.</span>
+  </footer>
+  <script src="assets/site.js"></script>
+</body>
+</html>

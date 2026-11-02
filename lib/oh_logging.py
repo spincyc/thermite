@@ -20,6 +20,8 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from oh_ports import HTTP_PORT
+
 RELATIVE = Path("etc/log4j2.xml")
 SELECTOR = Path("etc/org.ops4j.pax.logging.cfg")
 DEFAULT_SELECTOR = b"org.ops4j.pax.logging.log4j2.config.file=${karaf.etc}/log4j2.xml\n"
@@ -191,7 +193,7 @@ def initialize(userdata: Path, template: Path, uid: int, gid: int) -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("userdata", type=Path, help="the initialized instance's userdata directory")
-    parser.add_argument("--http-port", type=int, default=8080, help="its HTTP port (default: 8080)")
+    parser.add_argument("--http-port", type=int, default=HTTP_PORT, help=f"its HTTP port (default: {HTTP_PORT})")
     parser.add_argument("--template", type=Path, help="seed complete pinned userdata on an empty first install")
     parser.add_argument("--uid", type=int, help="owner of newly seeded userdata")
     parser.add_argument("--gid", type=int, help="group of newly seeded userdata")

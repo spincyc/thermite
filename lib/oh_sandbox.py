@@ -31,6 +31,7 @@ from pathlib import Path
 
 import oh_cli
 import oh_logging
+import oh_ports
 
 from oh_paths import SITE as AREA
 VAR = AREA / "var"
@@ -669,9 +670,9 @@ def sandbox_instance(conf: Path | None = None, userdata: Path | None = None, liv
         state,
         Path(conf or AREA / "conf").resolve(),
         Path(userdata or state / "userdata").resolve(),
-        18080,
-        18443,
-        18101,
+        oh_ports.DEFAULTS["sandbox_http"],
+        oh_ports.DEFAULTS["sandbox_https"],
+        oh_ports.DEFAULTS["sandbox_karaf"],
         EVERY_INTERFACE if live else LOOPBACK,
     )
 
@@ -692,7 +693,8 @@ def write_mode(inst: Instance, mode: str) -> None:
 def boot_check_instance(conf: Path | None = None) -> Instance:
     state = VAR / "boot-check"
     return Instance(
-        "boot-check", state, Path(conf or AREA / "conf").resolve(), state / "userdata", 18081, 18444, 18102
+        "boot-check", state, Path(conf or AREA / "conf").resolve(), state / "userdata", oh_ports.DEFAULTS["boot_http"], oh_ports.DEFAULTS["boot_https"],
+        oh_ports.DEFAULTS["boot_karaf"]
     )
 
 
@@ -851,6 +853,7 @@ def port_in_use(port: int, host: str = "127.0.0.1") -> bool:
 def start_instance(rt: Runtime, inst: Instance, log=print) -> int:
     if running_pgid(inst):
         raise SandboxError(f"{inst.name} is already running (pid file {inst.pid_file})")
+    oh_ports.unique({"HTTP": inst.http_port, "HTTPS": inst.https_port, "Karaf": inst.ssh_port})
     for port in (inst.http_port, inst.https_port, inst.ssh_port):
         if port_in_use(port):
             raise SandboxError(f"port {port} on 127.0.0.1 is already in use")

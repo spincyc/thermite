@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Documentation screenshots · thermite</title>
+  <meta name="description" content="Reproduce the screenshots using fictional inventory and the actual clients.">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/palettes/thermite.css" id="palette-css">
+  <link rel="stylesheet" href="assets/site.css">
+  <script>
+    // Theme and palette before the first paint, so a light page never flashes dark.
+    (function () {
+      var theme, palette, names = "contrast thermite harbor".split(" ");
+      try {
+        theme = localStorage.getItem("thermite.theme");
+        palette = localStorage.getItem("thermite.palette");
+      } catch (error) { /* storage blocked */ }
+      if (theme !== "light" && theme !== "dark") {
+        theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+      if (names.indexOf(palette) >= 0) {
+        document.getElementById("palette-css").href = "assets/palettes/" + palette + ".css";
+      }
+    })();
+  </script>
+</head>
+<body class="page-screenshots">
+  <a class="skip" href="#main">Skip to the content</a>
+  <header class="bar">
+    <a class="brand" href="index.html" aria-label="thermite, home"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg><span>thermite</span></a>
+    <nav aria-label="Pages"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="dashboards.html">Dashboards</a><a href="commands.html">Commands</a><a href="colors.html">Colors</a><a href="faq.html">FAQ</a></nav>
+    <button class="theme" id="theme" type="button" aria-label="Switch to the light theme">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>
+    </button>
+  </header>
+  <main id="main">
+<h1 id="documentation-screenshots">Documentation screenshots</h1>
+<p>The images in <code>assets/screenshots/</code> show the real web and terminal clients in mock mode, using <code>oh_public.demo()</code>'s fictional inventory. They show no real deployment. No device, native runtime or access service is contacted.</p>
+<p>From the source checkout, install the capture-only dependencies in scratch:</p>
+<pre><code class="language-sh">npm install --ignore-scripts --no-audit --no-fund --prefix .scratch/docs-visuals/npm playwright@1.58.2 @xterm/xterm@6.0.0 blessed@0.1.81
+PLAYWRIGHT_BROWSERS_PATH=.scratch/docs-visuals/browsers .scratch/docs-visuals/npm/node_modules/.bin/playwright install chromium
+PLAYWRIGHT_BROWSERS_PATH=.scratch/docs-visuals/browsers python3 site/capture-docs.py --modules .scratch/docs-visuals/npm/node_modules</code></pre>
+<p>The script generates remote assets from the fictional public inventory under <code>.scratch/docs-visuals/capture/</code>, launches the actual terminal program in a 154-column, 44-row PTY, and captures its ANSI output. Chromium renders that output in xterm.js and opens the actual web client at 1440 × 1000 pixels. Browser requests are restricted to the script's loopback file server. The terminal exits and the file server stops after capture.</p>
+<p>Chromium needs its platform libraries and installed sans-serif and monospace fonts. You can use an existing compatible Chromium executable by setting <code>THERMITE_TEST_CHROME</code> to its absolute path. The capture explicitly enables terminal color, even if the calling shell sets <code>NO_COLOR</code> or <code>FORCE_COLOR</code>. On a minimal host, pass <code>--fonts /path/to/DejaVu</code> to use a directory containing DejaVu Sans, Serif and Sans Mono. The script writes a scratch fontconfig file with the required generic-family aliases and default fallback. It changes no system font settings.</p>
+<p>Review both PNGs before publishing. <code>manifest.json</code> records their dimensions, SHA-256 digests and the inventory digest for the public export guard. The terminal's clock uses the capture time; fonts and browser versions can also affect pixels. The manifest and screenshots belong in the same change.</p>
+
+  </main>
+  <footer class="foot">
+    <span class="foot-mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg> thermite · simple parts, joined</span>
+    <span>© 2026. All rights reserved.</span>
+  </footer>
+  <script src="assets/site.js"></script>
+</body>
+</html>

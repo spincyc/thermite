@@ -78,7 +78,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     files = render.render(data)
     devices = len(data.get("devices") or [])
-    versions, host = deploy.load(AREA)
+    try:
+        versions, host = deploy.load(AREA)
+    except ValueError as exc:
+        print(f"thermite generate: {exc}; nothing generated", file=sys.stderr)
+        return 1
     units = deploy.render_units(versions, host)
     root = arguments.root
     trees = [(arguments.conf, arguments.conf.name, files,

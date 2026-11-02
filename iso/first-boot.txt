@@ -1,0 +1,34 @@
+
+Thermite is installed; configure this machine as its owner.
+
+No house, accounts, credentials or runtime services were created. Log in as
+the owner account you chose in the Ubuntu installer. Connect to the Internet
+for runtime packages, images and integrity-pinned downloads, then run:
+
+  thermite init "$HOME/thermite-site"
+  cd "$HOME/thermite-site"
+
+Edit instance/devices.yaml and instance/host.yaml for your installation.
+The generated example is fictional; remove it before controlling hardware.
+Then run:
+
+  thermite generate
+  thermite validate
+  sudo apt-get update
+  sudo apt-get install git
+  git init --initial-branch=main
+  git add .
+  git commit -m 'Initialize private Thermite site'
+  thermite install --dry-run
+  thermite install
+
+Install asks before root commands and for the native runtime API token.
+Runtime startup may download several container images. Keep this Git
+repository private. Configure Git's author identity if commit requests it.
+
+Before sharing the remote, complete authentication and HTTPS commissioning:
+  thermite access --help
+
+The installed application contains docs/installation.md
+under /opt/thermite/venv/lib/python3.12/site-packages/thermite_app/runtime/.
+Use thermite status and thermite health --production to inspect the result.

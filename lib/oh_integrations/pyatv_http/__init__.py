@@ -53,7 +53,9 @@ ADDONS = (Addon("automation", "jsscripting", "the Apple TV rule (pyatv_http.js)"
 ASSETS: dict[str, str] = {}
 #: Where the rule reaches the helper: on the openHAB host itself, never the
 #: LAN (bin/thermite apple-tv serve listens on 127.0.0.1 only).
-HELPER = "http://127.0.0.1:8099"
+from oh_ports import HELPER_PORT
+
+HELPER = f"http://127.0.0.1:{HELPER_PORT}"
 #: Seconds from a command to its read-back: none, the helper returns its native
 #: cached state. An acknowledgement does not imply a new power observation.
 READ_BACK = 0

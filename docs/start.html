@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Get started · thermite</title>
-  <meta name="description" content="Describe the house, try it, install it, use it.">
+  <meta name="description" content="Try the example, install thermite, and connect your devices.">
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/palettes/thermite.css" id="palette-css">
   <link rel="stylesheet" href="assets/site.css">
@@ -37,21 +37,24 @@
   </header>
   <main id="main">
 <h1 id="get-started">Get started</h1>
-<p>thermite runs on one Linux machine on your home network, next to openHAB. You describe the house, generate its configuration and check each step before installing it. Current application builds are development version <code>0.1.0.dev0</code>.</p>
-<h2 id="what-you-need">What you need</h2>
-<ul><li>A Linux machine that stays on: a small server or a mini PC.</li><li>Podman, Python 3.11 or later and Git. Node.js for the terminal remote.</li><li>Your devices on the same network, each with a fixed address.</li></ul>
-<h2 id="install-the-application">Install the application</h2>
-<p>From the reviewed public source checkout, install thermite in a dedicated Python environment:</p>
+<p>thermite runs on a Linux machine on your home network. Choose where it will live, or try the fictional example first. These are development builds, version <code>0.1.0.dev0</code>.</p>
+<h2 id="choose-where-to-run-it">Choose where to run it</h2>
+<table><thead><tr><th>Your setup</th><th>Installation path</th></tr></thead><tbody><tr><td>An existing Linux server</td><td><a href="installation.html">Install thermite on your server</a>. Keep your existing operating system and create a private site.</td></tr><tr><td>A dedicated machine</td><td><a href="iso.html">Build the standalone ISO</a>. Boot it to install the operating system and thermite on that machine.</td></tr></tbody></table>
+<p>Both paths use the same application, house file and remotes. The <a href="ports.html">ports guide</a> lists the network services and their exposure.</p>
+<h2 id="try-the-example">Try the example</h2>
+<p>You can generate configuration and use the terminal remote in demo mode before connecting hardware. From a reviewed source checkout, with Python 3.11 or later, Git, Node.js and npm installed:</p>
 <pre><code class="language-sh">python3 -m venv ~/.venvs/thermite
 ~/.venvs/thermite/bin/python -m pip install .
 . ~/.venvs/thermite/bin/activate
 thermite init ~/my-thermite-site
-cd ~/my-thermite-site</code></pre>
-<p>You can also install a reviewed wheel with <code>python -m pip install /path/to/thermite_app-0.1.0.dev0-py3-none-any.whl</code>. PyYAML is the application's configuration dependency; runtime downloads, the terminal's locked Node package and optional service dependencies have their own explicit setup steps.</p>
-<p>The installed program stays separate from your private site. <code>init</code> writes a fictional inventory, sample host settings, runtime pins and a private launcher. It does not create a Git repository, contact devices, install services or activate accounts. Commands recognize the site in the current directory; use <code>thermite --site /path/to/site ...</code> elsewhere.</p>
-<h2 id="1-describe-the-house">1. Describe the house</h2>
-<p>Edit <code>instance/devices.yaml</code> and <code>instance/host.yaml</code> in your new private site. Its initial devices are fictional; replace them before commissioning real hardware. Create a private Git repository for this site. Deployment installs committed files: generate and privately commit the site manifest, configuration, launcher, pins, <code>conf/</code>, <code>metrics/</code> and <code>deploy/</code> before installing. Never publish house facts or generated private outputs to the public thermite repository.</p>
-<p>The house file lists the rooms and the devices in them. A room with a TV looks like this:</p>
+cd ~/my-thermite-site
+thermite generate
+thermite validate
+thermite remote --mock</code></pre>
+<p>The initial inventory is fictional. Generating and validating files sends no device commands; the mock remote simulates controls. Its first run downloads its locked terminal dependency with npm. Podman is needed when you move on to an openHAB test runtime or server installation.</p>
+<p>The application stays in its Python environment. Your private site contains the inventory, host settings, generated configuration and runtime state. <code>init</code> creates files; it does not install services or create a Git repository.</p>
+<h2 id="describe-your-house">Describe your house</h2>
+<p>Edit <code>instance/devices.yaml</code> and <code>instance/host.yaml</code> in the private site. Replace the example inventory with your own rooms and devices, using fixed network addresses. A TV entry looks like this:</p>
 <pre><code class="language-yaml">rooms:
   living_room: {label: Living Room}
 
@@ -60,38 +63,27 @@ devices:
     room: living_room
     kind: tv
     make: Sony
-    model: KD-55X85K
+    model: Example TV
     name: Living Room TV
     ip: 192.0.2.20
     controls:
-      observe: [network_ping, sony_rest]
+      observe: [sony_rest]
       control: [sony_ip_control]</code></pre>
-<p><code>controls</code> says how thermite may reach a device: <em>observe</em> only reads it, <em>control</em> sends it commands, best first.</p>
-<h2 id="2-generate-and-try">2. Generate and try</h2>
-<pre><code class="language-sh">thermite generate        # write openHAB's files from the house file
-thermite validate        # check inventory and generated files
-thermite test boot       # boot a throwaway openHAB on them and report what loads
-thermite sandbox start   # or keep one running, to click around in</code></pre>
-<h2 id="3-install">3. Install</h2>
-<pre><code class="language-sh">thermite install --dry-run   # each step it would take
-thermite install             # take them; it asks before anything that needs sudo
-thermite deploy              # put the tested configuration in place
-thermite status              # what runs, and whether it matches
-thermite upgrade --dry-run   # later: what moving to newer pinned versions would do</code></pre>
-<p>The existing complete source-checkout workflow remains available. An installed private site additionally pins an exact application version and release digest. To change the application, install its reviewed package, then run <code>thermite init --upgrade /path/to/site</code>; configuration, state and cached older releases are preserved. Generate, validate and privately commit the result before deployment. Runtime pins and application upgrades are separate. Keep <code>var/application-releases/</code> for rollback: a missing or modified release is refused, not downloaded or silently replaced.</p>
-<h2 id="4-set-up-site-access">4. Set up site access</h2>
-<p>Authenticated access is the fictional site's default. The web and terminal clients share site accounts once the owner explicitly commissions that boundary. Admins manage users, roles and room schedules; ordinary users control unlocked rooms, and viewers have read-only access. A scheduled lock has an expected room state that thermite reconciles while the lock is active. Installing the application does not activate this service or protect an existing native listener.</p>
-<p>Run <code>thermite access stage --help</code> to prepare a private, persistent site release. Staging needs a trusted TLS certificate, a service-owned native API credential, the generated remote assets, an explicit site hostname and a separate persistent <code>--state</code> directory. Reuse that state across releases to preserve users and policies. Staging writes the service units and an activation checklist; it does not start them or migrate the database.</p>
-<p>Bootstrap the first admin locally from that release with <code>thermite access bootstrap --config &lt;release&gt;/config.json --user admin</code>. Password prompts are hidden. Before activating, follow the checklist to close direct native HTTP, HTTPS and websocket access, disable implicit grants, and preserve device callbacks such as Sonos. Accounts do not protect a separate native listener left open.</p>
-<p>After activation, admins can use Settings and Users in either client. Other users can see room settings but cannot change them. Locks reconcile supported device reports; passive equipment and stale readings remain explicitly unverified.</p>
-<h2 id="5-pair-your-devices">5. Pair your devices</h2>
-<p>Some devices need a one-time handshake: they show a code on screen, which you type into Remotes → Pair devices. On a compatible Sony TV, set IP control's Authentication to Normal and turn on Remote Start; the menu path varies by model. Pairing availability depends on the device's firmware, and thermite reports failures on its pairing page. A Sony TV can also be paired from a terminal:</p>
-<pre><code class="language-sh">thermite pair living_room_tv</code></pre>
-<h2 id="6-use-it">6. Use it</h2>
-<ul><li>On a phone or a computer, open <code>https://&lt;site hostname&gt;:9443/static/remote/home.html</code> and sign in.</li><li>In a terminal, run <code>thermite access login --url https://&lt;site hostname&gt;:9443 --user &lt;username&gt;</code>, then <code>thermite remote --url https://&lt;site hostname&gt;:9443</code>. Both clients start with Home, with Remotes, Security, Cameras and Site views.</li></ul>
-<p>Use <code>--ca-file</code> at login when your site uses a private CA. The terminal stores its revocable credential in a private file. Native runtime access is an explicit owner/testing option (<code>thermite remote --native</code>); authentication failures never select it automatically.</p>
-<h2 id="when-something-goes-wrong">When something goes wrong</h2>
-<ul><li><code>thermite health --production</code> lists every device that isn't online.</li><li><code>thermite rollback</code> puts the previously deployed version back; <code>thermite history</code> lists them.</li><li>Every command explains itself: <code>thermite help &lt;command&gt;</code>. The <a href="commands.html">commands page</a> has them all.</li><li><code>thermite version</code> shows which thermite and which openHAB you run, and <code>thermite completion bash</code> (or <code>zsh</code>, <code>fish</code>) gives your shell tab completion.</li></ul>
+<p><code>observe</code> lists interfaces thermite may read. <code>control</code> lists interfaces it may command. The sample address above is reserved for documentation; use the TV's actual address in your private site.</p>
+<p>Create a private Git repository for that site. Keep real inventory, host settings and generated <code>conf/</code>, <code>metrics/</code> and <code>deploy/</code> there. Credentials and runtime state stay outside Git. The public application repository should contain only fictional examples.</p>
+<h2 id="check-and-deploy">Check and deploy</h2>
+<p>After editing the house file:</p>
+<pre><code class="language-sh">thermite generate
+thermite validate
+thermite test boot</code></pre>
+<p>The boot check loads the generated configuration in an isolated openHAB runtime and reports what loads. Follow the <a href="installation.html">server installation guide</a> to prepare the host, commit your private site and deploy it. <code>thermite install --dry-run</code> shows the planned installation steps. <code>thermite status</code> reports the running services and their addresses.</p>
+<h2 id="connect-and-use-it">Connect and use it</h2>
+<p>The installation guide covers site access and the first account. After commissioning authenticated access, open your site's web address and sign in. In a terminal:</p>
+<pre><code class="language-sh">thermite access login --url https://thermite.example:13600 --user admin
+thermite remote --url https://thermite.example:13600</code></pre>
+<p>Use <code>--ca-file</code> at login if your site uses a private certificate authority. Remotes lets you choose a room and source; Pair devices handles devices that need an on-screen code. Security shows Not connected until an alarm integration is configured. Cameras and Site show the camera catalogue and configured connections.</p>
+<h2 id="keep-it-running">Keep it running</h2>
+<ul><li><code>thermite health --production</code> reports device health.</li><li><code>thermite history</code> lists deployments; <code>thermite rollback</code> restores the previous one.</li><li><code>thermite version</code> shows application and runtime versions.</li><li><a href="packaging.html">Application releases and private sites</a> explains application upgrades and cached releases for rollback.</li><li><code>thermite help &lt;command&gt;</code> explains any command, with examples.</li></ul>
 
   </main>
   <footer class="foot">

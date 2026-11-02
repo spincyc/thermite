@@ -1,5 +1,5 @@
 """Install openHAB on the host that runs bin/thermite install, as the
-owner's user, from wherever the owner's clone is.
+owner's user, from the selected private site or complete source checkout.
 
 The install is a list of steps (steps.py). Each step first reads the host
 (system.py) to find out whether it is done; if it is not, it lists the

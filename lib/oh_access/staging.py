@@ -10,6 +10,9 @@ import shutil
 import subprocess
 import sys
 import venv
+from urllib.parse import urlsplit
+
+import oh_ports
 
 from . import AccessError
 from .files import atomic_private, json_private, private_directory, read_private
@@ -78,7 +81,9 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     program and assets are copied, so no service points into a disposable checkout.
     """
     from .service import compile_contract, load_config
-    area = _absolute(area or Path(__file__).resolve().parents[2])
+    from oh_paths import PROGRAM, SITE, SITE_FILE
+    area = _absolute(area or SITE)
+    resources = PROGRAM if (area / SITE_FILE).is_file() else area
     target = _absolute(destination)
     state = _absolute(state)
     if target.exists():
@@ -96,6 +101,12 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     if callbacks is not None:
         from .callback_service import load_config as load_callbacks
         callback_config = load_callbacks(callbacks, runtime_url=runtime_url)
+    if callback_config is not None:
+        try:
+            oh_ports.unique({"access": port, "callbacks": callback_config["port"],
+                             "native HTTP": urlsplit(runtime_url).port or 80})
+        except ValueError as exc:
+            raise AccessError(str(exc)) from None
     generated_units = units(target, user, state=state, callbacks=callback_config is not None)
     # Validate/create only the owned directory. Staging never initializes keys,
     # changes site identity, opens SQLite, migrates schemas or takes worker locks.
@@ -113,9 +124,9 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     atomic_private(target / "secrets/tls-cert.pem", certificate)
     program = target / "program"
     program.mkdir(mode=0o700)
-    shutil.copytree(area / "lib", program / "lib", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(resources / "lib", program / "lib", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     (program / "bin").mkdir(mode=0o700)
-    shutil.copy2(area / "bin/thermite", program / "bin/thermite")
+    shutil.copy2(resources / "bin/thermite", program / "bin/thermite")
     private_assets = target / "private-assets"
     private_directory(private_assets)
     from oh_features.remote import FILES

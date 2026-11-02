@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. Existing complete Git checkouts retain their deployment behavior.
 
+- Separate setup guides for an existing Linux server and a dedicated machine,
+  with a bootable Ubuntu Server ISO builder and bundled application installer.
+- A contiguous listener allocation at 13600–13622, starting with the site's
+  HTTPS service. Existing installations need the documented port migration.
+- Updated documentation with screenshots of the web and terminal remotes,
+  captured from the fictional example.
 - Compact shared web navigation and improved Sony standby and command-error
   handling.
 - Ordered control and error snapshots: older reads cannot overwrite newer

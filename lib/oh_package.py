@@ -37,7 +37,7 @@ def main():
 
 def runtime_files(public: dict[str, bytes]) -> dict[str, bytes]:
     """Retain only public program resources and fictional init templates."""
-    prefixes = ("bin/", "lib/", "web/", "tui/", "site/", "instance/", "docs/", "tests/")
+    prefixes = ("bin/", "lib/", "web/", "tui/", "site/", "instance/", "docs/", "tests/", "iso/")
     names = {"versions.json", "README.md", "FAQ.md", "Makefile", "CHANGELOG.md", "pyproject.toml", "requirements.txt"}
     files = {safe(name): value for name, value in public.items() if name.startswith(prefixes) or name in names}
     required = {"bin/thermite", "lib/oh_paths.py", "lib/oh_release.py", "instance/devices.yaml", "instance/host.yaml", "versions.json"}

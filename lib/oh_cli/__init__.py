@@ -36,10 +36,10 @@ from typing import Sequence
 
 from oh_paths import PROGRAM as PROGRAM_ROOT, SITE as AREA
 from oh_release import VERSION
+from oh_ports import SANDBOX_URL
 BIN = AREA / "bin"
 PROGRAM = "thermite"
 #: thermite's own version; the commit (`thermite --version`) tells builds apart.
-SANDBOX_URL = "http://127.0.0.1:18080"
 HOUSE = AREA / "instance/devices.yaml"
 
 #: (group, heading) in the order `thermite --help` lists them.
@@ -59,7 +59,7 @@ VERBS = {
     "validate": ("house", "check the house file, and that conf/ agrees with it"),
     "lint": ("house", "refuse credentials in Git, and docs naming a missing make target"),
     "test": ("test", "boot conf/ on a test runtime; test routing and the controls end to end"),
-    "sandbox": ("test", "run a thermite sandbox from a copy of conf/ on 127.0.0.1:18080"),
+    "sandbox": ("test", "run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615"),
     "install": ("production", "install thermite on this host, asking before each sudo command"),
     "upgrade": ("production", "upgrade thermite and the Apple TV helper here to the pinned versions"),
     "uninstall": ("production", "stop thermite here and remove its units; --purge deletes its state"),
@@ -79,6 +79,7 @@ VERBS = {
     "docs": ("use", "build the docs site, or export it to the thermite repository"),
     "version": ("program", "thermite's version, and runtime's: pinned, and running here"),
     "package": ("program", "build a privacy-checked portable application wheel"),
+    "iso": ("program", "build a bootable installer for a dedicated Thermite machine"),
     "completion": ("program", "print a completion script for bash, zsh or fish"),
 }
 
@@ -409,7 +410,7 @@ def add_conf(parser: argparse.ArgumentParser, default: Path | None = AREA / "con
 TARGETS = {
     "production": "production runtime on this host",
     "sandbox": f"the sandbox, {SANDBOX_URL} (thermite sandbox)",
-    "url": "runtime at URL, e.g. http://thermite.example:8080",
+    "url": "runtime at URL, e.g. http://thermite.example:13601",
     "mock": "the remote page's mock backend, which sends nothing",
 }
 
@@ -549,7 +550,7 @@ def _main(argv: list[str]) -> int:
     if first not in VERBS:
         close = difflib.get_close_matches(first, list(VERBS), n=1)
         return usage_error(f"no verb {first!r}" + (f"; did you mean {close[0]}?" if close else ""))
-    if first not in {"init", "package", "theme", "docs", "completion", "version"} and not any(arg in {"-h", "--help"} for arg in argv):
+    if first not in {"init", "package", "iso", "theme", "docs", "completion", "version"} and not any(arg in {"-h", "--help"} for arg in argv):
         import oh_paths
         try:
             oh_paths.require_compatible()

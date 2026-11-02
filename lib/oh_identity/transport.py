@@ -9,8 +9,10 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
+from oh_ports import NATIVE_URL
 
-def native_batches(topics, base="http://127.0.0.1:8080"):
+
+def native_batches(topics, base=NATIVE_URL):
     from .runtime import safe_item
     grouped = {}
     for topic in topics:

@@ -14,6 +14,7 @@ import mimetypes
 import sys
 from pathlib import Path
 
+import oh_ports
 import oh_site as site
 from oh_cli import action, actions, add_dry_run, command
 
@@ -65,6 +66,12 @@ def cmd_build(args) -> int:
 
 
 def cmd_serve(args) -> int:
+    if args.port != 0:
+        try:
+            oh_ports.listener("docs", args.port)
+        except ValueError as exc:
+            print(f"thermite docs: {exc}", file=sys.stderr)
+            return 2
     files, problems = built()
     if problems:
         return refuse(problems)
@@ -162,7 +169,7 @@ def cmd_export(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = command("docs", DESCRIPTION, (
-        ("thermite docs serve", "preview the site at http://127.0.0.1:8000/"),
+        ("thermite docs serve", "preview the site at http://127.0.0.1:13621/"),
         ("thermite docs check", "does it build, without naming this house?"),
         ("thermite docs export --to ../thermite", "update the thermite repository's copy"),
     ), notes=NOTES)
@@ -175,10 +182,10 @@ def main(argv: list[str] | None = None) -> int:
     build.set_defaults(func=cmd_build)
 
     serve = action(sub, "serve", "preview the site on 127.0.0.1, without writing it anywhere", examples=(
-        ("thermite docs serve", "at http://127.0.0.1:8000/"),
+        ("thermite docs serve", "at http://127.0.0.1:13621/"),
         ("thermite docs serve --port 0", "on any free port; it prints which"),
     ))
-    serve.add_argument("--port", type=int, default=8000, help="the port (default: 8000)")
+    serve.add_argument("--port", type=int, default=oh_ports.DOCS_PORT, help=f"the port (default: {oh_ports.DOCS_PORT})")
     serve.set_defaults(func=cmd_serve)
 
     check = action(sub, "check", "build the site in memory and refuse anything naming this house", examples=(

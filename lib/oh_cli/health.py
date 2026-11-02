@@ -20,7 +20,7 @@ addons.cfg when --addons is given). Only GET requests are sent.
 
 The runtime answers /rest/things and /rest/addons only with credentials; pass
 an API token file (the sandbox writes var/sandbox/api-token). --sandbox
-checks the sandbox on 127.0.0.1:18080, with that token when it exists.
+checks the sandbox on 127.0.0.1:13615, with that token when it exists.
 --production checks production runtime on this host, on 127.0.0.1 at
 instance/host.yaml's http_port, with the token bin/thermite install saved in
 var/<this host's name>/api-token, and the metrics services beside it:
@@ -33,7 +33,7 @@ EXAMPLES = (
     ("thermite health --production", "check production runtime on this host, with the token the install saved"),
     ("thermite health --sandbox --addons conf/services/addons.cfg",
      "also fail if an add-on conf/ asks for is not installed"),
-    ("thermite health --url http://thermite.example:8080 --json", "runtime at that URL, without a token, as JSON"),
+    ("thermite health --url http://thermite.example:13601 --json", "runtime at that URL, without a token, as JSON"),
 )
 
 NOTES = """\

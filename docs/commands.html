@@ -41,7 +41,7 @@
 <h2 id="house">The house file, and what is generated from it</h2>
 <table class="verbs"><tbody><tr><td><a href="#init"><code>thermite init</code></a></td><td>create a private site, or pin an installed application upgrade</td></tr><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that conf/ agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
 <h2 id="test">Test on a test runtime, never production</h2>
-<table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:18080</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
 <table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, asking before each sudo command</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>upgrade thermite and the Apple TV helper here to the pinned versions</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>install a commit&#x27;s conf/ and Apple TV helper here</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
@@ -49,7 +49,7 @@
 <h2 id="use">Front ends, themes and docs</h2>
 <table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#access"><code>thermite access</code></a></td><td>site login, local identity bootstrap, HTTPS service and room policies</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the flaming bowl mark and color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
 <h2 id="program">This program</h2>
-<table class="verbs"><tbody><tr><td><a href="#version"><code>thermite version</code></a></td><td>thermite&#x27;s version, and runtime&#x27;s: pinned, and running here</td></tr><tr><td><a href="#package"><code>thermite package</code></a></td><td>build a privacy-checked portable application wheel</td></tr><tr><td><a href="#completion"><code>thermite completion</code></a></td><td>print a completion script for bash, zsh or fish</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#version"><code>thermite version</code></a></td><td>thermite&#x27;s version, and runtime&#x27;s: pinned, and running here</td></tr><tr><td><a href="#package"><code>thermite package</code></a></td><td>build a privacy-checked portable application wheel</td></tr><tr><td><a href="#iso"><code>thermite iso</code></a></td><td>build a bootable installer for a dedicated Thermite machine</td></tr><tr><td><a href="#completion"><code>thermite completion</code></a></td><td>print a completion script for bash, zsh or fish</td></tr></tbody></table>
 <h2 id="overview">thermite --help</h2>
 <pre class="help">usage: thermite VERB [ACTION] [SWITCHES]
 
@@ -65,7 +65,7 @@ the house file, and what is generated from it:
 
 test on a test runtime, never production:
   test                 boot conf/ on a test runtime; test routing and the controls end to end
-  sandbox              run a thermite sandbox from a copy of conf/ on 127.0.0.1:18080
+  sandbox              run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615
 
 production runtime on this host:
   install              install thermite on this host, asking before each sudo command
@@ -93,6 +93,7 @@ front ends, themes and docs:
 this program:
   version              thermite&#x27;s version, and runtime&#x27;s: pinned, and running here
   package              build a privacy-checked portable application wheel
+  iso                  build a bootable installer for a dedicated Thermite machine
   completion           print a completion script for bash, zsh or fish
 
 switches that mean the same in every verb that has them:
@@ -238,7 +239,7 @@ examples:
 </section>
 <section class="verb" id="test"><h3><code>thermite test</code></h3><p>Boot conf/ on a test runtime; test routing and the controls end to end.</p><pre class="help">usage: thermite test [-h] [--timeout SECONDS] [--house FILE] ACTION ...
 
-Test conf/ on a test runtime, the pinned distribution on 127.0.0.1:18081,
+Test conf/ on a test runtime, the pinned distribution on 127.0.0.1:13618,
 never production: `boot` boots conf/ and reports how it loads (thermite
 deploy installs only a conf/ that passed it); `routing` and `controls`
 generate a conf from the house file that drives simulated matrices and
@@ -286,7 +287,7 @@ examples:
 Boot conf/ on a test runtime and report how it loads.
 
 Boot a test runtime (the pinned distribution, see thermite sandbox) on
-CONF, on 127.0.0.1:18081 (HTTPS 18444, Karaf console 18102) so it can run
+CONF, on 127.0.0.1:13618 (HTTPS 13619, Karaf console 13620) so it can run
 beside the sandbox. It boots on var/boot-check/conf, a copy of CONF in which
 every HTTP binding channel is READONLY (oh_render.read_only), so it polls the
 real matrices but cannot switch them. Wait for the add-ons in
@@ -390,7 +391,7 @@ and check that:
    fixed setting such as scaler or HDCP) and refused none;
 9. openhab.log holds no ERROR and no model problem.
 
-It uses the test runtime of thermite test boot (127.0.0.1:18081) and its
+It uses the test runtime of thermite test boot (127.0.0.1:13618) and its
 warmed userdata, so it cannot run beside it.
 
 options:
@@ -458,7 +459,7 @@ it does not simulate or claim native Sonos UPnP/SOAP protocol coverage.
 Native discovery/channel status and idempotent real-binding validation are
 separate deployment checks.
 
-It uses the test runtime of thermite test boot (127.0.0.1:18081) and its
+It uses the test runtime of thermite test boot (127.0.0.1:13618) and its
 warmed userdata, so it cannot run beside thermite test boot or thermite
 test routing.
 
@@ -483,17 +484,17 @@ examples:
                                     give a slow host longer to boot
 </pre></details>
 </section>
-<section class="verb" id="sandbox"><h3><code>thermite sandbox</code></h3><p>Run a thermite sandbox from a copy of conf/ on 127.0.0.1:18080.</p><pre class="help">usage: thermite sandbox [-h] ACTION ...
+<section class="verb" id="sandbox"><h3><code>thermite sandbox</code></h3><p>Run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615.</p><pre class="help">usage: thermite sandbox [-h] ACTION ...
 
 Run a local runtime sandbox from the distribution zip and a Temurin JRE, both
 pinned in versions.json and cached under build/sandbox/. No root, container
 runtime or system Java is needed.
 
-The sandbox binds HTTP to 127.0.0.1:18080 and HTTPS to 127.0.0.1:18443
+The sandbox binds HTTP to 127.0.0.1:13615 and HTTPS to 127.0.0.1:13616
 (OPENHAB_HTTP_ADDRESS/OPENHAB_HTTP_PORT/OPENHAB_HTTPS_PORT, honoured by
 runtime/bin/setenv), so the UI is not reachable from the LAN (but see
 --live below). The Karaf
-console listens on 127.0.0.1:18101. Bindings still open UPnP/mDNS sockets on
+console listens on 127.0.0.1:13617. Bindings still open UPnP/mDNS sockets on
 the LAN.
 
 It runs on var/sandbox/conf, a copy of conf/ in which every HTTP binding
@@ -508,7 +509,7 @@ picks the change up.
 is unchanged, so its Source selectors switch the real matrices and its
 remote drives the devices under control (the Apple TVs through thermite
 apple-tv serve; every other control stays guarded in conf/), and HTTP and HTTPS
-listen on every interface, so phones on the LAN reach it on port 18080 of
+listen on every interface, so phones on the LAN reach it on port 13615 of
 this host. Anyone on the LAN can then do what the runtime&#x27;s implicit &#x27;user&#x27; role
 allows, choosing sources and driving those devices included; administration
 still needs the admin login. `reload` keeps the mode the sandbox was started in;
@@ -544,7 +545,7 @@ REST authentication:
   runtime 5 lets anonymous clients use &#x27;user&#x27; endpoints (implicit user role)
   but needs an administrator for others, such as /rest/addons. After the REST
   API answers, `start` logs into the local Karaf console (runtime/bin/client
-  as the distribution&#x27;s console user openhab/habopen, 127.0.0.1:18101 only)
+  as the distribution&#x27;s console user openhab/habopen, 127.0.0.1:13617 only)
   and runs:
       openhab:users add admin &lt;random password&gt; administrator
       openhab:users addApiToken admin automation sandbox
@@ -552,7 +553,7 @@ REST authentication:
   var/sandbox/admin-password, both mode 0600 and gitignored. A token that
   still works is reused on the next start. Send it as
       curl -H &quot;Authorization: Bearer $(cat var/sandbox/api-token)&quot; \
-           http://127.0.0.1:18080/rest/addons
+           http://127.0.0.1:13615/rest/addons
   and log into the UI as &#x27;admin&#x27; with the stored password. --fresh discards
   both together with userdata.
 
@@ -623,7 +624,7 @@ switches every verb takes:
   --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite sandbox start            read-only, on 127.0.0.1:18080
+  thermite sandbox start            read-only, on 127.0.0.1:13615
   thermite sandbox start --fresh    on an empty userdata: a first boot
   thermite sandbox start --live     a test instance that drives the house, reachable from the LAN
 </pre></details>
@@ -701,7 +702,7 @@ examples:
 <section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, asking before each sudo command.</p><pre class="help">usage: thermite install [-h] [-n]
 
 Install thermite on this host, the one you run it on. Run
-it as your user, from a clone of this repository, wherever that clone is:
+it as your user, from a committed private site or a complete source checkout:
 it is safe to run again at any time. It finds this host&#x27;s name and address
 and your user as it runs; instance/host.yaml holds only what is the same on
 any host (the state root, the ports, the openhab ids, the time zone).
@@ -991,7 +992,7 @@ addons.cfg when --addons is given). Only GET requests are sent.
 
 The runtime answers /rest/things and /rest/addons only with credentials; pass
 an API token file (the sandbox writes var/sandbox/api-token). --sandbox
-checks the sandbox on 127.0.0.1:18080, with that token when it exists.
+checks the sandbox on 127.0.0.1:13615, with that token when it exists.
 --production checks production runtime on this host, on 127.0.0.1 at
 instance/host.yaml&#x27;s http_port, with the token bin/thermite install saved in
 var/&lt;this host&#x27;s name&gt;/api-token, and the metrics services beside it:
@@ -1001,8 +1002,8 @@ Before thermite upgrade has installed them it says they are not installed yet.
 options:
   -h, --help                   show this help message and exit
   --production                 production runtime on this host
-  --sandbox                    the sandbox, http://127.0.0.1:18080 (thermite sandbox)
-  --url URL                    runtime at URL, e.g. http://thermite.example:8080
+  --sandbox                    the sandbox, http://127.0.0.1:13615 (thermite sandbox)
+  --url URL                    runtime at URL, e.g. http://thermite.example:13601
   --token-file FILE            file holding a runtime API token
   --allow-offline ID [ID ...]  Thing UIDs that may be offline
   --addons FILE                fail if an add-on listed in this addons.cfg is missing
@@ -1031,7 +1032,7 @@ examples:
   thermite health --production      check production runtime on this host, with the token the install saved
   thermite health --sandbox --addons conf/services/addons.cfg
                                     also fail if an add-on conf/ asks for is not installed
-  thermite health --url http://thermite.example:8080 --json
+  thermite health --url http://thermite.example:13601 --json
                                     runtime at that URL, without a token, as JSON
 </pre>
 </section>
@@ -1179,7 +1180,7 @@ options:
   -h, --help                 show this help message and exit
   --house FILE               the house file (default: instance/devices.yaml)
   --production               production runtime on this host (default)
-  --url URL                  runtime at URL, e.g. http://thermite.example:8080
+  --url URL                  runtime at URL, e.g. http://thermite.example:13601
   --runtime-token-file FILE  a mode-0600 API token for --url
   --json                     print the report as JSON
 
@@ -1210,7 +1211,7 @@ options:
   -h, --help                 show this help message and exit
   --house FILE               the house file (default: instance/devices.yaml)
   --production               production runtime on this host (default)
-  --url URL                  runtime at URL, e.g. http://thermite.example:8080
+  --url URL                  runtime at URL, e.g. http://thermite.example:13601
   --runtime-token-file FILE  a mode-0600 API token for --url
   -n, --dry-run              report what it would do; change nothing
   --homebridge FILE          read the matching local console login from this Homebridge
@@ -1246,7 +1247,7 @@ options:
   -h, --help                 show this help message and exit
   --house FILE               the house file (default: instance/devices.yaml)
   --production               production runtime on this host (default)
-  --url URL                  runtime at URL, e.g. http://thermite.example:8080
+  --url URL                  runtime at URL, e.g. http://thermite.example:13601
   --runtime-token-file FILE  a mode-0600 API token for --url
   --all                      enable native WebRTC for every configured camera
   --none                     disable all native WebRTC sessions; keep status and
@@ -1313,12 +1314,12 @@ pairing:
 localhost only:
   The API has no authentication, and whoever reaches it can pair with and
   drive every Apple TV. thermite runs on the same host, so it listens on
-  127.0.0.1:8099 and refuses a non-loopback --listen unless --allow-remote
+  127.0.0.1:13605 and refuses a non-loopback --listen unless --allow-remote
   is given.
 
 examples:
   thermite apple-tv setup           build the venv with the pinned pyatv
-  thermite apple-tv serve           serve on 127.0.0.1:8099
+  thermite apple-tv serve           serve on 127.0.0.1:13605
   thermite apple-tv serve --setup   build the venv first if it is missing or stale, as production does
 </pre>
 <details id="apple-tv-setup"><summary><code>thermite apple-tv setup</code></summary><pre class="help">usage: thermite apple-tv setup [-h]
@@ -1355,7 +1356,7 @@ options:
   -h, --help          show this help message and exit
   --setup             run setup first if the venv is missing or was built from other
                       pins or another Python
-  --listen HOST:PORT  address to serve on (default 127.0.0.1:8099)
+  --listen HOST:PORT  address to serve on (default 127.0.0.1:13605)
   --secrets DIR       where pairings are stored (default var/secrets/pyatv)
   --allow-remote      allow a non-loopback --listen address (no authentication: anyone
                       who reaches it can pair with and drive the Apple TVs)
@@ -1376,11 +1377,11 @@ pairing:
 localhost only:
   The API has no authentication, and whoever reaches it can pair with and
   drive every Apple TV. thermite runs on the same host, so it listens on
-  127.0.0.1:8099 and refuses a non-loopback --listen unless --allow-remote
+  127.0.0.1:13605 and refuses a non-loopback --listen unless --allow-remote
   is given.
 
 examples:
-  thermite apple-tv serve           serve on 127.0.0.1:8099 until Ctrl-C
+  thermite apple-tv serve           serve on 127.0.0.1:13605 until Ctrl-C
   thermite apple-tv serve --setup --secrets /secrets
                                     as the helper&#x27;s container runs it
 </pre></details>
@@ -1434,10 +1435,10 @@ backend.js, session.js and pair.js from web/remote/ under node, so both
 front ends drive thermite the same way (tui/remote/README.md).
 
 By default it uses the authenticated site (THERMITE_SITE_URL, or
-https://localhost:9443). A site with access.mode: native instead uses its
+https://localhost:13600). A site with access.mode: native instead uses its
 production runtime without login; --native explicitly selects that testing
 mode for this run. Choosing a source really switches the room. --sandbox talks to
-the sandbox on 127.0.0.1:18080 and --mock to the page&#x27;s mock backend,
+the sandbox on 127.0.0.1:13615 and --mock to the page&#x27;s mock backend,
 which sends nothing.
 
 Its colors are a thermite theme&#x27;s, as the remote page&#x27;s are: the house
@@ -1463,8 +1464,8 @@ tui/remote/package-lock.json into build/tui-remote with npm ci
 options:
   -h, --help                 show this help message and exit
   --production               production runtime on this host (default)
-  --sandbox                  the sandbox, http://127.0.0.1:18080 (thermite sandbox)
-  --url URL                  runtime at URL, e.g. http://thermite.example:8080
+  --sandbox                  the sandbox, http://127.0.0.1:13615 (thermite sandbox)
+  --url URL                  runtime at URL, e.g. http://thermite.example:13601
   --mock                     the remote page&#x27;s mock backend, which sends nothing
   --native                   explicitly use the native runtime instead of site
                              authentication (owner/testing only)
@@ -1514,7 +1515,7 @@ examples:
   thermite remote --sandbox --room living_room
                                     the sandbox, starting in the living room
   thermite remote --pair            start on the Pairing screen
-  thermite remote --url http://thermite.example:8080 --light
+  thermite remote --url http://thermite.example:13601 --light
                                     thermite on another host, light
   thermite remote --mock --theme contrast
                                     in the high-contrast theme
@@ -1553,7 +1554,7 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access login --url https://thermite.example:9443 --user operator
+  thermite access login --url https://thermite.example:13600 --user operator
                                     save this site&#x27;s personal credential privately
   thermite access bootstrap --config /srv/thermite/config.json --user admin
                                     initialize one site&#x27;s first admin locally
@@ -1648,7 +1649,7 @@ switches every verb takes:
   --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access login --url https://thermite.example:9443 --user operator
+  thermite access login --url https://thermite.example:13600 --user operator
                                     use this site&#x27;s private terminal credential
 </pre></details>
 <details id="access-logout"><summary><code>thermite access logout</code></summary><pre class="help">usage: thermite access logout [-h] --url URL [--json]
@@ -1666,7 +1667,7 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access logout --url https://thermite.example:9443
+  thermite access logout --url https://thermite.example:13600
                                     use this site&#x27;s private terminal credential
 </pre></details>
 <details id="access-status"><summary><code>thermite access status</code></summary><pre class="help">usage: thermite access status [-h] --url URL [--room ROOM] [--json]
@@ -1685,7 +1686,7 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access status --url https://thermite.example:9443
+  thermite access status --url https://thermite.example:13600
                                     use this site&#x27;s private terminal credential
 </pre></details>
 <details id="access-stage"><summary><code>thermite access stage</code></summary><pre class="help">usage: thermite access stage [-h] --destination DESTINATION --state STATE [--house FILE]
@@ -1712,7 +1713,7 @@ options:
   --tls-key TLS_KEY             service-owned mode0600 TLS private key
   --allowed-host ALLOWED_HOSTS  exact HTTP Host name (repeatable; no wildcard)
   --bind-host BIND_HOST         HTTPS listener address (default: all IPv4 interfaces)
-  --port PORT                   unprivileged HTTPS port (default: 9443)
+  --port PORT                   unprivileged HTTPS port (default: 13600)
   --timezone TIMEZONE           site&#x27;s IANA timezone (default: UTC)
   --service-user USER           existing unprivileged unit user (default: current user)
   --wheelhouse WHEELHOUSE       install pinned dependencies offline from this directory
@@ -1919,7 +1920,7 @@ no device connection or native runtime. Only previously managed source
 files can be removed; unrelated files and license terms stay untouched.
 
 examples:
-  thermite docs serve               preview the site at http://127.0.0.1:8000/
+  thermite docs serve               preview the site at http://127.0.0.1:13621/
   thermite docs check               does it build, without naming this house?
   thermite docs export --to ../thermite
                                     update the thermite repository&#x27;s copy
@@ -1947,7 +1948,7 @@ Preview the site on 127.0.0.1, without writing it anywhere.
 
 options:
   -h, --help     show this help message and exit
-  --port PORT    the port (default: 8000)
+  --port PORT    the port (default: 13621)
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -1955,7 +1956,7 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite docs serve               at http://127.0.0.1:8000/
+  thermite docs serve               at http://127.0.0.1:13621/
   thermite docs serve --port 0      on any free port; it prints which
 </pre></details>
 <details id="docs-check"><summary><code>thermite docs check</code></summary><pre class="help">usage: thermite docs check [-h] [--to DIR] [--with-code]
@@ -2040,6 +2041,74 @@ examples:
   thermite package --out .scratch/releases
                                     privacy-check portable source and build a deterministic wheel
 </pre>
+</section>
+<section class="verb" id="iso"><h3><code>thermite iso</code></h3><p>Build a bootable installer for a dedicated Thermite machine.</p><pre class="help">usage: thermite iso [-h] ACTION ...
+
+Build a hybrid BIOS/UEFI Ubuntu Server installer containing the reviewed
+Thermite application. It asks for disk, network and owner account settings.
+No private site or credentials are embedded. Runtime commissioning follows
+first boot and needs Internet access. Building requires xorriso; no root.
+
+fetch downloads the pinned base ISO and Python dependency over HTTPS and
+checks SHA256. build uses those cached inputs and writes an ISO plus a
+checksum and provenance receipt. Existing outputs are never overwritten.
+
+options:
+  -h, --help     show this help message and exit
+
+actions:
+  ACTION
+    fetch        download and verify pinned installer inputs
+    build        build a bootable ISO from the verified cache
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite iso fetch --cache .scratch/iso/cache
+                                    download and verify fixed inputs
+  thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso
+                                    build the bootable installer and checksum
+</pre>
+<details id="iso-fetch"><summary><code>thermite iso fetch</code></summary><pre class="help">usage: thermite iso fetch [-h] --cache DIR
+
+Download and verify pinned installer inputs.
+
+options:
+  -h, --help     show this help message and exit
+  --cache DIR    directory for verified input downloads
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite iso fetch --cache .scratch/iso/cache
+                                    download and verify fixed inputs
+</pre></details>
+<details id="iso-build"><summary><code>thermite iso build</code></summary><pre class="help">usage: thermite iso build [-h] --cache DIR --work DIR --out FILE [--xorriso XORRISO]
+
+Build a bootable ISO from the verified cache.
+
+options:
+  -h, --help         show this help message and exit
+  --cache DIR        directory containing verified inputs
+  --work DIR         disposable staging directory
+  --out FILE         new output ISO filename
+  --xorriso XORRISO  explicit xorriso executable
+
+switches every verb takes:
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso
+                                    build the bootable installer and checksum
+</pre></details>
 </section>
 <section class="verb" id="completion"><h3><code>thermite completion</code></h3><p>Print a completion script for bash, zsh or fish.</p><pre class="help">usage: thermite completion [-h] SHELL
 

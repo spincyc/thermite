@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 import oh_cli
+import oh_ports
 from oh_access import AccessError
 
 DESCRIPTION = """Run a site's authenticated HTTPS boundary and room-policy worker, or log
@@ -18,7 +19,7 @@ native listener is sealed and device callbacks are preserved. Staging reports
 that owner activation checklist explicitly.
 """
 
-EXAMPLES = (("thermite access login --url https://thermite.example:9443 --user operator", "save this site's personal credential privately"),
+EXAMPLES = (("thermite access login --url https://thermite.example:13600 --user operator", "save this site's personal credential privately"),
             ("thermite access bootstrap --config /srv/thermite/config.json --user admin", "initialize one site's first admin locally"),
             ("thermite access serve --config /srv/thermite/config.json", "serve the compiled site over verified TLS"),
             ("thermite access worker --config /srv/thermite/config.json", "run the single supervised room-policy worker"))
@@ -44,7 +45,7 @@ def main(argv=None):
     sub = oh_cli.action(commands, "callbacks", "run the explicitly configured plaintext UPnP NOTIFY listener", examples=[("thermite access callbacks --config /srv/thermite/release/callbacks.json", "run only verified callback paths and peers")])
     sub.add_argument("--config", required=True, type=Path, help="private mode0600 callback-only configuration")
     for name in ("login", "logout", "status"):
-        sub = oh_cli.action(commands, name, {"login": "log this terminal into a site", "logout": "revoke this terminal's site credential", "status": "read this terminal's current site identity and policies"}[name], examples=[("thermite access " + name + " --url https://thermite.example:9443" + (" --user operator" if name == "login" else ""), "use this site's private terminal credential")])
+        sub = oh_cli.action(commands, name, {"login": "log this terminal into a site", "logout": "revoke this terminal's site credential", "status": "read this terminal's current site identity and policies"}[name], examples=[("thermite access " + name + " --url https://thermite.example:13600" + (" --user operator" if name == "login" else ""), "use this site's private terminal credential")])
         sub.add_argument("--url", required=True, metavar="URL", help="site's HTTPS origin")
         if name == "login":
             sub.add_argument("--user", required=True, help="site username")
@@ -63,7 +64,7 @@ def main(argv=None):
     sub.add_argument("--tls-key", required=True, type=Path, help="service-owned mode0600 TLS private key")
     sub.add_argument("--allowed-host", required=True, action="append", dest="allowed_hosts", help="exact HTTP Host name (repeatable; no wildcard)")
     sub.add_argument("--bind-host", default="0.0.0.0", help="HTTPS listener address (default: all IPv4 interfaces)")
-    sub.add_argument("--port", type=int, default=9443, help="unprivileged HTTPS port (default: 9443)")
+    sub.add_argument("--port", type=int, default=oh_ports.ACCESS_PORT, help=f"unprivileged HTTPS port (default: {oh_ports.ACCESS_PORT})")
     sub.add_argument("--timezone", default="UTC", help="site's IANA timezone (default: UTC)")
     sub.add_argument("--service-user", dest="user", help="existing unprivileged unit user (default: current user)")
     sub.add_argument("--wheelhouse", type=Path, help="install pinned dependencies offline from this directory")

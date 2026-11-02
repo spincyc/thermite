@@ -5,6 +5,12 @@ service response bodies, URLs and credentials are never forwarded or logged.
 """
 from __future__ import annotations
 import argparse
+from pathlib import Path
+import sys
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import oh_ports
 import http.server
 import ipaddress
 import json
@@ -126,13 +132,18 @@ def server(address, relay):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--listen", default="127.0.0.1:9481")
+    parser.add_argument("--listen", default=f"127.0.0.1:{oh_ports.DEFAULTS['notifications']}")
     parser.add_argument("--ntfy", required=True)
     parser.add_argument("--catalog", required=True)
     args = parser.parse_args()
     from pathlib import Path
     catalog = json.loads(Path(args.catalog).read_text())
     host, port = args.listen.rsplit(":", 1)
+    try:
+        oh_ports.listener("notifications", int(port))
+        oh_ports.unique({"notifications": int(port), "ntfy": urllib.parse.urlsplit(args.ntfy).port})
+    except ValueError as exc:
+        parser.error(str(exc))
     httpd = server((host, int(port)), Relay(args.ntfy, catalog))
     try: httpd.serve_forever()
     finally: httpd.server_close()

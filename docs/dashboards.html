@@ -39,11 +39,11 @@
 <h1 id="dashboards">Dashboards</h1>
 <p>thermite keeps a history of your house and shows it in Grafana on the controller host. You can see when a TV stopped answering, which source a room was on last night, or whether the runtime is short of memory, from any phone or computer on your network.</p>
 <h2 id="what-runs">What runs</h2>
-<p><code>thermite install</code> sets up five monitoring services on that host, each from an image pinned by digest, with no privileges. Only Grafana can be reached from other machines.</p>
-<table><thead><tr><th>Service</th><th>Port</th><th>What it does</th></tr></thead><tbody><tr><td>Prometheus</td><td>9090, this machine only</td><td>collects everything below every 30 seconds and keeps 13 months of it, at most 12 GB</td></tr><tr><td>node_exporter</td><td>9100, this machine only</td><td>the machine itself: CPU, memory, disks, temperatures, and thermite's services</td></tr><tr><td>blackbox_exporter</td><td>9115, this machine only</td><td>whether each device answers on the port thermite controls it through</td></tr><tr><td>thermite's exporter</td><td>9480, this machine only</td><td>each device's status, power, input and volume, by room</td></tr><tr><td>Grafana</td><td>3000, your network</td><td>the dashboards</td></tr></tbody></table>
+<p><code>thermite install</code> sets up monitoring services on that host, each from an image pinned by digest, with no privileges. Only Grafana can be reached from other machines.</p>
+<table><thead><tr><th>Service</th><th>Port</th><th>What it does</th></tr></thead><tbody><tr><td>Prometheus</td><td>13606, this machine only</td><td>collects everything below every 30 seconds and keeps 13 months of it, at most 12 GB</td></tr><tr><td>node_exporter</td><td>13607, this machine only</td><td>the machine itself: CPU, memory, disks, temperatures, and thermite's services</td></tr><tr><td>blackbox_exporter</td><td>13608, this machine only</td><td>whether each device answers on the port thermite controls it through</td></tr><tr><td>thermite's exporter</td><td>13609, this machine only</td><td>each device's status, power, input and volume, by room</td></tr><tr><td>Grafana</td><td>13610, your network</td><td>the dashboards</td></tr><tr><td>Alertmanager</td><td>13611, this machine only</td><td>routes monitoring alerts</td></tr><tr><td>ntfy</td><td>13612, this machine only</td><td>keeps local notifications</td></tr><tr><td>Notification adapter</td><td>13613, this machine only</td><td>delivers known alert messages to ntfy</td></tr></tbody></table>
 <p>Prometheus also reads the runtime's Metrics add-on, which thermite enables in every configuration: memory, threads, events and rule runs. <code>thermite test boot</code> checks that it answers.</p>
 <h2 id="what-you-see">What you see</h2>
-<p>Open <code>http://&lt;thermite's address&gt;:3000/</code>. Anyone on your network can look without logging in. Four dashboards come with it:</p>
+<p>Open <code>http://&lt;thermite's address&gt;:13610/</code>. Anyone on your network can look without logging in. Four dashboards come with it:</p>
 <ul><li><strong>House</strong>: every room and its devices, and what is down right now. It is the home page.</li><li><strong>Devices by kind</strong>: receivers, TVs, projectors, switchers and the rest, a row each.</li><li><strong>thermite runtime</strong>: memory, threads, events, rule runs, and Things that aren't online.</li><li><strong>Host</strong>: the machine, its disks, and every service and probe.</li></ul>
 <p>To change anything else in Grafana, log in as <code>admin</code>. <code>thermite install</code> generated the password and saved a copy for you next to thermite's API token. Grafana takes it the first time it starts; change it later on Grafana's profile page.</p>
 <h2 id="changing-them">Changing them</h2>
@@ -56,7 +56,9 @@ thermite deploy          # installs them; the services pick them up by themselve
 <pre><code class="language-sh">thermite upgrade --dry-run   # what it would do: directories, units, the deploy, the services
 thermite upgrade             # do it; it asks before anything that needs sudo
 thermite status              # Grafana's address and whether Prometheus reaches everything</code></pre>
-<p>There are no alerts yet; the dashboards only show.</p>
+<h2 id="alerts">Alerts</h2>
+<p>Prometheus evaluates alerts for sustained control failures, missing runtime telemetry, low disk space and failed services. Alertmanager routes them through a local notification adapter to ntfy. These services listen only on this machine; phone push requires separate setup. A local heartbeat checks that alert evaluation and delivery are working.</p>
+<p>The <a href="ports.html">ports guide</a> lists every listener and its network exposure.</p>
 
   </main>
   <footer class="foot">

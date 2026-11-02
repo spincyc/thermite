@@ -38,7 +38,7 @@
   <main id="main">
 <h1 id="questions">Questions</h1>
 <h3 id="what-is-thermite">What is thermite?</h3>
-<p>Software that runs a house. You describe the house once, and thermite sets up openHAB, the open-source home hub, to match. It also gives you remotes for it.</p>
+<p>Home automation built around openHAB. Describe your rooms, devices and connections in one file; thermite generates the configuration and gives you controls in a web app and a terminal.</p>
 <h3 id="do-i-need-to-know-openhab">Do I need to know openHAB?</h3>
 <p>No. You edit the house file; thermite writes openHAB's files. Knowing openHAB helps when something goes wrong, but you don't need it to start.</p>
 <h3 id="what-can-it-control">What can it control?</h3>
@@ -54,7 +54,9 @@
 <h3 id="does-it-work-with-apple-home">Does it work with Apple Home?</h3>
 <p>Not yet. Bringing the house into Apple Home through openHAB is planned.</p>
 <h3 id="what-does-it-need-to-run">What does it need to run?</h3>
-<p>One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node.js for the terminal remote. Install the reviewed application in a dedicated Python environment, then use <code>thermite init</code> to create a separate private site. <code>thermite install</code> prepares the native runtime only after its explicit checks and owner-controlled steps.</p>
+<p>One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node.js and npm for the terminal remote. You can <a href="installation.html">install on an existing server</a>, or <a href="iso.html">build a standalone ISO</a> for a dedicated machine. Both paths keep your private site separate from the application.</p>
+<h3 id="are-the-screenshots-from-a-real-house">Are the screenshots from a real house?</h3>
+<p>They show the actual clients in demo mode with fictional inventory. The simulated controls send no commands to real devices. You can reproduce the images with the <a href="screenshots.html">capture recipe</a>, or try the terminal with <code>thermite remote --mock</code>.</p>
 <h3 id="where-does-my-house-configuration-belong">Where does my house configuration belong?</h3>
 <p>In a private site, separate from the installed application and the public repository. Keep real inventory, host settings and generated outputs in private Git; credentials and runtime state stay outside Git. <code>init</code> starts with fictional devices and activates no service. The <a href="start.html">getting-started guide</a> explains the boundary.</p>
 <h3 id="how-do-application-upgrades-and-rollback-work">How do application upgrades and rollback work?</h3>

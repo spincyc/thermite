@@ -19,7 +19,7 @@ SUMMARY = "boot conf/ on a test runtime and report how it loads"
 
 DESCRIPTION = """\
 Boot a test runtime (the pinned distribution, see thermite sandbox) on
-CONF, on 127.0.0.1:18081 (HTTPS 18444, Karaf console 18102) so it can run
+CONF, on 127.0.0.1:13618 (HTTPS 13619, Karaf console 13620) so it can run
 beside the sandbox. It boots on var/boot-check/conf, a copy of CONF in which
 every HTTP binding channel is READONLY (oh_render.read_only), so it polls the
 real matrices but cannot switch them. Wait for the add-ons in

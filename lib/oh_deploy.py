@@ -42,6 +42,7 @@ from pathlib import Path
 
 import oh_cli
 import oh_logging
+import oh_ports
 import oh_metrics as metrics
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -74,7 +75,7 @@ SERVICES = ("openhab.service", "openhab-atv.service", "openhab-atv-restart.path"
             "openhab-metrics-restart.path")
 #: The area's files the Apple TV helper's container runs.
 ATV_APP = ("bin/thermite", "lib/oh_cli/__init__.py", "lib/oh_cli/apple_tv.py", "lib/oh_atv.py",
-           "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py")
+           "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py", "lib/oh_ports.py")
 #: The helper's verb module in commits from before it was apple_tv.py: a
 #: deploy of such a commit (a rollback) installs it, or that commit's
 #: bin/thermite could not run the helper.
@@ -97,9 +98,9 @@ SECRET_FILE_MODE = 0o640
 #: Where the openHAB container sees the secrets directory, as $OPENHAB_SECRETS.
 SECRETS_MOUNT = "/secrets"
 #: Ports besides HTTP and HTTPS that openHAB or the helper listen on.
-HELPER_PORT = 8099
-KARAF_PORT = 8101
-LSP_PORT = 5007
+HELPER_PORT = oh_ports.HELPER_PORT
+KARAF_PORT = oh_ports.KARAF_PORT
+LSP_PORT = oh_ports.LSP_PORT
 
 
 class DeployError(Exception):
@@ -113,6 +114,7 @@ def load(area: Path) -> tuple[dict, dict]:
 
     versions = json.loads((Path(area) / "versions.json").read_text(encoding="utf-8"))
     host = yaml.safe_load((Path(area) / "instance/host.yaml").read_text(encoding="utf-8"))
+    oh_ports.effective(host)
     return versions, host
 
 
@@ -911,7 +913,7 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
     preflight(layout)
     if oh_logging.pairing_conf(conf) and not oh_logging.ready(layout.userdata):
         script = Path(__file__).resolve().with_name("oh_logging.py")
-        port = (host or {}).get("http_port", 8080)
+        port = (host or {}).get("http_port", oh_ports.HTTP_PORT)
         raise DeployError("pairing credentials would enter openHAB's native logs; before deploying, stop openHAB, "
                           f"run `sudo python3 {script} {layout.userdata} --http-port {port}`, "
                           "then start openHAB to load the filter and deploy again (docs/deploy.md)")
@@ -928,7 +930,7 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
     notifications_installed = (layout.metrics / "notifications/catalog.json").is_file()
     notifications_present = ("notifications/catalog.json" in tree and "alertmanager/alertmanager.yml" in tree
                              and "ntfy/server.yml" in tree and metrics.EXPORTER_APP[1] in exporter)
-    kept = with_metrics and (not (tree and exporter) or (notifications_installed and not notifications_present))
+    kept = with_metrics and (not (tree and metrics.EXPORTER_APP[0] in exporter) or (notifications_installed and not notifications_present))
     synced = with_metrics and not kept
     metrics_changes = sync(tree, layout.metrics, previous.get("metrics", {}), dry_run) if synced else Changes()
     exporter_changes = (sync(exporter, layout.exporter_app, previous.get("exporter_app", {}), dry_run)

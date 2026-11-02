@@ -43,9 +43,13 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
-EXPORTER_PORT = 9480
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import oh_ports
+
+EXPORTER_PORT = oh_ports.DEFAULTS["exporter"]
 LISTEN = f"127.0.0.1:{EXPORTER_PORT}"
-OPENHAB = "http://127.0.0.1:8080"
+OPENHAB = oh_ports.NATIVE_URL
 MAP = Path("/etc/thermite-exporter/map.json")
 TOKEN = Path("/secrets/openhab-token")
 MAP_VERSION = 1
@@ -407,6 +411,10 @@ def parse_listen(value: str) -> tuple[str, int]:
     host, _, port = value.rpartition(":")
     if not host or not port.isdigit() or not 0 < int(port) < 65536:
         raise argparse.ArgumentTypeError(f"{value!r} is not HOST:PORT")
+    try:
+        oh_ports.listener("exporter", int(port))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
     return host, int(port)
 
 

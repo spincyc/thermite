@@ -9,6 +9,8 @@ import re
 import ssl
 from urllib.parse import urlsplit
 
+import oh_ports
+
 from . import AccessError
 from .files import json_private, private_directory, read_private
 
@@ -31,9 +33,7 @@ def load_config(path, *, tls=True):
         native = urlsplit(data["runtime_url"])
         if native.scheme != "http" or native.hostname not in {"127.0.0.1", "::1"} or native.username or native.password or native.path not in ("", "/") or native.query or native.fragment:
             raise ValueError()
-        native.port  # also validate an explicit port before any service setup
-        if type(data["port"]) is not int or not 1024 <= data["port"] <= 65535:
-            raise ValueError()
+        oh_ports.listener("access", data["port"], upstream=native.port or 80)
         from zoneinfo import ZoneInfo
         ZoneInfo(data["timezone"])
         private_directory(data["state"])
