@@ -115,6 +115,7 @@ def load(area: Path) -> tuple[dict, dict]:
     host = yaml.safe_load((Path(area) / "instance/host.yaml").read_text(encoding="utf-8"))
     oh_service.validate_identity(host["uid"], host["gid"])
     oh_ports.effective(host)
+    metrics.yoke_targets(host)
     return versions, host
 
 

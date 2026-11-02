@@ -1,7 +1,7 @@
 """Grafana dashboards for the house, built from the exporter map.
 
-Four dashboards, each with a fixed uid, all querying the one provisioned
-datasource by its fixed uid:
+Four default dashboards and an optional Yoke dashboard, each with a fixed
+uid, all querying the one provisioned datasource by its fixed uid:
 
     house     one control-system health result, then observed room/source
               use, source mix and hour-of-day rhythms
@@ -11,6 +11,7 @@ datasource by its fixed uid:
               thread pools) from its Metrics add-on
     host      CPU, memory, disk, temperatures, the openHAB and metrics
               units, and Prometheus' own storage
+    yoke      optional passive endpoint observations and observer health
 
 House facts (rooms, devices, Items) come only from the map; the code names
 none. Panel ids and positions are assigned in order, so the same map gives
@@ -25,9 +26,10 @@ DATASOURCE_UID = "thermite-prometheus"
 DATASOURCE = {"type": "prometheus", "uid": DATASOURCE_UID}
 #: Grafana 12/13's classic dashboard JSON; Grafana migrates older ones on load.
 SCHEMA_VERSION = 41
-HOUSE, DEVICES, OPENHAB, HOST = "house", "devices", "openhab", "host"
-UIDS = {HOUSE: "thermite-house", DEVICES: "thermite-devices", OPENHAB: "thermite-openhab", HOST: "thermite-host"}
-TITLES = {HOUSE: "House rhythm", DEVICES: "Device use", OPENHAB: "thermite runtime", HOST: "Host"}
+HOUSE, DEVICES, OPENHAB, HOST, YOKE = "house", "devices", "openhab", "host", "yoke"
+UIDS = {HOUSE: "thermite-house", DEVICES: "thermite-devices", OPENHAB: "thermite-openhab", HOST: "thermite-host",
+        YOKE: "thermite-yoke"}
+TITLES = {HOUSE: "House rhythm", DEVICES: "Device use", OPENHAB: "thermite runtime", HOST: "Host", YOKE: "Yoke"}
 TAG = "thermite"
 
 #: The openHAB Metrics add-on's series, as openHAB 5.2.3 serves them at
@@ -187,7 +189,7 @@ def table(title: str, expr: str, columns: list[str], description: str = "") -> d
             "options": {"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
             "transformations": [{"id": "organize", "options": {
                 "excludeByName": {"Time": True, "Value": "Value" not in keep, "__name__": True, "job": True,
-                                  "instance": True},
+                                  "instance": "instance" not in keep},
                 "indexByName": keep, "includeByName": {name: True for name in columns}}}]}
 
 
@@ -528,6 +530,39 @@ def host() -> dict:
     return dashboard(HOST, board, "This host: CPU, memory, disk, temperatures and the runtime units.")
 
 
-def render(mapping: dict, probes: list[dict]) -> dict[str, dict]:
+def yoke() -> dict:
+    """Passive control observations, separate from core home-control health."""
+    board = Board()
+    job = 'job="yoke"'
+    device = "{{instance}} {{node_id}}"
+    board.add(note("About these observations",
+                   "Yoke observers passively read existing announcements. Device up means a recent "
+                   "announcement, not verified hardware or media health. State is the last accepted "
+                   "announcement, even after a peer becomes silent. Counters cover retained observations "
+                   "and reset on observer restart or peer eviction. Thermite scrapes every 30 seconds; "
+                   "the observer samples once per second by default. Missing series remain unknown."), 24, 4)
+    board.add(state_timeline("Observer scrape health", [(f"up{{{job}}}", "{{instance}}")], UP_DOWN), 12, 7)
+    board.add(state_timeline("Announcement liveness", [(f"yoke_device_up{{{job}}}", device)], UP_DOWN), 12, 7)
+    board.add(table("Last announced state", f"yoke_device_state{{{job}}} == 1",
+                    ["instance", "node_id", "state"],
+                    "Last accepted announcement; consult liveness before treating it as current."), 12, 7)
+    board.add(timeseries("Time since announcement", [(f"yoke_device_last_seen_age_seconds{{{job}}}", device)],
+                         "s", minimum=0), 12, 7)
+    board.add(timeseries("Observed control frames", [(f"rate(yoke_device_control_frames_total{{{job}}}[5m])", device)],
+                         "ops", minimum=0), 12, 7)
+    board.add(timeseries("Observed control bytes", [(f"rate(yoke_device_control_bytes_total{{{job}}}[5m])", device)],
+                         "Bps", minimum=0, description="Control datagrams only; this is not media throughput."), 12, 7)
+    board.add(timeseries("Observed device events", [(f"rate(yoke_device_events_total{{{job}}}[5m])",
+                                                     device + " {{event}}")], "ops", minimum=0), 12, 7)
+    board.add(timeseries("Observer datagrams", [(f"rate(yoke_observer_datagrams_total{{{job}}}[5m])",
+                                                "{{instance}} {{verdict}}")], "ops", minimum=0), 12, 7)
+    return dashboard(YOKE, board, "Optional Yoke observers: announcement liveness, last state and control traffic.",
+                     refresh="30s", time_from="now-1h")
+
+
+def render(mapping: dict, probes: list[dict], *, yoke_enabled: bool = False) -> dict[str, dict]:
     """{name: dashboard} for the exporter map and the device probes."""
-    return {HOUSE: house(mapping, probes), DEVICES: devices(mapping, probes), OPENHAB: openhab(), HOST: host()}
+    result = {HOUSE: house(mapping, probes), DEVICES: devices(mapping, probes), OPENHAB: openhab(), HOST: host()}
+    if yoke_enabled:
+        result[YOKE] = yoke()
+    return result

@@ -51,6 +51,18 @@
 <pre><code class="language-sh">thermite generate        # writes the dashboards and Prometheus' targets too
 thermite deploy          # installs them; the services pick them up by themselves</code></pre>
 <p>Grafana won't save edits to these dashboards: change the house file instead, so the next generate doesn't undo your work.</p>
+<h2 id="yoke-observers">Yoke observers</h2>
+<p>Yoke monitoring is optional. Run an observer independently on the Thermite host:</p>
+<pre><code class="language-sh">yoke metrics --listen 127.0.0.1 --http-port 9754</code></pre>
+<p>Add its HTTP endpoint to <code>instance/host.yaml</code> in your private site, preserving the other host settings:</p>
+<pre><code class="language-yaml">metrics:
+  yoke_targets:
+    - "127.0.0.1:9754"</code></pre>
+<p>Then generate and deploy as above. Prometheus scrapes the observer's <code>/metrics</code> every <strong>30 seconds</strong>; Yoke samples and caches its observations every <strong>1 second</strong> by default. A <strong>Yoke</strong> dashboard appears with observer scrape health, announcement liveness, last announced state, time since announcement, and observed control-frame and event rates. These optional observations stay separate from the house's control-health result.</p>
+<p>One observer on the Thermite host can hear existing Yoke multicast announcements across its VLAN, without adding YWP traffic. Device up means a recent announcement; it does not verify hardware or media delivery. The state is the last accepted announcement even while a device is silent. Counters describe retained observations and reset on observer restart or peer eviction; missing data stays unknown. Observers and saved routes operate independently of Thermite.</p>
+<p>Each target must be a unique <code>hostname:port</code>, <code>IPv4:port</code> or <code>[IPv6]:port</code>, for example <code>[2001:db8::10]:9754</code>. This list supports HTTP <code>/metrics</code> endpoints and rejects credentials, URL paths and missing ports. Yoke requires <code>--expose</code> for a non-loopback listener. For authenticated TLS access to a remote collector, provide a local HTTP listener on the Thermite host through an operator-managed TLS proxy or tunnel, and scrape that local listener.</p>
+<p>Yoke's <code>yoke_host_*</code> measurements describe the <strong>collector host</strong>. Run a separate observer on each appliance when you need that appliance's host statistics; a remote observer's CPU and memory do not describe the appliances it hears. Thermite's existing node_exporter remains the controller host's comprehensive monitor.</p>
+<p>Omit <code>yoke_targets</code> or set it to <code>[]</code> to disable the optional scrape job and generated dashboard. As with other generated files, <code>generate</code> reports a previously generated <code>metrics/grafana/dashboards/yoke.json</code> as a stray after disabling it; remove that file before the next deployment.</p>
 <h2 id="already-installed">Already installed?</h2>
 <p>On a machine installed before the dashboards existed:</p>
 <pre><code class="language-sh">thermite upgrade --dry-run   # what it would do: directories, units, the deploy, the services
