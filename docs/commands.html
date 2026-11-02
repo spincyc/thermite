@@ -1563,6 +1563,8 @@ examples:
                                     save this site&#x27;s personal credential privately
   thermite access bootstrap --config /srv/thermite/config.json --user admin
                                     initialize one site&#x27;s first admin locally
+  thermite access verify --config /srv/thermite-access/releases/current/config.json
+                                    check service ownership and configuration as thermite before activation
   thermite access serve --config /srv/thermite/config.json
                                     serve the compiled site over verified TLS
   thermite access worker --config /srv/thermite/config.json
@@ -1632,6 +1634,10 @@ switches every verb takes:
   -q, --quiet      print only errors
   -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
   --no-color       no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access verify --config /srv/thermite-access/releases/current/config.json
+                                    check service ownership and configuration as thermite before activation
 </pre></details>
 <details id="access-callbacks"><summary><code>thermite access callbacks</code></summary><pre class="help">usage: thermite access callbacks [-h] --config CONFIG
 

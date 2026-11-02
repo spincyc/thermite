@@ -21,6 +21,7 @@ that owner activation checklist explicitly.
 
 EXAMPLES = (("thermite access login --url https://thermite.example:13600 --user operator", "save this site's personal credential privately"),
             ("thermite access bootstrap --config /srv/thermite/config.json --user admin", "initialize one site's first admin locally"),
+            ("thermite access verify --config /srv/thermite-access/releases/current/config.json", "check service ownership and configuration as thermite before activation"),
             ("thermite access serve --config /srv/thermite/config.json", "serve the compiled site over verified TLS"),
             ("thermite access worker --config /srv/thermite/config.json", "run the single supervised room-policy worker"))
 
