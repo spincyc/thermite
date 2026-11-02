@@ -13,6 +13,9 @@ rollback. Existing complete Git checkouts retain their deployment behavior.
   HTTPS service. Existing installations need the documented port migration.
 - Updated documentation with screenshots of the web and terminal remotes,
   captured from the fictional example.
+- Application services run as `thermite:thermite`, including native container
+  startup. Existing installations retain their numeric IDs and data during
+  account migration; deployed files receive explicit ownership and permissions.
 - Compact shared web navigation and improved Sony standby and command-error
   handling.
 - Ordered control and error snapshots: older reads cannot overwrite newer

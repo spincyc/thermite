@@ -8,14 +8,10 @@ The openHAB quadlet has the shape of the factory services role's (ADR 0054)
 so that role can adopt openHAB unchanged once it supports more than one
 volume.
 
-A deploy installs one commit, never the working tree, and runs as the
-owner's user, a member of the openhab group, without root. The openHAB
-image's entrypoint chowns everything below its home, conf/ included, to
-openhab at every start but leaves modes alone. So a deploy creates
-directories 2775 and files 0664 (0775 for a program), and it only ever
-creates entries, renames a new file over an old one and deletes entries:
-it never chmods or chowns one it did not just create, which that user may
-no longer own.
+A deploy installs one commit, never the working tree. Trusted operators
+write shared configuration through the thermite group. Before any write,
+an operator explicitly approves the finite administrative ownership handoff;
+successful deployment leaves runtime state owned by thermite:thermite.
 """
 
 from __future__ import annotations
@@ -29,9 +25,12 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
+import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import urllib.error
@@ -43,6 +42,7 @@ from pathlib import Path
 import oh_cli
 import oh_logging
 import oh_ports
+import oh_service
 import oh_metrics as metrics
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -85,16 +85,15 @@ ATV_APP_BEFORE = ("lib/oh_cli/atv.py",)
 LEGACY_ATV_PROGRAM = "bin/openhab-atv"
 #: Inside the helper's container.
 ATV_VENV = "/venv/pyatv"
-DIR_MODE = 0o2775
-FILE_MODE = 0o664
-PROGRAM_MODE = 0o775
-#: The secrets directory: the openhab group reads and writes it, no one else
-#: enters it.
-SECRETS_MODE = 0o2770
+DIR_MODE = oh_service.SHARED_DIR
+FILE_MODE = oh_service.SHARED_FILE
+PROGRAM_MODE = oh_service.SHARED_PROGRAM
+#: Credential custody belongs to the service identity alone.
+SECRETS_MODE = oh_service.PRIVATE_DIR
 #: Prometheus' and Grafana's stores and the metrics secrets: written only by
-#: the services (as openhab), read by the group.
-MONITORING_MODE = 0o750
-SECRET_FILE_MODE = 0o640
+#: the services as thermite; credentials remain private to the service.
+MONITORING_MODE = oh_service.RUNTIME_DIR
+SECRET_FILE_MODE = oh_service.PRIVATE_FILE
 #: Where the openHAB container sees the secrets directory, as $OPENHAB_SECRETS.
 SECRETS_MOUNT = "/secrets"
 #: Ports besides HTTP and HTTPS that openHAB or the helper listen on.
@@ -114,6 +113,7 @@ def load(area: Path) -> tuple[dict, dict]:
 
     versions = json.loads((Path(area) / "versions.json").read_text(encoding="utf-8"))
     host = yaml.safe_load((Path(area) / "instance/host.yaml").read_text(encoding="utf-8"))
+    oh_service.validate_identity(host["uid"], host["gid"])
     oh_ports.effective(host)
     return versions, host
 
@@ -168,7 +168,7 @@ class State:
     @property
     def secrets(self) -> Path:
         """Keys openHAB's rules may read, mounted read-only at SECRETS_MOUNT;
-        the owner writes them through the group. No rule reads one today: the
+        administrative installation preserves service-only custody. No rule reads one today: the
         Sony TVs' registrations are in openHAB's userdata."""
         return self.root / "secrets"
 
@@ -235,24 +235,24 @@ class State:
         return self.records / "metrics-restart"
 
     def directories(self) -> list[tuple[int, list[Path]]]:
-        """(mode, directories) the install creates, owned by openhab. The
-        deploying user writes the 2775 ones through the group."""
+        """Service-owned directories; operators write the shared ones."""
         return [
-            (0o755, [self.userdata, self.addons, self.atv, self.atv_venv]),
+            (MONITORING_MODE, [self.root, self.addons, self.atv, self.atv_venv]),
             (DIR_MODE, [self.conf, self.records, self.atv_app]),
-            (0o700, [self.atv_secrets]),
+            (0o700, [self.userdata, self.atv_secrets]),
             (SECRETS_MODE, [self.secrets]),
         ]
 
     def metrics_directories(self) -> list[tuple[int, list[Path]]]:
-        """(mode, directories) the metrics services need, owned by openhab:
-        the deploying user writes the 2775 ones through the group; the stores
+        """(mode, directories) the metrics services need, owned by thermite:
+        the deploying user writes the 2770 ones through the group; the stores
         and the secrets are the services' own, which the group only reads."""
         return [
-            (0o755, [self.monitoring, self.exporter]),
+            (MONITORING_MODE, [self.monitoring, self.exporter]),
             (DIR_MODE, [self.metrics, self.exporter_app]),
             (MONITORING_MODE, [self.prometheus_data, self.grafana_data, self.root / metrics.STATE_ALERTMANAGER,
-                               self.root / metrics.STATE_NTFY, self.monitoring_secrets]),
+                               self.root / metrics.STATE_NTFY]),
+            (SECRETS_MODE, [self.monitoring_secrets]),
         ]
 
     def with_metrics(self) -> bool:
@@ -273,8 +273,84 @@ HEADER = [
     "# instance/host.yaml: change those, then generate again.",
 ]
 
+# The pinned image's own /entrypoint creates accounts, edits /etc and chowns
+# /openhab as root. Use only its unprivileged volume initialization at startup.
+# Verified against image revision 86fb030402531b52bbdc80329d841f96f5d7896e
+# (the config of versions.json's linux/amd64 image), not a moving image tag.
+OPENHAB_UPDATE_SHA256 = "a6f09a576ae7ad4c6187ecd7ebcdd00d60b6b06ff073c8e52261bf8ca3129386"
+
+
+def _openhab_initialize() -> str:
+    return " ".join((
+        'test "$(id -u)" -ne 0 || { echo "openHAB must run as thermite, never root" >&2; exit 1; };',
+        'umask 0077;',
+        'for name in conf userdata; do',
+        'target="$OPENHAB_HOME/$name";',
+        'if test -z "$(ls -A "$target")"; then',
+        'cp -R --no-preserve=ownership "$OPENHAB_HOME/dist/$name/." "$target/";',
+        'if test "$name" = conf; then chmod -R ug+rwX,o-rwx "$target"; fi;',
+        'fi;',
+        'done;',
+        'test -f "$OPENHAB_USERDATA/etc/version.properties" ||',
+        '{ echo "Incomplete native userdata; run thermite install" >&2; exit 1; };',
+    ))
+
+
+def openhab_start() -> str:
+    """The entire container payload, including initialization, is non-root."""
+    return " ".join((
+        _openhab_initialize(),
+        'cmp -s "$OPENHAB_USERDATA/etc/version.properties" "$OPENHAB_HOME/dist/userdata/etc/version.properties" ||',
+        '{ echo "Native userdata needs offline preparation; run thermite upgrade" >&2; exit 1; };',
+        'rm -f "$OPENHAB_USERDATA/tmp/instances/instance.properties";',
+        'export JAVA_HOME="$(find /usr/lib/jvm -mindepth 1 -maxdepth 1 -type d | head -n 1)";',
+        # A service-owned Java security override avoids editing the image's /etc.
+        'printf "crypto.policy=unlimited\\n" > "$OPENHAB_USERDATA/etc/thermite-java.security";',
+        'export EXTRA_JAVA_OPTS="$EXTRA_JAVA_OPTS -Djava.security.properties=$OPENHAB_USERDATA/etc/thermite-java.security";',
+        'exec tini -s ./start.sh server',
+    ))
+
+
+def openhab_prepare() -> str:
+    """Offline, explicit userdata upgrade using the pinned upstream updater.
+
+    Its only root requirement is an initial identity guard. All mutable paths
+    belong to thermite, so remove that exact guard from a hash-checked copy
+    and run the remaining updater as thermite. A new upstream updater needs
+    review before its hash is accepted here.
+    """
+    return " ".join((
+        _openhab_initialize(),
+        'if cmp -s "$OPENHAB_USERDATA/etc/version.properties" "$OPENHAB_HOME/dist/userdata/etc/version.properties"; then exit 0; fi;',
+        f'printf "{OPENHAB_UPDATE_SHA256}  /openhab/runtime/bin/update\\n" | sha256sum -c -;',
+        'mkdir -p "$OPENHAB_BACKUPS" "$OPENHAB_LOGDIR";',
+        'backup="$(mktemp "$OPENHAB_BACKUPS/thermite-before-$(date -u +%Y%m%dT%H%M%S)-XXXXXX.tar")";',
+        'tar --exclude=./backup -cf "$backup" -C "$OPENHAB_USERDATA" .;',
+        'prepared="$(mktemp /tmp/thermite-update.XXXXXX)";',
+        'trap \'rm -f "$prepared"\' EXIT;',
+        "sed '/^  # Ask to run as root/,/^  fi$/d' /openhab/runtime/bin/update > \"$prepared\";",
+        '! grep -Fq \'Please run this script as root!\' "$prepared";',
+        'export JAVA_HOME="$(find /usr/lib/jvm -mindepth 1 -maxdepth 1 -type d | head -n 1)";',
+        'sh -e "$prepared";',
+        'cmp -s "$OPENHAB_USERDATA/etc/version.properties" "$OPENHAB_HOME/dist/userdata/etc/version.properties"',
+    ))
+
+
+def prepare_openhab_argv(versions: dict, host: dict) -> tuple[str, ...]:
+    """Owner-approved Podman management; the offline payload remains non-root."""
+    oh_service.validate_identity(host["uid"], host["gid"])
+    root = host["state_root"]
+    return ("podman", "run", "--rm", "--network=host", "--user", f"{host['uid']}:{host['gid']}",
+            "--umask=0077", "--cap-drop=all", "--security-opt=no-new-privileges", "--entrypoint=/bin/sh",
+            "--env", f"TZ={host['timezone']}",
+            "--volume", f"{root}/conf:/openhab/conf:Z",
+            "--volume", f"{root}/userdata:/openhab/userdata:Z",
+            "--volume", f"{root}/addons:/openhab/addons:Z",
+            image(versions), "-ec", openhab_prepare())
+
 
 def render_quadlet(versions: dict, host: dict) -> str:
+    oh_service.validate_identity(host["uid"], host["gid"])
     root = host["state_root"]
     version = versions["openhab"]["version"]
     lines = [
@@ -291,22 +367,30 @@ def render_quadlet(versions: dict, host: dict) -> str:
         "# UPnP, mDNS and SDDP discovery and the Sonos event callbacks do not",
         "# traverse a container network.",
         "Network=host",
+        f"User={host['uid']}",
+        f"Group={host['gid']}",
+        "NoNewPrivileges=true",
+        "DropCapability=all",
+        "PodmanArgs=--umask=0077",
+        "Entrypoint=/bin/sh",
         f"Volume={root}/conf:/openhab/conf:Z",
         f"Volume={root}/userdata:/openhab/userdata:Z",
         f"Volume={root}/addons:/openhab/addons:Z",
-        "# Keys the rules may read: outside /openhab, which the entrypoint",
-        "# chowns, and never in conf.",
+        "# Credentials remain outside shared configuration.",
         f"Volume={root}/secrets:{SECRETS_MOUNT}:ro,Z",
         f"Environment=OPENHAB_SECRETS={SECRETS_MOUNT}",
         f"Environment=USER_ID={host['uid']}",
         f"Environment=GROUP_ID={host['gid']}",
+        "Environment=HOME=/openhab/userdata",
         "Environment=CRYPTO_POLICY=unlimited",
         f"Environment=TZ={host['timezone']}",
-        f"Environment=EXTRA_JAVA_OPTS=-Duser.timezone={host['timezone']}",
+        f'Environment="EXTRA_JAVA_OPTS=-Duser.timezone={host["timezone"]} -Duser.home=/openhab/userdata"',
         f"Environment=OPENHAB_HTTP_PORT={host['http_port']}",
         f"Environment=OPENHAB_HTTPS_PORT={host['https_port']}",
+        "Exec=-ec " + exec_word(openhab_start()),
         "",
         "[Service]",
+        "UMask=0077",
         "Restart=always",
         "TimeoutStartSec=300",
         "",
@@ -318,6 +402,7 @@ def render_quadlet(versions: dict, host: dict) -> str:
 
 
 def render_atv_quadlet(versions: dict, host: dict) -> str:
+    oh_service.validate_identity(host["uid"], host["gid"])
     layout = state(host)
     lines = [
         "# The Apple TV helper for openHAB (bin/thermite apple-tv, docs/deploy.md).",
@@ -337,11 +422,13 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
         f"Group={host['gid']}",
         "NoNewPrivileges=true",
         "DropCapability=all",
+        "PodmanArgs=--umask=0077",
         "# Its code, as the last deploy installed it.",
         f"Volume={layout.atv_app}:/app:ro,Z",
         f"Volume={layout.atv_venv}:/venv:Z",
         f"Volume={layout.atv_secrets}:/secrets:Z",
         f"Environment=OPENHAB_ATV_VENV={ATV_VENV}",
+        "Environment=HOME=/secrets",
         "Environment=PYTHONDONTWRITEBYTECODE=1",
         f"Environment=TZ={host['timezone']}",
         f"# The first start builds {ATV_VENV} from the hash-pinned wheels in",
@@ -350,6 +437,7 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
         "Exec=python3 /app/bin/thermite apple-tv serve --setup --secrets /secrets",
         "",
         "[Service]",
+        "UMask=0077",
         "Restart=always",
         "# Unhurried, so a boot without PyPI does not exhaust systemd's start limit.",
         "RestartSec=10",
@@ -419,6 +507,7 @@ def _volume(service: metrics.Service, volume: metrics.Volume, root: Path, shared
 
 
 def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service) -> str:
+    oh_service.validate_identity(host["uid"], host["gid"])
     root = Path(host["state_root"])
     every = metrics.services(host)
     used = [volume.source for other in every for volume in other.volumes]
@@ -443,6 +532,7 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         f"Group={host['gid']}",
         "NoNewPrivileges=true",
         "DropCapability=all",
+        "PodmanArgs=--umask=0027",
         *(f"# {note}" for note in service.notes),
         *(_volume(service, volume, root, shared) for volume in service.volumes),
         *(f"Environment={key}={value}" for key, value in service.environment),
@@ -455,6 +545,7 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
     lines += [
         "",
         "[Service]",
+        "UMask=0027",
         "Restart=always",
         "RestartSec=10",
         "# The first start pulls the image.",
@@ -716,6 +807,25 @@ def _make_dirs(root: Path, directory: Path) -> None:
         os.chmod(path, DIR_MODE)
 
 
+def _safe_parents(root: Path, directory: Path) -> None:
+    """A deployed relative path must never walk a link out of its tree."""
+    descriptor = None
+    try:
+        descriptor = oh_service._open_root(root)
+        for part in directory.relative_to(root).parts:
+            try:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            except FileNotFoundError:
+                return
+            os.close(descriptor)
+            descriptor = child
+    except OSError as exc:
+        raise DeployError(f"refusing non-directory or symlink deployment parent {directory}: {exc}") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def _replace(target: Path, data: bytes, mode: int) -> None:
     """Write target by renaming a new file over it: needs only the right to
     write its directory, whoever owns the old file."""
@@ -730,6 +840,23 @@ def _replace(target: Path, data: bytes, mode: int) -> None:
         with contextlib.suppress(OSError):
             os.unlink(temp)
         raise
+
+
+def _shared_write(target: Path, data: str, *, append: bool = False) -> None:
+    """Keep path-unit close events and give a newly created record mode0660."""
+    try:
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, FILE_MODE)
+    except FileExistsError:
+        descriptor = os.open(target, os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW | (os.O_APPEND if append else 0))
+    else:
+        os.fchmod(descriptor, FILE_MODE)
+    with os.fdopen(descriptor, "a" if append else "w", encoding="utf-8") as output:
+        info = os.fstat(output.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise DeployError(f"refusing non-regular or hard-linked deployment record {target}")
+        if not append:
+            os.ftruncate(output.fileno(), 0)
+        output.write(data)
 
 
 def _prune(root: Path, directory: Path) -> None:
@@ -750,6 +877,7 @@ def sync(files: dict[str, Blob], target: Path, previous: Iterable[str] = (), dry
     changes = Changes()
     for path in sorted(files):
         destination = target / _relative(path)
+        _safe_parents(target, destination.parent)
         blob = files[path]
         if _same(destination, blob):
             changes.unchanged += 1
@@ -762,6 +890,7 @@ def sync(files: dict[str, Blob], target: Path, previous: Iterable[str] = (), dry
             _replace(destination, blob.data, PROGRAM_MODE if blob.program else FILE_MODE)
     for path in sorted(set(previous) - set(files)):
         destination = target / _relative(path)
+        _safe_parents(target, destination.parent)
         if destination.is_symlink() or destination.is_file():
             changes.removed.append(path)
             if not dry_run:
@@ -804,9 +933,72 @@ def preflight(layout: State) -> None:
     for directory in (layout.conf, layout.atv_app, layout.records, *extra):
         if not directory.is_dir():
             raise DeployError(f"{directory} does not exist; bin/thermite install creates it")
+        _safe_parents(directory, directory)
         if not os.access(directory, os.W_OK | os.X_OK):
-            raise DeployError(f"{user} cannot write {directory}: join the openhab group, then log in again "
+            raise DeployError(f"{user} cannot write {directory}: join the thermite group, then log in again "
                               "(`id -nG` lists your groups; docs/deploy.md)")
+
+
+def ownership_argv(layout: State, host: dict | None = None) -> tuple[str, ...]:
+    """The finite administrative helper, independent of an operator's home."""
+    from oh_paths import PROGRAM
+    uid = host["uid"] if host else layout.root.stat().st_uid
+    gid = host["gid"] if host else layout.root.stat().st_gid
+    oh_service.validate_identity(uid, gid)
+    return ("/usr/bin/python3", str(PROGRAM / "lib/oh_service.py"), str(layout.root),
+            "--uid", str(uid), "--gid", str(gid), "--deployment")
+
+
+@contextlib.contextmanager
+def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_logging: bool):
+    """Approve before writes; repair ownership even when a write later fails."""
+    argv = ownership_argv(layout, host)
+    uid, gid = int(argv[argv.index("--uid") + 1]), int(argv[argv.index("--gid") + 1])
+    direct = os.geteuid() == 0 or (os.geteuid() == uid and gid in {os.getegid(), *os.getgroups()})
+    command = argv if direct else ("sudo", *argv)
+    checks = (*command, "--check-pairing-logging")
+    if dry_run:
+        if require_logging:
+            print("pairing logging check: " + shlex.join(checks))
+        print("ownership handoff: " + shlex.join(command))
+        yield
+        return
+    if not direct:
+        if not sys.stdin.isatty():
+            raise DeployError("deployment needs an explicitly approved thermite ownership handoff; "
+                              "run interactively (no files were changed): " + shlex.join(command))
+        if shutil.which("sudo") is None:
+            raise DeployError("sudo is unavailable for the thermite ownership handoff; no files were changed")
+        print("Deployment will run these administrative commands:")
+        if require_logging:
+            print("  " + shlex.join(checks))
+        print("  " + shlex.join(command))
+        if input("Approve this ownership handoff before deployment writes? [y/N] ").strip().lower() not in ("y", "yes"):
+            raise DeployError("ownership handoff declined; no files were changed")
+    if require_logging:
+        try:
+            if direct:
+                protected = oh_service.pairing_logging(layout.root)
+            else:
+                oh_cli.trace_run(checks)
+                protected = subprocess.run(checks, check=False).returncode == 0
+        except (OSError, ValueError):
+            protected = False
+        if not protected:
+            raise DeployError("pairing credentials would enter openHAB's native logs; run thermite install "
+                              "to protect native logging before deploying")
+    try:
+        yield
+    finally:
+        try:
+            if direct:
+                oh_service.normalize_state(layout.root, uid, gid, deployment=True)
+            else:
+                oh_cli.trace_run(command)
+                subprocess.run(command, check=True)
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            raise DeployError("thermite ownership handoff failed; deployment is incomplete. Run "
+                              + shlex.join(command) + f": {exc}") from exc
 
 
 @dataclasses.dataclass
@@ -911,63 +1103,56 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
                           "install a commit known to be good (thermite rollback needs none for a commit "
                           "deployed here before)")
     preflight(layout)
-    if oh_logging.pairing_conf(conf) and not oh_logging.ready(layout.userdata):
-        script = Path(__file__).resolve().with_name("oh_logging.py")
-        port = (host or {}).get("http_port", oh_ports.HTTP_PORT)
-        raise DeployError("pairing credentials would enter openHAB's native logs; before deploying, stop openHAB, "
-                          f"run `sudo python3 {script} {layout.userdata} --http-port {port}`, "
-                          "then start openHAB to load the filter and deploy again (docs/deploy.md)")
-    previous = read_record(layout)
-    conf_changes = sync(conf, layout.conf, previous.get("conf", {}), dry_run)
-    app_changes = sync(app, layout.atv_app, previous.get("atv_app", {}), dry_run)
-    tree = {path[len("metrics/"):]: blob for path, blob in files.items() if path.startswith("metrics/")}
-    exporter = {path: files[path] for path in metrics.EXPORTER_APP if path in files}
-    with_metrics = layout.with_metrics()
-    # A commit from before the metrics (rolling back past them) has neither: syncing its nothing would delete
-    # what the running services read, so they keep what the last deploy installed.
-    # Installed notification units must retain their program/config on a
-    # rollback to an older revision that has no notification stack.
-    notifications_installed = (layout.metrics / "notifications/catalog.json").is_file()
-    notifications_present = ("notifications/catalog.json" in tree and "alertmanager/alertmanager.yml" in tree
-                             and "ntfy/server.yml" in tree and metrics.EXPORTER_APP[1] in exporter)
-    kept = with_metrics and (not (tree and metrics.EXPORTER_APP[0] in exporter) or (notifications_installed and not notifications_present))
-    synced = with_metrics and not kept
-    metrics_changes = sync(tree, layout.metrics, previous.get("metrics", {}), dry_run) if synced else Changes()
-    exporter_changes = (sync(exporter, layout.exporter_app, previous.get("exporter_app", {}), dry_run)
-                        if synced else Changes())
-    record = {
-        "commit": commit,
-        "subject": title,
-        "deployed_at": _now(),
-        "by": getpass.getuser(),
-        "conf_digest": digest,
-        "boot_checked": boot_checked(var, digest),
-        "conf": {path: sha256(blob.data) for path, blob in conf.items()},
-        "atv_app": {path: sha256(blob.data) for path, blob in app.items()},
-    }
-    if application is not None:
-        record["application"] = application
-    if synced:
-        record["metrics"] = {path: sha256(blob.data) for path, blob in tree.items()}
-        record["exporter_app"] = {path: sha256(blob.data) for path, blob in exporter.items()}
-    elif kept:
-        record.update({key: previous[key] for key in ("metrics", "exporter_app") if key in previous})
-    reloads: list[str] = []
-    if not dry_run:
-        _replace(layout.record, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"), FILE_MODE)
-        entry = {key: record[key] for key in ("deployed_at", "commit", "by", "boot_checked")}
+    with ownership_handoff(layout, host, dry_run, bool(oh_logging.pairing_conf(conf))):
+        previous = read_record(layout)
+        conf_changes = sync(conf, layout.conf, previous.get("conf", {}), dry_run)
+        app_changes = sync(app, layout.atv_app, previous.get("atv_app", {}), dry_run)
+        tree = {path[len("metrics/"):]: blob for path, blob in files.items() if path.startswith("metrics/")}
+        exporter = {path: files[path] for path in metrics.EXPORTER_APP if path in files}
+        with_metrics = layout.with_metrics()
+        # A commit from before the metrics (rolling back past them) has neither: syncing its nothing would delete
+        # what the running services read, so they keep what the last deploy installed.
+        # Installed notification units must retain their program/config on a
+        # rollback to an older revision that has no notification stack.
+        notifications_installed = (layout.metrics / "notifications/catalog.json").is_file()
+        notifications_present = ("notifications/catalog.json" in tree and "alertmanager/alertmanager.yml" in tree
+                                 and "ntfy/server.yml" in tree and metrics.EXPORTER_APP[1] in exporter)
+        kept = with_metrics and (not (tree and metrics.EXPORTER_APP[0] in exporter) or (notifications_installed and not notifications_present))
+        synced = with_metrics and not kept
+        metrics_changes = sync(tree, layout.metrics, previous.get("metrics", {}), dry_run) if synced else Changes()
+        exporter_changes = (sync(exporter, layout.exporter_app, previous.get("exporter_app", {}), dry_run)
+                            if synced else Changes())
+        record = {
+            "commit": commit,
+            "subject": title,
+            "deployed_at": _now(),
+            "by": getpass.getuser(),
+            "conf_digest": digest,
+            "boot_checked": boot_checked(var, digest),
+            "conf": {path: sha256(blob.data) for path, blob in conf.items()},
+            "atv_app": {path: sha256(blob.data) for path, blob in app.items()},
+        }
         if application is not None:
-            entry["application"] = application
-        with open(layout.history, "a", encoding="utf-8") as log:
-            log.write(json.dumps({**entry, "how": how, "subject": record["subject"]}) + "\n")
-        if app_changes:
-            # A plain write: the path unit reacts to the file being closed.
-            with open(layout.atv_restart, "w", encoding="utf-8") as trigger:
-                trigger.write(f"{record['deployed_at']} {commit}\n")
+            record["application"] = application
         if synced:
-            reloads = apply_metrics(layout, host or {}, metrics_changes, exporter_changes, record, post or http_post)
-    return Deployed(commit, record["subject"], conf_changes, app_changes, record, dry_run, copied, with_metrics,
-                    metrics_changes, exporter_changes, reloads, kept)
+            record["metrics"] = {path: sha256(blob.data) for path, blob in tree.items()}
+            record["exporter_app"] = {path: sha256(blob.data) for path, blob in exporter.items()}
+        elif kept:
+            record.update({key: previous[key] for key in ("metrics", "exporter_app") if key in previous})
+        reloads: list[str] = []
+        if not dry_run:
+            _replace(layout.record, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"), FILE_MODE)
+            entry = {key: record[key] for key in ("deployed_at", "commit", "by", "boot_checked")}
+            if application is not None:
+                entry["application"] = application
+            _shared_write(layout.history, json.dumps({**entry, "how": how, "subject": record["subject"]}) + "\n", append=True)
+            if app_changes:
+                # A plain write: the path unit reacts to the file being closed.
+                _shared_write(layout.atv_restart, f"{record['deployed_at']} {commit}\n")
+            if synced:
+                reloads = apply_metrics(layout, host or {}, metrics_changes, exporter_changes, record, post or http_post)
+        return Deployed(commit, record["subject"], conf_changes, app_changes, record, dry_run, copied, with_metrics,
+                        metrics_changes, exporter_changes, reloads, kept)
 
 
 def _touched(changes: Changes) -> list[str]:
@@ -1005,8 +1190,7 @@ def apply_metrics(layout: State, host: dict, metrics_changes: Changes, exporter_
             said.append(f"{name} refused the reload (HTTP {status}) and keeps the old configuration: "
                         f"sudo journalctl -u {unit} says why")
     if metrics_restart_needed(metrics_changes, exporter_changes):
-        with open(layout.metrics_restart, "w", encoding="utf-8") as trigger:
-            trigger.write(f"{record['deployed_at']} {record['commit']}\n")
+        _shared_write(layout.metrics_restart, f"{record['deployed_at']} {record['commit']}\n")
         said.append(f"{Path(METRICS_RESTART_PATH).name} restarts {' and '.join(METRICS_RESTARTED)} "
                     f"({layout.metrics_restart})")
     return said

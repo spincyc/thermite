@@ -85,12 +85,20 @@ class Allocation(unittest.TestCase):
 
     def test_installer_sets_console_before_start_or_restart(self):
         host = oh_public.demo_host()
-        context = steps.Context(AREA, {}, host, "c" * 40, "d" * 64, "example", "192.0.2.5")
+        versions = json.loads((AREA / "versions.json").read_text())
+        context = steps.Context(AREA, versions, host, "c" * 40, "d" * 64, "example", "192.0.2.5")
         sequence = [type(step) for step in steps.install(context)]
-        self.assertLess(sequence.index(steps.PairingLogging), sequence.index(steps.NativeListeners))
-        self.assertLess(sequence.index(steps.NativeListeners), sequence.index(steps.Services))
-        configured = (f"sshPort = {oh_ports.KARAF_PORT}\nsshHost = 127.0.0.1\n").encode()
+        self.assertLess(sequence.index(steps.NativePreparation), sequence.index(steps.Deploy))
+        self.assertLess(sequence.index(steps.NativePreparation), sequence.index(steps.Services))
         system = mock.Mock()
+        system.unit.return_value.active = "inactive"
+        commands = [action.argv for action in steps.NativePreparation(context).actions(system)]
+        logging = next(i for i, argv in enumerate(commands) if any(word.endswith("/oh_logging.py") for word in argv))
+        listeners = next(i for i, argv in enumerate(commands) if any(word.endswith("/oh_ports.py") for word in argv))
+        receipt = next(i for i, argv in enumerate(commands) if "--receipt" in argv)
+        self.assertLess(logging, listeners)
+        self.assertLess(listeners, receipt)
+        configured = (f"sshPort = {oh_ports.KARAF_PORT}\nsshHost = 127.0.0.1\n").encode()
         system.read_bytes.return_value = configured
         self.assertTrue(steps.NativeListeners(context).check(system).done)
 

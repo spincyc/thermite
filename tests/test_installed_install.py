@@ -16,7 +16,7 @@ from oh_install import steps
 
 class InstalledInstall(unittest.TestCase):
     def setUp(self):
-        scratch = AREA / ".scratch/install-iso"; scratch.mkdir(parents=True, exist_ok=True)
+        scratch = AREA.parents[1] / ".scratch/service-access/installed"; scratch.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="installed-", dir=scratch)
         self.addCleanup(self.temporary.cleanup)
         self.site = Path(self.temporary.name) / "private site"
@@ -44,7 +44,7 @@ class InstalledInstall(unittest.TestCase):
         self.host.login.return_value = "owner"
         with patch.object(oh_paths, "PROGRAM", self.program):
             command = steps.Deploy(self.context).actions(self.host)[-1]
-            self.assertEqual(command.argv[:3], ("sg", "openhab", "-c"))
+            self.assertEqual(command.argv[:3], ("sg", "thermite", "-c"))
             self.assertEqual(tuple(shlex.split(command.argv[-1])), self.command("deploy"))
             self.host.which.return_value = None
             fallback = steps.Deploy(self.context).actions(self.host)[-1]
@@ -75,6 +75,7 @@ class InstalledInstall(unittest.TestCase):
         def compile_contract(house, asset_root, output): json_private(output, {"rooms": {}})
         with patch.object(oh_paths, "PROGRAM", self.program), patch.object(oh_paths, "SITE", self.site), \
                 patch.object(staging, "_disposable", return_value=False), \
+                patch.object(staging, "_service_parents"), \
                 patch.object(staging, "_state_location") as location, \
                 patch("oh_access.service.compile_contract", side_effect=compile_contract), \
                 patch("oh_access.service.load_config"), patch.object(staging.subprocess, "run") as run:

@@ -25,6 +25,9 @@ Then run:
 Install asks before root commands and for the native runtime API token.
 Runtime startup may download several container images. Keep this Git
 repository private. Configure Git's author identity if commit requests it.
+Install creates the non-login thermite user and group (UID/GID 9001) for
+application services and deployed data. Keep using your own account for the
+CLI and private Git; log out and back in for new group membership to apply.
 
 Before sharing the remote, complete authentication and HTTPS commissioning:
   thermite access --help

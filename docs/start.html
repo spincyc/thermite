@@ -41,6 +41,7 @@
 <h2 id="choose-where-to-run-it">Choose where to run it</h2>
 <table><thead><tr><th>Your setup</th><th>Installation path</th></tr></thead><tbody><tr><td>An existing Linux server</td><td><a href="installation.html">Install thermite on your server</a>. Keep your existing operating system and create a private site.</td></tr><tr><td>A dedicated machine</td><td><a href="iso.html">Build the standalone ISO</a>. Boot it to install the operating system and thermite on that machine.</td></tr></tbody></table>
 <p>Both paths use the same application, house file and remotes. The <a href="ports.html">ports guide</a> lists the network services and their exposure.</p>
+<p>You administer Thermite with your own login. Its application services and deployed data use the non-login <code>thermite:thermite</code> account, UID/GID 9001. The <a href="service-account.html">service account guide</a> covers permissions and upgrades from the old <code>openhab</code> account name.</p>
 <h2 id="try-the-example">Try the example</h2>
 <p>You can generate configuration and use the terminal remote in demo mode before connecting hardware. From a reviewed source checkout, with Python 3.11 or later, Git, Node.js and npm installed:</p>
 <pre><code class="language-sh">python3 -m venv ~/.venvs/thermite

@@ -147,6 +147,8 @@ async def observe(transport, cache, stop):
 
 
 def run(config_path, *, stop=None, interval=1, wall_clock=None):
+    from .files import require_service_account
+    require_service_account()
     from .service import configured
     from oh_identity.policy_store import Store
     from oh_identity.runtime import plain

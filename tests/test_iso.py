@@ -25,7 +25,7 @@ spec.loader.exec_module(bootstrap)
 
 class InstallerISO(unittest.TestCase):
     def setUp(self):
-        scratch = AREA / ".scratch/install-iso"
+        scratch = AREA.parents[1] / ".scratch/iso-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="test-", dir=scratch)
         self.root = Path(self.temporary.name)

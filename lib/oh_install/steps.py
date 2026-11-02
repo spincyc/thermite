@@ -5,13 +5,13 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
-import secrets
 import shlex
 import sys
 from pathlib import Path
 
 import oh_deploy as deploy
 import oh_logging
+import oh_service
 import oh_ports
 import oh_metrics as metrics
 from oh_install.model import Action, Check, Command, Step, Task
@@ -27,7 +27,8 @@ PACKAGES = {
 PODMAN = (4, 4)
 #: The Apple TV helper's pins have no wheels for anything else.
 MACHINE = "x86_64"
-NAME = "openhab"
+NAME = oh_service.ACCOUNT
+LEGACY_NAME = "openhab"
 PATH_UNIT = "openhab-atv-restart.path"
 METRICS_PATH_UNIT = Path(deploy.METRICS_RESTART_PATH).name
 #: The unit a changed file in deploy/ restarts; the restart service runs only
@@ -50,7 +51,7 @@ WAIT = 15 * 60
 POLL = 5
 #: How many pastes the token prompt takes before the install stops.
 PASTES = 3
-ACTIVE = ("active", "activating", "reloading")
+ACTIVE = ("active", "activating", "reloading", "deactivating")
 #: openHAB rebuilds these at its next start; a backup leaves them out.
 UNSAVED = ("userdata/cache", "userdata/tmp")
 #: Ends the name of a backup that holds Grafana's data, before .tar.gz.
@@ -139,6 +140,10 @@ class Preconditions(Step):
     def check(self, system: System) -> Check:
         host = self.context.host
         problems = []
+        try:
+            oh_service.validate_identity(host["uid"], host["gid"])
+        except oh_service.ServiceError as exc:
+            problems.append(str(exc))
         if system.machine() != MACHINE:
             problems.append(f"this is {system.machine()}; the Apple TV helper's pins need {MACHINE}")
         if not system.overlayfs():
@@ -146,10 +151,20 @@ class Preconditions(Step):
                             "from (it was upgraded since the last boot), and Podman needs it: reboot first")
         for key, by_id, by_name in (("gid", system.group(host["gid"]), system.group(NAME)),
                                     ("uid", system.user(host["uid"]), system.user(NAME))):
-            if by_id is not None and by_id.name != NAME:
+            if by_id is not None and by_id.name not in (NAME, LEGACY_NAME):
                 problems.append(f"{key} {host[key]} belongs to {by_id.name}, not {NAME}")
             if by_name is not None and getattr(by_name, key) != host[key]:
                 problems.append(f"{NAME} has {key} {getattr(by_name, key)}, not {host[key]}")
+            if by_id is not None and by_id.name == LEGACY_NAME and by_name is not None:
+                problems.append(f"both {LEGACY_NAME} and {NAME} occupy the configured {key}; resolve the accounts first")
+            legacy = system.group(LEGACY_NAME) if key == "gid" else system.user(LEGACY_NAME)
+            if legacy is not None and by_name is not None and getattr(legacy, key) == host[key] == getattr(by_name, key):
+                problems.append(f"both {LEGACY_NAME} and {NAME} use {key} {host[key]}; resolve the duplicate names first")
+            if by_name is None and legacy is not None and getattr(legacy, key) != host[key]:
+                problems.append(f"{LEGACY_NAME} has {key} {getattr(legacy, key)}, not {host[key]}; refusing to renumber it")
+        named = system.user(NAME) or system.user(LEGACY_NAME)
+        if named is not None and named.uid == host["uid"] and named.gid != host["gid"]:
+            problems.append(f"{named.name} has primary gid {named.gid}, not {host['gid']}")
         busy = busy_ports(self.context, system)
         if busy:
             problems.append(f"port {', '.join(map(str, busy))} in use (ss -ltnp shows by what)")
@@ -202,7 +217,7 @@ class Packages(Step):
 
 
 class Account(Step):
-    title = "The openhab user and group, with you in the group"
+    title = "The thermite user and group, with you in the group"
 
     def __init__(self, context: Context):
         self.context = context
@@ -215,6 +230,10 @@ class Account(Step):
             missing.append("group")
         if system.user(NAME) is None:
             missing.append("user")
+        service = system.user(NAME)
+        if service is not None and ((service.home is not None and service.home != str(self.context.layout.root))
+                                    or (service.shell is not None and not service.shell.endswith("/nologin"))):
+            missing.append("settings")
         if group is None or not (login in group.members or (me is not None and me.gid == group.gid)):
             missing.append("member")
         return missing
@@ -223,20 +242,45 @@ class Account(Step):
         missing = self.missing(system)
         host, login = self.context.host, system.login()
         words = {"group": f"group {NAME} ({host['gid']})", "user": f"user {NAME} ({host['uid']})",
-                 "member": f"{login} in group {NAME}"}
+                 "member": f"{login} in group {NAME}", "settings": "service home and nologin shell"}
         if missing:
-            return Check(False, "to create: " + ", ".join(words[m] for m in missing))
+            legacy = (("group" in missing and (group := system.group(LEGACY_NAME)) is not None and group.gid == host["gid"])
+                      or ("user" in missing and (user := system.user(LEGACY_NAME)) is not None and user.uid == host["uid"]))
+            return Check(False, ("rename the legacy account without changing IDs; " if legacy else "")
+                         + "to configure: " + ", ".join(words[m] for m in missing))
         return Check(True, f"{NAME} {host['uid']}:{host['gid']}, {login} a member")
 
     def actions(self, system: System) -> list[Action]:
         host, missing = self.context.host, self.missing(system)
         actions = []
+        legacy_group = system.group(LEGACY_NAME) if "group" in missing else None
+        legacy_user = system.user(LEGACY_NAME) if "user" in missing else None
+        if legacy_group is not None and legacy_group.gid != host["gid"]:
+            legacy_group = None
+        if legacy_user is not None and legacy_user.uid != host["uid"]:
+            legacy_user = None
+        if legacy_group is not None or legacy_user is not None:
+            # A login cannot be renamed while its service processes are alive.
+            # Stop only this stack's managed units; preserve data and numeric IDs.
+            paths = [name for name in Stop.PATHS if system.unit(name).active in ACTIVE]
+            if paths:
+                actions.append(Command(("systemctl", "stop", *paths), root=True))
+            running = [name for name in (*Stop.SERVICES, "thermite-access.service", "thermite-access-worker.service",
+                                         "thermite-access-callbacks.service") if system.unit(name).active in ACTIVE]
+            if running:
+                actions.append(Command(("systemctl", "stop", *running), root=True))
         if "group" in missing:
-            actions.append(Command(("groupadd", "-g", str(host["gid"]), NAME), root=True))
+            actions.append(Command(("groupmod", "-n", NAME, LEGACY_NAME) if legacy_group else
+                                   ("groupadd", "-g", str(host["gid"]), NAME), root=True))
         if "user" in missing:
             shell = system.which("nologin") or "/usr/bin/nologin"
-            actions.append(Command(("useradd", "-r", "-u", str(host["uid"]), "-g", str(host["gid"]),
-                                    "-d", str(self.context.layout.root), "-s", shell, NAME), root=True))
+            argv = (("usermod", "-l", NAME, "-d", str(self.context.layout.root), "-s", shell, LEGACY_NAME) if legacy_user else
+                    ("useradd", "-r", "-u", str(host["uid"]), "-g", str(host["gid"]),
+                     "-d", str(self.context.layout.root), "-s", shell, NAME))
+            actions.append(Command(argv, root=True))
+        elif "settings" in missing:
+            shell = system.which("nologin") or "/usr/bin/nologin"
+            actions.append(Command(("usermod", "-d", str(self.context.layout.root), "-s", shell, NAME), root=True))
         if "member" in missing:
             actions.append(Command(("usermod", "-aG", NAME, system.login()), root=True))
         return actions
@@ -247,6 +291,7 @@ class StateDirectories(Step):
 
     def __init__(self, context: Context):
         self.context = context
+        self.applied = False
 
     def directories(self) -> list[tuple[int, list[Path]]]:
         return self.context.layout.directories()
@@ -267,6 +312,8 @@ class StateDirectories(Step):
         if system.stat(root) is None:
             return Check(False, f"{root} does not exist")
         wrong = self.wrong(system)
+        if self.applied and self.context.host["gid"] not in system.process_groups():
+            return Check(True, f"service directories installed for {NAME}; log in again for group access")
         if wrong:
             return Check(False, "to create or fix: " + ", ".join(str(p.relative_to(root)) for _, p in wrong))
         count = sum(len(paths) for _, paths in self.directories())
@@ -285,6 +332,7 @@ class StateDirectories(Step):
         return actions + self.fix(system)
 
     def fix(self, system: System) -> list[Action]:
+        self.applied = True
         host = self.context.host
         by_mode: dict[int, list[Path]] = {}
         for mode, path in self.wrong(system):
@@ -302,6 +350,8 @@ class MetricsDirectories(StateDirectories):
     def check(self, system: System) -> Check:
         root = self.context.layout.root
         wrong = self.wrong(system)
+        if self.applied and self.context.host["gid"] not in system.process_groups():
+            return Check(True, f"metrics directories installed for {NAME}; log in again for group access")
         if wrong:
             return Check(False, "to create or fix: " + ", ".join(str(p.relative_to(root)) for _, p in wrong))
         return Check(True, f"{', '.join(str(p.relative_to(root)) for _, paths in self.directories() for p in paths)}, "
@@ -336,14 +386,18 @@ class NativeListeners(Step):
 
     def __init__(self, context: Context):
         self.context = context
+        self.applied = False
 
     def check(self, system: System) -> Check:
         data = system.read_bytes(self.context.layout.userdata / oh_ports.SHELL_CFG)
         if oh_ports.native_configured_bytes(data):
             return Check(True, f"Karaf listens on 127.0.0.1:{oh_ports.KARAF_PORT}")
+        if data is None and _opaque(system, self.context, self.context.layout.userdata / oh_ports.SHELL_CFG) and (self.applied or service_receipt(self.context, system)):
+            return Check(True, "native listener configuration verified under private service custody")
         return Check(False, f"set Karaf to 127.0.0.1:{oh_ports.KARAF_PORT} while openHAB is stopped")
 
     def actions(self, system: System) -> list[Action]:
+        self.applied = True
         from oh_paths import PROGRAM
         running = system.unit("openhab.service").active not in ("inactive", "failed", "unknown")
         actions: list[Action] = []
@@ -362,6 +416,7 @@ class PairingLogging(Step):
 
     def __init__(self, context: Context):
         self.context = context
+        self.applied = False
 
     @property
     def template(self) -> Path:
@@ -373,10 +428,13 @@ class PairingLogging(Step):
         selector = system.read_bytes(self.context.layout.userdata / oh_logging.SELECTOR)
         if data is not None and selector is not None and oh_logging.selected_default(selector) and oh_logging.protected(data):
             return Check(True, "native logger filters drop pairing command payloads")
+        if data is None and _opaque(system, self.context, self.context.layout.userdata / oh_logging.RELATIVE) and (self.applied or service_receipt(self.context, system)):
+            return Check(True, "pairing logging protection verified under private service custody")
         return Check(False, "install the pairing filter before deploying its Items; an existing service is stopped "
                             "and started so the filter is loaded before pairing is offered")
 
     def actions(self, system: System) -> list[Action]:
+        self.applied = True
         actions: list[Action] = []
         if system.stat(self.template / oh_logging.RELATIVE) is None:
             # A boot receipt can outlive a tidied runtime cache.
@@ -399,9 +457,12 @@ class Deploy(Step):
 
     def __init__(self, context: Context):
         self.context = context
+        self.applied = False
 
     def check(self, system: System) -> Check:
         head, layout = self.context.head, self.context.layout
+        if self.applied and _opaque(system, self.context, layout.record):
+            return Check(True, f"{head[:12]} deployed by the refreshed operator group")
         try:
             record = json.loads(system.read_bytes(layout.record) or b"{}")
         except ValueError:
@@ -417,6 +478,7 @@ class Deploy(Step):
         return Check(False, f"deployed: {commit[:12] if commit else 'nothing yet'}; HEAD is {head[:12]}")
 
     def actions(self, system: System) -> list[Action]:
+        self.applied = True
         from oh_paths import SITE_FILE
         installed = (self.context.area / SITE_FILE).is_file()
         argv = application(self.context, "deploy") if installed else ("make", "openhab-deploy")
@@ -516,6 +578,74 @@ class MetricsServices(Services):
     path_unit = METRICS_PATH_UNIT
 
 
+def _opaque(system: System, context: Context, path: Path) -> bool:
+    """Missing and hidden differ: a private service ancestor hides either one."""
+    if system.stat(path) is not None:
+        return False
+    me = system.user(system.login())
+    for parent in path.parents:
+        found = system.stat(parent)
+        if found is not None and found.is_dir and (found.uid, found.gid) == (context.host["uid"], context.host["gid"]):
+            bit = 0o100 if me is not None and me.uid == found.uid else 0o010 if found.gid in system.process_groups() else 0o001
+            if not found.mode & bit:
+                return True
+    return False
+
+
+def service_receipt(context: Context, system: System) -> bool:
+    path = context.layout.root / oh_service.RECEIPT
+    info = system.stat(path)
+    if info is None or info.is_dir or (info.uid, info.gid, info.mode) != (context.host["uid"], context.host["gid"], 0o660):
+        return False
+    try:
+        return json.loads(system.read_bytes(path) or b"null") == {
+            "version": oh_service.RECEIPT_VERSION, "policy": oh_service.POLICY,
+            "uid": context.host["uid"], "gid": context.host["gid"]}
+    except ValueError:
+        return False
+
+
+class NativePreparation(Step):
+    title = "Prepare stopped native userdata and service ownership as thermite"
+
+    def __init__(self, context: Context):
+        self.context = context
+        self.applied = False
+
+    def check(self, system: System) -> Check:
+        if self.applied:
+            return Check(True, "offline preparation, native guards and complete ownership repair succeeded")
+        start, restart, _ = Services(self.context).plan(system)
+        needed = (not service_receipt(self.context, system)
+                  or StateDirectories(self.context).wrong(system) or MetricsDirectories(self.context).wrong(system)
+                  or Account(self.context).missing(system)
+                  or "openhab.service" in (*start, *restart)
+                  or Units(self.context).stale(system, deploy.OPENHAB_UNITS)
+                  or not PairingLogging(self.context).check(system).done
+                  or not NativeListeners(self.context).check(system).done)
+        return Check(not needed, "service ownership and native preparation are recorded" if not needed else
+                     "stop every active native/metrics process and restart path, repair custody, prepare native userdata without root, then verify guards and repair final modes")
+
+    def actions(self, system: System) -> list[Action]:
+        from oh_paths import PROGRAM
+        self.applied = True
+        host, root = self.context.host, self.context.layout.root
+        paths = [name for name in Stop.PATHS if system.unit(name).active in ACTIVE]
+        running = [name for name in Stop.SERVICES if system.unit(name).active in ACTIVE]
+        helper = ("/usr/bin/python3", str(PROGRAM / "lib/oh_service.py"), str(root),
+                  "--uid", str(host["uid"]), "--gid", str(host["gid"]))
+        userdata = str(self.context.layout.userdata)
+        return [*([Command(("systemctl", "stop", *paths), root=True)] if paths else []),
+                *([Command(("systemctl", "stop", *running), root=True)] if running else []),
+                Command(helper, root=True),
+                Command(deploy.prepare_openhab_argv(self.context.versions, host), root=True),
+                Command(("python3", str(PROGRAM / "lib/oh_logging.py"), userdata, "--http-port", str(host["http_port"])), root=True),
+                Command(("python3", str(PROGRAM / "lib/oh_ports.py"), userdata, "--http-port", str(host["http_port"]),
+                         "--uid", str(host["uid"]), "--gid", str(host["gid"])), root=True),
+                Command((*helper, "--check-pairing-logging"), root=True),
+                Command((*helper, "--receipt"), root=True)]
+
+
 def _secret_wrong(system: System, context: Context, path: Path) -> str | None:
     """Why a file in the metrics secrets is not right, or None when it is."""
     host, found = context.host, system.stat(path)
@@ -527,22 +657,21 @@ def _secret_wrong(system: System, context: Context, path: Path) -> str | None:
 
 
 def _unseen(system: System, context: Context, path: Path) -> bool:
-    """Whether this login cannot see path at all: its directory is the
-    openhab group's alone, and usermod -aG puts the owner in that group only
-    at their next login."""
-    parent = system.stat(path.parent)
-    return (system.stat(path) is None and parent is not None and not parent.mode & 0o001
-            and context.host["gid"] not in system.process_groups())
+    """Whether private service custody makes existence opaque to the operator."""
+    return _opaque(system, context, path)
 
 
 #: What a secret step says of a file it installed but this login cannot see.
-UNSEEN = f"installed; this login, not in group {NAME} yet, cannot see it (the next one can)"
+UNSEEN = "verified by the administrative helper; private thermite service custody"
 
 
-def _install_secret(context: Context, source: Path, target: Path) -> Command:
+def _install_secret(context: Context, source: Path, target: Path, *, preserve=False) -> Command:
+    from oh_paths import PROGRAM
     host = context.host
-    return Command(("install", "-o", str(host["uid"]), "-g", str(host["gid"]), "-m", f"{deploy.SECRET_FILE_MODE:04o}",
-                    str(source), str(target)), root=True)
+    return Command(("python3", str(PROGRAM / "lib/oh_install/secrets.py"), str(context.layout.root),
+                    "--name", target.name, "--source", str(context.area / source),
+                    "--uid", str(host["uid"]), "--gid", str(host["gid"]),
+                    *(("--preserve-existing", "--generate-if-missing") if preserve else ())), root=True)
 
 
 class MetricsToken(Step):
@@ -581,7 +710,7 @@ class MetricsToken(Step):
         return Check(True, f"{self.target} holds the token in {self.context.token_file}")
 
     def actions(self, system: System) -> list[Action]:
-        self.unseen = _unseen(system, self.context, self.target)
+        self.unseen = True
         actions: list[Action] = []
         if not self.saved(system):
             token = Token(self.context)
@@ -617,22 +746,8 @@ class GrafanaPassword(Step):
         return Check(True, f"in {self.target}; the admin login is admin")
 
     def actions(self, system: System) -> list[Action]:
-        host = self.context.host
-        self.unseen = _unseen(system, self.context, self.target)
-        if system.stat(self.target) is not None:
-            return [Command(("chown", f"{host['uid']}:{host['gid']}", str(self.target)), root=True),
-                    Command(("chmod", f"{deploy.SECRET_FILE_MODE:04o}", str(self.target)), root=True)]
-        actions: list[Action] = []
-        copy = self.context.grafana_password_file
-        if not (system.read_bytes(self.context.area / copy) or b"").strip():
-            actions.append(Task(f"generate a random password into {copy} (mode 0600)", self.generate))
-        actions.append(_install_secret(self.context, copy, self.target))
-        return actions
-
-    def generate(self, system: System) -> int:
-        # No newline: Grafana takes the file's bytes as the password.
-        system.write_private(self.context.area / self.context.grafana_password_file, secrets.token_urlsafe(24))
-        return 0
+        self.unseen = True
+        return [_install_secret(self.context, self.context.grafana_password_file, self.target, preserve=True)]
 
 
 class MetricsAnswer(Step):
@@ -804,10 +919,11 @@ class Plan:
     installed_image: str | None
     pinned_image: str
     services: tuple[str, ...]
+    migration: tuple[str, ...] = ()
 
     @property
     def current(self) -> bool:
-        return not self.units and not self.services
+        return not self.units and not self.services and not self.migration
 
     def describe(self) -> str:
         parts = []
@@ -820,6 +936,8 @@ class Plan:
             parts.append(f"openHAB {self.pinned_version}, as pinned")
         if self.services:
             parts.append("not running on its installed unit: " + ", ".join(self.services))
+        if self.migration:
+            parts.append("to commission: " + ", ".join(self.migration))
         return "; ".join(parts)
 
 
@@ -840,8 +958,13 @@ def plan(context: Context, system: System) -> Plan:
     for step in (Services(context), MetricsServices(context)):
         start, restart, enable = step.plan(system)
         services += [*start, *restart, *([step.path_unit] if enable and step.path_unit not in start else [])]
+    migration = []
+    if not Preconditions(context).check(system).done or not Account(context).check(system).done:
+        migration.append("thermite account and group")
+    if not NativePreparation(context).check(system).done:
+        migration.append("service ownership and offline native preparation")
     return Plan(tuple(Units(context).stale(system)), deploy.unit_version(text), context.versions["openhab"]["version"],
-                deploy.unit_image(text), deploy.image(context.versions), tuple(services))
+                deploy.unit_image(text), deploy.image(context.versions), tuple(services), tuple(migration))
 
 
 class WhatChanges(Step):
@@ -910,7 +1033,7 @@ class Backup(Step):
         return None
 
     def check(self, system: System) -> Check:
-        if not Units(self.context).stale(system, deploy.OPENHAB_UNITS):
+        if not Units(self.context).stale(system, deploy.OPENHAB_UNITS) and NativePreparation(self.context).check(system).done:
             return Check(True, "openHAB's units are installed already, so nothing changes that a backup would undo")
         latest = self.latest(system)
         if latest:
@@ -933,10 +1056,14 @@ class Backup(Step):
         running = [name for name in self.stopped(self.grafana) if system.unit(name).active in ACTIVE]
         if running:
             actions.append(Command(("systemctl", "stop", *running), root=True))
-        if system.stat(backups) is None:
+        directory = system.stat(backups)
+        if directory is None or (directory.uid, directory.gid, directory.mode) != (host["uid"], host["gid"], 0o750):
             actions.append(Command(("install", "-d", "-o", str(host["uid"]), "-g", str(host["gid"]), "-m", "0750",
                                     str(backups)), root=True))
-        actions.append(Command(backup_argv(self.context.layout, self.file, self.grafana), root=True))
+        actions.append(Command(("sh", "-c", 'umask 077; exec "$@"', "thermite-backup",
+                                *backup_argv(self.context.layout, self.file, self.grafana)), root=True))
+        actions.extend([Command(("chown", f"{host['uid']}:{host['gid']}", str(self.file)), root=True),
+                        Command(("chmod", "0600", str(self.file)), root=True)])
         return actions
 
 
@@ -958,8 +1085,9 @@ def metrics_steps(context: Context, restart: bool = False) -> list[Step]:
 def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     """The upgrade's steps after its preconditions, in order. A host where
     openHAB runs without the metrics gets them here."""
-    return [WhatChanges(plan_), BootTest(context), Backup(context, stamp, plan_.installed_version),
-            MetricsDirectories(context), PairingLogging(context), NativeListeners(context), Units(context), Restart(context), Deploy(context), Answers(context),
+    return [WhatChanges(plan_), Preconditions(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
+            Account(context), StateDirectories(context), MetricsDirectories(context),
+            Units(context), NativePreparation(context), Deploy(context), Restart(context), Answers(context),
             *metrics_steps(context, restart=True), Verify(context)]
 
 
@@ -1055,5 +1183,5 @@ def uninstall(context: Context, purge: bool = False) -> list[Step]:
 def install(context: Context) -> list[Step]:
     """Every step, in order."""
     return [Preconditions(context), Packages(), Account(context), StateDirectories(context),
-            MetricsDirectories(context), BootTest(context), PairingLogging(context), NativeListeners(context), Deploy(context), Units(context), Services(context),
+            MetricsDirectories(context), BootTest(context), Units(context), NativePreparation(context), Deploy(context), Services(context),
             Answers(context), Token(context), *metrics_steps(context), Verify(context)]

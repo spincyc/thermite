@@ -76,6 +76,13 @@ creates `/opt/thermite/venv` without pip or network access, and adds the
 `thermite` command and login instructions. It does not partition disks or
 start runtime services.
 
+First-boot commissioning creates the non-login `thermite:thermite` service
+account, UID/GID 9001, and gives it the deployed runtime files. Your login
+continues to own the private site and run the CLI. The application container
+processes and native access services run under that service identity. The
+host's Podman backend and systemd manager remain root-managed. See
+[service ownership](service-account.md).
+
 ## First boot
 
 The login message points to `/opt/thermite/FIRST-BOOT.txt`. Run

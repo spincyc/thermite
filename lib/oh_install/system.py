@@ -34,6 +34,8 @@ class User:
     name: str
     uid: int
     gid: int
+    home: str | None = None
+    shell: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -109,11 +111,11 @@ class System:
             entry = pwd.getpwuid(key) if isinstance(key, int) else pwd.getpwnam(key)
         except KeyError:
             return None
-        return User(entry.pw_name, entry.pw_uid, entry.pw_gid)
+        return User(entry.pw_name, entry.pw_uid, entry.pw_gid, entry.pw_dir, entry.pw_shell)
 
     def stat(self, path: Path) -> Stat | None:
         """None when path is missing, or below a directory this user cannot
-        search (one of the openhab group's, before a login puts them in it)."""
+        search (one of the thermite group's, before a login puts them in it)."""
         try:
             found = os.stat(path)
         except (FileNotFoundError, NotADirectoryError, PermissionError):

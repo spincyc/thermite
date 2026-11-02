@@ -34,13 +34,14 @@ preconditions (deploy/ is what thermite generate writes, and this area is
 committed); what changes: each installed unit against deploy/, and the
 runtime image the installed unit runs against the pinned one (when nothing
 differs it says so and stops); the boot test of HEAD's conf/; when
-runtime's own units change, a backup, with runtime stopped, of the state's
+runtime's units or service ownership need preparation, a backup, with runtime stopped, of the state's
 conf, userdata and Grafana's data into
 <state>/backups/<UTC time>-openhab-<installed version>.tar.gz (without
 userdata/cache and userdata/tmp, which runtime rebuilds, and without
-Prometheus' samples); the metrics directories; the changed units and
-systemctl daemon-reload; the services whose units changed restarted; the
-deploy of HEAD, if it is not what is deployed; runtime answering; the API
+Prometheus' samples); the thermite account and group, preserving existing
+numeric IDs; state directories; changed units and systemctl daemon-reload;
+stopped native-state preparation and ownership repair; the deploy of HEAD;
+the services started on their installed units; runtime answering; the API
 token and Grafana's admin password installed for the metrics services,
 which are then (re)started; Prometheus with every target up and Grafana
 answering; and a read-only check (thermite health --production and

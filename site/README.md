@@ -34,6 +34,8 @@ The terminal remote uses the same controls and room model. Both screenshots show
 
 This checkout contains the application and a fictional example. Keep your real house configuration in a separate private site; `thermite init` creates one. Installing the application and commissioning a running house are separate steps.
 
+Application services run as the non-login user and group `thermite`, with UID/GID 9001. Your own account administers the private site and uses the remotes. [Service ownership and migration](https://spincyc.github.io/thermite/service-account.html) explains deployed file permissions and upgrades from the older account name.
+
 ## Explore
 
 - [Get started](https://spincyc.github.io/thermite/start.html): try the example, install, and connect your devices.

@@ -11,6 +11,8 @@ thermite runs on a Linux machine on your home network. Choose where it will live
 
 Both paths use the same application, house file and remotes. The [ports guide](ports.html) lists the network services and their exposure.
 
+You administer Thermite with your own login. Its application services and deployed data use the non-login `thermite:thermite` account, UID/GID 9001. The [service account guide](service-account.html) covers permissions and upgrades from the old `openhab` account name.
+
 ## Try the example
 
 You can generate configuration and use the terminal remote in demo mode before connecting hardware. From a reviewed source checkout, with Python 3.11 or later, Git, Node.js and npm installed:

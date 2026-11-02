@@ -705,12 +705,12 @@ Install thermite on this host, the one you run it on. Run
 it as your user, from a committed private site or a complete source checkout:
 it is safe to run again at any time. It finds this host&#x27;s name and address
 and your user as it runs; instance/host.yaml holds only what is the same on
-any host (the state root, the ports, the openhab ids, the time zone).
+any host (the state root, ports, service UID and GID, and time zone).
 
 Each step first checks whether it is done and skips it if so:
-preconditions, packages, the openhab user and group with you in it, the
-state directory and its directories, the boot check, the deploy of HEAD,
-the systemd units, the services, runtime answering, the API token, and a
+preconditions, packages, the thermite user and group with you in it, the
+state directories, the boot check, the systemd units, stopped native-state
+preparation and ownership repair, the deploy of HEAD, services, the API token, and a
 read-only check at the end. A command that needs root is shown before it
 runs, under sudo, and runs only if you answer y. After a no, a failure or
 Ctrl-C, run it again and it goes on from there.
@@ -747,13 +747,14 @@ preconditions (deploy/ is what thermite generate writes, and this area is
 committed); what changes: each installed unit against deploy/, and the
 runtime image the installed unit runs against the pinned one (when nothing
 differs it says so and stops); the boot test of HEAD&#x27;s conf/; when
-runtime&#x27;s own units change, a backup, with runtime stopped, of the state&#x27;s
+runtime&#x27;s units or service ownership need preparation, a backup, with runtime stopped, of the state&#x27;s
 conf, userdata and Grafana&#x27;s data into
 &lt;state&gt;/backups/&lt;UTC time&gt;-openhab-&lt;installed version&gt;.tar.gz (without
 userdata/cache and userdata/tmp, which runtime rebuilds, and without
-Prometheus&#x27; samples); the metrics directories; the changed units and
-systemctl daemon-reload; the services whose units changed restarted; the
-deploy of HEAD, if it is not what is deployed; runtime answering; the API
+Prometheus&#x27; samples); the thermite account and group, preserving existing
+numeric IDs; state directories; changed units and systemctl daemon-reload;
+stopped native-state preparation and ownership repair; the deploy of HEAD;
+the services started on their installed units; runtime answering; the API
 token and Grafana&#x27;s admin password installed for the metrics services,
 which are then (re)started; Prometheus with every target up and Grafana
 answering; and a read-only check (thermite health --production and
@@ -803,7 +804,7 @@ them from starting at the next boot.
 
 It keeps the state root (conf, userdata, secrets, the deploy records and
 backups, Prometheus&#x27; samples, Grafana&#x27;s data and the metrics secrets), the
-openhab user and group, the packages and the images, and says so: thermite
+thermite user and group, the packages and the images, and says so: thermite
 install puts runtime and the metrics back on the same state. --purge, as apt
 purge does, also deletes the state root; before that step it shows the path
 and asks you to type it, on top of the y before each sudo command.
@@ -833,7 +834,7 @@ examples:
 
 Production runtime runs on the host thermite install ran on, from its state
 directory (the host file&#x27;s state_root). Run this there. It installs one
-commit into the state, as you, without root:
+commit into the state from your operator account:
 
   - the commit&#x27;s conf/ into &lt;state&gt;/conf, which runtime reloads by itself
     (no restart);
@@ -858,8 +859,11 @@ clean working tree, and the commit&#x27;s conf/ must have passed thermite test
 boot on this host. It writes only what differs, deletes only files
 an earlier deploy installed, and leaves alone anything else in the state.
 
-You need to be in the openhab group. Changing the units themselves (an
-runtime upgrade, a new image) needs root, so thermite upgrade does it:
+You need to be in the thermite group. Before writing, it asks you to approve
+the exact privileged command that gives deployed files to thermite:thermite.
+New files inherit the service group and shared directories keep setgid.
+Changing the units themselves (a runtime upgrade or new image) needs root,
+so thermite upgrade does it:
 thermite status says when an installed unit differs from deploy/. To put
 back the commit deployed before, use thermite rollback.
 
@@ -888,8 +892,8 @@ examples:
 Put back an earlier commit&#x27;s conf/ and Apple TV helper, as helm rollback
 does: without COMMIT, the commit deployed before the one deployed now
 (thermite history lists them); with it, that commit. It deploys as
-thermite deploy does, as you, through the openhab group, and records a
-rollback in the history.
+thermite deploy does, as you, through the thermite group, with an explicit
+ownership handoff to thermite:thermite, and records a rollback in the history.
 
 A commit this host&#x27;s history holds ran here before, so it needs no fresh
 boot test. Any other commit needs thermite test boot to have passed on its
@@ -1542,6 +1546,7 @@ actions:
     bootstrap    initialize the first admin locally
     serve        serve one HTTPS site
     worker       run the single room-policy worker
+    verify       verify service custody without initializing state
     callbacks    run the explicitly configured plaintext UPnP NOTIFY listener
     login        log this terminal into a site
     logout       revoke this terminal&#x27;s site credential
@@ -1614,6 +1619,19 @@ switches every verb takes:
 examples:
   thermite access worker --config /srv/thermite/config.json
                                     run the single supervised room-policy worker
+</pre></details>
+<details id="access-verify"><summary><code>thermite access verify</code></summary><pre class="help">usage: thermite access verify [-h] --config CONFIG
+
+Verify service custody without initializing state.
+
+options:
+  -h, --help       show this help message and exit
+  --config CONFIG  private site service configuration
+
+switches every verb takes:
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
 </pre></details>
 <details id="access-callbacks"><summary><code>thermite access callbacks</code></summary><pre class="help">usage: thermite access callbacks [-h] --config CONFIG
 
@@ -1694,7 +1712,7 @@ examples:
                              --runtime-token-file RUNTIME_TOKEN_FILE --tls-cert TLS_CERT
                              --tls-key TLS_KEY --allowed-host ALLOWED_HOSTS
                              [--bind-host BIND_HOST] [--port PORT] [--timezone TIMEZONE]
-                             [--service-user USER] [--wheelhouse WHEELHOUSE]
+                             [--service-user {thermite}] [--wheelhouse WHEELHOUSE]
                              [--callbacks CALLBACKS] [--json]
 
 Prepare a persistent release and owner-installable units.
@@ -1708,14 +1726,17 @@ options:
   --assets ASSETS               complete deployed native conf/html/remote directory
   --runtime-url RUNTIME_URL     explicit native loopback HTTP origin
   --runtime-token-file RUNTIME_TOKEN_FILE
-                                service-owned mode0600 native bearer file
+                                operator-owned mode0600 native bearer input; copied for
+                                service handoff
   --tls-cert TLS_CERT           owner-managed TLS certificate chain
-  --tls-key TLS_KEY             service-owned mode0600 TLS private key
+  --tls-key TLS_KEY             operator-owned mode0600 TLS private key input; copied
+                                for service handoff
   --allowed-host ALLOWED_HOSTS  exact HTTP Host name (repeatable; no wildcard)
   --bind-host BIND_HOST         HTTPS listener address (default: all IPv4 interfaces)
   --port PORT                   unprivileged HTTPS port (default: 13600)
   --timezone TIMEZONE           site&#x27;s IANA timezone (default: UTC)
-  --service-user USER           existing unprivileged unit user (default: current user)
+  --service-user {thermite}     fixed service account (thermite); ownership handoff is
+                                reported explicitly
   --wheelhouse WHEELHOUSE       install pinned dependencies offline from this directory
   --callbacks CALLBACKS         optional private mode0600 exact callback map; stage a
                                 separate disabled listener unit

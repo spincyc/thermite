@@ -1,12 +1,40 @@
 """Owner-only bounded files and atomic replacement, shared by CLI and service."""
 
 import json
+import grp
 import os
 from pathlib import Path
+import pwd
 import secrets
 import stat
 
+from oh_service import ACCOUNT, GROUP, UID, GID
+
 from . import AccessError
+
+
+def service_identity(*, required=False):
+    """Resolve the fixed service account, while permitting an offline stage plan."""
+    try:
+        account = pwd.getpwnam(ACCOUNT)
+    except KeyError:
+        account = None
+    try:
+        group = grp.getgrnam(GROUP)
+    except KeyError:
+        group = None
+    if account is None and group is None and not required:
+        return UID, GID
+    if account is None or group is None or account.pw_uid == 0 or group.gr_gid == 0 or account.pw_gid != group.gr_gid:
+        raise AccessError("Create the thermite service account and matching primary group before commissioning")
+    return account.pw_uid, group.gr_gid
+
+
+def require_service_account():
+    uid, gid = service_identity(required=True)
+    if os.geteuid() != uid or os.getegid() != gid:
+        raise AccessError("Run this access service as user thermite and group thermite after the ownership handoff")
+    return uid, gid
 
 
 def private_directory(value):

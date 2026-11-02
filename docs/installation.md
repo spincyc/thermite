@@ -82,6 +82,13 @@ site; installs systemd Quadlets; starts services; and requests the runtime API
 token. It displays and asks before each root command. It can be rerun after a
 failure or a declined step. Do not run the whole CLI as root.
 
+Application services run as the non-login user and group `thermite`, UID/GID
+9001, and deployed files belong to that account. Your login keeps ownership
+of the private site, launcher and Git repository. The host's systemd manager
+and Podman backend remain root-managed. Existing installations retain their
+numeric IDs and data paths when the old `openhab` account is renamed; see
+[service ownership and migration](service-account.md).
+
 The native boot test downloads its pinned runtime and JRE; service startup
 pulls the pinned container images. This can take several minutes. Follow the
 runtime UI link printed by the installer to create its administrative login
@@ -109,17 +116,20 @@ browser and terminal client. Keep its private key in an owned mode-0600 file.
 A certificate from your existing local CA or public CA works; certificate
 issuance and DNS administration depend on your network.
 
-Run these commands as the same owner who installed the private site. Adjust
+Run these commands as the same owner who installed the private site, after
+logging back in for membership in group `thermite`. Adjust
 the hostname, certificate paths and native state directory to match your
 installation; `/srv/thermite` is the sample `state_root`:
 
 ```sh
 sudo apt-get install python3-venv
-ACCESS_ROOT="$HOME/.local/share/thermite/access"
+ACCESS_ROOT=/srv/thermite-access
 SITE_HOST=thermite.home.arpa
 RUNTIME_STATE=/srv/thermite
 TLS_CERT="$HOME/.config/thermite/tls/fullchain.pem"
 TLS_KEY="$HOME/.config/thermite/tls/key.pem"
+sudo install -d -o "$(id -un)" -g thermite -m 2770 \
+  "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
 thermite access stage \
   --destination "$ACCESS_ROOT/releases/first" \
   --state "$ACCESS_ROOT/state" \
@@ -128,17 +138,38 @@ thermite access stage \
   --runtime-token-file "$PWD/var/$(hostname -s)/api-token" \
   --tls-cert "$TLS_CERT" --tls-key "$TLS_KEY" \
   --allowed-host "$SITE_HOST" --port 13600 --timezone Etc/UTC
-"$ACCESS_ROOT/releases/first/env/bin/python" \
+```
+
+Keep the access root outside the native `state_root`, so runtime permission
+maintenance cannot change its operator-owned release parents. All parent
+directories must allow `thermite` to traverse them. The stage
+command rejects a release hidden behind a private home directory. It copies
+the program, generated assets and explicit TLS/token inputs into a new
+release, installs hash-pinned dependencies and writes units for
+`User=thermite` and `Group=thermite`. It starts no service and runs no
+privileged command.
+
+Review the stage output and run its `ownership_commands` in order. They name
+the finite release and new-state files to give to `thermite:thermite`, with
+directories and executables at 0700 and other files at 0600. Follow with the
+service-user verification and first administrator bootstrap:
+
+```sh
+sudo -u thermite -g thermite "$ACCESS_ROOT/releases/first/env/bin/python" \
+  "$ACCESS_ROOT/releases/first/program/bin/thermite" access verify \
+  --config "$ACCESS_ROOT/releases/first/config.json"
+sudo -u thermite -g thermite "$ACCESS_ROOT/releases/first/env/bin/python" \
   "$ACCESS_ROOT/releases/first/program/bin/thermite" access bootstrap \
   --config "$ACCESS_ROOT/releases/first/config.json" --user admin
 ```
 
-The stage command copies the program, private generated assets and explicit
-TLS/token inputs into a new persistent release. It installs hash-pinned
-service dependencies and writes systemd units without starting them.
 Bootstrap prompts privately for a new administrator password of at least
-12 characters. Run it only once for a new site. Keep the same `--state`
-directory across later releases to retain accounts, policies and locks.
+12 characters. Run it only once for a new site, under the service account;
+do not bootstrap an existing site again. Keep the same `--state` directory
+across later releases to retain accounts, policies and locks. For older access
+state inside a private home, follow the
+[one-time state move](service-account.md#move-existing-access-state) before
+staging the replacement. The native runtime's `state_root` stays in place.
 
 Before activation, close direct native HTTP, HTTPS, websocket and language
 server access from household clients, and turn off the runtime's implicit
@@ -158,12 +189,13 @@ configuration and activation checks; the
 [upstream security guide](https://www.openhab.org/docs/installation/security.html)
 explains native access settings.
 
-After resolving the activation requirements listed in
-`$ACCESS_ROOT/releases/first/stage.json`, install and enable its two units:
+After resolving the activation requirements printed by stage (also saved in
+the now service-owned `stage.json`), install and enable its two units as the
+host administrator:
 
 ```sh
-sudo install -m 0644 "$ACCESS_ROOT/releases/first/units/thermite-access.service" /etc/systemd/system/
-sudo install -m 0644 "$ACCESS_ROOT/releases/first/units/thermite-access-worker.service" /etc/systemd/system/
+sudo install -o root -g root -m 0644 "$ACCESS_ROOT/releases/first/units/thermite-access.service" /etc/systemd/system/
+sudo install -o root -g root -m 0644 "$ACCESS_ROOT/releases/first/units/thermite-access-worker.service" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now thermite-access.service thermite-access-worker.service
 thermite access login --url "https://$SITE_HOST:13600" --user admin

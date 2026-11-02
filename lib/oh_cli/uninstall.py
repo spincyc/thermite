@@ -28,7 +28,7 @@ them from starting at the next boot.
 
 It keeps the state root (conf, userdata, secrets, the deploy records and
 backups, Prometheus' samples, Grafana's data and the metrics secrets), the
-openhab user and group, the packages and the images, and says so: thermite
+thermite user and group, the packages and the images, and says so: thermite
 install puts runtime and the metrics back on the same state. --purge, as apt
 purge does, also deletes the state root; before that step it shows the path
 and asks you to type it, on top of the y before each sudo command.
@@ -47,7 +47,7 @@ EXAMPLES = (
 
 def kept(context: steps.Context, purge: bool) -> str:
     state = "" if purge else f"the state root, {context.layout.root} (thermite uninstall --purge deletes it); "
-    return (f"Kept: {state}the openhab user and group; the packages; the images (`sudo podman images` lists them, "
+    return (f"Kept: {state}the thermite user and group; the packages; the images (`sudo podman images` lists them, "
             "`sudo podman rmi IMAGE` deletes one); and this clone. thermite install installs runtime and the metrics "
             "again.")
 

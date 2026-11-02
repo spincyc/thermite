@@ -17,7 +17,7 @@ VAR = AREA / "var"
 DESCRIPTION = """\
 Production runtime runs on the host thermite install ran on, from its state
 directory (the host file's state_root). Run this there. It installs one
-commit into the state, as you, without root:
+commit into the state from your operator account:
 
   - the commit's conf/ into <state>/conf, which runtime reloads by itself
     (no restart);
@@ -42,8 +42,11 @@ clean working tree, and the commit's conf/ must have passed thermite test
 boot on this host. It writes only what differs, deletes only files
 an earlier deploy installed, and leaves alone anything else in the state.
 
-You need to be in the openhab group. Changing the units themselves (an
-runtime upgrade, a new image) needs root, so thermite upgrade does it:
+You need to be in the thermite group. Before writing, it asks you to approve
+the exact privileged command that gives deployed files to thermite:thermite.
+New files inherit the service group and shared directories keep setgid.
+Changing the units themselves (a runtime upgrade or new image) needs root,
+so thermite upgrade does it:
 thermite status says when an installed unit differs from deploy/. To put
 back the commit deployed before, use thermite rollback.
 """

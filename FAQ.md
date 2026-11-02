@@ -40,6 +40,10 @@ One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node
 
 They show the actual clients in demo mode with fictional inventory. The simulated controls send no commands to real devices. You can reproduce the images with the [capture recipe](https://spincyc.github.io/thermite/screenshots.html), or try the terminal with `thermite remote --mock`.
 
+### Which Linux account runs the services?
+
+The non-login account `thermite:thermite`, UID/GID 9001, runs all application services and owns their deployed data. You continue using your own login for the CLI, terminal remote, builds and private Git. The host's systemd manager and Podman backend remain root-managed. Existing installations migrate the older `openhab` account name while keeping the numeric IDs and data paths; see [service ownership](https://spincyc.github.io/thermite/service-account.html).
+
 ### Where does my house configuration belong?
 
 In a private site, separate from the installed application and the public repository. Keep real inventory, host settings and generated outputs in private Git; credentials and runtime state stay outside Git. `init` starts with fictional devices and activates no service. The [getting-started guide](https://spincyc.github.io/thermite/start.html) explains the boundary.

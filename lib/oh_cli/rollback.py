@@ -17,8 +17,8 @@ DESCRIPTION = """\
 Put back an earlier commit's conf/ and Apple TV helper, as helm rollback
 does: without COMMIT, the commit deployed before the one deployed now
 (thermite history lists them); with it, that commit. It deploys as
-thermite deploy does, as you, through the openhab group, and records a
-rollback in the history.
+thermite deploy does, as you, through the thermite group, with an explicit
+ownership handoff to thermite:thermite, and records a rollback in the history.
 
 A commit this host's history holds ran here before, so it needs no fresh
 boot test. Any other commit needs thermite test boot to have passed on its

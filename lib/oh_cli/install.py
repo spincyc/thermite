@@ -20,12 +20,12 @@ Install thermite on this host, the one you run it on. Run
 it as your user, from a committed private site or a complete source checkout:
 it is safe to run again at any time. It finds this host's name and address
 and your user as it runs; instance/host.yaml holds only what is the same on
-any host (the state root, the ports, the openhab ids, the time zone).
+any host (the state root, ports, service UID and GID, and time zone).
 
 Each step first checks whether it is done and skips it if so:
-preconditions, packages, the openhab user and group with you in it, the
-state directory and its directories, the boot check, the deploy of HEAD,
-the systemd units, the services, runtime answering, the API token, and a
+preconditions, packages, the thermite user and group with you in it, the
+state directories, the boot check, the systemd units, stopped native-state
+preparation and ownership repair, the deploy of HEAD, services, the API token, and a
 read-only check at the end. A command that needs root is shown before it
 runs, under sudo, and runs only if you answer y. After a no, a failure or
 Ctrl-C, run it again and it goes on from there.
@@ -80,5 +80,5 @@ def install(system: System, dry_run: bool) -> int:
                    f"{context.lan_url}/static/remote/. Pair the TVs, SHIELDs and Apple TVs at "
                    f"{context.lan_url}/static/remote/pair.html (docs/deploy.md).")
         if host["gid"] not in system.process_groups():
-            system.say("Log out and in again, so that your shell is in the openhab group for later deploys.")
+            system.say("Log out and in again, so that your shell is in the thermite group for later deploys.")
     return runner.run([verify], system, AREA, dry_run=dry_run, first=len(install) + 1) or code

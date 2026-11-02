@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 import oh_ports
 
 from . import AccessError
-from .files import json_private, private_directory, read_private
+from .files import json_private, private_directory, read_private, require_service_account
 
 CONFIG_FIELDS = {"version", "state", "contract_file", "runtime_url", "runtime_token_file", "allowed_hosts",
                  "bind_host", "port", "tls_cert", "tls_key", "timezone"}
@@ -118,6 +118,7 @@ def bootstrap(config_path, username, secret):
 
 
 def serve(config_path):
+    require_service_account()
     config, _, _ = configured(config_path)
     from oh_identity.models import User
     if not User.objects.filter(is_active=True, role__reserved=True, role__name="Admin").exists():

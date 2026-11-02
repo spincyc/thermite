@@ -47,6 +47,12 @@ Keep its configuration, manifest and generated outputs in private Git;
 `var/` and `build/` stay ignored. Production installation still requires a
 clean committed site and the native boot test.
 
+The private site and launcher stay owned by the operator. Installed
+application services use the non-login `thermite:thermite` account, UID/GID
+9001, and their deployed configuration and state belong to that account.
+The installer sets up trusted operator group access; see
+[service ownership and migration](service-account.md).
+
 ## Update and roll back
 
 A site's manifest pins an application version and the exact release digest.

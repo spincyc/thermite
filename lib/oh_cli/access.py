@@ -37,8 +37,8 @@ def hidden_password(prompt="Password: ", *, confirm=False):
 def main(argv=None):
     parser = oh_cli.command("access", DESCRIPTION, EXAMPLES)
     commands = oh_cli.actions(parser)
-    for name in ("bootstrap", "serve", "worker"):
-        sub = oh_cli.action(commands, name, {"bootstrap": "initialize the first admin locally", "serve": "serve one HTTPS site", "worker": "run the single room-policy worker"}[name], examples=[example for example in EXAMPLES if " " + name + " " in example[0]])
+    for name in ("bootstrap", "serve", "worker", "verify"):
+        sub = oh_cli.action(commands, name, {"bootstrap": "initialize the first admin locally", "serve": "serve one HTTPS site", "worker": "run the single room-policy worker", "verify": "verify service custody without initializing state"}[name], examples=[example for example in EXAMPLES if " " + name + " " in example[0]])
         sub.add_argument("--config", required=True, type=Path, help="private site service configuration")
         if name == "bootstrap":
             sub.add_argument("--user", required=True, help="first admin's username")
@@ -59,14 +59,14 @@ def main(argv=None):
     oh_cli.add_house(sub)
     sub.add_argument("--assets", required=True, type=Path, help="complete deployed native conf/html/remote directory")
     sub.add_argument("--runtime-url", required=True, help="explicit native loopback HTTP origin")
-    sub.add_argument("--runtime-token-file", required=True, type=Path, help="service-owned mode0600 native bearer file")
+    sub.add_argument("--runtime-token-file", required=True, type=Path, help="operator-owned mode0600 native bearer input; copied for service handoff")
     sub.add_argument("--tls-cert", required=True, type=Path, help="owner-managed TLS certificate chain")
-    sub.add_argument("--tls-key", required=True, type=Path, help="service-owned mode0600 TLS private key")
+    sub.add_argument("--tls-key", required=True, type=Path, help="operator-owned mode0600 TLS private key input; copied for service handoff")
     sub.add_argument("--allowed-host", required=True, action="append", dest="allowed_hosts", help="exact HTTP Host name (repeatable; no wildcard)")
     sub.add_argument("--bind-host", default="0.0.0.0", help="HTTPS listener address (default: all IPv4 interfaces)")
     sub.add_argument("--port", type=int, default=oh_ports.ACCESS_PORT, help=f"unprivileged HTTPS port (default: {oh_ports.ACCESS_PORT})")
     sub.add_argument("--timezone", default="UTC", help="site's IANA timezone (default: UTC)")
-    sub.add_argument("--service-user", dest="user", help="existing unprivileged unit user (default: current user)")
+    sub.add_argument("--service-user", dest="user", choices=("thermite",), default="thermite", help="fixed service account (thermite); ownership handoff is reported explicitly")
     sub.add_argument("--wheelhouse", type=Path, help="install pinned dependencies offline from this directory")
     sub.add_argument("--callbacks", type=Path, help="optional private mode0600 exact callback map; stage a separate disabled listener unit")
     oh_cli.add_json(sub)
@@ -81,8 +81,13 @@ def main(argv=None):
             else:
                 result = client.status(args.url, rooms=args.room)
         elif args.command == "bootstrap":
+            from oh_access.files import require_service_account
+            require_service_account()
             from oh_access.service import bootstrap
             result = bootstrap(args.config, args.user, hidden_password("First admin password: ", confirm=True))
+        elif args.command == "verify":
+            from oh_access.staging import verify
+            result = verify(args.config)
         elif args.command == "serve":
             from oh_access.service import serve
             serve(args.config)

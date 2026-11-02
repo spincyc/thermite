@@ -12,7 +12,7 @@ import oh_ports
 
 from . import AccessError
 from .callbacks import CallbackRelay, MAX_HEADER_BYTES
-from .files import read_private
+from .files import read_private, require_service_account
 
 FIELDS = {"version", "routes", "upstream", "hosts", "bind_host", "port"}
 CONNECTIONS = 32
@@ -82,6 +82,7 @@ def header_protocol():
 
 def serve(config_path):
     """Owner invokes separately; no TLS/auth proxy or general HTTP forwarding."""
+    require_service_account()
     config = load_config(config_path)
     application = CallbackRelay(config["routes"], config["upstream"], config["hosts"])
     import uvicorn

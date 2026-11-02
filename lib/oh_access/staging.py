@@ -1,21 +1,20 @@
 """Build a private persistent release and owner-installable units; never activate."""
 
-import getpass
-import json
 import os
+import json
 from pathlib import Path
-import re
-import pwd
 import shutil
+import stat
 import subprocess
-import sys
 import venv
 from urllib.parse import urlsplit
 
 import oh_ports
+from oh_service import ACCOUNT, GROUP
 
 from . import AccessError
-from .files import atomic_private, json_private, private_directory, read_private
+from .files import (atomic_private, json_private, private_directory, read_private,
+                    require_service_account, service_identity)
 
 
 def systemd(value):
@@ -25,11 +24,11 @@ def systemd(value):
     return '"' + text.replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def units(destination, user, *, state, callbacks=False):
+def units(destination, user=ACCOUNT, *, state, callbacks=False):
     root = Path(destination).absolute()
     state = _absolute(state)
-    if not re.fullmatch(r"[a-z_][a-z0-9_-]*", user) or user == "root":
-        raise AccessError("Choose an existing unprivileged service user")
+    if user != ACCOUNT:
+        raise AccessError("Access services require user thermite and group thermite")
     command = [root / "env/bin/python", root / "program/bin/thermite", "access"]
     result = {}
     for name in (("serve", "worker", "callbacks") if callbacks else ("serve", "worker")):
@@ -39,7 +38,7 @@ def units(destination, user, *, state, callbacks=False):
         result["thermite-access" + suffix + ".service"] = (
             "[Unit]\nDescription=thermite " + {"worker": "room policy worker", "serve": "authenticated site", "callbacks": "verified UPnP callback ingress"}[name] +
             "\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=" + user +
-            "\nUMask=0077\nWorkingDirectory=" + systemd(root) +
+            "\nGroup=" + GROUP + "\nUMask=0077\nWorkingDirectory=" + systemd(root) +
             "\nExecStart=" + " ".join(systemd(x) for x in [*command, name, "--config", root / config_name]) +
             "\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only" + writable +
             "\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy=multi-user.target\n")
@@ -68,8 +67,121 @@ def _state_location(state, target, area):
     if _disposable(state) or any(_overlap(state, root) for root in (target, *roots)):
         raise AccessError("Persistent state must be separate from releases, source checkouts and disposable workspaces")
     for ancestor in (state, *state.parents):
-        if (ancestor / "stage.json").exists() or ((ancestor / "program").is_dir() and (ancestor / "config.json").exists()):
-            raise AccessError("Persistent state must not be inside an existing release")
+        try:
+            if (ancestor / "stage.json").exists() or ((ancestor / "program").is_dir() and (ancestor / "config.json").exists()):
+                raise AccessError("Persistent state must not be inside an existing release")
+        except PermissionError:
+            # A correctly private service-owned state root is opaque to the
+            # staging operator. Its mode and owner are checked separately.
+            if ancestor != state:
+                raise AccessError("Cannot inspect persistent state parents") from None
+
+
+def _no_symlinks(path):
+    for parent in [*reversed(path.parents), path]:
+        if parent.is_symlink():
+            raise AccessError("Service paths must not contain symlinks")
+
+
+def _service_parents(target, state, uid, gid):
+    """Refuse releases hidden behind an operator's private HOME or other parent."""
+    for path in {target.parent, state.parent}:
+        _no_symlinks(path)
+        if not path.is_dir():
+            raise AccessError("Prepare existing service-accessible release and state parents before staging")
+        for parent in [path, *path.parents]:
+            info = parent.stat()
+            bit = stat.S_IXUSR if info.st_uid == uid else stat.S_IXGRP if info.st_gid == gid else stat.S_IXOTH
+            if not info.st_mode & bit:
+                raise AccessError("Service parents must permit thermite traversal; use a prepared persistent location such as /srv/thermite-access")
+
+
+def _state_directory(state, uid, gid):
+    """Inspect only the state root: an upgrade must not open private authority."""
+    _no_symlinks(state)
+    if not state.exists():
+        private_directory(state)
+        return
+    info = state.stat()
+    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700 or info.st_uid not in {os.geteuid(), uid}:
+        raise AccessError("Persistent state must be mode 0700 and owned by the operator or thermite")
+    if info.st_uid == uid and info.st_gid != gid:
+        raise AccessError("Existing thermite state must also belong to group thermite")
+
+
+def _inventory(root, *, release=False):
+    """Finite custody inventory; never follow links or walk existing service state."""
+    result = []
+    pending = [root]
+    device = root.lstat().st_dev
+    while pending:
+        path = pending.pop()
+        info = path.lstat()
+        if info.st_dev != device:
+            raise AccessError("Private service trees must not cross filesystem mounts")
+        if stat.S_ISDIR(info.st_mode):
+            result.append((path, 0o700))
+            pending.extend(sorted(path.iterdir(), reverse=True))
+        elif stat.S_ISREG(info.st_mode):
+            if info.st_nlink != 1:
+                raise AccessError("Service custody must not change files linked outside their private tree")
+            executable = release and path.relative_to(root).parts[0] in {"program", "env"} and info.st_mode & 0o111
+            result.append((path, 0o700 if executable else 0o600))
+        elif stat.S_ISLNK(info.st_mode) and release and root / "env" in path.parents and (root / "env") in path.resolve().parents:
+            # venv's lib64 -> lib is the only usual link. It may not escape env.
+            result.append((path, None))
+        else:
+            raise AccessError("Private service trees must contain only regular files, directories and internal environment links")
+    return result
+
+
+def _batches(paths, maximum=16000):
+    batch, length = [], 0
+    for path in paths:
+        text = str(path)
+        if batch and length + len(text) > maximum:
+            yield batch
+            batch, length = [], 0
+        batch.append(text)
+        length += len(text) + 1
+    if batch:
+        yield batch
+
+
+def _handoff(inventory):
+    commands = []
+    for mode in (0o600, 0o700):
+        for batch in _batches(path for path, wanted in inventory if wanted == mode):
+            commands.append(["sudo", "chmod", format(mode, "04o"), "--", *batch])
+    # The root is handed over last; no command relies on operator traversal later.
+    for batch in _batches(path for path, _ in reversed(inventory)):
+        commands.append(["sudo", "chown", "--no-dereference", ACCOUNT + ":" + GROUP, "--", *batch])
+    return commands
+
+
+def verify(config_path):
+    """Read-only commissioning check, run under the same identity as the units."""
+    from .service import load_config
+    uid, gid = require_service_account()
+    config_path = _absolute(config_path)
+    try:
+        state = Path(json.loads(read_private(config_path, 65536))["state"])
+        if not state.is_absolute() or not state.is_dir():
+            raise ValueError()
+    except (ValueError, KeyError, TypeError):
+        raise AccessError("Custody verification requires an existing persistent state directory") from None
+    config = load_config(config_path)
+    target, state = config_path.parent, Path(config["state"])
+    _service_parents(target, state, uid, gid)
+    count = 0
+    for inventory in (_inventory(target, release=True), _inventory(state)):
+        for path, mode in inventory:
+            info = path.lstat()
+            if info.st_uid != uid or info.st_gid != gid or mode is not None and stat.S_IMODE(info.st_mode) != mode:
+                raise AccessError("Access custody verification failed: every private path must belong to thermite:thermite with private modes")
+            count += 1
+    return {"verified": True, "user": ACCOUNT, "group": GROUP, "paths": count,
+            "destination": str(target), "persistent_state": str(state)}
 
 
 def stage(destination, *, state, house, assets, runtime_url, runtime_token_file, tls_cert, tls_key,
@@ -93,10 +205,11 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     if _disposable(target):
         raise AccessError("Services must not point into a disposable workspace")
     _state_location(state, target, area)
-    current_user = pwd.getpwuid(os.geteuid()).pw_name
-    user = user or current_user
-    if user != current_user:
-        raise AccessError("Stage as the unprivileged unit user so private file ownership is correct")
+    user = user or ACCOUNT
+    if user != ACCOUNT:
+        raise AccessError("Access services require user thermite and group thermite")
+    uid, gid = service_identity()
+    _service_parents(target, state, uid, gid)
     callback_config = None
     if callbacks is not None:
         from .callback_service import load_config as load_callbacks
@@ -110,7 +223,7 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     generated_units = units(target, user, state=state, callbacks=callback_config is not None)
     # Validate/create only the owned directory. Staging never initializes keys,
     # changes site identity, opens SQLite, migrates schemas or takes worker locks.
-    private_directory(state)
+    _state_directory(state, uid, gid)
     private_directory(target)
     private_directory(target / "secrets")
     private_directory(target / "units")
@@ -141,7 +254,17 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
               "allowed_hosts": allowed_hosts, "bind_host": bind_host, "port": port, "timezone": timezone,
               "tls_cert": str(target / "secrets/tls-cert.pem"), "tls_key": str(target / "secrets/tls-key.pem")}
     json_private(target / "config.json", config)
-    load_config(target / "config.json")
+    # Runtime loading deliberately requires current-user custody. Validate this
+    # release's inputs against an empty operator-owned temporary root, so staging
+    # an upgrade never reads or changes the service-owned persistent state.
+    validation_state = private_directory(target / ".validation-state")
+    validation_config = target / ".validation-config.json"
+    try:
+        json_private(validation_config, {**config, "state": str(validation_state)})
+        load_config(validation_config)
+    finally:
+        validation_config.unlink(missing_ok=True)
+        validation_state.rmdir()
     if install_environment:
         venv.EnvBuilder(with_pip=True).create(target / "env")
         argv = [str(target / "env/bin/python"), "-m", "pip", "install", "--require-hashes",
@@ -154,7 +277,7 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     for name, source in generated_units.items():
         atomic_private(target / "units" / name, source.encode())
     requirements = [
-        "Bootstrap the first admin locally only for a genuinely new site; reuse this persistent state for upgrades and never bootstrap an existing site again.",
+        "Complete and verify the explicit thermite:thermite ownership handoff before bootstrap or activation. Bootstrap as thermite only for a genuinely new site; reuse persistent state for upgrades and never bootstrap an existing site again.",
         "Install and trust an owner-managed TLS certificate for each client; never disable certificate validation.",
         "Seal every native HTTP/HTTPS/websocket/alternate-UI listener before exposing this as the security boundary.",
         "Disable implicit native user roles and trusted-network authentication grants.",
@@ -167,8 +290,21 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
                "destination": str(target), "persistent_state": str(state), "config": str(target / "config.json"), "units": list(generated_units),
                "environment_installed": install_environment, "activation_requirements": requirements,
                "callbacks_staged": callback_config is not None, "callbacks_activated": False,
-               "owner_commands": [["sudo", "install", "-m", "0644", str(target / "units" / name), "/etc/systemd/system/" + name] for name in generated_units] +
-                                 [["sudo", "systemctl", "daemon-reload"],
-                                  ["sudo", "systemctl", "enable", "--now", *generated_units]]}
+               "service_user": ACCOUNT, "service_group": GROUP}
+    command = ["sudo", "-u", ACCOUNT, "-g", GROUP, str(target / "env/bin/python"),
+               str(target / "program/bin/thermite"), "access"]
+    receipt["verification_command"] = [*command, "verify", "--config", str(target / "config.json")]
+    receipt["bootstrap_command"] = [*command, "bootstrap", "--config", str(target / "config.json"), "--user", "<admin-user>"]
+    receipt["activation_commands"] = [["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(target / "units" / name), "/etc/systemd/system/" + name] for name in generated_units] + [
+        ["sudo", "systemctl", "daemon-reload"], ["sudo", "systemctl", "enable", "--now", *generated_units]]
+    json_private(target / "stage.json", {})
+    release_inventory = _inventory(target, release=True)
+    for path, mode in release_inventory:
+        if mode is not None:
+            path.chmod(mode)
+    state_inventory = _inventory(state) if state.stat().st_uid == os.geteuid() else []
+    receipt["ownership_commands"] = [["getent", "passwd", ACCOUNT], ["getent", "group", GROUP], ["id", ACCOUNT],
+                                     *_handoff([*release_inventory, *state_inventory])]
+    receipt["owner_commands"] = [*receipt["ownership_commands"], receipt["verification_command"], *receipt["activation_commands"]]
     json_private(target / "stage.json", receipt)
     return receipt
