@@ -14,6 +14,19 @@ Each module owns everything about its integration and provides:
     render(device, house, out)
               adds one device's Things and Items to out (an oh_conf.YamlFile)
 
+Optional provider hooks preserve dormant integrations and validate gateways:
+
+    NEEDS_IP = False
+              its endpoint is an explicit transport rather than the target
+              device; all ordinary providers still require the device IP
+    addons(devices) -> Addon sequence
+              conditional add-ons; otherwise static ADDONS is unchanged
+    validate_house(data) -> list[str]
+              cross-device wiring/dependency validation before rendering
+    transport_addresses(device) -> {exactThingUID: [IPv4, ...]}
+              validated endpoint authority for that provider's own Things
+              only; unrelated Things retain their inventory address checks
+
 A module that switches a matrix also provides
 
     ports(device) -> (inputs, outputs)
@@ -92,13 +105,13 @@ integrations, not integrations.
 
 from __future__ import annotations
 
-from . import (androidtv_googletv, avpro_telnet, bk808_http, cast, denonmarantz_http, drhdmi_http, network_ping, pyatv_http, sonos,
+from . import (androidtv_googletv, avpro_telnet, bk808_cec, bk808_http, cast, denonmarantz_http, drhdmi_http, globalcache_ir, heos, network_ping, pyatv_http, sonos,
                sony_adcp, sony_ip_control, sony_rest, ukm404_http, unifi_protect, vrroom_http, wiim_http)
 
 #: Implemented integrations, in render order; a room page lists each device's
 #: points in this order.
-REGISTRY = (network_ping, sony_rest, sony_ip_control, cast, androidtv_googletv, pyatv_http, sonos, denonmarantz_http,
-            wiim_http, sony_adcp, bk808_http, ukm404_http, vrroom_http, avpro_telnet, unifi_protect, drhdmi_http)
+REGISTRY = (network_ping, sony_rest, sony_ip_control, cast, androidtv_googletv, pyatv_http, sonos, denonmarantz_http, heos,
+            wiim_http, sony_adcp, bk808_http, ukm404_http, vrroom_http, avpro_telnet, unifi_protect, drhdmi_http, globalcache_ir, bk808_cec)
 
 PHASES = ("observe", "control")
 
@@ -109,8 +122,7 @@ PLANNED = {
     "observe": frozenset(),
     "control": frozenset({
         "androidtv_shieldtv",
-        "heos",
-        "adb", "ir", "telnet",
+        "adb", "telnet",
         # A contact closure from a relay module (such as a Global Caché
         # iTach IP2CC) replacing a Control4 controller's relay port.
         "relay",

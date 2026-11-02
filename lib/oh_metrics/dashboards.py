@@ -71,7 +71,8 @@ KIND_GROUPS = (
 )
 #: The units the Host dashboard shows.
 UNITS = ("openhab.service", "openhab-atv.service", "openhab-prometheus.service", "openhab-node-exporter.service",
-         "openhab-blackbox.service", "openhab-metrics-exporter.service", "openhab-grafana.service")
+         "openhab-blackbox.service", "openhab-metrics-exporter.service", "openhab-grafana.service",
+         "openhab-alertmanager.service", "openhab-notifications.service", "openhab-ntfy.service")
 
 SWITCH_POINTS = ("power", "mute", "reachable")
 NUMBER_POINTS = ("volume", "input", "routing", "edid")

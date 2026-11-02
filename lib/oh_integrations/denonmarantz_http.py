@@ -352,7 +352,7 @@ def remote(device: dict) -> dict | None:
     if not uses(device, "control", NAME):
         return None
     ident = device["id"]
-    return {
+    control = {
         "key": f"{ident}_key",
         "power": f"{ident}_main_power",
         "mute": f"{ident}_main_mute",
@@ -363,6 +363,26 @@ def remote(device: dict) -> dict | None:
                                  "relative": {"unit": "dB", "offset": DB_OFFSET, "minimum": "---.- dB"}}}},
         "input": {"item": f"{ident}_main_input", "options": [list(pair) for pair in inputs(device)]},
     }
+    from . import heos
+    if heos.enabled(device):
+        control["playback"] = {"item": heos.playback_item(device), "label": "HEOS playback"}
+    return control
+
+
+def command_keys(device: dict) -> dict[str, str]:
+    """Composed remote capabilities; KEYS remains the receiver's wire map.
+
+    HEOS consumes its own finite transport keys on the shared command Item.
+    Site authority must include those keys when that provider is configured.
+    """
+    from . import heos
+    return {**KEYS, **(heos.KEYS if heos.enabled(device) else {})}
+
+
+def remote_of(device: dict) -> str:
+    """Keep legacy receivers' controls unchanged when HEOS is not commissioned."""
+    from . import heos
+    return "marantz_heos" if heos.enabled(device) else "marantz_avr"
 
 
 def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:

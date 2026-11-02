@@ -332,12 +332,18 @@
       const id = element.getAttribute("data-button");
       const label = session.spec(id).label;
       const to = session.drives(id, target);
-      element.setAttribute("aria-label", label + ". " + to);
-      element.setAttribute("title", label + " → " + to);
+      const available = session.canPress(id, target);
+      const note = !available && target && target.availability ? target.availability.note : "";
+      element.disabled = !available;
+      // Permission restoration must restore the current profile availability.
+      if (element.hasAttribute("data-policy-disabled")) element.dataset.policyDisabled = String(!available);
+      element.setAttribute("aria-label", label + ". " + to + (note ? ". " + note : ""));
+      element.setAttribute("title", note || label + " → " + to);
     });
     $("[data-caption=audio]").textContent = audio ? audio.short : "No audio";
     all("[data-caption=channel]").forEach((caption) => { caption.textContent = target ? target.short : ""; });
-    $("[data-caption=source]").textContent = remote && !remote.note ? target.label + " · " + remote.label : "";
+    $("[data-caption=source]").textContent = remote && !remote.note ? target.label + " · " + remote.label
+      + (target.availability ? " · " + target.availability.note : "") : "";
     $("#remote").setAttribute("data-audio", audio ? "live" : "idle");
   }
 

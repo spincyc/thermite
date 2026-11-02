@@ -25,7 +25,8 @@ from . import remote_activity, remote_cameras, remote_diagnostics, remote_topolo
 
 NAME = "remote"
 SOURCE = LIB.parent / "web/remote"
-INSTANCE = LIB.parent / "instance"
+from oh_paths import SITE
+INSTANCE = SITE / "instance"
 TARGET = "html/remote"
 #: Every file the page loads; README.md stays behind.
 FILES = ("index.html", "theme.css", "remote.css", "house.js", "remotes.js", "activity.js", "activity.json", "diagnostics.js", "diagnostics.json", "backend.js", "session.js", "log.js", "remote.js",

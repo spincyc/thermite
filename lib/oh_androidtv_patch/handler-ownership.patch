@@ -1,0 +1,15 @@
+--- a/AndroidTVHandler.java
++++ b/AndroidTVHandler.java
+@@ -272 +272 @@
+-                    googletvConnectionManager = null;
++                    this.googletvConnectionManager = null;
+@@ -273,0 +274,3 @@
++                    if (googletvConnectionManager != null) {
++                        googletvConnectionManager.dispose();
++                    }
+@@ -275 +278 @@
+-                    googletvConnectionManager = new GoogleTVConnectionManager(this, googletvConfig);
++                    this.googletvConnectionManager = new GoogleTVConnectionManager(this, googletvConfig);
+@@ -279 +282 @@
+-                    googletvConnectionManager = new GoogleTVConnectionManager(this, googletvConfig);
++                    this.googletvConnectionManager = new GoogleTVConnectionManager(this, googletvConfig);

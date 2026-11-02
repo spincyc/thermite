@@ -166,13 +166,22 @@
     if (!known) return { id: id, label: id, short: id, kind: "", model: "", remote: null };
     return {
       id: id, label: known.label, short: known.short || known.label, kind: known.kind, model: known.model || "",
-      remote: known.remote || null
+      remote: known.remote || null, availability: known.availability || null
     };
   }
 
   function layouts() {
     if (!global.REMOTE_LAYOUTS) throw new Error("remotes.js is not loaded");
     return global.REMOTE_LAYOUTS;
+  }
+
+  // A commissioned IR profile offers only its individually verified keys.
+  // Absence of this descriptor preserves the established native remotes.
+  function buttonAvailable(house, deviceId, button) {
+    const target = device(house, deviceId);
+    if (!target) return false;
+    const availability = target.availability;
+    return !availability || (Array.isArray(availability.keyButtons) && availability.keyButtons.indexOf(button) >= 0);
   }
 
   // Every button a remote has, Volume and Mute aside.
@@ -258,6 +267,7 @@
     const remote = layouts().remotes[target.remote];
     if (remote.note) throw new Error(remote.note.replace("{device}", target.label));
     if (buttonsOf(target.remote).indexOf(button) < 0) throw new Error("The " + remote.label + " has no " + spec.label);
+    if (!buttonAvailable(house, target.id, button)) throw new Error((target.availability || {}).note || "This key is not configured");
     result.device = target;
     return result;
   }
@@ -282,6 +292,7 @@
       }
       if (control.mute) items[control.mute] = [id, "mute"];
       if (control.input) items[control.input.item] = [id, "input"];
+      if (control.playback) items[control.playback.item] = [id, "playback"];
     });
     return items;
   }
@@ -346,6 +357,10 @@
       return { field: "mute", item: control.mute, command: mute ? "ON" : "OFF", note: mute ? "Muted" : "Sound on" };
     }
     if (button === "power") {
+      if (!control.power && control.key && target.availability && Array.isArray(target.availability.keyButtons)
+          && target.availability.keyButtons.indexOf("power") >= 0) {
+        return { field: "key", item: control.key, command: "power", note: "IR power key; device state is not reported" };
+      }
       if (!control.power) return missing("power");
       if (state.power !== "ON" && state.power !== "OFF") throw new Error("The " + target.label + " has not said whether it is on");
       const on = state.power === "OFF";
@@ -530,6 +545,7 @@
       };
       const control = controlOf(this.house, deviceId);
       if (control.volume && control.volume.displayMode) snapshot.volumeScale = state.volumeScale || NULL_STATE;
+      if (control.playback) snapshot.playback = ["PLAY", "PAUSE"].includes(state.playback) ? state.playback : UNDEF;
       return snapshot;
     },
     // The volume or mute last sent, until the device reports it or AIM_MS pass.
@@ -785,6 +801,8 @@
     this.devices = unread(house);
     this.controlItems = controlItems(house);
     this.problemItems = problemItems(house);
+    this.itemRevisions = Object.create(null);
+    Object.keys(this.controlItems).concat(Object.keys(this.problemItems)).forEach((item) => { this.itemRevisions[item] = 0; });
     if (this.access && !this.access.native) {
       this.access.subscribe((event) => {
         if (event.type === "unauthorized") {
@@ -915,9 +933,9 @@
 
   // Every room, control and problem again: after (re)connecting, an update may have been missed.
   OpenHabBackend.prototype.readAll = function () {
+    if (this.stopped || !this.active) return Promise.resolve([]);
     const rooms = this.house.rooms.map((room) => this.read(room.id));
-    const controls = this.watched().map((item) => this.routeProblemItems[item] ? this.readRouteProblem(item) :
-      this.request("GET", "/rest/items/" + item + "/state").then((text) => this.updateItem(item, text.trim())));
+    const controls = this.watched().map((item) => this.routeProblemItems[item] ? this.readRouteProblem(item) : this.readItem(item));
     return Promise.all(rooms.concat(controls).map((reading) => reading.catch((error) => {
       console.warn(error);
       return null;
@@ -927,6 +945,20 @@
   // Every Item a control is read from, then every problem Item.
   OpenHabBackend.prototype.watched = function () {
     return Object.keys(this.controlItems).concat(Object.keys(this.problemItems), Object.keys(this.routeProblemItems));
+  };
+
+  // Reconnect snapshots share the same ordering contract as room Sources:
+  // an accepted event (even unchanged), newer read or retired stream wins.
+  OpenHabBackend.prototype.readItem = function (item) {
+    if (this.stopped || !this.active || !Object.prototype.hasOwnProperty.call(this.itemRevisions, item)) return Promise.resolve();
+    const revision = ++this.itemRevisions[item], lifecycle = this.readLifecycle, stream = this.streamGeneration;
+    const current = () => !this.stopped && this.active && lifecycle === this.readLifecycle
+      && stream === this.streamGeneration && revision === this.itemRevisions[item];
+    return this.request("GET", "/rest/items/" + item + "/state").then((text) => {
+      if (current()) this.updateItem(item, text.trim());
+    }, (error) => {
+      if (current()) throw error;
+    });
   };
 
   OpenHabBackend.prototype.readRouteProblem = function (item) {
@@ -948,6 +980,8 @@
 
   OpenHabBackend.prototype.updateItem = function (item, value) {
     if (this.routeProblemItems[item]) { this.updateRouteProblem(item, value); return; }
+    if (!Object.prototype.hasOwnProperty.call(this.itemRevisions, item)) return;
+    this.itemRevisions[item] += 1;
     if (this.activity) this.activity.seed(item, value);
     const entry = this.controlItems[item];
     if (entry) this.updateDevice(entry[0], entry[1], value);
@@ -1235,6 +1269,7 @@
     volumeStep: volumeStep,
     showing: showing,
     buttonsOf: buttonsOf,
+    buttonAvailable: buttonAvailable,
     sourceItem: sourceItem,
     servedByOpenHab: servedByOpenHab,
     create: function (house, settings) {

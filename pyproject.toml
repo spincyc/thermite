@@ -1,0 +1,15 @@
+[build-system]
+requires = ["PyYAML>=6,<7"]
+build-backend = "oh_package"
+backend-path = ["lib"]
+
+[project]
+name = "thermite-app"
+dynamic = ["version"]
+description = "Thermite house configuration and control application"
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6,<7"]
+license = {text = "All rights reserved"}
+
+[project.scripts]
+thermite = "thermite_app:main"

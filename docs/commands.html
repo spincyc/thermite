@@ -39,17 +39,17 @@
 <h1 id="commands">Commands</h1>
 <p>One program, <code>thermite</code>, with a verb for each job. Every verb answers <code>--help</code> (or <code>thermite help VERB</code>) with what it does, its switches and examples; this page is that help, word for word.</p>
 <h2 id="house">The house file, and what is generated from it</h2>
-<table class="verbs"><tbody><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that conf/ agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#init"><code>thermite init</code></a></td><td>create a private site, or pin an installed application upgrade</td></tr><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that conf/ agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
 <h2 id="test">Test on a test runtime, never production</h2>
 <table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:18080</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
 <table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, asking before each sudo command</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>upgrade thermite and the Apple TV helper here to the pinned versions</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>install a commit&#x27;s conf/ and Apple TV helper here</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
-<table class="verbs"><tbody><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
 <table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#access"><code>thermite access</code></a></td><td>site login, local identity bootstrap, HTTPS service and room policies</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the flaming bowl mark and color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
 <h2 id="program">This program</h2>
-<table class="verbs"><tbody><tr><td><a href="#version"><code>thermite version</code></a></td><td>thermite&#x27;s version, and runtime&#x27;s: pinned, and running here</td></tr><tr><td><a href="#completion"><code>thermite completion</code></a></td><td>print a completion script for bash, zsh or fish</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#version"><code>thermite version</code></a></td><td>thermite&#x27;s version, and runtime&#x27;s: pinned, and running here</td></tr><tr><td><a href="#package"><code>thermite package</code></a></td><td>build a privacy-checked portable application wheel</td></tr><tr><td><a href="#completion"><code>thermite completion</code></a></td><td>print a completion script for bash, zsh or fish</td></tr></tbody></table>
 <h2 id="overview">thermite --help</h2>
 <pre class="help">usage: thermite VERB [ACTION] [SWITCHES]
 
@@ -58,6 +58,7 @@ configuration, tests it on a test runtime, installs it, and drives the
 remotes. One program, a verb for each job; `thermite help VERB` explains one.
 
 the house file, and what is generated from it:
+  init                 create a private site, or pin an installed application upgrade
   generate             write conf/ from the house file, and deploy/&#x27;s systemd units
   validate             check the house file, and that conf/ agrees with it
   lint                 refuse credentials in Git, and docs naming a missing make target
@@ -81,6 +82,7 @@ the house&#x27;s devices:
   pair                 pair a TV with runtime, or check the Sony TVs&#x27; pairing
   cameras              read camera status, or configure native Protect bridges privately
   apple-tv             run the Apple TV helper runtime calls
+  ir-profile           validate verified IR keys or print an iTach packet without transmitting
 
 front ends, themes and docs:
   remote               the house remote in a terminal
@@ -90,9 +92,11 @@ front ends, themes and docs:
 
 this program:
   version              thermite&#x27;s version, and runtime&#x27;s: pinned, and running here
+  package              build a privacy-checked portable application wheel
   completion           print a completion script for bash, zsh or fish
 
 switches that mean the same in every verb that has them:
+  --site DIR                        select a private site (also THERMITE_SITE; before or after the verb)
   --json                            print the report as JSON
   -n, --dry-run                     report what it would do; change nothing
   --check                           change nothing; exit 1 if what it writes is stale
@@ -125,6 +129,30 @@ examples:
   thermite help sandbox             one verb&#x27;s actions, switches and examples
   thermite completion bash          tab completion for bash (thermite help completion)
 </pre>
+<section class="verb" id="init"><h3><code>thermite init</code></h3><p>Create a private site, or pin an installed application upgrade.</p><pre class="help">usage: thermite init [-h] [--upgrade] [--json] directory
+
+Create a separate private site, or explicitly select an installed upgrade.
+
+positional arguments:
+  directory      new private site directory, or the existing site for --upgrade
+
+options:
+  -h, --help     show this help message and exit
+  --upgrade      update the application requirement and launcher; preserve configuration
+                 and state
+  --json         print the report as JSON
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite init ~/my-site           write a fictional private site; start no service
+  thermite init --upgrade ~/my-site
+                                    pin an installed upgrade while preserving all configuration and prior releases
+</pre>
+</section>
 <section class="verb" id="generate"><h3><code>thermite generate</code></h3><p>Write conf/ from the house file, and deploy/&#x27;s systemd units.</p><pre class="help">usage: thermite generate [-h] [--check] [--house FILE] [--conf DIR]
 
 Generate conf/ from the house file (instance/devices.yaml), metrics/ (the
@@ -393,7 +421,7 @@ Prove the remote and routing controls work, end to end,
 without touching the house. Generate conf/ from the house file, keep only
 the Things, Items and rules of the devices runtime controls (every
 integration&#x27;s remote(), plus its stage() input where the page has no input
-selector), point each at a simulated device on 127.0.0.1 with
+selector), point each at a simulated device on loopback with
 the integration&#x27;s aim(), boot a test runtime on that as thermite test boot
 does, and check that:
 
@@ -415,6 +443,10 @@ does, and check that:
    power control off (all_off.js; the rooms&#x27; Source Items are not in this
    conf, so it names them as missing);
 8. openhab.log holds no ERROR and no model problem.
+
+Verified IR profiles use the native iTach binding on loopback TCP 4998.
+Their packet/transport acknowledgements are checked without claiming player
+power or playback feedback. Unknown keys never enter the native MAP lookup.
 
 One Sony TV is also paired again through the CLI and its pairing Items.
 Its result must acknowledge that new command, and neither native log may
@@ -702,7 +734,8 @@ examples:
 <section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Upgrade thermite and the Apple TV helper here to the pinned versions.</p><pre class="help">usage: thermite upgrade [-h] [-n]
 
 Move runtime, the Apple TV helper and the metrics services (Prometheus,
-node_exporter, blackbox_exporter, the runtime exporter, Grafana) on this
+node_exporter, blackbox_exporter, the runtime exporter, Grafana,
+Alertmanager, the local notification adapter and ntfy) on this
 host to the versions versions.json pins and the units deploy/ holds, as of
 HEAD. thermite install must have run here first. Run it as your user, from
 the clone install ran from; it is safe to run again at any time. A host
@@ -1352,6 +1385,40 @@ examples:
                                     as the helper&#x27;s container runs it
 </pre></details>
 </section>
+<section class="verb" id="ir-profile"><h3><code>thermite ir-profile</code></h3><p>Validate verified IR keys or print an iTach packet without transmitting.</p><pre class="help">usage: thermite ir-profile [-h] [--json] [-n]
+                           [--key {audio,back,blue,bluetooth,display,down,eject,fast_forward,favorite,green,home,left,netflix,next,ok,options,pause,play,popup_menu,power,previous,red,rewind,right,stop,subtitle,top_menu,up,yellow}]
+                           [--connector {1,2,3}]
+                           profile
+
+Check a model-matched learned/verified Sony IR profile. Show its verified,
+pending and missing keys. --dry-run prints the packet the native iTach
+IP2IR binding would send; it never connects to an emitter or transmits IR.
+No code, endpoint, device power or playback state is inferred.
+
+positional arguments:
+  profile                       model-matched learned/verified Sony profile JSON file
+
+options:
+  -h, --help                    show this help message and exit
+  --json                        print the report as JSON
+  -n, --dry-run                 report what it would do; change nothing
+  --key {audio,back,blue,bluetooth,display,down,eject,fast_forward,favorite,green,home,left,netflix,next,ok,options,pause,play,popup_menu,power,previous,red,rewind,right,stop,subtitle,top_menu,up,yellow}
+                                verified player key to print with --dry-run
+  --connector {1,2,3}           iTach IR connector for --dry-run
+
+switches every verb takes:
+  -q, --quiet                   print only errors
+  -v, --verbose                 also print, on stderr, the commands and HTTP requests it
+                                runs
+  --no-color                    no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite ir-profile instance/ir/sony-bluray.json
+                                    validate the profile without transmitting
+  thermite ir-profile instance/ir/sony-bluray.json --dry-run --key play --connector 2
+                                    print the exact packet only
+</pre>
+</section>
 <section class="verb" id="remote"><h3><code>thermite remote</code></h3><p>The house remote in a terminal.</p><pre class="help">usage: thermite remote [-h] [--production | --sandbox | --url URL | --mock] [--native]
                        [--setup] [--pair] [--room ID] [--choose SOURCE]
                        [--theme NAME|FILE] [--dark | --light]
@@ -1954,6 +2021,24 @@ examples:
   thermite version                  thermite&#x27;s version, the pinned runtime and the one running here
   thermite version --json           the same, as JSON
   thermite --version                only thermite&#x27;s
+</pre>
+</section>
+<section class="verb" id="package"><h3><code>thermite package</code></h3><p>Build a privacy-checked portable application wheel.</p><pre class="help">usage: thermite package [-h] --out OUT
+
+Build the reviewed portable application wheel; never package the private inventory.
+
+options:
+  -h, --help     show this help message and exit
+  --out OUT      owned directory for the wheel and release receipt
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite package --out .scratch/releases
+                                    privacy-check portable source and build a deterministic wheel
 </pre>
 </section>
 <section class="verb" id="completion"><h3><code>thermite completion</code></h3><p>Print a completion script for bash, zsh or fish.</p><pre class="help">usage: thermite completion [-h] SHELL

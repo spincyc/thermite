@@ -18,8 +18,10 @@ from pathlib import Path
 import oh_adcp_sim as adcp_sim
 import oh_atv_sim as atv_sim
 import oh_av_sim as av_sim
+import oh_cec_sim as cec_sim
 import oh_googletv_sim as googletv_sim
 import oh_integrations as integrations
+import oh_ir_sim as ir_sim
 import oh_inventory as inventory
 import oh_cli
 import oh_render as render
@@ -38,7 +40,7 @@ Prove the remote and routing controls work, end to end,
 without touching the house. Generate conf/ from the house file, keep only
 the Things, Items and rules of the devices runtime controls (every
 integration's remote(), plus its stage() input where the page has no input
-selector), point each at a simulated device on 127.0.0.1 with
+selector), point each at a simulated device on loopback with
 the integration's aim(), boot a test runtime on that as thermite test boot
 does, and check that:
 
@@ -60,6 +62,10 @@ does, and check that:
    power control off (all_off.js; the rooms' Source Items are not in this
    conf, so it names them as missing);
 8. openhab.log holds no ERROR and no model problem.
+
+Verified IR profiles use the native iTach binding on loopback TCP 4998.
+Their packet/transport acknowledgements are checked without claiming player
+power or playback feedback. Unknown keys never enter the native MAP lookup.
 
 One Sony TV is also paired again through the CLI and its pairing Items.
 Its result must acknowledge that new command, and neither native log may
@@ -182,6 +188,46 @@ class SonosStandIn:
         return list(self.sim.commands)
 
 
+class CECStandIn:
+    """Source CEC requests acknowledged by a matrix, without player feedback."""
+    def __init__(self, module, device: dict) -> None:
+        self.sim = cec_sim.Matrix(device["cec"]["input"])
+        self.server = cec_sim.Server(self.sim)
+        self.names = {index: key for key, index in module.KEYS.items()}
+
+    def state(self) -> dict:
+        return {}
+
+    def keys(self) -> list[str]:
+        return [self.names[index] for index in self.sim.commands]
+
+    def reached_key(self, button: str) -> bool:
+        return self.keys()[-1:] == [button]
+
+    def writes(self) -> list[int]:
+        return list(self.sim.commands)
+
+
+class IRStandIn:
+    """Native iTach wire proof only; no player power/playback feedback."""
+    def __init__(self, module, device: dict) -> None:
+        profile = module.commissioned(device)
+        self.sim = ir_sim.Emitter(profile["commands"], profile["connector"])
+        self.server = ir_sim.Server(self.sim)
+
+    def state(self) -> dict:
+        return {}
+
+    def keys(self) -> list[str]:
+        return [packet.split(",", 3)[3] for packet in self.sim.sent()]
+
+    def reached_key(self, button: str) -> bool:
+        return self.sim.reached(button)
+
+    def writes(self) -> list[str]:
+        return self.sim.sent()
+
+
 class GoogleTVStandIn:
     """lib/oh_googletv_sim.py's TV, as the control Items see it."""
 
@@ -263,7 +309,7 @@ class SonyTVStandIn:
 #: The stand-in for each integration with a control, by its NAME.
 STAND_INS = {"sony_adcp": ProjectorStandIn, "denonmarantz_http": ReceiverStandIn, "wiim_http": PlayerStandIn,
              "androidtv_googletv": GoogleTVStandIn, "pyatv_http": AppleTVStandIn, "sony_ip_control": SonyTVStandIn,
-             "sonos": SonosStandIn}
+             "sonos": SonosStandIn, "ir": IRStandIn, "bk808_cec": CECStandIn}
 
 
 def same(want: object, got: object) -> bool:
@@ -381,6 +427,10 @@ class Check:
         leaks += sorted({f"{path}: {device['id']} (real Sonos UDN)" for path, text in out.items()
                          if isinstance(text, str) for device in self.data["devices"]
                          if device.get("sonos_udn") and device["sonos_udn"] in text})
+        leaks += sorted({f"{path}: {device['id']} (real IR emitter)" for path, text in out.items()
+                         if isinstance(text, str) for device in self.data["devices"]
+                         if isinstance(device.get("ir"), dict) and device["ir"].get("ip")
+                         and re.search(rf"(?<![\d.]){re.escape(device['ir']['ip'])}(?![\d.])", text)})
         if leaks:
             raise lib.SandboxError("the conf would reach a real device: " + "; ".join(leaks))
         return out
@@ -524,8 +574,12 @@ class Check:
         if control.get("key"):
             buttons = module.keys(self.devices[ident]) if hasattr(module, "keys") else getattr(module, "KEYS", {})
             for button in buttons:
+                before = len(self.stand_ins[ident].writes())
                 self.command(control["key"], button)
-                self.wait_for(f"{ident} key {button}", lambda: {} if self.stand_ins[ident].keys()[-1:] == [button]
+                reached = lambda: (len(self.stand_ins[ident].writes()) == before + 1 and self.stand_ins[ident].reached_key(button)
+                                   if hasattr(self.stand_ins[ident], "reached_key")
+                                   else self.stand_ins[ident].keys()[-1:] == [button])
+                self.wait_for(f"{ident} key {button}", lambda: {} if reached()
                               else {ident: (button, (self.stand_ins[ident].keys() or [None])[-1])})
 
     def values(self, ident: str) -> dict[str, list[tuple[str, str, str]]]:
@@ -648,7 +702,21 @@ class Check:
         anonymous = lib.Http(self.http.base, timeout=STEP, allow_write=True)
         items = [item for _, control in self.controls.values() for item in control_items(control).values()]
         topics = ["openhab/items/loc_*_source/stateupdated"] + [f"openhab/items/{i}/stateupdated" for i in items]
-        ident, (_, control) = next((i, c) for i, c in self.controls.items() if c[1].get("power"))
+        powered = next(((i, c) for i, c in self.controls.items() if c[1].get("power")), None)
+        if powered is None:
+            # A keys-only site has transport acknowledgements, not a
+            # physical power state to claim or await on the event stream.
+            for ident, (module, control) in self.controls.items():
+                if module.NAME not in ("ir", "bk808_cec"):
+                    continue
+                button = next(iter(module.keys(self.devices[ident]) if hasattr(module, "keys") else module.KEYS))
+                before = len(self.stand_ins[ident].writes())
+                self.command(control["key"], button, anonymous)
+                self.wait_for(f"{ident} anonymous key transport", lambda: {} if
+                              len(self.stand_ins[ident].writes()) == before + 1 and self.stand_ins[ident].reached_key(button)
+                              else {ident: ("one verified transport request", "not received")})
+            return
+        ident, (_, control) = powered
         opened, heard = threading.Event(), {}
         listener = threading.Thread(target=self._listen, daemon=True,
                                     args=("/rest/events?topics=" + ",".join(topics),
@@ -665,6 +733,9 @@ class Check:
     def step_all_off(self) -> None:
         """Every powered device on, then All off with no login, as the page sends it."""
         powered = [i for i, (_, control) in self.controls.items() if control.get("power")]
+        if not powered:
+            self.log("        no observed power controls; key acknowledgements do not establish an Off state")
+            return
         for ident in powered:
             power = self.controls[ident][1]["power"]
             if self.states().get(power) != "ON":

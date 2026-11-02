@@ -54,7 +54,11 @@
 <h3 id="does-it-work-with-apple-home">Does it work with Apple Home?</h3>
 <p>Not yet. Bringing the house into Apple Home through openHAB is planned.</p>
 <h3 id="what-does-it-need-to-run">What does it need to run?</h3>
-<p>One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node.js for the terminal remote. <code>thermite install</code> sets up openHAB itself.</p>
+<p>One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node.js for the terminal remote. Install the reviewed application in a dedicated Python environment, then use <code>thermite init</code> to create a separate private site. <code>thermite install</code> prepares the native runtime only after its explicit checks and owner-controlled steps.</p>
+<h3 id="where-does-my-house-configuration-belong">Where does my house configuration belong?</h3>
+<p>In a private site, separate from the installed application and the public repository. Keep real inventory, host settings and generated outputs in private Git; credentials and runtime state stay outside Git. <code>init</code> starts with fictional devices and activates no service. The <a href="start.html">getting-started guide</a> explains the boundary.</p>
+<h3 id="how-do-application-upgrades-and-rollback-work">How do application upgrades and rollback work?</h3>
+<p>A private site pins the application's version and exact release digest. Install the reviewed new package, run <code>thermite init --upgrade /path/to/site</code>, then generate, validate and privately commit before deployment. Configuration and state are preserved. Rollback uses the older private revision's exact cached application release, so keep that cache. Runtime version pins are separate; no missing artifact is silently substituted.</p>
 <h3 id="why-thermite-and-why-a-bowl">Why "thermite", and why a bowl?</h3>
 <p>The name refers to aluminothermic metalworking. The shallow bowl, metal rim and small flame express the craft of joining parts into something useful. The <a href="colors.html">design notes</a> explain the historical reference and shared drawing.</p>
 <h3 id="can-i-use-it">Can I use it?</h3>

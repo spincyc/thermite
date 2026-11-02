@@ -22,7 +22,8 @@ RERUN = "Run thermite upgrade again to go on from here."
 
 DESCRIPTION = """\
 Move runtime, the Apple TV helper and the metrics services (Prometheus,
-node_exporter, blackbox_exporter, the runtime exporter, Grafana) on this
+node_exporter, blackbox_exporter, the runtime exporter, Grafana,
+Alertmanager, the local notification adapter and ntfy) on this
 host to the versions versions.json pins and the units deploy/ holds, as of
 HEAD. thermite install must have run here first. Run it as your user, from
 the clone install ran from; it is safe to run again at any time. A host

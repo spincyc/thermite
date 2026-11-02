@@ -243,7 +243,11 @@ HOUSE_ITEMS = frozenset({"house_all_off", "house_camera_status"})
 
 def cross_check(data: dict, things: dict, items: dict) -> list[str]:
     """Problems where conf/ disagrees with the inventory."""
+    from oh_integrations import REGISTRY  # Runtime-only: providers import inventory through oh_conf.
+    from oh_features.threadpools import ITEM_NAMES as HANDLER_ITEMS
+
     devices = {d["id"]: d for d in data.get("devices") or [] if d.get("id")}
+    house_items = HOUSE_ITEMS | frozenset(HANDLER_ITEMS.values())
     services = set(data.get("services") or [])
     rooms = set(data.get("rooms") or {})
     problems: list[str] = []
@@ -260,10 +264,30 @@ def cross_check(data: dict, things: dict, items: dict) -> list[str]:
             continue
         with_things.add(last)
         home = device.get("ip") or devices.get(device.get("via"), {}).get("ip")
-        for address in sorted(addresses(thing["body"]) - {home}):
+        allowed = {home}
+        owners = 0
+        for module in REGISTRY:
+            if not hasattr(module, "transport_addresses"):
+                continue
+            try:
+                declared = module.transport_addresses(device)
+                if uid not in declared:
+                    continue
+                values = declared[uid]
+                if (not isinstance(values, (list, tuple, set, frozenset)) or not values
+                        or any(not isinstance(value, str) or str(ipaddress.IPv4Address(value)) != value for value in values)):
+                    raise ValueError("invalid transport addresses")
+                owners += 1
+                allowed = set(values)
+            except (ValueError, OSError):
+                problems.append(f"{thing['file']}: Thing {uid}: invalid {module.NAME} transport-address declaration")
+        if owners > 1:
+            problems.append(f"{thing['file']}: Thing {uid}: conflicting transport-address declarations")
+            allowed = {home}
+        for address in sorted(addresses(thing["body"]) - allowed):
             problems.append(
-                f"{thing['file']}: Thing {uid} uses {address}, but {last} is "
-                f"at {home}")
+                f"{thing['file']}: Thing {uid} uses {address}, but "
+                + (f"its approved transport addresses are {sorted(allowed)}" if owners == 1 else f"{last} is at {home}"))
     for device_id, device in sorted(devices.items()):
         observe = (device.get("controls") or {}).get("observe") or []
         if "network_ping" in observe and not any(
@@ -275,7 +299,7 @@ def cross_check(data: dict, things: dict, items: dict) -> list[str]:
         if name.startswith("loc_") and any(name[4:] == room or name[4:].startswith(room + "_")
                                            for room in rooms):
             continue
-        if name in devices or any(name.startswith(d + "_") for d in devices) or name in HOUSE_ITEMS:
+        if name in devices or any(name.startswith(d + "_") for d in devices) or name in house_items:
             continue
         problems.append(f"{item['file']}: Item {name} is neither loc_<room>[_<point>], "
                         "named after a device id, nor one of HOUSE_ITEMS")

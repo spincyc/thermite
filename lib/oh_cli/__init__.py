@@ -34,11 +34,11 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-AREA = Path(__file__).resolve().parents[2]
+from oh_paths import PROGRAM as PROGRAM_ROOT, SITE as AREA
+from oh_release import VERSION
 BIN = AREA / "bin"
 PROGRAM = "thermite"
 #: thermite's own version; the commit (`thermite --version`) tells builds apart.
-VERSION = "0.1.0.dev0"
 SANDBOX_URL = "http://127.0.0.1:18080"
 HOUSE = AREA / "instance/devices.yaml"
 
@@ -54,6 +54,7 @@ GROUPS = (
 
 #: verb: (group, summary). The summaries are what `thermite --help` lists.
 VERBS = {
+    "init": ("house", "create a private site, or pin an installed application upgrade"),
     "generate": ("house", "write conf/ from the house file, and deploy/'s systemd units"),
     "validate": ("house", "check the house file, and that conf/ agrees with it"),
     "lint": ("house", "refuse credentials in Git, and docs naming a missing make target"),
@@ -71,11 +72,13 @@ VERBS = {
     "pair": ("devices", "pair a TV with runtime, or check the Sony TVs' pairing"),
     "cameras": ("devices", "read camera status, or configure native Protect bridges privately"),
     "apple-tv": ("devices", "run the Apple TV helper runtime calls"),
+    "ir-profile": ("devices", "validate verified IR keys or print an iTach packet without transmitting"),
     "remote": ("use", "the house remote in a terminal"),
     "access": ("use", "site login, local identity bootstrap, HTTPS service and room policies"),
     "theme": ("use", "the flaming bowl mark and color themes: show, check, export"),
     "docs": ("use", "build the docs site, or export it to the thermite repository"),
     "version": ("program", "thermite's version, and runtime's: pinned, and running here"),
+    "package": ("program", "build a privacy-checked portable application wheel"),
     "completion": ("program", "print a completion script for bash, zsh or fish"),
 }
 
@@ -123,6 +126,7 @@ RENAMED_ACTIONS = {
 #: Switches that mean the same in every verb that has them (the add_*
 #: helpers), as `thermite --help` explains them.
 STANDARD_SWITCHES = (
+    ("--site DIR", "select a private site (also THERMITE_SITE; before or after the verb)"),
     ("--json", "print the report as JSON"),
     ("-n, --dry-run", "report what it would do; change nothing"),
     ("--check", "change nothing; exit 1 if what it writes is stale"),
@@ -461,6 +465,11 @@ def commit(area: Path = AREA, timeout: float = 5) -> tuple[str, bool] | None:
 
 def version_line(area: Path = AREA) -> str:
     """`thermite --version`: the version, and the commit it runs from when Git can tell."""
+    from oh_paths import RELEASE_FILE
+    if (PROGRAM_ROOT / RELEASE_FILE).is_file():
+        from oh_release import manifest
+        release = manifest(PROGRAM_ROOT)
+        return f"{PROGRAM} {VERSION} (release {release['digest'][:12]})"
     found = commit(area)
     if not found:
         return f"{PROGRAM} {VERSION}"
@@ -540,6 +549,12 @@ def _main(argv: list[str]) -> int:
     if first not in VERBS:
         close = difflib.get_close_matches(first, list(VERBS), n=1)
         return usage_error(f"no verb {first!r}" + (f"; did you mean {close[0]}?" if close else ""))
+    if first not in {"init", "package", "theme", "docs", "completion", "version"} and not any(arg in {"-h", "--help"} for arg in argv):
+        import oh_paths
+        try:
+            oh_paths.require_compatible()
+        except ValueError as exc:
+            return usage_error(str(exc))
     return importlib.import_module(module_name(first)).main([*pulled, *argv[1:]])
 
 

@@ -27,9 +27,16 @@ EXAMPLES = (
 
 
 def report(timeout: float) -> dict:
-    found = oh_cli.commit()
+    import oh_paths
+    from oh_release import manifest
+    installed = (oh_paths.PROGRAM / oh_paths.RELEASE_FILE).is_file()
+    application = manifest(oh_paths.PROGRAM) if installed else None
+    found = oh_cli.commit() if not installed or oh_paths.descriptor() is not None else None
     pinned = json.loads((AREA / "versions.json").read_text(encoding="utf-8"))["openhab"]["version"]
     url = running = None
+    if installed and oh_paths.descriptor() is None:
+        return {"thermite": oh_cli.VERSION, "commit": None, "modified": None,
+                "application_release": application["digest"], "openhab": {"pinned": pinned, "production": None, "url": None}}
     try:
         import oh_deploy as deploy
 
@@ -39,6 +46,7 @@ def report(timeout: float) -> dict:
         print(f"thermite version: cannot tell where production listens: {exc}", file=sys.stderr)
     return {"thermite": oh_cli.VERSION, "commit": found[0] if found else None,
             "modified": found[1] if found else None,
+            **({"application_release": application["digest"]} if installed else {}),
             "openhab": {"pinned": pinned, "production": running, "url": url}}
 
 

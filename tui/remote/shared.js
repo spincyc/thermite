@@ -17,7 +17,7 @@ const SCRIPTS = ["access.js", "house.js", "remotes.js", "activity.js", "diagnost
 function load(dir) {
   const from = dir || WEB;
   SCRIPTS.forEach((name) => {
-    const generated = path.join(__dirname, "..", "..", "conf", "html", "remote", "house.js");
+    const generated = process.env.THERMITE_REMOTE_HOUSE_FILE || path.join(__dirname, "..", "..", "conf", "html", "remote", "house.js");
     const file = !dir && name === "house.js" && fs.existsSync(generated) ? generated : path.join(from, name);
     vm.runInThisContext(fs.readFileSync(file, "utf8"), { filename: file });
   });

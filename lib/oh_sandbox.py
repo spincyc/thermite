@@ -32,7 +32,7 @@ from pathlib import Path
 import oh_cli
 import oh_logging
 
-AREA = Path(__file__).resolve().parent.parent
+from oh_paths import SITE as AREA
 VAR = AREA / "var"
 #: Keys a test instance's rules read, as $OPENHAB_SECRETS (production's are
 #: in its state, oh_deploy.State.secrets).

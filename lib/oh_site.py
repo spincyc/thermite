@@ -23,7 +23,7 @@ import oh_brand as brand
 import oh_cli
 
 AREA = oh_cli.AREA
-SOURCE = AREA / "site"
+SOURCE = oh_cli.PROGRAM_ROOT / "site"
 SITE_URL = "https://spincyc.github.io/thermite/"
 #: (page, title in the navigation, <title>, description)
 PAGES = (

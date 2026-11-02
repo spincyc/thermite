@@ -340,7 +340,8 @@ class PairingLogging(Step):
         running = system.unit("openhab.service").active not in ("inactive", "failed", "unknown")
         if running:
             actions.append(Command(("systemctl", "stop", "openhab.service"), root=True))
-        actions.append(Command(("python3", str(self.context.area / "lib" / "oh_logging.py"),
+        from oh_paths import PROGRAM
+        actions.append(Command(("python3", str(PROGRAM / "lib" / "oh_logging.py"),
                                 str(self.context.layout.userdata), "--http-port", str(self.context.host["http_port"]),
                                 "--template", str(self.template), "--uid", str(self.context.host["uid"]),
                                 "--gid", str(self.context.host["gid"])), root=True))
@@ -462,7 +463,7 @@ class Services(Step):
 
 
 class MetricsServices(Services):
-    title = "The metrics services running: Prometheus, node_exporter, blackbox_exporter, the exporter, Grafana"
+    title = "The metrics and local notification services running"
     restarts = METRICS_RESTARTS
     path_unit = METRICS_PATH_UNIT
 

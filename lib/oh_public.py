@@ -28,6 +28,13 @@ from oh_features import remote_model, remote_cameras, remote_topology, remote_di
 MANIFEST = ".thermite-export.json"
 SOURCE_FILES = (
     'bin/thermite',
+    'pyproject.toml',
+    'CHANGELOG.md',
+    'docs/packaging.md',
+    'lib/oh_paths.py',
+    'lib/oh_release.py',
+    'lib/oh_package.py',
+    'lib/oh_init.py',
     'lib/oh_access/README.md',
     'lib/oh_access/__init__.py',
     'lib/oh_access/callback_service.py',
@@ -46,6 +53,8 @@ SOURCE_FILES = (
     'lib/oh_brand/palettes/thermite.json',
     'lib/oh_brand/theme.schema.json',
     'lib/oh_cli/__init__.py',
+    'lib/oh_cli/init.py',
+    'lib/oh_cli/package.py',
     'lib/oh_cli/access.py',
     'lib/oh_cli/apple_tv.py',
     'lib/oh_cli/cameras.py',
@@ -57,6 +66,7 @@ SOURCE_FILES = (
     'lib/oh_cli/health.py',
     'lib/oh_cli/history.py',
     'lib/oh_cli/install.py',
+    'lib/oh_cli/ir_profile.py',
     'lib/oh_cli/lint.py',
     'lib/oh_cli/pair.py',
     'lib/oh_cli/remote.py',
@@ -71,6 +81,7 @@ SOURCE_FILES = (
     'lib/oh_cli/version.py',
     'lib/oh_climate/__init__.py',
     'lib/oh_climate/nuheat_api.py',
+    'lib/oh_cec_sim.py',
     'lib/oh_conf.py',
     'lib/oh_deploy.py',
     'lib/oh_discover.py',
@@ -89,6 +100,7 @@ SOURCE_FILES = (
     'lib/oh_features/routing/__init__.py',
     'lib/oh_features/routing/routing.js',
     'lib/oh_features/threadpools.py',
+    'lib/oh_features/threadpools.js',
     'lib/oh_googletv_sim.py',
     'lib/oh_identity/README.md',
     'lib/oh_identity/__init__.py',
@@ -122,8 +134,14 @@ SOURCE_FILES = (
     'lib/oh_integrations/avpro_telnet/__init__.py',
     'lib/oh_integrations/avpro_telnet/avpro_telnet.js',
     'lib/oh_integrations/bk808_http.py',
+    'lib/oh_integrations/bk808_cec.py',
+    'lib/oh_integrations/bk808_cec.js',
     'lib/oh_integrations/cast.py',
     'lib/oh_integrations/denonmarantz_http.py',
+    'lib/oh_integrations/globalcache_ir.py',
+    'lib/oh_integrations/globalcache_ir.js',
+    'lib/oh_integrations/heos.py',
+    'lib/oh_integrations/heos.js',
     'lib/oh_integrations/drhdmi_http.py',
     'lib/oh_integrations/network_ping.py',
     'lib/oh_integrations/pyatv_http/__init__.py',
@@ -141,10 +159,25 @@ SOURCE_FILES = (
     'lib/oh_integrations/wiim_http/__init__.py',
     'lib/oh_integrations/wiim_http/hex-to-utf8.js',
     'lib/oh_access_mode.py',
+    'lib/oh_androidtv_patch/GoogleTVSocketLifecycle.java',
+    'lib/oh_androidtv_patch/README.md',
+    'lib/oh_androidtv_patch/__init__.py',
+    'lib/oh_androidtv_patch/__main__.py',
+    'lib/oh_androidtv_patch/googletv-lifecycle.patch',
+    'lib/oh_androidtv_patch/handler-ownership.patch',
+    'lib/oh_androidtv_patch/inputs.json',
+    'lib/oh_androidtv_patch/integrity.py',
+    'lib/oh_androidtv_patch/owner_files.py',
+    'lib/oh_androidtv_patch/maintenance.py',
+    'lib/oh_androidtv_patch/maintenance_probe.js',
+    'lib/oh_androidtv_patch/owner_run.py',
     'lib/oh_inventory.py',
+    'lib/oh_ir_sim.py',
     'lib/oh_logging.py',
     'lib/oh_matrix_sim.py',
     'lib/oh_metrics/__init__.py',
+    'lib/oh_metrics/alerts.py',
+    'lib/oh_metrics/notifications.py',
     'lib/oh_metrics/dashboards.py',
     'lib/oh_metrics/exporter.py',
     'lib/oh_public.py',
@@ -178,6 +211,18 @@ SOURCE_FILES = (
     'site/site.css',
     'site/site.js',
     'site/template.html',
+    'tests/androidtv_patch/AndroidTVHandler.java',
+    'tests/androidtv_patch/AndroidTVTranslationProvider.java',
+    'tests/androidtv_patch/LifecycleTest.java',
+    'tests/androidtv_patch/ActivationTest.java',
+    'tests/test_androidtv_patch.py',
+    'tests/test_androidtv_integrity.py',
+    'tests/test_androidtv_owner_files.py',
+    'tests/test_androidtv_maintenance.py',
+    'tests/test_androidtv_system_adapter.py',
+    'tests/androidtv_maintenance_probe.cjs',
+    'tests/backend_item_read_order_harness.js',
+    'tests/test_backend_item_read_order.py',
     'tui/remote/administration.js',
     'tui/remote/app.js',
     'tui/remote/cameras.js',
@@ -494,12 +539,14 @@ docs:
 '''
 
 
-def bundle(doc_files: dict[str, bytes], area: Path = oh_cli.AREA) -> dict[str, bytes]:
+def bundle(doc_files: dict[str, bytes], area: Path = oh_cli.PROGRAM_ROOT) -> dict[str, bytes]:
     """Build the complete reviewed artifact in memory. No destination writes."""
     import oh_brand
     import oh_render
     area = Path(area)
     facts = _private(area)
+    if oh_cli.AREA != area and (oh_cli.AREA / "instance/devices.yaml").is_file():
+        facts |= _private(oh_cli.AREA)
     out = dict(doc_files)
     for name in SOURCE_FILES:
         path = area / name
@@ -573,6 +620,7 @@ This public checkout contains the program and a fictional example, not a product
 """
     readme = readme.replace("## In four commands", private_site + "## In four commands")
     readme += """\n## Run the example\n\nThe included `instance/` describes fictional devices at documentation-only addresses. Replace those files with your own inventory before using a real runtime.\n\n```sh\npython3 -m venv .venv\n.venv/bin/pip install -r requirements.txt\n.venv/bin/python -m unittest tests.test_public -q\n.venv/bin/python bin/thermite generate\n.venv/bin/python bin/thermite validate\n```\n\nConfiguration, documentation and these tests run offline. Running a native test runtime or installing services is a separate explicit command and requires the pinned downloads. The terminal remote additionally needs Node.js and its locked package; the Apple TV helper has its own hashed dependency lock.\n"""
+    readme += """\n## Install the application separately\n\nThis reviewed public source can also be installed with `python -m pip install .` in a dedicated virtual environment. Run `thermite init /path/to/private-site`, then `thermite --site /path/to/private-site generate` and `validate`. The installed program stays separate from the site's configuration, output and runtime state. A private site pins an exact application release; keep its configuration and generated outputs in private Git. Application upgrades are explicit and preserve cached releases for rollback. See [application and private-site packaging](docs/packaging.md) for the full boundary. These development builds are versioned `0.1.0.dev0`; installation does not commission a house or activate services.\n"""
     out["README.md"] = readme.encode()
     # Default source previews are canonical generated assets, never an opaque image copy.
     out["web/remote/theme.css"] = oh_brand.css().encode()
@@ -596,7 +644,10 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
     allowed_macs = {d["mac"] for d in demo()["devices"]}
     layouts_source = files.get("web/remote/remotes.js", b"").decode()
     layout_body = layouts_source.partition("\n  remotes: {")[2]
-    layout_ids = set(re.findall(r"^    ([a-z][a-z0-9_]*): \{", layout_body, re.MULTILINE))
+    declarations = list(re.finditer(r"^    ([a-z][a-z0-9_]*): \{", layout_body, re.MULTILINE))
+    layout_ids = {match.group(1) for match in declarations}
+    body_offset = len(layouts_source) - len(layout_body)
+    layout_spans = [(body_offset + match.start(1), body_offset + match.end(1)) for match in declarations]
     problems = []
     for name, value in sorted(files.items()):
         path = PurePosixPath(name)
@@ -621,15 +672,32 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
         for match in MAC.findall(text):
             if not (name == "instance/devices.yaml" and match.lower() in allowed_macs):
                 problems.append(f"{name}: non-demo MAC address")
+        layout_returns = []
+        if name in {"lib/oh_integrations/globalcache_ir.py", "lib/oh_integrations/denonmarantz_http.py",
+                    "lib/oh_integrations/bk808_cec.py"}:
+            offsets = [0]
+            for row in text.splitlines(keepends=True): offsets.append(offsets[-1] + len(row))
+            for function in ast.parse(text).body:
+                if not isinstance(function, ast.FunctionDef) or function.name != "remote_of": continue
+                for statement in function.body:
+                    if not isinstance(statement, ast.Return): continue
+                    value = statement.value
+                    choices = [value]
+                    if isinstance(value, ast.IfExp) and ast.unparse(value.test) == "heos.enabled(device)":
+                        choices = [value.body, value.orelse]
+                    if all(isinstance(choice, ast.Constant) and choice.value in layout_ids for choice in choices):
+                        layout_returns += [(offsets[choice.lineno - 1] + choice.col_offset,
+                                            offsets[choice.end_lineno - 1] + choice.end_col_offset) for choice in choices]
         def technical(match):
             token = match.group().lower()
             line = text[text.rfind("\n", 0, match.start()) + 1:text.find("\n", match.end()) if "\n" in text[match.end():] else len(text)]
-            return ((name == "web/remote/remotes.js" and token in layout_ids
-                     and re.fullmatch(r"\s*" + re.escape(token) + r": \{", line))
+            return ((name == "web/remote/remotes.js"
+                     and any(start <= match.start() and match.end() <= end for start, end in layout_spans))
                     or (name == "tui/remote/view.js" and token in layout_ids
                         and (".includes(target.remote)" in line or "remote.id ===" in line))
                     or (name == "lib/oh_features/remote_model.py" and token in layout_ids
-                        and re.search(r'"[a-z_]+": "' + re.escape(token) + '"', line)))
+                        and re.search(r'"[a-z_]+": "' + re.escape(token) + '"', line))
+                    or any(start <= match.start() and match.end() <= end for start, end in layout_returns))
         if pattern and any(not technical(match) for match in pattern.finditer(text)):
             problems.append(f"{name}: private identifier or person/host fact")
         # The strongest credential patterns are never bypassed by a lint comment.
@@ -715,7 +783,7 @@ def _target(root: Path, name: str) -> Path:
     path = PurePosixPath(name)
     if path.is_absolute() or ".." in path.parts or not path.parts:
         raise PublicError("unsafe managed export path")
-    allowed = {MANIFEST, "README.md", "FAQ.md", "Makefile", "requirements.txt", "versions.json", ".gitignore",
+    allowed = {MANIFEST, "README.md", "FAQ.md", "Makefile", "requirements.txt", "versions.json", ".gitignore", "pyproject.toml", "CHANGELOG.md",
                ".github/workflows/pages.yml"}
     if name not in allowed and path.parts[0] not in {"docs", "bin", "lib", "site", "web", "tui", "tests", "instance"}:
         raise PublicError("path is outside the managed public source trees")

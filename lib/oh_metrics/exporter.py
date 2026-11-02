@@ -78,6 +78,12 @@ FAMILIES = {
     "thermite_item_value": ("gauge", "A numeric Item state: switches 1 or 0, numbers as they are."),
     "thermite_item_info": ("gauge", "A selection Item's state, as a label; always 1."),
     "thermite_device_problem": ("gauge", "1 while the device's problem Item has a text."),
+    "thermite_handler_pool_up": ("gauge", "1 when thingHandler telemetry is complete and at most 60 seconds old."),
+    "thermite_handler_pool_observation_age_seconds": ("gauge", "Age of the native thingHandler telemetry sample."),
+    "thermite_handler_pool_active_threads": ("gauge", "Active thingHandler workers."),
+    "thermite_handler_pool_core_threads": ("gauge", "Configured thingHandler worker capacity."),
+    "thermite_handler_pool_queued_tasks": ("gauge", "Queued thingHandler tasks, including future scheduled work."),
+    "thermite_handler_pool_probe_overdue_seconds": ("gauge", "Seconds a ready harmless thingHandler probe has waited to dispatch."),
 }
 
 
@@ -242,6 +248,28 @@ def collect(mapping: dict, fetch: Fetch, clock: Callable[[], float] = time.monot
         samples += _things(mapping, answers["things"])
     if "items" in answers:
         samples += _items(mapping, answers["items"])
+    samples += _handler_pool(mapping, answers.get("items", []))
+    return samples
+
+
+def _handler_pool(mapping: dict, answer: list, now: float | None = None) -> list[Sample]:
+    spec = mapping.get("handler_pool")
+    if not spec:
+        return []
+    states = {item["name"]: item.get("state") for item in answer if isinstance(item, dict) and "name" in item}
+    values = {key: to_number(states.get(name), "number") for key, name in spec.items()}
+    now = time.time() if now is None else now
+    observed = values.get("observed")
+    age = now - observed if observed is not None else None
+    fields = {"active": "active_threads", "core": "core_threads", "queued": "queued_tasks", "overdue": "probe_overdue_seconds"}
+    valid = (age is not None and -5 <= age <= 60 and values.get("core") is not None and values["core"] >= 1
+             and all(values.get(key) is not None and values[key] >= 0 for key in fields))
+    labels = {"pool": "thingHandler"}
+    samples = [("thermite_handler_pool_up", labels, 1.0 if valid else 0.0)]
+    if age is not None and age >= -5:
+        samples.append(("thermite_handler_pool_observation_age_seconds", labels, max(0, age)))
+    if valid:
+        samples += [(f"thermite_handler_pool_{suffix}", labels, values[key]) for key, suffix in fields.items()]
     return samples
 
 

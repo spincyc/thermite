@@ -98,6 +98,30 @@
     "node_exporter.image.platforms": "Per-platform manifest digests listed in that manifest list",
     "blackbox_exporter.image.platforms": "Per-platform manifest digests listed in that manifest list",
     "grafana.image.platforms": "Per-platform manifest digests listed in that manifest list",
-    "java.sha256": "Adoptium API api.adoptium.net/v3/assets/latest/21/hotspot (jre, linux, x64) and the published https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jre_x64_linux_hotspot_21.0.13_9.tar.gz.sha256.txt"
+    "java.sha256": "Adoptium API api.adoptium.net/v3/assets/latest/21/hotspot (jre, linux, x64) and the published https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jre_x64_linux_hotspot_21.0.13_9.tar.gz.sha256.txt",
+    "alertmanager.image": "Official quay.io/prometheus/alertmanager:v0.34.2 registry manifest, read 2026-11-01",
+    "ntfy.image": "Official docker.io/binwiederhier/ntfy:v2.36.0 registry manifest, read 2026-11-01"
+  },
+  "alertmanager": {
+    "version": "0.34.2",
+    "image": {
+      "ref": "quay.io/prometheus/alertmanager:v0.34.2",
+      "digest": "sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b",
+      "platforms": {
+        "linux/amd64": "sha256:7619e9399e623c9f99a40cb199c2bceb972cbf725598a51dcbde69d51dcaaedf",
+        "linux/arm64": "sha256:6d6e6783829a3bce34d010e71e752426bc9cf345726a7c48fa00dfb5e3292a68"
+      }
+    }
+  },
+  "ntfy": {
+    "version": "2.36.0",
+    "image": {
+      "ref": "docker.io/binwiederhier/ntfy:v2.36.0",
+      "digest": "sha256:fb48c413eb11d50339962b5d62cddce0f800e7f77c626d638a7c20cb7e9c4465",
+      "platforms": {
+        "linux/amd64": "sha256:d0a2461288f240d83ef6969c8e1da273b834549b9bc0816ef219a0fb76835ed7",
+        "linux/arm64": "sha256:664b40a8728a949f019dfada19ed645594b4cf79a65b27cff23649ca2785905e"
+      }
+    }
   }
 }

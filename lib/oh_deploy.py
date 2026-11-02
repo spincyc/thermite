@@ -55,7 +55,8 @@ METRICS_RESTART_PATH = "deploy/openhab-metrics-restart.path"
 METRICS_RESTART_SERVICE = "deploy/openhab-metrics-restart.service"
 #: What openhab-metrics-restart.service restarts: the services a deploy
 #: cannot reload over HTTP.
-METRICS_RESTARTED = ("openhab-metrics-exporter.service", "openhab-grafana.service")
+METRICS_RESTARTED = ("openhab-metrics-exporter.service", "openhab-grafana.service",
+                     "openhab-notifications.service", "openhab-ntfy.service")
 #: Where the owner installs each generated unit on the host.
 INSTALLED = {
     QUADLET: Path("/etc/containers/systemd/openhab.container"),
@@ -73,7 +74,7 @@ SERVICES = ("openhab.service", "openhab-atv.service", "openhab-atv-restart.path"
             "openhab-metrics-restart.path")
 #: The area's files the Apple TV helper's container runs.
 ATV_APP = ("bin/thermite", "lib/oh_cli/__init__.py", "lib/oh_cli/apple_tv.py", "lib/oh_atv.py",
-           "lib/requirements-pyatv.txt")
+           "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py")
 #: The helper's verb module in commits from before it was apple_tv.py: a
 #: deploy of such a commit (a rollback) installs it, or that commit's
 #: bin/thermite could not run the helper.
@@ -248,7 +249,8 @@ class State:
         return [
             (0o755, [self.monitoring, self.exporter]),
             (DIR_MODE, [self.metrics, self.exporter_app]),
-            (MONITORING_MODE, [self.prometheus_data, self.grafana_data, self.monitoring_secrets]),
+            (MONITORING_MODE, [self.prometheus_data, self.grafana_data, self.root / metrics.STATE_ALERTMANAGER,
+                               self.root / metrics.STATE_NTFY, self.monitoring_secrets]),
         ]
 
     def with_metrics(self) -> bool:
@@ -465,12 +467,12 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
 
 def render_metrics_restart_path(host: dict) -> str:
     lines = [
-        "# Restarts the metrics exporter and Grafana when a deploy changes the",
-        "# exporter's code or Grafana's settings (bin/thermite deploy writes the",
-        "# watched file). Prometheus and blackbox_exporter reload over HTTP instead.",
+        "# Restarts the metrics applications when a deploy changes their",
+        "# programs, Grafana settings, adapter catalog or ntfy settings (deploy writes",
+        "# the watched file). Prometheus, Alertmanager and blackbox reload over HTTP.",
         *HEADER,
         "[Unit]",
-        "Description=Restart the metrics exporter and Grafana after a deploy changes them",
+        "Description=Restart the metrics applications after a deploy changes them",
         "",
         "[Path]",
         f"PathChanged={state(host).metrics_restart}",
@@ -488,7 +490,7 @@ def render_metrics_restart_service(host: dict) -> str:
         f"# Started by {Path(METRICS_RESTART_PATH).name}.",
         *HEADER,
         "[Unit]",
-        "Description=Restart the metrics exporter and Grafana after a deploy changed them",
+        "Description=Restart the metrics applications after a deploy changed them",
         "",
         "[Service]",
         "Type=oneshot",
@@ -840,10 +842,39 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
             listed = "".join(f"\n  {line}" for line in dirt[:10]) + ("\n  ..." if len(dirt) > 10 else "")
             raise DeployError("automation/openhab has changes that are not committed; a deploy installs a commit, "
                               f"and make check has tested the working tree. Commit them first:{listed}")
-    files = export(area, commit, ("conf", "metrics", *ATV_APP, *ATV_APP_BEFORE, LEGACY_ATV_PROGRAM,
-                                  *metrics.EXPORTER_APP))
+    files, application = deployment_files(area, commit, var)
     return install(files, commit, subject(area, commit), layout, var, force=force, dry_run=dry_run,
-                   legacy_atv=legacy_atv(), how=how, host=host)
+                   legacy_atv=legacy_atv(), how=how, host=host, application=application)
+
+
+def deployment_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
+    """Site revisions lock code separately; full checkouts retain Git source export."""
+    from oh_paths import SITE_FILE
+    import oh_release
+    files = export(area, commit, ("conf", "metrics", SITE_FILE, *ATV_APP, *ATV_APP_BEFORE,
+                                  LEGACY_ATV_PROGRAM, *metrics.EXPORTER_APP))
+    locked = files.pop(SITE_FILE, None)
+    if locked is None:
+        return files, None
+    try:
+        requirement = json.loads(locked.data)
+        if (not isinstance(requirement, dict) or set(requirement) != {"version", "application", "release"}
+                or requirement.get("version") != 1 or not isinstance(requirement["application"], str)
+                or not oh_release.HEX.fullmatch(str(requirement.get("release")))):
+            raise ValueError("invalid site application requirement")
+        root = Path(var) / "application-releases" / requirement["release"]
+        release = oh_release.manifest(root, requirement["release"])
+        if release["application"] != requirement["application"]:
+            raise ValueError("cached release version differs from the site requirement")
+        names = tuple(dict.fromkeys((*ATV_APP, *metrics.EXPORTER_APP)))
+        application = oh_release.blobs(root, names, requirement["release"])
+    except (OSError, ValueError) as exc:
+        raise DeployError("the committed site requires its exact cached application release; "
+                          "install the reviewed wheel and run thermite init --upgrade before deployment") from exc
+    # Never take a site's arbitrary lib/ as application authority.
+    files = {name: blob for name, blob in files.items() if name.startswith(("conf/", "metrics/"))}
+    files.update({name: Blob(data, name.startswith("bin/")) for name, data in application.items()})
+    return files, {"version": release["application"], "digest": release["digest"]}
 
 
 def legacy_atv(installed: Path = INSTALLED[ATV_QUADLET]) -> bool:
@@ -859,7 +890,7 @@ def legacy_atv(installed: Path = INSTALLED[ATV_QUADLET]) -> bool:
 
 def install(files: dict[str, Blob], commit: str, title: str, layout: State, var: Path, *,
             force: bool = False, dry_run: bool = False, legacy_atv: bool = False, how: str = "deploy",
-            host: dict | None = None, post=None) -> Deployed:
+            host: dict | None = None, post=None, application: dict | None = None) -> Deployed:
     """deploy() once the commit's files ({area path: Blob}) are exported.
     With legacy_atv the helper also gets bin/thermite as LEGACY_ATV_PROGRAM;
     a commit from before bin/thermite brings its own LEGACY_ATV_PROGRAM,
@@ -892,7 +923,12 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
     with_metrics = layout.with_metrics()
     # A commit from before the metrics (rolling back past them) has neither: syncing its nothing would delete
     # what the running services read, so they keep what the last deploy installed.
-    kept = with_metrics and not (tree and exporter)
+    # Installed notification units must retain their program/config on a
+    # rollback to an older revision that has no notification stack.
+    notifications_installed = (layout.metrics / "notifications/catalog.json").is_file()
+    notifications_present = ("notifications/catalog.json" in tree and "alertmanager/alertmanager.yml" in tree
+                             and "ntfy/server.yml" in tree and metrics.EXPORTER_APP[1] in exporter)
+    kept = with_metrics and (not (tree and exporter) or (notifications_installed and not notifications_present))
     synced = with_metrics and not kept
     metrics_changes = sync(tree, layout.metrics, previous.get("metrics", {}), dry_run) if synced else Changes()
     exporter_changes = (sync(exporter, layout.exporter_app, previous.get("exporter_app", {}), dry_run)
@@ -907,6 +943,8 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
         "conf": {path: sha256(blob.data) for path, blob in conf.items()},
         "atv_app": {path: sha256(blob.data) for path, blob in app.items()},
     }
+    if application is not None:
+        record["application"] = application
     if synced:
         record["metrics"] = {path: sha256(blob.data) for path, blob in tree.items()}
         record["exporter_app"] = {path: sha256(blob.data) for path, blob in exporter.items()}
@@ -916,6 +954,8 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
     if not dry_run:
         _replace(layout.record, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"), FILE_MODE)
         entry = {key: record[key] for key in ("deployed_at", "commit", "by", "boot_checked")}
+        if application is not None:
+            entry["application"] = application
         with open(layout.history, "a", encoding="utf-8") as log:
             log.write(json.dumps({**entry, "how": how, "subject": record["subject"]}) + "\n")
         if app_changes:
@@ -937,7 +977,7 @@ def metrics_restart_needed(metrics_changes: Changes, exporter_changes: Changes) 
     the exporter's code, or Grafana's settings and provisioning (it rereads
     its dashboards and the exporter its map by themselves)."""
     return bool(exporter_changes) or any(
-        path.startswith("grafana/") and not path.startswith(f"{metrics.GRAFANA_DASHBOARDS}/")
+        path.startswith(("notifications/", "ntfy/")) or (path.startswith("grafana/") and not path.startswith(f"{metrics.GRAFANA_DASHBOARDS}/"))
         for path in _touched(metrics_changes))
 
 
@@ -950,7 +990,8 @@ def apply_metrics(layout: State, host: dict, metrics_changes: Changes, exporter_
     port = metrics.ports(host)
     touched = _touched(metrics_changes)
     for name, prefix, unit, key in (("Prometheus", "prometheus/", "openhab-prometheus.service", "prometheus"),
-                                    ("blackbox_exporter", "blackbox/", "openhab-blackbox.service", "blackbox")):
+                                    ("blackbox_exporter", "blackbox/", "openhab-blackbox.service", "blackbox"),
+                                    ("Alertmanager", "alertmanager/", "openhab-alertmanager.service", "alertmanager")):
         if not any(path.startswith(prefix) for path in touched):
             continue
         status = post(f"http://{metrics.LOOPBACK}:{port[key]}/-/reload")

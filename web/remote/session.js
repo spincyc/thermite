@@ -215,12 +215,17 @@
         return;
       }
       if (event.type === "device") {
+        const previous = devices[event.device];
         devices[event.device] = event.state;
         // The slider stops showing what it sent once the device reports it, and
         // sends that value again once the device has moved off it (its own knob).
         if (fader.device === event.device && event.state.level === fader.value && !fader.dragging) fader.at = 0;
         if (fader.sentTo === event.device && event.state.level !== fader.sent) fader.sent = null;
         emit({ type: "device", device: event.device });
+        if ((Remote.controlOf(house, event.device) || {}).playback
+            && ["playback", "power", "input"].some((field) => !previous || previous[field] !== event.state[field])) {
+          emit({ type: "change" });
+        }
         return;
       }
       if (event.type !== "state") return;
@@ -327,9 +332,20 @@
       return choice.id;
     }
 
+    function canPress(button, target) {
+      if (!current) return false;
+      const to = Remote.AUDIO[button] ? current.audio : target || activeTarget(controls());
+      return Boolean(to && Remote.buttonAvailable(house, to.id, button));
+    }
+
     function press(button) {
       if (!current) return Promise.resolve(null);
       const target = activeTarget(controls());
+      if (!canPress(button, target)) {
+        toast(spec(button) ? spec(button).label : button,
+          (target && target.availability && target.availability.note) || "This control is not available", "muted");
+        return Promise.resolve(null);
+      }
       const control = target && !Remote.AUDIO[button] ? Remote.controlOf(house, target.id) : null;
       if (button === "input" && control && control.input) {
         openInputs(target);
@@ -627,13 +643,18 @@
       const target = activeTarget(list);
       const audio = current.audio;
       const remote = remoteOf(target);
+      const playback = target && (Remote.controlOf(house, target.id) || {}).playback;
       const others = list.targets.filter((candidate) => !target || candidate.id !== target.id);
       return {
         rows: [
           ["Buttons", target ? target.label + " · " + remote.label : current.label + " shows nothing: choose a source"],
           ["Volume, mute", audio ? audio.label : current.label + " has no audio device in the inventory"],
           ["Other remotes here", others.length ? others.map((candidate) => candidate.label).join(", ") : "None"]
-        ],
+        ].concat(playback ? [["HEOS playback", (() => {
+          const state = backend.deviceSnapshot(target.id);
+          if (state.power !== "ON" || state.input !== "NET") return "Not active · select HEOS Music";
+          return state.playback === "PLAY" ? "Playing" : state.playback === "PAUSE" ? "Paused or stopped" : "Unknown";
+        })()]] : []),
         controls: current.controls.map((control) => ({
           id: control.id, label: control.label, device: control.device.label, connected: control.connected,
           actions: control.actions.map((action) => ({ id: action.id, label: action.label }))
@@ -746,6 +767,7 @@
       chooseSource: chooseSource,
       chooseDigit: chooseDigit,
       press: press,
+      canPress: canPress,
       pressKey: pressKey,
       allOff: allOff,
       inputOptions: inputOptions,

@@ -474,6 +474,7 @@ function keyLabel(ctx, id) {
 
 function keyStyle(ctx, id, options) {
   if (ctx.session.controlAllowed && !ctx.session.controlAllowed()) return "dim";
+  if (ctx.session.canPress && !ctx.session.canPress(id)) return focused(ctx, "key:" + id) ? "dim key.focus" : "dim";
   const key = "key:" + id;
   if (ctx.ui.pressed[key]) return "key.pressed";
   if (focused(ctx, key)) return "key.focus";
@@ -487,9 +488,12 @@ function keyHit(ctx, id) {
   const spec = ctx.session.spec(id);
   const target = ctx.session.target();
   const hints = ctx.hints[id];
+  const available = !ctx.session.canPress || ctx.session.canPress(id, target);
   return {
-    kind: "key", button: id, key: "key:" + id, focus: true, repeat: Boolean(spec.repeat),
-    label: spec.label + " \u2192 " + ctx.session.drives(id, target) + (hints ? "  (" + hints.join(", ") + ")" : "")
+    kind: "key", button: id, key: "key:" + id, focus: true, disabled: !available, repeat: available && Boolean(spec.repeat),
+    label: spec.label + " \u2192 " + ctx.session.drives(id, target)
+      + (!available && target && target.availability ? " · " + target.availability.note : "")
+      + (hints ? "  (" + hints.join(", ") + ")" : "")
   };
 }
 

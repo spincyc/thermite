@@ -35,6 +35,8 @@ globalThis.REMOTE_LAYOUTS = {
   version: 1,
 
   buttons: {
+    power_on: { label: "Power on", text: "On" },
+    power_off: { label: "Standby", text: "Standby" },
     power: { label: "Power", icon: "power" },
     input: { label: "Input", icon: "input" },
     settings: { label: "Settings", icon: "settings" },
@@ -67,6 +69,8 @@ globalThis.REMOTE_LAYOUTS = {
 
     netflix: { label: "Netflix", text: "NETFLIX" },
     youtube: { label: "YouTube", text: "YouTube" },
+    favorite: { label: "Favorite", text: "Favorite" },
+    bluetooth: { label: "Bluetooth audio", text: "Bluetooth" },
     top_menu: { label: "Top menu", text: "Top menu" },
     popup_menu: { label: "Pop-up menu", text: "Pop-up" },
     options: { label: "Options", text: "Options" },
@@ -123,9 +127,24 @@ globalThis.REMOTE_LAYOUTS = {
       corners: ["power", "eject", "back", "home"],
       playback: ["previous", "rewind", "play", "pause", "stop", "fast_forward", "next"],
       keyGroups: [
-        { label: "Apps", keys: ["netflix"], columns: 1, primary: true },
+        { label: "Apps", keys: ["netflix", "favorite"], columns: 2, primary: true },
         { label: "Disc menus", keys: ["top_menu", "popup_menu", "options", "display"], columns: 2 },
-        { label: "Audio", keys: ["audio", "subtitle"], columns: 2 }
+        { label: "Audio", keys: ["audio", "subtitle"], columns: 2 },
+        { label: "Wireless audio", keys: ["bluetooth"], columns: 1 },
+        { label: "Color keys", keys: ["red", "green", "yellow", "blue"], columns: 4 }
+      ]
+    },
+    sony_bluray_cec: {
+      label: "Blu-ray CEC remote",
+      corners: ["power", "eject", "back", "home"],
+      top: ["power_on", "power_off", "menu"],
+      playback: ["previous", "rewind", "play", "pause", "stop", "fast_forward", "next"],
+      keyGroups: [
+        { label: "Apps", keys: ["netflix", "favorite"], columns: 2, primary: true },
+        { label: "Disc menus", keys: ["top_menu", "popup_menu", "options", "display"], columns: 2 },
+        { label: "Audio", keys: ["audio", "subtitle"], columns: 2 },
+        { label: "Wireless audio", keys: ["bluetooth"], columns: 1 },
+        { label: "Color keys", keys: ["red", "green", "yellow", "blue"], columns: 4 }
       ]
     },
     sony_tv: {
@@ -158,6 +177,15 @@ globalThis.REMOTE_LAYOUTS = {
     marantz_avr: {
       label: "Marantz remote",
       corners: ["power", "input", "back", "settings"],
+      keyGroups: [
+        { label: "Sound modes", keys: ["sound_movie", "sound_music", "sound_game", "sound_pure"], columns: 2 },
+        { label: "Information", keys: ["info", "options"], columns: 2 }
+      ]
+    },
+    marantz_heos: {
+      label: "Marantz remote · HEOS transport",
+      corners: ["power", "input", "back", "settings"],
+      playback: ["previous", "play", "pause", "next"],
       keyGroups: [
         { label: "Sound modes", keys: ["sound_movie", "sound_music", "sound_game", "sound_pure"], columns: 2 },
         { label: "Information", keys: ["info", "options"], columns: 2 }

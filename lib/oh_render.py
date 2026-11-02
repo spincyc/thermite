@@ -22,7 +22,7 @@ from oh_conf import GUARD_ADDON_WHY, RULE_SENDS, RULE_SILENT, Addon, Conf, House
 METRICS_ADDON = Addon("misc", "metrics", "openHAB's own metrics at /rest/metrics/prometheus, which Prometheus "
                                          "scrapes (lib/oh_metrics)")
 
-AREA = Path(__file__).resolve().parents[1]
+from oh_paths import SITE as AREA
 INVENTORY = AREA / "instance/devices.yaml"
 CONF = AREA / "conf"
 
@@ -36,12 +36,15 @@ def validate(data: object) -> list[str]:
     assert isinstance(data, dict)
     for device in data.get("devices") or []:
         for module in integrations.REGISTRY:
-            if uses(device, module.PHASE, module.NAME) and not device.get("ip"):
+            if uses(device, module.PHASE, module.NAME) and getattr(module, "NEEDS_IP", True) and not device.get("ip"):
                 problems.append(f"{device['id']}: {module.NAME} needs the device's own ip")
             if (getattr(module, "CONTROL", False) and uses(device, "control", module.NAME)
                     and not uses(device, module.PHASE, module.NAME)):
                 problems.append(f"{device['id']}: {module.NAME} under control needs it under {module.PHASE} too")
             problems += module.validate(device)
+    for module in integrations.REGISTRY:
+        if hasattr(module, "validate_house"):
+            problems += module.validate_house(data)
     for feature in features.REGISTRY:
         problems += feature.validate(data)
     return problems
@@ -60,7 +63,7 @@ def build(data: dict) -> Conf:
             module.render(device, house, out)
         if hasattr(module, "files"):
             conf.files.update(module.files(devices, house))
-        for addon in module.ADDONS:
+        for addon in module.addons(devices) if hasattr(module, "addons") else module.ADDONS:
             conf.add_addon(addon)
         for path, source in module.ASSETS.items():
             conf.add_asset(path, Path(module.__file__).parent / source)

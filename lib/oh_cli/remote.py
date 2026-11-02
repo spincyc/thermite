@@ -16,9 +16,9 @@ import sys
 from pathlib import Path
 
 import oh_cli
-from oh_cli import AREA
+from oh_cli import AREA, PROGRAM_ROOT
 
-TUI = AREA / "tui/remote"
+TUI = PROGRAM_ROOT / "tui/remote"
 BUILD = Path(os.environ.get("OPENHAB_REMOTE_TUI_BUILD") or AREA / "build/tui-remote")
 STATE = AREA / "var/tui-remote/state.json"
 #: In BUILD: the digest of the lock its node_modules were installed from.
@@ -228,7 +228,8 @@ def parser() -> argparse.ArgumentParser:
 
 def launch_environment(arguments, chosen):
     """Only credential/CA paths cross to Node; personal tokens stay in files."""
-    environment = {**os.environ, LOOK: look(chosen)}
+    environment = {**os.environ, LOOK: look(chosen),
+                   "THERMITE_REMOTE_HOUSE_FILE": str(AREA / "conf/html/remote/house.js")}
     if arguments.mock or native_mode(arguments):
         environment.pop("THERMITE_REMOTE_TOKEN_FILE", None)
         return environment

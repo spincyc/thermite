@@ -1,0 +1,394 @@
+--- a/GoogleTVConnectionManager.java
++++ b/GoogleTVConnectionManager.java
+@@ -109 +109 @@
+-    private @Nullable GoogleTVConnectionManager childConnectionManager;
++    private volatile @Nullable GoogleTVConnectionManager childConnectionManager;
+@@ -141 +141,5 @@
+-    private boolean disposing = false;
++    private volatile boolean disposing = false;
++    private final GoogleTVSocketLifecycle sockets = new GoogleTVSocketLifecycle();
++    private final Object childLock = new Object();
++    private long retryGeneration;
++    private volatile @Nullable SSLServerSocket shimListener;
+@@ -388,15 +392,34 @@
+-        GoogleTVConfiguration childConfig = new GoogleTVConfiguration();
+-        childConfig.ipAddress = config.ipAddress;
+-        childConfig.googletvPort = port;
+-        childConfig.reconnect = config.reconnect;
+-        childConfig.heartbeat = config.heartbeat;
+-        childConfig.keystoreFileName = config.keystoreFileName;
+-        childConfig.keystorePassword = config.keystorePassword;
+-        childConfig.delay = config.delay;
+-        childConfig.shim = config.shim;
+-        childConfig.mode = mode;
+-        logger.debug("{} - startChildConnectionManager parent config: {} {} {}", handler.getThingID(),
+-                config.googletvPort, config.mode, config.shim);
+-        logger.debug("{} - startChildConnectionManager child config: {} {} {}", handler.getThingID(),
+-                childConfig.googletvPort, childConfig.mode, childConfig.shim);
+-        childConnectionManager = new GoogleTVConnectionManager(this.handler, childConfig, this);
++        synchronized (childLock) {
++            if (disposing) {
++                return;
++            }
++            GoogleTVConnectionManager previous = childConnectionManager;
++            childConnectionManager = null;
++            if (previous != null) {
++                previous.dispose();
++            }
++            GoogleTVConfiguration childConfig = new GoogleTVConfiguration();
++            childConfig.ipAddress = config.ipAddress;
++            childConfig.googletvPort = port;
++            childConfig.reconnect = config.reconnect;
++            childConfig.heartbeat = config.heartbeat;
++            childConfig.keystoreFileName = config.keystoreFileName;
++            childConfig.keystorePassword = config.keystorePassword;
++            childConfig.delay = config.delay;
++            childConfig.shim = config.shim;
++            childConfig.mode = mode;
++            logger.debug("{} - startChildConnectionManager parent config: {} {} {}", handler.getThingID(),
++                    config.googletvPort, config.mode, config.shim);
++            logger.debug("{} - startChildConnectionManager child config: {} {} {}", handler.getThingID(),
++                    childConfig.googletvPort, childConfig.mode, childConfig.shim);
++            GoogleTVConnectionManager replacement = newChild(childConfig);
++            if (disposing) {
++                replacement.dispose();
++            } else {
++                childConnectionManager = replacement;
++            }
++        }
++    }
++
++    GoogleTVConnectionManager newChild(GoogleTVConfiguration childConfig) {
++        return new GoogleTVConnectionManager(this.handler, childConfig, this);
+@@ -518,19 +541,33 @@
+-            if (isOnline || config.mode.equals(PIN_MODE)) {
+-                try {
+-                    logger.debug("{} - Opening GoogleTV SSL connection to {}:{} {}", handler.getThingID(),
+-                            config.ipAddress, config.googletvPort, config.mode);
+-                    SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket(config.ipAddress,
+-                            config.googletvPort);
+-                    sslSocket.startHandshake();
+-                    this.shimServerChain = ((SSLSocket) sslSocket).getSession().getPeerCertificates();
+-                    writer = new BufferedWriter(
+-                            new OutputStreamWriter(sslSocket.getOutputStream(), StandardCharsets.ISO_8859_1));
+-                    reader = new BufferedReader(
+-                            new InputStreamReader(sslSocket.getInputStream(), StandardCharsets.ISO_8859_1));
+-                    this.sslSocket = sslSocket;
+-                    this.sendQueue.clear();
+-                    logger.debug("{} - Connection to {}:{} {} successful", handler.getThingID(), config.ipAddress,
+-                            config.googletvPort, config.mode);
+-                } catch (UnknownHostException e) {
+-                    setStatus(false, "offline.unknown-host");
+-                    logger.debug("{} - Unknown host {}", handler.getThingID(), config.ipAddress);
++            if (disposing) {
++                return;
++            }
++            if (!isOnline && !config.mode.equals(PIN_MODE)) {
++                scheduleConnectRetry(config.reconnect);
++                return;
++            }
++        }
++        GoogleTVSocketLifecycle.Attempt attempt;
++        try {
++            attempt = sockets.begin(sslSocketFactory);
++        } catch (IOException e) {
++            if (!disposing) {
++                scheduleConnectRetry(config.reconnect);
++            }
++            return;
++        }
++        if (attempt == null) {
++            return; // An established connection or another tracked attempt owns the socket.
++        }
++        boolean accepted = false;
++        try {
++            if (!sockets.open(attempt, new InetSocketAddress(config.ipAddress, config.googletvPort))) {
++                return;
++            }
++            SSLSocket sslSocket = attempt.socket;
++            Certificate[] serverChain = sslSocket.getSession().getPeerCertificates();
++            BufferedWriter newWriter = new BufferedWriter(
++                    new OutputStreamWriter(sslSocket.getOutputStream(), StandardCharsets.ISO_8859_1));
++            BufferedReader newReader = new BufferedReader(
++                    new InputStreamReader(sslSocket.getInputStream(), StandardCharsets.ISO_8859_1));
++            synchronized (connectionLock) {
++                if (disposing || !sockets.isCurrent(attempt)) {
+@@ -538,42 +575,32 @@
+-                } catch (IllegalArgumentException e) {
+-                    // port out of valid range
+-                    setStatus(false, "offline.invalid-port-number");
+-                    logger.debug("{} - Invalid port number {}:{}", handler.getThingID(), config.ipAddress,
+-                            config.googletvPort);
+-                    return;
+-                } catch (InterruptedIOException e) {
+-                    logger.debug("{} - Interrupted while establishing GoogleTV connection", handler.getThingID());
+-                    Thread.currentThread().interrupt();
+-                    return;
+-                } catch (IOException e) {
+-                    String message = e.getMessage();
+-                    if ((message != null) && (message.contains("certificate_unknown"))
+-                            && (!config.mode.equals(PIN_MODE)) && (!config.shim)) {
+-                        setStatus(false, "offline.pin-process-incomplete");
+-                        logger.debug("{} - GoogleTV PIN Process Incomplete", handler.getThingID());
+-                        reconnectTaskCancel(true);
+-                        startChildConnectionManager(this.config.googletvPort + 1, PIN_MODE);
+-                    } else if ((message != null) && (message.contains("certificate_unknown")) && (config.shim)) {
+-                        logger.debug("Shim cert_unknown I/O error while connecting: {}", e.getMessage());
+-                        Socket shimServerSocket = this.shimServerSocket;
+-                        if (shimServerSocket != null) {
+-                            try {
+-                                shimServerSocket.close();
+-                            } catch (IOException ex) {
+-                                logger.debug("Error closing GoogleTV SSL socket: {}", ex.getMessage());
+-                            }
+-                            this.shimServerSocket = null;
+-                        }
+-                    } else {
+-                        setStatus(false, "offline.error-opening-ssl-connection-check-log");
+-                        logger.info("{} - Error opening SSL connection to {}:{} {}", handler.getThingID(),
+-                                config.ipAddress, config.googletvPort, e.getMessage());
+-                        disconnect(false);
+-                        scheduleConnectRetry(config.reconnect); // Possibly a temporary problem. Try again later.
+-                    }
+-                    return;
+-                }
+-
+-                setStatus(false, "offline.initializing");
+-
+-                logger.trace("{} - Starting Reader Thread for {}:{}", handler.getThingID(), config.ipAddress,
++                }
++                this.shimServerChain = serverChain;
++                this.sslSocket = sslSocket;
++                this.writer = newWriter;
++                this.reader = newReader;
++                this.sendQueue.clear();
++                accepted = true;
++            setStatus(false, "offline.initializing");
++
++            logger.trace("{} - Starting Reader Thread for {}:{}", handler.getThingID(), config.ipAddress,
++                    config.googletvPort);
++
++            Thread readerThread = new Thread(this::readerThreadJob,
++                    "OH-binding-" + handler.getThingUID() + "-GoogleTVReader");
++            readerThread.setDaemon(true);
++            readerThread.start();
++            this.readerThread = readerThread;
++
++            logger.trace("{} - Starting Sender Thread for {}:{}", handler.getThingID(), config.ipAddress,
++                    config.googletvPort);
++
++            Thread senderThread = new Thread(this::senderThreadJob,
++                    "OH-binding-" + handler.getThingUID() + "-GoogleTVSender");
++            senderThread.setDaemon(true);
++            senderThread.start();
++            this.senderThread = senderThread;
++
++            logger.trace("{} - Checking for PIN MODE for {}:{} {}", handler.getThingID(), config.ipAddress,
++                    config.googletvPort, config.mode);
++
++            if (config.mode.equals(PIN_MODE)) {
++                logger.trace("{} - Sending PIN Login to {}:{}", handler.getThingID(), config.ipAddress,
+@@ -581,17 +608,7 @@
+-
+-                Thread readerThread = new Thread(this::readerThreadJob,
+-                        "OH-binding-" + handler.getThingUID() + "-GoogleTVReader");
+-                readerThread.setDaemon(true);
+-                readerThread.start();
+-                this.readerThread = readerThread;
+-
+-                logger.trace("{} - Starting Sender Thread for {}:{}", handler.getThingID(), config.ipAddress,
+-                        config.googletvPort);
+-
+-                Thread senderThread = new Thread(this::senderThreadJob,
+-                        "OH-binding-" + handler.getThingUID() + "-GoogleTVSender");
+-                senderThread.setDaemon(true);
+-                senderThread.start();
+-                this.senderThread = senderThread;
+-
+-                logger.trace("{} - Checking for PIN MODE for {}:{} {}", handler.getThingID(), config.ipAddress,
++                // Send app name and device name
++                sendCommand(new GoogleTVCommand(GoogleTVRequest.encodeMessage(GoogleTVRequest.loginRequest(1))));
++                // Unknown but required
++                sendCommand(new GoogleTVCommand(GoogleTVRequest.encodeMessage(GoogleTVRequest.loginRequest(2))));
++                // Don't send pin request yet, let user send REQUEST via PINCODE channel
++            } else {
++                logger.trace("{} - Not PIN Mode {}:{} {}", handler.getThingID(), config.ipAddress,
+@@ -599,15 +616,27 @@
+-
+-                if (config.mode.equals(PIN_MODE)) {
+-                    logger.trace("{} - Sending PIN Login to {}:{}", handler.getThingID(), config.ipAddress,
+-                            config.googletvPort);
+-                    // Send app name and device name
+-                    sendCommand(new GoogleTVCommand(GoogleTVRequest.encodeMessage(GoogleTVRequest.loginRequest(1))));
+-                    // Unknown but required
+-                    sendCommand(new GoogleTVCommand(GoogleTVRequest.encodeMessage(GoogleTVRequest.loginRequest(2))));
+-                    // Don't send pin request yet, let user send REQUEST via PINCODE channel
+-                } else {
+-                    logger.trace("{} - Not PIN Mode {}:{} {}", handler.getThingID(), config.ipAddress,
+-                            config.googletvPort, config.mode);
+-                }
+-            } else {
+-                scheduleConnectRetry(config.reconnect); // Possibly a temporary problem. Try again later.
++            }
++            }
++        } catch (UnknownHostException e) {
++            if (sockets.release(attempt) && !disposing) {
++                setStatus(false, "offline.unknown-host");
++            }
++        } catch (IllegalArgumentException e) {
++            if (sockets.release(attempt) && !disposing) {
++                setStatus(false, "offline.invalid-port-number");
++            }
++        } catch (IOException e) {
++            if (!sockets.release(attempt) || disposing) {
++                return; // A cancelled attempt cannot affect a replacement or schedule another retry.
++            }
++            String message = e.getMessage();
++            if (message != null && message.contains("certificate_unknown") && !config.mode.equals(PIN_MODE)
++                    && !config.shim) {
++                setStatus(false, "offline.pin-process-incomplete");
++                reconnectTaskCancel(true);
++                startChildConnectionManager(config.googletvPort + 1, PIN_MODE);
++            } else if (!Thread.currentThread().isInterrupted()) {
++                setStatus(false, "offline.error-opening-ssl-connection-check-log");
++                scheduleConnectRetry(config.reconnect);
++            }
++        } finally {
++            if (!accepted) {
++                sockets.release(attempt);
+@@ -619 +648 @@
+-        synchronized (connectionLock) {
++        if (!disposing) {
+@@ -642 +671,6 @@
+-                while (true) {
++                shimListener = sslServerSocket;
++                if (disposing) {
++                    sslServerSocket.close();
++                    return;
++                }
++                while (!disposing) {
+@@ -648,0 +683,12 @@
++                    synchronized (connectionLock) {
++                        if (disposing) {
++                            serverSocket.close();
++                            return;
++                        }
++                        Socket previous = this.shimServerSocket;
++                        this.shimServerSocket = serverSocket;
++                        if (previous != null) {
++                            previous.close();
++                        }
++                    }
++                    serverSocket.setSoTimeout(GoogleTVSocketLifecycle.HANDSHAKE_TIMEOUT_MILLIS);
+@@ -651,0 +698,5 @@
++                        serverSocket.setSoTimeout(0);
++                        if (disposing) {
++                            serverSocket.close();
++                            return;
++                        }
+@@ -695,0 +747,5 @@
++                        synchronized (connectionLock) {
++                            if (disposing) {
++                                serverSocket.close();
++                                return;
++                            }
+@@ -713,0 +770 @@
++                        }
+@@ -729,2 +786,18 @@
+-        logger.trace("{} - Scheduling GoogleTV connection retry in {} seconds", handler.getThingID(), waitSeconds);
+-        connectRetryJob = scheduler.schedule(this::connect, waitSeconds, TimeUnit.SECONDS);
++        synchronized (connectionLock) {
++            if (disposing) {
++                return;
++            }
++            long generation = ++retryGeneration;
++            if (connectRetryJob != null) {
++                connectRetryJob.cancel(false);
++            }
++            connectRetryJob = scheduler.schedule(() -> {
++                synchronized (connectionLock) {
++                    if (disposing || generation != retryGeneration) {
++                        return;
++                    }
++                    connectRetryJob = null;
++                }
++                connect();
++            }, Math.max(1, waitSeconds), TimeUnit.SECONDS);
++        }
+@@ -740,0 +814 @@
++        // Closing the tracked attempt releases connect/TLS without needing connectionLock.
+@@ -741,0 +816,2 @@
++            sockets.disconnect();
++            ++retryGeneration;
+@@ -831,7 +907,4 @@
+-        synchronized (connectionLock) {
+-            if (!this.disposing) {
+-                logger.debug("{} - Attempting to reconnect to the GoogleTV", handler.getThingID());
+-                setStatus(false, "offline.reconnecting");
+-                disconnect(false);
+-                connect();
+-            }
++        if (!disposing) {
++            setStatus(false, "offline.reconnecting");
++            disconnect(false);
++            connect();
+@@ -1072,0 +1146,6 @@
++            if (disposing) {
++                return;
++            }
++            if (keepAliveReconnectJob != null) {
++                keepAliveReconnectJob.cancel(false);
++            }
+@@ -1107,9 +1186,23 @@
+-        GoogleTVConnectionManager connectionManager = this.connectionManager;
+-        GoogleTVConnectionManager childConnectionManager = this.childConnectionManager;
+-        if ((connectionManager != null) && (config.mode.equals(PIN_MODE)) && (!config.shim)) {
+-            disconnect(false);
+-            connectionManager.finishPinProcess();
+-        } else if ((childConnectionManager != null) && (config.mode.equals(DEFAULT_MODE)) && (!config.shim)) {
+-            childConnectionManager.dispose();
+-            reconnect();
+-        }
++        if (disposing || config.shim) {
++            return;
++        }
++        GoogleTVConnectionManager parent = connectionManager;
++        if (config.mode.equals(PIN_MODE) && parent != null && parent != this) {
++            parent.completePinProcess(this);
++        } else if (config.mode.equals(DEFAULT_MODE)) {
++            GoogleTVConnectionManager child = childConnectionManager;
++            if (child != null) {
++                completePinProcess(child);
++            }
++        }
++    }
++
++    private void completePinProcess(GoogleTVConnectionManager child) {
++        synchronized (childLock) {
++            if (disposing || child.disposing || childConnectionManager != child) {
++                return; // A replaced child's late parser callback has no authority over its successor.
++            }
++            childConnectionManager = null;
++        }
++        child.dispose();
++        reconnect(); // No lifecycle/child monitor is held during connection I/O.
+@@ -1371,0 +1465,9 @@
++        sockets.stop();
++        SSLServerSocket listener = shimListener;
++        if (listener != null) {
++            try {
++                listener.close();
++            } catch (IOException ignored) {
++                // Closing an already-closed listener is harmless.
++            }
++        }
+@@ -1385,3 +1487,6 @@
+-        GoogleTVConnectionManager childConnectionManager = this.childConnectionManager;
+-        if (childConnectionManager != null) {
+-            childConnectionManager.dispose();
++        synchronized (childLock) {
++            GoogleTVConnectionManager child = this.childConnectionManager;
++            this.childConnectionManager = null;
++            if (child != null) {
++                child.dispose();
++            }

@@ -70,7 +70,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-AREA = Path(__file__).resolve().parents[1]
+from oh_paths import SITE as AREA
 SECRETS = AREA / "var/secrets/pyatv"
 LISTEN = "127.0.0.1:8099"
 #: pyatv RemoteControl methods a key name may call.
@@ -347,25 +347,28 @@ class Bridge:
                 device.error = error.message
 
     async def _run(self, device: Device, what: str, action: Callable[[Any], Awaitable[Any]]) -> None:
-        """Send one command, connecting first if needed; a command that fails
-        on an open connection gets one new connection and one more try, since
-        the Apple TV may have dropped the old one without a word."""
+        """Connect before dispatch, then attempt the action once.
+
+        A timeout or lost reply can follow an accepted action. Replaying a
+        toggle or Next would undo or repeat it, so only a new explicit request
+        may reconnect and send again after an ambiguous command failure.
+        """
         if not self.paired(device.id):
             raise HttpError(409, NOT_PAIRED)
-        for attempt in (1, 2):
-            if device.atv is None:
-                await self._connect(device)
-            atv = device.atv
-            try:
-                await asyncio.wait_for(action(atv), self.connect_timeout)
-                return
-            except Exception as error:
-                if device.atv is atv:
-                    self._drop(device)
-                retry = attempt == 1
-                self._note(device, f"{what} failed: {describe(error)}" + ("; reconnecting" if retry else ""))
-                if not retry:
-                    raise HttpError(502, f"The Apple TV did not take the command: {describe(error)}") from None
+        if device.atv is None:
+            await self._connect(device)
+        atv = device.atv
+        try:
+            await asyncio.wait_for(action(atv), self.connect_timeout)
+        except Exception as error:
+            if device.atv is atv:
+                self._drop(device)
+            # Protocol exception text can quote private response fields. The
+            # bounded class/time classification is enough for this outcome.
+            reason = "no answer in time" if isinstance(error, TimeoutError) else type(error).__name__
+            self._note(device, f"{what} not confirmed ({reason}); not replaying")
+            raise HttpError(502, "The Apple TV did not confirm the command; it may have been applied. "
+                                "Check the device before trying again.") from None
 
     # -- the API's actions ---------------------------------------------------
 

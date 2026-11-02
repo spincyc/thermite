@@ -33,7 +33,8 @@ def capabilities(device: dict):
 
 
 def keys(module, device):
-    values = module.keys(device) if callable(getattr(module, "keys", None)) else getattr(module, "KEYS", {})
+    provider = getattr(module, "command_keys", None) or getattr(module, "keys", None)
+    values = provider(device) if callable(provider) else getattr(module, "KEYS", {})
     return sorted(key for key in values if isinstance(key, str)) if isinstance(values, (dict, tuple, list, set)) else []
 
 

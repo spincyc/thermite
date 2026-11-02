@@ -102,6 +102,9 @@ def capabilities(device: dict) -> tuple[dict | None, str | None, str | None]:
         layout = module.remote_of(device) if hasattr(module, "remote_of") else layouts.get(module.NAME)
         problem = module.problem(device) if hasattr(module, "problem") else None
         return control, layout, problem
+    for module in integrations.REGISTRY:
+        if hasattr(module, "remote_availability") and module.remote_availability(device) is not None:
+            return None, module.remote_of(device), None
     return None, "pc" if device["kind"] == "computer" else None, None
 
 
@@ -121,11 +124,15 @@ def build(house: House, hints: dict | None = None) -> dict:
                "kind": device["kind"], "model": hint.get("model") or device.get("model") or ""}
         control, layout, problem = (None, None, None) if ident in passive else capabilities(device)
         if ident not in passive and (hint.get("remote") or layout):
-            row["remote"] = hint.get("remote") or layout
+            row["remote"] = layout if control and layout else hint.get("remote") or layout
         if control:
             row["control"] = control
         if problem:
             row["problem"] = problem
+        availability = next((entry for module in integrations.REGISTRY if hasattr(module, "remote_availability")
+                             if (entry := module.remote_availability(device)) is not None), None)
+        if availability is not None:
+            row["availability"] = availability
         out["devices"][ident] = row
     for ident, spec in (route.get("sources") or {}).items():
         if ident not in devices:
@@ -134,7 +141,7 @@ def build(house: House, hints: dict | None = None) -> dict:
         device = out["devices"][ident]
         row = {"label": hint.get("label") or spec["label"], "kind": device["kind"], "model": hint.get("model") or device["model"]}
         if hint.get("remote") or device.get("remote"):
-            row["remote"] = hint.get("remote") or device["remote"]
+            row["remote"] = device["remote"] if device.get("control") and device.get("remote") else hint.get("remote") or device["remote"]
         out["sources"][ident] = row
     entries = route.get("rooms") or {}
     old_rooms = {r["id"]: r for r in hints.get("rooms") or [] if isinstance(r, dict) and "id" in r}

@@ -52,3 +52,7 @@ python3 -m venv .venv
 ```
 
 Configuration, documentation and these tests run offline. Running a native test runtime or installing services is a separate explicit command and requires the pinned downloads. The terminal remote additionally needs Node.js and its locked package; the Apple TV helper has its own hashed dependency lock.
+
+## Install the application separately
+
+This reviewed public source can also be installed with `python -m pip install .` in a dedicated virtual environment. Run `thermite init /path/to/private-site`, then `thermite --site /path/to/private-site generate` and `validate`. The installed program stays separate from the site's configuration, output and runtime state. A private site pins an exact application release; keep its configuration and generated outputs in private Git. Application upgrades are explicit and preserve cached releases for rollback. See [application and private-site packaging](docs/packaging.md) for the full boundary. These development builds are versioned `0.1.0.dev0`; installation does not commission a house or activate services.

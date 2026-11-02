@@ -15,11 +15,11 @@ from pathlib import Path
 
 import oh_atv as atv
 import oh_cli
-from oh_cli import AREA
+from oh_cli import AREA, PROGRAM_ROOT
 
 # The helper's container sets it (deploy/openhab-atv.container).
 VENV = Path(os.environ.get("OPENHAB_ATV_VENV") or AREA / "build/pyatv-venv")
-REQUIREMENTS = AREA / "lib/requirements-pyatv.txt"
+REQUIREMENTS = PROGRAM_ROOT / "lib/requirements-pyatv.txt"
 #: In the venv: the digest of the requirements it was built from.
 STAMP = "requirements.sha256"
 
@@ -114,9 +114,14 @@ def serve(arguments: argparse.Namespace) -> int:
         if not python.exists():
             print("thermite apple-tv: run `bin/thermite apple-tv setup` first", file=sys.stderr)
             return 2
-        # sys.argv as given, not bin/thermite apple-tv: the helper's container may still run it as
-        # bin/openhab-atv or as bin/thermite atv (oh_cli.LEGACY, oh_cli.ALIASES).
-        os.execv(str(python), [str(python), sys.argv[0], *sys.argv[1:]])
+        # The pyatv-only environment has no thermite_app distribution. Re-enter
+        # the selected program's stdlib launcher with canonical parsed options,
+        # even when called through an installed entry point or a legacy alias.
+        argv = [str(python), str(PROGRAM_ROOT / "bin/thermite"), "--site", str(AREA),
+                "apple-tv", "serve", "--listen", arguments.listen, "--secrets", str(arguments.secrets)]
+        if arguments.allow_remote:
+            argv.append("--allow-remote")
+        os.execv(str(python), argv)
     argv = ["--listen", arguments.listen, "--secrets", str(arguments.secrets)]
     if arguments.allow_remote:
         argv.append("--allow-remote")
