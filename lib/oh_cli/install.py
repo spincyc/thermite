@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import importlib
 import os
 import sys
 
@@ -22,7 +21,9 @@ it is safe to run again at any time. It finds this host's name and address
 and your user as it runs; instance/host.yaml holds only what is the same on
 any host (the state root, ports, service UID and GID, and time zone).
 
-Each step first checks whether it is done and skips it if so:
+Before changing this host, the installer checks that the site's generated
+files are current and every change is committed. Each later step checks
+whether it is done and skips it if so:
 preconditions, packages, the thermite user and group with you in it, the
 state directories, the boot check, the systemd units, stopped native-state
 preparation and ownership repair, the deploy of HEAD, services, the API token, and a
@@ -50,6 +51,9 @@ def main(argv: list[str] | None = None) -> int:
     system = System()
     try:
         return install(system, arguments.dry_run)
+    except (deploy.DeployError, ValueError, OSError) as exc:
+        print(f"thermite install: {exc}", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         system.say(f"\nInterrupted. {runner.RERUN}")
         return 130
@@ -59,11 +63,11 @@ def install(system: System, dry_run: bool) -> int:
     try:
         import yaml  # noqa: F401
     except ImportError:
-        system.say("PyYAML is missing, and instance/host.yaml needs it: the packages come first.")
-        code = runner.run([steps.Packages()], system, AREA, dry_run=dry_run)
-        if code or dry_run:
-            return code or 1
-        importlib.invalidate_caches()
+        system.say("PyYAML is missing from this Python environment. Install the application dependencies, "
+                   "then rerun: the site must be validated before any host changes.")
+        if dry_run:
+            runner.run([steps.Packages()], system, AREA, dry_run=True)
+        return 2
     versions, host = deploy.load(AREA)
     context = steps.Context(AREA, versions, host, deploy.resolve(AREA, "HEAD"),
                             deploy.tree_digest(deploy.read_tree(AREA / "conf")), system.hostname(), system.address())
@@ -76,9 +80,22 @@ def install(system: System, dry_run: bool) -> int:
     if code and not dry_run:
         return code
     if not dry_run:
-        system.say(f"thermite runs on {context.hostname}: Main UI at {context.lan_url}/ and the remote at "
-                   f"{context.lan_url}/static/remote/. Pair the TVs, SHIELDs and Apple TVs at "
-                   f"{context.lan_url}/static/remote/pair.html (docs/deploy.md).")
+        completion(context, system)
         if host["gid"] not in system.process_groups():
             system.say("Log out and in again, so that your shell is in the thermite group for later deploys.")
     return runner.run([verify], system, AREA, dry_run=dry_run, first=len(install) + 1) or code
+
+
+def completion(context: steps.Context, system: System) -> None:
+    """Distinguish native runtime readiness from the separately staged frontend."""
+    import oh_access_mode
+    import oh_inventory
+
+    system.say(f"Native Main UI on {context.hostname}: {context.lan_url}/")
+    house = oh_inventory.load(context.area / "instance/devices.yaml") or {}
+    if oh_access_mode.mode(house) == "native":
+        system.say(f"Native remote: {context.lan_url}/static/remote/home.html ; pairing: "
+                   f"{context.lan_url}/static/remote/pair.html (docs/deploy.md).")
+    else:
+        system.say("Set up HTTPS and accounts before using the authenticated web and terminal remotes. "
+                   "Follow docs/installation.md (Set up HTTPS and accounts); thermite access --help lists the commands.")

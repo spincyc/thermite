@@ -150,10 +150,12 @@ def run(config_path, *, stop=None, interval=1, wall_clock=None):
     from .files import require_service_account
     require_service_account()
     from .service import configured
+    # This is a fresh service process: configure Django before importing any
+    # model-backed store or runtime adapter, even when another process bootstrapped.
+    config, adapter, locks = configured(config_path, tls=False)
     from oh_identity.policy_store import Store
     from oh_identity.runtime import plain
     from oh_room_policy import Worker, expected_plan
-    config, adapter, locks = configured(config_path, tls=False)
     store = Store()
     house = plain(adapter.contract.house)
     fields = [field for room, spec in adapter.contract.rooms.items() for choice in ("off", *spec["sources"])

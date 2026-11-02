@@ -75,6 +75,79 @@ STOP_TIMEOUT = 3
 #: What Prometheus scrapes (oh_metrics prometheus.yml's openhab job).
 METRICS_PATH = "/rest/metrics/prometheus"
 SAMPLE = re.compile(r"^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{| )")
+THINGS_PATH = "/rest/things?summary=true"
+
+
+class ReportError(lib.SandboxError):
+    """A fixed-route query diagnostic; never include an upstream body or log tail."""
+
+
+class ReportUnavailable(ReportError):
+    """A temporary REST registration or connection outage within the boot budget."""
+
+
+class ReportHttp(lib.Http):
+    """Read a fresh report under one absolute deadline, including every request."""
+
+    def __init__(self, url, token, deadline):
+        super().__init__(url, token=token, timeout=30)
+        self.deadline = deadline
+        self.last_unavailable = None
+
+    def remaining(self, path):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            detail = f" (last outage: {self.last_unavailable})" if self.last_unavailable else ""
+            raise ReportError(f"boot-check: startup deadline expired querying {path}{detail}")
+        return remaining
+
+    def request(self, method, path, body=None, headers=None):
+        self.timeout = min(30, self.remaining(path))
+        try:
+            status, data = super().request(method, path, body=body, headers=headers)
+        except urllib.error.HTTPError as exc:
+            status, data = exc.code, b""
+            exc.close()
+        except (urllib.error.URLError, OSError):
+            status, data = 0, b""
+        self.remaining(path)
+        if status == 0 or status == 404 or 500 <= status <= 599:
+            issue = f"{path} is unavailable (HTTP {status})" if status else f"{path} has a connection failure"
+            self.last_unavailable = issue
+            raise ReportUnavailable(f"boot-check: {issue}")
+        if status != 200:
+            raise ReportError(f"boot-check: {path} answered HTTP {status}")
+        return status, data
+
+    def get_json(self, path):
+        try:
+            value = super().get_json(path)
+        except (ValueError, UnicodeError, RecursionError):
+            raise ReportError(f"boot-check: {path} returned malformed JSON") from None
+        valid = False
+        if path == "/rest/":
+            info = value.get("runtimeInfo") if isinstance(value, dict) else None
+            valid = isinstance(info, dict) and isinstance(info.get("version"), str) and bool(info["version"])
+        elif path == "/rest/systeminfo":
+            info = value.get("systemInfo") if isinstance(value, dict) else None
+            valid = isinstance(info, dict) and isinstance(info.get("javaVendorVersion"), str) and bool(info["javaVendorVersion"])
+        elif path == "/rest/addons?serviceId=all":
+            valid = isinstance(value, list) and all(isinstance(row, dict) and type(row.get("installed")) is bool
+                and (isinstance(row.get("uid"), str) and bool(row["uid"])
+                     or all(isinstance(row.get(key), str) and bool(row[key]) for key in ("type", "id")))
+                for row in value)
+        elif path == THINGS_PATH:
+            valid = isinstance(value, list) and all(isinstance(row, dict) and isinstance(row.get("UID"), str) and bool(row["UID"])
+                and isinstance(row.get("statusInfo"), dict) and isinstance(row["statusInfo"].get("status"), str) and bool(row["statusInfo"]["status"])
+                and (row["statusInfo"].get("statusDetail") is None or isinstance(row["statusInfo"]["statusDetail"], str))
+                for row in value)
+        elif path == "/rest/items?recursive=false&fields=name,type":
+            valid = isinstance(value, list) and all(isinstance(row, dict)
+                and all(isinstance(row.get(key), str) and bool(row[key]) for key in ("name", "type")) for row in value)
+        if not valid:
+            raise ReportError(f"boot-check: {path} returned an invalid JSON shape")
+        self.remaining(path)
+        return value
 
 
 def series_names(text: str) -> list[str]:
@@ -105,17 +178,17 @@ def metrics(http: lib.Http) -> dict:
 
 def collect(inst: lib.Instance, http: lib.Http, requested: dict, require_online: bool) -> dict:
     root = http.get_json("/rest/")
-    _, sysinfo = http.try_get_json("/rest/systeminfo")
-    _, addons = http.try_get_json("/rest/addons?serviceId=all")
-    things = http.get_json("/rest/things?summary=true") or []
-    items = http.get_json("/rest/items?recursive=false&fields=name,type") or []
-    installed = sorted(lib.installed_addon_uids(addons or []))
+    sysinfo = http.get_json("/rest/systeminfo")
+    addons = http.get_json("/rest/addons?serviceId=all")
+    things = http.get_json(THINGS_PATH)
+    items = http.get_json("/rest/items?recursive=false&fields=name,type")
+    installed = sorted(lib.installed_addon_uids(addons))
     wanted = lib.addon_uids(requested)
     text = inst.openhab_log.read_text(encoding="utf-8", errors="replace") if inst.openhab_log.exists() else ""
     problems = lib.log_problems(lib.parse_log(text))
     return {
-        "openhab_version": (root or {}).get("runtimeInfo", {}).get("version"),
-        "java": (sysinfo or {}).get("systemInfo", {}).get("javaVendorVersion"),
+        "openhab_version": root["runtimeInfo"]["version"],
+        "java": sysinfo["systemInfo"]["javaVendorVersion"],
         "conf": str(inst.conf),
         "addons": {
             "requested": wanted,
@@ -236,39 +309,55 @@ def run_check(args, rt: lib.Runtime, inst: lib.Instance, log) -> dict:
     try:
         booted = lib.boot(rt, inst, requested, started, deadline, log=log)
         timings, restarted = booted.timings, booted.restarted
-        http = lib.Http(inst.url, token=booted.token, timeout=30)
+        http = ReportHttp(inst.url, booted.token, deadline)
 
         settler = lib.Settler(args.settle, stall=args.stall, devices=args.require_online)
-        outcome = "timeout"
-        while time.monotonic() < deadline:
-            now = time.monotonic()
-            code, things = http.try_get_json("/rest/things?summary=true")
-            if code == 200:
-                if settler.observe(things or [], now, lib.start_level(inst)):
-                    outcome = "settled"
+        outcome = None
+        while True:
+            http.remaining(THINGS_PATH)
+            try:
+                if outcome != "stalled":
+                    things = http.get_json(THINGS_PATH)
+                    now = time.monotonic()
+                    if settler.observe(things, now, lib.start_level(inst)):
+                        outcome = "settled"
+                    elif settler.stalled(now):
+                        outcome = "stalled"
+                    if outcome:
+                        timings[f"things {outcome}"] = time.monotonic() - started
+                if outcome:
+                    report = collect(inst, http, requested, args.require_online)
+                    http.remaining(METRICS_PATH)
                     break
-                if settler.stalled(now):
-                    outcome = "stalled"
-                    break
-            time.sleep(1)
-        timings[f"things {outcome}"] = time.monotonic() - started
-
-        report = collect(inst, http, requested, args.require_online)
+            except ReportUnavailable:
+                # An attempt is all-or-nothing, including optional metadata,
+                # add-ons and metrics. Never reuse fields from a failed read.
+                if outcome != "stalled":
+                    timings.pop("things settled", None)
+                    outcome = None
+                    settler = lib.Settler(args.settle, stall=args.stall, devices=args.require_online)
+            time.sleep(min(1, http.remaining(THINGS_PATH)))
         report["start_level"] = lib.start_level(inst)
         report["restarted_after_first_boot"] = restarted
         report["things_outcome"] = outcome
         report["stall_seconds"] = args.stall
         report["timings"] = timings
         report["failures"] = verdict(report)
+        if outcome == "stalled":
+            report["failures"].append(f"Things stalled for {args.stall:.0f}s")
         report["url"] = inst.url
         report["token_file"] = str(inst.token_file)
         report["pid_file"] = str(inst.pid_file)
         keep = args.keep
         report["kept"] = keep
         return report
+    except ReportError:
+        raise
     except lib.SandboxError as exc:
-        tail = lib.tail_text(inst.openhab_log, 30)
-        raise lib.SandboxError(f"{exc}\n--- last lines of {inst.openhab_log}\n{tail}") from exc
+        if inst.openhab_log.is_file():
+            tail = lib.tail_text(inst.openhab_log, 30)
+            raise lib.SandboxError(f"{exc}\n--- last lines of {inst.openhab_log}\n{tail}") from exc
+        raise
     finally:
         if not keep:
             stop_started = time.monotonic()

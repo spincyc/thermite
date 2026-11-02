@@ -1,6 +1,6 @@
 # Thermite listening ports
 
-Thermite's default TCP listeners occupy **13600–13622**, anchored at the
+Thermite's default TCP listeners occupy **13600–13625**, anchored at the
 HTTPS application on **13600**. `lib/oh_ports.py` owns the allocation.
 `instance/host.yaml` keeps the site's native HTTP/HTTPS choices and optional
 `metrics: <service>_port` overrides. Generation rejects invalid values and
@@ -33,6 +33,9 @@ rules together when using them.
 | 13620 | Boot-check Karaf console | 127.0.0.1 only |
 | 13621 | Development docs preview HTTP | 127.0.0.1 only; `--port 0` explicitly requests an ephemeral port |
 | 13622 | Development remote preview HTTP | Explicit loopback-only Python static-server command |
+| 13623 | Native Karaf shutdown control | 127.0.0.1 only |
+| 13624 | Sandbox Karaf shutdown control | 127.0.0.1 only |
+| 13625 | Boot-check Karaf shutdown control | 127.0.0.1 only |
 
 Authenticated access is the application entry point. Choosing a new port does
 not seal native listeners or activate the optional callback ingress. Follow
@@ -48,6 +51,14 @@ The native language server's lack of an address setting is visible in the
 [pinned openHAB 5.2.3 source](https://github.com/openhab/openhab-core/blob/5.2.3/bundles/org.openhab.core.model.lsp/src/main/java/org/openhab/core/model/lsp/internal/ModelServer.java).
 The console's independent setting is documented by its
 [pinned distribution configuration](https://github.com/openhab/openhab-distro/blob/5.2.3/distributions/openhab/src/main/resources/userdata/etc/org.apache.karaf.shell.cfg).
+
+Karaf also opens a separate shutdown-control socket. Thermite sets its port
+and loopback address in each instance's `userdata/etc/custom.properties`,
+preserving the upstream stop command instead of accepting a random listener.
+Native, sandbox and boot-check instances use distinct ports so they can
+coexist. The behavior is defined by the pinned Karaf
+[shutdown setup](https://github.com/apache/karaf/blob/karaf-4.4.11/main/src/main/java/org/apache/karaf/main/InstanceHelper.java)
+and [stop command](https://github.com/apache/karaf/blob/karaf-4.4.11/main/src/main/java/org/apache/karaf/main/Stop.java).
 
 The default migration moves native HTTP/HTTPS from 8080/8443, Karaf from
 8101, LSP from 5007, the helper from 8099, Prometheus from 9090,
@@ -71,7 +82,7 @@ ports, the usual application defaults displaced above, and Kubernetes' default
 [Prysm's QUIC listener](https://github.com/OffchainLabs/prysm/discussions/14728)
 and the [AgentTeams dashboard](https://github.com/agentteams-group/agentteams-dashboard).
 Targeted searches found no known open-source default allocation for the chosen
-13600–13622 run. This is a local convention, not an IANA reservation or a
+13600–13625 run. This is a local convention, not an IANA reservation or a
 promise that no other program uses those numbers. Startup preconditions still
 check whether required ports are occupied.
 

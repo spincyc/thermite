@@ -161,14 +161,14 @@ def _start(args, rt, inst) -> int:
     started = time.monotonic()
     deadline = started + args.timeout
     first_boot = not (inst.userdata / "etc").exists()
-    pgid = lib.start_instance(rt, inst)
+    pgid = lib.start_instance(rt, inst, deadline=deadline)
     print(f"start   runtime {rt.openhab_version} (pid {pgid}) conf={inst.conf} userdata={inst.userdata}")
     try:
-        root = lib.wait_rest(inst, pgid, args.timeout)
+        root = lib.wait_rest(inst, pgid, max(0, deadline - time.monotonic()))
         print(f"rest    {inst.url}/rest/ answers: runtime {root['runtimeInfo'].get('version')} "
               f"after {time.monotonic() - started:.0f}s")
         if not args.no_token:
-            token = lib.read_token(lib.provision_token(rt, inst))
+            token = lib.read_token(lib.provision_token(rt, inst, deadline=deadline))
             wanted = set(lib.addon_uids(lib.read_requested_addons(inst.conf)))
             if first_boot and wanted:
                 http = lib.Http(inst.url, token=token, timeout=30)

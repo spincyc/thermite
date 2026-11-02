@@ -39,11 +39,13 @@
 <h1 id="get-started">Get started</h1>
 <p>thermite runs on a Linux machine on your home network. Choose where it will live, or try the fictional example first. These are development builds, version <code>0.1.0.dev0</code>.</p>
 <h2 id="choose-where-to-run-it">Choose where to run it</h2>
-<table><thead><tr><th>Your setup</th><th>Installation path</th></tr></thead><tbody><tr><td>An existing Linux server</td><td><a href="installation.html">Install thermite on your server</a>. Keep your existing operating system and create a private site.</td></tr><tr><td>A dedicated machine</td><td><a href="iso.html">Build the standalone ISO</a>. Boot it to install the operating system and thermite on that machine.</td></tr></tbody></table>
-<p>Both paths use the same application, house file and remotes. The <a href="ports.html">ports guide</a> lists the network services and their exposure.</p>
+<table><thead><tr><th>Your setup</th><th>Installation path</th></tr></thead><tbody><tr><td>Stock Arch Linux, or an existing Ubuntu Server</td><td><a href="installation.html">Install thermite on your server</a>. Keep your existing operating system and create a private site.</td></tr><tr><td>A dedicated machine</td><td><a href="iso.html">Build the standalone ISO</a>. Arch is the default base; Ubuntu is optional. Boot it to install the operating system and thermite on that machine.</td></tr></tbody></table>
+<p>Check the <a href="requirements.html">system requirements</a> first. Plan for 2 cores, 4 GiB RAM and a 64 GB SSD for light use, or 4 cores, 8 GiB and 128 GB for more headroom. These full-stack estimates are not benchmarked capacity limits. Each installation path uses the same application, house file and remotes. The <a href="ports.html">ports guide</a> lists the services and their exposure.</p>
 <p>You administer Thermite with your own login. Its application services and deployed data use the non-login <code>thermite:thermite</code> account, UID/GID 9001. The <a href="service-account.html">service account guide</a> covers permissions and upgrades from the old <code>openhab</code> account name.</p>
 <h2 id="try-the-example">Try the example</h2>
-<p>You can generate configuration and use the terminal remote in demo mode before connecting hardware. From a reviewed source checkout, with Python 3.11 or later, Git, Node.js and npm installed:</p>
+<p>You can generate configuration and use the terminal remote in demo mode before connecting hardware. On stock Arch, prepare the development tools:</p>
+<pre><code class="language-sh">sudo pacman -Syu --needed python python-pip git nodejs npm</code></pre>
+<p>On Ubuntu Server, use <code>sudo apt-get update</code> followed by <code>sudo apt-get install python3-venv git nodejs npm</code> instead. From a reviewed source checkout, create a separate application environment:</p>
 <pre><code class="language-sh">python3 -m venv ~/.venvs/thermite
 ~/.venvs/thermite/bin/python -m pip install .
 . ~/.venvs/thermite/bin/activate

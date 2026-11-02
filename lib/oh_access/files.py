@@ -39,15 +39,43 @@ def require_service_account():
 
 def private_directory(value):
     path = Path(value).expanduser().absolute()
-    # Refuse a symlink anywhere in the path, including intermediate directories.
-    for parent in [*reversed(path.parents), path]:
-        if parent.is_symlink():
-            raise AccessError("Private paths must not contain symlinks")
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    info = path.stat()
-    if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
-        raise AccessError("Private directory must be owned by this user and mode 0700")
-    return path
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptor = os.open(path.anchor, flags)
+    try:
+        for part in path.parts[1:]:
+            created = None
+            try:
+                child = os.open(part, flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+                else:
+                    created = os.stat(part, dir_fd=descriptor, follow_symlinks=False)
+                child = os.open(part, flags, dir_fd=descriptor)
+            try:
+                info = os.fstat(child)
+                if created is not None:
+                    if info.st_uid != os.geteuid() or not os.path.samestat(created, info):
+                        raise AccessError("Private directory changed during creation")
+                    # mkdir inherits SGID from a shared parent even with mode
+                    # 0700. Normalize only the directory this call created.
+                    os.fchmod(child, 0o700)
+                current = os.stat(part, dir_fd=descriptor, follow_symlinks=False)
+                if not os.path.samestat(current, os.fstat(child)):
+                    raise AccessError("Private directory changed during creation")
+            except BaseException:
+                os.close(child)
+                raise
+            os.close(descriptor)
+            descriptor = child
+        info = os.fstat(descriptor)
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            raise AccessError("Private directory must be owned by this user and mode 0700")
+        return path
+    finally:
+        os.close(descriptor)
 
 
 def read_private(value, maximum=2 * 1024 * 1024):

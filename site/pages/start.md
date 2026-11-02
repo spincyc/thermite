@@ -6,16 +6,29 @@ thermite runs on a Linux machine on your home network. Choose where it will live
 
 | Your setup | Installation path |
 |---|---|
-| An existing Linux server | [Install thermite on your server](installation.html). Keep your existing operating system and create a private site. |
-| A dedicated machine | [Build the standalone ISO](iso.html). Boot it to install the operating system and thermite on that machine. |
+| Stock Arch Linux, or an existing Ubuntu Server | [Install thermite on your server](installation.html). Keep your existing operating system and create a private site. |
+| A dedicated machine | [Build the standalone ISO](iso.html). Arch is the default base; Ubuntu is optional. Boot it to install the operating system and thermite on that machine. |
 
-Both paths use the same application, house file and remotes. The [ports guide](ports.html) lists the network services and their exposure.
+Check the [system requirements](requirements.html) first. Plan for 2 cores,
+4 GiB RAM and a 64 GB SSD for light use, or 4 cores, 8 GiB and 128 GB for
+more headroom. These full-stack estimates are not benchmarked capacity
+limits. Each installation path uses the same application, house file and
+remotes. The [ports guide](ports.html) lists the services and their exposure.
 
 You administer Thermite with your own login. Its application services and deployed data use the non-login `thermite:thermite` account, UID/GID 9001. The [service account guide](service-account.html) covers permissions and upgrades from the old `openhab` account name.
 
 ## Try the example
 
-You can generate configuration and use the terminal remote in demo mode before connecting hardware. From a reviewed source checkout, with Python 3.11 or later, Git, Node.js and npm installed:
+You can generate configuration and use the terminal remote in demo mode
+before connecting hardware. On stock Arch, prepare the development tools:
+
+```sh
+sudo pacman -Syu --needed python python-pip git nodejs npm
+```
+
+On Ubuntu Server, use `sudo apt-get update` followed by
+`sudo apt-get install python3-venv git nodejs npm` instead. From a reviewed
+source checkout, create a separate application environment:
 
 ```sh
 python3 -m venv ~/.venvs/thermite

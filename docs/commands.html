@@ -707,7 +707,9 @@ it is safe to run again at any time. It finds this host&#x27;s name and address
 and your user as it runs; instance/host.yaml holds only what is the same on
 any host (the state root, ports, service UID and GID, and time zone).
 
-Each step first checks whether it is done and skips it if so:
+Before changing this host, the installer checks that the site&#x27;s generated
+files are current and every change is committed. Each later step checks
+whether it is done and skips it if so:
 preconditions, packages, the thermite user and group with you in it, the
 state directories, the boot check, the systemd units, stopped native-state
 preparation and ownership repair, the deploy of HEAD, services, the API token, and a
@@ -1713,7 +1715,8 @@ examples:
   thermite access status --url https://thermite.example:13600
                                     use this site&#x27;s private terminal credential
 </pre></details>
-<details id="access-stage"><summary><code>thermite access stage</code></summary><pre class="help">usage: thermite access stage [-h] --destination DESTINATION --state STATE [--house FILE]
+<details id="access-stage"><summary><code>thermite access stage</code></summary><pre class="help">usage: thermite access stage [-h] --destination DESTINATION --state STATE
+                             [--plan-directory PLAN_DIRECTORY] [--house FILE]
                              --assets ASSETS --runtime-url RUNTIME_URL
                              --runtime-token-file RUNTIME_TOKEN_FILE --tls-cert TLS_CERT
                              --tls-key TLS_KEY --allowed-host ALLOWED_HOSTS
@@ -1728,6 +1731,10 @@ options:
   --destination DESTINATION     new persistent release directory outside this checkout
   --state STATE                 site-owned mode0700 state directory outside releases and
                                 source checkouts; reuse on upgrades
+  --plan-directory PLAN_DIRECTORY
+                                new operator-owned plan directory under an existing
+                                mode0700 parent; saves stage.json and a replayable
+                                handoff.sh
   --house FILE                  the house file (default: instance/devices.yaml)
   --assets ASSETS               complete deployed native conf/html/remote directory
   --runtime-url RUNTIME_URL     explicit native loopback HTTP origin
@@ -2071,13 +2078,15 @@ examples:
 </section>
 <section class="verb" id="iso"><h3><code>thermite iso</code></h3><p>Build a bootable installer for a dedicated Thermite machine.</p><pre class="help">usage: thermite iso [-h] ACTION ...
 
-Build a hybrid BIOS/UEFI Ubuntu Server installer containing the reviewed
+Build a hybrid BIOS/UEFI Arch Linux installer containing the reviewed
 Thermite application. It asks for disk, network and owner account settings.
 No private site or credentials are embedded. Runtime commissioning follows
-first boot and needs Internet access. Building requires xorriso; no root.
+first boot and needs Internet access. Arch OS installation also requires
+Internet access. --base ubuntu retains the Ubuntu Server offline OS installer.
+Building requires xorriso, plus mtools for Arch; no root.
 
-fetch downloads the pinned base ISO and Python dependency over HTTPS and
-checks SHA256. build uses those cached inputs and writes an ISO plus a
+fetch downloads the pinned base ISO and any bundled Python dependency over
+HTTPS and checks SHA256. build uses those cached inputs and writes an ISO plus a
 checksum and provenance receipt. Existing outputs are never overwritten.
 
 options:
@@ -2099,38 +2108,41 @@ examples:
   thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso
                                     build the bootable installer and checksum
 </pre>
-<details id="iso-fetch"><summary><code>thermite iso fetch</code></summary><pre class="help">usage: thermite iso fetch [-h] --cache DIR
+<details id="iso-fetch"><summary><code>thermite iso fetch</code></summary><pre class="help">usage: thermite iso fetch [-h] --cache DIR [--base {arch,ubuntu}]
 
 Download and verify pinned installer inputs.
 
 options:
-  -h, --help     show this help message and exit
-  --cache DIR    directory for verified input downloads
+  -h, --help            show this help message and exit
+  --cache DIR           directory for verified input downloads
+  --base {arch,ubuntu}  installer distribution (default: arch)
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite iso fetch --cache .scratch/iso/cache
                                     download and verify fixed inputs
 </pre></details>
 <details id="iso-build"><summary><code>thermite iso build</code></summary><pre class="help">usage: thermite iso build [-h] --cache DIR --work DIR --out FILE [--xorriso XORRISO]
+                          [--base {arch,ubuntu}]
 
 Build a bootable ISO from the verified cache.
 
 options:
-  -h, --help         show this help message and exit
-  --cache DIR        directory containing verified inputs
-  --work DIR         disposable staging directory
-  --out FILE         new output ISO filename
-  --xorriso XORRISO  explicit xorriso executable
+  -h, --help            show this help message and exit
+  --cache DIR           directory containing verified inputs
+  --work DIR            disposable staging directory
+  --out FILE            new output ISO filename
+  --xorriso XORRISO     explicit xorriso executable
+  --base {arch,ubuntu}  installer distribution (default: arch)
 
 switches every verb takes:
-  -q, --quiet        print only errors
-  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
-  --no-color         no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso

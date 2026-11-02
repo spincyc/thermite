@@ -39,6 +39,12 @@ retain their normal administrator ownership.
 
 More restrictive existing configuration modes are retained. Native userdata
 is private as a whole because it also contains identities and pairing keys.
+The recognized, versioned Graal attach executable may retain its producer's
+`0775` mode only when every parent inside userdata is service-owned `0700`.
+Those directories deny access to other identities. An existing `0700` mode
+is retained; other private userdata files and credentials remain `0600`.
+The Apple TV helper checks its environment after package installation and
+on reuse, since wheel installers can set modes explicitly despite the umask.
 The backup directory lets trusted operators list and inspect archive metadata;
 the archive contents remain private to the service account.
 Before an operator's deploy or rollback writes, it asks for approval of the

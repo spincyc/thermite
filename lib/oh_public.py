@@ -34,10 +34,15 @@ SOURCE_FILES = (
     'CHANGELOG.md',
     'docs/packaging.md',
     'docs/installation.md',
+    'docs/installation-handoff.md',
+    'docs/requirements.md',
     'docs/iso.md',
     'docs/ports.md',
     'docs/service-account.md',
     'iso/bootstrap.py',
+    'iso/arch-config.json',
+    'iso/arch-install.sh',
+    'iso/arch-plugin.py',
     'iso/first-boot.txt',
     'iso/inputs.json',
     'lib/oh_paths.py',
@@ -248,6 +253,13 @@ SOURCE_FILES = (
     'tests/test_installed_install.py',
     'tests/test_install_secret_files.py',
     'tests/test_service_account.py',
+    'tests/test_boot.py',
+    'tests/e2e/fixture.py',
+    'tests/e2e/README.md',
+    'tests/e2e/dummy-tv.py',
+    'tests/e2e/check_access.py',
+    'tests/e2e/check_tui.cjs',
+    'tests/e2e/check_browser.cjs',
     'tui/remote/administration.js',
     'tui/remote/app.js',
     'tui/remote/cameras.js',
@@ -721,6 +733,8 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
             allowed = match in PROTOCOL_IPS or (name == "lib/oh_discover.py" and match == ".".join(["1"] * 4))
             try:
                 address = ipaddress.ip_address(match)
+                # Installation fixtures use separate guest-loopback devices.
+                allowed |= address.is_loopback and name in {"tests/e2e/fixture.py", "tests/e2e/dummy-tv.py", "tests/e2e/check_access.py"}
                 allowed |= any(address in ipaddress.ip_network(prefix) for prefix in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"))
             except ValueError:
                 pass
@@ -810,7 +824,7 @@ def _credentials(name, text):
                     and literal(node.arg, node.value.value) and not simulated_pin(node)):
                 found.append((node.lineno, "literal credential"))
         return found
-    if name.endswith(".js"):
+    if name.endswith((".js", ".cjs", ".mjs")):
         strings = list(re.finditer(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|`(?:\\.|[^`\\])*`|//[^\n]*|/\*[\s\S]*?\*/', text))
         pattern = re.compile(r'''(?i)(?:^|[\s{,;])(?:const\s+|let\s+|var\s+)?["']?(password|passwd|passphrase|secret|token|api_?key|apitoken|psk|authorization|cookie|pin)["']?\s*[:=]\s*(["'])(.*?)\2''', re.MULTILINE)
         return [(text.count("\n", 0, m.start()) + 1, "literal credential") for m in pattern.finditer(text)

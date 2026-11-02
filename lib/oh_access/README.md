@@ -22,9 +22,20 @@ Stage as the operator, with `--destination "$ACCESS_ROOT/releases/first"` and
 operator's custody; staging copies them into the new release. The receipt's
 `ownership_commands` lists finite, exact-path `chmod` and `chown` commands for
 that release and any operator-owned state, followed separately by its
-`verification_command`. Review and run the ownership commands before verification,
-bootstrap or activation. No ownership changes or privileged commands run during
-staging. Once handed over, release and state directories belong to
+`verification_command`. Normal output is a concise summary; `--json` returns
+the full receipt for automation.
+
+Use `--plan-directory` to save an operator-owned receipt and `handoff.sh`
+outside the release and state. Its parent must already belong to the operator
+with mode 0700; the [installation guide](../../docs/installation.md#set-up-https-and-accounts)
+creates that parent explicitly. Review the script, then run it with `sh` as
+the operator. Only its exact administrative commands use sudo. The script
+applies the finite ownership plan and verifies custody as thermite, stopping
+on failure. Its private operator-owned copy remains readable for replay after
+partial or complete handoff. Bootstrap and activation remain separate.
+
+No ownership changes or privileged commands run during staging. Once handed
+over, release and state directories belong to
 `thermite:thermite` with mode 0700, ordinary files are 0600, and release program
 and environment executables are 0700. The two staging parents retain their
 operator/group ownership so the operator can prepare the next release.

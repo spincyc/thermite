@@ -7,10 +7,35 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. Existing complete Git checkouts retain their deployment behavior.
 
-- Separate setup guides for an existing Linux server and a dedicated machine,
-  with a bootable Ubuntu Server ISO builder and bundled application installer.
-- A contiguous listener allocation at 13600–13622, starting with the site's
-  HTTPS service. Existing installations need the documented port migration.
+- Arch Linux is the primary server example and default installer ISO base,
+  using native guided disk and account setup. Ubuntu Server remains an
+  alternative. Both ISO variants bundle the application.
+- Published CPU, RAM, storage and network planning requirements for the full
+  stack, with a repeatable fictional-house acceptance recipe.
+- Installation checks generated files and private Git before changing the
+  host. Cold boot checks share one startup budget across cache preparation,
+  console readiness, authentication and graceful cache shutdown.
+- Missing container images download before service startup, with visible
+  progress, so first-time transfers do not consume systemd's launch timeout.
+- Failed access staging removes its partial release so the same operation
+  can be retried while preserving previous releases and persistent state.
+- Access staging saves a private, reviewable ownership script that the owner
+  can resume, followed by service-user verification before activation.
+- Access service units now use directive-specific systemd path escaping,
+  including literal spaces, quotes and environment-variable characters.
+- The policy worker configures its identity database before importing models
+  in a fresh service process.
+- Gateway shutdown drains active requests and closes event streams within a
+  bounded cleanup window before systemd's stop deadline.
+- Installation waits for native authentication during startup before offering
+  to replace a saved API token; successful retries preserve the credential.
+- Boot report collection retries temporary REST registration outages within
+  its startup deadline and reports terminal query failures without a traceback.
+  [Installation handoff](docs/installation-handoff.md) records pending guest
+  verification and the incomplete three-path acceptance.
+- A contiguous listener allocation at 13600–13625, starting with the site's
+  HTTPS service and including each runtime's loopback shutdown control.
+  Existing installations need the documented port migration.
 - Updated documentation with screenshots of the web and terminal remotes,
   captured from the fictional example.
 - Application services run as `thermite:thermite`, including native container

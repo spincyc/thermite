@@ -21,7 +21,7 @@ from oh_install.system import System
 #: runs this area's tools; Node.js and npm support the terminal remote.
 PACKAGES = {
     "pacman": ("podman", "git", "make", "python", "python-yaml", "nodejs", "npm"),
-    "apt-get": ("podman", "git", "make", "python3", "python3-yaml", "nodejs", "npm"),
+    "apt-get": ("podman", "git", "make", "python3", "python3-yaml", "python3-venv", "nodejs", "npm"),
 }
 #: Quadlets need Podman 4.4.
 PODMAN = (4, 4)
@@ -287,7 +287,7 @@ class Account(Step):
 
 
 class StateDirectories(Step):
-    title = "The state subvolume and its directories (ADR 0054)"
+    title = "Service state directories"
 
     def __init__(self, context: Context):
         self.context = context
@@ -382,19 +382,25 @@ class BootTest(Step):
 
 
 class NativeListeners(Step):
-    title = "Use Thermite's native console listener on loopback"
+    title = "Use Thermite's native console and shutdown listeners on loopback"
 
     def __init__(self, context: Context):
         self.context = context
         self.applied = False
 
     def check(self, system: System) -> Check:
-        data = system.read_bytes(self.context.layout.userdata / oh_ports.SHELL_CFG)
-        if oh_ports.native_configured_bytes(data):
-            return Check(True, f"Karaf listens on 127.0.0.1:{oh_ports.KARAF_PORT}")
-        if data is None and _opaque(system, self.context, self.context.layout.userdata / oh_ports.SHELL_CFG) and (self.applied or service_receipt(self.context, system)):
+        checks = ((oh_ports.SHELL_CFG, oh_ports.native_configured_bytes),
+                  (oh_ports.CUSTOM_PROPERTIES, oh_ports.shutdown_configured_bytes))
+        data = []
+        for relative, verify in checks:
+            raw = system.read_bytes(self.context.layout.userdata / relative)
+            data.append((relative, raw, verify(raw)))
+        if all(done for _, _, done in data):
+            return Check(True, f"Karaf console/shutdown listen on 127.0.0.1:{oh_ports.KARAF_PORT}/{oh_ports.SHUTDOWN_PORT}")
+        if all(done or (raw is None and _opaque(system, self.context, self.context.layout.userdata / relative))
+               for relative, raw, done in data) and (self.applied or service_receipt(self.context, system)):
             return Check(True, "native listener configuration verified under private service custody")
-        return Check(False, f"set Karaf to 127.0.0.1:{oh_ports.KARAF_PORT} while openHAB is stopped")
+        return Check(False, f"set Karaf console/shutdown to 127.0.0.1:{oh_ports.KARAF_PORT}/{oh_ports.SHUTDOWN_PORT} while openHAB is stopped")
 
     def actions(self, system: System) -> list[Action]:
         self.applied = True
@@ -562,7 +568,7 @@ class Services(Step):
     def actions(self, system: System) -> list[Action]:
         start, restart, enable = self.plan(system)
         services = [unit for unit in start if unit != self.path_unit]
-        actions = []
+        actions = self.prefetch(system, [*services, *restart])
         if services:
             actions.append(Command(("systemctl", "start", *services), root=True))
         if restart:
@@ -570,6 +576,22 @@ class Services(Step):
         if enable or self.path_unit in start:
             actions.append(Command(("systemctl", "enable", "--now", self.path_unit), root=True))
         return actions
+
+    def prefetch(self, system: System, units: list[str]) -> list[Action]:
+        """Download sequentially before systemd starts any service's timer."""
+        names = {"openhab.service": "openhab", "openhab-atv.service": "atv_helper",
+                 **{service.unit: service.image for service in metrics.services(self.context.host)}}
+        images = list(dict.fromkeys(deploy.image(self.context.versions, names[unit])
+                                    for unit in units if unit.endswith(".service")))
+        if not images:
+            return []
+        code, help_text = system.capture(("podman", "pull", "--help"))
+        if code == 0 and "--policy" in help_text:
+            return [Command(("podman", "pull", "--policy=missing", image), root=True) for image in images]
+        # Podman 4.4 has no pull --policy. Keep cache checks in the same
+        # approved root context as the pull; the digest is data, never shell.
+        return [Command(("sh", "-c", 'podman image exists "$1" || exec podman pull "$1"',
+                         "thermite-image-prefetch", image), root=True) for image in images]
 
 
 class MetricsServices(Services):
@@ -703,7 +725,7 @@ class MetricsToken(Step):
         if _unseen(system, self.context, self.target):
             if self.unseen:
                 return Check(True, f"{self.target}: {UNSEEN}")
-            return Check(False, f"{self.target}: this login cannot see it (not in group {NAME} yet); to install")
+            return Check(False, f"{self.target}: private service custody; verify or install its token with the administrative helper")
         problem = self.problem(system)
         if problem:
             return Check(False, f"{self.target}: {problem}")
@@ -736,8 +758,8 @@ class GrafanaPassword(Step):
         if _unseen(system, self.context, self.target):
             if self.unseen:
                 return Check(True, f"{self.target}: {UNSEEN}")
-            return Check(False, f"{self.target}: this login cannot see it (not in group {NAME} yet); to install "
-                                f"from {self.context.grafana_password_file}, generated once")
+            return Check(False, f"{self.target}: private service custody; verify the existing password, "
+                                "generating one only if missing")
         wrong = _secret_wrong(system, self.context, self.target)
         if wrong == "missing":
             return Check(False, f"to generate once: {self.target}")
@@ -764,8 +786,8 @@ class MetricsAnswer(Step):
         if health.prometheus_ok and health.targets_ok and health.grafana_ok:
             return Check(True, health.describe())
         down = f"; down: {', '.join(health.down)}" if health.down else ""
-        return Check(False, f"{health.describe()}{down}: the first start pulls the images, then Prometheus "
-                            "scrapes each target within a minute")
+        return Check(False, f"{health.describe()}{down}: waiting for service readiness and a successful "
+                            "scrape of every target")
 
     def actions(self, system: System) -> list[Action]:
         return [Task(f"wait up to {METRICS_WAIT // 60} minutes for Prometheus' targets and "
@@ -795,7 +817,7 @@ class Answers(Step):
         version = system.openhab_version(url)
         if version:
             return Check(True, f"openHAB {version} at {url}")
-        return Check(False, f"nothing answers at {url} yet: the first start installs the add-ons, a few minutes")
+        return Check(False, f"REST at {url} is not ready; startup and add-on loading may take several minutes")
 
     def actions(self, system: System) -> list[Action]:
         return [Task(f"wait up to {WAIT // 60} minutes for {self.context.url}/rest/", self.wait)]
@@ -816,19 +838,62 @@ class Token(Step):
     def __init__(self, context: Context):
         self.context = context
 
+    def saved(self, system: System) -> str:
+        return (system.read_bytes(self.context.area / self.context.token_file) or b"").decode("utf-8", "replace").strip()
+
+    def startup_remaining(self, system: System) -> float | None:
+        """The native startup allowance left, or unknown without a start time."""
+        unit = system.unit("openhab.service")
+        if unit.active != "active" or unit.since is None:
+            return None
+        age = max(0, system.wall_time() - unit.since)
+        return max(0, WAIT - age)
+
     def check(self, system: System) -> Check:
         token = self.context.token_file
-        saved = (system.read_bytes(self.context.area / token) or b"").decode("utf-8", "replace").strip()
+        saved = self.saved(system)
         if not saved:
             return Check(False, f"no {token} yet")
         status = system.token_status(self.context.url, saved)
+        if status == 200:
+            return Check(True, f"{token} is saved and openHAB accepts it")
         if status in (401, 403):
-            return Check(False, f"openHAB refuses the token in {token} (HTTP {status})")
-        return Check(True, f"{token} is saved" + (" and openHAB accepts it" if status == 200 else ""))
+            return Check(False, f"openHAB refuses the token in {token} (HTTP {status}); "
+                         "check authentication readiness before replacing the saved credential")
+        return Check(False, f"{token} is saved but openHAB authentication is not ready; keep the saved credential")
 
     def actions(self, system: System) -> list[Action]:
+        if self.saved(system):
+            return [Task(f"check the saved API token, allowing up to {WAIT // 60} minutes for authentication readiness "
+                         "before offering replacement", self.wait)]
         return [Task(f"save the API token you create in Main UI as {self.context.token_file} (mode 0600)",
                      self.save, interactive=True)]
+
+    def wait(self, system: System) -> int:
+        saved = self.saved(system)
+        if not saved:
+            system.say("   the saved API token is no longer available; nothing was changed")
+            return 1
+        remaining = self.startup_remaining(system)
+        # Convert the wall-clock start age once; polling uses a monotonic
+        # deadline even if the wall clock changes during native startup.
+        deadline = system.clock() + (remaining if remaining else WAIT)
+        while True:
+            status = system.token_status(self.context.url, saved)
+            if status == 200:
+                return 0
+            established = self.startup_remaining(system) == 0
+            if status in (401, 403) and established and system.openhab_version(self.context.url):
+                if not system.interactive():
+                    system.say("   the established runtime refuses the saved API token; replacement needs you at a terminal; nothing was changed")
+                    return 1
+                return self.save(system)
+            left = deadline - system.clock()
+            if left <= 0:
+                system.say("   openHAB authentication did not become ready within the startup allowance; "
+                           "the saved API token was not changed. Check `sudo journalctl -u openhab.service`, then rerun.")
+                return 1
+            system.sleep(min(POLL, left))
 
     def save(self, system: System) -> int:
         system.say(f"   Open {self.context.lan_url}/ , create the admin account, then an API token under its "
@@ -898,7 +963,7 @@ class Committed(Step):
             problems.append("git cannot tell whether this area is committed")
         elif out.strip():
             problems.append(f"{len(out.splitlines())} uncommitted change(s) in this area: commit them first, "
-                            "since an upgrade installs HEAD")
+                            "since installation and upgrades install HEAD")
         busy = busy_ports(self.context, system)
         if busy:
             problems.append(f"port {', '.join(map(str, busy))} in use (ss -ltnp shows by what)")
@@ -1182,6 +1247,6 @@ def uninstall(context: Context, purge: bool = False) -> list[Step]:
 
 def install(context: Context) -> list[Step]:
     """Every step, in order."""
-    return [Preconditions(context), Packages(), Account(context), StateDirectories(context),
+    return [Preconditions(context), Committed(context), Packages(), Account(context), StateDirectories(context),
             MetricsDirectories(context), BootTest(context), Units(context), NativePreparation(context), Deploy(context), Services(context),
             Answers(context), Token(context), *metrics_steps(context), Verify(context)]

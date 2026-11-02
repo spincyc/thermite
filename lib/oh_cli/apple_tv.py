@@ -15,6 +15,7 @@ from pathlib import Path
 
 import oh_atv as atv
 import oh_cli
+import oh_service
 from oh_cli import AREA, PROGRAM_ROOT
 
 # The helper's container sets it (deploy/openhab-atv.container).
@@ -87,6 +88,8 @@ def ready() -> bool:
 
 
 def setup() -> int:
+    if VENV.exists():
+        oh_service.normalize_owned_runtime(VENV)
     built = (VENV / "bin/python").exists()
     if not built or not ready():
         subprocess.run([sys.executable, "-m", "venv", *(["--clear"] if built else []), str(VENV)], check=True)
@@ -99,6 +102,7 @@ def setup() -> int:
                     "'ready in', sys.prefix, 'on Python', sys.version.split()[0])"],
                    check=True)
     (VENV / STAMP).write_text(pins() + "\n", encoding="utf-8")
+    oh_service.normalize_owned_runtime(VENV)
     return 0
 
 
@@ -114,6 +118,9 @@ def serve(arguments: argparse.Namespace) -> int:
         if not python.exists():
             print("thermite apple-tv: run `bin/thermite apple-tv setup` first", file=sys.stderr)
             return 2
+        # Wheel modes bypass the service umask. Repair reused environments too,
+        # before executing them, without reinstalling already-pinned packages.
+        oh_service.normalize_owned_runtime(VENV)
         # The pyatv-only environment has no thermite_app distribution. Re-enter
         # the selected program's stdlib launcher with canonical parsed options,
         # even when called through an installed entry point or a legacy alias.

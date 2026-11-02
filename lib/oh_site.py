@@ -36,6 +36,7 @@ PAGES = (
     ("commands", "Commands", "Commands", "Every thermite command, its switches and examples."),
     ("colors", "Colors", "Colors and the bowl", "The bowl, the themes, and themes of your own."),
     ("faq", "FAQ", "Questions", "Short answers about thermite."),
+    ("requirements", "Requirements", "System requirements", "Plan CPU, memory, storage and networking for the complete Thermite stack."),
     ("installation", "Installation", "Server installation", "Install thermite on an existing Linux server."),
     ("iso", "Standalone ISO", "Standalone ISO", "Build bootable installation media for a dedicated thermite machine."),
     ("ports", "Ports", "Network ports", "thermite's service ports and network exposure."),
@@ -44,7 +45,7 @@ PAGES = (
     ("screenshots", "Screenshots", "Documentation screenshots", "Reproduce the screenshots using fictional inventory and the actual clients."),
 )
 DOCUMENT_PAGES = {name: oh_cli.PROGRAM_ROOT / "docs" / f"{name}.md"
-                  for name in ("installation", "iso", "ports", "packaging", "service-account")}
+                  for name in ("requirements", "installation", "iso", "ports", "packaging", "service-account")}
 DOCUMENT_PAGES["screenshots"] = SOURCE / "capture-docs.md"
 EXAMPLES = ("harbor",)
 TOP = ("README.md", "FAQ.md")

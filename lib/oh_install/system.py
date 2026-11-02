@@ -212,5 +212,9 @@ class System:
     def clock(self) -> float:
         return time.monotonic()
 
+    def wall_time(self) -> float:
+        """Unix time, for comparison with a unit's active-enter timestamp."""
+        return time.time()
+
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)

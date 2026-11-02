@@ -1,23 +1,45 @@
 # Install on a Linux server
 
-Thermite runs on one x86-64 Linux machine with systemd, Podman 4.4 or later,
-Python 3.11 or later, Git and Node.js. Ubuntu Server 24.04 LTS is the reference
-path; Debian installations need a sufficiently recent Podman. Arch Linux is
-also supported by the package-install step. Allow several GB for container
-images and runtime data, and keep backups outside the machine.
+Thermite runs on one x86-64 Linux machine with systemd. Arch Linux is the
+primary path; Ubuntu Server 24.04 LTS is the alternative shown below.
+Start with the [system requirements](requirements.md): the full stack's
+planning minimum is 2 cores, 4 GiB RAM and a 64 GB SSD, with 4 cores,
+8 GiB RAM and 128 GB recommended. These estimates are not benchmarked limits.
 
 These are development builds, currently `0.1.0.dev0`. A wheel installs the
 application; a private site holds your configuration and state. Installing
 the application starts no service. Commissioning the runtime is a separate,
-interactive step. For a bare machine, use the [installer ISO](iso.md).
+interactive step. For a bare machine, the [installer ISO](iso.md) defaults
+to Arch and also offers an Ubuntu base. After either ISO installation,
+continue at “Create your private site.”
+
+For a stock OS installation, first follow the official
+[Arch installation guide](https://wiki.archlinux.org/title/Installation_guide)
+(or its guided `archinstall` installer), or
+[Ubuntu Server installation guide](https://ubuntu.com/server/docs/installation/).
+Create your own login with sudo access and working networking, then reboot
+into the installed system. The commands below run there, not in the live
+installer environment.
 
 ## Install the application
 
-On Ubuntu, prepare a Python environment as your ordinary owner account:
+Use your ordinary owner account. On stock Arch, install the application
+prerequisites with a full system update:
+
+```sh
+sudo pacman -Syu --needed python python-pip git
+```
+
+On Ubuntu Server 24.04, use this package step instead:
 
 ```sh
 sudo apt-get update
 sudo apt-get install python3-venv git
+```
+
+Then use the same application setup on either distribution:
+
+```sh
 git clone https://github.com/spincyc/thermite.git "$HOME/thermite-source"
 python3 -m venv "$HOME/.local/share/thermite/venv"
 . "$HOME/.local/share/thermite/venv/bin/activate"
@@ -43,8 +65,9 @@ cd "$HOME/thermite-site"
 ```
 
 Edit `instance/devices.yaml` and `instance/host.yaml` for your own equipment,
-time zone and state directory. Init's inventory is fictional: remove its
-devices before commissioning. Keep the default authenticated access mode
+time zone and state directory. Init's inventory is fictional: use it only
+for the mock example, then replace its devices before commissioning real
+equipment. Keep the default authenticated access mode
 unless you explicitly intend unrestricted native access on your trusted LAN.
 Port assignments are listed in [ports](ports.md).
 
@@ -89,11 +112,26 @@ and Podman backend remain root-managed. Existing installations retain their
 numeric IDs and data paths when the old `openhab` account is renamed; see
 [service ownership and migration](service-account.md).
 
-The native boot test downloads its pinned runtime and JRE; service startup
-pulls the pinned container images. This can take several minutes. Follow the
+The native boot test downloads its pinned runtime and JRE. Before starting
+or restarting a service, the installer downloads any missing pinned container
+image with visible progress. Downloads finish before the service startup
+timer begins. This can take several minutes. Follow the
 runtime UI link printed by the installer to create its administrative login
 and API token. The token prompt hides the paste and saves it privately.
 Log out and back in after the installer adds you to the service group.
+
+On a slow machine or under software CPU emulation, give the boot check a
+longer startup budget, then rerun the installer:
+
+```sh
+thermite test boot --timeout 1800
+thermite install
+```
+
+A failed check does not approve a deployment. The longer check must pass
+against the same committed configuration before installation continues.
+If a system update replaced the running kernel's modules, reboot before
+commissioning so Podman can use overlayfs.
 
 Native runtime installation is followed by the HTTPS and account setup below.
 The ISO and application installation do not create credentials, provision
@@ -105,8 +143,9 @@ thermite health --production
 thermite access --help
 ```
 
-Health reports real device availability. Pair and verify equipment before
-relying on automation; `thermite pair --help` lists supported pairing steps.
+Health reports real device availability; fictional example addresses will
+not establish a healthy house. Pair and verify equipment before relying on
+automation; `thermite pair --help` lists supported pairing steps.
 
 ## Set up HTTPS and accounts
 
@@ -116,28 +155,37 @@ browser and terminal client. Keep its private key in an owned mode-0600 file.
 A certificate from your existing local CA or public CA works; certificate
 issuance and DNS administration depend on your network.
 
-Run these commands as the same owner who installed the private site, after
+The application setup above provides Python virtual environments on either
+distribution. Run these commands as the same owner who installed the private
+site, after
 logging back in for membership in group `thermite`. Adjust
 the hostname, certificate paths and native state directory to match your
-installation; `/srv/thermite` is the sample `state_root`:
+installation; `/srv/thermite` is the sample `state_root`. Enter your private
+site after logging in. Its launcher selects the application's Python
+environment, including when your previous shell's activation has ended:
 
 ```sh
-sudo apt-get install python3-venv
+cd "$HOME/thermite-site"
+HOST_ID=$(python3 -c 'import socket; print(socket.gethostname().split(".", 1)[0])')
 ACCESS_ROOT=/srv/thermite-access
 SITE_HOST=thermite.home.arpa
 RUNTIME_STATE=/srv/thermite
 TLS_CERT="$HOME/.config/thermite/tls/fullchain.pem"
 TLS_KEY="$HOME/.config/thermite/tls/key.pem"
+PLAN_ROOT="$PWD/var/$HOST_ID/access-plans"
+install -d -m 0700 "$PLAN_ROOT"
+PLAN="$PLAN_ROOT/first"
 sudo install -d -o "$(id -un)" -g thermite -m 2770 \
   "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
-thermite access stage \
+bin/thermite access stage \
   --destination "$ACCESS_ROOT/releases/first" \
   --state "$ACCESS_ROOT/state" \
   --assets "$RUNTIME_STATE/conf/html/remote" \
   --runtime-url http://127.0.0.1:13601 \
-  --runtime-token-file "$PWD/var/$(hostname -s)/api-token" \
+  --runtime-token-file "$PWD/var/$HOST_ID/api-token" \
   --tls-cert "$TLS_CERT" --tls-key "$TLS_KEY" \
-  --allowed-host "$SITE_HOST" --port 13600 --timezone Etc/UTC
+  --allowed-host "$SITE_HOST" --port 13600 --timezone Etc/UTC \
+  --plan-directory "$PLAN"
 ```
 
 Keep the access root outside the native `state_root`, so runtime permission
@@ -149,15 +197,25 @@ release, installs hash-pinned dependencies and writes units for
 `User=thermite` and `Group=thermite`. It starts no service and runs no
 privileged command.
 
-Review the stage output and run its `ownership_commands` in order. They name
-the finite release and new-state files to give to `thermite:thermite`, with
-directories and executables at 0700 and other files at 0600. Follow with the
-service-user verification and first administrator bootstrap:
+Stage saves a private receipt and `handoff.sh` in the operator-owned plan
+directory. Review the script, then run it as your ordinary account:
 
 ```sh
-sudo -u thermite -g thermite "$ACCESS_ROOT/releases/first/env/bin/python" \
-  "$ACCESS_ROOT/releases/first/program/bin/thermite" access verify \
-  --config "$ACCESS_ROOT/releases/first/config.json"
+more "$PLAN/handoff.sh"
+sh "$PLAN/handoff.sh"
+```
+
+Only its explicit administrative commands use sudo. The script gives the
+listed release and new-state files to `thermite:thermite`, with directories
+and executables at 0700 and other files at 0600, then verifies custody as the
+service user. It stops on failure; fix the reported cause and rerun the same
+script. Your copy remains readable after ownership changes. It does not
+bootstrap accounts or activate services. Use `--json` when a tool needs the
+full stage receipt.
+
+After verification, create the first administrator for a new site:
+
+```sh
 sudo -u thermite -g thermite "$ACCESS_ROOT/releases/first/env/bin/python" \
   "$ACCESS_ROOT/releases/first/program/bin/thermite" access bootstrap \
   --config "$ACCESS_ROOT/releases/first/config.json" --user admin
@@ -190,7 +248,7 @@ configuration and activation checks; the
 explains native access settings.
 
 After resolving the activation requirements printed by stage (also saved in
-the now service-owned `stage.json`), install and enable its two units as the
+`$PLAN/stage.json`), install and enable its two units as the
 host administrator:
 
 ```sh
@@ -198,8 +256,8 @@ sudo install -o root -g root -m 0644 "$ACCESS_ROOT/releases/first/units/thermite
 sudo install -o root -g root -m 0644 "$ACCESS_ROOT/releases/first/units/thermite-access-worker.service" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now thermite-access.service thermite-access-worker.service
-thermite access login --url "https://$SITE_HOST:13600" --user admin
-thermite remote --url "https://$SITE_HOST:13600"
+bin/thermite access login --url "https://$SITE_HOST:13600" --user admin
+bin/thermite remote --url "https://$SITE_HOST:13600"
 ```
 
 With a private CA, add `--ca-file /path/to/ca.pem` at terminal login and

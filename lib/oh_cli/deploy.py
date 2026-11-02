@@ -102,7 +102,7 @@ def apply(args, host: dict) -> int:
         print(f"note    kept {deploy.LEGACY_ATV_PROGRAM} in the helper: the installed quadlet still runs it "
               "until the owner installs the new one (make openhab-upgrade)")
     if not deploy.pushed(AREA, result.commit):
-        print(f"note    {short} is on no remote branch yet; push it so GitHub has what runs")
+        print(f"note    {short} is not on a remote branch; back up this configuration in your private repository")
     stale = [name for name, _, how in deploy.installed_units(AREA) if how == "differs"]
     if stale:
         print(f"note    the installed {', '.join(stale)} differ from this checkout's; the owner installs them "
@@ -119,9 +119,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state", type=Path, metavar="DIR",
                         help="the state root (default: instance/host.yaml state_root)")
     args = parser.parse_args(argv)
-    _, host = deploy.load(AREA)
     try:
+        _, host = deploy.load(AREA)
         return apply(args, host)
     except deploy.DeployError as exc:
         print(f"thermite deploy: {exc}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("\nthermite deploy: interrupted. Run the same thermite deploy command again to continue.", file=sys.stderr)
+        return 130

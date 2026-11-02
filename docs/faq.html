@@ -54,7 +54,8 @@
 <h3 id="does-it-work-with-apple-home">Does it work with Apple Home?</h3>
 <p>Not yet. Bringing the house into Apple Home through openHAB is planned.</p>
 <h3 id="what-does-it-need-to-run">What does it need to run?</h3>
-<p>One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node.js and npm for the terminal remote. You can <a href="installation.html">install on an existing server</a>, or <a href="iso.html">build a standalone ISO</a> for a dedicated machine. Both paths keep your private site separate from the application.</p>
+<p>One always-on x86-64 Linux machine or VM. For the full stack, plan on at least 2 cores, 4 GiB RAM and a 64 GB SSD for light use; 4 cores, 8 GiB RAM and 128 GB is the recommended starting point. These are estimates, not benchmarked capacity limits. Existing servers need additional free space for state and container images; see the <a href="requirements.html">system requirements</a>.</p>
+<p>Arch Linux is the primary <a href="installation.html">server installation</a> example and the default <a href="iso.html">standalone ISO</a> base. Ubuntu Server 24.04 is also documented, including an optional Ubuntu ISO. Each path keeps your private site separate from the application. The complete installer currently requires x86-64; ARM images for some dependencies do not make the full stack ARM-compatible.</p>
 <h3 id="are-the-screenshots-from-a-real-house">Are the screenshots from a real house?</h3>
 <p>They show the actual clients in demo mode with fictional inventory. The simulated controls send no commands to real devices. You can reproduce the images with the <a href="screenshots.html">capture recipe</a>, or try the terminal with <code>thermite remote --mock</code>.</p>
 <h3 id="which-linux-account-runs-the-services">Which Linux account runs the services?</h3>

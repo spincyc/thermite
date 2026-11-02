@@ -75,7 +75,7 @@ SERVICES = ("openhab.service", "openhab-atv.service", "openhab-atv-restart.path"
             "openhab-metrics-restart.path")
 #: The area's files the Apple TV helper's container runs.
 ATV_APP = ("bin/thermite", "lib/oh_cli/__init__.py", "lib/oh_cli/apple_tv.py", "lib/oh_atv.py",
-           "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py", "lib/oh_ports.py")
+           "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py", "lib/oh_ports.py", "lib/oh_service.py")
 #: The helper's verb module in commits from before it was apple_tv.py: a
 #: deploy of such a commit (a rollback) installs it, or that commit's
 #: bin/thermite could not run the helper.
