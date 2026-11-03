@@ -113,6 +113,10 @@ and rerun against the same committed configuration. Never manufacture a boot
 receipt, remove add-ons or allow offline Things to obtain a green result.
 `--timeout` belongs after `boot` in this command.
 
+Required native metric-series assertions here concern the disposable boot-test
+runtime. Record production native endpoints, Thing/add-on readiness and monitoring
+targets separately; do not imply that the production series were all parsed.
+
 Commission the native stack interactively as the owner:
 
 ```sh
@@ -252,9 +256,16 @@ Complete this cutover and persistence checklist for every case:
 - Verify effective service users/groups and private state modes, plus the
   staged custody check. The owner fixture unit is the documented exception;
   root-managed systemd/Podman control processes are not application payloads.
+- Record the actual Podman and runc versions and each container's recorded
+  OCI runtime. Every generated payload must use runc. On Ubuntu, inspect the
+  actual process AppArmor labels: require an enforced container profile without
+  a stacked crun peer. Keep no-new-privileges and dropped capabilities enabled.
+  Exercise the distribution's real older-Podman image-prefetch path; do not
+  upgrade Podman to bypass a compatibility failure.
 - Turn off native `implicitUserRole` and clear `trustedNetworks` through native
   administrator settings or its authenticated configuration API. Preserve other
-  settings and check readback. Anonymous native Item reads must be refused while
+  settings and check readback. Configuration reload can briefly unregister its
+  REST resource; retry within a bounded deadline before declaring readback ready. Anonymous native Item reads must be refused while
   the gateway's service bearer still works; `/rest/` metadata alone is not an
   authentication test.
 - Review and apply an explicit **guest-only** native-listener seal. This recipe
@@ -287,3 +298,18 @@ Complete this cutover and persistence checklist for every case:
   token, audit and policy operations. Do not reinitialize accounts to obtain a
   pass. Record the artifact, resource allocation, actual outcomes and remaining
   limits for all three cases before publishing any acceptance result.
+
+After all running-service, client and persistence checks, test native shutdown
+through its actual generated unit:
+
+```sh
+sudo systemctl stop openhab.service
+sudo systemctl show openhab.service \
+  --property=Result --property=ExecMainCode --property=ExecMainStatus
+```
+
+Require service success and a normal native exit, within the configured
+60-second container grace and 90-second systemd allowance. Inspect the matching
+unit and kernel journal window for forced SIGKILL or AppArmor signal denials;
+`systemctl stop` returning zero alone is insufficient. Record the authenticated
+held-event-stream gateway shutdown separately, then power off the guest cleanly.

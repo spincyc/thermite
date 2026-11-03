@@ -773,7 +773,16 @@ class GrafanaPassword(Step):
 
     def actions(self, system: System) -> list[Action]:
         self.unseen = True
-        return [_install_secret(self.context, self.context.grafana_password_file, self.target, preserve=True)]
+        return [Task("make the operator credential directory private (0700), preserving existing credential files", self.prepare_copy),
+                _install_secret(self.context, self.context.grafana_password_file, self.target, preserve=True)]
+
+    def prepare_copy(self, system: System) -> int:
+        try:
+            system.private_directory((self.context.area / self.context.grafana_password_file).parent)
+        except (OSError, ValueError):
+            system.say("   could not prepare the private operator credential directory; check its ownership, permissions and symlinks, then rerun")
+            return 1
+        return 0
 
 
 class MetricsAnswer(Step):
@@ -943,7 +952,12 @@ class Token(Step):
                 deadline = system.clock() + WAIT
             problem = self.problem(system, token, deadline=deadline)
             if problem is None:
-                system.write_private(self.context.area / self.context.token_file, token + "\n")
+                try:
+                    system.write_private(self.context.area / self.context.token_file, token + "\n")
+                except (OSError, ValueError):
+                    self.validated = None
+                    system.say("   could not complete a safe private token write; check the operator credential path and rerun")
+                    return 1
                 return 0
             system.say(f"   {problem}; nothing was saved.")
             if self.validation_unavailable:

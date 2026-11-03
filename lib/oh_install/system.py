@@ -4,6 +4,7 @@ System with a fake host."""
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import getpass
 import grp
@@ -14,6 +15,7 @@ import platform
 import pwd
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -251,11 +253,85 @@ class System:
             self.say("   command exceeded the remaining startup allowance; inspect the native service before retrying")
             return 124
 
+    @contextlib.contextmanager
+    def _private_directory(self, path: Path):
+        """Anchor an owned credential directory; narrow only that final inode."""
+        path = Path(path).expanduser()
+        if ".." in path.parts:
+            raise ValueError("private credential paths must not contain parent traversal")
+        path = Path(os.path.abspath(path))
+        if path == Path("/"):
+            raise ValueError("the filesystem root is not a private credential directory")
+        flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
+        descriptor = os.open("/", flags)
+        try:
+            for part in path.parts[1:]:
+                try:
+                    child = os.open(part, flags, dir_fd=descriptor)
+                except FileNotFoundError:
+                    try:
+                        os.mkdir(part, mode=0o700, dir_fd=descriptor)
+                    except FileExistsError:
+                        pass
+                    child = os.open(part, flags, dir_fd=descriptor)
+                os.close(descriptor)
+                descriptor = child
+            if os.fstat(descriptor).st_uid != os.geteuid():
+                raise ValueError("private credential directory must belong to this operator")
+            child = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+            info = os.fstat(descriptor)
+            if info.st_uid != os.geteuid():
+                raise ValueError("private credential directory custody changed")
+            if stat.S_IMODE(info.st_mode) != 0o700:
+                os.fchmod(descriptor, 0o700)
+            yield descriptor
+        finally:
+            os.close(descriptor)
+
+    def private_directory(self, path: Path) -> None:
+        with self._private_directory(path):
+            pass
+
     def write_private(self, path: Path, text: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
+        path = Path(path)
+        if not path.name or ".." in path.parts:
+            raise ValueError("invalid private credential path")
+        with self._private_directory(path.parent) as parent, contextlib.ExitStack() as stack:
+            previous = None
+            try:
+                existing = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            except FileNotFoundError:
+                pass
+            else:
+                stack.callback(os.close, existing)
+                previous = os.fstat(existing)
+                if (not stat.S_ISREG(previous.st_mode) or previous.st_uid != os.geteuid()
+                        or previous.st_nlink != 1 or stat.S_IMODE(previous.st_mode) != 0o600):
+                    raise ValueError("existing credential must be owned, private, regular and without hard links")
+            temporary = "." + path.name + "." + os.urandom(12).hex()
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                 0o600, dir_fd=parent)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    os.fchmod(handle.fileno(), 0o600)
+                    handle.write(text)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                if previous is None:
+                    os.link(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+                else:
+                    current = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+                    if not os.path.samestat(previous, current):
+                        raise ValueError("credential changed during private write")
+                    os.replace(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent)
+            finally:
+                try:
+                    os.unlink(temporary, dir_fd=parent)
+                except FileNotFoundError:
+                    pass
+            os.fsync(parent)
 
     def clock(self) -> float:
         return time.monotonic()
