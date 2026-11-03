@@ -15,6 +15,7 @@ import types
 import unittest
 from unittest import mock
 import urllib.error
+import urllib.request
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
@@ -286,7 +287,7 @@ class ReportTransport(unittest.TestCase):
         worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
         worker.start()
         try:
-            with mock.patch.object(boot.urllib.request, "getproxies", return_value={}):
+            with mock.patch.object(urllib.request, "getproxies", return_value={}):
                 yield f"http://127.0.0.1:{server.server_address[1]}"
         finally:
             stopping.set()

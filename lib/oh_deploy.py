@@ -1121,7 +1121,7 @@ def ownership_argv(layout: State, host: dict | None = None) -> tuple[str, ...]:
 
 
 @contextlib.contextmanager
-def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_logging: bool):
+def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_logging: bool, *, approved: bool = False):
     """Approve before writes; repair ownership even when a write later fails."""
     argv = ownership_argv(layout, host)
     uid, gid = int(argv[argv.index("--uid") + 1]), int(argv[argv.index("--gid") + 1])
@@ -1135,7 +1135,7 @@ def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_l
         yield
         return
     if not direct:
-        if not sys.stdin.isatty():
+        if not approved and not sys.stdin.isatty():
             raise DeployError("deployment needs an explicitly approved thermite ownership handoff; "
                               "run interactively (no files were changed): " + shlex.join(command))
         if shutil.which("sudo") is None:
@@ -1144,7 +1144,7 @@ def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_l
         if require_logging:
             print("  " + shlex.join(checks))
         print("  " + shlex.join(command))
-        if input("Approve this ownership handoff before deployment writes? [y/N] ").strip().lower() not in ("y", "yes"):
+        if not approved and input("Approve this ownership handoff before deployment writes? [y/N] ").strip().lower() not in ("y", "yes"):
             raise DeployError("ownership handoff declined; no files were changed")
     if require_logging:
         try:
@@ -1192,7 +1192,8 @@ class Deployed:
 
 
 def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bool = False,
-           dry_run: bool = False, how: str = "deploy", host: dict | None = None) -> Deployed:
+           dry_run: bool = False, how: str = "deploy", host: dict | None = None,
+           ownership_approved: bool = False) -> Deployed:
     """Install commit `rev`'s conf/ into the state's conf and the helper's
     files into atv/app (and, once the state has their directories, its
     metrics/ into metrics and the exporter into exporter/app), then record
@@ -1209,7 +1210,8 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
                               f"and make check has tested the working tree. Commit them first:{listed}")
     files, application = deployment_files(area, commit, var)
     return install(files, commit, subject(area, commit), layout, var, force=force, dry_run=dry_run,
-                   legacy_atv=legacy_atv(), how=how, host=host, application=application)
+                   legacy_atv=legacy_atv(), how=how, host=host, application=application,
+                   ownership_approved=ownership_approved)
 
 
 def deployment_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
@@ -1255,7 +1257,8 @@ def legacy_atv(installed: Path = INSTALLED[ATV_QUADLET]) -> bool:
 
 def install(files: dict[str, Blob], commit: str, title: str, layout: State, var: Path, *,
             force: bool = False, dry_run: bool = False, legacy_atv: bool = False, how: str = "deploy",
-            host: dict | None = None, post=None, application: dict | None = None) -> Deployed:
+            host: dict | None = None, post=None, application: dict | None = None,
+            ownership_approved: bool = False) -> Deployed:
     """deploy() once the commit's files ({area path: Blob}) are exported.
     With legacy_atv the helper also gets bin/thermite as LEGACY_ATV_PROGRAM;
     a commit from before bin/thermite brings its own LEGACY_ATV_PROGRAM,
@@ -1274,7 +1277,7 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
                           "install a commit known to be good (thermite rollback needs none for a commit "
                           "deployed here before)")
     preflight(layout)
-    with ownership_handoff(layout, host, dry_run, bool(oh_logging.pairing_conf(conf))):
+    with ownership_handoff(layout, host, dry_run, bool(oh_logging.pairing_conf(conf)), approved=ownership_approved):
         previous = read_record(layout)
         conf_changes = sync(conf, layout.conf, previous.get("conf", {}), dry_run)
         app_changes = sync(app, layout.atv_app, previous.get("atv_app", {}), dry_run)

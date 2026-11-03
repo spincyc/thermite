@@ -9,12 +9,14 @@ import shlex
 import sys
 from pathlib import Path
 
+import oh_cli
 import oh_deploy as deploy
 import oh_apparmor
 import oh_logging
 import oh_service
 import oh_ports
 import oh_metrics as metrics
+from oh_install import backup
 from oh_install.model import Action, Check, Command, Step, Task
 from oh_install.system import System
 
@@ -54,8 +56,6 @@ POLL = 5
 #: How many pastes the token prompt takes before the install stops.
 PASTES = 3
 ACTIVE = ("active", "activating", "reloading", "deactivating")
-#: openHAB rebuilds these at its next start; a backup leaves them out.
-UNSAVED = ("userdata/cache", "userdata/tmp")
 #: Ends the name of a backup that holds Grafana's data, before .tar.gz.
 GRAFANA_TAG = "-grafana"
 
@@ -232,8 +232,10 @@ class Packages(Step):
         manager = self.manager(system)
         missing = self.missing(system, manager)
         if manager == "pacman":
-            return [Command(("pacman", "-S", "--needed", *missing), root=True)]
-        return [Command(("apt-get", "install", *missing), root=True)]
+            return [Command(("pacman", "-S", "--needed", *missing), root=True,
+                            approved_argv=("pacman", "--noconfirm", "-S", "--needed", *missing), terminal=True)]
+        return [Command(("apt-get", "install", *missing), root=True,
+                        approved_argv=("apt-get", "--assume-yes", "install", *missing), terminal=True)]
 
 
 class NodeConfinement(Step):
@@ -297,7 +299,7 @@ class NodeConfinement(Step):
 
 
 class Account(Step):
-    title = "The thermite user and group, with you in the group"
+    title = "Service account and operator access"
 
     def __init__(self, context: Context):
         self.context = context
@@ -425,7 +427,7 @@ class StateDirectories(Step):
 
 
 class MetricsDirectories(StateDirectories):
-    title = "The metrics directories: their configuration, stores, secrets and exporter"
+    title = "Monitoring directories"
 
     def directories(self) -> list[tuple[int, list[Path]]]:
         return self.context.layout.metrics_directories()
@@ -445,7 +447,7 @@ class MetricsDirectories(StateDirectories):
 
 
 class BootTest(Step):
-    title = "Boot test of this commit's conf/"
+    title = "Configuration boot check"
 
     def __init__(self, context: Context):
         self.context = context
@@ -465,7 +467,7 @@ class BootTest(Step):
 
 
 class NativeListeners(Step):
-    title = "Use Thermite's native console and shutdown listeners on loopback"
+    title = "Native loopback listeners"
 
     def __init__(self, context: Context):
         self.context = context
@@ -501,7 +503,7 @@ class NativeListeners(Step):
 
 
 class PairingLogging(Step):
-    title = "Keep pairing credentials out of openHAB's native logs"
+    title = "Pairing log protection"
 
     def __init__(self, context: Context):
         self.context = context
@@ -570,14 +572,17 @@ class Deploy(Step):
         self.applied = True
         from oh_paths import SITE_FILE
         installed = (self.context.area / SITE_FILE).is_file()
-        argv = application(self.context, "deploy") if installed else ("make", "openhab-deploy")
+        argv = application(self.context, "deploy")
+        approved = application(self.context, "deploy", "--yes", *(("--quiet",) if not oh_cli.switches.verbose else ()))
         checks = [Command(application(self.context, *args)) for args in
-                  (("generate", "--check"), ("validate",), ("lint",))] if installed else []
-        return [*checks, operator_command(self.context, system, argv)]
+                  (("generate", "--check"), ("validate",), ("lint",))] if installed else [Command(("make", "check"))]
+        command = operator_command(self.context, system, argv)
+        accepted = operator_command(self.context, system, approved)
+        return [*checks, dataclasses.replace(command, approved_argv=accepted.argv, terminal=True)]
 
 
 class Units(Step):
-    title = "The systemd units from deploy/"
+    title = "Service units"
 
     def __init__(self, context: Context):
         self.context = context
@@ -603,7 +608,7 @@ class Units(Step):
 
 
 class Services(Step):
-    title = "openHAB and the Apple TV helper running"
+    title = "Runtime and Apple TV helper"
     restarts = RESTARTS
     path_unit = PATH_UNIT
 
@@ -673,7 +678,7 @@ class Services(Step):
 
 
 class MetricsServices(Services):
-    title = "The metrics and local notification services running"
+    title = "Monitoring and notifications"
     restarts = METRICS_RESTARTS
     path_unit = METRICS_PATH_UNIT
 
@@ -706,7 +711,7 @@ def service_receipt(context: Context, system: System) -> bool:
 
 
 class NativePreparation(Step):
-    title = "Prepare stopped native userdata and service ownership as thermite"
+    title = "Native state and ownership"
 
     def __init__(self, context: Context):
         self.context = context
@@ -775,7 +780,7 @@ def _install_secret(context: Context, source: Path, target: Path, *, preserve=Fa
 
 
 class MetricsToken(Step):
-    title = "The API token Prometheus and the exporter send to openHAB"
+    title = "Monitoring API token"
 
     def __init__(self, context: Context):
         self.context = context
@@ -821,7 +826,7 @@ class MetricsToken(Step):
 
 
 class GrafanaPassword(Step):
-    title = "Grafana's admin password"
+    title = "Grafana administrator password"
 
     def __init__(self, context: Context):
         self.context = context
@@ -860,7 +865,7 @@ class GrafanaPassword(Step):
 
 
 class MetricsAnswer(Step):
-    title = "Prometheus ready with every target up, and Grafana answering on the LAN"
+    title = "Monitoring readiness"
 
     def __init__(self, context: Context):
         self.context = context
@@ -897,7 +902,7 @@ class MetricsAnswer(Step):
 
 
 class Answers(Step):
-    title = "openHAB answering"
+    title = "Runtime readiness"
 
     def __init__(self, context: Context):
         self.context = context
@@ -923,7 +928,7 @@ class Answers(Step):
 
 
 class Token(Step):
-    title = "The admin account and an API token"
+    title = "Native API token"
 
     def __init__(self, context: Context):
         self.context = context
@@ -1020,8 +1025,11 @@ class Token(Step):
             system.sleep(min(POLL, left))
 
     def save(self, system: System) -> int:
-        system.say(f"   Open {self.context.lan_url}/ , create the admin account, then an API token under its "
-                   "profile (the person icon).")
+        system.say(f"   Open openHAB's token page: {self.context.lan_url}/createApiToken")
+        system.say("   Use your existing openHAB administrator username and password, then create an API token "
+                   "(name: thermite; scope may be left blank). This is separate from the Thermite remote.")
+        system.say(f"   On a completely new installation, first open {self.context.lan_url}/profile/ in a private browser "
+                   "window and complete administrator setup if offered.")
         deadline = None
         for _ in range(PASTES):
             token = system.secret("   Paste the token (it is not shown), then Enter: ").strip()
@@ -1086,7 +1094,7 @@ class _RestartBeforeDeadline:
 
 
 class NativeReady(Step):
-    title = "Authenticated native add-ons, Thing handlers and metrics ready"
+    title = "Native add-ons and handlers"
     grace = 60
     addons_path = "/rest/addons?serviceId=all"
     things_path = "/rest/things?summary=false"
@@ -1231,7 +1239,7 @@ class Verify(Step):
 
 
 class Committed(Step):
-    title = "Preconditions: deploy/ is current, and this area is committed"
+    title = "Committed configuration"
 
     def __init__(self, context: Context):
         self.context = context
@@ -1313,6 +1321,8 @@ def plan(context: Context, system: System) -> Plan:
         start, restart, enable = step.plan(system)
         services += [*start, *restart, *([step.path_unit] if enable and step.path_unit not in start else [])]
     migration = []
+    if not Packages().check(system).done:
+        migration.append("required host packages")
     if not NodeConfinement(context).check(system).done or oh_apparmor.enabled(system):
         migration.append("node exporter confinement")
     if not Preconditions(context).check(system).done or not Account(context).check(system).done:
@@ -1337,9 +1347,7 @@ class WhatChanges(Step):
 def backup_argv(layout: deploy.State, file: Path, grafana: bool = False) -> tuple[str, ...]:
     """Prometheus' samples are left out: up to the retention size, and a
     restored openHAB needs none of them."""
-    return ("tar", "--create", "--gzip", "--file", str(file), "--directory", str(layout.root),
-            *(f"--exclude={path}" for path in UNSAVED), "conf", "userdata",
-            *([str(layout.grafana_data.relative_to(layout.root))] if grafana else []))
+    return backup.archive_argv(layout.root, file, grafana)
 
 
 def restore_argvs(layout: deploy.State, file: Path, stamp: str, grafana: bool = False) -> list[tuple[str, ...]]:
@@ -1356,7 +1364,7 @@ def restore_argvs(layout: deploy.State, file: Path, stamp: str, grafana: bool = 
 
 
 class Backup(Step):
-    title = "Back up conf, userdata and Grafana's data, with openHAB and Grafana stopped"
+    title = "State backup"
 
     def __init__(self, context: Context, stamp: str, version: str | None):
         self.context = context
@@ -1367,11 +1375,14 @@ class Backup(Step):
         #: backup an earlier run took and the restore commands differ.
         self.grafana = False
         self.found: Path | None = None
+        self.target: Path | None = None
 
     @property
     def file(self) -> Path:
         if self.found:
             return self.found
+        if self.target:
+            return self.target
         tag = GRAFANA_TAG if self.grafana else ""
         return self.context.layout.backups / f"{self.stamp}-openhab-{self.version}{tag}.tar.gz"
 
@@ -1384,9 +1395,35 @@ class Backup(Step):
         endings = (f"-openhab-{self.version}.tar.gz", f"-openhab-{self.version}{GRAFANA_TAG}.tar.gz")
         for name in reversed(system.listdir(backups)):
             found = system.stat(backups / name)
-            if name.endswith(endings) and found and found.mtime > (unit.since or 0):
+            if (name.endswith(endings) and found and found.mtime > (unit.since or 0)
+                    and self.completed(system, backups / name)):
                 return backups / name
         return None
+
+    def completed(self, system: System, path: Path) -> bool:
+        """A successful helper publication, not a legacy or interrupted tar file.
+
+        Archives stay private to the service. The nonsecret receipt is readable
+        by its group and binds completion to the published archive's metadata.
+        Old backups without receipts are retained but never reused automatically.
+        """
+        host = self.context.host
+        archive, receipt = system.stat(path), system.stat(backup.receipt_path(path))
+        if (archive is None or archive.is_dir or receipt is None or receipt.is_dir
+                or (archive.uid, archive.gid, archive.mode) != (host["uid"], host["gid"], 0o600)
+                or (receipt.uid, receipt.gid, receipt.mode) != (host["uid"], host["gid"], 0o640)):
+            return False
+        return backup.completed(system.read_bytes(backup.receipt_path(path)), path.name, archive.mtime, size=archive.size)
+
+    def available(self, system: System) -> Path:
+        tag = GRAFANA_TAG if self.grafana else ""
+        occupied = set(system.listdir(self.context.layout.backups))
+        for attempt in range(1000):
+            suffix = f"-{attempt}" if attempt else ""
+            path = self.context.layout.backups / f"{self.stamp}{suffix}-openhab-{self.version}{tag}.tar.gz"
+            if path.name not in occupied and backup.receipt_path(path).name not in occupied:
+                return path
+        raise ValueError("too many occupied backup names; inspect the backup directory before retrying")
 
     def check(self, system: System) -> Check:
         if not Units(self.context).stale(system, deploy.OPENHAB_UNITS) and NativePreparation(self.context).check(system).done:
@@ -1396,6 +1433,7 @@ class Backup(Step):
             self.found, self.grafana = latest, latest.name.endswith(f"{GRAFANA_TAG}.tar.gz")
             return Check(True, f"{latest}")
         self.grafana = system.stat(self.context.layout.grafana_data) is not None
+        self.target = self.available(system)
         return Check(False, f"to stop {' and '.join(self.stopped(self.grafana))} and write {self.file}"
                             + (", with Grafana's data" if self.grafana else "")
                             + "; not Prometheus' samples (up to the retention size, and nothing restores them)")
@@ -1406,6 +1444,7 @@ class Backup(Step):
         return ("openhab.service", *(["openhab-grafana.service"] if grafana else []))
 
     def actions(self, system: System) -> list[Action]:
+        from oh_paths import PROGRAM
         host, backups = self.context.host, self.context.layout.backups
         self.grafana = system.stat(self.context.layout.grafana_data) is not None
         actions: list[Action] = []
@@ -1416,19 +1455,18 @@ class Backup(Step):
         if directory is None or (directory.uid, directory.gid, directory.mode) != (host["uid"], host["gid"], 0o750):
             actions.append(Command(("install", "-d", "-o", str(host["uid"]), "-g", str(host["gid"]), "-m", "0750",
                                     str(backups)), root=True))
-        actions.append(Command(("sh", "-c", 'umask 077; exec "$@"', "thermite-backup",
-                                *backup_argv(self.context.layout, self.file, self.grafana)), root=True))
-        actions.extend([Command(("chown", f"{host['uid']}:{host['gid']}", str(self.file)), root=True),
-                        Command(("chmod", "0600", str(self.file)), root=True)])
+        actions.append(Command(("python3", str(PROGRAM / "lib/oh_install/backup.py"), str(self.context.layout.root),
+                                "--name", self.file.name, "--uid", str(host["uid"]), "--gid", str(host["gid"]),
+                                *(("--grafana",) if self.grafana else ())), root=True))
         return actions
 
 
 class Restart(Services):
-    title = "openHAB and the Apple TV helper (re)started on their units"
+    title = "Runtime and helper restart"
 
 
 class MetricsRestart(MetricsServices):
-    title = "The metrics services (re)started on their units"
+    title = "Monitoring restart"
 
 
 def metrics_steps(context: Context, restart: bool = False) -> list[Step]:
@@ -1452,7 +1490,7 @@ def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
 
 
 class Stop(Step):
-    title = "Stop openHAB, the Apple TV helper and the metrics services, and disable their restart paths"
+    title = "Stop services and restart paths"
     SERVICES = ("openhab.service", "openhab-atv.service", "openhab-atv-restart.service", *metrics.SERVICE_UNITS,
                 Path(deploy.METRICS_RESTART_SERVICE).name)
     PATHS = (PATH_UNIT, METRICS_PATH_UNIT)
@@ -1484,7 +1522,7 @@ class Stop(Step):
 
 
 class RemoveUnits(Step):
-    title = "Remove the units thermite install installed"
+    title = "Remove service units"
 
     def present(self, system: System) -> list[Path]:
         return [target for _, target in sorted(deploy.INSTALLED.items()) if system.stat(target) is not None]
@@ -1536,8 +1574,35 @@ def uninstall(context: Context, purge: bool = False) -> list[Step]:
     return [Stop(), RemoveUnits(), *([Purge(context)] if purge else [])]
 
 
-def install(context: Context) -> list[Step]:
+class OperatorCredentialsReset(Step):
+    title = "Clear local credential copies"
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def paths(self) -> tuple[Path, Path]:
+        return (self.context.area / self.context.token_file, self.context.area / self.context.grafana_password_file)
+
+    def check(self, system: System) -> Check:
+        present = [str(path) for path in self.paths() if system.stat(path) is not None]
+        return Check(not present, "to clear: " + ", ".join(present) if present else "local credential copies absent")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Command(("rm", "-f", "--", *map(str, self.paths())))]
+
+
+def clean_install(context: Context) -> list[Step]:
+    # Complete prerequisites before deleting otherwise recoverable state.
+    # The normal install rechecks these steps and reuses the boot receipt.
+    return [Packages(), BootTest(context), *uninstall(context, purge=True), OperatorCredentialsReset(context)]
+
+
+def install_preflight(context: Context) -> list[Step]:
+    return [Preconditions(context), Committed(context)]
+
+
+def install(context: Context, *, preflight: bool = True) -> list[Step]:
     """Every step, in order."""
-    return [Preconditions(context), Committed(context), Packages(), NodeConfinement(context), Account(context), StateDirectories(context),
+    return [*(install_preflight(context) if preflight else []), Packages(), NodeConfinement(context), Account(context), StateDirectories(context),
             MetricsDirectories(context), BootTest(context), Units(context), NativePreparation(context), Deploy(context), Services(context),
             Answers(context), Token(context), NativeReady(context), *metrics_steps(context), Verify(context)]

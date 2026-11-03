@@ -48,11 +48,13 @@ def print_stage(result, args):
     print("Full receipt: " + str(plan / "stage.json"))
     print("Review: " + shlex.join(["more", str(plan / "handoff.sh")]))
     print("Hand off and verify: " + shlex.join(["sh", str(plan / "handoff.sh")]))
+    print("Review activation: " + shlex.join(["more", str(plan / "activate.sh")]))
     if result.get("bootstrap_command"):
         print("Only for a new site: " + shlex.join(result["bootstrap_command"]))
     print("Before activation:")
     for requirement in result.get("activation_requirements", ["Complete the TLS, native-listener and callback checklist in the receipt."]):
         print("  - " + requirement)
+    print("After completing those checks: " + shlex.join(["sh", str(plan / "activate.sh")]))
     print("No services started; the security boundary is not active.")
 
 
@@ -78,7 +80,7 @@ def main(argv=None):
     sub = oh_cli.action(commands, "stage", "prepare a persistent release and owner-installable units", examples=[("thermite access stage --help", "list the explicit custody and listener inputs")])
     sub.add_argument("--destination", required=True, type=Path, help="new persistent release directory outside this checkout")
     sub.add_argument("--state", required=True, type=Path, help="site-owned mode0700 state directory outside releases and source checkouts; reuse on upgrades")
-    sub.add_argument("--plan-directory", required=True, type=Path, help="new operator-owned plan directory under an existing mode0700 parent; saves the receipt, safe custody helper and replayable handoff.sh")
+    sub.add_argument("--plan-directory", required=True, type=Path, help="new operator-owned plan directory under an existing mode0700 parent; saves private diagnostics, the receipt, handoff.sh and activate.sh")
     oh_cli.add_house(sub)
     sub.add_argument("--assets", required=True, type=Path, help="complete deployed native conf/html/remote directory")
     sub.add_argument("--runtime-url", required=True, help="explicit native loopback HTTP origin")

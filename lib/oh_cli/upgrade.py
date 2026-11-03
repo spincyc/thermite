@@ -49,7 +49,9 @@ answering; and a read-only check (thermite health --production and
 thermite status).
 
 Before any changes, one y/n question approves the whole upgrade run,
-including its sudo commands. Each command is still shown before it runs.
+including its sudo commands. Compact status shows each stage; -v/--verbose
+shows details and commands. Interactive commands keep the terminal, with
+the spinner paused.
 After a no, a failure or Ctrl-C, run it again and it goes on from there,
 asking once again. --dry-run only reads: it reports each step and what it
 would run. An agent uses only that: agents never run sudo.
@@ -94,14 +96,16 @@ def deployed(system: System, context: steps.Context) -> str | None:
 def going_back(system: System, context: steps.Context, backup: steps.Backup, before: str | None,
                when: str) -> None:
     """Where the backup is, and how to put it and the previous units back."""
-    if system.stat(backup.file) is None and not before:
+    complete = backup.completed(system, backup.file)
+    if not complete and not before:
         return
-    if system.stat(backup.file) is not None:
+    if complete:
         system.say(f"backup   {backup.file}; to restore it, under sudo:")
         for argv in steps.restore_argvs(context.layout, backup.file, when, backup.grafana):
             system.say(f"           {Command(argv, root=True).shown()}")
     if before:
-        system.say(f"back     to go back to {before[:12]}, the commit deployed before: restore the backup, then "
+        restore = "restore the backup, then " if complete else ""
+        system.say(f"back     to go back to {before[:12]}, the commit deployed before: {restore}"
                    f"`git switch --detach {before[:12]}` and thermite upgrade there, which installs its units and "
                    "starts runtime on them (thermite install in a commit from before thermite upgrade)")
 
@@ -130,11 +134,7 @@ def upgrade(system: System, dry_run: bool, when: str | None = None) -> int:
     if not dry_run:
         system.say(f"Upgrade: {plan.describe()}. This run includes the boot test, any needed backup, "
                    "sudo commands, service restarts, deployment and health checks.")
-        if not system.interactive():
-            system.say(f"Stopped; this upgrade needs you at a terminal. {RERUN}")
-            return 1
-        if system.ask("Apply this upgrade for the whole run? [y/N] ").strip().lower() not in ("y", "yes"):
-            system.say(f"Stopped; no changes were made. {RERUN}")
+        if not runner.confirm_run(system, "upgrade", RERUN):
             return 1
     status = runner.run(rest, system, AREA, dry_run=dry_run, first=2, rerun=RERUN,
                         root_confirmed=not dry_run)
@@ -144,7 +144,7 @@ def upgrade(system: System, dry_run: bool, when: str | None = None) -> int:
     if status:
         system.say("The upgrade did not finish. If runtime is not right, go back:")
         going_back(system, context, backup, before, when)
-    elif system.stat(backup.file) is not None:
+    elif backup.completed(system, backup.file):
         going_back(system, context, backup, None, when)
     return status
 

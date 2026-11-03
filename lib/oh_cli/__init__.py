@@ -60,7 +60,7 @@ VERBS = {
     "lint": ("house", "refuse credentials in Git, and docs naming a missing make target"),
     "test": ("test", "boot conf/ on a test runtime; test routing and the controls end to end"),
     "sandbox": ("test", "run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615"),
-    "install": ("production", "install thermite on this host, asking before each sudo command"),
+    "install": ("production", "install thermite on this host, with one approval for the whole run"),
     "upgrade": ("production", "upgrade thermite and the Apple TV helper here to the pinned versions"),
     "uninstall": ("production", "stop thermite here and remove its units; --purge deletes its state"),
     "deploy": ("production", "install a commit's conf/ and Apple TV helper here"),

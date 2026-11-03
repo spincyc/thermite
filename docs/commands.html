@@ -43,7 +43,7 @@
 <h2 id="test">Test on a test runtime, never production</h2>
 <table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
-<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, asking before each sudo command</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>upgrade thermite and the Apple TV helper here to the pinned versions</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>install a commit&#x27;s conf/ and Apple TV helper here</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>upgrade thermite and the Apple TV helper here to the pinned versions</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>install a commit&#x27;s conf/ and Apple TV helper here</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
 <table class="verbs"><tbody><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
@@ -68,7 +68,7 @@ test on a test runtime, never production:
   sandbox       run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615
 
 production runtime on this host:
-  install       install thermite on this host, asking before each sudo command
+  install       install thermite on this host, with one approval for the whole run
   upgrade       upgrade thermite and the Apple TV helper here to the pinned versions
   uninstall     stop thermite here and remove its units; --purge deletes its state
   deploy        install a commit&#x27;s conf/ and Apple TV helper here
@@ -701,7 +701,7 @@ examples:
                                     production&#x27;s log (state_root: the host file)
 </pre></details>
 </section>
-<section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, asking before each sudo command.</p><pre class="help">usage: thermite install [-h] [-n]
+<section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, with one approval for the whole run.</p><pre class="help">usage: thermite install [-h] [-n] [--clean]
 
 Install thermite on this host, the one you run it on. Run
 it as your user, from a committed private site or a complete source checkout:
@@ -715,9 +715,17 @@ whether it is done and skips it if so:
 preconditions, packages, the thermite user and group with you in it, the
 state directories, the boot check, the systemd units, stopped native-state
 preparation and ownership repair, the deploy of HEAD, services, the API token, and a
-read-only check at the end. A command that needs root is shown before it
-runs, under sudo, and runs only if you answer y. After a no, a failure or
-Ctrl-C, run it again and it goes on from there.
+read-only check at the end. One y/n question approves this entire run,
+including its sudo commands and deployment ownership handoff. Compact
+status shows each stage; -v/--verbose shows details and commands. Interactive
+commands keep the terminal, with the spinner paused. After a no, a failure
+or Ctrl-C, run it again and it goes on from there, asking once for the new run.
+
+--clean first removes the installed units and deletes the native state root,
+including users, pairings, tokens, history, monitoring stores and backups.
+It also clears this host&#x27;s two local credential copies before reinstalling.
+The deletion still requires typing the exact state path. Source/site
+configuration and separately staged access identity/TLS state are retained.
 
 --dry-run only reads: it reports each step and what it would run. An
 agent uses only that: agents never run sudo.
@@ -725,6 +733,8 @@ agent uses only that: agents never run sudo.
 options:
   -h, --help     show this help message and exit
   -n, --dry-run  report what it would do; change nothing
+  --clean        delete native state and local API/Grafana credential copies, then
+                 reinstall; pairings are lost
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -733,7 +743,9 @@ switches every verb takes:
 
 examples:
   thermite install --dry-run        each step, and what it would run here; runs nothing
-  thermite install                  install, asking before each sudo command; safe to rerun
+  thermite install                  install with one approval for the whole run; safe to rerun
+  thermite install --clean --dry-run
+                                    review a complete native-state reset and fresh installation
 </pre>
 </section>
 <section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Upgrade thermite and the Apple TV helper here to the pinned versions.</p><pre class="help">usage: thermite upgrade [-h] [-n]
@@ -766,7 +778,9 @@ answering; and a read-only check (thermite health --production and
 thermite status).
 
 Before any changes, one y/n question approves the whole upgrade run,
-including its sudo commands. Each command is still shown before it runs.
+including its sudo commands. Compact status shows each stage; -v/--verbose
+shows details and commands. Interactive commands keep the terminal, with
+the spinner paused.
 After a no, a failure or Ctrl-C, run it again and it goes on from there,
 asking once again. --dry-run only reads: it reports each step and what it
 would run. An agent uses only that: agents never run sudo.
@@ -813,12 +827,15 @@ thermite user and group, the packages, images and host node-exporter
 confinement configuration, and says so: thermite
 install puts runtime and the metrics back on the same state. --purge, as apt
 purge does, also deletes the state root; before that step it shows the path
-and asks you to type it, on top of the y before each sudo command. Separately
-staged authenticated-access releases and state are managed separately.
+and asks you to type it. Separately staged authenticated-access releases
+and state are managed separately.
 
-Each step first checks whether it is done and skips it if so. --dry-run
-only reads: it reports each step and what it would run. An agent uses only
-that: agents never run sudo.
+One y/n question approves this uninstall run, including its sudo commands.
+Compact status shows each stage; -v/--verbose shows details and commands.
+Interactive commands keep the terminal, with the spinner paused. Each step
+first checks whether it is done and skips it if so. --dry-run only reads:
+it reports each step and what it would run. An agent uses only that:
+agents never run sudo.
 
 options:
   -h, --help     show this help message and exit
@@ -837,7 +854,7 @@ examples:
   thermite uninstall -n --purge     what deleting the state too would do
 </pre>
 </section>
-<section class="verb" id="deploy"><h3><code>thermite deploy</code></h3><p>Install a commit&#x27;s conf/ and Apple TV helper here.</p><pre class="help">usage: thermite deploy [-h] [-n] [--force] [--state DIR] [REV]
+<section class="verb" id="deploy"><h3><code>thermite deploy</code></h3><p>Install a commit&#x27;s conf/ and Apple TV helper here.</p><pre class="help">usage: thermite deploy [-h] [-n] [--yes] [--force] [--state DIR] [REV]
 
 Production runtime runs on the host thermite install ran on, from its state
 directory (the host file&#x27;s state_root). Run this there. It installs one
@@ -868,6 +885,9 @@ an earlier deploy installed, and leaves alone anything else in the state.
 
 You need to be in the thermite group. Before writing, it asks you to approve
 the exact privileged command that gives deployed files to thermite:thermite.
+Install and upgrade pass their run approval with --yes; an explicit --yes
+also acknowledges this handoff for a standalone deployment. It does not
+bypass boot checks, pairing-log protection or sudo authentication.
 New files inherit the service group and shared directories keep setgid.
 Changing the units themselves (a runtime upgrade or new image) needs root,
 so thermite upgrade does it:
@@ -880,6 +900,8 @@ positional arguments:
 options:
   -h, --help     show this help message and exit
   -n, --dry-run  report what it would do; change nothing
+  --yes          approve the ownership handoff for this invocation; install/upgrade use
+                 their run approval
   --force        install a conf thermite test boot has not passed on here
   --state DIR    the state root (default: instance/host.yaml state_root)
 
@@ -1740,8 +1762,8 @@ options:
                                 source checkouts; reuse on upgrades
   --plan-directory PLAN_DIRECTORY
                                 new operator-owned plan directory under an existing
-                                mode0700 parent; saves the receipt, safe custody helper
-                                and replayable handoff.sh
+                                mode0700 parent; saves private diagnostics, the receipt,
+                                handoff.sh and activate.sh
   --house FILE                  the house file (default: instance/devices.yaml)
   --assets ASSETS               complete deployed native conf/html/remote directory
   --runtime-url RUNTIME_URL     explicit native loopback HTTP origin

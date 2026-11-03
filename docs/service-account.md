@@ -46,7 +46,9 @@ is retained; other private userdata files and credentials remain `0600`.
 The Apple TV helper checks its environment after package installation and
 on reuse, since wheel installers can set modes explicitly despite the umask.
 The backup directory lets trusted operators list and inspect archive metadata;
-the archive contents remain private to the service account.
+the archive contents remain private to the service account. New backups have
+mode-0640 completion receipts readable by the trusted operator group. Permission
+maintenance preserves that mode without widening private files.
 Before an operator's deploy or rollback writes, it asks for approval of the
 exact ownership-handoff command. When it needs that privilege, a
 noninteractive run refuses before writing. A successful deploy hands its
@@ -119,6 +121,12 @@ The first administrator is created by an explicit command run as `thermite`;
 the service account still has no interactive login. Later releases reuse the
 same private state. See the complete commands in
 [server installation](installation.md#set-up-https-and-accounts).
+Access staging parents are operator-owned `2750`, so the service can traverse
+them but cannot replace an in-progress release. Tighten older `2770` access
+parents before staging. The protected plan's separate `activate.sh` handles
+both first installation and upgrade cutover, including stopping old processes
+and verifying the running release; see
+[access upgrades and recovery](installation.md#update-the-access-release).
 
 ### Move existing access state
 
@@ -134,7 +142,7 @@ As the owner, with the `thermite` account already installed:
 ```sh
 ACCESS_ROOT=/srv/thermite-access
 OLD_ACCESS_STATE=/absolute/path/to/existing/access-state
-sudo install -d -o "$(id -un)" -g thermite -m 2770 \
+sudo install -d -o "$(id -un)" -g thermite -m 2750 \
   "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
 sudo mv --no-clobber --no-target-directory -- \
   "$OLD_ACCESS_STATE" "$ACCESS_ROOT/state"

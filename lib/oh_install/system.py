@@ -20,11 +20,14 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
 
 import oh_cli
 import oh_deploy as deploy
+import oh_http
+from oh_install import progress
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,6 +53,7 @@ class Stat:
     mode: int
     is_dir: bool
     mtime: float
+    size: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -136,7 +140,7 @@ class System:
             found = os.stat(path)
         except (FileNotFoundError, NotADirectoryError, PermissionError):
             return None
-        return Stat(found.st_uid, found.st_gid, found.st_mode & 0o7777, os.path.isdir(path), found.st_mtime)
+        return Stat(found.st_uid, found.st_gid, found.st_mode & 0o7777, os.path.isdir(path), found.st_mtime, found.st_size)
 
     def listdir(self, path: Path) -> list[str]:
         """The names in a directory; none when it is missing or unreadable."""
@@ -188,34 +192,35 @@ class System:
 
     def native_probe(self, url: str, token: str, path: str, deadline: float, *, json_body: bool = True) -> NativeProbe:
         """One authenticated read, bounded through headers/body by the startup deadline."""
-        from oh_testing.boot import ReportError, ReportHttp
-
-        remaining = deadline - self.clock()
-        if remaining <= 0:
-            return NativeProbe(0, problem="startup deadline expired")
-        # Reuse the report reader's per-receive deadline enforcement, while
-        # retaining status codes needed to distinguish auth and metrics readiness.
-        client = ReportHttp(url, token, deadline)
-        client.timeout = min(5, remaining)
+        def remaining():
+            value = deadline - self.clock()
+            if value <= 0:
+                raise oh_http.DeadlineExpired("startup deadline expired")
+            return value
         try:
-            status, body = client._request("GET", path,
-                                           headers={"Accept": "application/json" if json_body else "text/plain"})
-            client.remaining(path)
+            timeout = min(5, remaining())
+            request = urllib.request.Request(url.rstrip("/") + path, method="GET", headers={
+                "Accept": "application/json" if json_body else "text/plain", "Authorization": f"Bearer {token}"})
+            oh_cli.trace_http("GET", url.rstrip("/") + path)
+            status, body = oh_http.request(request, timeout=timeout, remaining=remaining)
         except urllib.error.HTTPError as exc:
             status, body = exc.code, b""
             exc.close()
         except (OSError, urllib.error.URLError, http.client.HTTPException):
             return NativeProbe(0)
-        except ReportError:
+        except oh_http.DeadlineExpired:
             return NativeProbe(0, problem="startup deadline expired")
         if self.clock() >= deadline:
             return NativeProbe(0, problem="startup deadline expired")
         if status != 200 or not json_body:
             return NativeProbe(status)
         try:
-            return NativeProbe(status, json.loads(body.decode("utf-8")))
+            value = json.loads(body.decode("utf-8"))
         except (ValueError, UnicodeError, RecursionError):
             return NativeProbe(status, problem="malformed JSON")
+        if self.clock() >= deadline:
+            return NativeProbe(0, problem="startup deadline expired")
+        return NativeProbe(status, value)
 
     def metrics_health(self, host: dict, address: str | None) -> deploy.MetricsHealth:
         return deploy.metrics_health(host, address)
@@ -225,30 +230,56 @@ class System:
 
     def ask(self, prompt: str) -> str:
         try:
-            if oh_cli.switches.quiet:
-                # Under -q what say() printed goes nowhere, yet the owner must
-                # see what a question is about.
-                sys.stderr.write(f"{getattr(self, 'said', '')}\n{prompt}")
-                sys.stderr.flush()
-                return input()
-            return input(prompt)
+            with progress.paused():
+                if oh_cli.switches.quiet:
+                    active = progress.current.get()
+                    if active:
+                        active.prompt_context()
+                    else:
+                        print(getattr(self, "said", ""), file=sys.stderr)
+                    sys.stderr.write(prompt)
+                    sys.stderr.flush()
+                    return input()
+                return input(prompt)
         except EOFError:
             return ""
 
     def secret(self, prompt: str) -> str:
         try:
-            return getpass.getpass(prompt)
+            with progress.paused():
+                if oh_cli.switches.quiet and (active := progress.current.get()):
+                    active.prompt_context()
+                return getpass.getpass(prompt)
         except EOFError:
             return ""
 
     def say(self, text: str) -> None:
         self.said = text
-        print(text, flush=True)
+        with progress.paused():
+            if oh_cli.switches.quiet and (active := progress.current.get()):
+                active.notes.append(text)
+                return
+            print(text, flush=True)
 
     def run(self, argv: Sequence[str], cwd: Path, *, timeout: float | None = None) -> int:
         oh_cli.trace_run(argv, cwd)
         try:
-            return subprocess.run(list(argv), cwd=cwd, check=False, timeout=timeout).returncode
+            if progress.capture_command.get():
+                from oh_install import output
+                active = progress.current.get()
+                return output.run(argv, cwd, timeout=timeout,
+                                  report=lambda text: active.message(text, error=True))
+            with contextlib.ExitStack() as stack:
+                options = {}
+                if oh_cli.switches.quiet and progress.terminal_command.get():
+                    # CLI quiet mode discards fd 1 process-wide. A package
+                    # manager may prompt on stdout: give interactive children
+                    # their terminal back instead of hiding that question.
+                    try:
+                        options["stdout"] = stack.enter_context(open("/dev/tty", "w"))
+                    except OSError:
+                        options["stdout"] = sys.stderr
+                return subprocess.run(list(argv), cwd=cwd, check=False, timeout=timeout, **options).returncode
         except FileNotFoundError:
             self.say(f"   {argv[0]}: no such program on this host")
             return 127

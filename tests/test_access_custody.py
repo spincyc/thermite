@@ -7,6 +7,7 @@ from pathlib import Path
 import resource
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -194,7 +195,8 @@ class Custody(unittest.TestCase):
         parent.mkdir(mode=0o700)
         plan = parent / "first"
         receipt = {"ownership_commands": [["sudo", "/usr/bin/python3", "-I", "-S", str(plan / "custody.py"), str(plan / "custody.json")]],
-                   "verification_command": ["true"]}
+                   "verification_command": ["true"], "destination": str(self.release), "units": list(staging.units(self.release, state=self.state)),
+                   "unit_install_commands": []}
         generated_units = staging.units(self.release, state=self.state)
         with staging._new_release(plan, purpose="Plan", private_parent=True) as descriptor:
             staging._export_plan(descriptor, receipt, self.plan, generated_units)
@@ -226,6 +228,230 @@ class Custody(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(created.stat().st_mode), 0o700)
         finally:
             parent.chmod(0o700)
+
+    def test_service_writable_release_or_state_ancestor_is_refused_before_setup(self):
+        for which in ("release", "state"):
+            with self.subTest(which=which), tempfile.TemporaryDirectory(dir=self.root) as temporary:
+                root = Path(temporary)
+                shared = root / "shared"
+                protected = shared / "protected"
+                protected.mkdir(parents=True, mode=0o750)
+                shared.chmod(0o2770)
+                target = (protected if which == "release" else root) / "new-release"
+                state = (protected if which == "state" else root) / "new-state"
+                with patch.object(staging, "service_identity", return_value=(os.geteuid() + 1, os.getegid())), \
+                        patch.object(staging, "_disposable", return_value=False), patch.object(staging, "_state_location"), \
+                        patch.object(staging, "_service_parents"), patch.object(staging, "_state_directory") as create, \
+                        patch.object(staging.venv, "EnvBuilder") as builder, patch.object(staging.subprocess, "run") as run:
+                    with self.assertRaisesRegex(AccessError, "Release and state ancestors.*protected from replacement"):
+                        staging.stage(target, state=state, house="unused", assets="unused", runtime_url="unused",
+                                      runtime_token_file="unused", tls_cert="unused", tls_key="unused", allowed_hosts=[],
+                                      bind_host="127.0.0.1", port=13600, timezone="UTC", plan_directory=root / "plan",
+                                      area=root / "source")
+                create.assert_not_called()
+                builder.assert_not_called()
+                run.assert_not_called()
+                self.assertFalse(target.exists())
+                self.assertFalse(state.exists())
+                self.assertFalse((root / "plan").exists())
+
+    def test_operator_owned_2750_parents_and_root_sticky_ancestor_are_accepted(self):
+        parent = self.root / "releases"
+        parent.mkdir()
+        parent.chmod(0o2750)
+        staging._trusted_ancestors(parent, "Release and state")
+        original = staging.os.fstat
+        inode = parent.stat().st_ino
+        def sticky_root(descriptor):
+            info = original(descriptor)
+            if info.st_ino == inode:
+                values = list(info)
+                values[0], values[4] = stat.S_IFDIR | 0o1777, 0
+                return os.stat_result(values)
+            return info
+        with patch.object(staging.os, "fstat", side_effect=sticky_root):
+            staging._trusted_ancestors(parent, "Release and state")
+
+    def test_service_owned_read_only_ancestor_is_not_a_trusted_staging_parent(self):
+        parent = self.root / "service-owned"
+        parent.mkdir(mode=0o750)
+        original = staging.os.fstat
+        inode = parent.stat().st_ino
+        def service_owned(descriptor):
+            info = original(descriptor)
+            if info.st_ino == inode:
+                values = list(info)
+                values[4] = os.geteuid() + 1
+                return os.stat_result(values)
+            return info
+        with patch.object(staging.os, "fstat", side_effect=service_owned):
+            with self.assertRaisesRegex(AccessError, "protected from replacement"):
+                staging._trusted_ancestors(parent, "Release and state")
+
+
+class Activation(unittest.TestCase):
+    """Run the saved shell workflow against a stateful, unprivileged fake host."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.release = self.root / "release with spaces and 'quote'"
+        self.plan = self.root / "plan"
+        self.plan.mkdir()
+        self.installed = self.root / "installed"
+        self.installed.mkdir()
+        self.units = list(staging.ACCESS_UNITS[:2])
+        commands = []
+        for name in self.units:
+            source = self.plan / name
+            source.write_text("new release " + str(self.release))
+            commands.append(["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(source), str(self.installed / name)])
+        self.receipt = {"destination": str(self.release), "units": self.units,
+                        "verification_command": ["true"], "unit_install_commands": commands}
+        self.state = {"units": {}, "next_pid": 100, "calls": [], "release": str(self.release)}
+        self.state_path = self.root / "host.json"
+        commands_dir = self.root / "commands"
+        commands_dir.mkdir()
+        shim = commands_dir / "fake-host"
+        shim.write_text("#!" + sys.executable + "\n" + r'''
+import json, os, pathlib, shutil, sys
+path = pathlib.Path(os.environ['FAKE_HOST_STATE'])
+state = json.loads(path.read_text())
+name, args = pathlib.Path(sys.argv[0]).name, sys.argv[1:]
+if name == 'fake-admin':
+    name, args = args[0], args[1:]
+state['calls'].append([name, *args])
+result, output = 0, ''
+if name == 'systemctl':
+    action, unit = args[0], args[-1]
+    current = state['units'].get(unit, {})
+    if action == 'cat': result = 0 if current else 1
+    elif action == 'is-active': result = 0 if current.get('active') else 3
+    elif action == 'is-enabled': result = 0 if current.get('enabled') else 1
+    elif action == 'show': output = str(current.get('pid', 0))
+    elif action == 'stop':
+        if not state.get('ignore_stop'):
+            current.update(active=False, pid=0)
+    elif action == 'disable': current['enabled'] = False
+    elif action == 'daemon-reload': pass
+    elif action == 'enable' and args[1] == '--now':
+        for unit in args[2:]:
+            current = state['units'].setdefault(unit, {})
+            current['enabled'] = True
+            if not current.get('active'):
+                state['next_pid'] += 1
+                current.update(active=True, pid=state['next_pid'], cwd=state['release'])
+    else: raise AssertionError(('unexpected systemctl', args))
+elif name == 'readlink':
+    pid = int(pathlib.Path(args[-1]).parts[-2])
+    matches = [unit for unit in state['units'].values() if unit.get('pid') == pid]
+    if matches: output = matches[0]['cwd']
+    else: result = 1
+elif name == 'install':
+    if state.pop('fail_install_once', False): result = 1
+    else:
+        source, target = map(pathlib.Path, args[-2:])
+        assert target.parent == path.parent / 'installed'
+        shutil.copyfile(source, target)
+        state['units'].setdefault(target.name, {'active': False, 'enabled': False})
+elif name != 'sleep': raise AssertionError(('unexpected command', name, args))
+path.write_text(json.dumps(state))
+if output: print(output)
+sys.exit(result)
+''')
+        shim.chmod(0o700)
+        for name in ("systemctl", "fake-admin", "sleep"):
+            (commands_dir / name).symlink_to(shim)
+        self.environment = {**os.environ, "FAKE_HOST_STATE": str(self.state_path),
+                            "PATH": str(commands_dir) + os.pathsep + os.environ["PATH"]}
+
+    def run_activation(self):
+        script = self.plan / "activate.sh"
+        # The real sudo executable is never run, even if a fake command fails.
+        script.write_text(staging._activation_script(self.receipt).replace("sudo ", "fake-admin "))
+        self.state_path.write_text(json.dumps(self.state))
+        result = subprocess.run(["/bin/sh", str(script)], env=self.environment, capture_output=True, text=True, timeout=10)
+        self.state = json.loads(self.state_path.read_text())
+        return result
+
+    def old_release(self, callbacks=False):
+        for number, name in enumerate(staging.ACCESS_UNITS if callbacks else self.units):
+            (self.installed / name).write_text("old release")
+            self.state["units"][name] = {"active": True, "enabled": True, "pid": number + 10, "cwd": "old-release"}
+
+    def test_first_install_starts_and_verifies_each_new_process(self):
+        result = self.run_activation()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Running release verified", result.stdout)
+        for name in self.units:
+            self.assertEqual(self.state["units"][name]["cwd"], str(self.release))
+            self.assertTrue(self.state["units"][name]["active"])
+        self.assertFalse(any(call[:2] == ["systemctl", "stop"] for call in self.state["calls"]))
+
+    def test_upgrade_stops_old_processes_before_install_and_retires_callback(self):
+        self.old_release(callbacks=True)
+        result = self.run_activation()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.state["calls"]
+        first_install = next(index for index, call in enumerate(calls) if call[0] == "install")
+        for name in staging.ACCESS_UNITS:
+            self.assertLess(calls.index(["systemctl", "stop", name]), first_install)
+        callback = self.state["units"][staging.ACCESS_UNITS[-1]]
+        self.assertFalse(callback["active"])
+        self.assertFalse(callback["enabled"])
+        for name in self.units:
+            self.assertGreater(self.state["units"][name]["pid"], 100)
+
+    def test_optional_callback_is_started_when_included_in_the_new_plan(self):
+        name = staging.ACCESS_UNITS[-1]
+        self.units.append(name)
+        source = self.plan / name
+        source.write_text("new callback release")
+        self.receipt["unit_install_commands"].append(
+            ["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(source), str(self.installed / name)])
+        result = self.run_activation()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        callback = self.state["units"][name]
+        self.assertTrue(callback["active"] and callback["enabled"])
+        self.assertEqual(callback["cwd"], str(self.release))
+        self.assertFalse(any(call[:2] == ["systemctl", "disable"] for call in self.state["calls"]))
+
+    def test_replay_of_active_plan_does_not_restart_or_reinstall(self):
+        self.assertEqual(self.run_activation().returncode, 0)
+        before = self.state["units"].copy()
+        self.state["calls"] = []
+        result = self.run_activation()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no services restarted", result.stdout)
+        self.assertEqual(self.state["units"], before)
+        self.assertFalse(any(call[0] == "install" or call[:2] in (["systemctl", "stop"], ["systemctl", "enable"], ["systemctl", "disable"])
+                             for call in self.state["calls"]))
+
+    def test_running_old_release_cannot_be_reported_as_success(self):
+        self.old_release()
+        self.state["ignore_stop"] = True
+        result = self.run_activation()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Running release verification failed", result.stderr)
+        self.assertNotIn("Running release verified.", result.stdout)
+        self.assertEqual(sum(call[0] == "sleep" for call in self.state["calls"]), 9)
+
+    def test_failed_custody_verification_never_stops_existing_services(self):
+        self.old_release()
+        self.receipt["verification_command"] = ["false"]
+        result = self.run_activation()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.state["calls"], [])
+
+    def test_interrupted_install_can_resume_from_the_same_plan(self):
+        self.old_release()
+        self.state["fail_install_once"] = True
+        self.assertNotEqual(self.run_activation().returncode, 0)
+        self.assertTrue(all(not value["active"] for value in self.state["units"].values()))
+        result = self.run_activation()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(all(value["active"] and value["cwd"] == str(self.release) for value in self.state["units"].values()))
 
 
 if __name__ == "__main__":

@@ -4,6 +4,29 @@ Updated 2026-11-03 UTC. The review began on `feature/productionize`.
 Its tested history is preserved while reconciling with `main`; the original
 installation acceptance and subsequent runtime integration are distinct below.
 
+## Cold-review corrections
+
+The subsequent cold review found remaining gaps in staging-path protection,
+interrupted backup recovery, access-release activation, startup HTTP deadlines,
+upgrade prerequisite detection and approval propagation. The fixes require
+protected release/state parents before staging, publish backups with explicit
+completion evidence, and provide an operator-reviewed access cutover script.
+The browser regression harness also preserves its debugging descriptors across
+exec and keeps temporary socket paths short in deeply nested workspaces.
+
+For publication, these fixes were reconciled with canonical `main` at
+`f5bf997`, retaining installation-wide approval, explicit runtime reset and
+compact lifecycle progress. Native recovery uses that run's scoped approval.
+
+These changes supersede the code in the guest-tested artifacts below. Their
+validation uses regression tests, isolated filesystems, simulated service
+commands, local HTTP servers and the real browser harness. The earlier Arch
+and Ubuntu guest acceptance remains evidence for its named artifacts; it is
+not a fresh guest acceptance claim for these corrections. Existing access
+parents need the permission migration in the installation guide before staging
+another release. Existing backup archives remain available for manual recovery,
+but an archive without completion evidence is not reused by an upgrade.
+
 ## Main integration
 
 Reconciled with canonical `main` at `de3c961`, retaining its pooled HTTP

@@ -62,6 +62,20 @@ class Permissions(unittest.TestCase):
         self.assertEqual(stat.S_IMODE((self.root / "conf/legacy-secret").stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o2700)
 
+    def test_backup_completion_witnesses_keep_group_read_access_without_widening_private_files(self):
+        receipt = self.file("backups/finished.tar.gz.complete.json", 0o640)
+        private = [self.file("backups/finished.tar.gz", 0o640),
+                   self.file("backups/private.tar.gz.complete.json", 0o600),
+                   self.file("backups/nested/other.tar.gz.complete.json", 0o640),
+                   self.file("backups/unrelated.json", 0o640)]
+        before = {path: path.read_bytes() for path in [receipt, *private]}
+        service.normalize_state(self.root, self.uid, self.gid)
+        self.assertEqual(stat.S_IMODE(receipt.stat().st_mode), 0o640)
+        for path in private:
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual({path: path.read_bytes() for path in before}, before)
+        self.assertEqual(service.audit_state(self.root, self.uid, self.gid), [])
+
     def test_only_known_graal_cache_helper_retains_owner_execution(self):
         prefix = "userdata/.cache/org.graalvm.polyglot/engine/libtruffleattach/"
         helper = self.file(prefix + "a" * 64 + "/bin/libtruffleattach.so", 0o775)

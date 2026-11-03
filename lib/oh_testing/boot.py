@@ -4,13 +4,11 @@ whether it loads cleanly."""
 from __future__ import annotations
 
 import http.client
-import io
 import json
 import re
 import sys
 import time
 import urllib.error
-import urllib.request
 
 import oh_cli
 import oh_deploy as deploy
@@ -92,66 +90,11 @@ class ReportUnavailable(ReportError):
     """A temporary REST registration or connection outage within the boot budget."""
 
 
-class _DeadlineReader(io.RawIOBase):
-    """Reapply the remaining budget before each socket receive, including headers."""
-
-    def __init__(self, stream, sock, remaining):
-        self.stream, self.sock, self.remaining = stream, sock, remaining
-
-    def readable(self):
-        return True
-
-    def readinto(self, buffer):
-        self.sock.settimeout(min(30, self.remaining()))
-        return self.stream.readinto(buffer)
-
-    def close(self):
-        try:
-            self.stream.close()
-        finally:
-            super().close()
-
-
-class _DeadlineSocket:
-    def __init__(self, sock, remaining):
-        self.sock, self.remaining = sock, remaining
-
-    def makefile(self, mode):
-        # SocketIO keeps the socket alive after urllib closes its connection;
-        # closing HTTPResponse also closes this stream and releases the socket.
-        raw = self.sock.makefile(mode, buffering=0)
-        return io.BufferedReader(_DeadlineReader(raw, self.sock, self.remaining))
-
-
-class _DeadlineHandler:
-    def __init__(self, remaining):
-        super().__init__()
-        self.remaining = remaining
-
-    def do_open(self, http_class, request, **kwargs):
-        def connection(*args, **options):
-            conn = http_class(*args, **options)
-            response_class = conn.response_class
-            conn.response_class = lambda sock, *response_args, **response_options: response_class(
-                _DeadlineSocket(sock, self.remaining), *response_args, **response_options)
-            return conn
-        return super().do_open(connection, request, **kwargs)
-
-
-class _DeadlineHTTPHandler(_DeadlineHandler, urllib.request.HTTPHandler):
-    pass
-
-
-class _DeadlineHTTPSHandler(_DeadlineHandler, urllib.request.HTTPSHandler):
-    pass
-
-
 class ReportHttp(lib.Http):
     """Read a fresh report under one absolute deadline, including every request."""
 
     def __init__(self, url, token, deadline):
-        super().__init__(url, token=token, timeout=30)
-        self.deadline = deadline
+        super().__init__(url, token=token, timeout=30, deadline=deadline)
         self.last_unavailable = None
 
     def remaining(self, path):
@@ -160,21 +103,6 @@ class ReportHttp(lib.Http):
             detail = f" (last outage: {self.last_unavailable})" if self.last_unavailable else ""
             raise ReportError(f"boot-check: startup deadline expired querying {path}{detail}")
         return remaining
-
-    def _request(self, method, path, body=None, headers=None):
-        if method != "GET" and not self.allow_write:
-            raise lib.SandboxError(f"refusing {method} {path}: this client is read-only")
-        req = urllib.request.Request(self.base + path, data=body, method=method)
-        req.add_header("Accept", "application/json")
-        if self.token:
-            req.add_header("Authorization", f"Bearer {self.token}")
-        for key, value in (headers or {}).items():
-            req.add_header(key, value)
-        remaining = lambda: self.remaining(path)
-        opener = urllib.request.build_opener(_DeadlineHTTPHandler(remaining), _DeadlineHTTPSHandler(remaining))
-        oh_cli.trace_http(method, self.base + path)
-        with opener.open(req, timeout=self.timeout) as response:
-            return response.status, response.read()
 
     def request(self, method, path, body=None, headers=None):
         self.timeout = min(30, self.remaining(path))

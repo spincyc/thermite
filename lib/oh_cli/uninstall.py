@@ -32,12 +32,15 @@ thermite user and group, the packages, images and host node-exporter
 confinement configuration, and says so: thermite
 install puts runtime and the metrics back on the same state. --purge, as apt
 purge does, also deletes the state root; before that step it shows the path
-and asks you to type it, on top of the y before each sudo command. Separately
-staged authenticated-access releases and state are managed separately.
+and asks you to type it. Separately staged authenticated-access releases
+and state are managed separately.
 
-Each step first checks whether it is done and skips it if so. --dry-run
-only reads: it reports each step and what it would run. An agent uses only
-that: agents never run sudo.
+One y/n question approves this uninstall run, including its sudo commands.
+Compact status shows each stage; -v/--verbose shows details and commands.
+Interactive commands keep the terminal, with the spinner paused. Each step
+first checks whether it is done and skips it if so. --dry-run only reads:
+it reports each step and what it would run. An agent uses only that:
+agents never run sudo.
 """
 
 EXAMPLES = (
@@ -60,7 +63,13 @@ def uninstall(system: System, dry_run: bool, purge: bool) -> int:
     what = "uninstalling and purging" if purge else "uninstalling"
     system.say(f"{'What ' + what if dry_run else what.capitalize()} runtime on this host, {context.hostname}, "
                f"{'would do' if dry_run else 'step by step'}:")
-    code = runner.run(steps.uninstall(context, purge), system, AREA, dry_run=dry_run, rerun=RERUN)
+    if not dry_run:
+        system.say(f"This run stops runtime and monitoring, removes their units, and "
+                   f"{'deletes' if purge else 'keeps'} the state at {context.layout.root}.")
+        if not runner.confirm_run(system, "uninstall", RERUN):
+            return 1
+    code = runner.run(steps.uninstall(context, purge), system, AREA, dry_run=dry_run, rerun=RERUN,
+                      root_confirmed=not dry_run)
     if not code or dry_run:
         system.say(kept(context, purge))
     return code
@@ -73,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="also delete the state root: conf, userdata, secrets, deploy records, backups, metrics")
     arguments = parser.parse_args(argv)
     if os.geteuid() == 0:
-        print("thermite uninstall: run it as your user; it asks before each command it runs with sudo",
+        print("thermite uninstall: run it as your user; it asks once before applying the uninstall",
               file=sys.stderr)
         return 2
     system = System()

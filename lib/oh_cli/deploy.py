@@ -44,6 +44,9 @@ an earlier deploy installed, and leaves alone anything else in the state.
 
 You need to be in the thermite group. Before writing, it asks you to approve
 the exact privileged command that gives deployed files to thermite:thermite.
+Install and upgrade pass their run approval with --yes; an explicit --yes
+also acknowledges this handoff for a standalone deployment. It does not
+bypass boot checks, pairing-log protection or sudo authentication.
 New files inherit the service group and shared directories keep setgid.
 Changing the units themselves (a runtime upgrade or new image) needs root,
 so thermite upgrade does it:
@@ -83,7 +86,8 @@ def print_metrics(result: deploy.Deployed, layout: deploy.State) -> None:
 
 def apply(args, host: dict) -> int:
     layout = deploy.State(args.state) if args.state else deploy.state(host)
-    result = deploy.deploy(AREA, layout, VAR, args.rev, force=args.force, dry_run=args.dry_run, host=host)
+    result = deploy.deploy(AREA, layout, VAR, args.rev, force=args.force, dry_run=args.dry_run, host=host,
+                           ownership_approved=getattr(args, "yes", False))
     short = result.commit[:12]
     print(f"{'dry run ' if args.dry_run else 'deploy  '}{short} {result.subject}")
     print_changes("conf", result.conf)
@@ -114,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("deploy", DESCRIPTION, EXAMPLES)
     parser.add_argument("rev", nargs="?", default="HEAD", metavar="REV", help="the commit (default: HEAD)")
     oh_cli.add_dry_run(parser)
+    parser.add_argument("--yes", action="store_true",
+                        help="approve the ownership handoff for this invocation; install/upgrade use their run approval")
     parser.add_argument("--force", action="store_true",
                         help="install a conf thermite test boot has not passed on here")
     parser.add_argument("--state", type=Path, metavar="DIR",

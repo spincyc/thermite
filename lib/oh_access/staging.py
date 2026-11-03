@@ -18,6 +18,12 @@ from . import AccessError
 from .files import (atomic_private, json_private, private_directory, read_private,
                     require_service_account, service_identity)
 
+ACCESS_UNITS = ("thermite-access.service", "thermite-access-worker.service", "thermite-access-callbacks.service")
+
+
+class _EnvironmentInstallError(AccessError):
+    """Keep the operator's diagnostic directory when environment setup fails."""
+
 
 def _systemd_text(value):
     text = str(value)
@@ -206,16 +212,16 @@ def _private_plan_parent(descriptor):
         raise AccessError("Plan parent must already be owned by this operator and mode 0700")
 
 
-def _trusted_plan_ancestors(path):
-    # A private immediate parent is insufficient below a service-writable
-    # ancestor: thermite could rename that parent and substitute root code.
+def _trusted_ancestors(path, purpose):
+    # A private leaf is insufficient below a service-writable ancestor:
+    # thermite could rename it and substitute an interpreter or root helper.
     for ancestor in (path, *path.parents):
         with _directory_descriptor(ancestor) as descriptor:
             info = os.fstat(descriptor)
             writable = stat.S_IMODE(info.st_mode) & 0o022
             sticky_root = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
             if info.st_uid not in {0, os.geteuid()} or writable and not sticky_root:
-                raise AccessError("Plan ancestors must be owned by root or the operator and protected from replacement")
+                raise AccessError(purpose + " ancestors must be owned by root or the operator and protected from replacement")
 
 
 def _plan_location(plan, target, state):
@@ -228,7 +234,7 @@ def _plan_location(plan, target, state):
     try:
         with _directory_descriptor(plan.parent) as descriptor:
             _private_plan_parent(descriptor)
-        _trusted_plan_ancestors(plan.parent)
+        _trusted_ancestors(plan.parent, "Plan")
     except OSError:
         raise AccessError("Plan parent must already exist without symlinks and be private to this operator") from None
     for ancestor in plan.parents:
@@ -253,13 +259,17 @@ def _new_release(target, *, purpose="Release", private_parent=False):
         descriptor = os.open(target.name, flags, dir_fd=parent)
         try:
             try:
-                # A prepared releases parent is SGID 2770. Clear its inherited
+                # A prepared releases parent is SGID 2750. Clear its inherited
                 # bit on this exclusively created directory, through its fd.
                 os.fchmod(descriptor, 0o700)
                 yield descriptor
-            except BaseException:
+            except BaseException as error:
                 if not _same_release(parent, target.name, descriptor):
                     raise AccessError(purpose + " path changed during staging; refusing to remove its replacement") from None
+                if private_parent and isinstance(error, _EnvironmentInstallError):
+                    # At this point the plan holds only a private diagnostic
+                    # log, never a runnable partial handoff or activation plan.
+                    raise
                 try:
                     # Anchor deletion to the directory created above. rmtree's
                     # fd-based walk never follows links into other releases or
@@ -303,9 +313,91 @@ def _handoff_script(receipt):
             "\nprintf '%s\\n' 'Custody verified. Bootstrap only a new site; complete the activation checklist before installing or starting units.'\n")
 
 
+def _activation_script(receipt):
+    """A reviewed cutover, using only commands generated for this release."""
+    target = receipt["destination"]
+    installed = receipt["units"]
+    retired = [name for name in ACCESS_UNITS if name not in installed]
+    lines = ["#!/bin/sh", "set -eu", "umask 077",
+             "# Run as the operator only after reviewing this script and completing",
+             "# the receipt's TLS, native-listener and callback requirements.",
+             "# This script never bootstraps or migrates site authority.",
+             "trap 'activation_status=$?; if [ \"$activation_status\" -ne 0 ]; then printf \"%s\\n\" \"Activation stopped; services may be stopped. Fix the failed command and rerun this script. See the guide before rolling back with an older plan.\" >&2; fi; exit \"$activation_status\"' 0",
+             "trap 'exit 130' INT", "trap 'exit 143' TERM",
+             "expected_release=" + shlex.quote(target),
+             "running_release() {",
+             '  unit=$1',
+             '  systemctl is-active --quiet "$unit" || return 1',
+             '  pid=$(systemctl show --property=MainPID --value "$unit") || return 1',
+             '  case "$pid" in ""|0|*[!0-9]*) return 1 ;; esac',
+             '  current=$(sudo readlink -- "/proc/$pid/cwd") || return 1',
+             '  [ "$current" = "$expected_release" ] || return 1',
+             '  [ "$(systemctl show --property=MainPID --value "$unit")" = "$pid" ]',
+             "}",
+             "# Verify the new release before stopping any existing service.",
+             shlex.join(receipt["verification_command"]),
+             "same_release=true"]
+    for command in receipt["unit_install_commands"]:
+        source, destination = command[-2:]
+        lines.append("cmp -s " + shlex.join([source, destination]) + " || same_release=false")
+    for name in installed:
+        lines.extend(["running_release " + shlex.quote(name) + " || same_release=false",
+                      "systemctl is-enabled --quiet " + shlex.quote(name) + " || same_release=false"])
+    for name in retired:
+        lines.append("if systemctl is-active --quiet " + shlex.quote(name) + " || systemctl is-enabled --quiet " + shlex.quote(name) + "; then same_release=false; fi")
+    lines.extend(['if [ "$same_release" = true ]; then',
+                  "  printf '%s\\n' 'This release is already active; no services restarted.'", "  exit 0", "fi",
+                  "# Stop installed access services before replacing their units."])
+    for name in ACCESS_UNITS:
+        lines.append("if systemctl cat " + shlex.quote(name) + " >/dev/null 2>&1; then " +
+                     shlex.join(["sudo", "systemctl", "stop", name]) + "; fi")
+    for name in retired:
+        lines.append("if systemctl cat " + shlex.quote(name) + " >/dev/null 2>&1; then " +
+                     shlex.join(["sudo", "systemctl", "disable", name]) + "; fi")
+    lines.extend(shlex.join(command) for command in receipt["unit_install_commands"])
+    lines.extend(["sudo systemctl daemon-reload",
+                  shlex.join(["sudo", "systemctl", "enable", "--now", *installed])])
+    for name in installed:
+        lines.extend(["for attempt in 1 2 3 4 5 6 7 8 9 10; do",
+                      "  if running_release " + shlex.quote(name) + "; then break; fi",
+                      '  if [ "$attempt" = 10 ]; then printf \'%s\\n\' ' +
+                      shlex.quote("Running release verification failed: " + name) + " >&2; exit 1; fi",
+                      "  sleep 1", "done"])
+    lines.append("printf '%s\\n' 'Running release verified. Check HTTPS login, room controls and any callbacks.'")
+    return "\n".join(lines) + "\n"
+
+
+def _install_environment(target, program, plan, descriptor, wheelhouse):
+    log = plan / "environment-install.log"
+    fd = os.open(log.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
+    with os.fdopen(fd, "wb") as output:
+        os.fchmod(output.fileno(), 0o600)
+        try:
+            output.write(b"Creating the private Python environment.\n")
+            output.flush()
+            venv.EnvBuilder(with_pip=True).create(target / "env")
+            argv = [str(target / "env/bin/python"), "-m", "pip", "install", "--require-hashes",
+                    "-r", str(program / "lib/requirements-site.txt")]
+            if wheelhouse:
+                argv.extend(["--no-index", "--find-links", str(Path(wheelhouse).absolute())])
+            completed = subprocess.run(argv, stdout=output, stderr=subprocess.STDOUT, check=False)
+            if completed.returncode:
+                raise RuntimeError("Pinned dependency installation exited " + str(completed.returncode))
+        except Exception as error:
+            output.write(("\n" + type(error).__name__ + ": " + str(error) + "\n").encode("utf-8", "replace"))
+            for captured in (getattr(error, "output", None), getattr(error, "stderr", None)):
+                if captured:
+                    output.write(captured if isinstance(captured, bytes) else captured.encode("utf-8", "replace"))
+            output.flush()
+            os.fsync(output.fileno())
+            raise _EnvironmentInstallError("Service environment installation failed; review the private diagnostic log at " +
+                                           str(log) + ". The partial release was removed; use a new plan directory when retrying.") from None
+
+
 def _export_plan(descriptor, receipt, custody, unit_sources=None):
     files = {"stage.json": json.dumps(receipt, indent=2, allow_nan=False) + "\n",
              "handoff.sh": _handoff_script(receipt),
+             "activate.sh": _activation_script(receipt),
              "custody.json": json.dumps(custody, separators=(",", ":"), allow_nan=False) + "\n",
              "custody.py": Path(__file__).with_name("custody.py").read_text()}
     def write(parent, name, content):
@@ -361,6 +453,10 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     if user != ACCOUNT:
         raise AccessError("Access services require user thermite and group thermite")
     uid, gid = service_identity()
+    if os.geteuid() == uid:
+        raise AccessError("Stage as the operator, not the thermite service account")
+    for parent in {target.parent, state.parent}:
+        _trusted_ancestors(parent, "Release and state")
     _service_parents(target, state, uid, gid)
     callback_config = None
     if callbacks is not None:
@@ -419,14 +515,7 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
         os.unlink(validation_config.name, dir_fd=release_descriptor)
         os.rmdir(validation_state.name, dir_fd=release_descriptor)
         if install_environment:
-            venv.EnvBuilder(with_pip=True).create(target / "env")
-            argv = [str(target / "env/bin/python"), "-m", "pip", "install", "--require-hashes",
-                    "-r", str(program / "lib/requirements-site.txt")]
-            if wheelhouse:
-                argv.extend(["--no-index", "--find-links", str(Path(wheelhouse).absolute())])
-            completed = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            if completed.returncode:
-                raise AccessError("Pinned service environment installation failed")
+            _install_environment(target, program, plan, plan_descriptor, wheelhouse)
         for name, source in generated_units.items():
             atomic_private(target / "units" / name, source.encode())
         requirements = [
@@ -448,8 +537,8 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
                    str(target / "program/bin/thermite"), "access"]
         receipt["verification_command"] = [*command, "verify", "--config", str(target / "config.json")]
         receipt["bootstrap_command"] = [*command, "bootstrap", "--config", str(target / "config.json"), "--user", "<admin-user>"]
-        receipt["activation_commands"] = [["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(plan / "units" / name), "/etc/systemd/system/" + name] for name in generated_units] + [
-            ["sudo", "systemctl", "daemon-reload"], ["sudo", "systemctl", "enable", "--now", *generated_units]]
+        receipt["unit_install_commands"] = [["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(plan / "units" / name), "/etc/systemd/system/" + name] for name in generated_units]
+        receipt["activation_commands"] = [["sh", str(plan / "activate.sh")]]
         json_private(target / "stage.json", {})
         release_inventory = _inventory(target, release=True)
         for path, mode in release_inventory:

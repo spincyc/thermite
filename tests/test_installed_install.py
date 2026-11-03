@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 import oh_paths
+import oh_cli
 from oh_install import steps
 
 
@@ -34,9 +35,13 @@ class InstalledInstall(unittest.TestCase):
     def test_boot_deploy_and_verification_use_application_interpreter_and_explicit_site(self):
         with patch.object(oh_paths, "PROGRAM", self.program):
             self.assertEqual(steps.BootTest(self.context).actions(self.host)[0].argv, self.command("test", "boot"))
-            commands = [action.argv for action in steps.Deploy(self.context).actions(self.host)]
+            actions = steps.Deploy(self.context).actions(self.host)
+            commands = [action.argv for action in actions]
             self.assertEqual(commands, [self.command("generate", "--check"), self.command("validate"),
                                         self.command("lint"), self.command("deploy")])
+            self.assertEqual(actions[-1].approved_argv, self.command("deploy", "--yes", "--quiet"))
+            self.assertTrue(all(action.approved_argv is None for action in actions[:-1]))
+            self.assertEqual([action.terminal for action in actions], [False, False, False, True])
             self.assertEqual([action.argv for action in steps.Verify(self.context).actions(self.host)],
                              [self.command("health", "--production"), self.command("status")])
 
@@ -51,6 +56,9 @@ class InstalledInstall(unittest.TestCase):
             status = steps.Verify(self.context).actions(self.host)[-1]
             self.assertEqual(status.argv[:3], ("sg", "thermite", "-c"))
             self.assertEqual(tuple(shlex.split(status.argv[-1])), self.command("status"))
+            self.assertEqual(command.approved_argv[:3], command.argv[:3])
+            self.assertEqual(tuple(shlex.split(command.approved_argv[-1])), self.command("deploy", "--yes", "--quiet"))
+            self.assertTrue(command.terminal)
             self.host.which.return_value = None
             fallback = steps.Deploy(self.context).actions(self.host)[-1]
             self.assertTrue(fallback.root)
@@ -58,12 +66,32 @@ class InstalledInstall(unittest.TestCase):
             status = steps.Verify(self.context).actions(self.host)[-1]
             self.assertTrue(status.root)
             self.assertEqual(status.argv, ("-u", "owner", *self.command("status")))
+            self.assertEqual(fallback.approved_argv, ("-u", "owner", *self.command("deploy", "--yes", "--quiet")))
+            self.assertTrue(fallback.terminal)
 
-    def test_source_checkout_keeps_original_boot_and_deploy_checks(self):
+    def test_source_checkout_checks_before_terminal_deployment(self):
         (self.site / oh_paths.SITE_FILE).unlink()
         self.assertEqual(steps.BootTest(self.context).actions(self.host)[0].argv,
                          ("make", "openhab-test", "TEST=boot"))
-        self.assertEqual(steps.Deploy(self.context).actions(self.host)[0].argv, ("make", "openhab-deploy"))
+        checks, action = steps.Deploy(self.context).actions(self.host)
+        self.assertEqual(checks.argv, ("make", "check"))
+        self.assertIsNone(checks.approved_argv)
+        self.assertFalse(checks.terminal)
+        self.assertEqual(action.argv, ("bin/thermite", "deploy"))
+        self.assertEqual(action.approved_argv, ("bin/thermite", "deploy", "--yes", "--quiet"))
+        self.assertTrue(action.terminal)
+
+    def test_verbose_source_and_installed_deployment_keep_child_output(self):
+        with patch.object(oh_paths, "PROGRAM", self.program), patch.object(oh_cli.switches, "verbose", True):
+            for installed in (True, False):
+                with self.subTest(installed=installed):
+                    if not installed:
+                        (self.site / oh_paths.SITE_FILE).unlink()
+                    action = steps.Deploy(self.context).actions(self.host)[-1]
+                    expected = self.command("deploy") if installed else ("bin/thermite", "deploy")
+                    self.assertEqual(action.argv, expected)
+                    self.assertEqual(action.approved_argv, (*expected, "--yes"))
+                    self.assertTrue(action.terminal)
 
     def test_access_staging_uses_installed_resources_and_selected_site_boundary(self):
         from oh_access import staging
@@ -98,7 +126,7 @@ class InstalledInstall(unittest.TestCase):
         self.assertFalse((self.site / "lib").exists())
         location.assert_called_once_with(root / "identity-state", target, self.site)
         self.assertFalse(receipt["activated"])
-        installs = [command for command in receipt["activation_commands"] if command[:2] == ["sudo", "install"]]
+        installs = receipt["unit_install_commands"]
         self.assertEqual(len(installs), 2)
         for command in installs:
             source = Path(command[-2])

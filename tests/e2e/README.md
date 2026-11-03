@@ -189,9 +189,21 @@ as the ordinary owner to apply its finite custody plan and service-user
 verification. Keep the operator-owned plan readable after handoff and test
 replaying it without replacing credentials or state. Bootstrap
 only this genuinely new site, as `thermite:thermite`. Complete the native cutover
-checks below, then install/enable the staged access and worker units. This
+checks below, then review and run the saved `activate.sh`. It verifies the
+running release after starting its services. This
 fixture must stage exactly two units and no callback listener. Reuse the same
 state on reruns and after reboot; never bootstrap it again.
+
+For access upgrades, follow the guide's explicit access-update procedure with
+new release and plan names and the original state/TLS/token inputs. Prepare
+operator-owned `2750` access parents; a legacy group-writable ancestor must
+be refused before staging creates files or executes an interpreter. Use the
+new plan's activation script while the old access services are active and
+confirm their new MainPIDs run from the new release. Replay that activation
+plan and confirm process IDs/start timestamps stay unchanged. Exercise an
+interrupted activation and resume the same plan without bootstrap. A failing
+dependency installation must leave only its operator-private diagnostic log,
+remove its partial release, and preserve the existing state.
 
 Run the real HTTP and terminal acceptance helpers.
 

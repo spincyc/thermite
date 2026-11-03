@@ -17,6 +17,11 @@ class Command:
 
     argv: tuple[str, ...]
     root: bool = False
+    # Explicit child-command acknowledgement after the caller approved the
+    # whole workflow. Normal invocations keep their own confirmation.
+    approved_argv: tuple[str, ...] | None = None
+    # May prompt (including nested sudo): inherit the terminal, never capture.
+    terminal: bool = False
 
     @property
     def full(self) -> tuple[str, ...]:

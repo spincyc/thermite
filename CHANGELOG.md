@@ -7,6 +7,18 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. Existing complete Git checkouts retain their deployment behavior.
 
+- Access release and state parents must be protected from service-account
+  replacement before staging executes or writes application files. Existing
+  shared parents need the documented permission migration.
+- Access releases include a protected activation script for first installation
+  and upgrades, with an explicit service cutover and running-release check.
+- Upgrade backups are published only after successful archive creation, with
+  completion evidence required for reuse. Interrupted and legacy unverified
+  archives are retained without authorizing a migration.
+- Upgrade planning includes missing prerequisites, and approved upgrades carry
+  their approval through native startup recovery.
+- Startup HTTP reads enforce the remaining deadline through response headers
+  and bodies, including token validation.
 - Arch Linux is the primary server example and default installer ISO base,
   using native guided disk and account setup. Ubuntu Server remains an
   alternative. Both ISO variants bundle the application.
@@ -21,8 +33,9 @@ rollback. Existing complete Git checkouts retain their deployment behavior.
   for the priming JVM to exit. Authenticated readiness checks add-ons, Thing
   handlers and metrics before proceeding; incomplete cache preparation fails
   closed and preserves its diagnostic marker.
-- Failed access staging removes its partial release so the same operation
-  can be retried while preserving previous releases and persistent state.
+- Failed access staging removes its partial release while preserving previous
+  releases and persistent state. Environment failures retain a private diagnostic
+  log; retry with a new plan directory after correcting the cause.
 - Access staging saves a private, reviewable ownership script that the owner
   can resume, followed by service-user verification before activation.
 - Access staging requires a trusted operator plan. Its custody helper rejects
@@ -38,8 +51,8 @@ rollback. Existing complete Git checkouts retain their deployment behavior.
   to replace a saved API token; successful retries preserve the credential.
 - Boot report collection retries temporary REST registration outages within
   its startup deadline and reports terminal query failures without a traceback.
-  [Installation handoff](docs/installation-handoff.md) records pending guest
-  verification and the incomplete three-path acceptance.
+  [Installation handoff](docs/installation-handoff.md) records artifact-specific
+  guest coverage and remaining verification limits.
 - A contiguous listener allocation at 13600–13625, starting with the site's
   HTTPS service and including each runtime's loopback shutdown control.
   Existing installations need the documented port migration.
@@ -75,6 +88,9 @@ rollback. Existing complete Git checkouts retain their deployment behavior.
   permission repair completes on existing installations.
 - Keep the native HEOS bridge's optional-account diagnostic visible as a
   warning for online, account-free local transport, rather than blocking boot.
+- Ask once per install, upgrade or uninstall run, including nested deployment
+  ownership handoff. Show the direct native token-creation page and distinguish
+  retained administrator accounts from first-run setup.
 
 Security activation remains an explicit site choice. Installing this release
 neither enables accounts nor commissions physical devices.

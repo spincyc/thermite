@@ -98,12 +98,20 @@ thermite install --dry-run
 thermite install
 ```
 
+Install, upgrade and uninstall show compact stage status, with checkmarks
+and a spinner on a terminal. Use `thermite -v install` (or `upgrade` or
+`uninstall`) for stage details and commands. Failed checks print their
+diagnostics. Package transactions, sudo and other interactive commands keep
+the terminal while the spinner pauses; `--dry-run` lists the planned
+commands without running them.
+
 Read the plan first. The installer checks architecture, kernel support,
 ports and IDs; installs prerequisites; creates the service account and state
 directories; boots the configuration on a test runtime; deploys the committed
 site; installs systemd Quadlets; starts services; and requests the runtime API
-token. It displays and asks before each root command. It can be rerun after a
-failure or a declined step. Do not run the whole CLI as root.
+token. It asks once to approve the whole run, including root commands and the
+deployment ownership handoff. It can be rerun after a failure or a declined
+step. Do not run the whole CLI as root.
 
 Application services run as the non-login user and group `thermite`, UID/GID
 9001, and deployed files belong to that account. Your login keeps ownership
@@ -202,7 +210,7 @@ TLS_KEY="$HOME/.config/thermite/tls/key.pem"
 PLAN_ROOT="$HOME/.thermite-access-plans"
 install -d -m 0700 "$PLAN_ROOT"
 PLAN="$PLAN_ROOT/first"
-sudo install -d -o "$(id -un)" -g thermite -m 2770 \
+sudo install -d -o "$(id -un)" -g thermite -m 2750 \
   "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
 bin/thermite access stage \
   --destination "$ACCESS_ROOT/releases/first" \
@@ -217,7 +225,12 @@ bin/thermite access stage \
 
 Keep the access root outside the native `state_root`, so runtime permission
 maintenance cannot change its operator-owned release parents. All parent
-directories must allow `thermite` to traverse them. The stage
+directories must allow `thermite` to traverse them, but must be owned by root
+or the operator and protected from group/world replacement. The `2750`
+parents above let the operator stage releases without letting the service
+replace a directory while staging executes its interpreter. For older `2770`
+access parents, rerun the preparation command above to tighten both parents;
+do not change the service-owned release or state directories. The stage
 command rejects a release hidden behind a private home directory. It copies
 the program, generated assets and explicit TLS/token inputs into a new
 release, installs hash-pinned dependencies and writes units for
@@ -228,8 +241,8 @@ Keep every plan ancestor owned by root or the operator and free of group/world
 write permission. The home-based example avoids inheriting a shared site
 directory's permissions; choose another protected parent if your home is shared.
 
-The required plan directory holds a private receipt, custody helper and
-`handoff.sh` in the operator-owned plan
+The required plan directory holds a private receipt, custody helper,
+`handoff.sh` and `activate.sh` in the operator-owned plan
 directory. Review the script, then run it as your ordinary account:
 
 ```sh
@@ -247,6 +260,15 @@ service user. It stops on failure; fix the reported cause and rerun the same
 script. Your copy remains readable after ownership changes. It does not
 bootstrap accounts or activate services. Use `--json` when a tool needs the
 full stage receipt.
+
+Environment setup writes its diagnostics to the operator-owned mode-0600
+`$PLAN/environment-install.log`. If Python environment creation or pinned
+dependency installation fails, staging removes the partial release and keeps
+only that protected diagnostic plan. Review the log locally; it can contain
+private package-index details. Existing site state is unchanged. Correct the
+cause and retry with a new plan directory; the same release destination can
+be reused after its partial directory has been removed. Staging never
+overwrites an existing plan or prints diagnostic contents into the receipt.
 
 After verification, create the first administrator for a new site:
 
@@ -283,15 +305,17 @@ configuration and activation checks; the
 explains native access settings.
 
 After resolving the activation requirements printed by stage (also saved in
-`$PLAN/stage.json`), install the operator-owned unit copies and enable them
-as the host administrator. Keep using the copies in the protected plan;
-the service owns the release after handoff:
+`$PLAN/stage.json`), review and run the saved activation script as the operator.
+It verifies custody before stopping any existing access services, installs the
+protected unit copies, reloads systemd, enables/starts the staged services and
+checks that each active process runs from this release. Only its explicit
+administrative commands use sudo. It also stops and disables an old callback
+unit when the new release omits callbacks. The script does not perform the
+native-listener cutover or create accounts:
 
 ```sh
-sudo install -o root -g root -m 0644 "$PLAN/units/thermite-access.service" /etc/systemd/system/
-sudo install -o root -g root -m 0644 "$PLAN/units/thermite-access-worker.service" /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now thermite-access.service thermite-access-worker.service
+more "$PLAN/activate.sh"
+sh "$PLAN/activate.sh"
 bin/thermite access login --url "https://$SITE_HOST:13600" --user admin
 bin/thermite remote --url "https://$SITE_HOST:13600"
 ```
@@ -311,6 +335,50 @@ Keep the private site's verified application release cache under
 updates are separate: install a new reviewed application artifact, run
 `thermite init --upgrade /path/to/site`, generate, validate and commit the
 site, then review `thermite upgrade --dry-run`. See [packaging](packaging.md).
+
+### Update the access release
+
+The HTTPS gateway and worker use their own copied release. Updating the
+application or native runtime does not switch those running processes.
+Keep the current access release and its protected plan for recovery, and keep
+a backup of its persistent state. Choose new release and plan names, then
+repeat the stage command above with those paths, the original TLS/token
+inputs, and the **same** `--state` directory:
+
+```sh
+RELEASE="$ACCESS_ROOT/releases/second"
+PLAN="$PLAN_ROOT/second"
+bin/thermite access stage \
+  --destination "$RELEASE" --plan-directory "$PLAN" \
+  --state "$ACCESS_ROOT/state" \
+  --assets "$RUNTIME_STATE/conf/html/remote" \
+  --runtime-url http://127.0.0.1:13601 \
+  --runtime-token-file "$PWD/var/$HOST_ID/api-token" \
+  --tls-cert "$TLS_CERT" --tls-key "$TLS_KEY" \
+  --allowed-host "$SITE_HOST" --port 13600 --timezone Etc/UTC
+more "$PLAN/handoff.sh"
+sh "$PLAN/handoff.sh"
+```
+
+Staging and handoff preserve the existing authority and do not migrate its
+database. Do not bootstrap again or replace the existing CLI login. Retain
+`--callbacks` and its verified map if the site uses the relay; omitting it
+intentionally retires that listener during activation. Complete the TLS,
+native-listener and callback checklist, then review and run the new
+`activate.sh` as above. It stops old access processes before installing the
+new units, so a successful cutover cannot leave the previous release running.
+Afterward, check HTTPS login, room controls and any device callbacks. Replaying
+the same already-active plan verifies its processes and unit contents without
+restarting them.
+
+If activation fails, access services may be stopped. Fix the reported cause
+and rerun the same protected `activate.sh`; it can resume a partial unit
+installation. To roll back, first confirm that the prior release remains
+compatible with the unchanged shared state, then review and run that prior
+plan's `activate.sh`. If the old plan predates this script, restage the prior
+application with a new plan and the same state. Never restore or initialize
+authority merely to retry a cutover. A schema-changing upgrade needs its own
+explicit backed-up migration and recovery procedure.
 
 `thermite uninstall --dry-run` shows service removal. State is retained by
 default; review the explicit purge option separately. Back up private

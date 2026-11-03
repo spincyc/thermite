@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import fcntl
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -30,6 +31,7 @@ import zipfile
 from pathlib import Path
 
 import oh_cli
+import oh_http
 import oh_logging
 import oh_ports
 
@@ -575,15 +577,32 @@ def log_problems(records: list[LogRecord]) -> dict[str, list[LogRecord]]:
 
 
 class Http:
-    """Minimal REST client. Only GET unless allow_write is set."""
+    """Minimal REST client. Optional deadlines also bound headers and body.
 
-    def __init__(self, base_url: str, token: str | None = None, timeout: float = 10, allow_write: bool = False):
+    Only GET unless allow_write is set. An expired deadline is a SandboxError,
+    including through try_get_json(), so it cannot invalidate a stored token.
+    """
+
+    def __init__(self, base_url: str, token: str | None = None, timeout: float = 10, allow_write: bool = False,
+                 *, deadline: float | None = None):
         self.base = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
         self.allow_write = allow_write
+        self.deadline = deadline
+
+    def remaining(self, path: str) -> float:
+        if self.deadline is None:
+            return self.timeout
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise SandboxError(f"startup deadline expired querying {path}")
+        return remaining
 
     def request(self, method: str, path: str, body: bytes | None = None, headers: dict | None = None):
+        return self._request(method, path, body=body, headers=headers)
+
+    def _request(self, method: str, path: str, body: bytes | None = None, headers: dict | None = None):
         if method != "GET" and not self.allow_write:
             raise SandboxError(f"refusing {method} {path}: this client is read-only")
         req = urllib.request.Request(self.base + path, data=body, method=method)
@@ -593,13 +612,14 @@ class Http:
         for key, value in (headers or {}).items():
             req.add_header(key, value)
         oh_cli.trace_http(method, self.base + path)
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            data = resp.read()
-            return resp.status, data
+        return oh_http.request(req, timeout=self.timeout,
+                               remaining=(lambda: self.remaining(path)) if self.deadline is not None else None)
 
     def get_json(self, path: str):
         status, data = self.request("GET", path)
-        return json.loads(data.decode("utf-8")) if data else None
+        value = json.loads(data.decode("utf-8")) if data else None
+        self.remaining(path)
+        return value
 
     def try_get_json(self, path: str):
         """Return (http_status, json-or-None); connection failures give status 0."""
@@ -607,8 +627,10 @@ class Http:
             return 200, self.get_json(path)
         except urllib.error.HTTPError as exc:
             exc.close()
+            self.remaining(path)
             return exc.code, None
-        except (urllib.error.URLError, OSError, ValueError):
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException):
+            self.remaining(path)
             return 0, None
 
 
@@ -877,12 +899,15 @@ def port_in_use(port: int, host: str = "127.0.0.1", *, timeout: float = 0.5) -> 
 
 def start_instance(rt: Runtime, inst: Instance, log=print, *, deadline: float | None = None) -> int:
     """Start within the caller's deadline, including first-boot cache priming."""
+    if deadline is not None:
+        _startup_remaining(inst, deadline, "runtime launch")
     if running_pgid(inst):
         raise SandboxError(f"{inst.name} is already running (pid file {inst.pid_file})")
     oh_ports.unique({"HTTP": inst.http_port, "HTTPS": inst.https_port, "Karaf": inst.ssh_port,
                      "Karaf shutdown": inst.shutdown_port})
     for port in (inst.http_port, inst.https_port, inst.ssh_port, inst.shutdown_port):
-        if port_in_use(port):
+        remaining = .5 if deadline is None else min(.5, _startup_remaining(inst, deadline, "listener availability"))
+        if port_in_use(port, timeout=remaining):
             raise SandboxError(f"port {port} on 127.0.0.1 is already in use")
     inst.state.mkdir(parents=True, exist_ok=True)
     init_userdata(rt, inst, log=log)
@@ -957,7 +982,7 @@ def prime_cache(rt: Runtime, inst: Instance, log=print, timeout: float = 120, *,
             if time.monotonic() >= end:
                 raise SandboxError(f"{inst.name}: cache priming server did not reach start level "
                                    f"{PRIMED_LEVEL} within {budget:.0f}s")
-            time.sleep(1)
+            time.sleep(min(1, max(0, end - time.monotonic())))
         os.killpg(pgid, signal.SIGTERM)
         shutdown = time.monotonic()
         end = shutdown + 60 if deadline is None else deadline
@@ -991,7 +1016,8 @@ def prime_cache(rt: Runtime, inst: Instance, log=print, timeout: float = 120, *,
             inst.pid_file.unlink(missing_ok=True)
 
 
-def wait_rest(inst: Instance, pgid: int, timeout: float, log=print, min_level: int = 0) -> dict:
+def wait_rest(inst: Instance, pgid: int, timeout: float, log=print, min_level: int = 0, *,
+              deadline: float | None = None) -> dict:
     """Wait for /rest/ to answer and the start level to reach min_level.
 
     While userdata/cache-refresh-lock exists a throwaway server is priming
@@ -999,20 +1025,21 @@ def wait_rest(inst: Instance, pgid: int, timeout: float, log=print, min_level: i
     waits for script engines such as jsscripting to install, 80 for every
     Thing to have an initialised handler. So by default only REST is awaited.
     """
-    http = Http(inst.url, timeout=5)
-    deadline = time.monotonic() + timeout
+    end = time.monotonic() + timeout
+    deadline = end if deadline is None else min(deadline, end)
+    http = Http(inst.url, timeout=5, deadline=deadline)
     root = None
     while time.monotonic() < deadline:
         if not group_members(pgid):
             raise SandboxError(f"{inst.name} exited during startup; see {inst.console_log}\n" + tail_text(inst.console_log, 20))
         if (inst.userdata / "cache-refresh-lock").exists():
-            time.sleep(1)
+            time.sleep(min(1, _startup_remaining(inst, deadline, "REST registration")))
             continue
         status, body = http.try_get_json("/rest/")
         if status == 200 and isinstance(body, dict) and body.get("runtimeInfo"):
             root = body
             break
-        time.sleep(1)
+        time.sleep(min(1, _startup_remaining(inst, deadline, "REST registration")))
     if root is None:
         raise SandboxError(f"{inst.name}: REST API did not answer within {timeout:.0f}s")
     while time.monotonic() < deadline:
@@ -1021,7 +1048,7 @@ def wait_rest(inst: Instance, pgid: int, timeout: float, log=print, min_level: i
             return root
         if not group_members(pgid):
             raise SandboxError(f"{inst.name} exited during startup; see {inst.console_log}")
-        time.sleep(1)
+        time.sleep(min(1, _startup_remaining(inst, deadline, f"start level {min_level}")))
     raise SandboxError(
         f"{inst.name}: start level {min_level} not reached within {timeout:.0f}s (at {start_level(inst)})"
     )
@@ -1112,6 +1139,7 @@ def _wait_karaf(inst: Instance, deadline: float) -> None:
     while True:
         remaining = _startup_remaining(inst, deadline, "start level 20 and the Karaf console")
         if (start_level(inst) or 0) >= 20 and port_in_use(inst.ssh_port, timeout=min(0.5, remaining)):
+            _startup_remaining(inst, deadline, "the Karaf console")
             return
         time.sleep(min(1, _startup_remaining(inst, deadline, "start level 20 and the Karaf console")))
 
@@ -1159,6 +1187,7 @@ def karaf_command(rt: Runtime, inst: Instance, command: str, retries: int = 30, 
         if read_end >= 0:
             os.close(read_end)
         os.close(write_end)
+    _startup_remaining(inst, deadline, f"Karaf '{verb}'")
     output = re.sub(r"^.*AcceptAllServerKeyVerifier.*\n?", "", output, flags=re.MULTILINE)
     if proc.returncode != 0:
         parts = command.split()
@@ -1183,8 +1212,8 @@ def parse_token(output: str) -> str:
     return match.group(0)
 
 
-def token_works(inst: Instance, token: str, *, timeout: float = 10) -> bool:
-    status, _ = Http(inst.url, token=token, timeout=timeout).try_get_json("/rest/addons?serviceId=karaf")
+def token_works(inst: Instance, token: str, *, timeout: float = 10, deadline: float | None = None) -> bool:
+    status, _ = Http(inst.url, token=token, timeout=timeout, deadline=deadline).try_get_json("/rest/addons?serviceId=karaf")
     return status == 200
 
 
@@ -1203,7 +1232,10 @@ def provision_token(rt: Runtime, inst: Instance, log=print, *, deadline: float |
     def command(text):
         return karaf_command(rt, inst, text, deadline=deadline)
     def accepted(token):
-        return token_works(inst, token, timeout=min(10, _startup_remaining(inst, deadline, "API token acceptance")))
+        _startup_remaining(inst, deadline, "API token acceptance")
+        works = token_works(inst, token, deadline=deadline)
+        _startup_remaining(inst, deadline, "API token acceptance")
+        return works
     if inst.token_file.exists():
         token = read_token(inst.token_file)
         if token and accepted(token):
@@ -1236,13 +1268,18 @@ STATES_LEVEL = 30
 
 def wait_addons(http: Http, wanted: set[str], deadline: float) -> set[str]:
     """Poll until every wanted add-on uid is installed or the deadline passes; return the missing."""
+    http.deadline = deadline if http.deadline is None else min(deadline, http.deadline)
     missing = set(wanted)
     while missing:
+        if time.monotonic() >= deadline:
+            break
         _, addons = http.try_get_json("/rest/addons?serviceId=all")
+        if time.monotonic() >= deadline:
+            break
         missing = set(wanted) - installed_addon_uids(addons or [])
         if not missing or time.monotonic() >= deadline:
             break
-        time.sleep(3)
+        time.sleep(min(3, max(0, deadline - time.monotonic())))
     return missing
 
 
@@ -1274,18 +1311,22 @@ def unstick_first_boot(rt: Runtime, inst: Instance, pgid: int, http: Http, deadl
     UNINITIALIZED/HANDLER_MISSING_ERROR). One restart on the same userdata
     starts them. Returns (process group, restarted).
     """
+    http.deadline = deadline if http.deadline is None else min(deadline, http.deadline)
     end = min(deadline, time.monotonic() + grace)
     reasons = ["not checked"]
     while time.monotonic() < end:
         code, things = http.try_get_json("/rest/things?summary=true")
+        _startup_remaining(inst, deadline, "Thing handlers")
         reasons = first_boot_stuck(start_level(inst), things or []) if code == 200 else ["/rest/things unreadable"]
         if not reasons:
             return pgid, False
-        time.sleep(3)
+        time.sleep(min(3, max(0, end - time.monotonic())))
+    _startup_remaining(inst, deadline, "first-boot recovery")
     log(f"restart first boot stuck {grace:.0f}s after the add-on install ({'; '.join(reasons)}); restarting once")
-    stop_instance(inst, log=log)
+    stop_instance(inst, timeout=min(STOP_TIMEOUT, _startup_remaining(inst, deadline, "recovery shutdown")), log=log)
+    _startup_remaining(inst, deadline, "first-boot recovery")
     pgid = start_instance(rt, inst, log=log, deadline=deadline)
-    wait_rest(inst, pgid, max(1, deadline - time.monotonic()), log=log, min_level=STATES_LEVEL)
+    wait_rest(inst, pgid, max(0, deadline - time.monotonic()), log=log, min_level=STATES_LEVEL, deadline=deadline)
     log(f"restart done: start level {start_level(inst)}")
     return pgid, True
 
@@ -1362,8 +1403,9 @@ def warm_template(rt: Runtime, inst: Instance, deadline: float, log=print) -> tu
     log(f"template building warmed userdata {tdir.name} (once per add-on list and runtime pin)")
     pgid = start_instance(rt, build, log=log, deadline=deadline)
     try:
-        wait_rest(build, pgid, max(1, deadline - time.monotonic()), log=log)
-        http = Http(build.url, token=read_token(provision_token(rt, build, log=log, deadline=deadline)), timeout=30)
+        wait_rest(build, pgid, max(0, deadline - time.monotonic()), log=log, deadline=deadline)
+        http = Http(build.url, token=read_token(provision_token(rt, build, log=log, deadline=deadline)),
+                    timeout=30, deadline=deadline)
         missing = wait_addons(http, set(addon_uids(parse_addons_cfg(addons_text))), deadline)
         if missing:
             raise SandboxError("template: add-ons not installed: " + ", ".join(sorted(missing)))
@@ -1372,8 +1414,9 @@ def warm_template(rt: Runtime, inst: Instance, deadline: float, log=print) -> tu
             if time.monotonic() >= deadline:
                 raise SandboxError(f"template: start level {start_level(build)} (want {COMPLETE_LEVEL}), "
                                    f"API token saved: {token_persisted(build.userdata)}")
-            time.sleep(1)
-        time.sleep(3 * SAVE_DELAY_MS / 1000)
+            time.sleep(min(1, _startup_remaining(build, deadline, "template persistence")))
+        time.sleep(min(3 * SAVE_DELAY_MS / 1000, _startup_remaining(build, deadline, "template persistence")))
+        _startup_remaining(build, deadline, "template persistence")
     except BaseException:
         stop_instance(build, timeout=5, log=log)
         raise
@@ -1381,6 +1424,7 @@ def warm_template(rt: Runtime, inst: Instance, deadline: float, log=print) -> tu
     if group_members(pgid):
         raise SandboxError(f"template: openHAB (process group {pgid}) survived SIGKILL")
     build.pid_file.unlink(missing_ok=True)
+    _startup_remaining(build, deadline, "template publication")
     scrub_template(build.userdata)
     tdir.mkdir(parents=True)
     os.rename(build.userdata, tdir / "userdata")
@@ -1430,10 +1474,10 @@ def boot(rt: Runtime, inst: Instance, requested: dict[str, list[str]], started: 
         before_start(inst)
     pgid = start_instance(rt, inst, log=log, deadline=deadline)
     log(f"boot    openHAB {rt.openhab_version} on {inst.conf} at {inst.url}")
-    wait_rest(inst, pgid, max(1, deadline - time.monotonic()), log=log)
+    wait_rest(inst, pgid, max(0, deadline - time.monotonic()), log=log, deadline=deadline)
     timings["REST up"] = time.monotonic() - started
     token = read_token(provision_token(rt, inst, log=log, deadline=deadline))
-    http = Http(inst.url, token=token, timeout=30)
+    http = Http(inst.url, token=token, timeout=30, deadline=deadline)
 
     wanted = set(addon_uids(requested))
     missing = wait_addons(http, wanted, deadline)
@@ -1448,6 +1492,7 @@ def boot(rt: Runtime, inst: Instance, requested: dict[str, list[str]], started: 
     if not built and (missing or restarted):
         wipe_dir(inst.state / "template", root=inst.state)
         log("template discarded: a boot from it did not come up clean; the next run rebuilds it")
+    _startup_remaining(inst, deadline, "startup completion")
     return Boot(pgid, token, missing, restarted, timings)
 
 

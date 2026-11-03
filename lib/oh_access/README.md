@@ -14,7 +14,7 @@ created the `thermite` account and group, the owner prepares its staging parents
 
 ```sh
 ACCESS_ROOT=/srv/thermite-access
-sudo install -d -o "$(id -un)" -g thermite -m 2770 "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
+sudo install -d -o "$(id -un)" -g thermite -m 2750 "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
 ```
 
 Stage as the operator, with `--destination "$ACCESS_ROOT/releases/first"` and
@@ -25,7 +25,8 @@ release and state manifest, followed separately by its
 `verification_command`. Normal output is a concise summary; `--json` returns
 the full receipt for automation.
 
-The required `--plan-directory` saves an operator-owned receipt and `handoff.sh`
+The required `--plan-directory` saves an operator-owned receipt, `handoff.sh`
+and `activate.sh`
 outside the release and state. Its parent must already belong to the operator
 with mode 0700; the [installation guide](../../docs/installation.md#set-up-https-and-accounts)
 creates that parent explicitly. Review the script, then run it with `sh` as
@@ -37,7 +38,17 @@ partial or complete handoff. Keep its helper and manifest in that trusted
 operator directory; never execute a privileged helper from the service-owned
 release. The plan also retains protected unit copies for the privileged
 installation step; never install units from the service-owned release.
-Bootstrap and activation remain separate.
+Bootstrap and activation remain separate. Release and state ancestors must
+also be owned by root or the operator and protected from group/world writes;
+root-owned sticky directories are allowed because they protect each trusted
+child from replacement. Older `2770` access parents must be tightened to
+`2750` before staging. Staging as the service account is refused.
+
+Python environment installation writes a private `environment-install.log`
+inside the operator's plan. On environment or dependency failure, staging
+removes the partial release and retains only the diagnostic plan, without
+changing existing authority. Review that log locally and retry with a new
+plan directory; diagnostic contents are never printed or copied into receipts.
 
 No ownership changes or privileged commands run during staging. Once handed
 over, release and state directories belong to
@@ -138,8 +149,25 @@ not enable an unverified callback relay. The owner must validate the exact
 native callback path and either its supported listener/proxy setting or an
 independently allowlisted relay before changing listeners.
 
-Only after custody verification and that checklist is satisfied should the owner install the
-staged unit files and enable the services. Staging, a responsive login page,
+Only after custody verification and that checklist is satisfied should the owner
+review and run `sh "$PLAN/activate.sh"`. It verifies custody again before
+stopping installed access services, installs the protected unit copies,
+reloads systemd and enables/starts the new release. It checks each active
+MainPID's working directory against the staged release, with a bounded retry;
+the owner then checks HTTPS login, controls and callbacks. A callback unit
+omitted from the new release is stopped and disabled. Replaying a plan whose
+units and running release already match does not restart services.
+
+Each upgrade uses a new release and plan with the same persistent state and
+no bootstrap. If cutover fails, fix the cause and rerun the saved activation
+script; services may be stopped. Keep the old release and plan for rollback
+after checking shared-state compatibility. The
+[installation guide](../../docs/installation.md#update-the-access-release)
+gives the full upgrade and recovery procedure. `activation_commands` in the
+JSON receipt invokes the saved script; `unit_install_commands` records its
+protected unit-copy operations for review.
+
+Staging, a responsive login page,
 or a working authenticated client alone does not establish that direct native
 access has been sealed. Existing hardware remotes and device protocols can
 still cause drift; room locks provide bounded reconciliation, not a physical
