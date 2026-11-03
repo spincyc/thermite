@@ -280,6 +280,7 @@ HEADER = [
 OPENHAB_UPDATE_SHA256 = "a6f09a576ae7ad4c6187ecd7ebcdd00d60b6b06ff073c8e52261bf8ca3129386"
 NATIVE_PRIME_MARKER = ".thermite-prime-incomplete"
 NATIVE_PRIME_WAIT = 180
+NATIVE_PRIME_REQUEST_WAIT = 30
 NATIVE_PRIME_STOP_WAIT = 60
 NATIVE_PRIME_POLL = 1
 
@@ -353,6 +354,11 @@ def _openhab_prime_cache() -> str:
         '(set -C; : > "$lock") || { echo "Native cache refresh lock already exists; inspect before recovery." >&2; return 1; };',
         'mkdir -p "$prime/conf/services" "$prime/logs";',
         'printf "# no add-ons while the fresh OSGi cache is primed\\n" > "$prime/conf/services/addons.cfg";',
+        'custom="$OPENHAB_USERDATA/etc/custom.properties";',
+        'cp -p -- "$custom" "$prime/custom.properties.before";',
+        # Port zero must have a private, unique port file: otherwise Stop may
+        # fall back to PID signaling, which confined Ubuntu processes can deny.
+        'printf "\\n\\nkaraf.shutdown.port = 0\\nkaraf.shutdown.host = 127.0.0.1\\nkaraf.shutdown.port.file = %s\\n" "$prime/shutdown.port" >> "$custom";',
         # The normal listener step follows preparation. Keep the temporary
         # authority-free server on loopback with ephemeral ports meanwhile.
         'shell_cfg="$OPENHAB_USERDATA/etc/org.apache.karaf.shell.cfg";',
@@ -360,33 +366,66 @@ def _openhab_prime_cache() -> str:
         'printf "\\nsshHost = 127.0.0.1\\nsshPort = 0\\n" >> "$shell_cfg";',
         'rm -f "$OPENHAB_USERDATA/tmp/instances/instance.properties";',
         'printf "0\\n" > "$OPENHAB_USERDATA/openhab-start-level";',
-        'prime_pid="";',
+        'prime_pid=""; stop_pid=""; prime_cleanup_attempted=0; prime_cleanup_status=1;',
+        'thermite_prime_run() {',
+        'export KARAF_EXEC=exec OPENHAB_CONF="$prime/conf" OPENHAB_LOGDIR="$prime/logs";',
+        'export OPENHAB_HTTP_ADDRESS=127.0.0.1 OPENHAB_HTTP_PORT=0 OPENHAB_HTTPS_PORT=0;',
+        'export EXTRA_JAVA_OPTS="${EXTRA_JAVA_OPTS:-} -Duser.home=$OPENHAB_USERDATA -Declipse.stateSaveDelayInterval=1000";',
+        'exec "$@";',
+        '};',
+        # kill -0 can fail with EPERM while a child is alive. Both children
+        # have this process's UID and PID namespace; inspect their proc state
+        # and reap only an absent or dead child, never wait on a live process.
+        'thermite_prime_child_running() {',
+        'test -d "/proc/$1" || return 1;',
+        'child_stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0;',
+        'child_state="${child_stat##*) }"; child_state="${child_state%% *}";',
+        'case "$child_state" in Z|X|x) return 1 ;; *) return 0 ;; esac;',
+        '};',
+        'thermite_prime_wait_child() {',
+        'wait_pid=$1; left=$2;',
+        'while thermite_prime_child_running "$wait_pid" && test "$left" -gt 0; do',
+        f'sleep {NATIVE_PRIME_POLL}; left=$((left - 1)); done;',
+        '! thermite_prime_child_running "$wait_pid";',
+        '};',
         'thermite_stop_prime() {',
         'test -n "$prime_pid" || return 0;',
-        'kill -TERM "$prime_pid" 2>/dev/null || :;',
-        f'left={NATIVE_PRIME_STOP_WAIT};',
-        'while kill -0 "$prime_pid" 2>/dev/null && test "$left" -gt 0; do',
-        f'sleep {NATIVE_PRIME_POLL}; left=$((left - 1)); done;',
-        'if kill -0 "$prime_pid" 2>/dev/null; then',
-        'echo "Fresh authority-free cache primer did not stop within its grace; terminating it and retaining the incomplete cache for explicit recovery." >&2;',
-        'kill -KILL "$prime_pid" 2>/dev/null || :; wait "$prime_pid" 2>/dev/null || :; prime_pid=""; return 1; fi;',
+        'test "$prime_cleanup_attempted" = 0 || return "$prime_cleanup_status";',
+        'prime_cleanup_attempted=1;',
+        # A repeated termination request must not restart a cleanup budget.
+        "trap '' INT HUP TERM;",
+        'if thermite_prime_child_running "$prime_pid"; then',
+        'stop_port="$(cat "$prime/shutdown.port" 2>/dev/null)" || { echo "Native primer shutdown port file is missing or unreadable; retaining incomplete cache. Temporary processes may remain until preparation container cleanup." >&2; return 1; };',
+        'case "$stop_port" in ""|*[!0-9]*) echo "Native primer shutdown port is invalid; refusing the PID fallback and retaining incomplete cache. Temporary processes may remain until preparation container cleanup." >&2; return 1 ;; esac;',
+        'if ! test "$stop_port" -gt 0 || ! test "$stop_port" -le 65535; then echo "Native primer shutdown port is invalid; refusing the PID fallback and retaining incomplete cache. Temporary processes may remain until preparation container cleanup." >&2; return 1; fi;',
+        'thermite_prime_run "$OPENHAB_HOME/runtime/bin/stop" > "$prime/stop.log" 2>&1 & stop_pid=$!;',
+        f'if ! thermite_prime_wait_child "$stop_pid" {NATIVE_PRIME_REQUEST_WAIT}; then',
+        'echo "Native primer shutdown client did not exit within its allowance; temporary processes may remain until preparation container cleanup. Incomplete cache retained." >&2; return 1; fi;',
+        'stop_exit=0; wait "$stop_pid" || stop_exit=$?; stop_pid="";',
+        'if test "$stop_exit" != 0; then echo "Native primer shutdown request failed; inspect retained stop.log. Temporary processes may remain until preparation container cleanup." >&2; return 1; fi;',
+        # Stop's zero status confirms a delivered request, not JVM exit. If
+        # either child remains alive, return with all evidence retained; the
+        # preparation container's PID 1 exit delegates namespace teardown to
+        # its runtime rather than signaling through the AppArmor boundary.
+        f'if ! thermite_prime_wait_child "$prime_pid" {NATIVE_PRIME_STOP_WAIT}; then',
+        'echo "Native primer JVM did not exit after Karaf shutdown; temporary processes may remain until preparation container cleanup. Incomplete cache retained." >&2; return 1; fi;',
+        'fi;',
         'prime_exit=0; wait "$prime_pid" || prime_exit=$?; prime_pid="";',
-        'test "$prime_exit" = 0 || test "$prime_exit" = 143;',
+        'if test "$prime_exit" != 0; then echo "Native cache primer exited unsuccessfully; incomplete cache retained." >&2; return 1; fi;',
+        'prime_cleanup_status=0;',
         '};',
-        "trap 'prime_result=$?; thermite_stop_prime || prime_result=1; exit \"$prime_result\"' EXIT;",
+        "trap 'prime_result=$?; trap - EXIT; thermite_stop_prime || prime_result=1; exit \"$prime_result\"' EXIT;",
         "trap 'exit 130' INT HUP; trap 'exit 143' TERM;",
-        'KARAF_EXEC=exec OPENHAB_CONF="$prime/conf" OPENHAB_LOGDIR="$prime/logs"',
-        'OPENHAB_HTTP_ADDRESS=127.0.0.1 OPENHAB_HTTP_PORT=0 OPENHAB_HTTPS_PORT=0',
-        'EXTRA_JAVA_OPTS="${EXTRA_JAVA_OPTS:-} -Duser.home=$OPENHAB_USERDATA -Declipse.stateSaveDelayInterval=1000"',
-        '"$OPENHAB_HOME/runtime/bin/karaf" server > "$prime/console.log" 2>&1 & prime_pid=$!;',
+        'thermite_prime_run "$OPENHAB_HOME/runtime/bin/karaf" server > "$prime/console.log" 2>&1 & prime_pid=$!;',
         f'left={NATIVE_PRIME_WAIT}; ready=0;',
-        'while kill -0 "$prime_pid" 2>/dev/null && test "$left" -gt 0; do',
+        'while thermite_prime_child_running "$prime_pid" && test "$left" -gt 0; do',
         'level="$(cat "$OPENHAB_USERDATA/openhab-start-level" 2>/dev/null || :)";',
         'case "$level" in ""|*[!0-9]*) ;; *) if test "$level" -ge 10; then ready=1; break; fi ;; esac;',
         f'sleep {NATIVE_PRIME_POLL}; left=$((left - 1)); done;',
         'if test "$ready" != 1; then echo "Fresh native cache primer did not reach start level 10; inspect retained logs." >&2; return 1; fi;',
         'thermite_stop_prime || return 1;',
         'test -d "$OPENHAB_USERDATA/cache/org.eclipse.osgi" || { echo "Native primer exited without an OSGi cache." >&2; return 1; };',
+        'cat "$prime/custom.properties.before" > "$custom";',
         'printf "0\\n" > "$OPENHAB_USERDATA/openhab-start-level";',
         'rm -f "$lock";',
         'rm -rf -- "$prime";',

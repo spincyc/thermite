@@ -21,23 +21,28 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_deploy as deploy
 
 
-FAKE_JVM = r'''
-import json,os,signal,sys,time
+FAKE_ENVIRONMENT = r'''
+import json,os,socket,sys,time
 from pathlib import Path
 root=Path(os.environ['OPENHAB_USERDATA'])
 control=Path(os.environ['FIXTURE_CONTROL'])
 def event(name):
     with (control/'events').open('a') as stream:stream.write(name+'\n')
-def stop(signum,frame):
-    event('TERM')
-    (root/'openhab-start-level').write_text('0\n')
-    (control/'stopping').touch()
-    if os.environ.get('FIXTURE_HOLD_EXIT'):
-        while not (control/'allow-exit').exists():time.sleep(.01)
-    event('EXIT')
-    (control/'exited').touch()
-    raise SystemExit(0)
-signal.signal(signal.SIGTERM,signal.SIG_IGN if os.environ.get('FIXTURE_IGNORE_TERM') else stop)
+properties={}
+for line in (root/'etc/custom.properties').read_text().splitlines():
+    if '=' in line and not line.lstrip().startswith('#'):
+        key,value=line.split('=',1)
+        properties[key.strip()]=value.strip()
+assert properties['karaf.shutdown.port']=='0'
+assert properties['karaf.shutdown.host']=='127.0.0.1'
+portfile=Path(properties['karaf.shutdown.port.file'])
+assert portfile.parent.name.startswith('thermite-prime.')
+assert portfile.parent.parent==root/'tmp'
+environment={key:os.environ[key] for key in ('JAVA_HOME','KARAF_EXEC','OPENHAB_CONF','OPENHAB_LOGDIR',
+    'OPENHAB_HTTP_ADDRESS','OPENHAB_HTTP_PORT','OPENHAB_HTTPS_PORT','EXTRA_JAVA_OPTS')}
+'''
+
+FAKE_JVM = FAKE_ENVIRONMENT + r'''
 (control/'pid').write_text(str(os.getpid()))
 assert (root/'cache-refresh-lock').exists(),'upstream cache priming was not disabled'
 conf=Path(os.environ['OPENHAB_CONF'])
@@ -48,12 +53,44 @@ assert os.environ['OPENHAB_HTTP_PORT']==os.environ['OPENHAB_HTTPS_PORT']=='0'
 assert 'sshHost = 127.0.0.1' in (root/'etc/org.apache.karaf.shell.cfg').read_text()
 assert os.environ['KARAF_EXEC']=='exec'
 assert '-Duser.home='+str(root) in os.environ['EXTRA_JAVA_OPTS']
+(control/'prime-environment').write_text(json.dumps(environment))
 event('START')
 (control/'identity').write_text(json.dumps([os.geteuid(),os.getegid()]))
 (root/'cache/org.eclipse.osgi').mkdir(parents=True,exist_ok=True)
 if os.environ.get('FIXTURE_CRASH'):raise SystemExit(7)
+server=socket.socket()
+server.bind(('127.0.0.1',0))
+server.listen(1)
+server.settimeout(.05)
+if not os.environ.get('FIXTURE_NO_PORTFILE'):
+    portfile.write_text(os.environ.get('FIXTURE_PORT',str(server.getsockname()[1])))
 (root/'openhab-start-level').write_text(os.environ.get('FIXTURE_LEVEL','10')+'\n')
-while True:time.sleep(.01)
+(control/'ready').touch()
+while True:
+    try:connection,_=server.accept()
+    except TimeoutError:continue
+    with connection:
+        assert connection.recv(1024)==b'fixture-private-command\n'
+    event('TCP_STOP')
+    if os.environ.get('FIXTURE_JVM_STAYS_AFTER_STOP'):continue
+    (root/'openhab-start-level').write_text('0\n')
+    (control/'stopping').touch()
+    if os.environ.get('FIXTURE_HOLD_EXIT'):
+        while not (control/'allow-exit').exists():time.sleep(.01)
+    event('EXIT')
+    (control/'exited').touch()
+    raise SystemExit(0)
+'''
+
+FAKE_STOP = FAKE_ENVIRONMENT + r'''
+(control/'stop-pid').write_text(str(os.getpid()))
+event('STOP_CLIENT')
+assert environment==json.loads((control/'prime-environment').read_text())
+if os.environ.get('FIXTURE_HUNG_STOP'):
+    while True:time.sleep(.01)
+if os.environ.get('FIXTURE_STOP_FAIL'):raise SystemExit(7)
+with socket.create_connection(('127.0.0.1',int(portfile.read_text())),timeout=1) as connection:
+    connection.sendall(b'fixture-private-command\n')
 '''
 
 
@@ -75,12 +112,18 @@ class NativePreparation(unittest.TestCase):
             path.mkdir(parents=True, exist_ok=True)
         self.version = self.home / "dist/userdata/etc/version.properties"
         self.version.write_text("openhab-distro = 5.2.3\n")
+        self.custom = self.home / "dist/userdata/etc/custom.properties"
+        self.custom.write_bytes(b"# distribution defaults\nkaraf.shutdown.port.file = ${karaf.data}/tmp/port\n")
         (self.home / "dist/userdata/etc/org.apache.karaf.shell.cfg").write_text("sshHost = 0.0.0.0\nsshPort = 8101\n")
         (self.home / "conf/automation/js/actual-house.js").write_text("must not run during cache priming\n")
         (self.root / "fake-jvm.py").write_text(FAKE_JVM)
         karaf = self.home / "runtime/bin/karaf"
         karaf.write_text("#!/bin/sh\nexec " + shlex.join([sys.executable, str(self.root / "fake-jvm.py")]) + "\n")
         karaf.chmod(0o700)
+        (self.root / "fake-stop.py").write_text(FAKE_STOP)
+        stop = self.home / "runtime/bin/stop"
+        stop.write_text("#!/bin/sh\nexec " + shlex.join([sys.executable, str(self.root / "fake-stop.py")]) + "\n")
+        stop.chmod(0o700)
         tini = self.tools / "tini"
         tini.write_text('#!/bin/sh\ntest -e "$FIXTURE_CONTROL/exited" || exit 99\nprintf "real start\\n" >> "$FIXTURE_CONTROL/events"\n')
         tini.chmod(0o700)
@@ -94,15 +137,22 @@ class NativePreparation(unittest.TestCase):
     def stop_fixtures(self):
         (self.control / "allow-exit").touch()
         for process in self.processes:
-            if process.poll() is None:
-                # Only our isolated fake processes are ever terminated here.
+            try:
+                # Failed payloads deliberately leave cleanup to the container
+                # runtime. Here only our isolated fixture group is terminated,
+                # including children of a shell that has already returned.
                 os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             process.communicate(timeout=5)
 
-    def prepare(self, **environment):
+    def prepare(self, *, deny_signals=False, **environment):
         with patch.object(deploy, "NATIVE_PRIME_WAIT", 30), patch.object(deploy, "NATIVE_PRIME_STOP_WAIT", 30), \
+                patch.object(deploy, "NATIVE_PRIME_REQUEST_WAIT", 30), \
                 patch.object(deploy, "NATIVE_PRIME_POLL", .02):
             command = deploy.openhab_prepare().replace("/openhab/runtime/bin/update", str(self.home / "runtime/bin/update"))
+        if deny_signals:
+            command = 'kill() { printf "SIGNAL_ATTEMPT\\n" >> "$FIXTURE_CONTROL/events"; return 1; }; ' + command
         process = subprocess.Popen(["sh", "-ec", command], cwd=self.home, env={**self.environment, **environment},
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
         self.processes.append(process)
@@ -139,8 +189,10 @@ class NativePreparation(unittest.TestCase):
         return info.st_ino, info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode), path.read_bytes()
 
     def test_zero_marker_does_not_release_preparation_before_actual_jvm_exit(self):
-        process = self.prepare(FIXTURE_HOLD_EXIT="1")
+        process = self.prepare(deny_signals=True, FIXTURE_HOLD_EXIT="1")
         self.wait_file(self.control / "stopping", process)
+        custom = self.userdata / "etc/custom.properties"
+        custom_inode = custom.stat().st_ino
         self.assertEqual((self.userdata / "openhab-start-level").read_text(), "0\n")
         self.assertIsNone(process.poll(), "marker 0 must not count as JVM exit")
         self.assertTrue((self.userdata / deploy.NATIVE_PRIME_MARKER).exists())
@@ -151,10 +203,15 @@ class NativePreparation(unittest.TestCase):
         self.assertFalse((self.userdata / deploy.NATIVE_PRIME_MARKER).exists())
         self.assertFalse((self.userdata / "cache-refresh-lock").exists())
         self.assertTrue((self.userdata / "cache/org.eclipse.osgi").is_dir())
+        self.assertEqual(custom.read_bytes(), self.custom.read_bytes())
+        self.assertEqual(custom.stat().st_ino, custom_inode)
+        self.assertIn("temporary JVM has fully exited", out)
+        self.assertNotIn("fixture-private-command", out + err)
         started = subprocess.run(["sh", "-ec", deploy.openhab_start()], cwd=self.home, env=self.environment,
                                  capture_output=True, text=True, timeout=5)
         self.assertEqual(started.returncode, 0, started.stderr)
-        self.assertEqual((self.control / "events").read_text().splitlines(), ["START", "TERM", "EXIT", "real start"])
+        self.assertEqual((self.control / "events").read_text().splitlines(),
+                         ["START", "STOP_CLIENT", "TCP_STOP", "EXIT", "real start"])
 
     def test_warmed_userdata_is_unchanged_and_never_launches_a_primer(self):
         credential = self.existing_userdata(cache=True)
@@ -206,20 +263,67 @@ class NativePreparation(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("Incomplete fresh native cache priming", err)
         self.assertEqual(self.snapshot(marker), before)
-        self.assertEqual((self.control / "events").read_text().splitlines(), ["START", "TERM", "EXIT"])
+        self.assertEqual((self.control / "events").read_text().splitlines(), ["START", "STOP_CLIENT", "TCP_STOP", "EXIT"])
         native = subprocess.run(["sh", "-ec", deploy.openhab_start()], cwd=self.home, env=self.environment,
                                 capture_output=True, text=True, timeout=5)
         self.assertNotEqual(native.returncode, 0)
         self.assertIn("Incomplete fresh native cache priming", native.stderr)
 
-    def test_unresponsive_fresh_primer_is_bounded_and_never_reported_successful(self):
-        code, out, err = self.completed(FIXTURE_IGNORE_TERM="1")
+    def test_successful_stop_request_cannot_count_as_actual_jvm_exit(self):
+        started = time.monotonic()
+        code, out, err = self.completed(deny_signals=True, FIXTURE_JVM_STAYS_AFTER_STOP="1")
+        self.assertLess(time.monotonic() - started, 3)
         self.assertNotEqual(code, 0)
-        self.assertIn("did not stop within its grace", err)
+        self.assertIn("JVM did not exit after Karaf shutdown", err)
+        self.assertIn("preparation container cleanup", err)
         self.assertTrue((self.userdata / deploy.NATIVE_PRIME_MARKER).exists())
+        self.assertTrue((self.userdata / "cache-refresh-lock").exists())
         self.assertFalse((self.control / "exited").exists())
-        with self.assertRaises(ProcessLookupError):
-            os.kill(int((self.control / "pid").read_text()), 0)
+        self.assertTrue(Path(f"/proc/{(self.control / 'pid').read_text()}").is_dir())
+        self.assertEqual((self.control / "events").read_text().splitlines(), ["START", "STOP_CLIENT", "TCP_STOP"])
+
+    def test_hung_stop_client_and_denied_signals_return_once_with_retained_state(self):
+        started = time.monotonic()
+        code, out, err = self.completed(deny_signals=True, FIXTURE_HUNG_STOP="1")
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertNotEqual(code, 0)
+        self.assertIn("shutdown client did not exit within its allowance", err)
+        self.assertTrue((self.userdata / deploy.NATIVE_PRIME_MARKER).exists())
+        self.assertTrue((self.userdata / "cache-refresh-lock").exists())
+        self.assertTrue((self.userdata / "cache/org.eclipse.osgi").is_dir())
+        primes = list((self.userdata / "tmp").glob("thermite-prime.*"))
+        self.assertEqual(len(primes), 1)
+        self.assertTrue((primes[0] / "stop.log").exists())
+        self.assertEqual((primes[0] / "custom.properties.before").read_bytes(), self.custom.read_bytes())
+        self.assertIn(str(primes[0] / "shutdown.port"), (self.userdata / "etc/custom.properties").read_text())
+        self.assertTrue(Path(f"/proc/{(self.control / 'pid').read_text()}").is_dir())
+        self.assertTrue(Path(f"/proc/{(self.control / 'stop-pid').read_text()}").is_dir())
+        self.assertEqual((self.control / "events").read_text().splitlines(), ["START", "STOP_CLIENT"])
+
+    def test_missing_shutdown_port_never_invokes_stop_or_its_pid_fallback(self):
+        code, out, err = self.completed(deny_signals=True, FIXTURE_NO_PORTFILE="1")
+        self.assertNotEqual(code, 0)
+        self.assertIn("shutdown port file is missing or unreadable", err)
+        self.assertFalse((self.control / "stop-pid").exists())
+        self.assertTrue((self.userdata / deploy.NATIVE_PRIME_MARKER).exists())
+        self.assertEqual((self.control / "events").read_text().splitlines(), ["START"])
+
+    def test_failed_stop_request_returns_without_waiting_for_the_live_jvm(self):
+        code, out, err = self.completed(deny_signals=True, FIXTURE_STOP_FAIL="1")
+        self.assertNotEqual(code, 0)
+        self.assertIn("shutdown request failed", err)
+        self.assertIn("preparation container cleanup", err)
+        self.assertTrue((self.userdata / deploy.NATIVE_PRIME_MARKER).exists())
+        self.assertTrue(Path(f"/proc/{(self.control / 'pid').read_text()}").is_dir())
+        self.assertEqual((self.control / "events").read_text().splitlines(), ["START", "STOP_CLIENT"])
+
+    def test_nonpositive_shutdown_port_never_invokes_stop_or_its_pid_fallback(self):
+        code, out, err = self.completed(deny_signals=True, FIXTURE_PORT="0")
+        self.assertNotEqual(code, 0)
+        self.assertIn("refusing the PID fallback", err)
+        self.assertFalse((self.control / "stop-pid").exists())
+        self.assertTrue((self.userdata / deploy.NATIVE_PRIME_MARKER).exists())
+        self.assertEqual((self.control / "events").read_text().splitlines(), ["START"])
 
     def test_crashed_primer_is_not_accepted_as_a_warmed_cache(self):
         code, out, err = self.completed(FIXTURE_CRASH="1")
@@ -229,7 +333,7 @@ class NativePreparation(unittest.TestCase):
 
     def test_interruption_waits_for_the_fresh_child_and_retains_the_failure_marker(self):
         process = self.prepare(FIXTURE_LEVEL="5")
-        self.wait_file(self.control / "pid", process)
+        self.wait_file(self.control / "ready", process)
         process.send_signal(signal.SIGTERM)
         process.communicate(timeout=5)
         self.assertEqual(process.returncode, 143)
