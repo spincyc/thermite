@@ -1545,7 +1545,7 @@ class MetricsHealth:
 
     @property
     def targets_ok(self) -> bool:
-        return self.total is not None and self.up == self.total
+        return self.total is not None and self.total > 0 and self.up == self.total
 
     def describe(self) -> str:
         if not self.prometheus_ok:
