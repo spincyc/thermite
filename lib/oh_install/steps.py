@@ -841,25 +841,45 @@ class Token(Step):
 
     def __init__(self, context: Context):
         self.context = context
+        self.validated = None
+        self.validation_unavailable = False
 
     def saved(self, system: System) -> str:
         return (system.read_bytes(self.context.area / self.context.token_file) or b"").decode("utf-8", "replace").strip()
 
-    def startup_remaining(self, system: System) -> float | None:
+    def startup_remaining(self, system: System, *, deadline: float | None = None) -> float | None:
         """The native startup allowance left, or unknown without a start time."""
-        unit = system.unit("openhab.service")
+        timeout = POLL if deadline is None else max(0.001, min(POLL, deadline - system.clock()))
+        unit = system.unit("openhab.service", timeout=timeout)
         if unit.active != "active" or unit.since is None:
             return None
         age = max(0, system.wall_time() - unit.since)
         return max(0, WAIT - age)
 
+    def status(self, system: System, token: str, deadline: float) -> int | None:
+        found = system.native_probe(self.context.url, token, "/rest/things?summary=true", deadline)
+        if system.clock() >= deadline:
+            return 0
+        if found.status == 200 and (found.problem or not isinstance(found.value, list)):
+            return 0
+        return found.status
+
+    @staticmethod
+    def transient(status: int | None) -> bool:
+        return status in (None, 0, 404) or 500 <= status <= 599
+
     def check(self, system: System) -> Check:
         token = self.context.token_file
         saved = self.saved(system)
+        if saved != self.validated:
+            self.validated = None
         if not saved:
             return Check(False, f"no {token} yet")
-        status = system.token_status(self.context.url, saved)
+        # Only the exact token validated by this one step can bypass runner's
+        # immediate post-action query. NativeReady performs fresh full reads.
+        status = 200 if self.validated == saved else self.status(system, saved, system.clock() + POLL)
         if status == 200:
+            self.validated = saved
             return Check(True, f"{token} is saved and openHAB accepts it")
         if status in (401, 403):
             return Check(False, f"openHAB refuses the token in {token} (HTTP {status}); "
@@ -878,20 +898,34 @@ class Token(Step):
         if not saved:
             system.say("   the saved API token is no longer available; nothing was changed")
             return 1
-        remaining = self.startup_remaining(system)
-        # Convert the wall-clock start age once; polling uses a monotonic
-        # deadline even if the wall clock changes during native startup.
-        deadline = system.clock() + (remaining if remaining else WAIT)
+        deadline = system.clock() + WAIT
         while True:
-            status = system.token_status(self.context.url, saved)
+            if system.clock() >= deadline:
+                system.say("   openHAB authentication did not become ready within the startup allowance; "
+                           "the saved API token was not changed. Check `sudo journalctl -u openhab.service`, then rerun.")
+                return 1
+            if self.saved(system) != saved:
+                self.validated = None
+                system.say("   the saved API token changed during validation; nothing was changed; rerun to check it")
+                return 1
+            status = self.status(system, saved, deadline)
             if status == 200:
+                self.validated = saved
                 return 0
-            established = self.startup_remaining(system) == 0
-            if status in (401, 403) and established and system.openhab_version(self.context.url):
+            established = status in (401, 403) and self.startup_remaining(system, deadline=deadline) == 0
+            if established and system.clock() < deadline:
+                root = system.native_probe(self.context.url, "", "/rest/", deadline)
+                info = root.value.get("runtimeInfo") if isinstance(root.value, dict) else None
+                established = (root.status == 200 and not root.problem and isinstance(info, dict)
+                               and isinstance(info.get("version"), str) and bool(info["version"]))
+            if established and system.clock() < deadline:
                 if not system.interactive():
                     system.say("   the established runtime refuses the saved API token; replacement needs you at a terminal; nothing was changed")
                     return 1
                 return self.save(system)
+            if not self.transient(status) and status not in (401, 403):
+                system.say(f"   openHAB refused the saved API token (HTTP {status}); nothing was changed")
+                return 1
             left = deadline - system.clock()
             if left <= 0:
                 system.say("   openHAB authentication did not become ready within the startup allowance; "
@@ -902,28 +936,45 @@ class Token(Step):
     def save(self, system: System) -> int:
         system.say(f"   Open {self.context.lan_url}/ , create the admin account, then an API token under its "
                    "profile (the person icon).")
+        deadline = None
         for _ in range(PASTES):
             token = system.secret("   Paste the token (it is not shown), then Enter: ").strip()
-            problem = self.problem(system, token)
+            if deadline is None:
+                deadline = system.clock() + WAIT
+            problem = self.problem(system, token, deadline=deadline)
             if problem is None:
                 system.write_private(self.context.area / self.context.token_file, token + "\n")
                 return 0
             system.say(f"   {problem}; nothing was saved.")
+            if self.validation_unavailable:
+                return 1
         return 1
 
-    def problem(self, system: System, token: str) -> str | None:
+    def problem(self, system: System, token: str, *, deadline: float | None = None) -> str | None:
         """Why token will not do, or None when openHAB accepts it."""
+        self.validation_unavailable = False
         if not token or any(c.isspace() for c in token):
             return "That is not a token"
-        status = system.token_status(self.context.url, token)
-        if status == 200:
-            return None
-        if status is None:
-            return f"openHAB did not answer at {self.context.url}, so the token could not be checked"
         # openHAB's tokens are oh.<name>.<secret>, and neither part holds a dot.
         if token.count(".") > 2:
             return "That looks like more than one paste run together (the prompt shows nothing, so paste once)"
-        return f"openHAB refused that token (HTTP {status})"
+        deadline = system.clock() + WAIT if deadline is None else deadline
+        waiting = False
+        while system.clock() < deadline:
+            status = self.status(system, token, deadline)
+            if status == 200:
+                self.validated = token
+                return None
+            if not self.transient(status):
+                return f"openHAB refused that token (HTTP {status})"
+            if not waiting:
+                system.say("   native authentication is not ready; retrying this same paste without saving it yet")
+                waiting = True
+            left = deadline - system.clock()
+            if left > 0:
+                system.sleep(min(POLL, left))
+        self.validation_unavailable = True
+        return "openHAB authentication did not become ready within the startup allowance"
 
 
 class _RestartBeforeDeadline:

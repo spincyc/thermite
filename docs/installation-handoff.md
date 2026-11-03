@@ -125,6 +125,15 @@ The review corrected:
 - Native metrics content negotiation: the first fresh review candidate received
   HTTP 406 because readiness requested JSON from the Prometheus text endpoint.
   A real loopback HTTP regression now checks the request headers.
+- Startup token validation: a subsequent fresh Arch run with candidate
+  `cb505ee181b0` received HTTP 404 twice, then validated and saved the token.
+  Its redundant immediate readback was unavailable and stopped installation.
+  Resuming with that same credential reached 16/16 targets. Validation now
+  retries transient outages using the same paste, writes only after a timely
+  authenticated success, and carries that exact validation through this one
+  step. Full native readiness still performs fresh reads. Established-token
+  replacement also requires bounded valid runtime metadata; outages retain
+  the credential. The failed attempt and original credential are preserved.
 - Final installation status before a new login: the owner had been added to
   `thermite`, but the original process still lacked that group. Status now
   uses the existing owner group-refresh mechanism, preserving the selected
@@ -146,9 +155,10 @@ of the final artifact. The Thermite Arch ISO provides that fresh-install check.
 
 ## Remaining work and evidence
 
-Freeze the signal-free primer fix into a new reviewed artifact and rerun all
-three fresh installation paths, including Ubuntu's actual older-Podman prefetch
-fallback. Complete clients, no-op/handoff replay, reboot comparisons and bounded
+Freeze the signal-free primer and startup-token fixes into a reviewed
+artifact. Resume the stock Arch case with its credential/state preserved,
+then complete fresh ISO and Ubuntu installations with that same artifact,
+including Ubuntu's actual older-Podman prefetch fallback. Complete clients, no-op/handoff replay, reboot comparisons and bounded
 stream stop. Then reconcile this record and [requirements](requirements.md),
 regenerate the public export and run required checks against exact final commits.
 
