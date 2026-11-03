@@ -1348,7 +1348,7 @@ def metrics_steps(context: Context, restart: bool = False) -> list[Step]:
 def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     """The upgrade's steps after its preconditions, in order. A host where
     openHAB runs without the metrics gets them here."""
-    return [WhatChanges(plan_), Preconditions(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
+    return [WhatChanges(plan_), Preconditions(context), Packages(), BootTest(context), Backup(context, stamp, plan_.installed_version),
             Account(context), StateDirectories(context), MetricsDirectories(context),
             Units(context), NativePreparation(context), Deploy(context), Restart(context), Answers(context), Token(context), NativeReady(context),
             *metrics_steps(context, restart=True), Verify(context)]

@@ -64,7 +64,7 @@ class InstallerISO(unittest.TestCase):
         self.assertTrue(oh_iso.inputs("ubuntu")["base"]["name"].startswith("ubuntu-"))
         config = json.loads((AREA / "iso/arch-config.json").read_text())
         self.assertEqual(set(config), {"packages", "network_config"})
-        self.assertTrue({"python", "python-yaml", "git", "make", "podman", "nodejs", "npm", "sudo"} <= set(config["packages"]))
+        self.assertTrue({"python", "python-yaml", "git", "make", "podman", "runc", "nodejs", "npm", "sudo"} <= set(config["packages"]))
         script = (AREA / "iso/arch-install.sh").read_text()
         self.assertNotIn("--silent", script)
         self.assertLess(script.index("pacman -Sp"), script.index("exec archinstall"))
