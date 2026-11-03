@@ -305,6 +305,7 @@
     "tests/test_public.py",
     "tests/test_service_account.py",
     "tests/test_startup_http.py",
+    "tests/test_volume_limits.py",
     "tests/test_yoke_metrics.py",
     "tui/remote/README.md",
     "tui/remote/administration.js",

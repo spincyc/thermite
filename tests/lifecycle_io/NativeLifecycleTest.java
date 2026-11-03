@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import com.sun.net.httpserver.HttpServer;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.http.HttpClientTransportOverHTTP;
+import org.eclipse.jetty.client.util.StringContentProvider;
 import org.graalvm.polyglot.Context;
 import org.openhab.core.automation.module.script.rulesupport.shared.ValueCache;
 
@@ -60,10 +61,13 @@ public class NativeLifecycleTest {
     private static String operation(String token,String key,String resource,String value) {
         return "{token:String('"+token+"'),key:'"+key+"',resource:'"+resource+"',value:'"+value+"',phase:'acquire',isCurrent:()=>true}";
     }
+    private static String appCommand(String name) {
+        return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<tx>\r\n<cmd id=\"1\">"+name+"</cmd>\r\n</tx>\r\n";
+    }
     public static void main(String[] args) throws Exception {
         System.setProperty("openhab.userdata",args[2]);
         String source=Files.readString(Path.of(args[0])).replace("// THERMITE_BOUNDED_IO",Files.readString(Path.of(args[1])));
-        String descriptor="{io:{epoch:'native-test',wake:'events',actors:{slow:{wake:'slow_wake',resources:['slow_D1']},fast:{wake:'fast_wake',resources:['fast_D1']},receiver:{wake:'receiver_wake',resources:['receiver_power']}}}}";
+        String descriptor="{io:{epoch:'native-test',wake:'events',actors:{slow:{wake:'slow_wake',resources:['slow_D1']},fast:{wake:'fast_wake',resources:['fast_D1']},receiver:{wake:'receiver_wake',resources:['receiver_power','receiver_input']}}}}";
         var shared=new ConcurrentHashMap<String,Object>();
         var pool=Executors.newCachedThreadPool();
         var workers=Executors.newFixedThreadPool(2);
@@ -92,7 +96,11 @@ public class NativeLifecycleTest {
                     answer="";
                 } else if(path.equals("/goform/AppCommand.xml")) {
                     String power=mainPower.get()?"ON":"OFF";
-                    answer=xmlMode.get()==0 ? "<rx><cmd><zone1>"+power+"</zone1><zone2>ON</zone2></cmd></rx>" :
+                    // Match the physical protocol: HTTP success alone does not
+                    // imply a usable response to compact or encoding-less XML.
+                    if(!body.equals(appCommand("GetAllZonePowerStatus"))&&!body.equals(appCommand("GetSourceStatus")))answer="<rx>\n</rx>";
+                    else if(body.equals(appCommand("GetSourceStatus")))answer="<rx><cmd><source>SAT/CBL</source></cmd></rx>";
+                    else answer=xmlMode.get()==0 ? "<rx><cmd><zone1>"+power+"</zone1><zone2>ON</zone2></cmd></rx>" :
                         xmlMode.get()==1 ? "<rx><cmd><zone1>OFF</zone1><zone1>ON</zone1></cmd></rx>" :
                         "<!DOCTYPE rx [<!ENTITY power SYSTEM 'http://127.0.0.1:"+server.getAddress().getPort()+"/entity'>]><rx><cmd><zone1>&power;</zone1></cmd></rx>";
                 } else if(path.equals("/entity")) {throw new AssertionError("external XML entity fetched");}
@@ -113,6 +121,15 @@ public class NativeLifecycleTest {
         HttpClient common=new HttpClient(new HttpClientTransportOverHTTP(1),null);
         common.start();
         try {
+        for(String body:List.of(
+                "<?xml version=\"1.0\"?><tx><cmd id=\"1\">GetAllZonePowerStatus</cmd></tx>",
+                "<?xml version=\"1.0\" encoding=\"utf-8\"?><tx><cmd id=\"1\">GetAllZonePowerStatus</cmd></tx>",
+                "<?xml version=\"1.0\"?>\r\n<tx>\r\n<cmd id=\"1\">GetAllZonePowerStatus</cmd>\r\n</tx>\r\n")) {
+            var response=common.POST(url+"/goform/AppCommand.xml")
+                .content(new StringContentProvider(body,StandardCharsets.UTF_8),"application/xml")
+                .timeout(3,TimeUnit.SECONDS).send();
+            check(response.getStatus()==200&&response.getContentAsString().equals("<rx>\n</rx>"),"fixture accepted unsupported AppCommand serialization");
+        }
         try(Context root=context(shared,common,new Thing(url+"/unused"),source,descriptor);
             Context slow=context(shared,common,new Thing(url+"/slow"),source,descriptor);
             Context fast=context(shared,common,new Thing(url+"/fast"),source,descriptor)) {
@@ -178,10 +195,14 @@ public class NativeLifecycleTest {
         try(Context root=context(shared,common,new Thing(url),source,descriptor);
             Context receiver=context(shared,common,new Thing(url),source,descriptor)) {
             root.eval("js","const bridge=module.exports.create(descriptor);function report(e){reports.push(e);}");
-            receiver.eval("js","const executor=module.exports.httpActor({key:'receiver',io:descriptor.io,fields:{receiver_power:{kind:'denon',thing:'owned',zone:1,point:'power',allowed:['ON','OFF']}}},{noRules:true});");
+            receiver.eval("js","const executor=module.exports.httpActor({key:'receiver',io:descriptor.io,fields:{receiver_power:{kind:'denon',thing:'owned',zone:1,point:'power',allowed:['ON','OFF']},receiver_input:{kind:'denon',thing:'owned',zone:1,point:'input',allowed:['SAT/CBL','MPLAY']}}},{noRules:true});");
+            root.eval("js","bridge.probe({token:String('receiver-input'),key:'receiver',resource:'receiver_input'},report);");
+            receiver.eval("js","executor.drain();");
+            root.eval("js","bridge.events();if(!reports.some(e=>e.token==='receiver-input'&&e.type==='sample'&&e.value==='SAT/CBL'&&e.fresh&&e.retired))throw Error('main input not read with accepted wire format');");
+            check(denonCommands.isEmpty(),"input probe mutated receiver");
             root.eval("js","bridge.dispatch("+operation("zone-off","receiver","receiver_power","OFF")+",report);");
             receiver.eval("js","executor.drain();");
-            root.eval("js","bridge.events();if(!reports.some(e=>e.token==='zone-off'&&e.type==='terminal'))throw Error('zone off not confirmed');");
+            root.eval("js","bridge.events();if(!reports.some(e=>e.token==='zone-off'&&e.type==='terminal'&&e.admitted&&e.sample&&e.sample.fresh&&e.sample.retired&&e.sample.value==='OFF'))throw Error('zone off not confirmed by owned readback');");
             check(denonCommands.equals(List.of("ZMOFF"))&&zone2Power.get(),"main OFF affected independent zone2");
             xmlMode.set(1);
             root.eval("js","bridge.probe({token:String('ambiguous-xml'),key:'receiver',resource:'receiver_power'},report);");

@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. Existing complete Git checkouts retain their deployment behavior.
 
+- Denon/Marantz routing status requests use the receiver's accepted XML wire
+  format, restoring power and input probes before source changes and Off.
+- Volume controls default to each integration's full supported range. Explicit
+  per-device `volume_max` limits still apply consistently to commands and clients.
 - Access release and state parents must be protected from service-account
   replacement before staging executes or writes application files. Existing
   shared parents need the documented permission migration.

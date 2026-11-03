@@ -63,9 +63,8 @@ DEFAULT_ZONES = 2
 #: The receiver's volume scale, 0-98 in steps of 0.5; 80 is 0 dB.
 MAX_VOLUME = 98
 DB_OFFSET = -80
-#: The volume a receiver under control is held to unless devices.yaml sets
-#: volume_max: -10 dB.
-DEFAULT_VOLUME_MAX = 70
+#: Use the full supported range unless devices.yaml explicitly sets volume_max.
+DEFAULT_VOLUME_MAX = MAX_VOLUME
 #: (SI source code, label) of every input the remote offers, as the
 #: CINEMA 60 and CINEMA 30 name them (Deviceinfo.xml).
 INPUTS = (

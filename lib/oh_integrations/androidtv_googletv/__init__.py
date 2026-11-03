@@ -88,10 +88,10 @@ RULE = "automation/js/androidtv_googletv.js"
 SOURCE = Path(__file__).resolve().parent / "androidtv_googletv.js"
 DEVICES_MARK = "const DEVICES = null;"
 PRESSES_MARK = "const PRESSES = null;"
-#: The TV's volume scale, as the binding reports it.
+#: The binding reports volume as a percentage of the TV's advertised maximum.
 MAX_VOLUME = 100
-#: The volume a TV is held to unless devices.yaml sets volume_max.
-DEFAULT_VOLUME_MAX = 40
+#: Use the full supported range unless devices.yaml explicitly sets volume_max.
+DEFAULT_VOLUME_MAX = MAX_VOLUME
 TV = "android_tv"
 SHIELD = "nvidia_shield"
 #: The remote layout (web/remote/remotes.js) each kind of device is drawn with.

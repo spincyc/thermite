@@ -103,8 +103,8 @@ INPUTS = tuple((f"hdmi{n}", f"HDMI {n}") for n in HDMI)
 OWN = ("tv", "TV (apps, home, tuner)")
 #: The TV's volume scale, as getVolumeInformation reports it.
 MAX_VOLUME = 100
-#: The volume a TV is held to unless devices.yaml sets volume_max.
-DEFAULT_VOLUME_MAX = 40
+#: Use the full supported range unless devices.yaml explicitly sets volume_max.
+DEFAULT_VOLUME_MAX = MAX_VOLUME
 #: The remote layout (web/remote/remotes.js) these TVs are drawn with.
 REMOTE = "sony_tv"
 #: Remote button id -> the IRCC command it sends, by the name the TV's

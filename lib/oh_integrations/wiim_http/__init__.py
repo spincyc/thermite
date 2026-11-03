@@ -63,9 +63,8 @@ BASE_URL = "https://{ip}/httpapi.asp?"
 READ_BACK = 1
 #: The player's volume scale.
 MAX_VOLUME = 100
-#: The volume a player under control is held to unless devices.yaml sets
-#: volume_max.
-DEFAULT_VOLUME_MAX = 70
+#: Use the full supported range unless devices.yaml explicitly sets volume_max.
+DEFAULT_VOLUME_MAX = MAX_VOLUME
 #: (switchmode name, label) of every input the remote offers: the Amp Pro's
 #: (getStatusEx plm_support: line in, Bluetooth, optical, HDMI ARC) and the
 #: network.

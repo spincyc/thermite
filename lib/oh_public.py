@@ -274,6 +274,7 @@ SOURCE_FILES = (
     'tests/lifecycle_io_harness.js',
     'tests/lifecycle_io/NativeLifecycleTest.java',
     'tests/test_lifecycle_io.py',
+    'tests/test_volume_limits.py',
     'tests/test_atv_lifecycle.py',
     'tests/test_ports.py',
     'tests/test_yoke_metrics.py',

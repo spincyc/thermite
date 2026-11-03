@@ -60,7 +60,7 @@ globalThis.REMOTE_HOUSE = {
         "mute": "example_tv_mute",
         "volume": {
           "item": "example_tv_volume",
-          "max": 40,
+          "max": 100,
           "step": 1,
           "unit": "",
           "offset": 0
@@ -91,7 +91,7 @@ globalThis.REMOTE_HOUSE = {
         "mute": "example_display_mute",
         "volume": {
           "item": "example_display_volume",
-          "max": 40,
+          "max": 100,
           "step": 1,
           "unit": "",
           "offset": 0
