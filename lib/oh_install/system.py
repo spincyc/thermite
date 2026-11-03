@@ -163,6 +163,9 @@ class System:
     def port_free(self, port: int) -> bool:
         with socket.socket() as sock:
             try:
+                # Match the servers' restart semantics: old closed connections
+                # in TIME_WAIT are reusable, while a live listener still blocks.
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(("0.0.0.0", port))
             except OSError:
                 return False
