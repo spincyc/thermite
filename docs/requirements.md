@@ -113,14 +113,20 @@ The estimates account for these upstream facts:
 - [Grafana's current guidance](https://grafana.com/docs/grafana/latest/setup-grafana/installation/#hardware-recommendations) gives 512 MB and one core as an evaluation floor. Its small-deployment baseline is 2 cores and 2–4 GB for Grafana alone, excluding Prometheus. Household usage may be lighter; these figures do not certify Thermite's minimum profile.
 - [Ubuntu's 24.04 amd64 requirements](https://ubuntu.com/server/docs/reference/installation/system-requirements/) list 1.5 GB RAM and 5 GB disk for ISO installation, and suggest 3 GB RAM and 25 GB disk. Those are OS figures, not the application stack's budget.
 
-Fictional-house guest acceptance completed on release `7c05db18`: a fresh
+The original fictional-house acceptance on release `7c05db18` covered: a fresh
 Thermite Arch ISO installation, stock Arch application/native/access upgrade
 after documented corrections, and Ubuntu Server 24.04.5 application/native/access
 upgrade with existing credentials and identity preserved. Ubuntu's earlier
 fresh-OS run also deliberately interrupted installation and rebooted before
 Grafana credential creation. These are distinct fresh-install and upgrade/resume
-results; see [installation acceptance](https://github.com/spincyc/thermite/blob/feature/productionize/docs/installation-handoff.md) for artifact
+results; see [installation acceptance](https://github.com/spincyc/thermite/blob/main/docs/installation-handoff.md) for artifact
 identities, retained failures and exact coverage.
+
+After reconciliation with `main`, release `eea4ec87` passed another complete
+retained-state application/native/access upgrade and client/no-op/reboot/shutdown
+run on both Arch and Ubuntu. This is additional runtime integration coverage;
+the fresh ISO evidence remains specific to the earlier artifact. The handoff
+records both identities and the current validation separately.
 
 The tested allocation is KVM, four vCPUs, 8 GiB RAM, a sparse 64 GiB disk, UEFI
 and ext4, with one fictional room and guest-loopback protocol stand-ins. This

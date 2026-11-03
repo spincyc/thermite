@@ -1,10 +1,62 @@
 # Installation review and acceptance
 
-Completed 2026-11-03 UTC. This replaces the interrupted installation handoff.
-Work stays on `feature/productionize`; acceptance does not publish or merge
-the branch.
+Updated 2026-11-03 UTC. The review began on `feature/productionize`.
+Its tested history is preserved while reconciling with `main`; the original
+installation acceptance and subsequent runtime integration are distinct below.
 
-## Source and tested candidate
+## Main integration
+
+Reconciled with canonical `main` at `de3c961`, retaining its pooled HTTP
+transport, finite command batches, event-driven worker and routing lifecycle
+changes alongside the production installation fixes.
+
+- Canonical runtime commit: `88385f6`; matching public export: `35c7833`.
+- Guest-tested integration release: `eea4ec8777575ca0fe877ddd217a8b7a1090951f393688c4ef8043f738eb6552`.
+- Wheel SHA256: `87146acead8943440fd0e42a376cae4ad3635793c1cf838cc782306e3fa1e25a`;
+  canonical/public wheels are byte-identical.
+- Canonical checks: 1,830 tests, twelve optional skips; public checks: 228 tests,
+  two optional skips, against those exact integration commits.
+
+Both retained Arch and Ubuntu sites completed application/native/access updates,
+strict boot, HTTP/browser/TUI/real-terminal checks, worker repair and singleton
+checks, external native-port blocking, no-op protected-plan replay, reboot and
+repeated clients. Existing credentials and identity were retained without
+bootstrap or administrator recreation; quiescent staging/handoff preserved the
+SQLite main file. No-op preserved the 12 service starts and 11 named stable
+file fingerprints; reboot preserved the fingerprints with a new boot ID.
+Ubuntu retained Podman 4.9.3 and enforced AppArmor, including the complete older
+image-prefetch path and node-exporter's read-only systemd collection.
+
+| Integration case | Native stop | Authenticated held-stream closure |
+|---|---|---|
+| Stock Arch | 9.64 s | 15.20 s |
+| Ubuntu Server | 9.19 s | 15.12 s |
+
+Native stops reported normal exit zero without forced kill or AppArmor signal
+denials. Gateway stops completed bounded stream cancellation and retained
+systemd success with the original SIGTERM status. Both guests powered off
+cleanly. A separate owned-child signal probe and committed regression verify
+that command batches drain before transport pools close, inside server shutdown
+before Uvicorn re-raises SIGTERM. An idempotent outer cleanup still handles
+startup/listener errors.
+
+Boot-report collection retains its absolute deadline and strict response
+validation while using full Things DTOs only for final classification. Native
+readiness uses the same exact account-free HEOS warning predicate as `main`;
+other configuration errors remain terminal. Configuration and account fields
+are neither logged nor included in reports. Worker configuration-before-model
+import, exact directory modes and removal of obsolete split rules are retained.
+
+This integration changes runtime code from the earlier `7c05db18` candidate.
+Its new guest coverage is retained-state Arch/Ubuntu upgrades, not another fresh
+ISO installation. The fresh guided ISO evidence below remains tied to its exact
+earlier artifact. The final documentation reconciliation changes only this
+handoff, requirements Markdown and generated requirements HTML; package proofs
+must compare every other byte and archive permission with this integration
+wheel and verify both release manifests, RECORDs and canonical/public equality.
+The final documentation commit records that package identity.
+
+## Earlier installation candidate and fresh ISO evidence
 
 The canonical implementation is `automation/openhab` in private
 `spincyc/homelab`. Fix that source, then regenerate public `spincyc/thermite`
@@ -20,17 +72,16 @@ Checks passed against those exact code commits: canonical source, 1,710 tests
 with ten optional skips; public export, 192 tests. Canonical and public wheels
 are byte-identical.
 
-Documentation is packaged. The release above identifies the guest-tested
-candidate; reconciling this handoff, requirements and the acceptance recipe
-changes the publication digest. The final documentation commit records its
-wheel/release identity. Require byte-identical canonical/public publication
-wheels, valid RECORDs and release manifests, and exact equality of every
-non-documentation entry and its archive permissions against the tested wheel.
-Only those three named Markdown resources, their generated requirements HTML,
-and the derived release manifest and RECORD may differ. Keep this relationship
-explicit when citing acceptance.
+The pre-integration documentation package was release
+`7b00ad1f6e0859c3e9ade5cea28e99c0fca477a71a7f283a3d4449971e6524e2`,
+wheel SHA256
+`585919cf38f36d1738a8021e8b66d7cbef215571a02f384e0772dafcbcdb8e3d`.
+Its exact payload comparison changed only the handoff, requirements and recipe
+Markdown, generated requirements HTML, and derived release manifest/RECORD.
+That historical documentation-only proof does not cover the later runtime
+integration described above.
 
-## Acceptance status
+## Baseline acceptance (`7c05db18`)
 
 Each guest uses KVM with host CPU exposure, four vCPUs, 8 GiB RAM, a sparse
 64 GiB virtio disk, UEFI and an ext4 root. The fictional fixture has one room,
