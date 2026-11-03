@@ -119,7 +119,7 @@ def bootstrap(config_path, username, secret):
     return {"initialized": True, "username": user.username, "state": config["state"]}
 
 
-def _run_server(application, **options):
+def _run_server(application, *, on_shutdown=None, **options):
     import uvicorn
 
     class Server(uvicorn.Server):
@@ -140,6 +140,10 @@ def _run_server(application, **options):
                     logging.getLogger("uvicorn.error").warning(
                         "Access shutdown cleanup incomplete: %d unfinished task(s), %d failed task(s).",
                         len(unfinished), failed)
+            # capture_signals re-raises SIGTERM after shutdown returns, which
+            # can bypass serve's outer finally. Drain/close before that point.
+            if on_shutdown:
+                on_shutdown()
 
     server = Server(uvicorn.Config(application, **options))
     try:
@@ -152,16 +156,33 @@ def _run_server(application, **options):
 
 def serve(config_path):
     require_service_account()
-    config, _, _ = configured(config_path)
-    from oh_identity.models import User
-    if not User.objects.filter(is_active=True, role__reserved=True, role__name="Admin").exists():
-        raise AccessError("Bootstrap a local admin before serving this site")
-    from oh_identity.asgi import application
-    # Direct TLS only. Proxy headers and forwarded client/origin claims are ignored.
-    _run_server(application, host=config["bind_host"], port=config["port"], ssl_certfile=config["tls_cert"],
-                ssl_keyfile=config["tls_key"], ssl_version=ssl.PROTOCOL_TLS_SERVER,
-                proxy_headers=False, forwarded_allow_ips="", access_log=False,
-                server_header=False, limit_concurrency=100, timeout_keep_alive=5,
-                # Cancel long-lived SSE requests before systemd's 30s stop limit.
-                timeout_graceful_shutdown=15,
-                log_config=None, workers=1)
+    config, adapter, _ = configured(config_path)
+    cleaned = False
+
+    def cleanup():
+        nonlocal cleaned
+        if cleaned:
+            return
+        cleaned = True
+        from oh_identity.batches import commands
+        # Drain admitted batch jobs before closing the pools they may use.
+        commands.shutdown()
+        close = getattr(adapter.transport, "close", None)
+        if close:
+            close()
+
+    try:
+        from oh_identity.models import User
+        if not User.objects.filter(is_active=True, role__reserved=True, role__name="Admin").exists():
+            raise AccessError("Bootstrap a local admin before serving this site")
+        from oh_identity.asgi import application
+        # Direct TLS only. Proxy headers and forwarded client/origin claims are ignored.
+        _run_server(application, on_shutdown=cleanup,
+                    host=config["bind_host"], port=config["port"], ssl_certfile=config["tls_cert"],
+                    ssl_keyfile=config["tls_key"], ssl_version=ssl.PROTOCOL_TLS_SERVER,
+                    proxy_headers=False, forwarded_allow_ips="", access_log=False,
+                    server_header=False, limit_concurrency=100, timeout_keep_alive=5,
+                    timeout_graceful_shutdown=15,
+                    log_config=None, workers=1)
+    finally:
+        cleanup()

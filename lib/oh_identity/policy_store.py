@@ -103,6 +103,13 @@ class Store:
     def current_revision(self, room):
         return RoomPolicy.objects.filter(room_id=room).values_list("revision", flat=True).first()
 
+    def current_revisions(self, rooms):
+        # Include missing rows: creation of a neighboring policy must invalidate
+        # the same conflict snapshot as changing an existing revision.
+        revisions = dict.fromkeys(rooms)
+        revisions.update(RoomPolicy.objects.filter(room_id__in=revisions).values_list("room_id", "revision"))
+        return revisions
+
     def claim_boundary(self, room, revision, key, at):
         return claim_boundary(key, room, revision)
 

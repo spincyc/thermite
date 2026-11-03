@@ -64,6 +64,17 @@ rollback. Existing complete Git checkouts retain their deployment behavior.
 - A reproducible, pinned Android TV connection lifecycle repair, with bounded
   connection opening and cancellation. Ordinary deployment does not activate
   this native binding replacement; it requires controlled owner maintenance.
+- Explicit route ownership with optional unused-USB parking and last-consumer
+  source standby. Independent device actors execute concurrently, while shared
+  sources, AVR zones and manual controls retain protection. Route readiness,
+  endpoint deactivation and cleanup are reported separately; event-driven
+  reconciliation adds no polling loop.
+- Label network reachability as Reachable / No response in the activity feed,
+  keeping ping observations distinct from a device's reported power.
+- Clear inherited directory set-ID bits during installation so private-state
+  permission repair completes on existing installations.
+- Keep the native HEOS bridge's optional-account diagnostic visible as a
+  warning for online, account-free local transport, rather than blocking boot.
 
 Security activation remains an explicit site choice. Installing this release
 neither enables accounts nor commissions physical devices.

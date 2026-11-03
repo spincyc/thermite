@@ -402,6 +402,10 @@ class Conf:
         self.yaml: dict[str, YamlFile] = {}
         self.files: dict[str, str | bytes] = {}
         self.addons: dict[str, dict[str, list[str]]] = {}
+        # Explicit native actors may consume Item commands while their
+        # binding links discard them. This server-side authority is never
+        # inferred from browser metadata or a transform profile alone.
+        self.executor_controls: set[str] = set()
 
     def yaml_file(self, path: str, header: tuple[str, ...] | list[str]) -> YamlFile:
         if path not in self.yaml:

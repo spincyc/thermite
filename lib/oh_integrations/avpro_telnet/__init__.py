@@ -1,4 +1,4 @@
-"AVPro Edge HDMI matrices (the AC-MX-44X) over telnet, TCP 23.\n\nThe matrix takes one CRLF-terminated ASCII line per request on its telnet\nport, with no login while its telnet login is off, as the example's\nis. `GET OUT0 VS` answers one `OUT<n> VS IN<m>` line per output, and `SET\nOUT<n> VS IN<m>` routes input m to output n: the line the matrix's own web\npage sends to switch. On connect it lists every output's input and other\nsettings unasked. No binding speaks it, so a rule does:\nconf/automation/js/avpro_telnet.js, avpro_telnet.js beside this file with\nthe device table filled in. Every 5 seconds it opens one short connection\nper matrix, waits for that listing to end, asks `GET OUT0 VS` and posts\neach output's input; a matrix that does not answer gets UNDEF. A command to\nan output's Item is sent as SET on a connection of its own, followed by the\nsame read.\n\nItems, per matrix:\n\n- `<id>_output<N>_input` (Number): the input routed to output N; commanded\n  with an input number.\n\nA room's HDMI switch in the routing (oh_features.routing) may be one of its\noutputs, as the example TV's is (ports(), switch_item()). The rule\nholds oh_conf.RULE_SENDS, so oh_render.read_only() makes it read the\nmatrices and send them nothing.\n"
+"AVPro Edge HDMI matrices (the AC-MX-44X) over telnet, TCP 23.\n\nThe matrix takes one CRLF-terminated ASCII line per request on its telnet\nport, with no login while its telnet login is off, as the example's\nis. `GET OUT0 VS` answers one `OUT<n> VS IN<m>` line per output, and `SET\nOUT<n> VS IN<m>` routes input m to output n: the line the matrix's own web\npage sends to switch. On connect it lists every output's input and other\nsettings unasked. No binding speaks it, so a rule does:\nconf/automation/js/avpro_telnet_<device>.js, avpro_telnet.js beside this file with\nthe device table filled in. Every 5 seconds it opens one short connection\nper matrix, waits for that listing to end, asks `GET OUT0 VS` and posts\neach output's input; a matrix that does not answer gets UNDEF. A command to\nan output's Item is sent as SET on a connection of its own, followed by the\nsame read.\n\nItems, per matrix:\n\n- `<id>_output<N>_input` (Number): the input routed to output N; commanded\n  with an input number.\n\nA room's HDMI switch in the routing (oh_features.routing) may be one of its\noutputs, as the example TV's is (ports(), switch_item()). The rule\nholds oh_conf.RULE_SENDS, so oh_render.read_only() makes it read the\nmatrices and send them nothing.\n"
 
 from __future__ import annotations
 
@@ -6,13 +6,14 @@ import json
 from pathlib import Path
 
 from oh_conf import RULE_SENDS, Addon, House, YamlFile, uses
+from .. import _io
 
 NAME = "avpro_telnet"
 PHASE = "control"
 FILE = "yaml/avpro.yaml"
 HEADER = (
     "AVPro Edge HDMI matrices over telnet (TCP 23), with no binding: the rule",
-    "conf/automation/js/avpro_telnet.js polls each matrix's routing and",
+    "conf/automation/js/avpro_telnet_<device>.js polls each matrix's routing and",
     "posts these Items, and turns their commands into SET lines. Items are",
     "autoupdate off: they show only what the matrix reports.",
 )
@@ -68,7 +69,7 @@ def _line(value: object) -> str:
 
 def rule(devices: list[dict]) -> str:
     """avpro_telnet.js with its device table filled in."""
-    source = SOURCE.read_text(encoding="utf-8")
+    source = _io.embed(SOURCE.read_text(encoding="utf-8"))
     for mark in (DEVICES_MARK, RULE_SENDS):
         if source.split("\n").count(mark) != 1:
             raise ValueError(f"{SOURCE} must contain the line {mark!r} exactly once")
@@ -78,16 +79,24 @@ def rule(devices: list[dict]) -> str:
     return header + source.replace(DEVICES_MARK, _line(table(devices)))
 
 
+def rule_path(device: dict) -> str:
+    """One script context per device; its polls and commands stay ordered."""
+    return _io.script_path(RULE, device)
+
+
 def files(devices: list[dict], house: House) -> dict[str, str]:
     """The conf files rendered from all of this integration's devices."""
-    return {RULE: rule(devices)}
+    return {rule_path(device): rule([device]) for device in devices}
 
 
 def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     """`files` with the rule talking to `device` at HOST:PORT instead."""
     host, _, port = address.rpartition(":")
     prefix = "const DEVICES = "
-    lines = files[RULE].split("\n")
+    path = rule_path(device) if rule_path(device) in files else RULE
+    if path not in files:
+        raise ValueError(f"{rule_path(device)} has no device {device['id']}")
+    lines = files[path].split("\n")
     index = next(i for i, line in enumerate(lines) if line.startswith(prefix))
     entries = json.loads(lines[index][len(prefix):-1])
     matching = [entry for entry in entries if entry["id"] == device["id"]]
@@ -96,4 +105,4 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     for entry in matching:
         entry.update(host=host, port=int(port))
     lines[index] = _line(entries)
-    return {**files, RULE: "\n".join(lines)}
+    return {**files, path: "\n".join(lines)}

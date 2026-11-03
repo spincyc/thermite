@@ -37,7 +37,9 @@ If Things still wait for a handler and neither they nor the start level
 change for --stall seconds, stop waiting and fail on them.
 
 The check proves conf/ loads and every Thing gets a handler without a
-configuration error. A Thing still INITIALIZING/UNKNOWN waits for its device
+configuration error. An online, account-free HEOS bridge's optional-login
+diagnostic remains a warning; local transport does not require an account.
+A Thing still INITIALIZING/UNKNOWN waits for its device
 and only warns; with --require-online the check also waits for devices and
 fails on any Thing not ONLINE. Device reachability is thermite health's job:
 the sandbox's web server is bound to 127.0.0.1, so UPnP event callbacks from
@@ -79,6 +81,7 @@ STOP_TIMEOUT = 3
 METRICS_PATH = "/rest/metrics/prometheus"
 SAMPLE = re.compile(r"^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{| )")
 THINGS_PATH = "/rest/things?summary=true"
+REPORT_THINGS_PATH = "/rest/things?summary=false"
 
 
 class ReportError(lib.SandboxError):
@@ -208,7 +211,7 @@ class ReportHttp(lib.Http):
                 and (isinstance(row.get("uid"), str) and bool(row["uid"])
                      or all(isinstance(row.get(key), str) and bool(row[key]) for key in ("type", "id")))
                 for row in value)
-        elif path == THINGS_PATH:
+        elif path in (THINGS_PATH, REPORT_THINGS_PATH):
             valid = isinstance(value, list) and all(isinstance(row, dict) and isinstance(row.get("UID"), str) and bool(row["UID"])
                 and isinstance(row.get("statusInfo"), dict) and isinstance(row["statusInfo"].get("status"), str) and bool(row["statusInfo"]["status"])
                 and (row["statusInfo"].get("statusDetail") is None or isinstance(row["statusInfo"]["statusDetail"], str))
@@ -252,7 +255,9 @@ def collect(inst: lib.Instance, http: lib.Http, requested: dict, require_online:
     root = http.get_json("/rest/")
     sysinfo = http.get_json("/rest/systeminfo")
     addons = http.get_json("/rest/addons?serviceId=all")
-    things = http.get_json(THINGS_PATH)
+    # Classify optional HEOS login diagnostics from the full DTO. Settling reads
+    # remain summaries; the report retains no configuration or account fields.
+    things = http.get_json(REPORT_THINGS_PATH)
     items = http.get_json("/rest/items?recursive=false&fields=name,type")
     installed = sorted(lib.installed_addon_uids(addons))
     wanted = lib.addon_uids(requested)

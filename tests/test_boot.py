@@ -27,8 +27,9 @@ ROOT = "/rest/"
 SYSTEM = "/rest/systeminfo"
 ADDONS = "/rest/addons?serviceId=all"
 THINGS = boot.THINGS_PATH
+REPORT_THINGS = boot.REPORT_THINGS_PATH
 ITEMS = "/rest/items?recursive=false&fields=name,type"
-ROUTES = (ROOT, SYSTEM, ADDONS, THINGS, ITEMS, boot.METRICS_PATH)
+ROUTES = (ROOT, SYSTEM, ADDONS, REPORT_THINGS, ITEMS, boot.METRICS_PATH)
 
 
 def thing(status="ONLINE", detail="NONE"):
@@ -84,7 +85,8 @@ class BootReadiness(unittest.TestCase):
         return lib.Boot(123, "synthetic test bearer", set(), False, {"add-ons": self.now})
 
     def response(self, path):
-        return 200, self.exposition if path == boot.METRICS_PATH else json.dumps(self.payloads[path]).encode()
+        value = self.payloads.get(REPORT_THINGS, self.payloads[THINGS]) if path == REPORT_THINGS else self.payloads.get(path)
+        return 200, self.exposition if path == boot.METRICS_PATH else json.dumps(value).encode()
 
     def run_check(self):
         return boot.run_check(self.args, self.rt, self.inst, log=lambda message: None)
@@ -111,7 +113,7 @@ class BootReadiness(unittest.TestCase):
                                      SYSTEM: {"systemInfo": {"javaVendorVersion": "stale-java"}},
                                      ADDONS: [], ITEMS: []}
                             if state["collecting"]:
-                                stale[THINGS] = [{**thing(), "UID": "http:url:stale"}]
+                                stale[REPORT_THINGS] = [{**thing(), "UID": "http:url:stale"}]
                             if path in stale:
                                 data = json.dumps(stale[path]).encode()
                         return code, data
@@ -164,7 +166,8 @@ class BootReadiness(unittest.TestCase):
                 self.assertNotIn("private.invalid", str(failed.exception))
                 self.assertEqual(len(self.asked), 1)
         malformed = {ROOT: [], SYSTEM: {"systemInfo": {}}, ADDONS: [{"installed": "yes"}],
-                     THINGS: [{"UID": "bad", "statusInfo": {"status": 7}}], ITEMS: [{"name": "bad"}]}
+                     THINGS: [{"UID": "bad", "statusInfo": {"status": 7}}],
+                     REPORT_THINGS: [{"UID": "bad", "statusInfo": {"status": 7}}], ITEMS: [{"name": "bad"}]}
         for route, invalid in malformed.items():
             with self.subTest(route=route):
                 self.reset()
@@ -232,7 +235,8 @@ class BootReadiness(unittest.TestCase):
         self.assertIn("Things stalled for 2s", report["failures"])
         self.assertEqual(report["timings"]["things stalled"], 2)
         self.assertEqual(self.now, 3)
-        self.assertEqual(self.calls[THINGS], 4)  # Three polls, then only the successful report read.
+        self.assertEqual(self.calls[THINGS], 3)
+        self.assertEqual(self.calls[REPORT_THINGS], 1)  # Only the successful final report reads configuration.
 
     def test_request_timeout_is_remaining_budget_and_late_response_cannot_pass(self):
         self.now = 9

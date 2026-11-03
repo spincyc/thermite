@@ -417,8 +417,11 @@ class StateDirectories(Step):
         by_mode: dict[int, list[Path]] = {}
         for mode, path in self.wrong(system):
             by_mode.setdefault(mode, []).append(path)
+        # GNU install preserves existing directory set-ID bits with four-digit
+        # modes. The extra leading zero requests the exact mode, including
+        # clearing inherited setgid on service-private directories.
         return [Command(("install", "-d", "-o", str(host["uid"]), "-g", str(host["gid"]),
-                         "-m", f"{mode:04o}", *map(str, paths)), root=True) for mode, paths in by_mode.items()]
+                         "-m", f"{mode:05o}", *map(str, paths)), root=True) for mode, paths in by_mode.items()]
 
 
 class MetricsDirectories(StateDirectories):
@@ -1086,7 +1089,7 @@ class NativeReady(Step):
     title = "Authenticated native add-ons, Thing handlers and metrics ready"
     grace = 60
     addons_path = "/rest/addons?serviceId=all"
-    things_path = "/rest/things?summary=true"
+    things_path = "/rest/things?summary=false"
     metrics_path = "/rest/metrics/prometheus"
 
     def __init__(self, context: Context):
@@ -1104,7 +1107,7 @@ class NativeReady(Step):
         self.signature = self.since = None
 
     def snapshot(self, system: System) -> tuple[Check, tuple | None]:
-        from oh_sandbox import FAIL_DETAILS, HANDLER_PENDING_DETAILS, installed_addon_uids
+        from oh_sandbox import FAIL_DETAILS, HANDLER_PENDING_DETAILS, installed_addon_uids, optional_heos_account
         if self.deadline is None:
             self.deadline = system.clock() + WAIT
         if system.clock() >= self.deadline:
@@ -1143,7 +1146,7 @@ class NativeReady(Step):
             and (row["statusInfo"].get("statusDetail") is None or isinstance(row["statusInfo"]["statusDetail"], str)) for row in things)
         if not valid_addons or not valid_things:
             return Check(False, "", "native readiness returned an invalid add-on or Thing JSON shape"), None
-        if any(row["statusInfo"].get("statusDetail") in FAIL_DETAILS for row in things):
+        if any(row["statusInfo"].get("statusDetail") in FAIL_DETAILS and not optional_heos_account(row) for row in things):
             return Check(False, "", "native Things report a configuration error; fix the configuration before retrying; no recovery restart was requested"), None
         installed = installed_addon_uids(addons)
         missing = sorted(self.required - installed)

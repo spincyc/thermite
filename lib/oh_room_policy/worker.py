@@ -8,8 +8,9 @@ crash cannot safely replay a Source's curtain/light actions.
 from __future__ import annotations
 
 import contextlib
+import copy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import os
@@ -17,12 +18,16 @@ from pathlib import Path
 import threading
 import time
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from .model import PolicyError, validate
 from .plan import Observation, Plan, conflicts, expected_plan, repair_plan, verify
-from .schedule import GRACE, Boundary, desired_at, due_boundaries, utc
+from .schedule import GRACE, Boundary, desired_at, due_boundaries, local_instant, utc
 
 BACKOFF = (2, 5, 15, 30, 60)
+# Locked-state evidence is considered stale after 15 seconds by the gateway.
+# Preserve that bound without writing unchanged rows on every supervisor tick.
+RECONCILE_HEARTBEAT = 10.0
 
 
 @dataclass(frozen=True)
@@ -96,14 +101,79 @@ class Worker:
         self._step_lock = threading.Lock()
         self._seen = {}
         self._runtime = {}
+        self._persisted = {}
+        self._policies = ()
+        self._reconcile_ready = False
+        self._notifications = set()
+        self._notification_lock = threading.Lock()
+        self._wake = threading.Event()
 
     def notify(self, room: str) -> None:
         """An internal state change can accelerate a read, never write backoff."""
-        if room in self._runtime:
-            self._runtime[room]["read_due"] = 0
+        if room not in self.contract["rooms"]:
+            return
+        with self._notification_lock:
+            self._notifications.add(room)
+            self._wake.set()
+
+    def wake(self):
+        """Wake the supervisor for shutdown or a trusted local notification."""
+        self._wake.set()
+
+    def next_delay(self, maximum=5.0):
+        """Sleep until an observation/retry or calendar boundary is due.
+
+        The maximum bounds discovery of cross-process policy edits and wall
+        clock changes; it does not set device polling or write retry frequency.
+        """
+        now, mono = utc(self.wall_clock()), self.monotonic()
+        delay = max(0.1, maximum)
+        if self._wake.is_set():
+            return 0
+        if self._reconcile_ready:
+            for runtime in self._runtime.values():
+                delay = min(delay, max(0, runtime["read_due"] - mono))
+        for policy in self._policies:
+            if not policy.get("enabled", True):
+                continue
+            active = desired_at(now, policy)
+            if active["end"]:
+                delay = min(delay, max(0, (active["end"] - now).total_seconds()))
+            today = now.astimezone(ZoneInfo(policy["timezone"])).date()
+            # The default fallback is five seconds; the next local day also
+            # covers midnight and DST transitions before that wake.
+            for offset in (0, 1):
+                day = today + timedelta(days=offset)
+                for key, point in (("daily_off", "time"), ("locks", "start")):
+                    for rule in policy[key]:
+                        if day.weekday() in rule["days"]:
+                            at = local_instant(day, rule[point], policy["timezone"])
+                            if at > now:
+                                delay = min(delay, (at - now).total_seconds())
+        return delay
+
+    def wait(self, maximum=5.0):
+        self._wake.wait(self.next_delay(maximum))
 
     def _current(self, revisions):
+        batch = getattr(self.store, "current_revisions", None)
+        if batch is not None:
+            return batch(tuple(revisions)) == revisions
         return all(self.store.current_revision(room) == revision for room, revision in revisions.items())
+
+    def _save(self, room, revision, state, *, occurrence=None):
+        previous = self._persisted.get(room)
+        now = self.monotonic()
+        if previous and previous[0] == revision and previous[1] == state and previous[3] == occurrence:
+            # Unlocked rows are not freshness evidence. Their next mutation or
+            # revision publishes immediately; active enforcement retains a
+            # bounded heartbeat even when all observations still match.
+            if state.get("phase") == "unlocked" or now - previous[2] < RECONCILE_HEARTBEAT:
+                return True
+        if not self.store.save_reconcile(room, revision, state):
+            return False
+        self._persisted[room] = (revision, copy.deepcopy(state), now, occurrence)
+        return True
 
     def _scheduled(self, policies, states):
         now = utc(self.wall_clock())
@@ -172,11 +242,21 @@ class Worker:
         if not self._step_lock.acquire(blocking=False):
             return {"busy": True}
         try:
-            return self._step()
+            with self._notification_lock:
+                self._wake.clear()
+                notified, self._notifications = self._notifications, set()
+            for room in notified:
+                if room in self._runtime:
+                    self._runtime[room]["read_due"] = 0
+            result = self._step()
+            if result.get("stale"):
+                self._reconcile_ready = False
+            return result
         finally:
             self._step_lock.release()
 
     def _step(self):
+        self._reconcile_ready = False
         now, mono = utc(self.wall_clock()), self.monotonic()
         records = self.store.policies()
         revisions = dict.fromkeys(self.contract["rooms"])
@@ -195,9 +275,15 @@ class Worker:
                 valid.append((policy, changed_at))
             except (PolicyError, KeyError, TypeError):
                 result[room] = {"phase": "invalid", "reason": "invalid_policy"}
-                self.store.save_reconcile(room, revision, result[room])
+                self._save(room, revision, result[room])
         if not self._current(revisions):
             return {"stale": True}
+        for room in set(self._runtime) - set(plans):
+            self._runtime.pop(room, None)
+        for room in tuple(self._persisted):
+            if revisions.get(room) is None:
+                self._persisted.pop(room, None)
+        self._policies = tuple(policy for policy, _ in valid)
         if result:
             # An invalid policy cannot safely be assumed to leave shared
             # hardware unlocked. Fail closed until the configuration is fixed.
@@ -205,8 +291,9 @@ class Worker:
                 room = policy["room"]
                 result[room] = {"phase": "enforcing" if states[room]["locked"] else "unlocked",
                                 "state": "degraded", "reason": "invalid_policy"}
-                self.store.save_reconcile(room, policy["revision"], result[room])
+                self._save(room, policy["revision"], result[room])
             return result
+        self._reconcile_ready = True
         policies = {policy["room"]: policy for policy, _ in valid}
         for policy, changed_at in valid:
             mono = self.monotonic()
@@ -220,7 +307,7 @@ class Worker:
             if not state["locked"]:
                 self._runtime.pop(room, None)
                 result[room] = {"phase": "unlocked", "desired": None}
-                self.store.save_reconcile(room, revision, result[room])
+                self._save(room, revision, result[room])
                 continue
             runtime = self._runtime.get(room)
             if runtime is None or runtime["key"] != state["key"]:
@@ -269,12 +356,13 @@ class Worker:
                 return {"stale": True}
             status["retry_seconds"] = max(0, runtime["write_due"] - self.monotonic())
             result[room] = status
-            self.store.save_reconcile(room, revision, status)
+            self._save(room, revision, status, occurrence=runtime["key"])
         return result
 
-    def run(self, stop, process_locks: FileLocks, *, interval=1.0):
+    def run(self, stop, process_locks: FileLocks, *, interval=5.0):
         """Caller supplies supervision and a stop Event; never launched on import."""
         with process_locks.hold(["room-policy-worker"], blocking=False):
             while not stop.is_set():
                 self.step()
-                stop.wait(max(0.1, interval))
+                if not stop.is_set():
+                    self.wait(interval)

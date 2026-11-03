@@ -188,6 +188,11 @@ class _Remote:
 
 
 class _Power(_Listened):
+    async def read_power_state(self) -> PowerState:
+        """An owned native acquisition, distinct from the cached property."""
+        self._connection.tv._command(self._connection)
+        return _state(self._connection.tv.power)
+
     @property
     def power_state(self) -> PowerState:
         return _state(self._connection.tv.power)
@@ -268,6 +273,10 @@ class _Config:
         return True
 
 
+class AuthenticationError(Exception):
+    """The simulator's typed native pairing refusal, like pyatv's."""
+
+
 class _Pairing:
     """pyatv's PairingHandler for the Companion protocol."""
 
@@ -298,7 +307,7 @@ class _Pairing:
             if tv._pairing is self:
                 tv.code_shown, tv._pairing = None, None
             if shown is None or self._pin is None or f"{self._pin:04d}" != shown:
-                raise RuntimeError("pairing failed")
+                raise AuthenticationError("pairing failed")
             issued = os.urandom(32).hex()
             tv.credentials.add(issued)
         self.service.credentials = issued
@@ -317,6 +326,7 @@ class FakePyatv:
     """The pyatv module, as far as oh_atv uses it, over stand-in Apple TVs."""
 
     const = types.SimpleNamespace(Protocol=Protocol, PowerState=PowerState)
+    exceptions = types.SimpleNamespace(AuthenticationError=AuthenticationError)
     Protocol = Protocol
     PowerState = PowerState
 

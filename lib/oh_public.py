@@ -119,6 +119,10 @@ SOURCE_FILES = (
     'lib/oh_features/remote_model.py',
     'lib/oh_features/remote_topology.py',
     'lib/oh_features/routing/__init__.py',
+    'lib/oh_features/routing/lifecycle.py',
+    'lib/oh_features/routing/lifecycle.js',
+    'lib/oh_features/routing/lifecycle_io.py',
+    'lib/oh_features/routing/lifecycle_io.js',
     'lib/oh_features/routing/routing.js',
     'lib/oh_features/threadpools.py',
     'lib/oh_features/threadpools.js',
@@ -128,6 +132,7 @@ SOURCE_FILES = (
     'lib/oh_identity/apps.py',
     'lib/oh_identity/asgi.py',
     'lib/oh_identity/auth.py',
+    'lib/oh_identity/batches.py',
     'lib/oh_identity/composition.py',
     'lib/oh_identity/migrations/0001_initial.py',
     'lib/oh_identity/migrations/__init__.py',
@@ -150,6 +155,8 @@ SOURCE_FILES = (
     'lib/oh_integrations/__init__.py',
     'lib/oh_integrations/_diagnostics.py',
     'lib/oh_integrations/_instr.py',
+    'lib/oh_integrations/_io.py',
+    'lib/oh_integrations/_io.js',
     'lib/oh_integrations/_pairing.py',
     'lib/oh_integrations/androidtv_googletv/__init__.py',
     'lib/oh_integrations/androidtv_googletv/androidtv_googletv.js',
@@ -252,6 +259,17 @@ SOURCE_FILES = (
     'tests/androidtv_maintenance_probe.cjs',
     'tests/backend_item_read_order_harness.js',
     'tests/test_backend_item_read_order.py',
+    'tests/backend_snapshot_harness.js',
+    'tests/test_backend_snapshots.py',
+    'tests/integration_io_harness.js',
+    'tests/integration_io/NativeTest.java',
+    'tests/test_integration_io.py',
+    'tests/lifecycle_planner_harness.js',
+    'tests/test_lifecycle_planner.py',
+    'tests/lifecycle_io_harness.js',
+    'tests/lifecycle_io/NativeLifecycleTest.java',
+    'tests/test_lifecycle_io.py',
+    'tests/test_atv_lifecycle.py',
     'tests/test_ports.py',
     'tests/test_iso.py',
     'tests/test_apparmor.py',
@@ -796,6 +814,8 @@ _CREDENTIAL = re.compile(r"(?i)^(?:password|passwd|passphrase|secret|token|api_?
 
 
 def _credentials(name, text):
+    if name.endswith(".java"):
+        return oh_secrets.scan_text(text, code=True)
     def literal(key, value):
         return (isinstance(key, str) and _CREDENTIAL.fullmatch(key) and isinstance(value, (str, bytes))
                 and bool(value) and not oh_secrets.PLACEHOLDER.fullmatch(str(value)) and value not in {"Bearer", "Basic"})

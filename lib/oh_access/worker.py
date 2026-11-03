@@ -18,27 +18,35 @@ class NativeCache:
     repeated cached updates never advance that native acquisition timestamp.
     """
 
-    def __init__(self, fields, *, native_power=None, clock=None):
+    def __init__(self, fields, *, native_power=None, clock=None, on_change=None):
         self.fields = {field.item: field for field in fields}
         self.native_power = dict(native_power or {})
+        self._topics = tuple("openhab/items/" + name + "/stateupdated"
+                             for name in sorted(set(self.fields) | set(self.native_power.values())))
+        self._topic_set = frozenset(self._topics)
         self.timestamps = {}
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.values = {}
         self.lock = threading.Lock()
         self.connected = False
+        self.on_change = on_change
 
     def clear(self):
         with self.lock:
+            changed = tuple(self.values)
             self.values.clear()
             self.timestamps.clear()
             self.connected = False
+        if self.on_change:
+            for item in changed:
+                self.on_change(item)
 
     @property
     def topics(self):
-        return ["openhab/items/" + name + "/stateupdated" for name in sorted(set(self.fields) | set(self.native_power.values()))]
+        return self._topics
 
     def project(self, event):
-        if not isinstance(event, dict) or event.get("type") != "ItemStateUpdatedEvent" or event.get("topic") not in self.topics:
+        if not isinstance(event, dict) or event.get("type") != "ItemStateUpdatedEvent" or event.get("topic") not in self._topic_set:
             return None
         item = event["topic"].split("/")[2]
         try:
@@ -63,6 +71,7 @@ class NativeCache:
     def accept(self, frame):
         from oh_room_policy import Observation
         item, value = frame
+        changed = False
         with self.lock:
             self.connected = True
             if item not in self.fields:
@@ -73,6 +82,7 @@ class NativeCache:
                 self.timestamps[item] = at
                 return
             field = self.fields[item]
+            previous = self.values.get(item)
             if field.native_power:
                 # The provider emits the exact acquisition timestamp BEFORE
                 # each power update. Consume it once; never reuse poll receipt.
@@ -81,8 +91,15 @@ class NativeCache:
                     self.values.pop(item, None)
                 else:
                     self.values[item] = Observation(value, at, basis="native_power")
-                return
-            self.values[item] = Observation(value, self.clock(), basis="native")
+            else:
+                self.values[item] = Observation(value, self.clock(), basis="native")
+            current = self.values.get(item)
+            changed = ((previous is None) != (current is None)
+                       or previous is not None and current is not None and previous.value != current.value)
+        # Same-value reports retain truthful acquisition times without waking
+        # the policy loop for every periodic device status update.
+        if changed and self.on_change:
+            self.on_change(item)
 
     def read(self, items):
         with self.lock:
@@ -115,19 +132,16 @@ class PolicyIO:
 
 
 async def observe(transport, cache, stop):
+    """Consume native events; the supervisor cancels to interrupt a quiet feed."""
     delay = 1
     while not stop.is_set():
         iterator = transport.events(cache.topics, project=cache.project).__aiter__()
-        task = None
         try:
-            while not stop.is_set():
-                if task is None:
-                    task = asyncio.create_task(anext(iterator))
-                done, _ = await asyncio.wait([task], timeout=0.25)
-                if done:
-                    cache.accept(task.result())
-                    task = None
-                    delay = 1
+            async for frame in iterator:
+                if stop.is_set():
+                    return
+                cache.accept(frame)
+                delay = 1
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -135,18 +149,14 @@ async def observe(transport, cache, stop):
                 return
         finally:
             cache.clear()
-            if task:
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
             await iterator.aclose()
-        for _ in range(delay * 4):
-            if stop.is_set():
-                return
-            await asyncio.sleep(0.25)
+        if stop.is_set():
+            return
+        await asyncio.sleep(delay)
         delay = min(30, delay * 2)
 
 
-def run(config_path, *, stop=None, interval=1, wall_clock=None):
+def run(config_path, *, stop=None, interval=5, wall_clock=None):
     from .files import require_service_account
     require_service_account()
     from .service import configured
@@ -172,26 +182,69 @@ def run(config_path, *, stop=None, interval=1, wall_clock=None):
     validate_batches(cache, adapter.transport.base)
     io = PolicyIO(adapter, store, cache)
     worker = Worker(house, store, io, locks=locks, wall_clock=wall_clock)
+    rooms_by_item = {}
+    for room, choices in io.plans.items():
+        for plan in choices.values():
+            for field in plan.fields:
+                rooms_by_item.setdefault(field.item, set()).add(room)
+    def changed(item):
+        for room in rooms_by_item.get(item, ()):
+            worker.notify(room)
+    cache.on_change = changed
     stop = stop or threading.Event()
     previous = {}
+    shutdown_requested = False
+    def request_stop(*_):
+        # Python may run a signal handler while this same thread holds an
+        # Event's non-reentrant condition lock. Even Event.set() can deadlock
+        # there; publish only a flag and let normal supervisor code clean up.
+        nonlocal shutdown_requested
+        shutdown_requested = True
     if threading.current_thread() is threading.main_thread():
         for signum in (signal.SIGTERM, signal.SIGINT):
-            previous[signum] = signal.signal(signum, lambda *_: stop.set())
-    thread = threading.Thread(target=lambda: asyncio.run(observe(adapter.transport, cache, stop)), daemon=True)
+            previous[signum] = signal.signal(signum, request_stop)
+    loop = asyncio.new_event_loop()
+    observer = loop.create_task(observe(adapter.transport, cache, stop))
+    def listen():
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(observer)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+    thread = threading.Thread(target=listen, daemon=True)
     try:
         # Take the process lease BEFORE connecting a feed or running any writes.
         with locks.hold(["room-policy-worker"], blocking=False):
-            thread.start()
-            while not stop.is_set():
+            if not shutdown_requested:
+                thread.start()
+            while not shutdown_requested and not stop.is_set():
                 worker.step()
-                stop.wait(max(0.1, interval))
+                if not shutdown_requested and not stop.is_set():
+                    worker.wait(min(5, interval))
     finally:
         stop.set()
         if thread.ident is not None:
+            if not loop.is_closed():
+                try:
+                    loop.call_soon_threadsafe(observer.cancel)
+                except RuntimeError:
+                    pass  # The observer finished and closed its loop meanwhile.
             thread.join(timeout=20)
+        else:
+            observer.cancel()
+            loop.run_until_complete(asyncio.gather(observer, return_exceptions=True))
+            loop.close()
         cache.clear()
         for signum, handler in previous.items():
             signal.signal(signum, handler)
+        if thread.is_alive():
+            raise AccessError("Native observation task did not stop")
+        close = getattr(adapter.transport, "close", None)
+        if close:
+            close()
 
 
 def cache_items(fields):

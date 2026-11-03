@@ -3,7 +3,7 @@ power, HDMI input, volume, mute, the remote's keys and pairing.
 
 sony_rest reads a TV's power, which needs no authentication. A TV that also
 lists sony_ip_control under control is commanded by a rule:
-conf/automation/js/sony_ip_control.js, sony_ip_control.js beside this file
+conf/automation/js/sony_ip_control_<device>.js, sony_ip_control.js beside this file
 with its tables filled in. It turns commands to the TV's Items into the
 TV's own requests (system setPowerStatus, avContent setPlayContent, audio
 setAudioVolume and setAudioMute, and IRCC for the remote's keys) and reads
@@ -67,6 +67,7 @@ import json
 from pathlib import Path
 
 from oh_conf import RULE_SENDS, Addon, House, YamlFile, options_text, retarget, uses
+from .. import _io
 
 from .. import _pairing, sony_rest
 
@@ -75,7 +76,7 @@ PHASE = "control"
 FILE = "yaml/sony_ip_control.yaml"
 HEADER = (
     "Sony BRAVIA TVs over Sony's IP control, paired from the Pairing page: the",
-    "rule conf/automation/js/sony_ip_control.js turns the power, input, volume,",
+    "rule conf/automation/js/sony_ip_control_<device>.js turns the power, input, volume,",
     "mute, key and pairing commands into the TV's requests, with the cookie the",
     "TV gave it, which it keeps in userdata, never in conf/. autoupdate is off:",
     "the Items show only what the TV reports.",
@@ -302,7 +303,7 @@ def _line(name: str, value: object) -> str:
 
 def rule(devices: list[dict]) -> str:
     """sony_ip_control.js with its tables filled in."""
-    source = SOURCE.read_text(encoding="utf-8")
+    source = _io.embed(SOURCE.read_text(encoding="utf-8"))
     for mark in (DEVICES_MARK, PRESSES_MARK, RULE_SENDS):
         if source.split("\n").count(mark) != 1:
             raise ValueError(f"{SOURCE} must contain the line {mark!r} exactly once")
@@ -313,9 +314,14 @@ def rule(devices: list[dict]) -> str:
                      .replace(PRESSES_MARK, _line("PRESSES", KEYS)))
 
 
+def rule_path(device: dict) -> str:
+    """One script context per device; its polls and commands stay ordered."""
+    return _io.script_path(RULE, device)
+
+
 def files(devices: list[dict], house: House) -> dict[str, str]:
     """The conf files rendered from all of this integration's devices."""
-    return {RULE: rule(devices)}
+    return {rule_path(device): rule([device]) for device in devices}
 
 
 def stage(device: dict, zone: int | None) -> dict | None:
@@ -343,7 +349,10 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     """`files` with the rule and sony_rest's Thing talking to the TV at
     HOST:PORT instead."""
     prefix = "const DEVICES = "
-    lines = files[RULE].split("\n")
+    path = rule_path(device) if rule_path(device) in files else RULE
+    if path not in files:
+        raise ValueError(f"{rule_path(device)} has no device {device['id']}")
+    lines = files[path].split("\n")
     index = next(i for i, line in enumerate(lines) if line.startswith(prefix))
     entries = json.loads(lines[index][len(prefix):-1])
     matching = [entry for entry in entries if entry["id"] == device["id"]]
@@ -355,7 +364,7 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
 
     def change(thing: dict) -> None:
         thing["config"]["baseURL"] = sony_rest.base_url(address)
-    out = {**files, RULE: "\n".join(lines)}
+    out = {**files, path: "\n".join(lines)}
     if sony_rest.FILE in out:
         out[sony_rest.FILE] = retarget(out[sony_rest.FILE], sony_rest.FILE, sony_rest.thing_uid(device), change)
     return out

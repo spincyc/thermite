@@ -86,6 +86,13 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict
     room_specs = route.get("rooms") or {}
     table = routing.table(house.data) if room_specs else {"rooms": {}, "edid": None, "off": "off"}
     all_items = {name: item for file in conf.yaml.values() for name, item in file.items.items()}
+
+    def commandable(name):
+        item = all_items.get(name)
+        if item is None:
+            return False
+        readonly = ((item.get("metadata") or {}).get("stateDescription") or {}).get("config", {}).get("readOnly") is True
+        return not is_guarded(item) or name in conf.executor_controls and not readonly
     owner = {name: next((ident for ident in item.get("groups", ()) if ident in devices), None)
              for name, item in all_items.items()}
     states = {name: spec for name, item in all_items.items() if (spec := _state(name, item)) is not None}
@@ -163,7 +170,7 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict
                 if point not in {"power", "input", "key", "volume", "mute"}:
                     continue
                 item = descriptor.get("item") if isinstance(descriptor, dict) else descriptor
-                if item not in all_items or is_guarded(all_items[item]) or not readable(item):
+                if not commandable(item) or not readable(item):
                     continue
                 if point in {"power", "mute"}:
                     spec = {"kind": "switch", "values": ["ON", "OFF"]}
@@ -196,7 +203,7 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict
         for ident in set((entry.get("on_actions") or {})) | set(entry.get("off_actions") or {}):
             item = routing.action_item(devices, ident)
             descriptor = states.get(item)
-            if item not in all_items or not descriptor or descriptor.get("kind") != "enum" or is_guarded(all_items[item]):
+            if not commandable(item) or not descriptor or descriptor.get("kind") != "enum":
                 continue
             actions["control." + ident] = {**descriptor, "item": item, "affected_rooms": sorted(item_rooms.get(item, {room})),
                                            "resources": ["device:" + ident]}

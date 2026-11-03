@@ -238,7 +238,7 @@ def addresses(value: object) -> set[str]:
 
 #: Items of the whole house rather than of a room or a device: All off
 #: (oh_features.all_off).
-HOUSE_ITEMS = frozenset({"house_all_off", "house_camera_status"})
+HOUSE_ITEMS = frozenset({"house_all_off", "house_camera_status", "house_routing_io_events", "house_routing_io_status"})
 
 
 def cross_check(data: dict, things: dict, items: dict) -> list[str]:

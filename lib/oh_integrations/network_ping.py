@@ -28,8 +28,9 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         "location": house.room_label(device["room"]),
         "config": {"hostname": device["ip"]},
     }
-    out.items[f"{ident}_online"] = point(ident, "Switch", "Online", ["Status"], f"{uid}:online",
-                                         icon="network")
+    online = point(ident, "Switch", "Network reachability", ["Status"], f"{uid}:online", icon="network")
+    online["metadata"] = {"stateDescription": {"config": {"options": "ON=Reachable,OFF=No response"}}}
+    out.items[f"{ident}_online"] = online
     out.items[f"{ident}_last_seen"] = point(ident, "DateTime", "Last Seen", ["Status", "Timestamp"],
                                             f"{uid}:lastseen", fmt="%1$tY-%1$tm-%1$td %1$tH:%1$tM:%1$tS",
                                             icon="time")

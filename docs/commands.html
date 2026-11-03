@@ -302,7 +302,9 @@ If Things still wait for a handler and neither they nor the start level
 change for --stall seconds, stop waiting and fail on them.
 
 The check proves conf/ loads and every Thing gets a handler without a
-configuration error. A Thing still INITIALIZING/UNKNOWN waits for its device
+configuration error. An online, account-free HEOS bridge&#x27;s optional-login
+diagnostic remains a warning; local transport does not require an account.
+A Thing still INITIALIZING/UNKNOWN waits for its device
 and only warns; with --require-online the check also waits for devices and
 fails on any Thing not ONLINE. Device reachability is thermite health&#x27;s job:
 the sandbox&#x27;s web server is bound to 127.0.0.1, so UPnP event callbacks from
@@ -998,6 +1000,8 @@ examples:
 Read-only checks against the running runtime: every Thing ONLINE, Items whose
 state is NULL or UNDEF, and the installed add-ons (compared with an
 addons.cfg when --addons is given). Only GET requests are sent.
+An online HEOS bridge without either optional account field reports its
+missing-account diagnostic as a visible warning, preserving local transport.
 
 The runtime answers /rest/things and /rest/addons only with credentials; pass
 an API token file (the sandbox writes var/sandbox/api-token). --sandbox

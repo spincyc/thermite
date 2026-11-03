@@ -77,10 +77,17 @@ async def stream(adapter, topics, snapshot):
     iterator = iterable.__aiter__()
     pending = None
     try:
-        while await sync_to_async(valid)(snapshot):
+        if not await sync_to_async(valid)(snapshot):
+            return
+        while True:
             if pending is None:
                 pending = asyncio.create_task(anext(iterator))
             done, _ = await asyncio.wait([pending], timeout=HEARTBEAT)
+            # One check after every wait fences both frames and heartbeats.
+            # Repeating it before the next wait doubles DB traffic without
+            # shortening the quiet-stream revocation bound (HEARTBEAT).
+            if not await sync_to_async(valid)(snapshot):
+                return
             if not done:
                 yield b": heartbeat\n\n"
                 continue
@@ -89,9 +96,6 @@ async def stream(adapter, topics, snapshot):
             except StopAsyncIteration:
                 return
             pending = None
-            # Recheck after a quiet upstream wakes, not only before awaiting it.
-            if not await sync_to_async(valid)(snapshot):
-                return
             value = event if projected else frame(adapter.contract, topics, event)
             if value:
                 yield ("data: " + json.dumps(value, separators=(",", ":")) + "\n\n").encode()

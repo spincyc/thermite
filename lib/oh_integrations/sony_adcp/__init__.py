@@ -1,4 +1,4 @@
-"Sony projectors over ADCP (Advanced Display Control Protocol), TCP 53595.\n\nNo binding speaks ADCP (openHAB's sonyprojector binding speaks PJ Talk on\n53484, which the VPL-VW915ES has closed), so a rule does:\nconf/automation/js/sony_adcp.js, sony_adcp.js beside this file with the\ndevice table filled in. Every 15 seconds it opens one short connection\nper projector, reads `power_status ?`, `input ?` and, while the projector is\non, `picture_mode ?`, and posts them to the Items; a projector that does not\nanswer gets UNDEF. A device that also lists sony_adcp under control has its\npower, input and key Items turned into ADCP lines (LINES) on a connection of\ntheir own. The projector greets with NOKEY when ADCP authentication is off,\nas the example's is; the rule does not implement the password handshake and\nreports a projector that asks for one.\n\nItems, per device:\n\n- `<id>_power` (Switch): ON while on or starting up, OFF in standby or\n  cooling down; commanded ON / OFF under control.\n- `<id>_power_state` (String): power_status as the projector reports it.\n- `<id>_input` (String): the input shown (INPUTS); commanded with one under\n  control.\n- `<id>_picture_mode` (String): the picture mode, UNDEF in standby.\n- `<id>_key` (String, control only): a remote button id (KEYS) to press.\n\nUnder observe only, every Item is display-only and the rule listens to none\nof them. The rule holds oh_conf.RULE_SENDS, so oh_render.read_only() makes it\nread the projectors and send them nothing.\n"
+"Sony projectors over ADCP (Advanced Display Control Protocol), TCP 53595.\n\nNo binding speaks ADCP (openHAB's sonyprojector binding speaks PJ Talk on\n53484, which the VPL-VW915ES has closed), so a rule does:\nconf/automation/js/sony_adcp_<device>.js, sony_adcp.js beside this file with the\ndevice table filled in. Every 15 seconds it opens one short connection\nper projector, reads `power_status ?`, `input ?` and, while the projector is\non, `picture_mode ?`, and posts them to the Items; a projector that does not\nanswer gets UNDEF. A device that also lists sony_adcp under control has its\npower, input and key Items turned into ADCP lines (LINES) on a connection of\ntheir own. The projector greets with NOKEY when ADCP authentication is off,\nas the example's is; the rule does not implement the password handshake and\nreports a projector that asks for one.\n\nItems, per device:\n\n- `<id>_power` (Switch): ON while on or starting up, OFF in standby or\n  cooling down; commanded ON / OFF under control.\n- `<id>_power_state` (String): power_status as the projector reports it.\n- `<id>_input` (String): the input shown (INPUTS); commanded with one under\n  control.\n- `<id>_picture_mode` (String): the picture mode, UNDEF in standby.\n- `<id>_key` (String, control only): a remote button id (KEYS) to press.\n\nUnder observe only, every Item is display-only and the rule listens to none\nof them. The rule holds oh_conf.RULE_SENDS, so oh_render.read_only() makes it\nread the projectors and send them nothing.\n"
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from oh_conf import RULE_SENDS, Addon, House, YamlFile, options_text, uses
+from .. import _io
 
 NAME = "sony_adcp"
 PHASE = "observe"
@@ -13,7 +14,7 @@ CONTROL = True
 FILE = "yaml/projector.yaml"
 HEADER = (
     "Sony projectors over ADCP (TCP 53595), with no binding: the rule",
-    "conf/automation/js/sony_adcp.js polls each projector and posts these",
+    "conf/automation/js/sony_adcp_<device>.js polls each projector and posts these",
     "Items, and under control turns their commands into ADCP lines. Items",
     "are autoupdate off: they show only what the projector reports.",
 )
@@ -118,7 +119,7 @@ def _line(name: str, value: object) -> str:
 
 def rule(devices: list[dict]) -> str:
     """sony_adcp.js with its tables filled in for these devices."""
-    source = SOURCE.read_text(encoding="utf-8")
+    source = _io.embed(SOURCE.read_text(encoding="utf-8"))
     for mark in (DEVICES_MARK, KEYS_MARK, INPUTS_MARK):
         if source.split("\n").count(mark) != 1:
             raise ValueError(f"{SOURCE} must contain the line {mark!r} exactly once")
@@ -133,9 +134,14 @@ def rule(devices: list[dict]) -> str:
     return header + filled
 
 
+def rule_path(device: dict) -> str:
+    """One script context per device; its polls and commands stay ordered."""
+    return _io.script_path(RULE, device)
+
+
 def files(devices: list[dict], house: House) -> dict[str, str]:
     """The conf files rendered from all of this integration's devices."""
-    return {RULE: rule(devices)}
+    return {rule_path(device): rule([device]) for device in devices}
 
 
 def stage(device: dict, zone: int | None) -> dict | None:
@@ -162,7 +168,10 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     """`files` with the rule talking to `device` at HOST:PORT instead."""
     host, _, port = address.rpartition(":")
     prefix = "const DEVICES = "
-    lines = files[RULE].split("\n")
+    path = rule_path(device) if rule_path(device) in files else RULE
+    if path not in files:
+        raise ValueError(f"{rule_path(device)} has no device {device['id']}")
+    lines = files[path].split("\n")
     index = next(i for i, line in enumerate(lines) if line.startswith(prefix))
     entries = json.loads(lines[index][len(prefix):-1])
     matching = [entry for entry in entries if entry["id"] == device["id"]]
@@ -171,4 +180,4 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     for entry in matching:
         entry.update(host=host, port=int(port))
     lines[index] = _line("DEVICES", entries)
-    return {**files, RULE: "\n".join(lines)}
+    return {**files, path: "\n".join(lines)}

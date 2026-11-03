@@ -54,7 +54,7 @@ def scan_text(text: str, code: bool = False) -> list[tuple[int, str]]:
 
 def is_code(path: Path, text: str) -> bool:
     first = text.split("\n", 1)[0]
-    return path.suffix == ".py" or (first.startswith("#!") and "python" in first)
+    return path.suffix in {".py", ".js", ".cjs", ".java"} or (first.startswith("#!") and "python" in first)
 
 
 def walk(area: Path) -> list[str]:

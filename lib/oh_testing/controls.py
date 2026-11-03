@@ -29,9 +29,9 @@ import oh_sandbox as lib
 import oh_sony_sim as sony_sim
 import oh_sonos_sim as sonos_sim
 from oh_cli import pair as pair_cli
-from oh_conf import House, YamlFile, uses
-from oh_features import all_off
-from oh_testing.routing import SIGNAL_WAIT, signal_problems
+from oh_conf import Conf, House, YamlFile, uses
+from oh_features import all_off, routing
+from oh_testing.routing import SIGNAL_WAIT, signal_problems, simulated_lifecycle
 
 SUMMARY = "receiver, streamer, projector and TV controls, plus Sonos Item contracts, against stand-ins"
 
@@ -396,9 +396,10 @@ class Check:
             keep.add(module.FILE)
             keep |= set(getattr(module, "ASSETS", {}))
             if hasattr(module, "files"):
-                rendered = [d for d in self.data["devices"] if uses(d, module.PHASE, module.NAME)]
-                keep |= set(module.files(rendered, house))
+                selected = [self.devices[i] for i, (owner, _) in self.controls.items() if owner is module]
+                keep |= set(module.files(selected, house))
         out = {path: files[path] for path in sorted(keep) if path in files}
+        selected_conf = Conf()
         # A shared module file can also contain observer-only or unexposed
         # devices. Render only this check's selected controls; a UDN can reach
         # real hardware even when a naive IP-address scan finds no leak.
@@ -408,8 +409,11 @@ class Check:
             for device in selected:
                 module.render(device, house, part)
             out[module.FILE] = part.text()
+            selected_conf.yaml[module.FILE] = part
             if hasattr(module, "files"):
-                out.update(module.files(selected, house))
+                generated = module.files(selected, house)
+                out.update(generated)
+                selected_conf.files.update(generated)
         # A module that needs another's Things and Items (sony_ip_control,
         # sony_rest's power) gets them for its own devices only.
         for module in modules.values():
@@ -419,6 +423,19 @@ class Check:
                     if owner is module and uses(self.devices[ident], needed.PHASE, needed.NAME):
                         needed.render(self.devices[ident], house, part)
                 out[needed.FILE] = part.text()
+                selected_conf.yaml[needed.FILE] = part
+        contract = routing.table(self.data) if self.data.get("routing") else {}
+        if "lifecycle" in contract:
+            from oh_features.routing import lifecycle_io
+            resources = {name for name, row in contract["lifecycle"]["resources"].items() if row["key"] in self.controls}
+            contract = simulated_lifecycle(contract, resources, endpoints=False)
+            lifecycle_io.configure(house, selected_conf, contract["lifecycle"])
+            selected_conf.files[routing.RULE] = routing.rule(self.data, contract)
+            planner = "automation/js/node_modules/thermite-routing-lifecycle/index.js"
+            selected_conf.files[planner] = files[planner]
+            generated = selected_conf.render()
+            generated.pop("services/addons.cfg", None)
+            out.update(generated)
         for ident, (module, _) in self.controls.items():
             out = module.aim(out, self.devices[ident], self.stand_ins[ident].server.address)
         leaks = sorted({f"{path}: {device['id']} ({device['ip']})" for path, text in out.items()

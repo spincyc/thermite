@@ -389,6 +389,26 @@ def classify_thing(status: str, detail: str | None, require_online: bool = False
     return "warn"
 
 
+def optional_heos_account(thing: dict) -> bool:
+    """Pinned HEOS 5.2.3 connects locally before flagging optional login.
+
+    Both account fields must actually be absent or blank in the full DTO.
+    A summary DTO cannot establish that this is an account-free bridge.
+    See openhab-addons/5.2.3 HeosBridgeHandler.delayedInitialize: it connects
+    and discovers players before adding this optional-account diagnostic.
+    """
+    config = thing.get("configuration")
+    info = thing.get("statusInfo") or {}
+    uid = thing.get("UID")
+    return (thing.get("thingTypeUID") == "heos:bridge"
+            and isinstance(uid, str) and re.fullmatch(r"heos:bridge:[A-Za-z0-9_-]+", uid) is not None
+            and isinstance(config, dict)
+            and all(key not in config or isinstance(config[key], str) and not config[key].strip()
+                    for key in ("username", "password"))
+            and info.get("status") == "ONLINE" and info.get("statusDetail") == "CONFIGURATION_ERROR"
+            and info.get("description") == "Can't log in. Username or password not set.")
+
+
 def thing_pending(thing: dict, devices: bool = True) -> bool:
     """Still waiting for its handler (or start level 30), or with devices=True for its device too."""
     info = thing.get("statusInfo", {})
@@ -464,6 +484,8 @@ def summarize_things(things: list[dict], require_online: bool = False, allow: fr
         key = status if detail in (None, "NONE") else f"{status}/{detail}"
         by_status[key] = by_status.get(key, 0) + 1
         verdict = classify_thing(status, detail, require_online)
+        if verdict == "fail" and optional_heos_account(thing):
+            verdict = "warn"
         if thing.get("UID") in allow and verdict == "fail" and status != "UNINITIALIZED" and detail not in FAIL_DETAILS:
             verdict = "allowed"
         row = {

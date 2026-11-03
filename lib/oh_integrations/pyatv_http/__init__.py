@@ -4,7 +4,7 @@ openHAB has no Apple TV binding, and tvOS takes remote control only over
 Apple's Companion protocol, an encrypted session that needs a HAP pairing
 first, which pyatv speaks. So a small helper on the openHAB host keeps one
 pyatv connection open per Apple TV and takes plain HTTP requests on
-localhost only (HELPER) from the rule conf/automation/js/pyatv_http.js
+localhost only (HELPER) from the rule conf/automation/js/pyatv_http_<device>.js
 (pyatv_http.js beside this file, with its tables filled in). Every POLL the
 rule asks the helper for each Apple TV's state, which the helper answers at
 once from what the Apple TV last pushed, and posts it; a command's answer
@@ -36,6 +36,7 @@ import json
 from pathlib import Path
 
 from oh_conf import RULE_SENDS, Addon, House, YamlFile, uses
+from .. import _io
 
 from .. import _pairing
 
@@ -45,7 +46,7 @@ FILE = "yaml/appletv.yaml"
 HEADER = (
     "Apple TVs through the Apple TV helper (bin/thermite apple-tv) on this host,",
     "which keeps one pyatv Companion connection per Apple TV: the rule",
-    "conf/automation/js/pyatv_http.js asks it for their state and sends it",
+    "conf/automation/js/pyatv_http_<device>.js asks it for their state and sends it",
     "their power, key and pairing commands. Items are autoupdate off: they",
     "show only what the helper reports.",
 )
@@ -126,7 +127,7 @@ def _line(name: str, value: object) -> str:
 
 def rule(devices: list[dict]) -> str:
     """pyatv_http.js with its tables filled in for these devices."""
-    source = SOURCE.read_text(encoding="utf-8")
+    source = _io.embed(SOURCE.read_text(encoding="utf-8"))
     for mark in (DEVICES_MARK, PRESSES_MARK, APPS_MARK, RULE_SENDS):
         if source.split("\n").count(mark) != 1:
             raise ValueError(f"{SOURCE} must contain the line {mark!r} exactly once")
@@ -138,9 +139,14 @@ def rule(devices: list[dict]) -> str:
                      .replace(APPS_MARK, _line("APPS", APPS)))
 
 
+def rule_path(device: dict) -> str:
+    """One script context per device; its polls and commands stay ordered."""
+    return _io.script_path(RULE, device)
+
+
 def files(devices: list[dict], house: House) -> dict[str, str]:
     """The conf files rendered from all of this integration's devices."""
-    return {RULE: rule(devices)}
+    return {rule_path(device): rule([device]) for device in devices}
 
 
 def remote(device: dict) -> dict | None:
@@ -168,7 +174,10 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     """`files` with the rule asking the helper at HOST:PORT for `device`,
     as the Apple TV at 127.0.0.1 (a stand-in helper answers for any)."""
     prefix = "const DEVICES = "
-    lines = files[RULE].split("\n")
+    path = rule_path(device) if rule_path(device) in files else RULE
+    if path not in files:
+        raise ValueError(f"{rule_path(device)} has no device {device['id']}")
+    lines = files[path].split("\n")
     index = next(i for i, line in enumerate(lines) if line.startswith(prefix))
     entries = json.loads(lines[index][len(prefix):-1])
     matching = [entry for entry in entries if entry["id"] == device["id"]]
@@ -177,4 +186,4 @@ def aim(files: dict[str, str], device: dict, address: str) -> dict[str, str]:
     for entry in matching:
         entry.update(host="127.0.0.1", helper=f"http://{address}")
     lines[index] = _line("DEVICES", entries)
-    return {**files, RULE: "\n".join(lines)}
+    return {**files, path: "\n".join(lines)}

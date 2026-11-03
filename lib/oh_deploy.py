@@ -1034,6 +1034,22 @@ def sync(files: dict[str, Blob], target: Path, previous: Iterable[str] = (), dry
     no deploy installed is left alone."""
     target = Path(target)
     changes = Changes()
+    obsolete = sorted(set(previous) - set(files))
+
+    def remove(path: str) -> None:
+        destination = target / _relative(path)
+        _safe_parents(target, destination.parent)
+        if destination.is_symlink() or destination.is_file():
+            changes.removed.append(path)
+            if not dry_run:
+                destination.unlink()
+                _prune(target, destination.parent)
+
+    # A renamed/split script must not coexist on disk with its replacement:
+    # both define command rules. This also orders the reverse rollback safely.
+    scripts = {path for path in obsolete if path.startswith("automation/js/") and path.endswith(".js")}
+    for path in sorted(scripts):
+        remove(path)
     for path in sorted(files):
         destination = target / _relative(path)
         _safe_parents(target, destination.parent)
@@ -1047,14 +1063,10 @@ def sync(files: dict[str, Blob], target: Path, previous: Iterable[str] = (), dry
         if not dry_run:
             _make_dirs(target, destination.parent)
             _replace(destination, blob.data, PROGRAM_MODE if blob.program else FILE_MODE)
-    for path in sorted(set(previous) - set(files)):
-        destination = target / _relative(path)
-        _safe_parents(target, destination.parent)
-        if destination.is_symlink() or destination.is_file():
-            changes.removed.append(path)
-            if not dry_run:
-                destination.unlink()
-                _prune(target, destination.parent)
+    for path in obsolete:
+        if path not in scripts:
+            remove(path)
+    changes.removed.sort()
     return changes
 
 

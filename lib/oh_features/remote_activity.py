@@ -56,10 +56,10 @@ def manifest(house: House, conf: Conf) -> dict:
                 kind = "problem"
             elif name.endswith("_key"):
                 kind = "key"
-            elif item.get("type") == "Switch":
-                kind = "switch"
             elif options:
                 kind = "enum"
+            elif item.get("type") == "Switch":
+                kind = "switch"
             elif item.get("type") == "Dimmer":
                 kind = "volume"
         desc = {"label": item.get("label") or name, "device": house.label(device) if device else None,

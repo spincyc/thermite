@@ -6,7 +6,7 @@ from django.conf import settings
 from django.contrib.auth import logout
 from django.http import FileResponse, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.middleware.csrf import get_token
-from django.db import transaction
+from django.db import close_old_connections, connection, connections, transaction
 from django.utils import timezone
 
 from .auth import api, failure, login_user
@@ -256,22 +256,37 @@ def asset(request, name):
     return response
 
 
+@transaction.non_atomic_requests
 @api("room.control", methods=("POST",))
 def all_off(request):
     if body(request):
         raise Problem("unknown_field")
+    if connection.in_atomic_block:
+        # No request-owned DB transaction may remain open while its worker
+        # threads acquire room/resource locks and make transport calls.
+        raise Problem("runtime_busy", 503)
+    from .batches import Busy, commands
     adapter = get_adapter()
-    accepted, skipped = [], []
-    for room in adapter.contract.rooms:
+    user = request.identity_user
+    def dispatch(room):
         try:
-            adapter.dispatch(request.identity_user, room, "source", "off")
-        except Problem as exc:
-            if exc.status == 401:
-                raise
-            skipped.append({"room": room, "reason": exc.code})
+            close_old_connections()
+            # Original credential context is immutable and is revalidated by
+            # dispatch after acquiring the same room/resource locks as usual.
+            return adapter.dispatch(user, room, "source", "off")
+        finally:
+            connections.close_all()
+    results = commands.run(adapter.contract.rooms, dispatch,
+                           fatal=lambda error: not isinstance(error, Problem) or error.status == 401)
+    accepted, skipped = [], []
+    for room, result in results:
+        if isinstance(result, Busy):
+            skipped.append({"room": room, "reason": "runtime_busy"})
+        elif isinstance(result, Problem):
+            skipped.append({"room": room, "reason": result.code})
         else:
             accepted.append(room)
-    audit(request.identity_user, "all_off")
+    audit(user, "all_off")
     return JsonResponse({"accepted": accepted, "skipped": skipped}, status=202)
 
 

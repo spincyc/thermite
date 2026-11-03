@@ -4,6 +4,8 @@ import asyncio
 import json
 import os
 import stat
+import threading
+import weakref
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -67,41 +69,67 @@ class LoopbackTransport:
         self.base = base.rstrip("/")
         self.headers = {"Authorization": "Bearer " + path.read_text().strip()}  # lint: allow (scheme only; credential read from private file)
         self.timeout = timeout
+        self._guard = threading.Lock()
+        self._clients = {}
+        self._closed = False
+        # Services close explicitly after their requests/tasks stop. This also
+        # closes short-lived CLI transports and a normally exiting process.
+        self._finalizer = weakref.finalize(self, self._close_clients, self._clients)
+
+    @staticmethod
+    def _close_clients(clients):
+        for client in clients.values():
+            client.close()
+
+    def close(self):
+        with self._guard:
+            self._closed = True
+            self._finalizer()
+
+    def _client(self, kind):
+        with self._guard:
+            if self._closed:
+                raise RuntimeError("Runtime transport is closed")
+            if kind not in self._clients:
+                # Snapshot/media traffic must not consume the connections
+                # reserved for interactive commands. httpx.Client is shared
+                # safely by Django's request threads and reuses keepalives.
+                capacity = {"read": 8, "command": 4, "media": 2}[kind]
+                self._clients[kind] = httpx.Client(
+                    trust_env=False, follow_redirects=False, timeout=15 if kind == "media" else self.timeout,
+                    limits=httpx.Limits(max_connections=capacity, max_keepalive_connections=capacity))
+            return self._clients[kind]
 
     def read(self, item):
-        with httpx.Client(trust_env=False, follow_redirects=False, timeout=self.timeout) as client:
-            response = client.get(self.base + "/rest/items/" + quote(item, safe="") + "/state", headers=self.headers)
-            response.raise_for_status()
-            if len(response.content) > 65536:
-                raise ValueError("Oversize runtime state")
-            return response.text.strip()
+        response = self._client("read").get(self.base + "/rest/items/" + quote(item, safe="") + "/state", headers=self.headers)
+        response.raise_for_status()
+        if len(response.content) > 65536:
+            raise ValueError("Oversize runtime state")
+        return response.text.strip()
 
     def command(self, item, value):
-        with httpx.Client(trust_env=False, follow_redirects=False, timeout=self.timeout) as client:
-            response = client.post(self.base + "/rest/items/" + quote(item, safe=""), content=value,
-                                   headers={**self.headers, "Content-Type": "text/plain"})
-            if response.status_code not in {200, 202}:
-                raise ValueError("Runtime command failed")
+        response = self._client("command").post(self.base + "/rest/items/" + quote(item, safe=""), content=value,
+                                               headers={**self.headers, "Content-Type": "text/plain"})
+        if response.status_code not in {200, 202}:
+            raise ValueError("Runtime command failed")
 
     def group(self, item):
-        with httpx.Client(trust_env=False, follow_redirects=False, timeout=self.timeout) as client:
-            response = client.get(self.base + "/rest/items/" + quote(item, safe=""), params={"fields": "members(name,state)"}, headers=self.headers)
-            response.raise_for_status()
-            if len(response.content) > 262144:
-                raise ValueError("Oversize runtime group")
-            return response.json()
+        response = self._client("read").get(self.base + "/rest/items/" + quote(item, safe=""), params={"fields": "members(name,state)"}, headers=self.headers)
+        response.raise_for_status()
+        if len(response.content) > 262144:
+            raise ValueError("Oversize runtime group")
+        return response.json()
 
     def media(self, resource, method, body, maximum):
-        with httpx.Client(trust_env=False, follow_redirects=False, timeout=15) as client:
-            with client.stream(method, self.base + resource, content=body or None,
-                               headers={**self.headers, "Content-Type": "application/sdp"}) as response:
-                response.raise_for_status()
-                data = bytearray()
-                for chunk in response.iter_bytes():
-                    if len(data) + len(chunk) > maximum:
-                        raise ValueError("Oversize media")
-                    data.extend(chunk)
-                return response.headers.get("content-type", "").split(";")[0], bytes(data)
+        with self._client("media").stream(method, self.base + resource, content=body or None,
+                                          headers={**self.headers, "Content-Type": "application/sdp"}) as response:
+            response.raise_for_status()
+            data = bytearray()
+            for chunk in response.iter_bytes():
+                if len(data) + len(chunk) > maximum:
+                    raise ValueError("Oversize media")
+                data.extend(chunk)
+            return response.headers.get("content-type", "").split(";")[0], bytes(data)
 
     async def _events(self, client, query):
         async with client.stream("GET", self.base + "/rest/events?topics=" + query, headers=self.headers) as response:

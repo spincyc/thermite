@@ -202,9 +202,20 @@ print('Reviewed program bytes and root-owned ancestry verified')
 PY
 ```
 
+Before apply or rollback, change the creation mask to **022**. The root program
+and data package remain private. Newly created native repository/report parent
+directories must be traversable by openHAB's separate service UID; retaining
+077 here makes the initial inspection time out before the service stops. The
+individual report leaf remains private to the native UID. Check access as that
+UID when preparing the runtime directories; a same-UID sandbox does not prove
+this boundary. If an earlier inspection timed out, inspect and correct only
+the exact owned `userdata/thermite` parent directories before retrying. Do not
+recursively change userdata ownership or permissions.
+
 Then apply, or explicitly roll back the matching transaction:
 
 ```sh
+umask 022
 /usr/bin/python3 -I -S -B \
   /var/lib/thermite-androidtv-maintenance/v1/program/oh_androidtv_patch/owner_run.py \
   --program-sha256 EXTERNALLY_APPROVED_PROGRAM_SHA256 apply \
