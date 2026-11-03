@@ -33,7 +33,8 @@ Each step first checks whether it is done and skips it if so:
 preconditions (deploy/ is what thermite generate writes, and this area is
 committed); what changes: each installed unit against deploy/, and the
 runtime image the installed unit runs against the pinned one (when nothing
-differs it says so and stops); the boot test of HEAD's conf/; when
+differs on a host without AppArmor it says so and stops); enabled AppArmor
+requires approved root enforcement verification even when disk state is current; the boot test of HEAD's conf/; when
 runtime's units or service ownership need preparation, a backup, with runtime stopped, of the state's
 conf, userdata and Grafana's data into
 <state>/backups/<UTC time>-openhab-<installed version>.tar.gz (without

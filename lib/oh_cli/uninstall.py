@@ -28,10 +28,12 @@ them from starting at the next boot.
 
 It keeps the state root (conf, userdata, secrets, the deploy records and
 backups, Prometheus' samples, Grafana's data and the metrics secrets), the
-thermite user and group, the packages and the images, and says so: thermite
+thermite user and group, the packages, images and host node-exporter
+confinement configuration, and says so: thermite
 install puts runtime and the metrics back on the same state. --purge, as apt
 purge does, also deletes the state root; before that step it shows the path
-and asks you to type it, on top of the y before each sudo command.
+and asks you to type it, on top of the y before each sudo command. Separately
+staged authenticated-access releases and state are managed separately.
 
 Each step first checks whether it is done and skips it if so. --dry-run
 only reads: it reports each step and what it would run. An agent uses only
@@ -48,7 +50,7 @@ EXAMPLES = (
 def kept(context: steps.Context, purge: bool) -> str:
     state = "" if purge else f"the state root, {context.layout.root} (thermite uninstall --purge deletes it); "
     return (f"Kept: {state}the thermite user and group; the packages; the images (`sudo podman images` lists them, "
-            "`sudo podman rmi IMAGE` deletes one); and this clone. thermite install installs runtime and the metrics "
+            "`sudo podman rmi IMAGE` deletes one); host node-exporter confinement configuration; and this clone. thermite install installs runtime and the metrics "
             "again.")
 
 

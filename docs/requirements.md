@@ -33,7 +33,7 @@ useful for installation; routine administration can use SSH and a browser.
 
 ## Software and installation
 
-The host needs systemd, Podman 4.4 or later with runc, a kernel with overlayfs,
+The host needs systemd, Podman 4.5 or later with runc, a kernel with overlayfs,
 Python 3.11 or later, Git and make. Node.js and npm support terminal controls
 and runtime checks. The [server guide](installation.md) prepares the
 application environment and the runtime installer installs service packages.

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import oh_deploy as deploy
+import oh_apparmor
 import oh_logging
 import oh_service
 import oh_ports
@@ -23,8 +24,8 @@ PACKAGES = {
     "pacman": ("podman", "runc", "git", "make", "python", "python-yaml", "nodejs", "npm"),
     "apt-get": ("podman", "runc", "git", "make", "python3", "python3-yaml", "python3-venv", "nodejs", "npm"),
 }
-#: Quadlets need Podman 4.4.
-PODMAN = (4, 4)
+#: Quadlets and the additive node-exporter confinement override need Podman 4.5.
+PODMAN = (4, 5)
 #: The Apple TV helper's pins have no wheels for anything else.
 MACHINE = "x86_64"
 NAME = oh_service.ACCOUNT
@@ -198,8 +199,11 @@ class Packages(Step):
     def manager(self, system: System) -> str | None:
         return next((name for name in PACKAGES if system.which(name)), None)
 
+    def names(self, system: System, manager: str) -> tuple[str, ...]:
+        return (*PACKAGES[manager], *(("apparmor",) if oh_apparmor.enabled(system) else ()))
+
     def missing(self, system: System, manager: str) -> list[str]:
-        names = PACKAGES[manager]
+        names = self.names(system, manager)
         if manager == "pacman":
             # -T prints the names it cannot satisfy.
             code, out = system.capture(["pacman", "-T", *names])
@@ -211,14 +215,17 @@ class Packages(Step):
         manager = self.manager(system)
         if manager is None:
             return Check(False, "", f"no pacman or apt-get here: install {' '.join(PACKAGES['pacman'])} yourself")
-        missing = self.missing(system, manager)
+        try:
+            missing = self.missing(system, manager)
+        except ValueError as exc:
+            return Check(False, "", str(exc))
         if missing:
             return Check(False, f"to install: {' '.join(missing)}")
         version = podman_version(system)
         if version is None or version < PODMAN:
             found = "no version" if version is None else ".".join(map(str, version))
-            return Check(False, "", f"Podman reports {found}; quadlets need {'.'.join(map(str, PODMAN))} or later")
-        return Check(True, f"{' '.join(PACKAGES[manager])}; Podman {'.'.join(map(str, version))}")
+            return Check(False, "", f"Podman reports {found}; quadlets and the node confinement override need {'.'.join(map(str, PODMAN))} or later")
+        return Check(True, f"{' '.join(self.names(system, manager))}; Podman {'.'.join(map(str, version))}")
 
     def actions(self, system: System) -> list[Action]:
         manager = self.manager(system)
@@ -226,6 +233,66 @@ class Packages(Step):
         if manager == "pacman":
             return [Command(("pacman", "-S", "--needed", *missing), root=True)]
         return [Command(("apt-get", "install", *missing), root=True)]
+
+
+class NodeConfinement(Step):
+    title = "Node exporter confinement"
+    always = True
+    stop_on_failure = True
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def stale(self, system: System, enabled: bool) -> list[Path]:
+        return [path for path, content in oh_apparmor.expected(enabled).items()
+                if (info := system.stat(path)) is None or info.is_dir
+                or (info.uid, info.gid, info.mode) != (0, 0, 0o644) or system.read_bytes(path) != content]
+
+    def parser(self, system: System) -> str | None:
+        parser = system.which("apparmor_parser")
+        return parser if parser and Path(parser).is_absolute() else None
+
+    def check(self, system: System) -> Check:
+        try:
+            enabled = oh_apparmor.enabled(system)
+            stale = self.stale(system, enabled)
+        except (OSError, ValueError) as exc:
+            return Check(False, "", f"cannot verify node exporter confinement: {exc}")
+        if enabled and not self.parser(system):
+            return Check(False, "", "the kernel enables AppArmor but apparmor_parser is unavailable after package preparation; fix the AppArmor installation before continuing")
+        waiting = ["to install root-owned configuration: " + ", ".join(map(str, stale))] if stale else []
+        if enabled:
+            unit = system.unit("apparmor.service")
+            if unit.active != "active" or unit.enabled != "enabled":
+                waiting.append("to enable and start apparmor.service")
+            config, policy = system.stat(oh_apparmor.CONFIG), system.stat(oh_apparmor.POLICY)
+            if config is not None and policy is not None and policy.mtime > config.mtime:
+                waiting.append("to reload the changed node exporter policy")
+        if waiting:
+            return Check(False, "; ".join(waiting))
+        return Check(True, "configuration current; enforcement is verified by the approved root command on every run" if enabled else
+                     "kernel AppArmor disabled; neutral service configuration current")
+
+    def actions(self, system: System) -> list[Action]:
+        from oh_paths import PROGRAM
+        enabled = oh_apparmor.enabled(system)
+        parser = self.parser(system) if enabled else None
+        if enabled and parser is None:
+            raise ValueError("the required AppArmor parser is unavailable; confinement was not disabled")
+        actions = []
+        if self.stale(system, enabled):
+            actions.append(Command(("python3", str(PROGRAM / "lib/oh_apparmor.py")), root=True))
+            if not enabled:
+                actions.append(Command(("touch", str(oh_apparmor.CONFIG)), root=True))
+        if enabled:
+            unit = system.unit("apparmor.service")
+            if unit.active != "active" or unit.enabled != "enabled":
+                actions.append(Command(("systemctl", "enable", "--now", "apparmor.service"), root=True))
+            # securityfs can deny the owner even when its mode is world-readable.
+            # The helper verifies actual enforcement as root, and only repairs
+            # and touches CONFIG when the loaded policy needs replacement.
+            actions.append(Command(("python3", str(PROGRAM / "lib/oh_apparmor.py"), "--verify", parser), root=True))
+        return actions
 
 
 class Account(Step):
@@ -549,7 +616,10 @@ class Services(Step):
                 start.append(unit)
                 continue
             installed = system.stat(deploy.INSTALLED[name])
-            if installed is not None and state.since is not None and installed.mtime > state.since:
+            confinement = system.stat(oh_apparmor.CONFIG) if unit == "openhab-node-exporter.service" else None
+            if (confinement is not None and state.since is None
+                    or state.since is not None and any(info is not None and info.mtime > state.since
+                                                       for info in (installed, confinement))):
                 restart.append(unit)
         return start, restart, system.unit(self.path_unit).enabled != "enabled"
 
@@ -561,7 +631,7 @@ class Services(Step):
         if start:
             parts.append("to start: " + ", ".join(start))
         if restart:
-            parts.append("to restart, its unit changed since it started: " + ", ".join(restart))
+            parts.append("to restart, its unit or confinement changed since it started: " + ", ".join(restart))
         if enable:
             parts.append(f"to enable: {self.path_unit}")
         if "openhab.service" in start:
@@ -796,14 +866,15 @@ class MetricsAnswer(Step):
 
     def check(self, system: System) -> Check:
         health = self.health(system)
-        if health.prometheus_ok and health.targets_ok and health.grafana_ok:
+        if health.prometheus_ok and health.targets_ok and health.grafana_ok and health.systemd is True:
             return Check(True, health.describe())
         down = f"; down: {', '.join(health.down)}" if health.down else ""
         return Check(False, f"{health.describe()}{down}: waiting for service readiness and a successful "
-                            "scrape of every target")
+                            "scrape of every target and node_exporter's systemd collector")
 
     def actions(self, system: System) -> list[Action]:
-        return [Task(f"wait up to {METRICS_WAIT // 60} minutes for Prometheus' targets and "
+        return [Task(f"wait up to {METRICS_WAIT // 60} minutes for Prometheus' targets, a successful "
+                     f"node_exporter systemd collector scrape, and "
                      f"{self.context.grafana_url}api/health", self.wait)]
 
     def wait(self, system: System) -> int:
@@ -815,6 +886,8 @@ class MetricsAnswer(Step):
         health = self.health(system)
         if health.down:
             system.say(f"   still down: {', '.join(health.down)}")
+        if health.systemd is not True:
+            system.say("   still waiting for Prometheus to report a successful node_exporter systemd collector scrape")
         system.say("   `sudo journalctl -u openhab-prometheus.service` (or the unit of what is down) shows why")
         return 1
 
@@ -1236,6 +1309,8 @@ def plan(context: Context, system: System) -> Plan:
         start, restart, enable = step.plan(system)
         services += [*start, *restart, *([step.path_unit] if enable and step.path_unit not in start else [])]
     migration = []
+    if not NodeConfinement(context).check(system).done or oh_apparmor.enabled(system):
+        migration.append("node exporter confinement")
     if not Preconditions(context).check(system).done or not Account(context).check(system).done:
         migration.append("thermite account and group")
     if not NativePreparation(context).check(system).done:
@@ -1362,7 +1437,7 @@ def metrics_steps(context: Context, restart: bool = False) -> list[Step]:
 def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     """The upgrade's steps after its preconditions, in order. A host where
     openHAB runs without the metrics gets them here."""
-    return [WhatChanges(plan_), Preconditions(context), Packages(), BootTest(context), Backup(context, stamp, plan_.installed_version),
+    return [WhatChanges(plan_), Preconditions(context), Packages(), NodeConfinement(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
             Account(context), StateDirectories(context), MetricsDirectories(context),
             Units(context), NativePreparation(context), Deploy(context), Restart(context), Answers(context), Token(context), NativeReady(context),
             *metrics_steps(context, restart=True), Verify(context)]
@@ -1459,6 +1534,6 @@ def uninstall(context: Context, purge: bool = False) -> list[Step]:
 
 def install(context: Context) -> list[Step]:
     """Every step, in order."""
-    return [Preconditions(context), Committed(context), Packages(), Account(context), StateDirectories(context),
+    return [Preconditions(context), Committed(context), Packages(), NodeConfinement(context), Account(context), StateDirectories(context),
             MetricsDirectories(context), BootTest(context), Units(context), NativePreparation(context), Deploy(context), Services(context),
             Answers(context), Token(context), NativeReady(context), *metrics_steps(context), Verify(context)]

@@ -65,7 +65,7 @@ def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = Fa
                 return 1
             if code:
                 system.say(f"   failed, exit status {code}: {action.shown()}")
-                if not step.always:
+                if not step.always or getattr(step, "stop_on_failure", False):
                     system.say(f"Stopped. {rerun}")
                     return code
                 failed = code

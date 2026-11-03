@@ -658,6 +658,7 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         f"Description={service.description}",
         "Wants=network-online.target",
         "After=network-online.target",
+        *(["After=apparmor.service"] if service.unit == "openhab-node-exporter.service" else []),
         "",
         "[Container]",
         f"ContainerName={service.container}",
@@ -683,7 +684,11 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
     lines += [
         "",
         "[Service]",
+        *(["Environment=CONTAINERS_CONF_OVERRIDE=/etc/thermite/node-exporter-containers.conf"]
+          if service.unit == "openhab-node-exporter.service" else []),
         "UMask=0027",
+        *(["# node_exporter exits 143 after an ordinary container SIGTERM.", "SuccessExitStatus=143"]
+          if service.unit == "openhab-node-exporter.service" else []),
         "Restart=always",
         "RestartSec=10",
         "# The first start pulls the image.",

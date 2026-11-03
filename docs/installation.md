@@ -111,8 +111,14 @@ of the private site, launcher and Git repository. The host's systemd manager
 and Podman backend remain root-managed. The installer requires runc and selects
 it explicitly for container payloads. This preserves AppArmor confinement on
 Ubuntu 24.04, where crun can stack profiles under no-new-privileges and deny
-application signals. Native shutdown gets a 60-second grace period. Existing installations retain their
-numeric IDs and data paths when the old `openhab` account is renamed; see
+application signals. Native shutdown gets a 60-second grace period. On AppArmor
+hosts, node_exporter receives a separate policy for read-only systemd D-Bus
+queries. Its container configuration applies only to that service; other
+containers retain their default profiles. The installer presents policy loading
+and enables AppArmor's boot-time loading when needed.
+
+Existing installations retain their numeric IDs and data paths when the old
+`openhab` account is renamed; see
 [service ownership and migration](service-account.md).
 
 The native boot test downloads its pinned runtime and JRE. Before starting
