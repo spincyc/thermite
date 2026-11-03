@@ -16,6 +16,7 @@ const house = { rooms: [{ id: "room", label: "Room", sources: ["source"], displa
       input: { item: "avr_input", options: [["NET", "HEOS Music"]] }, playback: { item: "avr_playback" } } }
   } };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+const tick = () => new Promise(resolve => setImmediate(resolve));
 class FakeEvents { close() {} }
 function client() {
   const reads = [], writes = [];
@@ -32,13 +33,20 @@ function client() {
       payload: JSON.stringify({ type: "String", value }) }));
   }
   function reading() {
-    const first = reads.length, done = backend.readAll(), pending = reads.slice(first);
-    return { done, release(values) {
-      for (const read of pending) {
-        const item = read.url.split("/").at(-2);
-        const value = Object.hasOwn(values, item) ? values[item] : item === "loc_room_source" ? "source" : "NULL";
-        read.resolve({ ok: true, status: 200, text: async () => value });
-      }
+    let next = reads.length, finished = false;
+    const done = backend.readAll().finally(() => { finished = true; });
+    return { done, async release(values) {
+      // Production snapshots now dispatch in a bounded queue. Complete each
+      // fake HTTP request as it starts, rather than assuming an all-house burst.
+      do {
+        while (next < reads.length) {
+          const read = reads[next++], item = read.url.split("/").at(-2);
+          const value = Object.hasOwn(values, item) ? values[item] : item === "loc_room_source" ? "source" : "NULL";
+          read.resolve({ ok: true, status: 200, text: async () => value });
+        }
+        await tick();
+      } while (!finished);
+      return done;
     } };
   }
   return { backend, reads, writes, event, reading,
@@ -68,9 +76,13 @@ async function probe(name, run) {
     return { pass: await c.power() === "OFF" && c.problem() === "Synthetic native failure" };
   });
   await probe("newer_get_supersedes_older_get", async c => {
-    const old = c.reading(), latest = c.reading();
-    latest.release({ tv_power: "OFF", tv_problem: "Synthetic native failure" }); await latest.done;
-    old.release({ tv_power: "ON", tv_problem: "UNDEF" }); await old.done;
+    // Explicit reads retain independent revisions, even though duplicate
+    // all-house recovery sweeps are now coalesced.
+    for (const [item, fresh, stale] of [["tv_power", "OFF", "ON"], ["tv_problem", "Synthetic native failure", "UNDEF"]]) {
+      const first = c.reads.length, old = c.backend.readItem(item), latest = c.backend.readItem(item);
+      c.reads[first + 1].resolve({ ok: true, text: async () => fresh }); await latest;
+      c.reads[first].resolve({ ok: true, text: async () => stale }); await old;
+    }
     return { pass: await c.power() === "OFF" && c.problem() === "Synthetic native failure" };
   });
   for (const lifecycle of ["hide_resume", "stop", "stream_restart"]) await probe(lifecycle + "_rejects_old_get", async c => {

@@ -34,7 +34,9 @@ Not yet. Bringing the house into Apple Home through openHAB is planned.
 
 ### What does it need to run?
 
-One Linux machine that stays on, with Podman, Python 3.11 or later and Git; Node.js and npm for the terminal remote. You can [install on an existing server](https://spincyc.github.io/thermite/installation.html), or [build a standalone ISO](https://spincyc.github.io/thermite/iso.html) for a dedicated machine. Both paths keep your private site separate from the application.
+One always-on x86-64 Linux machine or VM. For the full stack, plan on at least 2 cores, 4 GiB RAM and a 64 GB SSD for light use; 4 cores, 8 GiB RAM and 128 GB is the recommended starting point. These are estimates, not benchmarked capacity limits. Existing servers need additional free space for state and container images; see the [system requirements](https://spincyc.github.io/thermite/requirements.html).
+
+Arch Linux is the primary [server installation](https://spincyc.github.io/thermite/installation.html) example and the default [standalone ISO](https://spincyc.github.io/thermite/iso.html) base. Ubuntu Server 24.04 is also documented, including an optional Ubuntu ISO. Each path keeps your private site separate from the application. The complete installer currently requires x86-64; ARM images for some dependencies do not make the full stack ARM-compatible.
 
 ### Are the screenshots from a real house?
 

@@ -1,0 +1,4 @@
+{
+  "packages": ["git", "make", "python", "python-yaml", "podman", "runc", "util-linux", "nodejs", "npm", "sudo"],
+  "network_config": {"type": "nm"}
+}

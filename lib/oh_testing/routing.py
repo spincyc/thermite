@@ -3,6 +3,7 @@ simulated matrices."""
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import threading
@@ -83,8 +84,22 @@ STOP_TIMEOUT = 3
 SIGNAL_WAIT = 30
 #: Seconds a step may take: a poll (2s), a command and its re-read.
 STEP = 15
+EXECUTOR_QUIET = 0.25
 #: The event stream the remote page listens to (web/remote/backend.js).
 REMOTE_EVENTS = "/rest/events?topics=openhab/items/loc_*_source/stateupdated"
+
+
+def executor_activity(value: str | None) -> dict[str, int] | None:
+    """Only bounded, sanitized executor counts can establish test quiescence."""
+    try:
+        row = json.loads(value) if isinstance(value, str) and len(value) <= 1024 else None
+    except ValueError:
+        return None
+    fields = ("pending", "active", "quarantined", "eventsQueued")
+    if (not isinstance(row, dict) or set(row) != set(fields)
+            or any(type(row[name]) is not int or not 0 <= row[name] <= 1048576 for name in fields)):
+        return None
+    return {name: row[name] for name in fields}
 
 
 def signal_problems(expected: set[str], states: dict[str, str], since: float) -> dict[str, tuple[str, str]]:
@@ -114,12 +129,52 @@ def signal_problems(expected: set[str], states: dict[str, str], since: float) ->
     return wrong
 
 
+def simulated_lifecycle(contract: dict, resources: set[str], *, endpoints: bool = True) -> dict:
+    """Project ownership onto this check's actual, simulated device actors.
+
+    Plain stage/source stand-ins have no terminal executor and cannot prove
+    lifecycle readiness or authorize source standby. Matrix I/O remains real
+    actor I/O, pointed at loopback by the existing provider aim() methods.
+    Controls-only checks retain the manual-command arbiter without route Items.
+    A subsequent configure() gives controller and actors one matching epoch.
+    """
+    result = copy.deepcopy(contract)
+    if "lifecycle" not in result:
+        return result
+    descriptor = result["lifecycle"]
+    descriptor.pop("io", None)
+    descriptor["resources"] = {name: row for name, row in descriptor["resources"].items() if name in resources}
+    selected = set(descriptor["resources"])
+    for row in descriptor["resources"].values():
+        row["requires"] = {value: {name: target for name, target in dependencies.items() if name in selected}
+                           for value, dependencies in row.get("requires", {}).items()}
+    for row in descriptor["sources"].values():
+        row.update(power=None, idle="preserve", capable=False)
+    if endpoints:
+        for endpoint in descriptor["endpoints"].values():
+            for choice in endpoint["choices"].values():
+                for field in ("requirements", "release", "deactivate"):
+                    choice[field] = {name: value for name, value in choice.get(field, {}).items() if name in selected}
+                choice["preserve"] = [name for name in choice.get("preserve", []) if name in selected]
+    else:
+        descriptor["endpoints"] = {}
+        result["rooms"] = {}
+        result["edid"] = None
+    if "consumers" in descriptor:
+        descriptor["consumers"] = [
+            {**row, "requirements": {name: value for name, value in row["requirements"].items() if name in selected}}
+            for row in descriptor["consumers"] if any(name in selected for name in row["requirements"])
+        ]
+    return result
+
+
 class Check:
     def __init__(self, data: dict, log=print) -> None:
         self.data = data
         self.log = log
         self.routing = data["routing"]
         full = routing.table(data)
+        self.executor_enabled = "lifecycle" in full
         self.table = full["rooms"]
         self.edid = full["edid"]
         self.devices = {d["id"]: d for d in data["devices"]}
@@ -177,7 +232,21 @@ class Check:
     def conf(self) -> dict[str, str | bytes]:
         """The generated routing files and the remote page, with the matrices
         at their simulators."""
-        files = render.render(self.data)
+        built = render.build(self.data)
+        contract = simulated_lifecycle(routing.table(self.data), set(self.ports))
+        if "lifecycle" in contract:
+            from oh_features.routing import lifecycle_io
+            # Regenerate custom matrix actor adapters with the projected epoch;
+            # never leave an original full-house adapter beside the projection.
+            house = oh_conf.House(self.data)
+            for module in {m.NAME: m for m in self.modules.values()}.values():
+                if hasattr(module, "files"):
+                    devices = [self.devices[ident] for ident, owner in self.modules.items() if owner is module]
+                    built.files.update(module.files(devices, house))
+            built.yaml[lifecycle_io.ITEMS].items.clear()
+            lifecycle_io.configure(house, built, contract["lifecycle"])
+            built.files[routing.RULE] = routing.rule(self.data, contract)
+        files = built.render()
         keep = {"services/addons.cfg", "yaml/model.yaml", routing.ITEMS, routing.RULE, all_off.ITEMS, all_off.RULE,
                 *(m.FILE for m in self.modules.values()), *(m.RULE for m in self.modules.values() if self.ruled(m)),
                 *(f"{remote.TARGET}/{name}" for name in remote.FILES)}
@@ -187,6 +256,10 @@ class Check:
             if hasattr(module, "files"):
                 devices = [device for device in self.data["devices"] if oh_conf.uses(device, module.PHASE, module.NAME)]
                 keep |= set(module.files(devices, house))
+        if "lifecycle" in contract:
+            keep |= {lifecycle_io.ITEMS, lifecycle_io.MODULE,
+                     "automation/js/node_modules/thermite-routing-lifecycle/index.js"}
+            keep |= {f"automation/js/thermite_routing_io_{key}.js" for key in contract["lifecycle"]["io"]["actors"]}
         out = {path: text for path, text in files.items() if path in keep}
         for ident, module in self.modules.items():
             if self.ruled(module):
@@ -197,6 +270,11 @@ class Check:
                 raise lib.SandboxError(f"{module.FILE}: expected {real} once")
             out[module.FILE] = out[module.FILE].replace(real, module.url(self.servers[ident].address))
         out[STAND_INS] = self.stand_ins()
+        leaks = sorted({f"{path}: {device['id']} ({device['ip']})" for path, text in out.items()
+                        if isinstance(text, str) for device in self.data["devices"]
+                        if device.get("ip") and re.search(rf"(?<![\d.]){re.escape(device['ip'])}(?![\d.])", text)})
+        if leaks:
+            raise lib.SandboxError("the conf would reach a real device: " + "; ".join(leaks))
         self.remote_files = {name: value if isinstance(value, bytes) else value.encode("utf-8")
                              for name in remote.FILES for value in [out[f"{remote.TARGET}/{name}"]]}
         return out
@@ -285,6 +363,36 @@ class Check:
 
     def matrices(self) -> dict[str, int]:
         return {item: self.sims[ident].get(port) for item, (ident, port) in self.ports.items()}
+
+    def executor_idle(self, what: str, timeout: float = STEP) -> bool:
+        """Let queued writes retire before a passive fixture change/baseline.
+
+        This is test-only REST observation at the existing wait cadence. It
+        proves neither route readiness nor the absence of external controllers.
+        A short stable window also lets already-posted native Item commands
+        reach their actor before a simulator is muted or moved externally.
+        """
+        if not getattr(self, "executor_enabled", False):
+            return True
+        from oh_features.routing.lifecycle_io import STATUS_ITEM
+        quiet_since = None
+
+        def wrong():
+            nonlocal quiet_since
+            activity = executor_activity(self.states().get(STATUS_ITEM))
+            if activity is None:
+                quiet_since = None
+                return {STATUS_ITEM: ("idle activity counts", "missing or invalid snapshot")}
+            busy = {name: (0, count) for name, count in activity.items() if count}
+            if busy:
+                quiet_since = None
+                return busy
+            now = time.monotonic()
+            if quiet_since is None:
+                quiet_since = now
+            return {} if now - quiet_since >= EXECUTOR_QUIET else {STATUS_ITEM: ("stable idle", "settling")}
+
+        return self.wait_for(f"{what}: executor idle", wrong, timeout)
 
     def sources(self, rooms: dict[str, str]) -> bool:
         return self.wait("Source", {self.table[r]["item"]: v for r, v in rooms.items()}, self.states)
@@ -424,6 +532,8 @@ class Check:
         return rounds
 
     def step_refused_choice(self) -> None:
+        if not self.executor_idle("before an unoffered choice"):
+            return
         room = next(iter(self.table))
         writes = {i: self._writes(i) for i in self.sims}
         self.command(self.table[room]["item"], "no_such_source")
@@ -481,6 +591,8 @@ class Check:
         room = max((r for r in self.table if self.table[r]["hdmi"]),
                    key=lambda r: (self.table[r]["switch"] is not None, len(self.matrix_choices(r))))
         self.turn_off([r for r in self.table if r != room])
+        if not self.executor_idle("before external matrix switches"):
+            return
         switch = self.table[room]["switch"]
         writes = {ident: self._writes(ident) for ident in self.sims}
         self.show_feed(room)
@@ -534,6 +646,8 @@ class Check:
         turned off there."""
         staged = [room for room, entry in self.table.items() if entry["stages"]]
         self.turn_off(staged)
+        if not self.executor_idle("before external device switches"):
+            return
         for room in staged:
             entry = self.table[room]
             # A source on the matrix, from Off, moves its ports: the choice is
@@ -542,20 +656,21 @@ class Check:
             self.away(room, choice)
             self.command(entry["item"], choice)
             self.expect_routed(f"{entry['label']} before a switch at its devices", {room: choice})
+            if not self.executor_idle(f"before {entry['label']} front-panel switches"):
+                return
             writes = {ident: self._writes(ident) for ident in self.sims}
             sent = dict(entry["inputs"][choice])
             commands = self.device_commands()
             for stage in entry["stages"]:
                 for value, source in stage["readback"].items():
-                    self.update(stage["input"], value)
-                    self.sources({room: source})
+                    self.external_source(room, stage["input"], value, source)
                 known = {*stage["readback"], stage["feed"]}
                 other = next((v for v in self.inputs[stage["input"]] if v not in known), None)
                 if other is not None:
                     self.update(stage["input"], other)
                     self.sources({room: "UNDEF"})
-                if stage["input"] in sent:
-                    self.update(stage["input"], str(sent[stage["input"]]))
+                for item, value in sent.items():
+                    self.update(item, str(value))
                 self.update(stage["power"], "OFF")
                 self.sources({room: routing.OFF})
                 self.update(stage["power"], "ON")
@@ -569,6 +684,19 @@ class Check:
                 if self._writes(ident) != writes[ident]:
                     self.failures.append(f"a switch made at {entry['label']}'s receiver or display made runtime "
                                          f"write to {ident}")
+
+    def external_source(self, room: str, item: str, value: str, source: str) -> None:
+        """A local receiver source can require a different input on its display.
+
+        Check the partial physical path first, then simulate the other device
+        reports needed for that source. These are readbacks, never commands.
+        """
+        self.update(item, value)
+        self.sources({room: self.readback_choice(room)})
+        for other, expected in self.table[room]["inputs"][source]:
+            if other != item:
+                self.update(other, str(expected))
+        self.sources({room: source})
 
     def away(self, room: str, choice: str) -> None:
         """Off leaves a switch the master matrix does not feed as it is, so
@@ -608,6 +736,8 @@ class Check:
     def step_silent(self) -> None:
         """The HDMI matrix, then each HDMI switch, stops answering and comes back."""
         for ident in [self.routing["hdmi_matrix"], *self.switches]:
+            if not self.executor_idle(f"before {ident} stops answering"):
+                return
             writes = {i: self._writes(i) for i in self.sims}
             self.sims[ident].muted = True
             self.answering([ident], False, STEP)

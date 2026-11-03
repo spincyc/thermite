@@ -75,7 +75,7 @@ SERVICES = ("openhab.service", "openhab-atv.service", "openhab-atv-restart.path"
             "openhab-metrics-restart.path")
 #: The area's files the Apple TV helper's container runs.
 ATV_APP = ("bin/thermite", "lib/oh_cli/__init__.py", "lib/oh_cli/apple_tv.py", "lib/oh_atv.py",
-           "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py", "lib/oh_ports.py")
+           "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py", "lib/oh_ports.py", "lib/oh_service.py")
 #: The helper's verb module in commits from before it was apple_tv.py: a
 #: deploy of such a commit (a rollback) installs it, or that commit's
 #: bin/thermite could not run the helper.
@@ -279,16 +279,23 @@ HEADER = [
 # Verified against image revision 86fb030402531b52bbdc80329d841f96f5d7896e
 # (the config of versions.json's linux/amd64 image), not a moving image tag.
 OPENHAB_UPDATE_SHA256 = "a6f09a576ae7ad4c6187ecd7ebcdd00d60b6b06ff073c8e52261bf8ca3129386"
+NATIVE_PRIME_MARKER = ".thermite-prime-incomplete"
+NATIVE_PRIME_WAIT = 180
+NATIVE_PRIME_REQUEST_WAIT = 30
+NATIVE_PRIME_STOP_WAIT = 60
+NATIVE_PRIME_POLL = 1
 
 
-def _openhab_initialize() -> str:
+def _openhab_initialize(*, track_fresh: bool = False) -> str:
     return " ".join((
         'test "$(id -u)" -ne 0 || { echo "openHAB must run as thermite, never root" >&2; exit 1; };',
         'umask 0077;',
+        *(['thermite_new_userdata=0;'] if track_fresh else []),
         'for name in conf userdata; do',
         'target="$OPENHAB_HOME/$name";',
         'if test -z "$(ls -A "$target")"; then',
         'cp -R --no-preserve=ownership "$OPENHAB_HOME/dist/$name/." "$target/";',
+        *(['if test "$name" = userdata; then thermite_new_userdata=1; fi;'] if track_fresh else []),
         'if test "$name" = conf; then chmod -R ug+rwX,o-rwx "$target"; fi;',
         'fi;',
         'done;',
@@ -297,10 +304,18 @@ def _openhab_initialize() -> str:
     ))
 
 
+def _openhab_prime_guard() -> str:
+    return (f'if test -e "$OPENHAB_USERDATA/{NATIVE_PRIME_MARKER}" || '
+            f'test -L "$OPENHAB_USERDATA/{NATIVE_PRIME_MARKER}"; then '
+            'echo "Incomplete fresh native cache priming; inspect the retained marker and logs before explicit recovery. No cache or credentials were removed." >&2; '
+            'exit 1; fi;')
+
+
 def openhab_start() -> str:
     """The entire container payload, including initialization, is non-root."""
     return " ".join((
         _openhab_initialize(),
+        _openhab_prime_guard(),
         'cmp -s "$OPENHAB_USERDATA/etc/version.properties" "$OPENHAB_HOME/dist/userdata/etc/version.properties" ||',
         '{ echo "Native userdata needs offline preparation; run thermite upgrade" >&2; exit 1; };',
         'rm -f "$OPENHAB_USERDATA/tmp/instances/instance.properties";',
@@ -312,8 +327,118 @@ def openhab_start() -> str:
     ))
 
 
+def _openhab_prime_cache() -> str:
+    """Prime fresh, authority-free userdata without upstream's overlapping JVMs.
+
+    Established restores intentionally omit cache. They use normal startup and
+    authenticated readiness instead: even empty file conf would load managed
+    rules/Things from their jsondb. Never launch or force-stop those in a prepare
+    command. A failed fresh primer retains its cache, lock, logs and marker for
+    explicit recovery; neither preparation nor normal startup may reuse it.
+    """
+    return " ".join((
+        'thermite_prime_cache() {',
+        'if test -d "$OPENHAB_USERDATA/cache/org.eclipse.osgi"; then return 0; fi;',
+        'if test "$thermite_new_userdata" != 1; then',
+        'echo "Skipping offline cache priming for existing userdata without cache; normal owner-approved startup and authenticated readiness will validate it.";',
+        'return 0; fi;',
+        'if test -d "$OPENHAB_USERDATA/jsondb"; then',
+        'managed="$(find "$OPENHAB_USERDATA/jsondb" -type f -name \'*.json\' -print -quit)";',
+        'if test -n "$managed"; then echo "Skipping offline cache priming: managed jsondb state exists."; return 0; fi; fi;',
+        'if test -n "$(ls -A "$OPENHAB_HOME/addons")"; then',
+        'echo "Skipping offline cache priming: local add-on files exist."; return 0; fi;',
+        'mkdir -p "$OPENHAB_USERDATA/tmp";',
+        'prime="$(mktemp -d "$OPENHAB_USERDATA/tmp/thermite-prime.XXXXXX")";',
+        f'prime_marker="$OPENHAB_USERDATA/{NATIVE_PRIME_MARKER}";',
+        '(set -C; printf "Fresh native cache priming incomplete; logs: %s\\n" "$prime" > "$prime_marker");',
+        'lock="$OPENHAB_USERDATA/cache-refresh-lock";',
+        '(set -C; : > "$lock") || { echo "Native cache refresh lock already exists; inspect before recovery." >&2; return 1; };',
+        'mkdir -p "$prime/conf/services" "$prime/logs";',
+        'printf "# no add-ons while the fresh OSGi cache is primed\\n" > "$prime/conf/services/addons.cfg";',
+        'custom="$OPENHAB_USERDATA/etc/custom.properties";',
+        'cp -p -- "$custom" "$prime/custom.properties.before";',
+        # Port zero must have a private, unique port file: otherwise Stop may
+        # fall back to PID signaling, which confined Ubuntu processes can deny.
+        'printf "\\n\\nkaraf.shutdown.port = 0\\nkaraf.shutdown.host = 127.0.0.1\\nkaraf.shutdown.port.file = %s\\n" "$prime/shutdown.port" >> "$custom";',
+        # The normal listener step follows preparation. Keep the temporary
+        # authority-free server on loopback with ephemeral ports meanwhile.
+        'shell_cfg="$OPENHAB_USERDATA/etc/org.apache.karaf.shell.cfg";',
+        "sed -i '/^[[:space:]]*sshHost[[:space:]]*=/d; /^[[:space:]]*sshPort[[:space:]]*=/d' \"$shell_cfg\";",
+        'printf "\\nsshHost = 127.0.0.1\\nsshPort = 0\\n" >> "$shell_cfg";',
+        'rm -f "$OPENHAB_USERDATA/tmp/instances/instance.properties";',
+        'printf "0\\n" > "$OPENHAB_USERDATA/openhab-start-level";',
+        'prime_pid=""; stop_pid=""; prime_cleanup_attempted=0; prime_cleanup_status=1;',
+        'thermite_prime_run() {',
+        'export KARAF_EXEC=exec OPENHAB_CONF="$prime/conf" OPENHAB_LOGDIR="$prime/logs";',
+        'export OPENHAB_HTTP_ADDRESS=127.0.0.1 OPENHAB_HTTP_PORT=0 OPENHAB_HTTPS_PORT=0;',
+        'export EXTRA_JAVA_OPTS="${EXTRA_JAVA_OPTS:-} -Duser.home=$OPENHAB_USERDATA -Declipse.stateSaveDelayInterval=1000";',
+        'exec "$@";',
+        '};',
+        # kill -0 can fail with EPERM while a child is alive. Both children
+        # have this process's UID and PID namespace; inspect their proc state
+        # and reap only an absent or dead child, never wait on a live process.
+        'thermite_prime_child_running() {',
+        'test -d "/proc/$1" || return 1;',
+        'child_stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0;',
+        'child_state="${child_stat##*) }"; child_state="${child_state%% *}";',
+        'case "$child_state" in Z|X|x) return 1 ;; *) return 0 ;; esac;',
+        '};',
+        'thermite_prime_wait_child() {',
+        'wait_pid=$1; left=$2;',
+        'while thermite_prime_child_running "$wait_pid" && test "$left" -gt 0; do',
+        f'sleep {NATIVE_PRIME_POLL}; left=$((left - 1)); done;',
+        '! thermite_prime_child_running "$wait_pid";',
+        '};',
+        'thermite_stop_prime() {',
+        'test -n "$prime_pid" || return 0;',
+        'test "$prime_cleanup_attempted" = 0 || return "$prime_cleanup_status";',
+        'prime_cleanup_attempted=1;',
+        # A repeated termination request must not restart a cleanup budget.
+        "trap '' INT HUP TERM;",
+        'if thermite_prime_child_running "$prime_pid"; then',
+        'stop_port="$(cat "$prime/shutdown.port" 2>/dev/null)" || { echo "Native primer shutdown port file is missing or unreadable; retaining incomplete cache. Temporary processes may remain until preparation container cleanup." >&2; return 1; };',
+        'case "$stop_port" in ""|*[!0-9]*) echo "Native primer shutdown port is invalid; refusing the PID fallback and retaining incomplete cache. Temporary processes may remain until preparation container cleanup." >&2; return 1 ;; esac;',
+        'if ! test "$stop_port" -gt 0 || ! test "$stop_port" -le 65535; then echo "Native primer shutdown port is invalid; refusing the PID fallback and retaining incomplete cache. Temporary processes may remain until preparation container cleanup." >&2; return 1; fi;',
+        'thermite_prime_run "$OPENHAB_HOME/runtime/bin/stop" > "$prime/stop.log" 2>&1 & stop_pid=$!;',
+        f'if ! thermite_prime_wait_child "$stop_pid" {NATIVE_PRIME_REQUEST_WAIT}; then',
+        'echo "Native primer shutdown client did not exit within its allowance; temporary processes may remain until preparation container cleanup. Incomplete cache retained." >&2; return 1; fi;',
+        'stop_exit=0; wait "$stop_pid" || stop_exit=$?; stop_pid="";',
+        'if test "$stop_exit" != 0; then echo "Native primer shutdown request failed; inspect retained stop.log. Temporary processes may remain until preparation container cleanup." >&2; return 1; fi;',
+        # Stop's zero status confirms a delivered request, not JVM exit. If
+        # either child remains alive, return with all evidence retained; the
+        # preparation container's PID 1 exit delegates namespace teardown to
+        # its runtime rather than signaling through the AppArmor boundary.
+        f'if ! thermite_prime_wait_child "$prime_pid" {NATIVE_PRIME_STOP_WAIT}; then',
+        'echo "Native primer JVM did not exit after Karaf shutdown; temporary processes may remain until preparation container cleanup. Incomplete cache retained." >&2; return 1; fi;',
+        'fi;',
+        'prime_exit=0; wait "$prime_pid" || prime_exit=$?; prime_pid="";',
+        'if test "$prime_exit" != 0; then echo "Native cache primer exited unsuccessfully; incomplete cache retained." >&2; return 1; fi;',
+        'prime_cleanup_status=0;',
+        '};',
+        "trap 'prime_result=$?; trap - EXIT; thermite_stop_prime || prime_result=1; exit \"$prime_result\"' EXIT;",
+        "trap 'exit 130' INT HUP; trap 'exit 143' TERM;",
+        'thermite_prime_run "$OPENHAB_HOME/runtime/bin/karaf" server > "$prime/console.log" 2>&1 & prime_pid=$!;',
+        f'left={NATIVE_PRIME_WAIT}; ready=0;',
+        'while thermite_prime_child_running "$prime_pid" && test "$left" -gt 0; do',
+        'level="$(cat "$OPENHAB_USERDATA/openhab-start-level" 2>/dev/null || :)";',
+        'case "$level" in ""|*[!0-9]*) ;; *) if test "$level" -ge 10; then ready=1; break; fi ;; esac;',
+        f'sleep {NATIVE_PRIME_POLL}; left=$((left - 1)); done;',
+        'if test "$ready" != 1; then echo "Fresh native cache primer did not reach start level 10; inspect retained logs." >&2; return 1; fi;',
+        'thermite_stop_prime || return 1;',
+        'test -d "$OPENHAB_USERDATA/cache/org.eclipse.osgi" || { echo "Native primer exited without an OSGi cache." >&2; return 1; };',
+        'cat "$prime/custom.properties.before" > "$custom";',
+        'printf "0\\n" > "$OPENHAB_USERDATA/openhab-start-level";',
+        'rm -f "$lock";',
+        'rm -rf -- "$prime";',
+        'rm -f "$prime_marker";',
+        'trap - EXIT INT HUP TERM;',
+        'echo "Fresh native OSGi cache primed; the temporary JVM has fully exited.";',
+        '}; thermite_prime_cache;',
+    ))
+
+
 def openhab_prepare() -> str:
-    """Offline, explicit userdata upgrade using the pinned upstream updater.
+    """Upgrade offline, then prime only newly initialized authority-free userdata.
 
     Its only root requirement is an initial identity guard. All mutable paths
     belong to thermite, so remove that exact guard from a hash-checked copy
@@ -321,8 +446,10 @@ def openhab_prepare() -> str:
     review before its hash is accepted here.
     """
     return " ".join((
-        _openhab_initialize(),
-        'if cmp -s "$OPENHAB_USERDATA/etc/version.properties" "$OPENHAB_HOME/dist/userdata/etc/version.properties"; then exit 0; fi;',
+        _openhab_initialize(track_fresh=True),
+        _openhab_prime_guard(),
+        'export JAVA_HOME="$(find /usr/lib/jvm -mindepth 1 -maxdepth 1 -type d | head -n 1)";',
+        'if ! cmp -s "$OPENHAB_USERDATA/etc/version.properties" "$OPENHAB_HOME/dist/userdata/etc/version.properties"; then (',
         f'printf "{OPENHAB_UPDATE_SHA256}  /openhab/runtime/bin/update\\n" | sha256sum -c -;',
         'mkdir -p "$OPENHAB_BACKUPS" "$OPENHAB_LOGDIR";',
         'backup="$(mktemp "$OPENHAB_BACKUPS/thermite-before-$(date -u +%Y%m%dT%H%M%S)-XXXXXX.tar")";',
@@ -331,9 +458,10 @@ def openhab_prepare() -> str:
         'trap \'rm -f "$prepared"\' EXIT;',
         "sed '/^  # Ask to run as root/,/^  fi$/d' /openhab/runtime/bin/update > \"$prepared\";",
         '! grep -Fq \'Please run this script as root!\' "$prepared";',
-        'export JAVA_HOME="$(find /usr/lib/jvm -mindepth 1 -maxdepth 1 -type d | head -n 1)";',
         'sh -e "$prepared";',
         'cmp -s "$OPENHAB_USERDATA/etc/version.properties" "$OPENHAB_HOME/dist/userdata/etc/version.properties"',
+        '); fi;',
+        _openhab_prime_cache(),
     ))
 
 
@@ -341,7 +469,7 @@ def prepare_openhab_argv(versions: dict, host: dict) -> tuple[str, ...]:
     """Owner-approved Podman management; the offline payload remains non-root."""
     oh_service.validate_identity(host["uid"], host["gid"])
     root = host["state_root"]
-    return ("podman", "run", "--rm", "--network=host", "--user", f"{host['uid']}:{host['gid']}",
+    return ("podman", "run", "--rm", "--runtime=runc", "--network=host", "--user", f"{host['uid']}:{host['gid']}",
             "--umask=0077", "--cap-drop=all", "--security-opt=no-new-privileges", "--entrypoint=/bin/sh",
             "--env", f"TZ={host['timezone']}",
             "--volume", f"{root}/conf:/openhab/conf:Z",
@@ -372,8 +500,13 @@ def render_quadlet(versions: dict, host: dict) -> str:
         f"Group={host['gid']}",
         "NoNewPrivileges=true",
         "DropCapability=all",
+        # Avoid crun/AppArmor profile stacking under no-new-privileges.
+        "PodmanArgs=--runtime=runc",
         "PodmanArgs=--umask=0077",
-        "Entrypoint=/bin/sh",
+        # Quadlet 4.9 (Ubuntu 24.04) predates the Entrypoint key.
+        "PodmanArgs=--entrypoint=/bin/sh",
+        "# Karaf needs time to flush persistent state before removal.",
+        "PodmanArgs=--stop-timeout=60",
         f"Volume={root}/conf:/openhab/conf:Z",
         f"Volume={root}/userdata:/openhab/userdata:Z",
         f"Volume={root}/addons:/openhab/addons:Z",
@@ -394,6 +527,7 @@ def render_quadlet(versions: dict, host: dict) -> str:
         "UMask=0077",
         "Restart=always",
         "TimeoutStartSec=300",
+        "TimeoutStopSec=90",
         "",
         "[Install]",
         "WantedBy=multi-user.target",
@@ -423,6 +557,8 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
         f"Group={host['gid']}",
         "NoNewPrivileges=true",
         "DropCapability=all",
+        # Avoid crun/AppArmor profile stacking under no-new-privileges.
+        "PodmanArgs=--runtime=runc",
         "PodmanArgs=--umask=0077",
         "# Its code, as the last deploy installed it.",
         f"Volume={layout.atv_app}:/app:ro,Z",
@@ -507,6 +643,21 @@ def _volume(service: metrics.Service, volume: metrics.Volume, root: Path, shared
     return f"Volume={source}:{volume.target}" + (f":{','.join(options)}" if options else "")
 
 
+def _grafana_conditions(host: dict) -> list[str]:
+    """A partial-install reboot must not initialize Grafana's default admin."""
+    credential = exec_word(str(state(host).monitoring_secrets / metrics.GRAFANA_ADMIN_PASSWORD))
+    prefix = (f"/usr/bin/setpriv --reuid={host['uid']} --regid={host['gid']} "
+              "--clear-groups --no-new-privs ")
+    lines = ["# Check as the payload user before any administrator database can be created."]
+    lines += [f"ExecCondition={prefix}/usr/bin/test -{flag} {credential}" for flag in ("f", "r", "s")]
+    # run.sh uses export around command substitution, which masks cat failure.
+    # Assignment preserves that failure and rejects newline-only input after
+    # substitution, without exporting or printing the credential.
+    check = 'credential=$(/usr/bin/cat -- "$1") && test -n "$credential"'
+    lines.append(f"ExecCondition={prefix}/usr/bin/sh -ec {exec_word(check)} thermite-grafana {credential}")
+    return lines
+
+
 def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service) -> str:
     oh_service.validate_identity(host["uid"], host["gid"])
     root = Path(host["state_root"])
@@ -523,6 +674,7 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         f"Description={service.description}",
         "Wants=network-online.target",
         "After=network-online.target",
+        *(["After=apparmor.service"] if service.unit == "openhab-node-exporter.service" else []),
         "",
         "[Container]",
         f"ContainerName={service.container}",
@@ -533,6 +685,8 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         f"Group={host['gid']}",
         "NoNewPrivileges=true",
         "DropCapability=all",
+        # Avoid crun/AppArmor profile stacking under no-new-privileges.
+        "PodmanArgs=--runtime=runc",
         "PodmanArgs=--umask=0027",
         *(f"# {note}" for note in service.notes),
         *(_volume(service, volume, root, shared) for volume in service.volumes),
@@ -546,7 +700,12 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
     lines += [
         "",
         "[Service]",
+        *(["Environment=CONTAINERS_CONF_OVERRIDE=/etc/thermite/node-exporter-containers.conf"]
+          if service.unit == "openhab-node-exporter.service" else []),
         "UMask=0027",
+        *(_grafana_conditions(host) if service.image == "grafana" else []),
+        *(["# node_exporter exits 143 after an ordinary container SIGTERM.", "SuccessExitStatus=143"]
+          if service.unit == "openhab-node-exporter.service" else []),
         "Restart=always",
         "RestartSec=10",
         "# The first start pulls the image.",
@@ -876,6 +1035,22 @@ def sync(files: dict[str, Blob], target: Path, previous: Iterable[str] = (), dry
     no deploy installed is left alone."""
     target = Path(target)
     changes = Changes()
+    obsolete = sorted(set(previous) - set(files))
+
+    def remove(path: str) -> None:
+        destination = target / _relative(path)
+        _safe_parents(target, destination.parent)
+        if destination.is_symlink() or destination.is_file():
+            changes.removed.append(path)
+            if not dry_run:
+                destination.unlink()
+                _prune(target, destination.parent)
+
+    # A renamed/split script must not coexist on disk with its replacement:
+    # both define command rules. This also orders the reverse rollback safely.
+    scripts = {path for path in obsolete if path.startswith("automation/js/") and path.endswith(".js")}
+    for path in sorted(scripts):
+        remove(path)
     for path in sorted(files):
         destination = target / _relative(path)
         _safe_parents(target, destination.parent)
@@ -889,14 +1064,10 @@ def sync(files: dict[str, Blob], target: Path, previous: Iterable[str] = (), dry
         if not dry_run:
             _make_dirs(target, destination.parent)
             _replace(destination, blob.data, PROGRAM_MODE if blob.program else FILE_MODE)
-    for path in sorted(set(previous) - set(files)):
-        destination = target / _relative(path)
-        _safe_parents(target, destination.parent)
-        if destination.is_symlink() or destination.is_file():
-            changes.removed.append(path)
-            if not dry_run:
-                destination.unlink()
-                _prune(target, destination.parent)
+    for path in obsolete:
+        if path not in scripts:
+            remove(path)
+    changes.removed.sort()
     return changes
 
 
@@ -951,7 +1122,7 @@ def ownership_argv(layout: State, host: dict | None = None) -> tuple[str, ...]:
 
 
 @contextlib.contextmanager
-def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_logging: bool):
+def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_logging: bool, *, approved: bool = False):
     """Approve before writes; repair ownership even when a write later fails."""
     argv = ownership_argv(layout, host)
     uid, gid = int(argv[argv.index("--uid") + 1]), int(argv[argv.index("--gid") + 1])
@@ -965,7 +1136,7 @@ def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_l
         yield
         return
     if not direct:
-        if not sys.stdin.isatty():
+        if not approved and not sys.stdin.isatty():
             raise DeployError("deployment needs an explicitly approved thermite ownership handoff; "
                               "run interactively (no files were changed): " + shlex.join(command))
         if shutil.which("sudo") is None:
@@ -974,7 +1145,7 @@ def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_l
         if require_logging:
             print("  " + shlex.join(checks))
         print("  " + shlex.join(command))
-        if input("Approve this ownership handoff before deployment writes? [y/N] ").strip().lower() not in ("y", "yes"):
+        if not approved and input("Approve this ownership handoff before deployment writes? [y/N] ").strip().lower() not in ("y", "yes"):
             raise DeployError("ownership handoff declined; no files were changed")
     if require_logging:
         try:
@@ -1022,7 +1193,8 @@ class Deployed:
 
 
 def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bool = False,
-           dry_run: bool = False, how: str = "deploy", host: dict | None = None) -> Deployed:
+           dry_run: bool = False, how: str = "deploy", host: dict | None = None,
+           ownership_approved: bool = False) -> Deployed:
     """Install commit `rev`'s conf/ into the state's conf and the helper's
     files into atv/app (and, once the state has their directories, its
     metrics/ into metrics and the exporter into exporter/app), then record
@@ -1039,7 +1211,8 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
                               f"and make check has tested the working tree. Commit them first:{listed}")
     files, application = deployment_files(area, commit, var)
     return install(files, commit, subject(area, commit), layout, var, force=force, dry_run=dry_run,
-                   legacy_atv=legacy_atv(), how=how, host=host, application=application)
+                   legacy_atv=legacy_atv(), how=how, host=host, application=application,
+                   ownership_approved=ownership_approved)
 
 
 def deployment_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
@@ -1085,7 +1258,8 @@ def legacy_atv(installed: Path = INSTALLED[ATV_QUADLET]) -> bool:
 
 def install(files: dict[str, Blob], commit: str, title: str, layout: State, var: Path, *,
             force: bool = False, dry_run: bool = False, legacy_atv: bool = False, how: str = "deploy",
-            host: dict | None = None, post=None, application: dict | None = None) -> Deployed:
+            host: dict | None = None, post=None, application: dict | None = None,
+            ownership_approved: bool = False) -> Deployed:
     """deploy() once the commit's files ({area path: Blob}) are exported.
     With legacy_atv the helper also gets bin/thermite as LEGACY_ATV_PROGRAM;
     a commit from before bin/thermite brings its own LEGACY_ATV_PROGRAM,
@@ -1104,7 +1278,7 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
                           "install a commit known to be good (thermite rollback needs none for a commit "
                           "deployed here before)")
     preflight(layout)
-    with ownership_handoff(layout, host, dry_run, bool(oh_logging.pairing_conf(conf))):
+    with ownership_handoff(layout, host, dry_run, bool(oh_logging.pairing_conf(conf)), approved=ownership_approved):
         previous = read_record(layout)
         conf_changes = sync(conf, layout.conf, previous.get("conf", {}), dry_run)
         app_changes = sync(app, layout.atv_app, previous.get("atv_app", {}), dry_run)
@@ -1387,7 +1561,7 @@ class MetricsHealth:
 
     @property
     def targets_ok(self) -> bool:
-        return self.total is not None and self.up == self.total
+        return self.total is not None and self.total > 0 and self.up == self.total
 
     def describe(self) -> str:
         if not self.prometheus_ok:

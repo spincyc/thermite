@@ -4,22 +4,30 @@ System with a fake host."""
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import getpass
 import grp
+import http.client
+import json
 import os
 import platform
 import pwd
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
 
 import oh_cli
 import oh_deploy as deploy
+import oh_http
+from oh_install import progress
 
 
 @dataclasses.dataclass(frozen=True)
@@ -45,6 +53,7 @@ class Stat:
     mode: int
     is_dir: bool
     mtime: float
+    size: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -55,6 +64,15 @@ class Unit:
     active: str
     enabled: str
     since: float | None = None
+    #: Stable systemd active-enter monotonic timestamp, in microseconds.
+    generation: int | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class NativeProbe:
+    status: int
+    value: object = None
+    problem: str | None = None
 
 
 class System:
@@ -90,13 +108,15 @@ class System:
     def which(self, name: str) -> str | None:
         return shutil.which(name)
 
-    def capture(self, argv: Sequence[str]) -> tuple[int, str]:
+    def capture(self, argv: Sequence[str], *, timeout: float | None = None) -> tuple[int, str]:
         """Exit status and output of a read-only command; 127 if it is missing."""
         oh_cli.trace_run(argv)
         try:
-            out = subprocess.run(list(argv), capture_output=True, text=True, check=False)
+            out = subprocess.run(list(argv), capture_output=True, text=True, check=False, timeout=timeout)
         except FileNotFoundError:
             return 127, ""
+        except subprocess.TimeoutExpired:
+            return 124, ""
         return out.returncode, out.stdout
 
     def group(self, key: str | int) -> Group | None:
@@ -120,7 +140,7 @@ class System:
             found = os.stat(path)
         except (FileNotFoundError, NotADirectoryError, PermissionError):
             return None
-        return Stat(found.st_uid, found.st_gid, found.st_mode & 0o7777, os.path.isdir(path), found.st_mtime)
+        return Stat(found.st_uid, found.st_gid, found.st_mode & 0o7777, os.path.isdir(path), found.st_mtime, found.st_size)
 
     def listdir(self, path: Path) -> list[str]:
         """The names in a directory; none when it is missing or unreadable."""
@@ -147,25 +167,60 @@ class System:
     def port_free(self, port: int) -> bool:
         with socket.socket() as sock:
             try:
+                # Match the servers' restart semantics: old closed connections
+                # in TIME_WAIT are reusable, while a live listener still blocks.
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(("0.0.0.0", port))
             except OSError:
                 return False
         return True
 
-    def unit(self, name: str) -> Unit:
-        code, out = self.capture(["systemctl", "show", name,
-                                  "--property=ActiveState,UnitFileState,ActiveEnterTimestampMonotonic"])
+    def unit(self, name: str, *, timeout: float | None = None) -> Unit:
+        argv = ["systemctl", "show", name, "--property=ActiveState,UnitFileState,ActiveEnterTimestampMonotonic"]
+        code, out = self.capture(argv, timeout=timeout) if timeout is not None else self.capture(argv)
         values = dict(line.split("=", 1) for line in out.splitlines() if "=" in line) if code == 0 else {}
         monotonic = int(values.get("ActiveEnterTimestampMonotonic") or 0)
         # systemd counts on CLOCK_MONOTONIC, as time.monotonic() does.
         since = time.time() - time.monotonic() + monotonic / 1e6 if monotonic else None
-        return Unit(values.get("ActiveState", "unknown"), values.get("UnitFileState", ""), since)
+        return Unit(values.get("ActiveState", "unknown"), values.get("UnitFileState", ""), since, monotonic or None)
 
     def openhab_version(self, url: str) -> str | None:
         return deploy.openhab_version(url)
 
     def token_status(self, url: str, token: str) -> int | None:
         return deploy.token_status(url, token)
+
+    def native_probe(self, url: str, token: str, path: str, deadline: float, *, json_body: bool = True) -> NativeProbe:
+        """One authenticated read, bounded through headers/body by the startup deadline."""
+        def remaining():
+            value = deadline - self.clock()
+            if value <= 0:
+                raise oh_http.DeadlineExpired("startup deadline expired")
+            return value
+        try:
+            timeout = min(5, remaining())
+            request = urllib.request.Request(url.rstrip("/") + path, method="GET", headers={
+                "Accept": "application/json" if json_body else "text/plain", "Authorization": f"Bearer {token}"})
+            oh_cli.trace_http("GET", url.rstrip("/") + path)
+            status, body = oh_http.request(request, timeout=timeout, remaining=remaining)
+        except urllib.error.HTTPError as exc:
+            status, body = exc.code, b""
+            exc.close()
+        except (OSError, urllib.error.URLError, http.client.HTTPException):
+            return NativeProbe(0)
+        except oh_http.DeadlineExpired:
+            return NativeProbe(0, problem="startup deadline expired")
+        if self.clock() >= deadline:
+            return NativeProbe(0, problem="startup deadline expired")
+        if status != 200 or not json_body:
+            return NativeProbe(status)
+        try:
+            value = json.loads(body.decode("utf-8"))
+        except (ValueError, UnicodeError, RecursionError):
+            return NativeProbe(status, problem="malformed JSON")
+        if self.clock() >= deadline:
+            return NativeProbe(0, problem="startup deadline expired")
+        return NativeProbe(status, value)
 
     def metrics_health(self, host: dict, address: str | None) -> deploy.MetricsHealth:
         return deploy.metrics_health(host, address)
@@ -175,42 +230,149 @@ class System:
 
     def ask(self, prompt: str) -> str:
         try:
-            if oh_cli.switches.quiet:
-                # Under -q what say() printed goes nowhere, yet the owner must
-                # see what a question is about.
-                sys.stderr.write(f"{getattr(self, 'said', '')}\n{prompt}")
-                sys.stderr.flush()
-                return input()
-            return input(prompt)
+            with progress.paused():
+                if oh_cli.switches.quiet:
+                    active = progress.current.get()
+                    if active:
+                        active.prompt_context()
+                    else:
+                        print(getattr(self, "said", ""), file=sys.stderr)
+                    sys.stderr.write(prompt)
+                    sys.stderr.flush()
+                    return input()
+                return input(prompt)
         except EOFError:
             return ""
 
     def secret(self, prompt: str) -> str:
         try:
-            return getpass.getpass(prompt)
+            with progress.paused():
+                if oh_cli.switches.quiet and (active := progress.current.get()):
+                    active.prompt_context()
+                return getpass.getpass(prompt)
         except EOFError:
             return ""
 
     def say(self, text: str) -> None:
         self.said = text
-        print(text, flush=True)
+        with progress.paused():
+            if oh_cli.switches.quiet and (active := progress.current.get()):
+                active.notes.append(text)
+                return
+            print(text, flush=True)
 
-    def run(self, argv: Sequence[str], cwd: Path) -> int:
+    def run(self, argv: Sequence[str], cwd: Path, *, timeout: float | None = None) -> int:
         oh_cli.trace_run(argv, cwd)
         try:
-            return subprocess.run(list(argv), cwd=cwd, check=False).returncode
+            if progress.capture_command.get():
+                from oh_install import output
+                active = progress.current.get()
+                return output.run(argv, cwd, timeout=timeout,
+                                  report=lambda text: active.message(text, error=True))
+            with contextlib.ExitStack() as stack:
+                options = {}
+                if oh_cli.switches.quiet and progress.terminal_command.get():
+                    # CLI quiet mode discards fd 1 process-wide. A package
+                    # manager may prompt on stdout: give interactive children
+                    # their terminal back instead of hiding that question.
+                    try:
+                        options["stdout"] = stack.enter_context(open("/dev/tty", "w"))
+                    except OSError:
+                        options["stdout"] = sys.stderr
+                return subprocess.run(list(argv), cwd=cwd, check=False, timeout=timeout, **options).returncode
         except FileNotFoundError:
             self.say(f"   {argv[0]}: no such program on this host")
             return 127
+        except subprocess.TimeoutExpired:
+            self.say("   command exceeded the remaining startup allowance; inspect the native service before retrying")
+            return 124
+
+    @contextlib.contextmanager
+    def _private_directory(self, path: Path):
+        """Anchor an owned credential directory; narrow only that final inode."""
+        path = Path(path).expanduser()
+        if ".." in path.parts:
+            raise ValueError("private credential paths must not contain parent traversal")
+        path = Path(os.path.abspath(path))
+        if path == Path("/"):
+            raise ValueError("the filesystem root is not a private credential directory")
+        flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
+        descriptor = os.open("/", flags)
+        try:
+            for part in path.parts[1:]:
+                try:
+                    child = os.open(part, flags, dir_fd=descriptor)
+                except FileNotFoundError:
+                    try:
+                        os.mkdir(part, mode=0o700, dir_fd=descriptor)
+                    except FileExistsError:
+                        pass
+                    child = os.open(part, flags, dir_fd=descriptor)
+                os.close(descriptor)
+                descriptor = child
+            if os.fstat(descriptor).st_uid != os.geteuid():
+                raise ValueError("private credential directory must belong to this operator")
+            child = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+            info = os.fstat(descriptor)
+            if info.st_uid != os.geteuid():
+                raise ValueError("private credential directory custody changed")
+            if stat.S_IMODE(info.st_mode) != 0o700:
+                os.fchmod(descriptor, 0o700)
+            yield descriptor
+        finally:
+            os.close(descriptor)
+
+    def private_directory(self, path: Path) -> None:
+        with self._private_directory(path):
+            pass
 
     def write_private(self, path: Path, text: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
+        path = Path(path)
+        if not path.name or ".." in path.parts:
+            raise ValueError("invalid private credential path")
+        with self._private_directory(path.parent) as parent, contextlib.ExitStack() as stack:
+            previous = None
+            try:
+                existing = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            except FileNotFoundError:
+                pass
+            else:
+                stack.callback(os.close, existing)
+                previous = os.fstat(existing)
+                if (not stat.S_ISREG(previous.st_mode) or previous.st_uid != os.geteuid()
+                        or previous.st_nlink != 1 or stat.S_IMODE(previous.st_mode) != 0o600):
+                    raise ValueError("existing credential must be owned, private, regular and without hard links")
+            temporary = "." + path.name + "." + os.urandom(12).hex()
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                 0o600, dir_fd=parent)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    os.fchmod(handle.fileno(), 0o600)
+                    handle.write(text)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                if previous is None:
+                    os.link(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+                else:
+                    current = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+                    if not os.path.samestat(previous, current):
+                        raise ValueError("credential changed during private write")
+                    os.replace(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent)
+            finally:
+                try:
+                    os.unlink(temporary, dir_fd=parent)
+                except FileNotFoundError:
+                    pass
+            os.fsync(parent)
 
     def clock(self) -> float:
         return time.monotonic()
+
+    def wall_time(self) -> float:
+        """Unix time, for comparison with a unit's active-enter timestamp."""
+        return time.time()
 
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)

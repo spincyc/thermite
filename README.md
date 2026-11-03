@@ -28,11 +28,13 @@ The terminal remote uses the same controls and room model. Both screenshots show
 
 | Where thermite will run | Start here |
 |---|---|
-| An existing Linux server | [Server installation](https://spincyc.github.io/thermite/installation.html) |
-| A dedicated machine | [Build and install the standalone ISO](https://spincyc.github.io/thermite/iso.html) |
+| Stock Arch Linux, or an existing Ubuntu Server | [Server installation](https://spincyc.github.io/thermite/installation.html) |
+| A dedicated machine | [Build and install the standalone ISO](https://spincyc.github.io/thermite/iso.html), with Arch by default or an optional Ubuntu base |
 | A development machine, with fictional devices | [Try the example](https://spincyc.github.io/thermite/start.html#try-the-example) |
 
 This checkout contains the application and a fictional example. Keep your real house configuration in a separate private site; `thermite init` creates one. Installing the application and commissioning a running house are separate steps.
+
+Plan for an always-on x86-64 host: 2 cores, 4 GiB RAM and 64 GB SSD for light use; 4 cores, 8 GiB and 128 GB recommended. These are unbenchmarked estimates for the full stack. The [system requirements](https://spincyc.github.io/thermite/requirements.html) explain shared-server space, VM networking and the review baseline.
 
 Application services run as the non-login user and group `thermite`, with UID/GID 9001. Your own account administers the private site and uses the remotes. [Service ownership and migration](https://spincyc.github.io/thermite/service-account.html) explains deployed file permissions and upgrades from the older account name.
 

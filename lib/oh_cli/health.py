@@ -17,6 +17,8 @@ DESCRIPTION = """\
 Read-only checks against the running runtime: every Thing ONLINE, Items whose
 state is NULL or UNDEF, and the installed add-ons (compared with an
 addons.cfg when --addons is given). Only GET requests are sent.
+An online HEOS bridge without either optional account field reports its
+missing-account diagnostic as a visible warning, preserving local transport.
 
 The runtime answers /rest/things and /rest/addons only with credentials; pass
 an API token file (the sandbox writes var/sandbox/api-token). --sandbox
@@ -58,7 +60,7 @@ def run(args) -> dict:
         raise lib.SandboxError(f"{args.url} refused the API token in {args.token_file} (HTTP {code})")
     if code != 200 or not isinstance(root, dict):
         raise lib.SandboxError(f"{args.url}/rest/ did not answer (HTTP {code or 'connection failed'})")
-    code, things = http.try_get_json("/rest/things?summary=true")
+    code, things = http.try_get_json("/rest/things?summary=false")
     if code in (401, 403):
         raise lib.SandboxError(f"/rest/things answered {code}: pass --token-file with an API token")
     if code != 200:
@@ -127,8 +129,8 @@ def print_human(report: dict) -> None:
     print(f"runtime {report['openhab_version']} at {report['url']}")
     print(f"Things: {th['count']}  " + ", ".join(f"{k} {v}" for k, v in th["by_status"].items()))
     for row in th["things"]:
-        if row["verdict"] in ("fail", "allowed"):
-            mark = "FAIL" if row["verdict"] == "fail" else "allowed"
+        if row["verdict"] in ("fail", "allowed", "warn"):
+            mark = {"fail": "FAIL", "allowed": "allowed", "warn": "warn"}[row["verdict"]]
             desc = f"  {row['description']}" if row.get("description") else ""
             print(f"  {mark:7s} {row['uid']}  {row['status']}/{row['detail']}{desc}")
     if report["allowed_but_absent"]:

@@ -17,12 +17,14 @@ NAMES = (
     "access", "http", "https", "karaf", "lsp", "helper", "prometheus", "node_exporter",
     "blackbox", "exporter", "grafana", "alertmanager", "ntfy", "notifications", "callbacks",
     "sandbox_http", "sandbox_https", "sandbox_karaf", "boot_http", "boot_https", "boot_karaf", "docs", "preview",
+    "native_shutdown", "sandbox_shutdown", "boot_shutdown",
 )
 DEFAULTS = MappingProxyType({name: BASE + offset for offset, name in enumerate(NAMES)})
 ACCESS_PORT = DEFAULTS["access"]
 HTTP_PORT = DEFAULTS["http"]
 HTTPS_PORT = DEFAULTS["https"]
 KARAF_PORT = DEFAULTS["karaf"]
+SHUTDOWN_PORT = DEFAULTS["native_shutdown"]
 LSP_PORT = DEFAULTS["lsp"]
 HELPER_PORT = DEFAULTS["helper"]
 CALLBACK_PORT = DEFAULTS["callbacks"]
@@ -31,6 +33,8 @@ SANDBOX_URL = f"http://127.0.0.1:{DEFAULTS['sandbox_http']}"
 NATIVE_URL = f"http://127.0.0.1:{HTTP_PORT}"
 METRICS = ("prometheus", "node_exporter", "blackbox", "exporter", "grafana", "alertmanager", "ntfy", "notifications")
 SHELL_CFG = Path("etc/org.apache.karaf.shell.cfg")
+CUSTOM_PROPERTIES = Path("etc/custom.properties")
+SHUTDOWN_KEYS = frozenset(("karaf.shutdown.port", "karaf.shutdown.host"))
 
 
 def checked(name: str, value: int) -> int:
@@ -83,22 +87,100 @@ def native_configured_bytes(data: bytes | None) -> bool:
     return values == {"sshPort": str(KARAF_PORT), "sshHost": "127.0.0.1"}
 
 
+def _property_entries(text: str):
+    """Group Java Properties logical entries while retaining their physical text.
+
+    Only CR/LF terminate natural lines; comments cannot continue. Escaped keys
+    and empty continuation-only entries require manual review rather than
+    guessing which property they name. Values of unrelated entries are opaque.
+    """
+    raw, logical, continued = "", "", False
+    for natural in re.findall(r"[^\r\n]*(?:\r\n|\r|\n|$)", text):
+        if not natural:
+            continue
+        body = natural.rstrip("\r\n").lstrip(" \t\f")
+        if not continued and (not body or body.startswith(("#", "!"))):
+            yield natural, None, None, False
+            continue
+        raw += natural
+        logical += body
+        continued = (len(body) - len(body.rstrip("\\"))) % 2 == 1
+        if continued:
+            logical = logical[:-1]
+            if not logical:
+                raise ValueError("empty property continuations require manual review")
+            continue
+        key, value = _property_pair(logical)
+        yield raw, key, value, False
+        raw, logical = "", ""
+    if raw:
+        key, value = _property_pair(logical)
+        yield raw, key, value, continued
+
+
+def _property_pair(logical: str) -> tuple[str, str]:
+    key = re.split(r"[ \t\f:=]", logical, maxsplit=1)[0]
+    if "\\" in key:
+        raise ValueError("escaped property keys require manual review")
+    value = logical[len(key):].lstrip(" \t\f")
+    if value.startswith(("=", ":")):
+        value = value[1:].lstrip(" \t\f")
+    return key, value
+
+
+def shutdown_configured_bytes(data: bytes | None, port: int = SHUTDOWN_PORT) -> bool:
+    if data is None:
+        return False
+    try:
+        values = {key: value for _, key, value, _ in _property_entries(data.decode("utf-8")) if key in SHUTDOWN_KEYS}
+    except ValueError:
+        return False
+    return values == {"karaf.shutdown.port": str(port), "karaf.shutdown.host": "127.0.0.1"}
+
+
+def shutdown_properties(text: str, port: int) -> str:
+    """Persist a fixed loopback socket for both Karaf Main and its Stop client.
+
+    Port zero creates an unallocated ephemeral listener. A negative port uses
+    Stop's PID fallback, which force-kills after roughly eleven seconds; keep
+    the socket request for unhurried cold-cache shutdown instead.
+    """
+    checked("Karaf shutdown", port)
+    kept = [(raw, continued) for raw, key, _, continued in _property_entries(text) if key not in SHUTDOWN_KEYS]
+    prefix = "".join(raw for raw, _ in kept)
+    if prefix and not prefix.endswith(("\n", "\r")):
+        prefix += "\n"
+    if kept and kept[-1][1]:
+        # Finish an EOF continuation with a blank natural line. A lone CR
+        # needs two LFs because the first one completes its CRLF terminator.
+        prefix += "\n\n" if prefix.endswith("\r") else "\n"
+    return prefix + f"karaf.shutdown.port = {port}\nkaraf.shutdown.host = 127.0.0.1\n"
+
+
+def configure_shutdown(userdata: Path, port: int) -> None:
+    path = Path(userdata) / CUSTOM_PROPERTIES
+    path.write_bytes(shutdown_properties(path.read_bytes().decode("utf-8"), port).encode("utf-8"))
+
+
 def configure_native(userdata: Path) -> None:
-    """Change only the native console's port and keep it restricted to loopback."""
+    """Pin native console/shutdown sockets without changing other Karaf settings."""
     path = Path(userdata) / SHELL_CFG
     text = path.read_text(encoding="utf-8")
+    custom = Path(userdata) / CUSTOM_PROPERTIES
+    shutdown = shutdown_properties(custom.read_bytes().decode("utf-8"), SHUTDOWN_PORT)
     lines = [line for line in text.splitlines() if not re.match(r"\s*(sshPort|sshHost)\s*=", line)]
     path.write_text("\n".join([*lines, f"sshPort = {KARAF_PORT}", "sshHost = 127.0.0.1", ""]), encoding="utf-8")
+    custom.write_bytes(shutdown.encode("utf-8"))
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Set the stopped native console's Thermite listener and loopback address")
+    parser = argparse.ArgumentParser(description="Set stopped native console/shutdown listeners to Thermite's loopback ports")
     parser.add_argument("userdata", type=Path)
     parser.add_argument("--http-port", type=int, default=HTTP_PORT)
     parser.add_argument("--uid", type=int)
     parser.add_argument("--gid", type=int)
     args = parser.parse_args(argv)
-    for port in (args.http_port, HTTP_PORT, KARAF_PORT, 8101):
+    for port in (args.http_port, HTTP_PORT, KARAF_PORT, SHUTDOWN_PORT, 8101):
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.25):
                 parser.error(f"stop native openHAB before changing listener configuration (port {port} answers)")
@@ -107,9 +189,10 @@ def main(argv=None):
     try:
         configure_native(args.userdata)
     except (OSError, ValueError) as exc:
-        parser.exit(2, f"could not configure the initialized native console: {exc}\n")
+        parser.exit(2, f"could not configure the initialized native listeners: {exc}\n")
     if args.uid is not None and args.gid is not None:
-        os.chown(args.userdata / SHELL_CFG, args.uid, args.gid)
+        for relative in (SHELL_CFG, CUSTOM_PROPERTIES):
+            os.chown(args.userdata / relative, args.uid, args.gid)
     return 0
 
 

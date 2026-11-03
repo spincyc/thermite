@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>System requirements · thermite</title>
+  <meta name="description" content="Plan CPU, memory, storage and networking for the complete Thermite stack.">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/palettes/thermite.css" id="palette-css">
+  <link rel="stylesheet" href="assets/site.css">
+  <script>
+    // Theme and palette before the first paint, so a light page never flashes dark.
+    (function () {
+      var theme, palette, names = "contrast thermite harbor".split(" ");
+      try {
+        theme = localStorage.getItem("thermite.theme");
+        palette = localStorage.getItem("thermite.palette");
+      } catch (error) { /* storage blocked */ }
+      if (theme !== "light" && theme !== "dark") {
+        theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+      if (names.indexOf(palette) >= 0) {
+        document.getElementById("palette-css").href = "assets/palettes/" + palette + ".css";
+      }
+    })();
+  </script>
+</head>
+<body class="page-requirements">
+  <a class="skip" href="#main">Skip to the content</a>
+  <header class="bar">
+    <a class="brand" href="index.html" aria-label="thermite, home"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg><span>thermite</span></a>
+    <nav aria-label="Pages"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="dashboards.html">Dashboards</a><a href="commands.html">Commands</a><a href="colors.html">Colors</a><a href="faq.html">FAQ</a></nav>
+    <button class="theme" id="theme" type="button" aria-label="Switch to the light theme">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>
+    </button>
+  </header>
+  <main id="main">
+<h1 id="system-requirements">System requirements</h1>
+<p>Use one always-on x86-64 Linux machine, or a VM with the resources below. Arch Linux is the primary installation path: install Thermite on stock Arch, or use the Arch-based <a href="iso.html">Thermite ISO</a>. Ubuntu Server 24.04 LTS amd64 is an alternative for an existing server and the optional Ubuntu ISO.</p>
+<h2 id="plan-the-whole-stack">Plan the whole stack</h2>
+<p>These are <strong>Thermite planning estimates</strong>, not benchmarked capacity limits or upstream minimums. They cover the operating system, openHAB, the access services, device helpers, Prometheus, Grafana, exporters and notifications for light household use. They do not establish a supported device count.</p>
+<table><thead><tr><th>Resource</th><th>Minimum planning profile</th><th>Recommended starting profile</th></tr></thead><tbody><tr><td>CPU</td><td>2 x86-64 cores or vCPUs</td><td>4 x86-64 cores or vCPUs</td></tr><tr><td>RAM</td><td>4 GiB</td><td>8 GiB</td></tr><tr><td>Dedicated machine or VM disk</td><td>64 GB SSD</td><td>128 GB SSD</td></tr><tr><td>Additional free disk on an existing server</td><td>40 GB</td><td>80 GB</td></tr></tbody></table>
+<p>For a VM, reserve these resources for the guest and leave capacity for its host. On a shared server, leave CPU and RAM available beyond other workloads. The 4 GiB profile leaves limited headroom; prefer 8 GiB when choosing a new allocation. More bindings, complex rules, concurrent dashboards, camera streams and other applications can require more. Observe CPU, available RAM, storage growth and response times during your actual use before relying on a final allocation.</p>
+<p>A dedicated GPU is not required for the core automation stack. Camera streaming and transcoding need separate sizing. A monitor and keyboard are useful for installation; routine administration can use SSH and a browser.</p>
+<h2 id="software-and-installation">Software and installation</h2>
+<p>The host needs systemd, Podman 4.5 or later with runc, a kernel with overlayfs, Python 3.11 or later, Git and make. Node.js and npm support terminal controls and runtime checks. The installer also installs util-linux for the service-user Grafana credential checks. The <a href="installation.html">server guide</a> prepares the application environment and the runtime installer installs service packages. Run the CLI as your own account, with sudo available for the root commands it presents. Application services use <code>thermite:thermite</code>, UID/GID 9001; those IDs must be available or already belong to Thermite.</p>
+<p>On an AppArmor-enabled kernel, the installer requires the distribution's AppArmor package, system parser and service. It installs a dedicated node_exporter policy for read-only systemd collection and verifies enforcement through an approved root command. Other container profiles remain enforced; AppArmor is not disabled to obtain a passing installation.</p>
+<p>The complete installer currently accepts x86-64 only. Some container pins also include ARM images, but the locked Apple TV helper includes miniaudio without a Linux aarch64 wheel. ARM and 32-bit machines are not installation targets for this release.</p>
+<p>Arch installation needs Internet access for signed OS packages. Runtime commissioning on either distribution needs downloads of pinned runtimes, Python dependencies and container images. The optional Ubuntu ISO can install its bundled OS and application offline; that does not make runtime commissioning offline. Building an ISO needs separate build space as described in the <a href="iso.html">ISO guide</a>.</p>
+<h2 id="storage-and-metrics">Storage and metrics</h2>
+<p>Keep service state on a local POSIX filesystem, such as ext4 or XFS. Do not put the Prometheus data directory on NFS. SSD storage is preferable for the database and frequent writes.</p>
+<p>The default metrics policy is <strong>395 days or 12 GB, whichever is reached first</strong>, at a 30-second scrape interval. It does not guarantee 395 days of history. Prometheus interprets its <code>12GB</code> setting as 12 GiB. Reserve at least 15 GiB for Prometheus alone: its retention limit is not a filesystem quota, and compaction, the write-ahead log and current head data need room. Upstream recommends keeping the retention limit at no more than 80–85% of allocated Prometheus storage. <a href="https://prometheus.io/docs/prometheus/latest/storage/">Prometheus storage guidance</a></p>
+<p>The remaining disk budget covers container images, runtime downloads, application releases, native state, logs and backup staging. On an existing server, check free space on both the configured state filesystem and Podman's container-storage filesystem; free space on another mount does not satisfy either requirement. Retain backups outside this machine and budget separately for long-term archives. Raising retention or collecting more time series requires reviewing storage again.</p>
+<h2 id="network">Network</h2>
+<p>Prefer wired Ethernet with a stable address and working DNS and time synchronization. A VM needs bridged LAN access or an equivalent arrangement that you have verified for multicast discovery and device callbacks. Plain NAT and port forwarding alone do not establish that behavior. Thermite's containers use host networking; UPnP discovery is limited to the local subnet. <a href="https://www.openhab.org/docs/installation/docker.html#explanation-of-arguments-passed-to-docker">openHAB networking</a></p>
+<p>Allow the selected services through your host firewall and provide trusted TLS and a resolvable hostname for authenticated access. See the <a href="ports.html">ports</a> and <a href="installation.html#set-up-https-and-accounts">installation</a> guides. Pass through any USB radio or serial adapter your integrations need.</p>
+<h2 id="basis-and-review">Basis and review</h2>
+<p>Acceptance evidence reconciled <strong>2026-11-03</strong>; the sizing estimates and upstream basis below remain planning guidance, not newly measured capacity. The recorded runtime baseline is application <code>0.1.0.dev0</code>, openHAB <strong>5.2.3</strong>, Grafana <strong>13.3.0</strong>, Prometheus <strong>3.15.1</strong>, and the default retention above. The installation baselines are Arch Linux x86-64 (2026.11.01 ISO; installed packages follow Arch's rolling repositories) and Ubuntu Server 24.04.5 LTS amd64. Runtime pins are recorded in <code>versions.json</code>; ISO inputs are recorded in their input manifests.</p>
+<p>The estimates account for these upstream facts:</p>
+<ul><li><a href="https://www.openhab.org/docs/installation/">openHAB's stable installation guide</a> requires a 64-bit OS and Java 21. Its <a href="https://www.openhab.org/docs/installation/openhabian.html#hardware">x86 hardware guidance</a> recommends at least 4 GB RAM, with 8 GB preferable.</li><li><a href="https://grafana.com/docs/grafana/latest/setup-grafana/installation/#hardware-recommendations">Grafana's current guidance</a> gives 512 MB and one core as an evaluation floor. Its small-deployment baseline is 2 cores and 2–4 GB for Grafana alone, excluding Prometheus. Household usage may be lighter; these figures do not certify Thermite's minimum profile.</li><li><a href="https://ubuntu.com/server/docs/reference/installation/system-requirements/">Ubuntu's 24.04 amd64 requirements</a> list 1.5 GB RAM and 5 GB disk for ISO installation, and suggest 3 GB RAM and 25 GB disk. Those are OS figures, not the application stack's budget.</li></ul>
+<p>The original fictional-house acceptance on release <code>7c05db18</code> covered: a fresh Thermite Arch ISO installation, stock Arch application/native/access upgrade after documented corrections, and Ubuntu Server 24.04.5 application/native/access upgrade with existing credentials and identity preserved. Ubuntu's earlier fresh-OS run also deliberately interrupted installation and rebooted before Grafana credential creation. These are distinct fresh-install and upgrade/resume results; see <a href="https://github.com/spincyc/thermite/blob/main/docs/installation-handoff.md">installation acceptance</a> for artifact identities, retained failures and exact coverage.</p>
+<p>After reconciliation with <code>main</code>, release <code>eea4ec87</code> passed another complete retained-state application/native/access upgrade and client/no-op/reboot/shutdown run on both Arch and Ubuntu. This is additional runtime integration coverage; the fresh ISO evidence remains specific to the earlier artifact. The handoff records both identities and the current validation separately.</p>
+<p>The tested allocation is KVM, four vCPUs, 8 GiB RAM, a sparse 64 GiB disk, UEFI and ext4, with one fictional room and guest-loopback protocol stand-ins. This does not validate the 2-core/4-GiB minimum planning profile, a household capacity limit, physical picture or sound, multicast discovery or device callbacks. Required native metric-series assertions belong to the separate disposable strict boot runtime. Production checks record two Things ONLINE, 26 Items, four requested add-ons, authenticated native endpoint readiness, 16 monitoring targets and successful systemd collection/Grafana checks; they do not establish that every required native series was parsed in production. Offline checks alone do not prove machine installation or runtime commissioning.</p>
+<p>Review this page when application/runtime versions, helper wheel support, ISO inputs, supported installation paths, metrics retention or enabled services change. Update the baseline date and acceptance evidence with that review.</p>
+
+  </main>
+  <footer class="foot">
+    <span class="foot-mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg> thermite · simple parts, joined</span>
+    <span>© 2026. All rights reserved.</span>
+  </footer>
+  <script src="assets/site.js"></script>
+</body>
+</html>

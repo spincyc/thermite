@@ -28,15 +28,19 @@ from oh_metrics import exporter
 class Allocation(unittest.TestCase):
     def test_one_contiguous_run_with_distinct_application_anchor(self):
         self.assertEqual(oh_ports.ACCESS_PORT, 13600)
-        self.assertEqual(list(oh_ports.DEFAULTS.values()), list(range(13600, 13623)))
+        self.assertEqual(list(oh_ports.DEFAULTS.values()), list(range(13600, 13626)))
         self.assertEqual(len(set(oh_ports.DEFAULTS.values())), len(oh_ports.DEFAULTS))
+        self.assertEqual(tuple(oh_ports.DEFAULTS)[-3:], ("native_shutdown", "sandbox_shutdown", "boot_shutdown"))
+        self.assertEqual([oh_ports.DEFAULTS[name] for name in ("native_shutdown", "sandbox_shutdown", "boot_shutdown")],
+                         [13623, 13624, 13625])
 
     def test_overrides_cannot_take_other_production_or_development_listeners(self):
         for host in ({"http_port": oh_ports.HTTPS_PORT},
                      {"https_port": oh_ports.DOCS_PORT},
                      {"metrics": {"grafana_port": oh_ports.HELPER_PORT}},
                      {"metrics": {"prometheus_port": 14040, "node_exporter_port": 14040}},
-                     {"http_port": 14040, "metrics": {"exporter_port": 14040}}):
+                     {"http_port": 14040, "metrics": {"exporter_port": 14040}},
+                     *({"http_port": oh_ports.DEFAULTS[name]} for name in ("native_shutdown", "sandbox_shutdown", "boot_shutdown"))):
             with self.subTest(host=host), self.assertRaisesRegex(ValueError, "collides"):
                 oh_ports.effective(host)
 
@@ -57,13 +61,115 @@ class Allocation(unittest.TestCase):
             path = userdata / oh_ports.SHELL_CFG
             path.parent.mkdir()
             path.write_text("# console\nsshPort = 8101\nsshHost = 0.0.0.0\nsshIdleTimeout = 123\n")
+            custom = userdata / oh_ports.CUSTOM_PROPERTIES
+            preserved = "# custom\nkaraf.pid.file=${karaf.data}/tmp/karaf.pid\nkaraf.handle.sigterm=true\n"
+            custom.write_text(preserved + "karaf.shutdown.port: 0\nkaraf.shutdown.host 0.0.0.0\nkaraf.shutdown.port = 9999\n")
             oh_ports.configure_native(userdata)
             first = path.read_bytes()
+            configured = custom.read_bytes()
             self.assertTrue(oh_ports.native_configured_bytes(first))
             self.assertIn(b"sshIdleTimeout = 123\n", first)
             self.assertNotIn(b"0.0.0.0", first)
+            self.assertTrue(oh_ports.shutdown_configured_bytes(configured))
+            self.assertTrue(configured.startswith(preserved.encode()))
+            self.assertEqual(configured.count(b"karaf.shutdown.port"), 1)
+            self.assertNotIn(b"0.0.0.0", configured)
             oh_ports.configure_native(userdata)
             self.assertEqual(path.read_bytes(), first)
+            self.assertEqual(custom.read_bytes(), configured)
+
+    def test_shutdown_config_requires_both_positive_fixed_port_and_loopback(self):
+        for content in (None, b"", b"karaf.shutdown.port=0\nkaraf.shutdown.host=127.0.0.1\n",
+                        b"karaf.shutdown.port=-1\nkaraf.shutdown.host=127.0.0.1\n",
+                        f"karaf.shutdown.port={oh_ports.SHUTDOWN_PORT}\nkaraf.shutdown.host=0.0.0.0\n".encode(),
+                        f"karaf.shutdown.port={oh_ports.SHUTDOWN_PORT}\n".encode()):
+            with self.subTest(content=content):
+                self.assertFalse(oh_ports.shutdown_configured_bytes(content))
+        for port in (0, -1, True, 65536):
+            with self.subTest(port=port), self.assertRaises(ValueError):
+                oh_ports.shutdown_properties("", port)
+
+    def test_shutdown_writer_preserves_unrelated_continued_values_and_physical_newlines(self):
+        preserved = ("# comment ending in a backslash\\\r\n"
+                     "other=keep\\\r\n\tkaraf.shutdown.port=100\\\r\n  !still the same value\r\n"
+                     "karaf.pid.file=${karaf.data}/tmp/karaf.pid\r\n")
+        managed = "karaf.shutdown.port=12\\\n 345\nkaraf.shutdown.host=0.0.\\\n 0.0\n"
+        expected = oh_ports.shutdown_properties("", oh_ports.SHUTDOWN_PORT)
+        result = oh_ports.shutdown_properties(preserved + managed, oh_ports.SHUTDOWN_PORT)
+        self.assertEqual(result, preserved + expected)
+        self.assertTrue(oh_ports.shutdown_configured_bytes(result.encode()))
+        self.assertEqual(oh_ports.shutdown_properties(result, oh_ports.SHUTDOWN_PORT), result)
+        with tempfile.TemporaryDirectory() as temporary:
+            userdata = Path(temporary)
+            path = userdata / oh_ports.CUSTOM_PROPERTIES
+            path.parent.mkdir()
+            path.write_bytes((preserved + managed).encode())
+            oh_ports.configure_shutdown(userdata, oh_ports.SHUTDOWN_PORT)
+            self.assertEqual(path.read_bytes(), result.encode())
+
+    def test_shutdown_reader_counts_logical_entries_and_managed_continuations(self):
+        port = str(oh_ports.SHUTDOWN_PORT)
+        host = "karaf.shutdown.host=127.0.0.1\n"
+        for count in (1, 2, 3, 4):
+            for ending in ("\n", "\r", "\r\n"):
+                with self.subTest(backslashes=count, ending=repr(ending)):
+                    first = "other=keep" + "\\" * count + ending
+                    managed = "karaf.shutdown.port=" + port + ending
+                    text = first + managed + host
+                    self.assertEqual(oh_ports.shutdown_configured_bytes(text.encode()), count % 2 == 0)
+                    result = oh_ports.shutdown_properties(text, oh_ports.SHUTDOWN_PORT)
+                    self.assertTrue(result.startswith(first + (managed if count % 2 else "")))
+                    self.assertTrue(oh_ports.shutdown_configured_bytes(result.encode()))
+                    self.assertEqual(oh_ports.shutdown_properties(result, oh_ports.SHUTDOWN_PORT), result)
+        continued = "karaf.shutdown.po\\\n rt=" + port[:2] + "\\\r\n\t" + port[2:] + "\n" + host
+        self.assertTrue(oh_ports.shutdown_configured_bytes(continued.encode()))
+        self.assertEqual(oh_ports.shutdown_properties(continued, oh_ports.SHUTDOWN_PORT),
+                         oh_ports.shutdown_properties("", oh_ports.SHUTDOWN_PORT))
+        for tail in ("karaf.shutdown.port\n", "karaf.shutdown.port=" + port + " \n"):
+            self.assertFalse(oh_ports.shutdown_configured_bytes(("karaf.shutdown.port=" + port + "\n" + tail + host).encode()))
+
+    def test_shutdown_overrides_have_an_idempotent_standalone_eof_boundary(self):
+        configured = oh_ports.shutdown_properties("", oh_ports.SHUTDOWN_PORT)
+        for original, separator in (("other=keep\\", "\n\n"), ("other=keep\\\n", "\n"),
+                                    ("other=keep\\\r", "\n\n"), ("other=keep\\\r\n", "\n"),
+                                    ("other=keep\\\\", "\n"), ("# comment\\", "\n"),
+                                    ("! comment\\\n", ""), ("other=keep\n", "")):
+            with self.subTest(original=repr(original)):
+                result = oh_ports.shutdown_properties(original, oh_ports.SHUTDOWN_PORT)
+                self.assertEqual(result, original + separator + configured)
+                self.assertTrue(oh_ports.shutdown_configured_bytes(result.encode()))
+                self.assertEqual(oh_ports.shutdown_properties(result, oh_ports.SHUTDOWN_PORT), result)
+
+    def test_ambiguous_escaped_keys_fail_closed_without_modifying_native_files(self):
+        configured = oh_ports.shutdown_properties("", oh_ports.SHUTDOWN_PORT)
+        for text in ("karaf\\.shutdown.port=100\n", r"karaf.shutdown.po\u0072t=100" + "\n",
+                     r"other\:key=value" + "\n", "\\\n"):
+            with self.subTest(text=text):
+                self.assertFalse(oh_ports.shutdown_configured_bytes((text + configured).encode()))
+                with self.assertRaisesRegex(ValueError, "manual review"):
+                    oh_ports.shutdown_properties(text + configured, oh_ports.SHUTDOWN_PORT)
+        with tempfile.TemporaryDirectory() as temporary:
+            userdata = Path(temporary)
+            console = userdata / oh_ports.SHELL_CFG
+            console.parent.mkdir()
+            console.write_bytes(b"sshPort=8101\n")
+            custom = userdata / oh_ports.CUSTOM_PROPERTIES
+            custom.write_bytes(b"other\\:key=value\n")
+            before = console.read_bytes(), custom.read_bytes()
+            with self.assertRaisesRegex(ValueError, "manual review"):
+                oh_ports.configure_native(userdata)
+            self.assertEqual((console.read_bytes(), custom.read_bytes()), before)
+
+    def test_native_configuration_reads_both_existing_files_before_writing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            userdata = Path(temporary)
+            path = userdata / oh_ports.SHELL_CFG
+            path.parent.mkdir()
+            path.write_text("sshPort=8101\n")
+            before = path.read_bytes()
+            with self.assertRaises(FileNotFoundError):
+                oh_ports.configure_native(userdata)
+            self.assertEqual(path.read_bytes(), before)
 
     def test_console_writer_cannot_create_partial_first_install_state(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -78,10 +184,12 @@ class Allocation(unittest.TestCase):
             (template / oh_logging.RELATIVE).write_text("<Configuration><Loggers><Root/></Loggers></Configuration>")
             (template / oh_logging.SELECTOR).write_bytes(oh_logging.DEFAULT_SELECTOR)
             (template / oh_ports.SHELL_CFG).write_text("sshPort = 8101\nsshHost = 127.0.0.1\n")
+            (template / oh_ports.CUSTOM_PROPERTIES).write_text("karaf.pid.file=${karaf.data}/tmp/karaf.pid\n")
             self.assertTrue(oh_logging.initialize(userdata, template, os.getuid(), os.getgid()))
             oh_ports.configure_native(userdata)
             self.assertTrue(oh_logging.ready(userdata))
             self.assertTrue(oh_ports.native_configured_bytes((userdata / oh_ports.SHELL_CFG).read_bytes()))
+            self.assertTrue(oh_ports.shutdown_configured_bytes((userdata / oh_ports.CUSTOM_PROPERTIES).read_bytes()))
 
     def test_installer_sets_console_before_start_or_restart(self):
         host = oh_public.demo_host()
@@ -99,7 +207,7 @@ class Allocation(unittest.TestCase):
         self.assertLess(logging, listeners)
         self.assertLess(listeners, receipt)
         configured = (f"sshPort = {oh_ports.KARAF_PORT}\nsshHost = 127.0.0.1\n").encode()
-        system.read_bytes.return_value = configured
+        system.read_bytes.side_effect = lambda path: configured if path.name == oh_ports.SHELL_CFG.name else oh_ports.shutdown_properties("", oh_ports.SHUTDOWN_PORT).encode()
         self.assertTrue(steps.NativeListeners(context).check(system).done)
 
 
@@ -124,6 +232,7 @@ class Consumers(unittest.TestCase):
         boot = oh_sandbox.boot_check_instance()
         self.assertEqual((sandbox.http_port, sandbox.https_port, sandbox.ssh_port), (13615, 13616, 13617))
         self.assertEqual((boot.http_port, boot.https_port, boot.ssh_port), (13618, 13619, 13620))
+        self.assertEqual((sandbox.shutdown_port, boot.shutdown_port), (13624, 13625))
         self.assertEqual(sandbox.http_address, "127.0.0.1")
         self.assertEqual(boot.http_address, "127.0.0.1")
         self.assertIn("org.openhab.core.model.lsp", oh_sandbox.FEATURES_PROCESSING)

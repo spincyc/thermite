@@ -1,8 +1,8 @@
 
 Thermite is installed; configure this machine as its owner.
 
-No house, accounts, credentials or runtime services were created. Log in as
-the owner account you chose in the Ubuntu installer. Connect to the Internet
+No private house, service accounts, credentials or runtime services were created. Log in as
+the owner account you chose in the OS installer. Connect to the Internet
 for runtime packages, images and integrity-pinned downloads, then run:
 
   thermite init "$HOME/thermite-site"
@@ -14,8 +14,6 @@ Then run:
 
   thermite generate
   thermite validate
-  sudo apt-get update
-  sudo apt-get install git
   git init --initial-branch=main
   git add .
   git commit -m 'Initialize private Thermite site'
@@ -23,6 +21,8 @@ Then run:
   thermite install
 
 Install asks before root commands and for the native runtime API token.
+The Arch ISO includes Git. On the optional Ubuntu image, first install Git
+with sudo apt-get update && sudo apt-get install git if it is unavailable.
 Runtime startup may download several container images. Keep this Git
 repository private. Configure Git's author identity if commit requests it.
 Install creates the non-login thermite user and group (UID/GID 9001) for
@@ -32,6 +32,6 @@ CLI and private Git; log out and back in for new group membership to apply.
 Before sharing the remote, complete authentication and HTTPS commissioning:
   thermite access --help
 
-The installed application contains docs/installation.md
-under /opt/thermite/venv/lib/python3.12/site-packages/thermite_app/runtime/.
+The installed application contains docs/installation.md under
+/opt/thermite/venv/lib/python*/site-packages/thermite_app/runtime/.
 Use thermite status and thermite health --production to inspect the result.

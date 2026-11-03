@@ -21,11 +21,14 @@ import oh_package
 spec = importlib.util.spec_from_file_location("iso_bootstrap", AREA / "iso/bootstrap.py")
 bootstrap = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bootstrap)
+plugin_spec = importlib.util.spec_from_file_location("iso_arch_plugin", AREA / "iso/arch-plugin.py")
+arch_plugin = importlib.util.module_from_spec(plugin_spec)
+plugin_spec.loader.exec_module(arch_plugin)
 
 
 class InstallerISO(unittest.TestCase):
     def setUp(self):
-        scratch = AREA.parents[1] / ".scratch/iso-tests"
+        scratch = AREA.parents[1] / ".scratch/arch-iso/tests"
         scratch.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="test-", dir=scratch)
         self.root = Path(self.temporary.name)
@@ -55,6 +58,59 @@ class InstallerISO(unittest.TestCase):
         self.assertIn("initrd /casper/initrd", result)
         with self.assertRaises(ValueError): oh_iso.grub_config("linux /different/kernel ---\n")
         with self.assertRaises(ValueError): oh_iso.grub_config("linux /casper/vmlinuz autoinstall ---\n")
+
+    def test_arch_defaults_preserve_native_storage_and_identity_choices(self):
+        self.assertTrue(oh_iso.inputs()["base"]["name"].startswith("archlinux-"))
+        self.assertTrue(oh_iso.inputs("ubuntu")["base"]["name"].startswith("ubuntu-"))
+        config = json.loads((AREA / "iso/arch-config.json").read_text())
+        self.assertEqual(set(config), {"packages", "network_config"})
+        self.assertTrue({"python", "python-yaml", "git", "make", "podman", "runc", "util-linux", "nodejs", "npm", "sudo"} <= set(config["packages"]))
+        script = (AREA / "iso/arch-install.sh").read_text()
+        self.assertNotIn("--silent", script)
+        self.assertLess(script.index("pacman -Sp"), script.index("exec archinstall"))
+        self.assertLess(script.index("plugin.name not in plugins"), script.index("exec archinstall"))
+
+    def test_arch_boot_configs_keep_source_uuid_and_local_script(self):
+        options = "archisobasedir=arch archisosearchuuid=2026-11-01-08-42-25-00"
+        for kind, original in (("syslinux", "APPEND " + options + "\n"), ("systemd", "options  " + options + "\n")):
+            patched = oh_iso.arch_boot_config(original, kind)
+            self.assertIn(options, patched)
+            self.assertIn("script=/run/archiso/bootmnt/thermite/arch-install.sh", patched)
+            with self.assertRaises(ValueError): oh_iso.arch_boot_config(patched, kind)
+        with self.assertRaises(ValueError): oh_iso.arch_boot_config("options root=/dev/sda\n", "systemd")
+
+    def test_arch_efi_copy_checks_partition_bounds(self):
+        import struct
+        image = self.root / "base.iso"
+        mbr = bytearray(512); mbr[510:] = b"\x55\xaa"; mbr[466] = 0xef
+        struct.pack_into("<II", mbr, 470, 1, 1)
+        image.write_bytes(mbr + b"E" * 512)
+        output = self.root / "efi.img"
+        oh_iso.arch_efi_image(image, output)
+        self.assertEqual(output.read_bytes(), b"E" * 512)
+        struct.pack_into("<II", mbr, 470, 1, 3)
+        image.write_bytes(mbr + b"E" * 512)
+        with self.assertRaises(ValueError): oh_iso.arch_efi_image(image, self.root / "bad.img")
+        self.assertFalse((self.root / "bad.img").exists())
+
+    def test_arch_plugin_refuses_unmounted_or_root_only_targets_and_propagates_failure(self):
+        target = self.root / "target"; (target / "etc").mkdir(parents=True)
+        (target / "etc/os-release").write_text("ID=arch\n")
+        (target / "etc/passwd").write_text("root:x:0:0:root:/root:/bin/bash\n")
+        (target / "etc/shadow").write_text("root:!:1:0:99999:7:::\n")
+        (target / "etc/group").write_text("wheel:x:998:\n")
+        media = self.root / "media"; media.mkdir(); (media / "payload.json").write_text("{}")
+        with self.assertRaises(ValueError): arch_plugin.finalize(target, media)
+        with patch.object(Path, "is_mount", return_value=True):
+            with self.assertRaises(ValueError): arch_plugin.finalize(target, media)
+        self.assertFalse((target / "opt").exists())
+        with (target / "etc/passwd").open("a") as out: out.write("owner:x:1000:1000:Owner:/home/owner:/bin/bash\n")
+        with (target / "etc/shadow").open("a") as out: out.write("owner:$y$fixture:1:0:99999:7:::\n")
+        (target / "etc/group").write_text("wheel:x:998:owner\n")
+        failure = subprocess.CalledProcessError(2, ["arch-chroot"])
+        with patch.object(Path, "is_mount", return_value=True), patch.object(arch_plugin.subprocess, "run", side_effect=failure) as run:
+            with self.assertRaises(subprocess.CalledProcessError): arch_plugin.finalize(target, media)
+        run.assert_called_once_with(["arch-chroot", str(target), "/usr/bin/python3", "/opt/thermite-media/bootstrap.py"], check=True)
 
     def test_input_mismatch_and_output_symlinks_refuse_without_building(self):
         file = self.root / "input.iso"; file.write_bytes(b"untrusted")
@@ -88,6 +144,26 @@ class InstallerISO(unittest.TestCase):
             archive.writestr(member, b"elsewhere")
         with self.assertRaises(ValueError): bootstrap.unpack(wheel, target)
         self.assertEqual(list(target.iterdir()), [])
+
+    def test_arch_bootstrap_uses_system_yaml_and_offline_bundled_application(self):
+        media = self.root / "arch-media"; media.mkdir()
+        wheel, release = oh_package.wheel(oh_package.public_files(), media)
+        payload = {"version": 1, "application": release["application"], "release": release["digest"],
+                   "python_dependency": {"provider": "system", "package": "python-yaml", "module": "yaml"},
+                   "wheels": {"application": {"name": wheel.name, "sha256": bootstrap.digest(wheel)}}}
+        (media / "payload.json").write_text(json.dumps(payload))
+        (media / "FIRST-BOOT.txt").write_text("Owner commissioning follows first boot.\n")
+        target = self.root / "arch-target"; target.mkdir()
+        self.assertEqual(bootstrap.install(media, root=target), payload)
+        environment = target / "opt/thermite/venv"
+        self.assertIn("include-system-site-packages = true", (environment / "pyvenv.cfg").read_text())
+        self.assertTrue((target / "etc/profile.d/thermite.sh").is_file())
+        self.assertFalse((target / "etc/passwd").exists())
+        result = subprocess.run([str(target / "usr/local/bin/thermite"), "--version"],
+                                cwd=self.root, env={key: value for key, value in os.environ.items()
+                                                   if key not in {"PYTHONPATH", "THERMITE_SITE"}},
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_offline_bootstrap_installed_launcher_and_private_site_outside_checkout(self):
         media = self.root / "media"; media.mkdir()

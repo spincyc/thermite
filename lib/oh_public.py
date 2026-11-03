@@ -34,10 +34,15 @@ SOURCE_FILES = (
     'CHANGELOG.md',
     'docs/packaging.md',
     'docs/installation.md',
+    'docs/installation-handoff.md',
+    'docs/requirements.md',
     'docs/iso.md',
     'docs/ports.md',
     'docs/service-account.md',
     'iso/bootstrap.py',
+    'iso/arch-config.json',
+    'iso/arch-install.sh',
+    'iso/arch-plugin.py',
     'iso/first-boot.txt',
     'iso/inputs.json',
     'lib/oh_paths.py',
@@ -46,10 +51,14 @@ SOURCE_FILES = (
     'lib/oh_init.py',
     'lib/oh_iso.py',
     'lib/oh_ports.py',
+    'lib/oh_apparmor.py',
+    'lib/thermite-node-exporter.apparmor',
+    'lib/thermite-node-exporter.apparmor.LICENSE',
     'lib/oh_access/README.md',
     'lib/oh_access/__init__.py',
     'lib/oh_access/callback_service.py',
     'lib/oh_access/callbacks.py',
+    'lib/oh_access/custody.py',
     'lib/oh_access/client.py',
     'lib/oh_access/files.py',
     'lib/oh_access/service.py',
@@ -98,6 +107,7 @@ SOURCE_FILES = (
     'lib/oh_deploy.py',
     'lib/oh_discover.py',
     'lib/oh_docs.py',
+    'lib/oh_http.py',
     'lib/oh_features/__init__.py',
     'lib/oh_features/all_off/__init__.py',
     'lib/oh_features/all_off/all_off.js',
@@ -110,6 +120,10 @@ SOURCE_FILES = (
     'lib/oh_features/remote_model.py',
     'lib/oh_features/remote_topology.py',
     'lib/oh_features/routing/__init__.py',
+    'lib/oh_features/routing/lifecycle.py',
+    'lib/oh_features/routing/lifecycle.js',
+    'lib/oh_features/routing/lifecycle_io.py',
+    'lib/oh_features/routing/lifecycle_io.js',
     'lib/oh_features/routing/routing.js',
     'lib/oh_features/threadpools.py',
     'lib/oh_features/threadpools.js',
@@ -119,6 +133,7 @@ SOURCE_FILES = (
     'lib/oh_identity/apps.py',
     'lib/oh_identity/asgi.py',
     'lib/oh_identity/auth.py',
+    'lib/oh_identity/batches.py',
     'lib/oh_identity/composition.py',
     'lib/oh_identity/migrations/0001_initial.py',
     'lib/oh_identity/migrations/__init__.py',
@@ -133,7 +148,10 @@ SOURCE_FILES = (
     'lib/oh_identity/urls.py',
     'lib/oh_identity/views.py',
     'lib/oh_install/__init__.py',
+    'lib/oh_install/backup.py',
     'lib/oh_install/model.py',
+    'lib/oh_install/output.py',
+    'lib/oh_install/progress.py',
     'lib/oh_install/runner.py',
     'lib/oh_install/secrets.py',
     'lib/oh_install/steps.py',
@@ -141,6 +159,8 @@ SOURCE_FILES = (
     'lib/oh_integrations/__init__.py',
     'lib/oh_integrations/_diagnostics.py',
     'lib/oh_integrations/_instr.py',
+    'lib/oh_integrations/_io.py',
+    'lib/oh_integrations/_io.js',
     'lib/oh_integrations/_pairing.py',
     'lib/oh_integrations/androidtv_googletv/__init__.py',
     'lib/oh_integrations/androidtv_googletv/androidtv_googletv.js',
@@ -244,12 +264,37 @@ SOURCE_FILES = (
     'tests/androidtv_maintenance_probe.cjs',
     'tests/backend_item_read_order_harness.js',
     'tests/test_backend_item_read_order.py',
+    'tests/backend_snapshot_harness.js',
+    'tests/test_backend_snapshots.py',
+    'tests/integration_io_harness.js',
+    'tests/integration_io/NativeTest.java',
+    'tests/test_integration_io.py',
+    'tests/lifecycle_planner_harness.js',
+    'tests/test_lifecycle_planner.py',
+    'tests/lifecycle_io_harness.js',
+    'tests/lifecycle_io/NativeLifecycleTest.java',
+    'tests/test_lifecycle_io.py',
+    'tests/test_atv_lifecycle.py',
     'tests/test_ports.py',
     'tests/test_yoke_metrics.py',
     'tests/test_iso.py',
+    'tests/test_apparmor.py',
     'tests/test_installed_install.py',
+    'tests/test_install_output.py',
+    'tests/test_install_progress.py',
     'tests/test_install_secret_files.py',
     'tests/test_service_account.py',
+    'tests/test_access_custody.py',
+    'tests/test_boot.py',
+    'tests/test_native_prepare.py',
+    'tests/test_install_backup.py',
+    'tests/test_startup_http.py',
+    'tests/e2e/fixture.py',
+    'tests/e2e/README.md',
+    'tests/e2e/dummy-tv.py',
+    'tests/e2e/check_access.py',
+    'tests/e2e/check_tui.cjs',
+    'tests/e2e/check_browser.cjs',
     'tui/remote/administration.js',
     'tui/remote/app.js',
     'tui/remote/cameras.js',
@@ -723,6 +768,8 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
             allowed = match in PROTOCOL_IPS or (name == "lib/oh_discover.py" and match == ".".join(["1"] * 4))
             try:
                 address = ipaddress.ip_address(match)
+                # Installation fixtures use separate guest-loopback devices.
+                allowed |= address.is_loopback and name in {"tests/e2e/fixture.py", "tests/e2e/dummy-tv.py", "tests/e2e/check_access.py"}
                 allowed |= any(address in ipaddress.ip_network(prefix) for prefix in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"))
             except ValueError:
                 pass
@@ -777,6 +824,8 @@ _CREDENTIAL = re.compile(r"(?i)^(?:password|passwd|passphrase|secret|token|api_?
 
 
 def _credentials(name, text):
+    if name.endswith(".java"):
+        return oh_secrets.scan_text(text, code=True)
     def literal(key, value):
         return (isinstance(key, str) and _CREDENTIAL.fullmatch(key) and isinstance(value, (str, bytes))
                 and bool(value) and not oh_secrets.PLACEHOLDER.fullmatch(str(value)) and value not in {"Bearer", "Basic"})
@@ -812,7 +861,7 @@ def _credentials(name, text):
                     and literal(node.arg, node.value.value) and not simulated_pin(node)):
                 found.append((node.lineno, "literal credential"))
         return found
-    if name.endswith(".js"):
+    if name.endswith((".js", ".cjs", ".mjs")):
         strings = list(re.finditer(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|`(?:\\.|[^`\\])*`|//[^\n]*|/\*[\s\S]*?\*/', text))
         pattern = re.compile(r'''(?i)(?:^|[\s{,;])(?:const\s+|let\s+|var\s+)?["']?(password|passwd|passphrase|secret|token|api_?key|apitoken|psk|authorization|cookie|pin)["']?\s*[:=]\s*(["'])(.*?)\2''', re.MULTILINE)
         return [(text.count("\n", 0, m.start()) + 1, "literal credential") for m in pattern.finditer(text)

@@ -43,7 +43,7 @@
 <h2 id="test">Test on a test runtime, never production</h2>
 <table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
-<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, asking before each sudo command</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>upgrade thermite and the Apple TV helper here to the pinned versions</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>install a commit&#x27;s conf/ and Apple TV helper here</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>upgrade thermite and the Apple TV helper here to the pinned versions</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>install a commit&#x27;s conf/ and Apple TV helper here</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
 <table class="verbs"><tbody><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
@@ -58,43 +58,43 @@ configuration, tests it on a test runtime, installs it, and drives the
 remotes. One program, a verb for each job; `thermite help VERB` explains one.
 
 the house file, and what is generated from it:
-  init                 create a private site, or pin an installed application upgrade
-  generate             write conf/ from the house file, and deploy/&#x27;s systemd units
-  validate             check the house file, and that conf/ agrees with it
-  lint                 refuse credentials in Git, and docs naming a missing make target
+  init          create a private site, or pin an installed application upgrade
+  generate      write conf/ from the house file, and deploy/&#x27;s systemd units
+  validate      check the house file, and that conf/ agrees with it
+  lint          refuse credentials in Git, and docs naming a missing make target
 
 test on a test runtime, never production:
-  test                 boot conf/ on a test runtime; test routing and the controls end to end
-  sandbox              run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615
+  test          boot conf/ on a test runtime; test routing and the controls end to end
+  sandbox       run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615
 
 production runtime on this host:
-  install              install thermite on this host, asking before each sudo command
-  upgrade              upgrade thermite and the Apple TV helper here to the pinned versions
-  uninstall            stop thermite here and remove its units; --purge deletes its state
-  deploy               install a commit&#x27;s conf/ and Apple TV helper here
-  rollback             deploy the commit deployed before the current one, or another
-  status               what is deployed and running here, against this checkout
-  history              this host&#x27;s deploys, numbered, the latest last
-  health               read-only: every Thing ONLINE in the runtime
+  install       install thermite on this host, with one approval for the whole run
+  upgrade       upgrade thermite and the Apple TV helper here to the pinned versions
+  uninstall     stop thermite here and remove its units; --purge deletes its state
+  deploy        install a commit&#x27;s conf/ and Apple TV helper here
+  rollback      deploy the commit deployed before the current one, or another
+  status        what is deployed and running here, against this checkout
+  history       this host&#x27;s deploys, numbered, the latest last
+  health        read-only: every Thing ONLINE in the runtime
 
 the house&#x27;s devices:
-  discover             scan the LAN read-only and compare it with the house file
-  pair                 pair a TV with runtime, or check the Sony TVs&#x27; pairing
-  cameras              read camera status, or configure native Protect bridges privately
-  apple-tv             run the Apple TV helper runtime calls
-  ir-profile           validate verified IR keys or print an iTach packet without transmitting
+  discover      scan the LAN read-only and compare it with the house file
+  pair          pair a TV with runtime, or check the Sony TVs&#x27; pairing
+  cameras       read camera status, or configure native Protect bridges privately
+  apple-tv      run the Apple TV helper runtime calls
+  ir-profile    validate verified IR keys or print an iTach packet without transmitting
 
 front ends, themes and docs:
-  remote               the house remote in a terminal
-  access               site login, local identity bootstrap, HTTPS service and room policies
-  theme                the flaming bowl mark and color themes: show, check, export
-  docs                 build the docs site, or export it to the thermite repository
+  remote        the house remote in a terminal
+  access        site login, local identity bootstrap, HTTPS service and room policies
+  theme         the flaming bowl mark and color themes: show, check, export
+  docs          build the docs site, or export it to the thermite repository
 
 this program:
-  version              thermite&#x27;s version, and runtime&#x27;s: pinned, and running here
-  package              build a privacy-checked portable application wheel
-  iso                  build a bootable installer for a dedicated Thermite machine
-  completion           print a completion script for bash, zsh or fish
+  version       thermite&#x27;s version, and runtime&#x27;s: pinned, and running here
+  package       build a privacy-checked portable application wheel
+  iso           build a bootable installer for a dedicated Thermite machine
+  completion    print a completion script for bash, zsh or fish
 
 switches that mean the same in every verb that has them:
   --site DIR                        select a private site (also THERMITE_SITE; before or after the verb)
@@ -302,7 +302,9 @@ If Things still wait for a handler and neither they nor the start level
 change for --stall seconds, stop waiting and fail on them.
 
 The check proves conf/ loads and every Thing gets a handler without a
-configuration error. A Thing still INITIALIZING/UNKNOWN waits for its device
+configuration error. An online, account-free HEOS bridge&#x27;s optional-login
+diagnostic remains a warning; local transport does not require an account.
+A Thing still INITIALIZING/UNKNOWN waits for its device
 and only warns; with --require-online the check also waits for devices and
 fails on any Thing not ONLINE. Device reachability is thermite health&#x27;s job:
 the sandbox&#x27;s web server is bound to 127.0.0.1, so UPnP event callbacks from
@@ -699,7 +701,7 @@ examples:
                                     production&#x27;s log (state_root: the host file)
 </pre></details>
 </section>
-<section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, asking before each sudo command.</p><pre class="help">usage: thermite install [-h] [-n]
+<section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, with one approval for the whole run.</p><pre class="help">usage: thermite install [-h] [-n] [--clean]
 
 Install thermite on this host, the one you run it on. Run
 it as your user, from a committed private site or a complete source checkout:
@@ -707,13 +709,23 @@ it is safe to run again at any time. It finds this host&#x27;s name and address
 and your user as it runs; instance/host.yaml holds only what is the same on
 any host (the state root, ports, service UID and GID, and time zone).
 
-Each step first checks whether it is done and skips it if so:
+Before changing this host, the installer checks that the site&#x27;s generated
+files are current and every change is committed. Each later step checks
+whether it is done and skips it if so:
 preconditions, packages, the thermite user and group with you in it, the
 state directories, the boot check, the systemd units, stopped native-state
 preparation and ownership repair, the deploy of HEAD, services, the API token, and a
-read-only check at the end. A command that needs root is shown before it
-runs, under sudo, and runs only if you answer y. After a no, a failure or
-Ctrl-C, run it again and it goes on from there.
+read-only check at the end. One y/n question approves this entire run,
+including its sudo commands and deployment ownership handoff. Compact
+status shows each stage; -v/--verbose shows details and commands. Interactive
+commands keep the terminal, with the spinner paused. After a no, a failure
+or Ctrl-C, run it again and it goes on from there, asking once for the new run.
+
+--clean first removes the installed units and deletes the native state root,
+including users, pairings, tokens, history, monitoring stores and backups.
+It also clears this host&#x27;s two local credential copies before reinstalling.
+The deletion still requires typing the exact state path. Source/site
+configuration and separately staged access identity/TLS state are retained.
 
 --dry-run only reads: it reports each step and what it would run. An
 agent uses only that: agents never run sudo.
@@ -721,6 +733,8 @@ agent uses only that: agents never run sudo.
 options:
   -h, --help     show this help message and exit
   -n, --dry-run  report what it would do; change nothing
+  --clean        delete native state and local API/Grafana credential copies, then
+                 reinstall; pairings are lost
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -729,7 +743,9 @@ switches every verb takes:
 
 examples:
   thermite install --dry-run        each step, and what it would run here; runs nothing
-  thermite install                  install, asking before each sudo command; safe to rerun
+  thermite install                  install with one approval for the whole run; safe to rerun
+  thermite install --clean --dry-run
+                                    review a complete native-state reset and fresh installation
 </pre>
 </section>
 <section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Upgrade thermite and the Apple TV helper here to the pinned versions.</p><pre class="help">usage: thermite upgrade [-h] [-n]
@@ -746,7 +762,8 @@ Each step first checks whether it is done and skips it if so:
 preconditions (deploy/ is what thermite generate writes, and this area is
 committed); what changes: each installed unit against deploy/, and the
 runtime image the installed unit runs against the pinned one (when nothing
-differs it says so and stops); the boot test of HEAD&#x27;s conf/; when
+differs on a host without AppArmor it says so and stops); enabled AppArmor
+requires approved root enforcement verification even when disk state is current; the boot test of HEAD&#x27;s conf/; when
 runtime&#x27;s units or service ownership need preparation, a backup, with runtime stopped, of the state&#x27;s
 conf, userdata and Grafana&#x27;s data into
 &lt;state&gt;/backups/&lt;UTC time&gt;-openhab-&lt;installed version&gt;.tar.gz (without
@@ -761,7 +778,9 @@ answering; and a read-only check (thermite health --production and
 thermite status).
 
 Before any changes, one y/n question approves the whole upgrade run,
-including its sudo commands. Each command is still shown before it runs.
+including its sudo commands. Compact status shows each stage; -v/--verbose
+shows details and commands. Interactive commands keep the terminal, with
+the spinner paused.
 After a no, a failure or Ctrl-C, run it again and it goes on from there,
 asking once again. --dry-run only reads: it reports each step and what it
 would run. An agent uses only that: agents never run sudo.
@@ -804,14 +823,19 @@ them from starting at the next boot.
 
 It keeps the state root (conf, userdata, secrets, the deploy records and
 backups, Prometheus&#x27; samples, Grafana&#x27;s data and the metrics secrets), the
-thermite user and group, the packages and the images, and says so: thermite
+thermite user and group, the packages, images and host node-exporter
+confinement configuration, and says so: thermite
 install puts runtime and the metrics back on the same state. --purge, as apt
 purge does, also deletes the state root; before that step it shows the path
-and asks you to type it, on top of the y before each sudo command.
+and asks you to type it. Separately staged authenticated-access releases
+and state are managed separately.
 
-Each step first checks whether it is done and skips it if so. --dry-run
-only reads: it reports each step and what it would run. An agent uses only
-that: agents never run sudo.
+One y/n question approves this uninstall run, including its sudo commands.
+Compact status shows each stage; -v/--verbose shows details and commands.
+Interactive commands keep the terminal, with the spinner paused. Each step
+first checks whether it is done and skips it if so. --dry-run only reads:
+it reports each step and what it would run. An agent uses only that:
+agents never run sudo.
 
 options:
   -h, --help     show this help message and exit
@@ -830,7 +854,7 @@ examples:
   thermite uninstall -n --purge     what deleting the state too would do
 </pre>
 </section>
-<section class="verb" id="deploy"><h3><code>thermite deploy</code></h3><p>Install a commit&#x27;s conf/ and Apple TV helper here.</p><pre class="help">usage: thermite deploy [-h] [-n] [--force] [--state DIR] [REV]
+<section class="verb" id="deploy"><h3><code>thermite deploy</code></h3><p>Install a commit&#x27;s conf/ and Apple TV helper here.</p><pre class="help">usage: thermite deploy [-h] [-n] [--yes] [--force] [--state DIR] [REV]
 
 Production runtime runs on the host thermite install ran on, from its state
 directory (the host file&#x27;s state_root). Run this there. It installs one
@@ -861,6 +885,9 @@ an earlier deploy installed, and leaves alone anything else in the state.
 
 You need to be in the thermite group. Before writing, it asks you to approve
 the exact privileged command that gives deployed files to thermite:thermite.
+Install and upgrade pass their run approval with --yes; an explicit --yes
+also acknowledges this handoff for a standalone deployment. It does not
+bypass boot checks, pairing-log protection or sudo authentication.
 New files inherit the service group and shared directories keep setgid.
 Changing the units themselves (a runtime upgrade or new image) needs root,
 so thermite upgrade does it:
@@ -873,6 +900,8 @@ positional arguments:
 options:
   -h, --help     show this help message and exit
   -n, --dry-run  report what it would do; change nothing
+  --yes          approve the ownership handoff for this invocation; install/upgrade use
+                 their run approval
   --force        install a conf thermite test boot has not passed on here
   --state DIR    the state root (default: instance/host.yaml state_root)
 
@@ -993,6 +1022,8 @@ examples:
 Read-only checks against the running runtime: every Thing ONLINE, Items whose
 state is NULL or UNDEF, and the installed add-ons (compared with an
 addons.cfg when --addons is given). Only GET requests are sent.
+An online HEOS bridge without either optional account field reports its
+missing-account diagnostic as a visible warning, preserving local transport.
 
 The runtime answers /rest/things and /rest/addons only with credentials; pass
 an API token file (the sandbox writes var/sandbox/api-token). --sandbox
@@ -1713,7 +1744,8 @@ examples:
   thermite access status --url https://thermite.example:13600
                                     use this site&#x27;s private terminal credential
 </pre></details>
-<details id="access-stage"><summary><code>thermite access stage</code></summary><pre class="help">usage: thermite access stage [-h] --destination DESTINATION --state STATE [--house FILE]
+<details id="access-stage"><summary><code>thermite access stage</code></summary><pre class="help">usage: thermite access stage [-h] --destination DESTINATION --state STATE
+                             --plan-directory PLAN_DIRECTORY [--house FILE]
                              --assets ASSETS --runtime-url RUNTIME_URL
                              --runtime-token-file RUNTIME_TOKEN_FILE --tls-cert TLS_CERT
                              --tls-key TLS_KEY --allowed-host ALLOWED_HOSTS
@@ -1728,6 +1760,10 @@ options:
   --destination DESTINATION     new persistent release directory outside this checkout
   --state STATE                 site-owned mode0700 state directory outside releases and
                                 source checkouts; reuse on upgrades
+  --plan-directory PLAN_DIRECTORY
+                                new operator-owned plan directory under an existing
+                                mode0700 parent; saves private diagnostics, the receipt,
+                                handoff.sh and activate.sh
   --house FILE                  the house file (default: instance/devices.yaml)
   --assets ASSETS               complete deployed native conf/html/remote directory
   --runtime-url RUNTIME_URL     explicit native loopback HTTP origin
@@ -2071,13 +2107,15 @@ examples:
 </section>
 <section class="verb" id="iso"><h3><code>thermite iso</code></h3><p>Build a bootable installer for a dedicated Thermite machine.</p><pre class="help">usage: thermite iso [-h] ACTION ...
 
-Build a hybrid BIOS/UEFI Ubuntu Server installer containing the reviewed
+Build a hybrid BIOS/UEFI Arch Linux installer containing the reviewed
 Thermite application. It asks for disk, network and owner account settings.
 No private site or credentials are embedded. Runtime commissioning follows
-first boot and needs Internet access. Building requires xorriso; no root.
+first boot and needs Internet access. Arch OS installation also requires
+Internet access. --base ubuntu retains the Ubuntu Server offline OS installer.
+Building requires xorriso, plus mtools for Arch; no root.
 
-fetch downloads the pinned base ISO and Python dependency over HTTPS and
-checks SHA256. build uses those cached inputs and writes an ISO plus a
+fetch downloads the pinned base ISO and any bundled Python dependency over
+HTTPS and checks SHA256. build uses those cached inputs and writes an ISO plus a
 checksum and provenance receipt. Existing outputs are never overwritten.
 
 options:
@@ -2099,38 +2137,41 @@ examples:
   thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso
                                     build the bootable installer and checksum
 </pre>
-<details id="iso-fetch"><summary><code>thermite iso fetch</code></summary><pre class="help">usage: thermite iso fetch [-h] --cache DIR
+<details id="iso-fetch"><summary><code>thermite iso fetch</code></summary><pre class="help">usage: thermite iso fetch [-h] --cache DIR [--base {arch,ubuntu}]
 
 Download and verify pinned installer inputs.
 
 options:
-  -h, --help     show this help message and exit
-  --cache DIR    directory for verified input downloads
+  -h, --help            show this help message and exit
+  --cache DIR           directory for verified input downloads
+  --base {arch,ubuntu}  installer distribution (default: arch)
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite iso fetch --cache .scratch/iso/cache
                                     download and verify fixed inputs
 </pre></details>
 <details id="iso-build"><summary><code>thermite iso build</code></summary><pre class="help">usage: thermite iso build [-h] --cache DIR --work DIR --out FILE [--xorriso XORRISO]
+                          [--base {arch,ubuntu}]
 
 Build a bootable ISO from the verified cache.
 
 options:
-  -h, --help         show this help message and exit
-  --cache DIR        directory containing verified inputs
-  --work DIR         disposable staging directory
-  --out FILE         new output ISO filename
-  --xorriso XORRISO  explicit xorriso executable
+  -h, --help            show this help message and exit
+  --cache DIR           directory containing verified inputs
+  --work DIR            disposable staging directory
+  --out FILE            new output ISO filename
+  --xorriso XORRISO     explicit xorriso executable
+  --base {arch,ubuntu}  installer distribution (default: arch)
 
 switches every verb takes:
-  -q, --quiet        print only errors
-  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
-  --no-color         no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso

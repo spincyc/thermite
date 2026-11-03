@@ -14,13 +14,14 @@ import dataclasses
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import stat
 
 ACCOUNT = GROUP = "thermite"
 UID = GID = 9001
 RECEIPT_VERSION = 1
-POLICY = "thermite-service-v1"
+POLICY = "thermite-service-v3"
 RECEIPT = "deploy/service-account.json"
 SHARED_DIR = 0o2770
 SHARED_FILE = 0o660
@@ -29,6 +30,13 @@ RUNTIME_DIR = 0o750
 RUNTIME_FILE = 0o640
 PRIVATE_DIR = 0o700
 PRIVATE_FILE = 0o600
+# Graal 25.0.1's InternalResourceCache.installResource extracts this native
+# helper only when its versioned cache is absent. Its producer mode 0775 is
+# acceptable only behind checked service-owned 0700 parents. Keep an already
+# tightened 0700 helper and restore owner execution after legacy blanket
+# 0600 repair; credentials elsewhere in userdata stay 0600.
+PRIVATE_CACHE_PROGRAM = re.compile(
+    r"userdata/\.cache/org\.graalvm\.polyglot/engine/libtruffleattach/[0-9a-f]{64}/bin/libtruffleattach\.so\Z")
 
 SHARED = ("conf", "metrics", "atv/app", "exporter/app", "deploy")
 PRIVATE = ("secrets", "atv/secrets", "monitoring/secrets", "userdata")
@@ -57,16 +65,25 @@ def _under(relative: str, roots: tuple[str, ...]) -> bool:
     return any(relative == root or relative.startswith(root + "/") for root in roots)
 
 
-def desired_mode(relative: str, mode: int, directory: bool) -> int:
+def desired_mode(relative: str, mode: int, directory: bool, *, private_cache: bool = False) -> int:
     """Narrow access; an existing private file in shared config stays private.
 
     Shared directories themselves are the operator's deployment boundary.
     Descendant directories that were deliberately private remain private.
     """
     if _under(relative, PRIVATE):
-        return PRIVATE_DIR if directory else PRIVATE_FILE
+        if directory:
+            return PRIVATE_DIR
+        if PRIVATE_CACHE_PROGRAM.fullmatch(relative):
+            return 0o775 if private_cache and mode == 0o775 else 0o700
+        return PRIVATE_FILE
     if _under(relative, ("backups",)):
         # Recovery can enumerate archive names without reading credentials.
+        # Keep the helper's nonsecret completion witnesses group-readable,
+        # but never widen a private file just because its name resembles one.
+        if (not directory and mode == RUNTIME_FILE and relative.count("/") == 1
+                and relative.endswith(".tar.gz.complete.json")):
+            return RUNTIME_FILE
         return RUNTIME_DIR if directory else PRIVATE_FILE
     if _under(relative, SHARED):
         if directory:
@@ -176,11 +193,32 @@ def _selected_entries(root: Path, deployment: bool):
         os.close(first)
 
 
+def _policy_entries(entries, uid: int, gid: int):
+    """Apply the cache exception only after checking every private ancestor.
+
+    Walks yield directories before their children. Keep just the current
+    userdata ancestry, so descriptor and memory use stay bounded by depth.
+    """
+    parents = []
+    for relative, descriptor, info in entries:
+        while parents and not relative.startswith(parents[-1][0] + "/"):
+            parents.pop()
+        mode = stat.S_IMODE(info.st_mode)
+        owned = (info.st_uid, info.st_gid) == (uid, gid)
+        private = bool(parents and parents[-1][1])
+        if stat.S_ISDIR(info.st_mode) and (relative == "userdata" or relative.startswith("userdata/")):
+            parents.append((relative, owned and mode == PRIVATE_DIR and (relative == "userdata" or private)))
+        if PRIVATE_CACHE_PROGRAM.fullmatch(relative) and not stat.S_ISREG(info.st_mode):
+            raise ServiceError(f"Graal cache helper is not a regular file: {relative}")
+        wanted = mode if stat.S_ISLNK(info.st_mode) else desired_mode(
+            relative, mode, stat.S_ISDIR(info.st_mode), private_cache=private and owned)
+        yield relative, descriptor, info, wanted
+
+
 def _issues(root: Path, entries, uid: int, gid: int) -> list[Issue]:
     issues = []
-    for relative, _, info in entries:
+    for relative, _, info, wanted in _policy_entries(entries, uid, gid):
         mode = stat.S_IMODE(info.st_mode)
-        wanted = mode if stat.S_ISLNK(info.st_mode) else desired_mode(relative, mode, stat.S_ISDIR(info.st_mode))
         if (info.st_uid, info.st_gid, mode) != (uid, gid, wanted):
             issues.append(Issue(root / relative, info.st_uid, info.st_gid, mode, uid, gid, wanted))
     return issues
@@ -191,6 +229,63 @@ def audit_state(root: Path, uid: int = UID, gid: int = GID, *, deployment: bool 
     root = Path(os.path.abspath(root))
     with _selected_entries(root, deployment) as entries:
         return _issues(root, entries, uid, gid)
+
+
+def _mount_id(descriptor: int) -> int:
+    """Linux mount identity also distinguishes bind mounts on the same device."""
+    for line in Path(f"/proc/self/fdinfo/{descriptor}").read_text().splitlines():
+        if line.startswith("mnt_id:"):
+            return int(line.split()[1])
+    raise ServiceError("cannot verify runtime mount identity")
+
+
+def normalize_owned_runtime(root: Path) -> int:
+    """Narrow a caller-owned runtime, retaining its read and executable bits.
+
+    Unlike administrative state repair, this never changes ownership or adds
+    group access. Venv interpreter/directory symlinks remain untouched. The
+    complete preflight rejects foreign inodes, hard links and mount crossings
+    before any chmod; the repair walk repeats those checks on opened inodes.
+    """
+    uid, gid = os.geteuid(), os.getegid()
+    validate_identity(uid, gid)
+    root = Path(os.path.abspath(root))
+
+    @contextlib.contextmanager
+    def checked():
+        with _entries(root) as entries:
+            mount = None
+            def owned():
+                nonlocal mount
+                for relative, descriptor, info in entries:
+                    current_mount = _mount_id(descriptor)
+                    if mount is None:
+                        mount = current_mount
+                    if current_mount != mount:
+                        raise ServiceError(f"refusing mounted runtime entry {root / relative}")
+                    if (info.st_uid, info.st_gid) != (uid, gid):
+                        raise ServiceError(f"runtime entry is not owned by {uid}:{gid}: {root / relative}")
+                    yield relative, descriptor, info
+            walk = owned()
+            try:
+                yield walk
+            finally:
+                walk.close()
+
+    with checked() as entries:
+        for _ in entries:
+            pass
+    changed = 0
+    with checked() as entries:
+        for _, descriptor, info in entries:
+            if stat.S_ISLNK(info.st_mode):
+                continue
+            mode = stat.S_IMODE(info.st_mode)
+            wanted = (mode & 0o750) if stat.S_ISDIR(info.st_mode) or mode & 0o111 else (mode & 0o640)
+            if mode != wanted:
+                os.fchmod(descriptor, wanted)
+                changed += 1
+    return changed
 
 
 def _chown_link(descriptor: int, uid: int, gid: int) -> None:
@@ -250,14 +345,13 @@ def normalize_state(root: Path, uid: int = UID, gid: int = GID, *, deployment: b
         if not deployment:
             _remove_receipt(root)
         with _selected_entries(root, deployment) as entries:
-            for relative, descriptor, info in entries:
+            for relative, descriptor, info, wanted in _policy_entries(entries, uid, gid):
                 if (info.st_uid, info.st_gid) != (uid, gid):
                     if stat.S_ISLNK(info.st_mode):
                         _chown_link(descriptor, uid, gid)
                     else:
                         os.fchown(descriptor, uid, gid)
                 if not stat.S_ISLNK(info.st_mode):
-                    wanted = desired_mode(relative, stat.S_IMODE(info.st_mode), stat.S_ISDIR(info.st_mode))
                     if stat.S_IMODE(os.fstat(descriptor).st_mode) != wanted:
                         os.fchmod(descriptor, wanted)
         if receipt:

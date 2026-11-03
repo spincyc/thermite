@@ -1,8 +1,10 @@
 """Explicit, TLS-only site composition. No service starts on import."""
 
 from contextlib import contextmanager
+import asyncio
 import ipaddress
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -117,17 +119,70 @@ def bootstrap(config_path, username, secret):
     return {"initialized": True, "username": user.username, "state": config["state"]}
 
 
+def _run_server(application, *, on_shutdown=None, **options):
+    import uvicorn
+
+    class Server(uvicorn.Server):
+        async def shutdown(self, sockets=None):
+            await super().shutdown(sockets)
+            # Uvicorn cancels over-budget requests, then re-raises SIGTERM.
+            # Django also spawns response/stream tasks outside ServerState.tasks.
+            # This loop belongs to this single-worker server: finish its normal
+            # runner cancellation here, before SIGTERM can bypass runner cleanup.
+            pending = asyncio.all_tasks() - {asyncio.current_task()}
+            if pending:
+                for task in pending:
+                    if not task.cancelling():
+                        task.cancel()
+                done, unfinished = await asyncio.wait(pending, timeout=5)
+                failed = sum(not task.cancelled() and task.exception() is not None for task in done)
+                if unfinished or failed:
+                    logging.getLogger("uvicorn.error").warning(
+                        "Access shutdown cleanup incomplete: %d unfinished task(s), %d failed task(s).",
+                        len(unfinished), failed)
+            # capture_signals re-raises SIGTERM after shutdown returns, which
+            # can bypass serve's outer finally. Drain/close before that point.
+            if on_shutdown:
+                on_shutdown()
+
+    server = Server(uvicorn.Config(application, **options))
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass  # Match uvicorn.run's single-process signal handling.
+    if not server.started:
+        raise SystemExit(uvicorn.config.STARTUP_FAILURE)
+
+
 def serve(config_path):
     require_service_account()
-    config, _, _ = configured(config_path)
-    from oh_identity.models import User
-    if not User.objects.filter(is_active=True, role__reserved=True, role__name="Admin").exists():
-        raise AccessError("Bootstrap a local admin before serving this site")
-    from oh_identity.asgi import application
-    import uvicorn
-    # Direct TLS only. Proxy headers and forwarded client/origin claims are ignored.
-    uvicorn.run(application, host=config["bind_host"], port=config["port"], ssl_certfile=config["tls_cert"],
-                ssl_keyfile=config["tls_key"], ssl_version=ssl.PROTOCOL_TLS_SERVER,
-                proxy_headers=False, forwarded_allow_ips="", access_log=False,
-                server_header=False, limit_concurrency=100, timeout_keep_alive=5,
-                log_config=None, workers=1)
+    config, adapter, _ = configured(config_path)
+    cleaned = False
+
+    def cleanup():
+        nonlocal cleaned
+        if cleaned:
+            return
+        cleaned = True
+        from oh_identity.batches import commands
+        # Drain admitted batch jobs before closing the pools they may use.
+        commands.shutdown()
+        close = getattr(adapter.transport, "close", None)
+        if close:
+            close()
+
+    try:
+        from oh_identity.models import User
+        if not User.objects.filter(is_active=True, role__reserved=True, role__name="Admin").exists():
+            raise AccessError("Bootstrap a local admin before serving this site")
+        from oh_identity.asgi import application
+        # Direct TLS only. Proxy headers and forwarded client/origin claims are ignored.
+        _run_server(application, on_shutdown=cleanup,
+                    host=config["bind_host"], port=config["port"], ssl_certfile=config["tls_cert"],
+                    ssl_keyfile=config["tls_key"], ssl_version=ssl.PROTOCOL_TLS_SERVER,
+                    proxy_headers=False, forwarded_allow_ips="", access_log=False,
+                    server_header=False, limit_concurrency=100, timeout_keep_alive=5,
+                    timeout_graceful_shutdown=15,
+                    log_config=None, workers=1)
+    finally:
+        cleanup()

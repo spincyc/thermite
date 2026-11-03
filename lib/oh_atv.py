@@ -13,6 +13,11 @@ a new connection takes about two seconds.
     POST /devices/<id>/pair   {"host"}            the TV shows a 4-digit code
     POST /devices/<id>/pair   {"host", "code"}    finish pairing with it
 
+Key, app and pairing POSTs may also carry a bounded "operation" identifier.
+Those replies echo it with "terminal": whether that request is known to
+have ended, including a proved refusal. A timeout or failed pairing close
+is not terminal. Requests without an operation keep the legacy response.
+
 Every device answer is the status object with "ok" and "error" added:
 
     {"id", "host", "paired", "connected", "power": "on"|"off"|"unknown",
@@ -82,6 +87,7 @@ KEYS = frozenset({
 DEVICE_ID = re.compile(r"[a-z][a-z0-9_]{0,63}")
 BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,127}")
 CODE = re.compile(r"[0-9]{4}")
+OPERATION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}")
 MAX_BODY = 4096
 #: The request line and headers together.
 MAX_HEAD = 8192
@@ -98,11 +104,12 @@ REJECTED = "The Apple TV did not accept the code. Ask for a new one and try agai
 class HttpError(Exception):
     """A request answered with `status` and the plain-English `message`."""
 
-    def __init__(self, status: int, message: str, allow: str | None = None) -> None:
+    def __init__(self, status: int, message: str, allow: str | None = None, *, terminal: bool = False) -> None:
         super().__init__(message)
         self.status = status
         self.message = message
         self.allow = allow
+        self.terminal = terminal
 
 
 def describe(error: BaseException) -> str:
@@ -163,6 +170,8 @@ class Device:
         self.commanded_power: str | None = None
         self.power_command_ack_at: int | None = None
         self.power_reported_at: int | None = None
+        self.native_sequence = 0
+        self.power_event = asyncio.Event()
         self.pairing: Any = None
         self.pairing_since = 0.0
         self.error: str | None = None
@@ -265,6 +274,7 @@ class Bridge:
             return
         device.power = "unknown"
         device.power_reported_at = None
+        device.power_event.set()
         try:
             pending = atv.close()
         except Exception:
@@ -285,6 +295,8 @@ class Bridge:
             word = self._power_word(state)
             device.power = word
             device.power_reported_at = int(self.wall_clock() * 1000)
+            device.native_sequence += 1
+            device.power_event.set()
             self._note(device, f"power {word} (reported by the Apple TV); at_ms={device.power_reported_at}")
 
     def _take_pairing(self, device: Device) -> Any:
@@ -294,9 +306,33 @@ class Bridge:
     def _pairing_expired(self, device: Device) -> bool:
         return device.pairing is not None and self.clock() - device.pairing_since > self.pair_timeout
 
-    async def _close_pairing(self, handler: Any) -> None:
-        with contextlib.suppress(Exception):
+    async def _close_pairing(self, handler: Any) -> bool:
+        try:
             await asyncio.wait_for(handler.close(), self.connect_timeout)
+        except Exception:
+            return False
+        return True
+
+    def _pairing_rejected(self, error: Exception) -> bool:
+        """A native authentication rejection, never a transport classification.
+
+        The pinned Companion handler wraps AuthenticationError in PairingError;
+        transport failures have a different cause, including wrapped timeouts.
+        Inspect types only: exception strings can contain private protocol data.
+        """
+        rejected = getattr(getattr(self.pyatv, "exceptions", None), "AuthenticationError", None)
+        if not isinstance(rejected, type) or not issubclass(rejected, Exception):
+            return False
+        seen = set()
+        native_rejection = False
+        while error is not None and id(error) not in seen:
+            seen.add(id(error))
+            if isinstance(error, (TimeoutError, OSError)):
+                return False
+            if isinstance(error, rejected):
+                native_rejection = True
+            error = error.__cause__
+        return native_rejection
 
     # -- connecting ----------------------------------------------------------
 
@@ -316,7 +352,7 @@ class Bridge:
         device.last_attempt = self.clock()
         credentials = read_credentials(self.secrets, device.id)
         if credentials is None:
-            raise HttpError(409, NOT_PAIRED)
+            raise HttpError(409, NOT_PAIRED, terminal=True)
         try:
             atv = await asyncio.wait_for(self._open(device.host, credentials), self.connect_timeout)
         except HttpError as error:
@@ -336,6 +372,9 @@ class Bridge:
         device.atv, device.listener = atv, listener
         device.power = self._read_power(atv)
         device.power_reported_at = int(self.wall_clock() * 1000) if device.power != "unknown" else None
+        if device.power_reported_at is not None:
+            device.native_sequence += 1
+            device.power_event.set()
         device.error = None
         self._note(device, f"connected to {device.host}, power {device.power}")
 
@@ -356,7 +395,7 @@ class Bridge:
         may reconnect and send again after an ambiguous command failure.
         """
         if not self.paired(device.id):
-            raise HttpError(409, NOT_PAIRED)
+            raise HttpError(409, NOT_PAIRED, terminal=True)
         if device.atv is None:
             await self._connect(device)
         atv = device.atv
@@ -408,16 +447,103 @@ class Bridge:
             self._note(device, f"power {word} command acknowledged; at_ms={device.power_command_ack_at}; "
                                f"elapsed_ms={elapsed}")
 
+    async def _fresh_power(self, device: Device) -> None:
+        """Acquire native power once, never substitute the helper's cached GET.
+
+        The pinned Companion implementation exposes its existing read-only
+        attention-state query through the selected power implementation. Newer
+        tvOS can refuse that query; callers then need an actual native push.
+        The simulator has the same explicit acquisition seam.
+        """
+        atv = device.atv
+        if atv is None:
+            raise HttpError(502, NO_ANSWER)
+        power = atv.power
+        acquire = getattr(power, "read_power_state", None)
+        if callable(acquire):
+            state = await acquire()
+        else:
+            implementation = getattr(power, "main_instance", None)
+            fetch = getattr(getattr(implementation, "api", None), "fetch_attention_state", None)
+            translate = getattr(implementation, "_system_status_to_power_state", None)
+            if not callable(fetch) or not callable(translate):
+                raise HttpError(501, "A native power snapshot is unavailable; cached state is not confirmation.")
+            state = translate(await fetch())
+        if device.atv is not atv:
+            raise HttpError(502, NO_ANSWER)
+        self._pushed_power(device, atv, state)
+        if device.power == "unknown":
+            raise HttpError(502, "The Apple TV reported unknown power.")
+
+    async def lifecycle(self, device: Device, operation: str, kind: str, on: bool | None) -> tuple[int, dict]:
+        """One bounded correlated native acquisition/power operation.
+
+        The deadline includes the per-device queue and reconnect. A command is
+        never replayed. Only a native snapshot/push can confirm its value; a
+        cached GET or HID acknowledgement cannot. The unchanged legacy API
+        keeps its faster acknowledgement semantics.
+        """
+        submitted = False
+        try:
+            async with asyncio.timeout(self.connect_timeout):
+                async with device.lock:
+                    if not self.paired(device.id):
+                        raise HttpError(409, NOT_PAIRED)
+                    if device.atv is None:
+                        await self._connect(device)
+                    if kind == "probe":
+                        await self._fresh_power(device)
+                    else:
+                        target = "on" if on else "off"
+                        fresh = False
+                        try:
+                            await self._fresh_power(device)
+                            fresh = True
+                        except Exception:
+                            pass
+                        if not fresh or device.power != target:
+                            sequence = device.native_sequence
+                            submitted = True
+                            await self._run(device, f"lifecycle power {target}",
+                                            lambda atv: atv.power.turn_on() if on else atv.power.turn_off())
+                            device.commanded_power = target
+                            device.power_command_ack_at = int(self.wall_clock() * 1000)
+                            try:
+                                await self._fresh_power(device)
+                            except Exception:
+                                pass
+                            while device.native_sequence <= sequence or device.power != target:
+                                if device.atv is None:
+                                    raise HttpError(502, NO_ANSWER)
+                                device.power_event.clear()
+                                # No await separates this condition from clear;
+                                # a subsequent push wakes the finite wait.
+                                if device.native_sequence > sequence and device.power == target:
+                                    break
+                                await device.power_event.wait()
+                    return 200, self.status(device) | {"ok": True, "error": None,
+                        "operation": operation, "terminal": True, "submitted": submitted,
+                        "native_sequence": device.native_sequence}
+        except Exception as error:
+            message = error.message if isinstance(error, HttpError) else (
+                "The native power operation timed out; its outcome is uncertain." if isinstance(error, TimeoutError)
+                else "Native power could not be confirmed.")
+            code = error.status if isinstance(error, HttpError) else 502
+            return code, self.status(device) | {"ok": False, "error": message,
+                "operation": operation, "terminal": not submitted, "submitted": submitted,
+                "native_sequence": device.native_sequence}
+
     async def launch(self, device: Device, app: str) -> None:
         async with device.lock:
             await self._run(device, f"app {app}", lambda atv: atv.apps.launch_app(app))
         self._note(device, f"app {app}")
 
-    async def pair_begin(self, device: Device) -> None:
+    async def pair_begin(self, device: Device) -> bool:
         async with device.lock:
             old = self._take_pairing(device)
+            closed = True
             if old is not None:
-                await self._close_pairing(old)
+                closed = await self._close_pairing(old)
             handler = None
             try:
                 config = await asyncio.wait_for(self._scan(device.host), self.connect_timeout)
@@ -439,31 +565,35 @@ class Bridge:
             device.pairing = handler
             device.pairing_since = self.clock()
             self._note(device, "pairing begun; the Apple TV shows a code")
+            return closed
 
-    async def pair_finish(self, device: Device, code: str) -> None:
+    async def pair_finish(self, device: Device, code: str) -> bool:
         async with device.lock:
             if self._pairing_expired(device):
                 await self._close_pairing(self._take_pairing(device))
                 self._note(device, "the pairing code expired")
-                raise HttpError(409, EXPIRED)
+                raise HttpError(409, EXPIRED, terminal=True)
             handler = self._take_pairing(device)
             if handler is None:
-                raise HttpError(409, NO_CODE)
+                raise HttpError(409, NO_CODE, terminal=True)
             credentials = None
             reason = "code not accepted"
+            finished = False
             try:
                 handler.pin(int(code))
                 await asyncio.wait_for(handler.finish(), self.connect_timeout)
+                finished = True
                 if handler.has_paired:
                     credentials = handler.service.credentials
             except Exception as error:
                 # The type only: pyatv's text could quote what was sent.
                 reason = f"code not accepted ({type(error).__name__})"
+                finished = self._pairing_rejected(error)
             finally:
-                await self._close_pairing(handler)
+                closed = await self._close_pairing(handler)
             if not isinstance(credentials, str) or not credentials.strip():
                 self._note(device, f"pairing failed: {reason}")
-                raise HttpError(422, REJECTED)
+                raise HttpError(422, REJECTED, terminal=finished and closed)
             try:
                 write_credentials(self.secrets, device.id, credentials.strip())
             except OSError as error:
@@ -475,6 +605,7 @@ class Bridge:
             device.last_attempt = self.clock()
             self._note(device, "pairing succeeded; stored")
         self._spawn(self._connect_in_background(device))
+        return closed
 
     async def close(self) -> None:
         """Close every connection and pairing and stop background work."""
@@ -506,23 +637,40 @@ class Bridge:
             query = urllib.parse.parse_qs(split.query)
             return 200, self.look(ident, check_host((query.get("host") or [None])[-1]))
         action = urllib.parse.unquote(segments[3])
-        if action not in ("key", "power", "app", "pair"):
+        if action not in ("key", "power", "app", "pair", "lifecycle"):
             raise HttpError(404, f"No such path: {split.path[:100]}")
         if method != "POST":
             raise HttpError(405, f"{method} is not allowed here; use POST.", allow="POST")
         data = parse_body(body)
         host = check_host(data.get("host"))
+        if action == "lifecycle":
+            operation, kind, on = data.get("operation"), data.get("kind"), data.get("on")
+            if not isinstance(operation, str) or not OPERATION.fullmatch(operation):
+                raise HttpError(400, "Give a bounded lifecycle operation identifier.")
+            if kind not in ("probe", "power") or (kind == "power" and type(on) is not bool):
+                raise HttpError(400, "Give lifecycle kind probe or power, with boolean on for power.")
+            allowed = {"host", "operation", "kind"} | ({"on"} if kind == "power" else set())
+            if set(data) - allowed:
+                raise HttpError(400, "Unexpected lifecycle operation fields.")
+            return await self.lifecycle(self._device(ident, host), operation, kind, on)
+        correlated = "operation" in data
+        operation = data.get("operation")
+        if correlated and (action not in ("key", "app", "pair") or not isinstance(operation, str)
+                           or not OPERATION.fullmatch(operation)):
+            raise HttpError(400, "Give a bounded operation identifier for a key, app or pairing request.")
         run = self._action(action, data)
         device = self._device(ident, host)
         try:
-            await run(device)
+            completed = await run(device)
         except HttpError as error:
             device.error = error.message
-            return error.status, self.status(device) | {"ok": False, "error": error.message}
+            metadata = {"operation": operation, "terminal": error.terminal} if correlated else {}
+            return error.status, self.status(device) | {"ok": False, "error": error.message} | metadata
         device.error = None
-        return 200, self.status(device) | {"ok": True, "error": None}
+        metadata = {"operation": operation, "terminal": completed is not False} if correlated else {}
+        return 200, self.status(device) | {"ok": True, "error": None} | metadata
 
-    def _action(self, action: str, data: dict[str, Any]) -> Callable[[Device], Awaitable[None]]:
+    def _action(self, action: str, data: dict[str, Any]) -> Callable[[Device], Awaitable[bool | None]]:
         """The validated call one POST makes; HttpError 400 on bad fields."""
         if action == "key":
             key = data.get("key")

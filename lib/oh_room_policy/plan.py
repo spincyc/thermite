@@ -82,10 +82,10 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     def owner(item):
         return next((ident for ident in sorted(devices, key=len, reverse=True) if item.startswith(ident + "_")), None)
 
-    local_stage = any(choice in (entry.get(key, {}).get("sources") or {}) for key in ("receiver", "display"))
-    local_switch = choice in (entry.get("hdmi_switch", {}).get("inputs") or {})
-    source = config["sources"].get(choice, {})
-    wake_items = {name for name, _ in routing.wake(data, choice)}
+    # Policy verification and lifecycle ownership share one active path.
+    # Boundary-scoped parking and imperative actions remain effects below.
+    from oh_features.routing.lifecycle import active_requirements
+    active = active_requirements(data, room, choice) if choice != "off" else None
     steps = (routing.power(data, room, choice) + routing.commands(data, room, choice) + inputs
              + [step for step in routing.after(data, room, choice) if step[0] in relevant_power or step[0] in allowed])
     fields = []
@@ -94,17 +94,8 @@ def expected_plan(house, room: str, choice: str) -> Plan:
         if ident is None:
             raise PolicyError("unknown_controller_field")
         device = devices[ident]
-        if choice != "off":
-            if item.endswith("_power") and item not in relevant_power | wake_items:
-                continue
-            if ident == config.get("hdmi_matrix") and (local_stage or local_switch):
-                continue
-            if ident == entry.get("hdmi_switch", {}).get("device") and local_stage:
-                continue
-            if device.get("kind") == "usb_matrix":
-                host = source.get("usb_host")
-                if host is None or isinstance(host, dict) and ident not in host:
-                    continue
+        if active is not None and item not in active:
+            continue
         accepted = set(map(str, allowed[item]))
         module = routing.switcher(device)
         if module is not None:
@@ -115,6 +106,9 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     fields = list(by_item.values())
     effects = raw["power"][choice] + raw["choices"][choice] + raw["inputs"][choice] + raw["after"][choice]
     edid = table["edid"]
+    local_stage = any(choice in (entry.get(key, {}).get("sources") or {}) for key in ("receiver", "display"))
+    local_switch = choice in (entry.get("hdmi_switch", {}).get("inputs") or {})
+    source = config["sources"].get(choice, {})
     if choice != "off" and not local_stage and not local_switch and edid and source.get("hdmi_input") is not None:
         name = edid["inputs"].get(str(source["hdmi_input"]))
         if name and raw["hdmi"] in edid["outputs"]:

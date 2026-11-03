@@ -32,7 +32,7 @@ STAGE_KEYS = {"device", "zone", "input", "input_by_source", "sources"}
 #: The room keys of what its other devices are sent on any source, and on
 #: Off. Not `on` and `off`: YAML reads those as true and false.
 ACTIONS = ("on_actions", "off_actions")
-ROOM_KEYS = {"room", "label", "hdmi_output", "hdmi_audio_output", "hdmi_switch", "usb", "usb_only", "sources", "sleep_sources", "edid",
+ROOM_KEYS = {"room", "label", "hdmi_output", "hdmi_audio_output", "hdmi_switch", "usb", "usb_only", "usb_unused", "sources", "sleep_sources", "edid",
              *STAGES, *ACTIONS}
 
 
@@ -208,7 +208,21 @@ def validate(data: object) -> list[str]:
                 size = usb_sizes.get(matrix_id) if matrix_id is not None else None
                 if port(at, host, size[0] if size else usb_hosts) and host == off_host:
                     problems.append(f"{at}: {host} is usb_off_host")
-        for key in sorted(set(entry) - {"label", "hdmi_input", "usb_host"}):
+        if "idle" in entry:
+            idle = entry["idle"]
+            if not isinstance(idle, str) or idle not in {"preserve", "standby"}:
+                problems.append(f"{where}.idle: must be preserve or standby")
+            elif idle == "standby":
+                from .lifecycle_io import capabilities
+                device = devices.get(source)
+                module = waker(device) if device is not None else None
+                cap = capabilities(data).get(module.wake_item(device)) if module else None
+                if not cap or not cap.get("terminal") or not cap.get("probe"):
+                    problems.append(f"{where}.idle: standby requires controlled absolute power, ordered execution and fresh readback")
+                if any(source in (room.get("sleep_sources") or []) for room in rooms_section.values()
+                       if isinstance(room, dict) and isinstance(room.get("sleep_sources", []), list)):
+                    problems.append(f"{where}.idle: remove this source from sleep_sources before enabling standby")
+        for key in sorted(set(entry) - {"label", "hdmi_input", "usb_host", "idle"}):
             problems.append(f"{where}: unknown key '{key}'")
 
     outputs: dict[object, str] = {}
@@ -242,6 +256,12 @@ def validate(data: object) -> list[str]:
         if not isinstance(usb, dict):
             problems.append(f"{where}.usb: must map USB matrices to device ports")
             usb = {}
+        if "usb_unused" in entry:
+            policy = entry["usb_unused"]
+            if not isinstance(policy, str) or policy not in {"preserve", "park"}:
+                problems.append(f"{where}.usb_unused: must be preserve or park")
+            if not usb:
+                problems.append(f"{where}.usb_unused: requires managed USB ports")
         for matrix_id, ports in usb.items():
             size = usb_sizes.get(matrix_id)
             if not isinstance(ports, list) or not ports:
@@ -330,6 +350,12 @@ def validate(data: object) -> list[str]:
     for key in sorted(set(routing) - {"hdmi_matrix", "hdmi_off_input", "usb_off_host", "edid", "sources",
                                       "rooms"}):
         problems.append(f"routing: unknown key '{key}'")
+    if not problems and any(source.get("idle") == "standby" for source in sources.values()):
+        contract = table(data)["lifecycle"]
+        for source, coverage in contract.get("coverage", {}).items():
+            if sources[source].get("idle") == "standby" and not coverage["complete"]:
+                problems.append(f"routing.sources.{source}.idle: standby requires complete observable consumer coverage; "
+                                + ", ".join(coverage.get("unsupported", [])))
     return problems
 
 
@@ -657,6 +683,9 @@ def commands(data: dict, room: str, choice: str) -> list[list]:
         host = usb_host(source, matrix_id, routing["usb_off_host"])
         moved = ports if only is None else only.get(matrix_id, [])
         out += [[_port_item(devices, matrix_id, port), host] for port in moved]
+        if only is not None and entry.get("usb_unused", "preserve") == "park":
+            out += [[_port_item(devices, matrix_id, port), routing["usb_off_host"]]
+                    for port in ports if port not in moved]
     return out
 
 
@@ -795,7 +824,18 @@ def table(data: dict) -> dict:
                 checks[item] = {"device": ident, "label": device.get("name") or device.get("model") or ident,
                                 "model": device.get("model") or "", "action": action}
         raw["diagnosis"] = {"item": problem_item_name(room), "checks": checks}
-    return {"rooms": rooms, "edid": edid_table(data), "off": OFF}
+    result = {"rooms": rooms, "edid": edid_table(data), "off": OFF}
+    if lifecycle_enabled(data):
+        from .lifecycle import compile_descriptor
+        from .lifecycle_io import capabilities
+        result["lifecycle"] = compile_descriptor(data, result, capabilities(data))
+    return result
+
+
+def lifecycle_enabled(data: dict) -> bool:
+    routing = data.get("routing") or {}
+    return (any(room.get("usb_unused") == "park" for room in routing.get("rooms", {}).values())
+            or any(source.get("idle") == "standby" for source in routing.get("sources", {}).values()))
 
 
 def options(data: dict, room: str) -> str:
@@ -837,14 +877,14 @@ def _label_ports(conf: Conf, device: dict, labels: dict[int, str]) -> None:
         _label(conf, module.switch_item(device, port), labels)
 
 
-def rule(data: dict) -> str:
+def rule(data: dict, contract: dict | None = None) -> str:
     source = SOURCE.read_text(encoding="utf-8")
     if source.count(MARK) != 1:
         raise ValueError(f"{SOURCE} must contain the line {MARK!r} exactly once")
     origin = SOURCE.relative_to(SOURCE.parents[3])
     header = (f"// Generated by bin/thermite generate from {origin} and the routing in\n"
               "// instance/devices.yaml; do not edit.\n")
-    filled = "const TABLE = " + json.dumps(table(data), indent=1) + ";"
+    filled = "const TABLE = " + json.dumps(table(data) if contract is None else contract, indent=1) + ";"
     return header + source.replace(MARK, filled)
 
 
@@ -878,5 +918,16 @@ def render(house: House, conf: Conf) -> None:
         labels.update({usb_host(s, matrix_id, off_host): s["label"] for s in sources
                        if usb_host(s, matrix_id, off_host) != off_host})
         _label_ports(conf, devices[matrix_id], labels)
-    conf.files[RULE] = rule(data)
+    contract = table(data)
+    if "lifecycle" in contract:
+        from .lifecycle_io import configure
+        configure(house, conf, contract["lifecycle"])
+        conf.files["automation/js/node_modules/thermite-routing-lifecycle/index.js"] = (
+            SOURCE.with_name("lifecycle.js").read_text(encoding="utf-8"))
+        for room in routing["rooms"]:
+            out.items[f"loc_{room}_source_lifecycle"] = {
+                "type": "String", "label": "Route lifecycle", "autoupdate": False,
+                "metadata": {"stateDescription": {"config": {"readOnly": True}}},
+            }
+    conf.files[RULE] = rule(data, contract)
     conf.add_addon(Addon("automation", "jsscripting", "the room Source rule (routing.js)"))

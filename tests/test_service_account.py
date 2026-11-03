@@ -8,6 +8,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
@@ -60,6 +61,140 @@ class Permissions(unittest.TestCase):
         service.normalize_state(self.root, self.uid, self.gid)
         self.assertEqual(stat.S_IMODE((self.root / "conf/legacy-secret").stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o2700)
+
+    def test_backup_completion_witnesses_keep_group_read_access_without_widening_private_files(self):
+        receipt = self.file("backups/finished.tar.gz.complete.json", 0o640)
+        private = [self.file("backups/finished.tar.gz", 0o640),
+                   self.file("backups/private.tar.gz.complete.json", 0o600),
+                   self.file("backups/nested/other.tar.gz.complete.json", 0o640),
+                   self.file("backups/unrelated.json", 0o640)]
+        before = {path: path.read_bytes() for path in [receipt, *private]}
+        service.normalize_state(self.root, self.uid, self.gid)
+        self.assertEqual(stat.S_IMODE(receipt.stat().st_mode), 0o640)
+        for path in private:
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual({path: path.read_bytes() for path in before}, before)
+        self.assertEqual(service.audit_state(self.root, self.uid, self.gid), [])
+
+    def test_only_known_graal_cache_helper_retains_owner_execution(self):
+        prefix = "userdata/.cache/org.graalvm.polyglot/engine/libtruffleattach/"
+        helper = self.file(prefix + "a" * 64 + "/bin/libtruffleattach.so", 0o775)
+        other = [self.file("userdata/credential", 0o775),
+                 self.file(prefix + "not-a-hash/bin/libtruffleattach.so", 0o775),
+                 self.file(prefix + "b" * 64 + "/bin/other.so", 0o775)]
+        before = {path: (path.read_bytes(), path.stat().st_ino) for path in [helper, *other]}
+        service.normalize_state(self.root, self.uid, self.gid)
+        self.assertEqual(stat.S_IMODE(helper.stat().st_mode), 0o700)
+        for parent in helper.relative_to(self.root).parents:
+            if parent != Path("."):
+                self.assertEqual(stat.S_IMODE((self.root / parent).stat().st_mode), 0o700)
+        for path in other:
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual({path: (path.read_bytes(), path.stat().st_ino) for path in [helper, *other]}, before)
+        self.assertEqual(service.audit_state(self.root, self.uid, self.gid), [])
+        self.assertEqual(service.normalize_state(self.root, self.uid, self.gid), [])
+
+    def graal_helper(self, mode=0o775):
+        helper = self.file("userdata/.cache/org.graalvm.polyglot/engine/libtruffleattach/"
+                           + "a" * 64 + "/bin/libtruffleattach.so", mode)
+        self.root.chmod(0o750)
+        for parent in helper.parents:
+            if parent == self.root:
+                break
+            parent.chmod(0o700)
+        return helper
+
+    def test_fresh_graal_producer_mode_is_private_and_tightened_mode_is_never_widened(self):
+        helper = self.graal_helper()
+        for mode in (0o775, 0o700):
+            with self.subTest(mode=oct(mode)):
+                helper.chmod(mode)
+                before = helper.stat()
+                self.assertEqual(service.audit_state(self.root, self.uid, self.gid), [])
+                self.assertEqual(service.normalize_state(self.root, self.uid, self.gid), [])
+                self.assertEqual(helper.stat(), before)
+
+    def test_legacy_graal_0600_helper_regains_owner_execution_without_replacement(self):
+        helper = self.graal_helper(0o600)
+        before = helper.read_bytes(), helper.stat().st_ino
+        issues = service.normalize_state(self.root, self.uid, self.gid)
+        self.assertTrue(any(issue.path == helper and issue.wanted_mode == 0o700 for issue in issues))
+        self.assertEqual(stat.S_IMODE(helper.stat().st_mode), 0o700)
+        self.assertEqual((helper.read_bytes(), helper.stat().st_ino), before)
+        self.assertEqual(service.audit_state(self.root, self.uid, self.gid), [])
+
+    def test_graal_exception_leaves_neighbors_and_credentials_strict(self):
+        helper = self.graal_helper()
+        neighbor = self.file(str(helper.relative_to(self.root).parent / "neighbor.so"), 0o775)
+        credential = self.file("userdata/credential", 0o775)
+        pairing = self.file("secrets/pairing", 0o775)
+        issues = service.audit_state(self.root, self.uid, self.gid)
+        self.assertFalse(any(issue.path == helper for issue in issues))
+        for path in (neighbor, credential, pairing):
+            self.assertTrue(any(issue.path == path and issue.wanted_mode == 0o600 for issue in issues))
+        service.normalize_state(self.root, self.uid, self.gid)
+        self.assertEqual(stat.S_IMODE(helper.stat().st_mode), 0o775)
+        for path in (neighbor, credential, pairing):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_each_graal_ancestor_must_have_private_permissions(self):
+        helper = self.graal_helper()
+        for parent in helper.parents:
+            if parent == self.root:
+                break
+            with self.subTest(parent=parent.relative_to(self.root)):
+                parent.chmod(0o750)
+                issues = service.audit_state(self.root, self.uid, self.gid)
+                self.assertTrue(any(issue.path == parent and issue.wanted_mode == 0o700 for issue in issues))
+                self.assertTrue(any(issue.path == helper and issue.wanted_mode == 0o700 for issue in issues))
+                parent.chmod(0o700)
+
+    def test_every_graal_ancestor_and_helper_must_have_the_expected_uid_and_gid(self):
+        helper = self.graal_helper()
+        checked = [helper]
+        for parent in helper.parents:
+            if parent == self.root:
+                break
+            checked.append(parent)
+        original = os.fstat
+        for path in checked:
+            inode = path.stat().st_ino
+            for field in (4, 5):
+                def wrong_identity(descriptor):
+                    info = original(descriptor)
+                    if info.st_ino == inode:
+                        values = list(info)
+                        values[field] += 1
+                        return os.stat_result(values)
+                    return info
+                with self.subTest(path=path.relative_to(self.root), identity=field), \
+                        mock.patch.object(service.os, "fstat", side_effect=wrong_identity):
+                    issues = service.audit_state(self.root, self.uid, self.gid)
+                self.assertTrue(any(issue.path == path for issue in issues))
+                self.assertTrue(any(issue.path == helper and issue.wanted_mode == 0o700 for issue in issues))
+
+    def test_graal_other_modes_and_special_bits_are_repaired_behind_private_parents(self):
+        helper = self.graal_helper()
+        for mode in (0o755, 0o6775, 0o1775):
+            with self.subTest(mode=oct(mode)):
+                helper.chmod(mode)
+                issues = service.audit_state(self.root, self.uid, self.gid)
+                self.assertTrue(any(issue.path == helper and issue.wanted_mode == 0o700 for issue in issues))
+                service.normalize_state(self.root, self.uid, self.gid)
+                self.assertEqual(stat.S_IMODE(helper.stat().st_mode), 0o700)
+                self.assertEqual(service.audit_state(self.root, self.uid, self.gid), [])
+
+    def test_graal_cache_helper_must_be_regular_and_never_follows_a_link(self):
+        helper = self.graal_helper()
+        external = Path(self.tmp.name, "external-library")
+        external.write_text("external")
+        external.chmod(0o775)
+        before = external.stat()
+        helper.unlink()
+        helper.symlink_to(external)
+        with self.assertRaisesRegex(service.ServiceError, "not a regular file"):
+            service.normalize_state(self.root, self.uid, self.gid)
+        self.assertEqual(external.stat(), before)
 
     def test_links_never_touch_external_targets(self):
         outside = Path(self.tmp.name, "outside")
@@ -174,6 +309,83 @@ class Permissions(unittest.TestCase):
     def test_deployment_cannot_issue_full_repair_receipt(self):
         with self.assertRaisesRegex(service.ServiceError, "deployment-only"):
             service.normalize_state(self.root, self.uid, self.gid, deployment=True, receipt=True)
+
+
+class OwnedRuntime(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name, "venv")
+        self.root.mkdir()
+        self.uid, self.gid = os.geteuid(), os.getegid()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    file = Permissions.file
+
+    def test_retains_read_and_executable_bits_and_only_narrows_access(self):
+        paths = [(self.file(name, before), after) for name, before, after in (
+            ("bin/activate", 0o644, 0o640), ("bin/console", 0o755, 0o750),
+            ("lib/module.so", 0o711, 0o710), ("private", 0o600, 0o600),
+            ("read-only", 0o440, 0o440))]
+        self.root.chmod(0o700)
+        before = {path: (path.read_bytes(), path.stat().st_ino) for path, _ in paths}
+        self.assertGreater(service.normalize_owned_runtime(self.root), 0)
+        self.assertEqual(stat.S_IMODE(self.root.stat().st_mode), 0o700)
+        for path, wanted in paths:
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), wanted)
+            self.assertEqual((path.read_bytes(), path.stat().st_ino), before[path])
+        self.assertEqual(service.normalize_owned_runtime(self.root), 0)
+
+    def test_interpreter_and_directory_symlink_targets_are_untouched(self):
+        outside = Path(self.tmp.name, "global-python")
+        outside.write_text("global interpreter")
+        outside.chmod(0o755)
+        external = Path(self.tmp.name, "external-lib")
+        external.mkdir(mode=0o777)
+        (self.root / "python").symlink_to(outside)
+        (self.root / "lib64").symlink_to(external, target_is_directory=True)
+        before = outside.stat(), external.stat()
+        service.normalize_owned_runtime(self.root)
+        self.assertEqual((outside.stat(), external.stat()), before)
+
+    def test_unsafe_hardlink_rejects_the_whole_runtime_before_chmod(self):
+        earlier = self.file("a-console", 0o755)
+        external = Path(self.tmp.name, "external")
+        external.write_text("global package")
+        external.chmod(0o644)
+        os.link(external, self.root / "z-linked")
+        before = earlier.stat(), external.stat(), self.root.stat()
+        with self.assertRaisesRegex(service.ServiceError, "hard-linked"):
+            service.normalize_owned_runtime(self.root)
+        self.assertEqual((earlier.stat(), external.stat(), self.root.stat()), before)
+
+    def test_wrong_owner_rejects_before_chmod(self):
+        target = self.file("console", 0o755)
+        before = target.stat(), self.root.stat()
+        with mock.patch.object(service.os, "geteuid", return_value=self.uid + 1):
+            with self.assertRaisesRegex(service.ServiceError, "not owned"):
+                service.normalize_owned_runtime(self.root)
+        self.assertEqual((target.stat(), self.root.stat()), before)
+
+    def test_same_device_mount_crossing_rejects_before_chmod(self):
+        earlier = self.file("a-console", 0o755)
+        mounted = self.file("z-mounted", 0o644)
+        inode = mounted.stat().st_ino
+        before = earlier.stat(), mounted.stat(), self.root.stat()
+        def mount_id(descriptor):
+            return 2 if os.fstat(descriptor).st_ino == inode else 1
+        with mock.patch.object(service, "_mount_id", side_effect=mount_id):
+            with self.assertRaisesRegex(service.ServiceError, "mounted runtime"):
+                service.normalize_owned_runtime(self.root)
+        self.assertEqual((earlier.stat(), mounted.stat(), self.root.stat()), before)
+
+    def test_symlink_root_or_ancestor_is_rejected(self):
+        link = Path(self.tmp.name, "link")
+        link.symlink_to(self.root, target_is_directory=True)
+        for root in (link, link / "child"):
+            with self.subTest(root=root), self.assertRaises(OSError):
+                service.normalize_owned_runtime(root)
 
 
 if __name__ == "__main__":
