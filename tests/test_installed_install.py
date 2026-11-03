@@ -48,10 +48,16 @@ class InstalledInstall(unittest.TestCase):
             command = steps.Deploy(self.context).actions(self.host)[-1]
             self.assertEqual(command.argv[:3], ("sg", "thermite", "-c"))
             self.assertEqual(tuple(shlex.split(command.argv[-1])), self.command("deploy"))
+            status = steps.Verify(self.context).actions(self.host)[-1]
+            self.assertEqual(status.argv[:3], ("sg", "thermite", "-c"))
+            self.assertEqual(tuple(shlex.split(status.argv[-1])), self.command("status"))
             self.host.which.return_value = None
             fallback = steps.Deploy(self.context).actions(self.host)[-1]
             self.assertTrue(fallback.root)
             self.assertEqual(fallback.argv, ("-u", "owner", *self.command("deploy")))
+            status = steps.Verify(self.context).actions(self.host)[-1]
+            self.assertTrue(status.root)
+            self.assertEqual(status.argv, ("-u", "owner", *self.command("status")))
 
     def test_source_checkout_keeps_original_boot_and_deploy_checks(self):
         (self.site / oh_paths.SITE_FILE).unlink()
