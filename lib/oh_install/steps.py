@@ -131,6 +131,18 @@ def application(context: Context, *args: str) -> tuple[str, ...]:
     return ("bin/thermite", *args)
 
 
+def operator_command(context: Context, system: System, argv: tuple[str, ...]) -> Command:
+    """Refresh newly granted group access for this owner command only."""
+    if context.host["gid"] in system.process_groups():
+        return Command(argv)
+    # usermod -aG takes effect at the next login. sg grants the group to
+    # this command now. Arch has no sg; sudo -u refreshes the owner's
+    # supplementary groups without running the application as root.
+    if system.which("sg"):
+        return Command(("sg", NAME, "-c", shlex.join(argv)))
+    return Command(("-u", system.login(), *argv), root=True)
+
+
 class Preconditions(Step):
     title = "Preconditions"
 
@@ -490,15 +502,7 @@ class Deploy(Step):
         argv = application(self.context, "deploy") if installed else ("make", "openhab-deploy")
         checks = [Command(application(self.context, *args)) for args in
                   (("generate", "--check"), ("validate",), ("lint",))] if installed else []
-        if self.context.host["gid"] in system.process_groups():
-            return [*checks, Command(argv)]
-        # usermod -aG takes effect at the next login. sg gives this one
-        # command the group now. Arch has no sg (util-linux ships only
-        # newgrp, which cannot run one command); sudo -u can, since it sets
-        # the user's groups afresh from the group database.
-        if system.which("sg"):
-            return [*checks, Command(("sg", NAME, "-c", shlex.join(argv)))]
-        return [*checks, Command(("-u", system.login(), *argv), root=True)]
+        return [*checks, operator_command(self.context, system, argv)]
 
 
 class Units(Step):
@@ -1077,7 +1081,7 @@ class Verify(Step):
 
     def actions(self, system: System) -> list[Action]:
         return [Command(application(self.context, "health", "--production")),
-                Command(application(self.context, "status"))]
+                operator_command(self.context, system, application(self.context, "status"))]
 
 
 # --------------------------------------------------------------------------
