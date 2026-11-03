@@ -139,6 +139,22 @@ failed priming marker is a failed run requiring diagnosis; preserve its logs
 and state. The subsequent authenticated readiness check must pass without
 removing add-ons or replacing credentials.
 
+On a fresh Ubuntu case, also exercise interrupted installation before Grafana's
+administrator password exists. After creating the native administrator and
+validating its token, decline the Grafana password step. Retain the expected
+nonzero installer result and private fingerprints of both saved native-token
+files. Reboot the same disk and artifact. Require the actual Grafana unit to
+skip startup, with no Grafana container or database created and both token-file
+fingerprints unchanged. Resume the owner installer with the same native state
+and credentials. Verify that Grafana accepts the generated password and refuses
+the default administrator password. Preserve a failed existing database for
+diagnosis; deleting it or resetting its password is not this regression test.
+
+During initial startup and metrics restart, Prometheus can briefly report no
+active targets while older successful collector samples remain queryable.
+Require a nonempty target inventory with every target up and a successful
+systemd collector scrape before final health checks; `0/0` is not readiness.
+
 Set up the authenticated gateway.
 
 Follow [HTTPS and accounts](../../docs/installation.md#set-up-https-and-accounts),

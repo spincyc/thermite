@@ -35,11 +35,18 @@ useful for installation; routine administration can use SSH and a browser.
 
 The host needs systemd, Podman 4.5 or later with runc, a kernel with overlayfs,
 Python 3.11 or later, Git and make. Node.js and npm support terminal controls
-and runtime checks. The [server guide](installation.md) prepares the
+and runtime checks. The installer also installs util-linux for the service-user
+Grafana credential checks. The [server guide](installation.md) prepares the
 application environment and the runtime installer installs service packages.
 Run the CLI as your own account, with sudo available for the root commands
 it presents. Application services use `thermite:thermite`, UID/GID 9001;
 those IDs must be available or already belong to Thermite.
+
+On an AppArmor-enabled kernel, the installer requires the distribution's
+AppArmor package, system parser and service. It installs a dedicated
+node_exporter policy for read-only systemd collection and verifies enforcement
+through an approved root command. Other container profiles remain enforced;
+AppArmor is not disabled to obtain a passing installation.
 
 The complete installer currently accepts x86-64 only. Some container pins
 also include ARM images, but the locked Apple TV helper includes miniaudio
@@ -91,7 +98,9 @@ guides. Pass through any USB radio or serial adapter your integrations need.
 
 ## Basis and review
 
-Reviewed **2026-11-02** for application `0.1.0.dev0`, openHAB **5.2.3**,
+Acceptance evidence reconciled **2026-11-03**; the sizing estimates and
+upstream basis below remain planning guidance, not newly measured capacity.
+The recorded runtime baseline is application `0.1.0.dev0`, openHAB **5.2.3**,
 Grafana **13.3.0**, Prometheus **3.15.1**, and the default retention above.
 The installation baselines are Arch Linux x86-64 (2026.11.01 ISO; installed
 packages follow Arch's rolling repositories) and Ubuntu Server 24.04.5 LTS
@@ -104,9 +113,25 @@ The estimates account for these upstream facts:
 - [Grafana's current guidance](https://grafana.com/docs/grafana/latest/setup-grafana/installation/#hardware-recommendations) gives 512 MB and one core as an evaluation floor. Its small-deployment baseline is 2 cores and 2–4 GB for Grafana alone, excluding Prometheus. Household usage may be lighter; these figures do not certify Thermite's minimum profile.
 - [Ubuntu's 24.04 amd64 requirements](https://ubuntu.com/server/docs/reference/installation/system-requirements/) list 1.5 GB RAM and 5 GB disk for ISO installation, and suggest 3 GB RAM and 25 GB disk. Those are OS figures, not the application stack's budget.
 
-End-to-end acceptance of the Thermite ISO, stock Arch plus Thermite, and
-Ubuntu Server plus Thermite with a fictional house is pending. Offline
-checks do not prove machine installation or runtime commissioning.
+Fictional-house guest acceptance completed on release `7c05db18`: a fresh
+Thermite Arch ISO installation, stock Arch application/native/access upgrade
+after documented corrections, and Ubuntu Server 24.04.5 application/native/access
+upgrade with existing credentials and identity preserved. Ubuntu's earlier
+fresh-OS run also deliberately interrupted installation and rebooted before
+Grafana credential creation. These are distinct fresh-install and upgrade/resume
+results; see [installation acceptance](https://github.com/spincyc/thermite/blob/feature/productionize/docs/installation-handoff.md) for artifact
+identities, retained failures and exact coverage.
+
+The tested allocation is KVM, four vCPUs, 8 GiB RAM, a sparse 64 GiB disk, UEFI
+and ext4, with one fictional room and guest-loopback protocol stand-ins. This
+does not validate the 2-core/4-GiB minimum planning profile, a household capacity
+limit, physical picture or sound, multicast discovery or device callbacks.
+Required native metric-series assertions belong to the separate disposable
+strict boot runtime. Production checks record two Things ONLINE, 26 Items, four
+requested add-ons, authenticated native endpoint readiness, 16 monitoring targets
+and successful systemd collection/Grafana checks; they do not establish that
+every required native series was parsed in production. Offline checks alone do
+not prove machine installation or runtime commissioning.
 
 Review this page when application/runtime versions, helper wheel support,
 ISO inputs, supported installation paths, metrics retention or enabled

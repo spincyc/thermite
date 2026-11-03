@@ -1,170 +1,232 @@
 # Installation review and acceptance
 
-Updated 2026-11-03 UTC. This replaces the interrupted installation handoff.
-Work belongs on `feature/productionize`; acceptance does not publish or merge
-anything to `main`.
+Completed 2026-11-03 UTC. This replaces the interrupted installation handoff.
+Work stays on `feature/productionize`; acceptance does not publish or merge
+the branch.
 
-## Source and tested artifacts
+## Source and tested candidate
 
 The canonical implementation is `automation/openhab` in private
-`spincyc/homelab`. Regenerate public `spincyc/thermite` from there with
-`python3 bin/thermite docs export --with-code --to /path/to/thermite`.
-Do not fix the generated public copy independently.
+`spincyc/homelab`. Fix that source, then regenerate public `spincyc/thermite`
+with `python3 bin/thermite docs export --with-code --to /path/to/thermite`.
 
-The earlier runtime candidate was built from homelab `cdd4b42` and
-reproduced from public `09d4ad6`. Homelab `4d57495` adds the matching upgrade-test expectation;
-it does not change the application artifact. Canonical and public wheels
-are byte-identical:
-
+- Canonical code commit: `fb65ece`; public code commit: `8d39d36`.
 - Application: `0.1.0.dev0`.
-- Release: `7e0bd0190fb893f996f899ef3acbbfde0f77fc8d7da0f5b4f3e1f6ac4ac60044`.
-- Wheel SHA256: `1b299ddb15da3ff993a0b01281c359c8008ff24aa5685083d1ad81d96ecd0339`.
-- Tested Thermite Arch ISO SHA256: `88b76e7f3b1162db590b25e9e4c1bf43d86d30efa579f95aa419474e234bc1a3`.
+- Release: `7c05db18a95ee2485b3e9b04b96b0608ffe52f8c910e6dc43b51ecfeeb18c77c`.
+- Wheel SHA256: `77f824cdac198ce9dcb4489cb5c42d13ee533083a6791436d429c8b6ff2eb6fa`.
+- Thermite Arch ISO SHA256: `1bd7dad024d893ce72ccc42ac8cd90922fc8d044708a99426022f8e0dcaeffb3`.
 
-For that candidate, source checks passed: 1,614 tests with 10 optional skips. Public checks passed:
-145 tests. These include deterministic repackaging, export privacy, custody,
-real HTTP transport, native preparation and installer lifecycle regressions.
-Final evidence/documentation reconciliation is still in progress.
+Checks passed against those exact code commits: canonical source, 1,710 tests
+with ten optional skips; public export, 192 tests. Canonical and public wheels
+are byte-identical.
 
-## Installation paths
+Documentation is packaged. The release above identifies the guest-tested
+candidate; reconciling this handoff, requirements and the acceptance recipe
+changes the publication digest. The final documentation commit records its
+wheel/release identity. Require byte-identical canonical/public publication
+wheels, valid RECORDs and release manifests, and exact equality of every
+non-documentation entry and its archive permissions against the tested wheel.
+Only those three named Markdown resources, their generated requirements HTML,
+and the derived release manifest and RECORD may differ. Keep this relationship
+explicit when citing acceptance.
 
-Every case uses an independent disposable disk, KVM, host CPU exposure,
-4 vCPUs, 8 GiB RAM, a sparse 64 GiB virtio disk, UEFI and an ext4 root.
-The fictional fixture has one room, one computer source, an HTTP matrix and
-an observe-only Sony display on separate guest-loopback addresses. The
-committed [acceptance recipe](../tests/e2e/README.md) defines the procedure.
+## Acceptance status
 
-| Path | Actual result |
+Each guest uses KVM with host CPU exposure, four vCPUs, 8 GiB RAM, a sparse
+64 GiB virtio disk, UEFI and an ext4 root. The fictional fixture has one room,
+one computer source, an HTTP matrix and an observe-only Sony display on separate
+guest-loopback addresses. The [acceptance recipe](../tests/e2e/README.md) defines
+the checks; retain each actual allocation and artifact identity with its proof.
+
+| Path | Result on `7c05db18` |
 |---|---|
-| Stock Arch plus application | Accepted after the documented application upgrade/resume described below. Final-release strict boot, installation, access clients, no-op handoff replay and reboot comparisons passed. |
-| Thermite Arch ISO | Fresh firmware boot, native guided disk selection and destructive confirmation, owner/password/sudo creation, application-hook success, media removal and installed-disk password login passed. Fresh runtime commissioning and the complete client/no-op/reboot checks passed. |
-| Ubuntu Server 24.04.5 plus application | Fresh stock OS installation, installed-disk login and strict boot passed. Native preparation then failed because the distro AppArmor policy denied child signals; this failed run is retained. The corrected primer passed a separate real pinned-image probe; fresh complete acceptance is pending. |
+| Stock Arch plus application | Accepted application/native update and a new staged access release using the same authority; actual stopped-metrics restart, full clients, no-op/handoff replay, reboot and both shutdown checks passed. Earlier correction/resume and the empty-target failure remain retained. This is upgrade/resume coverage. |
+| Thermite Arch ISO | Accepted fresh firmware boot and native guided storage/owner/password/sudo workflow, saved-config review before destructive confirmation, exact application-hook success, media removal and installed-disk console password/sudo checks; then full commissioning, clients, no-op replay, reboot and shutdown. |
+| Ubuntu Server 24.04.5 plus application | Accepted application/native and staged-access upgrades while preserving the existing authority, followed by full clients, no-op replay, reboot and shutdown. Its fresh OS and deliberately interrupted-install/reboot checks began on `33d5ec91`; it is not a failure-free fresh installation of the final artifact. |
 
-The Arch baseline is the official 2026.11.01 ISO with installed rolling
-packages. Ubuntu uses the official 24.04.5 Server ISO and an external,
-private test-only OS seed guarded to a blank 64 GiB `/dev/vda`; it is not
-an unattended storage or identity default in a Thermite image. The optional
-Thermite Ubuntu ISO has offline/build coverage, not a full guest installation
-acceptance claim.
+Earlier accepted evidence remains separate: Arch release
+`b6cd35c4ca48c87b9ff2a5534e80489b524b0829b5b1d1e7937ce212fdc36f1a`
+and Ubuntu release
+`33d5ec911d354725546f90664432f879058e9b3bedda141143955c7aeff1f34c`,
+followed by accepted `7a48ab33` ISO/Ubuntu runs. The subsequent stock Arch
+upgrade exposed empty Prometheus target discovery with an old collector sample.
+The corrected candidate above was then accepted on all three paths.
 
-The Thermite Arch image's normal guided installer performed the OS and owner
-setup. After its application hook succeeded, SSH and guest-only firewall test
-tools were added for remote orchestration. Runtime commissioning used the
-bundled `/opt/thermite/venv` application, not a source checkout.
+Arch starts from the official 2026.11.01 image with rolling installed packages.
+Ubuntu starts from the official 24.04.5 Server image. Its external private OS
+test seed is guarded to the disposable blank disk; it is not an unattended
+Thermite storage/identity default. The optional Thermite Ubuntu ISO has build
+and offline checks, without a full guest-installation acceptance claim.
 
-## Checks completed on both Arch paths
+The native ISO installer created the OS and owner. SSH and guest-only transport
+and firewall test tools were configured after its application hook succeeded.
+Runtime commissioning used the bundled `/opt/thermite/venv` application; no source
+checkout substituted for it.
 
-Before and after a clean reboot, actual checks passed for:
+## What the completed evidence establishes
 
-- Two native Things ONLINE, 26 Items, four requested add-ons, required native
-  metric series, and 16 Prometheus targets up. Grafana administrator login,
-  its provisioned datasource and an actual `up` query succeeded.
-- All 12 application services active under `thermite:thermite`, UID/GID 9001,
-  with every inspected container payload and native access main process
-  showing those effective identities. Service state and staged custody checks
-  passed; the operator's fixture unit is separate test infrastructure.
-- Authenticated HTTP sessions and personal tokens, anonymous/private-asset
-  denial, source/Off commands with native readback, locked-command rejection
-  and worker repair after a direct simulated matrix change.
-- Certificate-verified browser login, rendered room controls and Users & Roles;
-  installed TUI controller/events and a populated real terminal with normal
-  quit. Browser trust was isolated without TLS bypasses or changes to the
-  workstation's normal trust store.
-- Disabled native implicit user role and empty trusted networks, with anonymous
-  Item reads denied and the existing service bearer still accepted. Actual
-  external forwards to all four native TCP ports were rejected, supported by
-  positive guest filter counters; gateway HTTPS continued working.
-- A second-worker singleton attempt rejected specifically with
-  `BlockingIOError`. The same staged ownership plan replayed successfully.
-- No-op installation preserving all 12 service start timestamps and 11 named
-  credential, identity, TLS and deployed-record files' bytes, inodes, modes
-  and owners. After reboot, a new boot ID and the same file fingerprints were
-  required. This comparison starts after commissioning and does not cover
-  every userdata file or the changing SQLite database.
-- A held authenticated event stream closing about 15.2 seconds after service
-  stop. Systemd reported success; Uvicorn completed its bounded shutdown and
-  re-raised the original SIGTERM. This is not a zero exit-status claim or a
-  host-forced VM power cut.
+Production checks record two Things ONLINE, 26 Items, four requested add-ons,
+answering authenticated native metrics endpoints and 16 Prometheus targets up.
+Every final case records successful node_exporter systemd collection and
+unit-state series, Grafana administrator login, denial of the default
+administrator password, its provisioned datasource and an actual query returning
+16 targets. Required native metric-series assertions belong to the strict boot
+test's separate disposable runtime; the production evidence does not parse and
+assert every such native series.
 
-The worker correctly retained degraded enforcement for
-`passive_endpoint:example_tv`. These runs do not verify a physical picture,
-sound, hardware compatibility, multicast discovery, callback delivery, a
-supported household capacity or the minimum planning profile.
+The application payload census verifies UID/GID 9001 across 12 application
+services, including inspected container children and access main processes.
+All cases record runc for all ten application containers. Ubuntu also records
+enforced default AppArmor profiles without a crun stack and the dedicated
+enforced profile for node_exporter. Root-managed systemd/Podman control processes
+and the owner's simulator unit have different roles; this is not a claim that every process on
+the machine is unprivileged.
 
-## Review fixes and retained failures
+The completed client and persistence checks cover:
 
-The review corrected:
+- Authenticated HTTP sessions and personal tokens; anonymous/private-asset
+  denial; simulated source/Off commands with native readback; locked-command
+  rejection and worker repair after a direct simulated matrix change.
+- Certificate-verified rendered browser controls and Users & Roles, installed
+  TUI controller/events, and a populated real terminal quitting normally.
+  Browser trust is isolated without TLS bypasses or host trust-store changes.
+- Disabled native implicit roles and empty trusted networks; anonymous Item
+  denial while the service bearer still works; external rejection of all four
+  native TCP ingress paths with positive guest-filter counters, while verified
+  gateway HTTPS continues to answer.
+- A second worker rejected specifically by the shared singleton lease with
+  `BlockingIOError`; staged custody verification and protected-plan replay.
+- No-op comparison of recorded stable credential/identity/TLS/deployed-record
+  fingerprints and service starts; after reboot, a changed boot ID and preserved
+  stable fingerprints. This covers named files, not every userdata file or the
+  active SQLite database.
 
-- Resumable custody escalation through service-owned path replacement. The
-  saved operator plan now uses finite inode/type manifests, protected helper
-  code, descriptor-based changes and preflight rejection of unexpected path
-  replacements, hardlinks and mount crossings. Recorded virtual-environment
-  symlinks are handled without following them. Root unit installation reads protected
-  operator copies rather than mutable service-owned release files.
-- Private directory traversal and inherited setgid modes, while retaining
-  strict ownership and write protections.
-- Boot-report collection during temporary REST registration outages, truncated
-  replies and slowly arriving headers/bodies. Incomplete snapshots are
-  discarded within one absolute deadline; complete assertion failures remain
-  failures. Current real guest strict boot checks passed on both Arch paths.
-- The native fresh-cache startup race. Declared add-ons could appear installed
-  while their bundles remained resolved and Thing handlers uninitialized.
-  Fresh, authority-free cache preparation now requires its temporary JVM to
-  exit before normal startup. Failed preparation retains logs and an
-  incomplete marker; established userdata and credentials are not reset.
-  Authenticated readiness checks add-ons, handlers and native metrics, with
-  at most one explicitly approved bounded recovery restart for known unchanged
-  handler symptoms.
-- Ubuntu primer shutdown: Podman 4.9.3 with its distro AppArmor profile denied
-  TERM and KILL between confined child processes, exposing an unbounded wait
-  after failed signal delivery. Preparation now uses Karaf's authenticated
-  loopback shutdown protocol with a unique ephemeral port, bounded client and
-  JVM observation, and idempotent cleanup. It restores the original properties
-  only after actual exit. Thirteen focused tests and a real pinned-image
-  Ubuntu probe passed with AppArmor unchanged; failed state remains retained.
-- Native metrics content negotiation: the first fresh review candidate received
-  HTTP 406 because readiness requested JSON from the Prometheus text endpoint.
-  A real loopback HTTP regression now checks the request headers.
-- Startup token validation: a subsequent fresh Arch run with candidate
-  `cb505ee181b0` received HTTP 404 twice, then validated and saved the token.
-  Its redundant immediate readback was unavailable and stopped installation.
-  Resuming with that same credential reached 16/16 targets. Validation now
-  retries transient outages using the same paste, writes only after a timely
-  authenticated success, and carries that exact validation through this one
-  step. Full native readiness still performs fresh reads. Established-token
-  replacement also requires bounded valid runtime metadata; outages retain
-  the credential. The failed attempt and original credential are preserved.
-- Final installation status before a new login: the owner had been added to
-  `thermite`, but the original process still lacked that group. Status now
-  uses the existing owner group-refresh mechanism, preserving the selected
-  interpreter/site and showing any required sudo command for approval.
+The Ubuntu guard run deliberately declined before Grafana credential creation.
+After reboot the actual unit skipped startup: no Grafana container or database
+existed, and native API credential files were unchanged. The same artifact then
+resumed successfully. Its deliberate installer exit 1 remains an expected
+interruption, not a passing install exit. Full older-Podman prefetch replay used
+actual Podman 4.9.3 without the unsupported pull-policy flag and preserved
+credentials/identity; it did not upgrade Podman to obtain compatibility.
 
-The earlier handoff's report traceback and interrupted reboot were failed or
-incomplete runs. A diagnostic native guest also needed manual bundle activation;
-it is not a clean acceptance result. Those failures were retained while fixes
-were tested.
+Actual final native-unit stops succeeded with normal exit status zero, without
+recorded AppArmor denials or forced container kills:
 
-Stock Arch's later `f19fb13c6f65` candidate passed native readiness and all
-16 targets, then failed its final status read because of group membership.
-The final application was installed using the documented force-reinstall and
-`thermite init --upgrade` workflow, preserving inventory, pins, credentials and
-native state. The changed site manifest was committed, strict boot and
-installation were rerun, and only then was the no-op/reboot baseline taken.
-This is accepted upgrade/resume coverage, not a failure-free fresh installation
-of the final artifact. The Thermite Arch ISO provides that fresh-install check.
+| Case | Podman / runc | Native stop | Held-stream closure |
+|---|---|---|---|
+| Stock Arch | 6.1.4 / 1.5.2 | 8.99 s | 15.14 s |
+| Fresh Thermite Arch ISO | 6.1.4 / 1.5.2 | 11.94 s | 15.16 s |
+| Ubuntu Server | 4.9.3 / 1.3.4 | 9.95 s | 15.20 s |
 
-## Remaining work and evidence
+Authenticated held-stream shutdown is a separate check: bounded Uvicorn
+shutdown closes the stream and re-raises SIGTERM. Systemd reports
+`Result=success`, `ExecMainCode=2`, `ExecMainStatus=15`; that is successful
+shutdown, not a zero-process-exit-status claim. All owned guests subsequently
+completed clean poweroff.
 
-Freeze the signal-free primer and startup-token fixes into a reviewed
-artifact. Resume the stock Arch case with its credential/state preserved,
-then complete fresh ISO and Ubuntu installations with that same artifact,
-including Ubuntu's actual older-Podman prefetch fallback. Complete clients, no-op/handoff replay, reboot comparisons and bounded
-stream stop. Then reconcile this record and [requirements](requirements.md),
-regenerate the public export and run required checks against exact final commits.
+The passive display remains `passive_endpoint:example_tv`, with degraded
+enforcement. This fixture establishes no physical picture/sound, hardware
+compatibility, multicast discovery or callback delivery, supported household
+capacity, or tested minimum resource allocation. No physical household has
+been commissioned.
 
-Retained local logs, receipts, fingerprints and screenshots live under the
-original workspace's clone-root `.scratch/e2e/` and `.scratch/browser-trust/`.
-They are disposable private evidence, not part of a push. Never commit or upload
-VM disks, firmware stores, credentials, private keys or installation media.
-Reconstruct missing guests from the committed recipe. No physical household
-was commissioned.
+## Corrections and retained failed attempts
+
+- Custody now uses an operator-owned protected plan, finite inode/type
+  manifests, trusted helper code and protected activation-unit copies. Its
+  descriptor-based preflight rejects replaced paths, unsafe hardlinks and mount
+  crossings; virtual-environment links are handled without following them.
+- Private traversal and inherited setgid handling were corrected. Ubuntu
+  umask 002 exposed owner credential directories at 0775; ordinary-owner repair
+  now narrows only the owned final directory to 0700 using no-follow descriptors,
+  retaining existing credential bytes/inodes. Writes remain anchored to the
+  protected parent. The root secret helper keeps its strict custody checks.
+- The installation example places plans below a protected 0700 HOME parent,
+  outside the service-writable site/release/state tree. Root activation reads
+  only protected plan unit copies. Staging reuses existing service-owned 0700
+  state without making its authority readable to the operator; no upgrade
+  bootstraps an existing site.
+- Strict boot discards incomplete/transient REST snapshots within an absolute
+  header/body deadline, catches interrupted transport and retains complete
+  assertion failures as failures. Fresh cache priming uses empty add-on
+  configuration and waits for the actual temporary JVM to exit before normal
+  startup. Failure retains its incomplete marker, cache and logs. Bounded
+  authenticated loopback Karaf TCP shutdown and actual JVM observation replace
+  unreliable child signals; original property bytes are restored only on exit.
+- Native readiness requests Prometheus text rather than JSON, fixing HTTP 406.
+  Token validation retries transient startup outages with the same paste, saves
+  only after a timely authenticated Things success, and carries only that exact
+  success through the current step. Fresh native readiness still checks add-ons,
+  Thing handlers and metrics. Established-token replacement requires valid
+  bounded runtime metadata; outage paths retain the saved credential.
+- Final status refreshes the owner's newly granted group membership while
+  retaining the selected site/interpreter and explicit privileged approval.
+- Ubuntu Podman 4.9.3 predates Quadlet's `Entrypoint` key; the unit passes
+  `--entrypoint=/bin/sh` through `PodmanArgs`. Prefetch detects its actual pull
+  interface and uses the supported cache/pull fallback.
+- runc is installed and selected explicitly for every application container and
+  native preparation, avoiding crun/AppArmor signal stacking. Existing AppArmor
+  confinement is retained, along with no-new-privileges, dropped capabilities
+  and UID/GID 9001.
+  Upgrade prerequisites run before any service stop. Native stop allows 60
+  seconds of container grace inside systemd's 90-second allowance.
+- Only node_exporter receives the dedicated policy permitting its read-only
+  systemd D-Bus queries. The additive override requires Podman 4.5 or later.
+  Conditional AppArmor packages, root-owned finite files, enforced-profile
+  verification through the approved root helper and boot-time profile loading
+  are prerequisites. The owner cannot assume securityfs is readable from its
+  mode bits. Repairs persist a node-only recreation marker; current verification
+  leaves starts unchanged. Enabled-AppArmor upgrades enter root verification
+  even when disk artifacts are current. Readiness also waits for a successful
+  systemd collector scrape rather than a cached earlier result.
+- A partial-install reboot previously let Grafana initialize its default admin
+  before the generated credential existed. That failed database is retained.
+  Grafana now checks the secret as its actual payload identity before startup,
+  including regular/readable/nonempty and successful nonempty read checks;
+  `util-linux` supplies `setpriv`. Guarded interruption/reboot acceptance above
+  checks absence of both the container and database before resuming.
+- During stock Arch upgrade, Prometheus briefly returned an empty active-target
+  inventory while older successful systemd collector samples remained queryable.
+  The installer accepted `0/0`, then its final health check failed. Readiness now
+  requires a nonempty target inventory. Two regressions and an actual stopped-
+  metrics restart passed; all original authority files remained unchanged.
+- A closed TCP connection in TIME_WAIT falsely appeared to occupy a stopped
+  service port during replay. The probe now uses SO_REUSEADDR to match normal
+  server restart behavior while a live listener still blocks. The prior failed
+  prefetch attempt remains retained alongside the corrected immediate restart
+  and full-prefetch proof.
+
+Earlier report traceback/interrupted reboot, manual-bundle diagnostics,
+startup token/status failures, Ubuntu primer/signal failures, Quadlet rejection,
+graceless shutdown, private-directory/plan failures, collector denial and
+default-admin initialization remain failed or incomplete attempts. No reset or
+credential replacement converts them into clean acceptance. In particular,
+stock Arch's accepted correction/resume remains distinct from a fresh final
+installation, and `ubuntu-guard` does not rehabilitate the failed Ubuntu database.
+
+## Persistence and evidence
+
+Both access upgrades stopped the two access units and staged a new release
+with the same state and original TLS/native-token inputs. Each used a new
+protected plan and its protected unit copies, without bootstrap or replacement
+CLI login. Quiescent checks preserved site identity, secret key and the actual
+SQLite main file through staging/handoff; post-start comparisons covered stable
+authority. New release TLS/token copies matched original bytes and their new
+inodes were recorded; old copies and the saved CLI credential retained their
+old fingerprints. Native userdata and administrator accounts were not recreated.
+
+Every final case preserved all 12 service start timestamps and 11 named stable
+file fingerprints during no-op installation and protected-plan replay. Reboot
+required a new boot ID and the same stable fingerprints, with the native seal
+persisting before repeated external ingress checks. These comparisons cover
+named files, not every userdata file or the changing active SQLite database.
+
+The final documentation pass reconciles [requirements](requirements.md) and
+the committed [acceptance recipe](../tests/e2e/README.md). Its package comparison
+and exact-commit checks accompany the publication commits. There is no physical
+household commissioning, capacity certification or minimum-profile validation.
+
+Logs, receipts, fingerprints and screenshots remain disposable private evidence
+under clone-root `.scratch/e2e/` and `.scratch/browser-trust/`. Never commit or
+upload credentials, private keys, state databases, VM disks, firmware stores or
+installation media. Reconstruct missing guests from the committed recipe.
