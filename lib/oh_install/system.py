@@ -193,7 +193,8 @@ class System:
         client = ReportHttp(url, token, deadline)
         client.timeout = min(5, remaining)
         try:
-            status, body = client._request("GET", path)
+            status, body = client._request("GET", path,
+                                           headers={"Accept": "application/json" if json_body else "text/plain"})
             client.remaining(path)
         except urllib.error.HTTPError as exc:
             status, body = exc.code, b""
