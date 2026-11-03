@@ -115,7 +115,10 @@ application signals. Native shutdown gets a 60-second grace period. On AppArmor
 hosts, node_exporter receives a separate policy for read-only systemd D-Bus
 queries. Its container configuration applies only to that service; other
 containers retain their default profiles. The installer presents policy loading
-and enables AppArmor's boot-time loading when needed.
+and enables AppArmor's boot-time loading when needed. Grafana startup waits for
+a readable, nonempty administrator credential as the service user, including
+after an interrupted installation and reboot. Existing administrator databases
+and passwords are preserved.
 
 Existing installations retain their numeric IDs and data paths when the old
 `openhab` account is renamed; see
@@ -196,7 +199,7 @@ SITE_HOST=thermite.home.arpa
 RUNTIME_STATE=/srv/thermite
 TLS_CERT="$HOME/.config/thermite/tls/fullchain.pem"
 TLS_KEY="$HOME/.config/thermite/tls/key.pem"
-PLAN_ROOT="$PWD/var/$HOST_ID/access-plans"
+PLAN_ROOT="$HOME/.thermite-access-plans"
 install -d -m 0700 "$PLAN_ROOT"
 PLAN="$PLAN_ROOT/first"
 sudo install -d -o "$(id -un)" -g thermite -m 2770 \
@@ -220,6 +223,10 @@ the program, generated assets and explicit TLS/token inputs into a new
 release, installs hash-pinned dependencies and writes units for
 `User=thermite` and `Group=thermite`. It starts no service and runs no
 privileged command.
+
+Keep every plan ancestor owned by root or the operator and free of group/world
+write permission. The home-based example avoids inheriting a shared site
+directory's permissions; choose another protected parent if your home is shared.
 
 The required plan directory holds a private receipt, custody helper and
 `handoff.sh` in the operator-owned plan

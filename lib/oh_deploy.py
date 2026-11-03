@@ -642,6 +642,21 @@ def _volume(service: metrics.Service, volume: metrics.Volume, root: Path, shared
     return f"Volume={source}:{volume.target}" + (f":{','.join(options)}" if options else "")
 
 
+def _grafana_conditions(host: dict) -> list[str]:
+    """A partial-install reboot must not initialize Grafana's default admin."""
+    credential = exec_word(str(state(host).monitoring_secrets / metrics.GRAFANA_ADMIN_PASSWORD))
+    prefix = (f"/usr/bin/setpriv --reuid={host['uid']} --regid={host['gid']} "
+              "--clear-groups --no-new-privs ")
+    lines = ["# Check as the payload user before any administrator database can be created."]
+    lines += [f"ExecCondition={prefix}/usr/bin/test -{flag} {credential}" for flag in ("f", "r", "s")]
+    # run.sh uses export around command substitution, which masks cat failure.
+    # Assignment preserves that failure and rejects newline-only input after
+    # substitution, without exporting or printing the credential.
+    check = 'credential=$(/usr/bin/cat -- "$1") && test -n "$credential"'
+    lines.append(f"ExecCondition={prefix}/usr/bin/sh -ec {exec_word(check)} thermite-grafana {credential}")
+    return lines
+
+
 def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service) -> str:
     oh_service.validate_identity(host["uid"], host["gid"])
     root = Path(host["state_root"])
@@ -687,6 +702,7 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         *(["Environment=CONTAINERS_CONF_OVERRIDE=/etc/thermite/node-exporter-containers.conf"]
           if service.unit == "openhab-node-exporter.service" else []),
         "UMask=0027",
+        *(_grafana_conditions(host) if service.image == "grafana" else []),
         *(["# node_exporter exits 143 after an ordinary container SIGTERM.", "SuccessExitStatus=143"]
           if service.unit == "openhab-node-exporter.service" else []),
         "Restart=always",

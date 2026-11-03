@@ -19,10 +19,11 @@ from oh_install.model import Action, Check, Command, Step, Task
 from oh_install.system import System
 
 #: Podman runs openHAB through runc; Git and make carry the deploys; Python with PyYAML
-#: runs this area's tools; Node.js and npm support the terminal remote.
+#: runs this area's tools; Node.js and npm support the terminal remote; util-linux
+#: supplies setpriv for Grafana's credential readiness checks.
 PACKAGES = {
-    "pacman": ("podman", "runc", "git", "make", "python", "python-yaml", "nodejs", "npm"),
-    "apt-get": ("podman", "runc", "git", "make", "python3", "python3-yaml", "python3-venv", "nodejs", "npm"),
+    "pacman": ("podman", "runc", "util-linux", "git", "make", "python", "python-yaml", "nodejs", "npm"),
+    "apt-get": ("podman", "runc", "util-linux", "git", "make", "python3", "python3-yaml", "python3-venv", "nodejs", "npm"),
 }
 #: Quadlets and the additive node-exporter confinement override need Podman 4.5.
 PODMAN = (4, 5)
