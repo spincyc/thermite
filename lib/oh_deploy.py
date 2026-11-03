@@ -468,7 +468,7 @@ def prepare_openhab_argv(versions: dict, host: dict) -> tuple[str, ...]:
     """Owner-approved Podman management; the offline payload remains non-root."""
     oh_service.validate_identity(host["uid"], host["gid"])
     root = host["state_root"]
-    return ("podman", "run", "--rm", "--network=host", "--user", f"{host['uid']}:{host['gid']}",
+    return ("podman", "run", "--rm", "--runtime=runc", "--network=host", "--user", f"{host['uid']}:{host['gid']}",
             "--umask=0077", "--cap-drop=all", "--security-opt=no-new-privileges", "--entrypoint=/bin/sh",
             "--env", f"TZ={host['timezone']}",
             "--volume", f"{root}/conf:/openhab/conf:Z",
@@ -499,8 +499,13 @@ def render_quadlet(versions: dict, host: dict) -> str:
         f"Group={host['gid']}",
         "NoNewPrivileges=true",
         "DropCapability=all",
+        # Avoid crun/AppArmor profile stacking under no-new-privileges.
+        "PodmanArgs=--runtime=runc",
         "PodmanArgs=--umask=0077",
-        "Entrypoint=/bin/sh",
+        # Quadlet 4.9 (Ubuntu 24.04) predates the Entrypoint key.
+        "PodmanArgs=--entrypoint=/bin/sh",
+        "# Karaf needs time to flush persistent state before removal.",
+        "PodmanArgs=--stop-timeout=60",
         f"Volume={root}/conf:/openhab/conf:Z",
         f"Volume={root}/userdata:/openhab/userdata:Z",
         f"Volume={root}/addons:/openhab/addons:Z",
@@ -521,6 +526,7 @@ def render_quadlet(versions: dict, host: dict) -> str:
         "UMask=0077",
         "Restart=always",
         "TimeoutStartSec=300",
+        "TimeoutStopSec=90",
         "",
         "[Install]",
         "WantedBy=multi-user.target",
@@ -550,6 +556,8 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
         f"Group={host['gid']}",
         "NoNewPrivileges=true",
         "DropCapability=all",
+        # Avoid crun/AppArmor profile stacking under no-new-privileges.
+        "PodmanArgs=--runtime=runc",
         "PodmanArgs=--umask=0077",
         "# Its code, as the last deploy installed it.",
         f"Volume={layout.atv_app}:/app:ro,Z",
@@ -660,6 +668,8 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         f"Group={host['gid']}",
         "NoNewPrivileges=true",
         "DropCapability=all",
+        # Avoid crun/AppArmor profile stacking under no-new-privileges.
+        "PodmanArgs=--runtime=runc",
         "PodmanArgs=--umask=0027",
         *(f"# {note}" for note in service.notes),
         *(_volume(service, volume, root, shared) for volume in service.volumes),

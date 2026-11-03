@@ -108,7 +108,10 @@ failure or a declined step. Do not run the whole CLI as root.
 Application services run as the non-login user and group `thermite`, UID/GID
 9001, and deployed files belong to that account. Your login keeps ownership
 of the private site, launcher and Git repository. The host's systemd manager
-and Podman backend remain root-managed. Existing installations retain their
+and Podman backend remain root-managed. The installer requires runc and selects
+it explicitly for container payloads. This preserves AppArmor confinement on
+Ubuntu 24.04, where crun can stack profiles under no-new-privileges and deny
+application signals. Native shutdown gets a 60-second grace period. Existing installations retain their
 numeric IDs and data paths when the old `openhab` account is renamed; see
 [service ownership and migration](service-account.md).
 
