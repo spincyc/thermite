@@ -24,7 +24,7 @@ help (the commands page), and the torch and color themes. The thermite
 repository publishes it with GitHub Pages, so it is public: every action
 first refuses a site that names this house: an address, a MAC, the host's
 name, state root or time zone, a device's id, name, model or make, a room's
-label, or a word in site/private-words.txt. The house-only verbs are left out.
+label, or a word in instance/private-words.txt. The house-only verbs are left out.
 """
 
 NOTES = """\

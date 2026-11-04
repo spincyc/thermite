@@ -440,10 +440,11 @@ def _private(area: Path) -> set[str]:
                     (str(d.get("make") or "") + " " + str(d.get("model") or "")).strip().lower()}
         if name and name not in products:
             facts.add(name)
-    words = area / "site/private-words.txt"
-    if words.is_file():
-        facts.update(line.strip().lower() for line in words.read_text().splitlines()
-                     if line.strip() and not line.lstrip().startswith("#") and line.strip().lower() not in CODE_WORDS)
+    for relative in ("instance/private-words.txt", "site/private-words.txt"):
+        words = area / relative
+        if words.is_file():
+            facts.update(line.strip().lower() for line in words.read_text().splitlines()
+                         if line.strip() and not line.lstrip().startswith("#") and line.strip().lower() not in CODE_WORDS)
     facts.add(socket.gethostname().split(".")[0].lower())
     allowed = {d["id"] for d in demo()["devices"]} | {r["label"].lower() for r in demo()["rooms"].values()}
     allowed |= {d["name"].lower() for d in demo()["devices"]} | {"computer"}

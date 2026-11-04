@@ -340,6 +340,7 @@
     "tests/test_native_prepare.py",
     "tests/test_packaging.py",
     "tests/test_ports.py",
+    "tests/test_private_words.py",
     "tests/test_public.py",
     "tests/test_remote_site_model.py",
     "tests/test_remote_system.py",

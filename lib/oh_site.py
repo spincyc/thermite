@@ -50,7 +50,6 @@ DOCUMENT_PAGES["screenshots"] = SOURCE / "capture-docs.md"
 EXAMPLES = ("harbor",)
 TOP = ("README.md", "FAQ.md")
 HOST_FILE = AREA / "instance/host.yaml"
-PRIVATE_WORDS = SOURCE / "private-words.txt"
 #: Makes and products named by public help, independently of this house's inventory.
 PUBLIC_MAKES = {"sony", "apple", "sonos", "unifi", "homebridge"}
 
@@ -415,11 +414,16 @@ def house_facts(house: Path = oh_cli.HOUSE, host_file: Path = HOST_FILE) -> set[
     return facts - set(['', '/srv/thermite', 'apple', 'computer', 'etc/utc', 'example computer', 'example display', 'example east', 'example matrix', 'example player', 'example tv', 'example west', 'example_computer', 'example_display', 'example_matrix', 'example_player', 'example_tv', 'hdmi matrix', 'sony', 'utc'])
 
 
-def private_words(path: Path = PRIVATE_WORDS) -> list[str]:
-    if not path.exists():
-        return []
-    lines = (line.strip().lower() for line in path.read_text(encoding="utf-8").splitlines())
-    return [line for line in lines if line and not line.startswith("#")]
+def private_words(path: Path | None = None) -> list[str]:
+    """Read selected-site filters; an explicit path selects only that file."""
+    paths = (path,) if path is not None else (AREA / "instance/private-words.txt", AREA / "site/private-words.txt")
+    words = []
+    for selected in paths:
+        if not selected.exists():
+            continue
+        lines = (line.strip().lower() for line in selected.read_text(encoding="utf-8").splitlines())
+        words.extend(line for line in lines if line and not line.startswith("#"))
+    return words
 
 
 def guard(files: dict[str, bytes], facts: set[str], words: list[str] | None = None) -> list[str]:
