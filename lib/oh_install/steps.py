@@ -31,7 +31,8 @@ from oh_install.system import System
 #: supplies setpriv for Grafana's credential readiness checks.
 PACKAGES = {
     "pacman": ("podman", "runc", "util-linux", "git", "make", "python", "python-yaml", "nodejs", "npm", "openssl", "nftables"),
-    "apt-get": ("podman", "runc", "util-linux", "git", "make", "python3", "python3-yaml", "python3-venv", "nodejs", "npm", "openssl", "nftables"),
+    # Podman's --init binary: a dependency of Arch's podman, only recommended by Ubuntu's.
+    "apt-get": ("podman", "runc", "catatonit", "util-linux", "git", "make", "python3", "python3-yaml", "python3-venv", "nodejs", "npm", "openssl", "nftables"),
 }
 #: Quadlets and the additive node-exporter confinement override need Podman 4.5.
 PODMAN = (4, 5)

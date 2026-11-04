@@ -830,6 +830,12 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
     used = [volume.source for other in every for volume in other.volumes]
     shared = {source for source in used if used.count(source) > 1}
     address = service.listen
+    # Python as a container's PID 1 installs no SIGTERM handler, and PID 1
+    # ignores the signals it does not handle: podman waited out its stop
+    # timeout and killed it, exit 137, on every stop. An init process
+    # (podman --init, catatonit) forwards SIGTERM; Python dies of it at once
+    # and the container reports 143, which counts as a clean stop.
+    python = service.command[:1] == ("python3",)
     where = ("only this host reaches it" if address.startswith(f"{metrics.LOOPBACK}:") else
              "phones and computers on the LAN reach it")
     lines = [
@@ -856,6 +862,7 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         "PodmanArgs=--replace=false",
         "PodmanArgs=--cidfile=%t/%N.cid",
         "PodmanArgs=--umask=0027",
+        *(["# Forwards SIGTERM to Python, which ignores it as PID 1.", "PodmanArgs=--init"] if python else []),
         *(f"# {note}" for note in service.notes),
         *(_volume(service, volume, root, shared) for volume in service.volumes),
         *(f"Environment={key}={value}" for key, value in service.environment),
@@ -875,6 +882,7 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         *(_grafana_conditions(host) if service.image == "grafana" else []),
         *(["# node_exporter exits 143 after an ordinary container SIGTERM.", "SuccessExitStatus=143"]
           if service.unit == oh_units.NODE_EXPORTER else []),
+        *(["# Python killed by its init's forwarded SIGTERM exits 143.", "SuccessExitStatus=143"] if python else []),
         "Restart=always",
         "RestartSec=10",
         "# The first start pulls the image.",

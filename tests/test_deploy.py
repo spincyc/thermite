@@ -517,6 +517,20 @@ class MetricsUnits(unittest.TestCase):
         self.assertIn("Exec=python3 /app/lib/oh_metrics/exporter.py --listen=127.0.0.1:13609 ", text)
         self.assertIn("--openhab=http://127.0.0.1:8080 --token-file=/secrets/openhab-token\n", text)
 
+    def test_python_services_run_under_an_init_and_stop_cleanly(self):
+        for name in ("metrics-exporter", "notifications", "prometheus", "node-exporter", "blackbox", "grafana",
+                     "alertmanager", "ntfy"):
+            with self.subTest(name=name):
+                text = self.unit(name)
+                python = "\nExec=python3 " in text
+                self.assertEqual(name in ("metrics-exporter", "notifications"), python)
+                self.assertEqual("\nPodmanArgs=--init\n" in text, python)
+                self.assertEqual("\nSuccessExitStatus=143\n" in text, python or name == "node-exporter")
+                parsed = configparser.ConfigParser(interpolation=None, strict=False)
+                parsed.read_string(text)
+                if python:
+                    self.assertEqual(parsed["Service"]["SuccessExitStatus"], "143")
+
     def test_grafana_reads_its_password_from_a_file(self):
         text = self.unit("grafana")
         self.assertIn("Environment=GF_SECURITY_ADMIN_PASSWORD__FILE=/secrets/grafana-admin-password\n", text)
