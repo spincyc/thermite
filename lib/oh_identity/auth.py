@@ -83,9 +83,7 @@ def principal(request):
     if not request.user.is_authenticated:
         if request.headers.get("Authorization") or request.COOKIES.get(settings.SESSION_COOKIE_NAME):
             raise Problem("session_expired", 401)
-        if not state.enabled:
-            return Guest(state.revision)
-        raise Problem("login_required", 401)
+        return Guest(state.revision)
     if not state.enabled:
         raise Problem("authentication_disabled", 403)
     user = User.objects.select_related("role").filter(pk=request.user.pk, is_active=True).first()
@@ -105,8 +103,6 @@ def revalidate(user):
     if context.get("security_revision") != state.revision:
         raise Problem("authorization_changed", 401)
     if context.get("guest"):
-        if state.enabled:
-            raise Problem("authorization_changed", 401)
         return
     if not state.enabled:
         raise Problem("authentication_disabled", 403)
@@ -133,7 +129,7 @@ def api(permission=None, methods=("GET",), authentication=False):
                     from .security import require_enabled
                     require_enabled()
                     if getattr(user, "is_guest", False):
-                        raise Problem("authorization_changed", 401)
+                        raise Problem("login_required", 401)
                 if permission and permission not in permissions(user):
                     raise Problem("forbidden", 403)
                 if permission and permission.endswith(".manage") and not is_admin(user):

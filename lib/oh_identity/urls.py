@@ -17,6 +17,7 @@ urlpatterns = [
     path("api/v1/users", views.users), path("api/v1/users/<int:ident>", views.users),
     path("api/v1/roles", views.roles), path("api/v1/roles/<int:ident>", views.roles),
     path("api/v1/rooms/<slug:room>/policy", views.room_policy),
+    path("api/v1/rooms/<slug:room>/lock", views.room_lock),
     path("api/v1/rooms/<slug:room>/commands", views.command),
     path("rest/items", views.pairing_items), path("rest/items/<slug:item>", views.item_resource),
     path("rest/items/<slug:item>/state", views.item_state), path("rest/events", events),

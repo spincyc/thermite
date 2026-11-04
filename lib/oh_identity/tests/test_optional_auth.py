@@ -113,7 +113,7 @@ class OptionalAuthentication(SecurityClient, TestCase):
         self.assertFalse(response.json()["bootstrap_required"])
         self.assertFalse(response.json()["setup_available"])
         self.assertEqual(User.objects.get().role.name, "Admin")
-        self.assertEqual(self.call("get", "/api/v1/me").status_code, 401)
+        self.assertTrue(self.call("get", "/api/v1/me").json()["is_guest"])
         self.assertFalse(Session.objects.exists())
         self.assertEqual(get_state().setup_digest, "")
         self.assertNotIn(code, response.content.decode())

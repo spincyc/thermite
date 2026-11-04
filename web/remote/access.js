@@ -5,9 +5,11 @@
     login_required: "Sign in to thermite.", session_expired: "Your session has ended. Sign in again.",
     invalid_token: "Your terminal sign-in has ended. Run thermite access login again.",
     invalid_login: "The username or password was not accepted.", login_throttled: "Too many sign-in attempts. Try again later.",
-    forbidden: "Your account does not allow this action.", room_locked: "Room scheduling blocks this action.",
-    policy_locked: "Room scheduling blocks this action.", policy_unavailable: "Room policy is unavailable. Control is paused.",
-    revision_conflict: "The schedule changed. Reload it before saving.", last_admin: "Keep at least one active administrator.",
+    forbidden: "Your account does not allow this action.", room_locked: "This room is locked.",
+    policy_locked: "This room is locked.", policy_unavailable: "Room lock status is unavailable. Control is paused.",
+    room_state_unavailable: "Wait until the room reports a current source or Off before locking it.",
+    runtime_unavailable: "The room could not be read. Try again when it is connected.",
+    revision_conflict: "The room policy changed. Review its current state and try again.", last_admin: "Keep at least one active administrator.",
     reserved_role: "Built-in roles cannot be changed.", role_in_use: "This role is assigned to a user.",
     invalid_password: "Choose a stronger password.", invalid_policy: "Check the schedule times, days and sources.",
     invalid_user: "Check the username, role and room grants.", invalid_role: "Check the role name and permissions.",
@@ -46,7 +48,7 @@
         || !Array.isArray(value.permissions) || value.rooms !== null && (!Array.isArray(value.rooms)
           || value.rooms.some((id) => typeof id !== "string" || !/^[a-z][a-z0-9_]{0,99}$/.test(id)))) throw problem("invalid_response");
     return { id: value.id, username: value.username, role: value.role, rooms: value.rooms,
-      can_edit: value.can_edit === true, auth_enabled: value.auth_enabled !== false, site: typeof value.site === "string" ? value.site : null,
+      can_edit: value.can_edit === true, is_guest: value.is_guest === true, auth_enabled: value.auth_enabled !== false, site: typeof value.site === "string" ? value.site : null,
       permissions: value.permissions.filter((permission) => ["site.read", "room.control", "settings.manage", "users.manage", "roles.manage", "pairing.manage"].includes(permission)) };
   }
   function create(options) {
@@ -54,7 +56,7 @@
     const base = (config.base || "").replace(/\/$/, ""), origin = new URL(base || global.location.href).origin;
     const legacy = config.native === true, mock = config.mock === true;
     let token = config.token || null;  // lint: allow — credential supplied by the caller
-    const listeners = [], policies = Object.create(null);
+    const listeners = [], policies = Object.create(null), policyReads = Object.create(null), policyWrites = new Set(), policyFailures = new Set();
     let security = null, discovering = null, csrfCookie = null;
     let user = null, csrf = null, loading = null, ended = false, policyRoom = null, policyTimer = null, policyGeneration = 0, authRevision = 0;
     let active = typeof document === "undefined" || document.visibilityState !== "hidden";
@@ -86,7 +88,7 @@
     const notify = (type) => listeners.slice().forEach((fn) => fn({ type, user, security }));
     function lost(code) {
       user = null; csrf = null; ended = true; authRevision++; clearTimeout(policyTimer);
-      Object.keys(policies).forEach((id) => delete policies[id]);
+      Object.keys(policies).forEach((id) => delete policies[id]); policyFailures.clear();
       notify("unauthorized");
       if (config.onUnauthorized) config.onUnauthorized(code);
     }
@@ -165,7 +167,6 @@
         const mode = security || await loadSecurity(), revision = authRevision;
         if (mode.enabled && !token && config.getToken) token = config.getToken();
         if (mode.enabled && !token) {
-          if (!global.location && !config.allowSession) throw problem("login_required", 401);
           const answer = await data("/api/v1/session"); csrf = answer.csrf;
         }
         const answer = principal(await data("/api/v1/me", null, true)); stale(revision);
@@ -187,12 +188,12 @@
       if (response.status === 401) { lost("session_expired"); throw problem("session_expired", 401); }
       return response;
     }
-    async function json(path, method, value) {
+    async function json(path, method, value, options) {
       await ready();
       if (legacy) throw problem("access_not_configured", 404);
-      if (!client.authEnabled() && (/^\/api\/v1\/(users|roles|tokens)(\/|$)/.test(path) || /\/policy$/.test(path))) throw problem("auth_disabled", 403);
+      if (!client.authEnabled() && (/^\/api\/v1\/(users|roles|tokens)(\/|$)/.test(path) || /\/(policy|lock)$/.test(path))) throw problem("auth_disabled", 403);
       if (mock) return (config.mockRequest || demoRequest)(path, method || "GET", value);
-      const init = { method: method || "GET", headers: { Accept: "application/json" } };
+      const init = { ...(options || {}), method: method || "GET", headers: { Accept: "application/json" } };
       if (value !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(value); }
       return data(path, init, true);
     }
@@ -207,14 +208,55 @@
       canControl(room) {
         if (legacy || mock) return true;
         if (!client.has("room.control") || user.rooms !== null && !user.rooms.includes(room)) return false;
-        return !(policies[room] && policies[room].effective && policies[room].effective.allowed === false);
+        return !client.authEnabled() || policies[room]?.effective?.allowed === true;
       },
       policy(room) { return client.authEnabled() ? policies[room] || null : null; },
-      async loadPolicy(room) { const value = await json("/api/v1/rooms/" + encodeURIComponent(room) + "/policy"); policies[room] = value; notify("policy"); return value; },
+      // "checking" until the first answer for a room; a failed read stays "unavailable" until one succeeds.
+      policyStatus(room) { return !client.authEnabled() ? "off" : policies[room] ? "ready" : policyFailures.has(room) ? "unavailable" : "checking"; },
+      async loadPolicy(room) {
+        const sequence = policyReads[room] = (policyReads[room] || 0) + 1, authority = authRevision;
+        const controller = typeof AbortController === "function" ? new AbortController() : null;
+        let timer;
+        try {
+          const value = await Promise.race([
+            json("/api/v1/rooms/" + encodeURIComponent(room) + "/policy", "GET", undefined, controller ? { signal: controller.signal } : {}),
+            new Promise((_, reject) => { timer = setTimeout(() => { controller?.abort(); reject(problem("policy_unavailable", 503)); }, config.policyTimeout || 8000); })
+          ]);
+          stale(authority);
+          if (sequence !== policyReads[room] || policyWrites.has(room)) return policies[room] || null;
+          if (value.room !== room || !Number.isInteger(value.revision) || typeof value.effective?.allowed !== "boolean"
+              || typeof value.effective?.locked !== "boolean") throw problem("invalid_response");
+          if (policies[room] && policies[room].revision > value.revision) return policies[room];
+          policies[room] = value; policyFailures.delete(room); notify("policy"); return value;
+        } catch (error) {
+          if (sequence === policyReads[room] && !policyWrites.has(room)) { delete policies[room]; policyFailures.add(room); notify("policy"); }
+          throw error;
+        } finally { clearTimeout(timer); }
+      },
       async savePolicy(room, revision, value) {
         const saved = await json("/api/v1/rooms/" + encodeURIComponent(room) + "/policy", "PUT", { revision, config: value });
         policies[room] = { ...policies[room], ...saved }; notify("policy");
         await client.loadPolicy(room); return saved;
+      },
+      async setRoomLock(room, revision, locked) {
+        await ready();
+        const authority = authRevision;
+        if (!client.authEnabled()) throw problem("auth_disabled", 403);
+        if (!client.canEdit() || policies[room]?.can_lock !== true) throw problem("forbidden", 403);
+        if (policyWrites.has(room)) return null;
+        policyWrites.add(room); policyReads[room] = (policyReads[room] || 0) + 1;
+        try {
+          const saved = await json("/api/v1/rooms/" + encodeURIComponent(room) + "/lock", "PUT", { revision, locked });
+          stale(authority);
+          if (saved.room !== room || !Number.isInteger(saved.revision) || typeof saved.effective?.allowed !== "boolean"
+              || typeof saved.effective?.locked !== "boolean") throw problem("invalid_response");
+          policies[room] = saved; policyFailures.delete(room); notify("policy"); return saved;
+        } catch (error) {
+          // A rejected/uncertain write never changes the displayed switch optimistically.
+          policyWrites.delete(room);
+          if (!error.stale && !ended) await client.loadPolicy(room).catch(() => {});
+          throw error;
+        } finally { policyWrites.delete(room); }
       },
       async command(room, action, value) {
         await ready();
@@ -228,7 +270,7 @@
         const refresh = () => {
           if (!active || ended || !policyRoom || generation !== policyGeneration) return;
           return client.loadPolicy(policyRoom).catch(() => null).finally(() => {
-            if (active && !ended && generation === policyGeneration) { policyTimer = setTimeout(refresh, 15000); if (policyTimer.unref) policyTimer.unref(); }
+            if (active && !ended && generation === policyGeneration) { policyTimer = setTimeout(refresh, 5000); if (policyTimer.unref) policyTimer.unref(); }
           });
         };
         return refresh();

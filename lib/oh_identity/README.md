@@ -8,9 +8,11 @@ Python 3.11 or newer is required. Install `lib/requirements-site.txt` with
 The Security page controls a persistent authentication property. New identity
 databases start with authentication off; existing databases with accounts
 migrate with authentication on. The gateway stays in place in both modes.
-With authentication off, an anonymous Guest can read the site and use ordinary
-room controls. Account administration, pairing, room locks and schedules are
-disabled by the backend; the worker cannot dispatch saved schedules. Saved
+An anonymous Guest can read the site and use ordinary controls in unlocked
+rooms in either authentication mode. While authentication is on, camera media
+(`/unifi/media/…` snapshots and live video) requires an account. Authentication enables account
+administration, pairing, room locks and schedules; these are disabled by the
+backend when the switch is off, and the worker cannot enforce saved policies. Saved
 accounts and policies remain in private storage. Native testing mode is a
 separate direct-runtime path, not this property or an authentication fallback.
 
@@ -35,8 +37,11 @@ an active Admin's `username` and current password. Disabling requires the
 current Admin's password. Both browser writes and terminal bearer writes retain
 their existing CSRF/channel protections. Mode changes revoke prior sessions
 and tokens, fence queued commands and streams, and revise retained schedules
-so old worker receipts cannot execute after a transition. The browser signs in
-again after enabling; terminal users run `thermite access login` again.
+so old worker receipts cannot execute after a transition. Clients can continue
+as Guests after enabling; privileged use requires a new browser sign-in or
+`thermite access login` in the terminal. An explicitly supplied expired or
+invalid session/token is rejected rather than downgraded to Guest; sign out
+to return to anonymous controls.
 
 Privilege elevation is an account operation: sign out and sign in as an Admin,
 or have an Admin assign the required role on Users. Role changes revoke old
@@ -64,7 +69,9 @@ never put the token in a query string. A token cannot mint another token.
 
 GET `/api/v1/me` returns the site ID, current role ID, canonical permissions,
 room grants and can_edit. User controls unlocked granted rooms, Viewer reads,
-Admin manages users, roles and policies. GET/POST `/api/v1/users` and
+Admin manages users, roles and policies. Guest access is a baseline available
+without credentials: signed-in room grants and Viewer restrictions do not
+prevent someone from signing out and controlling unlocked rooms. GET/POST `/api/v1/users` and
 PATCH/DELETE `/api/v1/users/<id>` administer accounts; DELETE deactivates.
 Reserved Admin/User/Viewer roles cannot be edited/deleted. Custom roles can
 grant site.read/room.control; admin management capabilities remain reserved.
@@ -87,13 +94,29 @@ accepted lengths the login endpoint rejected; both now enforce the same
 1024-character maximum. Native-listener isolation remains a deployment
 requirement, not something a database toggle can establish.
 
-GET/PUT `/api/v1/rooms/<id>/policy` uses `{revision,config}`. PUT is Admin-only,
+GET/PUT `/api/v1/rooms/<id>/policy` uses `{revision,config}`. Guests may read
+policy status while authentication is enabled. PUT is Admin-only,
 CAS protected and delegates validation to the policy engine. Room, timezone
 and new revision are supplied by the server. Missing engine with a saved
 enabled policy denies control; it never silently unlocks. The separate worker
 uses `policy_store.Store` for revision-fenced durable boundary claims and
 canonical reconcile status. Claims happen before external effects; uncertain
 dispatch is not replayed as a new boundary action.
+
+PUT `/api/v1/rooms/<id>/lock` uses `{revision,locked}` and requires an
+authenticated Admin. Enabling captures the server's current reported room
+source or Off; callers cannot supply the target. Unavailable or unknown
+readback is rejected. The persisted `manual_lock` contains `desired` and
+`started_at`; status exposes it with `can_lock`, and an active manual hold has
+`effective.reason=manual_lock` and no end time. It survives restarts, overrides
+scheduled actions, and remains active when the schedule's `enabled` flag is
+false. Schedule edits preserve the manual lock. Disabling authentication
+suspends both manual and scheduled enforcement without deleting them.
+Unlocking releases only the manual hold, leaves the current source in place
+unless a current schedule applies, and does not replay past daily-off actions.
+Manual locks use the same configured route enforcement and physical-device
+limitations as scheduled locks; they do not snapshot arbitrary playback or
+volume settings. All ordinary commands, including Admin commands, obey locks.
 
 POST `/api/v1/rooms/<id>/commands` takes `{action,value}`. The immutable server
 contract resolves the action to a known Item and validates enum/range/step.
@@ -109,8 +132,9 @@ returns upstream error bodies to a client.
 Read compatibility is limited to known `/rest/items/<item>/state` and finite
 `/rest/events?topics=...`. Unknown/private/credential Items are filtered before
 payload parsing or output. Pairing statuses/results are reconstructed from
-known fields. Free String values fail closed. Private house.js/JSON assets
-require auth even when accidentally marked public in the asset declaration;
+known fields. Free String values fail closed. Site house.js/JSON assets remain
+available to Guests through the same finite projection; administrative assets
+still require management authority even when marked public in the asset declaration;
 all filesystem assets are exact basenames under a configured asset root.
 Pairing metadata comes only from the compiled `pairings` map; its command
 Item state is always NULL and is never fetched. Status/result reads are

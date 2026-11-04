@@ -43,7 +43,8 @@ def me_data(user):
     from .security import get_state
     enabled = get_state().enabled
     return {**user_data(user), "site": settings.SITE_ID, "permissions": sorted(permissions(user)),
-            "can_edit": enabled and is_admin(user), "auth_enabled": enabled}
+            "can_edit": enabled and is_admin(user), "auth_enabled": enabled,
+            "is_guest": bool(getattr(user, "is_guest", False))}
 
 
 def security(request):
@@ -197,36 +198,40 @@ def roles(request, ident=None):
     return JsonResponse(role_data(role) if role else {"ok": True}, status=200 if ident else 201)
 
 
-@api("site.read", methods=("GET", "PUT"), authentication=True)
+def policy_data(adapter, room, user, saved):
+    now = timezone.now()
+    effective = {"locked": False, "desired": None, "allowed": True, "reason": "unlocked", "until": None,
+                 "evaluated_at": now}
+    state, manual = {"locked": False}, None
+    if saved and (saved.config.get("enabled") is not False or saved.config.get("manual_lock") is not None):
+        try:
+            config = adapter.policy.validate(saved.config, room, adapter.contract.policy_contract())
+            authorization = adapter.policy.authorize(config, now)
+            state = adapter.policy.effective(config, now) if hasattr(adapter.policy, "effective") else None
+            manual = config.get("manual_lock")
+            effective.update(locked=not authorization["allowed"], desired=authorization.get("desired"),
+                             allowed=authorization["allowed"], reason=authorization.get("reason"),
+                             until=state.get("end") if state else None)
+        except Exception:
+            effective.update(locked=True, allowed=False, reason="policy_unavailable")
+            state = None
+    if "room.control" not in permissions(user) or user.rooms is not None and room not in user.rooms:
+        effective.update(allowed=False, reason="room_read_only")
+    reconciled = ReconcileState.objects.filter(room_id=room, revision=saved.revision).first() if saved else None
+    return {"room": room, "revision": saved.revision if saved else 0,
+            "config": saved.config if saved else None, "can_edit": is_admin(user), "can_lock": is_admin(user),
+            "manual_lock": manual, "effective": effective, "enforcement": enforcement_data(reconciled, state, now)}
+
+
+@api("site.read", methods=("GET", "PUT"))
 def room_policy(request, room):
+    from .security import require_enabled
+    require_enabled()
     adapter = get_adapter()
     if room not in adapter.contract.rooms:
         raise Problem("unknown_room", 404)
     if request.method == "GET":
-        saved = RoomPolicy.objects.filter(room_id=room).first()
-        now = timezone.now()
-        effective = {"locked": False, "desired": None, "allowed": True, "reason": "unlocked", "until": None,
-                     "evaluated_at": now}
-        state = {"locked": False}
-        if saved and saved.config.get("enabled") is not False:
-            try:
-                config = adapter.policy.validate(saved.config, room, adapter.contract.policy_contract())
-                authorization = adapter.policy.authorize(config, now)
-                state = adapter.policy.effective(config, now) if hasattr(adapter.policy, "effective") else None
-                effective.update(locked=not authorization["allowed"], desired=authorization.get("desired"),
-                                 allowed=authorization["allowed"], reason=authorization.get("reason"),
-                                 until=state.get("end") if state else None)
-            except Exception:
-                effective.update(locked=True, allowed=False, reason="policy_unavailable")
-                state = None
-        user = request.identity_user
-        if "room.control" not in permissions(user) or user.rooms is not None and room not in user.rooms:
-            effective.update(allowed=False, reason="room_read_only")
-        reconciled = ReconcileState.objects.filter(room_id=room, revision=saved.revision).first() if saved else None
-        enforcement = enforcement_data(reconciled, state, now)
-        return JsonResponse({"room": room, "revision": saved.revision if saved else 0,
-                             "config": saved.config if saved else None, "can_edit": is_admin(user),
-                             "effective": effective, "enforcement": enforcement})
+        return JsonResponse(policy_data(adapter, room, request.identity_user, RoomPolicy.objects.filter(room_id=room).first()))
     if not is_admin(request.identity_user):
         raise Problem("forbidden", 403)
     if not adapter.policy:
@@ -241,6 +246,13 @@ def room_policy(request, room):
         if current != data["revision"]:
             raise Problem("revision_conflict", 409)
         config = {**data["config"], "room": room, "timezone": settings.TIME_ZONE, "revision": current + 1}
+        # Schedule editing cannot invent, replace or erase a captured hold.
+        manual = saved.config.get("manual_lock") if saved else None
+        if "manual_lock" in config and config["manual_lock"] != manual:
+            raise Problem("invalid_policy")
+        config.pop("manual_lock", None)
+        if manual is not None:
+            config["manual_lock"] = manual
         try:
             config = adapter.policy.validate(config, room, adapter.contract.policy_contract())
         except Exception:
@@ -249,6 +261,55 @@ def room_policy(request, room):
                                                                              "updated_by": request.identity_user})
         audit(request.identity_user, "policy.update", room)
     return JsonResponse({"room": room, "revision": saved.revision, "config": saved.config})
+
+
+@transaction.non_atomic_requests
+@api("settings.manage", methods=("PUT",), authentication=True)
+def room_lock(request, room):
+    adapter = get_adapter()
+    if room not in adapter.contract.rooms:
+        raise Problem("unknown_room", 404)
+    if not adapter.policy:
+        raise Problem("policy_unavailable", 503)
+    data = body(request)
+    if set(data) != {"revision", "locked"} or type(data["revision"]) is not int or data["revision"] < 0 or type(data["locked"]) is not bool:
+        raise Problem("invalid_lock")
+    # Hold the same room lock as commands and the worker, but no database write
+    # transaction during native I/O. Recheck credentials and CAS after the read.
+    with adapter.command_lock((room,), ()):
+        admin_actor(request.identity_user)
+        saved = RoomPolicy.objects.filter(room_id=room).first()
+        current = saved.revision if saved else 0
+        if current != data["revision"]:
+            raise Problem("revision_conflict", 409)
+        manual = saved.config.get("manual_lock") if saved else None
+        if (manual is not None) == data["locked"]:
+            return JsonResponse(policy_data(adapter, room, request.identity_user, saved))
+        captured = None
+        if data["locked"]:
+            spec = adapter.contract.rooms[room]
+            desired = adapter.read(spec["source_item"])
+            if desired not in ("off", *spec["sources"]):
+                raise Problem("room_state_unavailable", 409)
+            captured = {"desired": desired, "started_at": timezone.now().isoformat()}
+        with transaction.atomic():
+            actor = admin_actor(request.identity_user)
+            saved = RoomPolicy.objects.filter(room_id=room).first()
+            if (saved.revision if saved else 0) != current:
+                raise Problem("revision_conflict", 409)
+            config = dict(saved.config) if saved else {"version": 1, "enabled": False, "daily_off": [], "locks": []}
+            config.update(room=room, timezone=settings.TIME_ZONE, revision=current + 1)
+            config.pop("manual_lock", None)
+            if captured is not None:
+                config["manual_lock"] = captured
+            try:
+                config = adapter.policy.validate(config, room, adapter.contract.policy_contract())
+            except Exception:
+                raise Problem("invalid_policy") from None
+            saved, _ = RoomPolicy.objects.update_or_create(room_id=room, defaults={"config": config, "revision": current + 1,
+                                                                                 "updated_by": actor})
+            audit(actor, "room.lock" if captured else "room.unlock", room)
+        return JsonResponse(policy_data(adapter, room, request.identity_user, saved))
 
 
 @api("room.control", methods=("POST",))
@@ -309,6 +370,8 @@ def asset(request, name):
             if admin_only:
                 from .security import require_enabled
                 require_enabled()
+                if getattr(user, "is_guest", False):
+                    raise Problem("login_required", 401)
             if "site.read" not in permissions(user):
                 raise Problem("forbidden", 403)
             if admin_only and not is_admin(user):
@@ -396,6 +459,11 @@ def item_resource(request, item):
 
 @api("site.read", methods=("GET", "POST"))
 def media(request, resource):
+    from .security import get_state
+    # Remotes are open to Guests; camera images and video need an account
+    # whenever authentication is on.
+    if getattr(request.identity_user, "is_guest", False) and get_state().enabled:
+        raise Problem("login_required", 401)
     if request.GET:
         raise Problem("not_found", 404)
     if request.method == "POST" and request.content_type != "application/sdp":

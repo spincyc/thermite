@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Remotes provide an administrator-only manual room lock that captures the
+  current reported source or Off and persists until unlocked. Manual holds
+  survive restarts, preserve schedules, and take precedence while active.
+  Guests can use unlocked remotes without signing in in either authentication
+  mode. Locked rooms keep the normal layout with a visible lock indication
+  and disabled controls; management, camera snapshots and live video still
+  require a signed-in account while authentication is on.
+
 - `thermite install --config DIR` deploys the complete stack and `thermite
   upgrade --config DIR` updates the application, native services, monitoring,
   HTTPS gateway and identity schema in one approved run. The stable command

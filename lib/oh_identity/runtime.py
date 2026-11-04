@@ -216,12 +216,16 @@ class RuntimeAdapter:
         if not get_state().enabled:
             return
         saved = RoomPolicy.objects.filter(room_id=room_id).first()
-        if not saved or saved.config.get("enabled") is False:
+        if not saved or saved.config.get("enabled") is False and saved.config.get("manual_lock") is None:
             return
         # A persisted enabled policy cannot silently become unenforced if engine missing.
         if not self.policy:
             raise Problem("policy_unavailable", 503)
-        answer = self.policy.authorize(saved.config, timezone.now())
+        try:
+            config = self.policy.validate(saved.config, room_id, self.contract.policy_contract())
+            answer = self.policy.authorize(config, timezone.now())
+        except Exception:
+            raise Problem("policy_unavailable", 503) from None
         if not answer.get("allowed"):
             raise Problem("room_locked", 423)
 

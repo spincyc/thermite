@@ -60,7 +60,13 @@ function create(client, house, changed) {
       line("Basic remote controls are available without signing in. Enable authentication in Security (F3) for accounts, device pairing, locks and room schedules."); return y;
     }
     if (state.kind === "account") {
-      const user = client.current(); line(user ? "Signed in as " + user.username : "Not signed in", "strong");
+      const user = client.current(); line(user?.is_guest ? "Guest · no sign-in required" : user ? "Signed in as " + user.username : "Not signed in", "strong");
+      if (user?.is_guest) {
+        line("Use the remotes in unlocked rooms. Locked rooms remain visible.");
+        line("To manage room locks, sign in as an administrator:");
+        line("thermite access login --url " + client.origin + " --user ADMIN");
+        line("Then reopen the remote."); return y;
+      }
       if (!user) { line("Run thermite access login for this address, then reopen the remote."); return y; }
       line(user?.can_edit ? "Administrator" : client.has("room.control") ? "Control of granted, unlocked rooms" : "Read-only access");
       line("To switch or elevate access, quit and run thermite access login --url " + client.origin + " --user ADMIN, then reopen the remote.");
@@ -72,7 +78,7 @@ function create(client, house, changed) {
     if (state.kind === "settings") {
       const room = house.rooms.find((room) => room.id === state.room), saved = state.policy, policy = saved?.config;
       line(room?.label || "Room", "strong");
-      line(saved?.effective ? saved.effective.locked ? "Locked by schedule" : "Unlocked" : "Current policy not reported");
+      line(saved?.effective ? saved.effective.locked ? saved.manual_lock ? "Locked · until unlocked" : "Locked by schedule" : "Unlocked" : "Current policy not reported");
       line("Timezone: " + (policy?.timezone || "Site timezone"));
       const stamp = saved?.enforcement?.updated_at;
       line("Verification: " + (({ verified: "Verified", degraded: "Needs attention", unknown: "Unknown" })[saved?.enforcement?.state] || "Not reported")

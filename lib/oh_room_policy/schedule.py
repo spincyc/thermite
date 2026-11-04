@@ -59,14 +59,20 @@ def boundary_key(policy: dict, rule: str, day: date, kind: str) -> str:
 
 def desired_at(now_utc: datetime, policy: dict) -> dict:
     now = utc(now_utc)
+    manual = policy.get("manual_lock")
+    if manual is not None:
+        start = utc(datetime.fromisoformat(manual["started_at"]))
+        return {"room": policy["room"], "revision": policy["revision"], "locked": True,
+                "desired": manual["desired"], "rule": None, "start": start, "end": None,
+                "key": f"{policy['room']}:{policy['revision']}:manual:{manual['started_at']}", "kind": "manual"}
     if policy.get("enabled", True):
         for rule, day, start, end in _windows(policy, now):
             if start <= now < end:
                 return {"room": policy["room"], "revision": policy["revision"], "locked": True,
                         "desired": rule["desired"], "rule": rule["id"], "start": start, "end": end,
-                        "key": boundary_key(policy, rule["id"], day, "start")}
+                        "key": boundary_key(policy, rule["id"], day, "start"), "kind": "schedule"}
     return {"room": policy["room"], "revision": policy["revision"], "locked": False, "desired": None,
-            "rule": None, "start": None, "end": None, "key": None}
+            "rule": None, "start": None, "end": None, "key": None, "kind": None}
 
 
 def effective(config: dict, aware_now: datetime) -> dict:
@@ -76,7 +82,7 @@ def effective(config: dict, aware_now: datetime) -> dict:
 def authorize(config: dict, aware_now: datetime) -> dict:
     """Ordinary actuation only. Identity roles, reads and grants live above it."""
     state = effective(config, aware_now)
-    return {"allowed": not state["locked"], "reason": "room_locked" if state["locked"] else "unlocked",
+    return {"allowed": not state["locked"], "reason": "manual_lock" if state["kind"] == "manual" else "room_locked" if state["locked"] else "unlocked",
             "desired": state["desired"], "revision": state["revision"]}
 
 
@@ -109,7 +115,7 @@ def due_boundaries(now_utc: datetime, policy: dict, receipts=(), *, not_before: 
     A currently active lock supersedes older unlock/daily-off actions.
     """
     now = utc(now_utc)
-    if not policy.get("enabled", True):
+    if policy.get("manual_lock") is not None or not policy.get("enabled", True):
         return []
     lower = utc(not_before) if not_before is not None else now - timedelta(days=2)
     seen = set(receipts)

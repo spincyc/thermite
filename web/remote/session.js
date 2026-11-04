@@ -144,6 +144,43 @@
       emit({ type: "announce", message: message });
     }
 
+    const lockRequests = new Set();
+    function roomLock() {
+      const access = backend.access, room = current;
+      const enabled = Boolean(room && access && !access.native && access.authEnabled());
+      const policy = enabled ? access.policy(room.id) : null, status = enabled ? access.policyStatus(room.id) : "off";
+      const manual = Boolean(policy?.manual_lock), locked = policy?.effective?.locked === true;
+      const state = room && states[room.id];
+      const settled = state && !state.pending && room.options.some(option => option.id === state.value);
+      const busy = Boolean(room && lockRequests.has(room.id));
+      const canManage = enabled && access.canEdit() && policy?.can_lock === true;
+      const unavailable = status === "unavailable" || policy?.effective?.reason === "policy_unavailable";
+      let text = "";
+      if (unavailable) text = "Room lock status unavailable · controls paused";
+      else if (status === "checking") text = "Checking room lock…";
+      else if (locked) text = manual ? "Locked · until unlocked" : "Locked by schedule";
+      return { room: room?.id || null, enabled, manual, locked, busy, canManage,
+        disabled: busy || !canManage || !manual && (!settled || unavailable),
+        text, label: busy ? "Saving…" : manual ? "Unlock room" : "Lock room" };
+    }
+
+    async function toggleRoomLock(expectedRoom) {
+      const lock = roomLock(), room = current;
+      if (!room || expectedRoom && expectedRoom !== room.id || lock.disabled) return false;
+      const policy = backend.access.policy(room.id), desired = !lock.manual;
+      lockRequests.add(room.id); emit({ type: "change" });
+      try {
+        const saved = await backend.access.setRoomLock(room.id, policy.revision, desired);
+        if (!saved) return false;
+        toast(room.label, desired ? "Room locked until you unlock it."
+          : saved.effective?.locked ? "Manual lock released. The room is still locked by its schedule." : "Room unlocked.");
+        return true;
+      } catch (error) {
+        if (!error.stale) toast(room.label, error.message, "bad");
+        return false;
+      } finally { lockRequests.delete(room.id); emit({ type: "change" }); }
+    }
+
     function subscribe(callback) {
       listeners.push(callback);
       return () => {
@@ -780,6 +817,8 @@
       toggleVolumeMode: () => setVolumeMode(volumeMode === "slider" ? "buttons" : "slider"),
       access: backend.access || null,
       controlAllowed: () => !backend.access || backend.access.canControl(current && current.id),
+      roomLock,
+      toggleRoomLock,
       audioView: audioView,
       controls: controls,
       activeTarget: activeTarget,

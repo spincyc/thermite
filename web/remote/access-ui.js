@@ -45,7 +45,7 @@
     }
     try {
       const user = await client.ready();
-      if (user) {
+      if (user && !user.is_guest) {
         $(".access-login h1").textContent = "Your account"; form.replaceChildren();
         form.append(node("p", "Signed in as " + user.username), node("p", "To elevate access, switch to an administrator account. An administrator can change your role in Users & roles; then sign in again."),
           button("Switch account", signOut), button("Sign out", signOut));
@@ -63,7 +63,7 @@
       } catch (error) { status(error.message, true); form.elements.password.focus(); }
       finally { submit.disabled = false; }
     });
-    status("");
+    status(client.current?.()?.is_guest ? "Guest access is available for unlocked rooms. Sign in for additional permissions." : "");
   }
   async function security() {
     const host = $("[data-security]");
@@ -72,7 +72,7 @@
     status("");
     host.replaceChildren();
     host.append(node("h2", "Authentication is " + (mode.enabled ? "on" : "off")), node("p", mode.enabled
-      ? "Accounts protect access to thermite. Locks and schedules follow account permissions."
+      ? "Unlocked rooms work without signing in. Accounts grant permission to manage locks, schedules and the site."
       : "Basic remote controls are available without signing in. Accounts, device pairing, locks and room schedules require authentication."));
     host.appendChild(node("p", "Changing this setting signs out every browser and terminal. Existing credentials cannot be reused after a change.", { class: "access-note" }));
     if (client.mock) { host.appendChild(node("p", "Demo authentication cannot be changed.")); return; }
@@ -153,7 +153,7 @@
     const summary = node("div", null, { class: "access-summary" });
     const fact = (name, value) => { const box = node("span", value); box.prepend(node("strong", name)); summary.appendChild(box); };
     fact("Schedule timezone", config.timezone || "Site timezone");
-    fact("Current policy", answer.effective?.locked ? "Locked" : answer.effective ? "Unlocked" : "Not reported");
+    fact("Current policy", answer.effective?.locked ? answer.manual_lock ? "Locked until unlocked" : "Locked by schedule" : answer.effective ? "Unlocked" : "Not reported");
     fact("Last verification", ({ verified: "Verified", degraded: "Needs attention", unknown: "Unknown" })[answer.enforcement?.state] || "Not reported");
     const stamp = answer.enforcement?.updated_at;
     fact("Verification time", typeof stamp === "string" && Number.isFinite(Date.parse(stamp)) ? new Date(stamp).toLocaleString() : "Not reported");

@@ -95,6 +95,12 @@
         </button>
       </header>
 
+      <div class="room-lock" data-room-lock hidden>
+        <span class="room-lock__status" data-room-lock-status role="status"></span>
+        <button class="button room-lock__toggle" type="button" role="switch" aria-checked="false"
+          aria-label="Hold this room until unlocked" data-action="room-lock" hidden>Lock room</button>
+      </div>
+
       <div class="targets-wrap">
         <!-- The arrows are for a mouse: a keyboard reaches each bubble with Tab, a finger swipes. -->
         <button class="targets__more" type="button" data-action="scroll-targets" data-step="-1" tabindex="-1" aria-hidden="true">

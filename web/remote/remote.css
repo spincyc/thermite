@@ -608,6 +608,23 @@ button {
 
 /* ---- a problem with the room's source ------------------------------------ */
 
+.room-lock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: var(--space-2) var(--space-4) 0;
+  padding: 8px 12px;
+  border: 1px solid currentColor;
+  border-radius: 12px;
+  font-size: 13px;
+}
+.room-lock[hidden], .room-lock__toggle[hidden] { display: none; }
+.room-lock__status { flex: 1; min-width: 160px; }
+.room-lock__toggle { flex: none; min-height: 40px; }
+.room-lock__toggle[aria-checked="true"] { color: var(--bad); }
+
 .alert {
   display: flex;
   align-items: center;

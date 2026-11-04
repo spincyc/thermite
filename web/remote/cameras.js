@@ -347,6 +347,9 @@
     });
     const model = create({ ...options, mock, manifestURL: global.ThermiteNavigation?.asset("cameras.json") || "cameras.json" });
     const find = (selector) => root.querySelector(selector);
+    const access = global.ThermiteAccess?.client;
+    // Guests see camera status, but media needs an account while authentication is on.
+    const mediaNeedsAccount = () => !mock && Boolean(access && !access.native && access.authEnabled() && access.current()?.is_guest);
     const cards = new Map();
     let selected = global.location.hash.slice(1), filter = "all", stopped = false, mediaKind = "idle";
     const viewer = media({ ...options, mock, video: find("[data-camera-video]"), image: find("[data-camera-image]"),
@@ -433,8 +436,10 @@
         quality.value = camera.media.streams.medium ? "medium" : Object.keys(camera.media.streams)[0] || "";
         quality.dataset.signature = signature;
       }
-      find("[data-camera-snapshot]").disabled = camera.online === false;
-      find("[data-camera-live]").disabled = camera.online === false || !quality.value;
+      const signIn = mediaNeedsAccount();
+      find("[data-camera-snapshot]").disabled = signIn || camera.online === false;
+      find("[data-camera-live]").disabled = signIn || camera.online === false || !quality.value;
+      if (signIn && mediaKind === "idle") find("[data-media-message]").textContent = "Sign in to view snapshots and live video.";
     }
 
     const current = () => model.camera(selected);

@@ -101,9 +101,12 @@ code expires after 15 minutes; run setup again for a replacement. It cannot
 replace existing accounts. Keep the code out of logs, URLs and shared messages.
 
 The Security toggle changes private identity state; it does not regenerate
-inventory, restart services, or switch clients to native REST. Off allows
-ordinary room controls through the gateway. Users, pairing, locks and schedules
-require authentication. Accounts and policies survive toggles, but every prior
+inventory, restart services, or switch clients to native REST. Guests can use
+ordinary controls in unlocked rooms through the gateway in either mode; camera
+media needs an account while authentication is on.
+Account management, pairing, lock changes and schedules require authentication.
+With authentication off, locks and schedules are suspended. Accounts and
+policies survive toggles, but every prior
 browser session and terminal token is revoked. Subsequent toggles require an
 active administrator's current password. Use the Account page to switch to an
 Admin, or have an Admin change your role in Users and sign in again. Terminal
@@ -144,7 +147,8 @@ stale or invalid timestamp stays Unknown; native drift can trigger only the
 engine's bounded mismatch repairs. Source boundary commands remain durably
 claimed once, with uncertain outcomes preserved after transport failure.
 
-Terminal clients use `access login --url https://… --user …`. Their personal
+Terminal clients need no login for ordinary Guest controls. To elevate, use
+`access login --url https://… --user …`. The personal
 token is stored atomically in an owned mode-0600 regular file under
 `${XDG_CONFIG_HOME:-~/.config}/thermite/sites/<sha256-origin>.json`. Its five
 fields are `version`, `origin`, `token`, `id`, and `expires_at`. A private CA

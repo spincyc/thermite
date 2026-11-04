@@ -81,8 +81,8 @@ class Core(TestCase):
             bootstrap("intruder", PASSPHRASE)
         self.assertEqual(caught.exception.code, "already_initialized")
 
-    def test_anonymous_and_viewer_cannot_command(self):
-        self.assertEqual(self.request("get", "/api/v1/me").status_code, 401)
+    def test_guest_can_read_but_viewer_cannot_command(self):
+        self.assertTrue(self.request("get", "/api/v1/me").json()["is_guest"])
         self.signin("viewer")
         self.assertEqual(self.request("post", "/api/v1/rooms/den/commands", {"action": "source", "value": "player"}).status_code, 403)
         self.assertEqual(self.adapter.transport.commands, [])

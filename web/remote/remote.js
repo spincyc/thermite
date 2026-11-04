@@ -108,13 +108,26 @@
     updateSimulation();
     updateSignal();
     syncSignal();
+    const lock = session.roomLock();
+    const lockRow = $("[data-room-lock]"), lockButton = $('[data-action="room-lock"]');
+    lockRow.hidden = !lock.enabled || !lock.text && !lock.canManage;
+    $("[data-room-lock-status]").textContent = lock.text || "Hold the current source or Off until unlocked";
+    lockButton.hidden = !lock.canManage;
+    lockButton.textContent = lock.label;
+    lockButton.disabled = lock.disabled;
+    lockButton.dataset.room = lock.room || "";
+    lockButton.setAttribute("aria-checked", String(lock.manual));
+    lockButton.title = !lock.manual && lock.disabled && !lock.busy ? "Wait for the room to finish switching and report its source." : "";
     const allowed = session.controlAllowed();
     all('[data-action="all-off"]').forEach((button) => { button.disabled = Boolean(backend.access && !backend.access.has("room.control")); });
     all('[data-button], [data-choose], [data-action="control"], [data-action="input"]').forEach((button) => {
       if (!allowed && !button.hasAttribute("data-policy-disabled")) { button.dataset.policyDisabled = String(button.disabled); button.disabled = true; }
       else if (allowed && button.hasAttribute("data-policy-disabled")) { button.disabled = button.dataset.policyDisabled === "true"; delete button.dataset.policyDisabled; }
     });
-    if (!allowed) { $("[data-fader-input]").disabled = true; $("#alert").hidden = false; $("#alert-text").textContent = [$("#alert-text").textContent, "Read-only · account permission or room schedule"].filter(Boolean).join(" · "); }
+    if (!allowed) {
+      $("[data-fader-input]").disabled = true;
+      if (!lock.text) { $("#alert").hidden = false; $("#alert-text").textContent = [$("#alert-text").textContent, "Read-only · account permission"].filter(Boolean).join(" · "); }
+    }
   }
 
   function buildRoomLists() {
@@ -747,6 +760,9 @@
     const action = event.target.closest("[data-action]");
     if (!action) return;
     switch (action.getAttribute("data-action")) {
+      case "room-lock":
+        session.toggleRoomLock(action.dataset.room);
+        break;
       case "info-view":
         setInfoView(action.getAttribute("data-view"), false);
         break;

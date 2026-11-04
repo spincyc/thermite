@@ -14,7 +14,7 @@ class SecurityHeaders(TransactionTestCase):
     def setUp(self):
         SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
 
-    def test_private_html_redirects_to_public_login_without_exposing_house(self):
+    def test_guest_remote_pages_work_but_invalid_credentials_require_explicit_recovery(self):
         with tempfile.TemporaryDirectory(dir=settings.STATE) as temporary:
             root = Path(temporary)
             (root / "home.html").write_text("private home fixture")
@@ -24,16 +24,26 @@ class SecurityHeaders(TransactionTestCase):
                                                      "index.html": {"private": True}, "access.html": {}},
                                                      asset_root=root), FakeRuntime())
             install_adapter(adapter)
-            response = Client().get("/static/remote/home.html", secure=True)
+            for path in ("/", "/remotes/", "/static/remote/", "/static/remote/home.html", "/static/remote/index.html"):
+                response = Client().get(path, secure=True)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response["Cache-Control"], "no-store")
+                self.assertEqual(response["X-Frame-Options"], "DENY")
+                response.close()
+            def stale():
+                # Each response deletes the rejected cookie; recovery is per request.
+                client = Client()
+                client.cookies[settings.SESSION_COOKIE_NAME] = "expired-browser-session"
+                return client
+            response = stale().get("/static/remote/home.html", secure=True)
             self.assertEqual(response.status_code, 302)
             self.assertEqual(response["Location"], "/account/?next=%2F")
             self.assertEqual(response["Cache-Control"], "no-store")
             self.assertEqual(response["X-Frame-Options"], "DENY")
             self.assertNotIn(b"private home fixture", response.content)
-            # The directory bookmark and Remotes navigation share the same
-            # private asset gate as the explicit index; neither is a 404 or bypass.
+            # An expired supplied credential never silently falls back to Guest.
             for path in ("/static/remote/", "/static/remote/index.html", "/remotes/"):
-                remote = Client().get(path, secure=True)
+                remote = stale().get(path, secure=True)
                 self.assertEqual(remote.status_code, 302)
                 self.assertEqual(remote["Location"], "/account/?next=%2Fremotes%2F")
                 self.assertEqual(remote["Cache-Control"], "no-store")
@@ -70,6 +80,7 @@ class SecurityHeaders(TransactionTestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response["X-Frame-Options"], "DENY")
             self.assertTrue(response.cookies[settings.CSRF_COOKIE_NAME]["secure"])
+            client.cookies[settings.SESSION_COOKIE_NAME] = "expired-browser-session"
             response = client.get("/static/remote/house.js", secure=True)
             self.assertEqual(response.status_code, 401)
             self.assertEqual(response["X-Frame-Options"], "DENY")

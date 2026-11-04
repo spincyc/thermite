@@ -456,7 +456,7 @@ function create(options) {
   }
 
   function applySourceCursor() {
-    if (session.controlAllowed && !session.controlAllowed()) return toast("Read-only", "Account permission or room schedule");
+    if (session.controlAllowed && !session.controlAllowed()) return toast("Read-only", session.roomLock?.().locked ? "Room is locked" : "Account permission or room lock status");
     const room = session.current().id;
     const list = session.bubbles(session.controls());
     const id = ui.sourceCursor[room] || session.state(room).value;
@@ -614,13 +614,13 @@ function create(options) {
   function activate(hit) {
     // A page switch can outrun a terminal redraw. Old control hit boxes must
     // not operate a device once its page has been left.
-    if (["bubble", "key", "volume-mode", "control", "input", "all-off", "simulate-matrix", "simulate-external", "scroll-bubbles"].includes(hit.kind)
+    if (["bubble", "key", "volume-mode", "control", "input", "all-off", "room-lock", "simulate-matrix", "simulate-external", "scroll-bubbles"].includes(hit.kind)
         && ui.screen !== "remote") return;
     if (hit.kind.startsWith("pair-") || ["send-code", "new-code", "code"].includes(hit.kind)) {
       if (ui.screen !== "pairing") return;
     }
     if (session.controlAllowed && !session.controlAllowed() && (["key", "control", "input"].includes(hit.kind) || hit.kind === "bubble" && hit.item?.choose)) {
-      return toast("Read-only", "Account permission or room schedule");
+      return toast("Read-only", session.roomLock?.().locked ? "Room is locked" : "Account permission or room lock status");
     }
     if (hit.kind === "access-action" || hit.kind === "access-field") {
       if (hit.action === "settings" || hit.action === "users") setScreen(hit.action);
@@ -628,6 +628,9 @@ function create(options) {
       return;
     }
     switch (hit.kind) {
+      case "room-lock":
+        session.toggleRoomLock(hit.room);
+        break;
       case "pair-sort":
         if (!pairing.backend || pairing.backend.view(pairing.selected)?.confirm || !View.PAIR_FIELDS.includes(hit.field)) return;
         pairing.sortDescending = pairing.sortField === hit.field ? !pairing.sortDescending : false;
@@ -758,7 +761,7 @@ function create(options) {
   }
 
   function pressKey(candidates) {
-    if (session.controlAllowed && !session.controlAllowed()) return toast("Read-only", "Account permission or room schedule");
+    if (session.controlAllowed && !session.controlAllowed()) return toast("Read-only", session.roomLock?.().locked ? "Room is locked" : "Account permission or room lock status");
     const button = session.pressKey(candidates);
     flash("key:" + button);
   }

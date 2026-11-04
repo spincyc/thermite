@@ -584,7 +584,14 @@ function remoteContent(frame, g, w, ctx) {
   const target = session.activeTarget(list);
   const state = session.state(current.id);
   let y = 0;
-  if (session.controlAllowed && !session.controlAllowed()) y = paragraph(g, 2, y, w - 4, "Read-only · account permission or room schedule", "dim");
+  const lock = session.roomLock?.();
+  if (lock?.text) y = paragraph(g, 2, y, w - 4, lock.text, lock.locked ? "strong" : "dim");
+  if (lock?.canManage) {
+    const key = "room-lock:" + current.id;
+    const hit = lock.disabled ? null : { kind: "room-lock", key, room: current.id, focus: true, label: lock.label };
+    button(g, ctx, 2, y, lock.label, key, hit, lock.disabled ? "dim" : "key"); y += 4;
+  }
+  if (!lock?.text && session.controlAllowed && !session.controlAllowed()) y = paragraph(g, 2, y, w - 4, "Read-only · account permission", "dim");
   const shown = session.view(current, state);
   if (shown.problem) y = paragraph(g, 2, y, w - 4, "\u26a0 " + shown.problem, "alert");
   const remote = session.remoteOf(target);

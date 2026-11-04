@@ -68,7 +68,7 @@ def valid(snapshot):
     if snapshot.get("security_revision") != state.revision:
         return False
     if snapshot.get("guest"):
-        return not state.enabled
+        return True
     if not state.enabled:
         return False
     user = User.objects.select_related("role").filter(pk=snapshot["user"], is_active=True, auth_revision=snapshot["revision"]).first()

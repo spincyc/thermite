@@ -147,6 +147,10 @@ def save_policy(gateway, config):
 
 def unlock(gateway):
     save_policy(gateway, {"version": 1, "enabled": False, "daily_off": [], "locks": []})
+    current = policy(gateway)
+    if current.get("manual_lock"):
+        gateway.json("/api/v1/rooms/" + ROOM + "/lock", method="PUT",
+                     data={"revision": current["revision"], "locked": False})
     require(policy(gateway)["effective"]["locked"] is False, "dummy room remained locked")
 
 
@@ -194,16 +198,23 @@ def run(args):
         require(matrix_status.get("comhead") == "get video status"
                 and isinstance(matrix_status.get("allsource"), list) and len(matrix_status["allsource"]) == 9,
                 "loopback matrix is not the BK-808 dummy fixture")
-        denied = ("/api/v1/me", "/api/v1/rooms/" + ROOM + "/policy", "/static/remote/house.js",
-                  "/static/remote/activity.json")
-        for path in denied:
-            require(gateway.request(path, authenticated=False)[0] == 401, "anonymous private resource was not denied")
-        status, headers, _ = gateway.request("/static/remote/home.html", authenticated=False)
-        require(status == 302 and headers.get("Location") == "/account/?next=%2F",
-                "anonymous private page did not redirect to login")
-        for path in ("/static/remote/access.html", "/static/remote/access.js"):
-            require(gateway.request(path, authenticated=False)[0] == 200, "public login resource was unavailable")
-        proof["anonymous_denied"] = True
+        for path in ("/api/v1/me", "/api/v1/rooms/" + ROOM + "/policy", "/static/remote/house.js",
+                     "/static/remote/activity.json", "/static/remote/home.html", "/remotes/",
+                     "/static/remote/access.html", "/static/remote/access.js"):
+            require(gateway.request(path, authenticated=False)[0] == 200, "guest remote resource was unavailable")
+        guest = gateway.json("/api/v1/me", authenticated=False)
+        require(guest.get("is_guest") is True and guest.get("can_edit") is False
+                and guest.get("auth_enabled") is True, "guest authority did not match enabled authentication")
+        for path in ("/api/v1/users", "/api/v1/roles", "/api/v1/tokens", "/static/remote/system.json"):
+            require(gateway.request(path, authenticated=False)[0] in (401, 403), "guest management access was not denied")
+        guest_browser = gateway.open(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        guest_csrf = gateway.json("/api/v1/session", authenticated=False, opener=guest_browser)["csrf"]
+        guest_headers = {"X-CSRFToken": guest_csrf, "Origin": gateway.base, "Referer": gateway.base + "/remotes/"}
+
+        def guest_json(path, **values):
+            return gateway.json(path, authenticated=False, opener=guest_browser, headers=guest_headers, **values)
+
+        proof["guest_remotes_and_management_boundary"] = True
         issued = gateway.json("/api/v1/token-login", status=201, method="POST", authenticated=False,
                               data={"username": args.admin, "password": secret, "name": "dummy guest acceptance", "days": 1})
         require(isinstance(issued.get("token"), str) and re.fullmatch(r"thm_[A-Za-z0-9_-]{32,200}", issued["token"]),
@@ -226,18 +237,38 @@ def run(args):
         touched_policy = True
         unlock(gateway)
         for source, number in (("off", 8), (SOURCE, 1)):
-            accepted = gateway.json("/api/v1/rooms/" + ROOM + "/commands", status=202,
-                                    method="POST", data={"action": "source", "value": source})
-            require(accepted.get("accepted") is True, "dummy room source command was refused")
+            accepted = guest_json("/api/v1/rooms/" + ROOM + "/commands", status=202,
+                                  method="POST", data={"action": "source", "value": source})
+            require(accepted.get("accepted") is True, "guest dummy room source command was refused")
             poll(args.timeout, "native route " + source,
                  lambda: float(gateway.state(FIELD)) == number and gateway.state("loc_" + ROOM + "_source") == source)
-        proof["commands_and_native_readback"] = True
+        proof["guest_commands_and_native_readback"] = True
+        current = policy(gateway)
+        denied = guest_json("/api/v1/rooms/" + ROOM + "/lock", status=401, method="PUT",
+                            data={"revision": current["revision"], "locked": True})
+        require(denied.get("error") == "login_required", "guest was allowed to lock the room")
+        held = gateway.json("/api/v1/rooms/" + ROOM + "/lock", method="PUT",
+                            data={"revision": current["revision"], "locked": True})
+        require(held["manual_lock"]["desired"] == SOURCE and held["effective"]["reason"] == "manual_lock"
+                and held["effective"]["until"] is None, "manual lock did not capture the native source indefinitely")
+        for request in (gateway.json, guest_json):
+            denied = request("/api/v1/rooms/" + ROOM + "/commands", status=423, method="POST",
+                             data={"action": "source", "value": "off"})
+            require(denied.get("error") == "room_locked", "manual lock did not deny ordinary room control")
         save_policy(gateway, {"version": 1, "enabled": True, "daily_off": [], "locks": [
             {"id": "e2e-hold", "start": "00:00", "end": "00:00", "days": list(range(7)),
              "desired": "off", "unlock": "leave"}]})
+        current = policy(gateway)
+        require(current["manual_lock"] == held["manual_lock"] and current["effective"]["desired"] == SOURCE,
+                "schedule edit replaced the manual hold")
+        released = gateway.json("/api/v1/rooms/" + ROOM + "/lock", method="PUT",
+                                data={"revision": current["revision"], "locked": False})
+        require(released["manual_lock"] is None and released["effective"]["locked"]
+                and released["effective"]["desired"] == "off", "manual release did not resume the active schedule")
+        proof["manual_lock_capture_and_schedule_resume"] = True
         poll(args.timeout, "worker initial Off enforcement", lambda: float(gateway.state(FIELD)) == 8)
-        denied = gateway.json("/api/v1/rooms/" + ROOM + "/commands", status=423, method="POST",
-                              data={"action": "source", "value": SOURCE})
+        denied = guest_json("/api/v1/rooms/" + ROOM + "/commands", status=423, method="POST",
+                            data={"action": "source", "value": SOURCE})
         require(denied.get("error") == "room_locked", "active policy did not deny room control")
         changed = datetime.now(timezone.utc)
         drift = matrix_request(matrix, args.timeout, {"comhead": "video switch", "source": [1, 1]})

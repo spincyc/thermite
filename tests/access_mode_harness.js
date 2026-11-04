@@ -7,8 +7,8 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const origin = "https://site.example:13600", csrfValue = "C".repeat(32), csrfName = "thermite_0123456789abcdef_csrf";
 const confirmation = "F".repeat(16);
 const mode = (enabled, revision = 1) => ({ enabled, revision, bootstrap_required: !enabled, setup_available: false, csrf: csrfValue });
-const guest = { id: 0, role: 0, username: "Guest", rooms: null, can_edit: false, auth_enabled: false, permissions: ["site.read", "room.control"] };
-const admin = { ...guest, id: 1, role: 1, username: "Admin", can_edit: true, auth_enabled: true, permissions: [...guest.permissions, "settings.manage", "users.manage", "roles.manage", "pairing.manage"] };
+const guest = { id: 0, role: 0, username: "Guest", rooms: null, can_edit: false, is_guest: true, auth_enabled: false, permissions: ["site.read", "room.control"] };
+const admin = { ...guest, id: 1, role: 1, username: "Admin", can_edit: true, is_guest: false, auth_enabled: true, permissions: [...guest.permissions, "settings.manage", "users.manage", "roles.manage", "pairing.manage"] };
 const response = (value, status = 200, cookies = []) => ({ ok: status >= 200 && status < 300, status, json: async () => value, headers: { getSetCookie: () => cookies } });
 const house = { rooms: [{ id: "den", label: "Den", sources: [] }], sources: {} };
 function textOf(node) { return [node.textContent || "", ...(node.children || []).map(textOf)].join(" "); }
@@ -67,8 +67,24 @@ async function browser(page, client) {
   assert.equal(attempts, 1); assert.equal(unavailable.native, false);
   const missing = Access.create({ base: origin, fetch: async () => response({}, 404) });
   await assert.rejects(missing.ready(), error => error.code === "access_not_configured");
-  const unsigned = Access.create({ base: origin, fetch: async url => { assert.equal(new URL(url).pathname, "/api/v1/security"); return response(mode(true)); } });
-  await assert.rejects(unsigned.ready(), error => error.code === "login_required");
+  const guestCalls = [];
+  const unsigned = Access.create({ base: origin, fetch: async (url, init) => {
+    const route = new URL(url).pathname; guestCalls.push(route);
+    assert.equal(init.headers.get("Authorization"), null);
+    if (route === "/api/v1/security") return response(mode(true));
+    if (route === "/api/v1/session") return response({ csrf: csrfValue });
+    if (route === "/api/v1/me") return response({ ...guest, auth_enabled: true });
+    if (route.endsWith("/policy")) return response({ room: "den", revision: 0, manual_lock: null, can_lock: false,
+      effective: { allowed: true, locked: false } });
+    if (route.endsWith("/commands")) { assert.equal(init.headers.get("X-CSRFToken"), csrfValue); return response({ ok: true }); }
+    throw Error("Unexpected guest route: " + route);
+  } });
+  assert.equal((await unsigned.ready()).is_guest, true);
+  assert.equal(unsigned.canEdit(), false); assert.equal(unsigned.canControl("den"), false, "wait for current lock status");
+  await unsigned.loadPolicy("den"); assert(unsigned.canControl("den"));
+  await unsigned.command("den", "source", "off");
+  await assert.rejects(unsigned.setRoomLock("den", 0, true), error => error.code === "forbidden");
+  assert(!guestCalls.some(route => route.endsWith("/lock")), "guest cannot send a lock mutation");
 
   const personal = "thm_" + "T".repeat(32);
   const bearer = Access.create({ base: origin, token: personal, fetch: async (url, init) => {
@@ -144,6 +160,9 @@ async function browser(page, client) {
   assert(!viewer.host.children.some(child => child.tag === "form")); assert(textOf(viewer.host).includes("Switch to an administrator account"));
   const settings = await browser("settings", off); assert(settings.status.textContent.includes("Enable authentication")); assert(settings.hidden.hidden);
   const native = await browser("security", { native: true }); assert(native.status.textContent.includes("Configure and open the thermite gateway"));
+  const guestAccount = await browser("access", unsigned);
+  assert(guestAccount.login.handlers.submit, "guest gets sign-in form for elevation");
+  assert(!textOf(guestAccount.login).includes("Signed in as Guest"));
   const staleAccount = await browser("access", { native: false, loadSecurity: async () => mode(false), ready: async () => { throw Access.problem("session_expired", 401); }, logout: async () => {} });
   const clear = staleAccount.login.children.find(child => child.textContent === "Clear expired sign-in"); assert(clear);
   await clear.handlers.click(); assert.deepEqual(staleAccount.redirects, ["reload"]);
@@ -156,5 +175,9 @@ async function browser(page, client) {
   const offlineTerminal = Administration.create(unavailable, house, () => {}); await offlineTerminal.open("account");
   grid = new Grid(100, null, "base"); offlineTerminal.content(grid, 100, { ui: {} });
   assert(grid.text().includes("Authentication status unavailable")); assert(!grid.text().includes("Authentication is off"));
-  process.stdout.write(JSON.stringify({ guestGateway: true, terminalCsrf: true, noFallback: true, transitionFence: true, bootstrapForms: true, staleRecovery: true, terminalSecurity: true }));
+  const guestTerminal = Administration.create(unsigned, house, () => {}); await guestTerminal.open("account");
+  grid = new Grid(100, null, "base"); guestTerminal.content(grid, 100, { ui: {} });
+  assert(grid.text().includes("Guest · no sign-in required"));
+  assert(grid.text().includes("thermite access login"));
+  process.stdout.write(JSON.stringify({ enabledGuest: true, guestGateway: true, terminalCsrf: true, noFallback: true, transitionFence: true, bootstrapForms: true, staleRecovery: true, terminalSecurity: true }));
 })().catch(error => { process.stderr.write(error.stack + "\n"); process.exitCode = 1; });

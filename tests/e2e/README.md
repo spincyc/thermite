@@ -233,9 +233,11 @@ helper exercises the installed TUI controller, state reads and authenticated
 SSE; it does not draw a terminal. It checks the same locked blessed installation
 as `remote --setup`, and passes credential/CA paths rather than token values.
 
-The HTTP helper checks anonymous denial, browser CSRF/session login, personal
-token access, private assets, room commands, locked-command rejection and worker
-repair after a direct simulated matrix change. It clears its lock and revokes
+The HTTP helper checks guest remote access and commands, denial of guest
+management access, browser CSRF/session login, personal token access, manual
+source capture, preservation through schedule edits, scheduled-lock resumption,
+locked-command rejection and worker repair after a direct simulated matrix
+change. It clears its locks and revokes
 its in-memory token in `finally`; it does not change the CLI credential file.
 It performs two password logins. Reuse the CLI credential after reboot and
 respect the real login throttle when repeating checks; do not bypass it.

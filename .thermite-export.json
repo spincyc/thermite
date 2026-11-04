@@ -180,6 +180,7 @@
     "lib/oh_identity/tests/test_boundary.py",
     "lib/oh_identity/tests/test_core.py",
     "lib/oh_identity/tests/test_features.py",
+    "lib/oh_identity/tests/test_manual_lock.py",
     "lib/oh_identity/tests/test_optional_auth.py",
     "lib/oh_identity/tests/test_policy_status.py",
     "lib/oh_identity/tests/test_security_headers.py",

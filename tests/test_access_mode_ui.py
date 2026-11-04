@@ -22,6 +22,9 @@ class AccessModeUI(unittest.TestCase):
     def test_guest_terminal_uses_gateway_csrf_without_credentials_or_native_fallback(self):
         self.assertTrue(self.proof["guestGateway"] and self.proof["terminalCsrf"] and self.proof["noFallback"])
 
+    def test_guest_remote_controls_stay_available_when_authentication_is_enabled(self):
+        self.assertTrue(self.proof["enabledGuest"])
+
     def test_mode_transitions_clear_authority_and_reject_inflight_old_responses(self):
         self.assertTrue(self.proof["transitionFence"])
 

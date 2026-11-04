@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -50,7 +51,7 @@ def validate(config: object, room: str, contract: dict) -> dict:
     adapter. All overlapping windows are rejected, even with equal targets:
     V1 does not silently arbitrate duplicate start/unlock actions.
     """
-    data = _keys(config, {"version", "room", "timezone", "revision", "enabled", "daily_off", "locks"}, "policy")
+    data = _keys(config, {"version", "room", "timezone", "revision", "enabled", "daily_off", "locks", "manual_lock"}, "policy")
     if type(data.get("version")) is not int or data["version"] != 1:
         raise PolicyError("unsupported_version")
     if data.get("room") != room:
@@ -69,6 +70,21 @@ def validate(config: object, room: str, contract: dict) -> dict:
         raise PolicyError("invalid_enabled")
     out = {"version": 1, "room": room, "timezone": zone, "revision": data["revision"],
            "enabled": data.get("enabled", True), "daily_off": [], "locks": []}
+    manual = data.get("manual_lock")
+    if manual is not None:
+        manual = _keys(manual, {"desired", "started_at"}, "manual_lock")
+        if not isinstance(manual.get("desired"), str) or manual["desired"] not in offered:
+            raise PolicyError("invalid_desired_source", "manual_lock")
+        stamp = manual.get("started_at")
+        try:
+            if not isinstance(stamp, str) or len(stamp) > 64:
+                raise ValueError()
+            started = datetime.fromisoformat(stamp)
+            if started.tzinfo is None or started.utcoffset() is None:
+                raise ValueError()
+        except ValueError:
+            raise PolicyError("invalid_lock_start", "manual_lock") from None
+        out["manual_lock"] = {"desired": manual["desired"], "started_at": started.astimezone(timezone.utc).isoformat()}
     ids: set[str] = set()
     for kind in ("daily_off", "locks"):
         rules = data.get(kind, [])

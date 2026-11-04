@@ -90,7 +90,9 @@ class Boundary(TransactionTestCase):
             (root / "code.js").write_text("public program")
             self.adapter.contract = RuntimeContract({}, assets={"house.js": {}, "code.js": {}}, asset_root=root)
             client = Client()
-            self.assertEqual(client.get("/static/remote/house.js", secure=True).status_code, 401)
+            response = client.get("/static/remote/house.js", secure=True)
+            self.assertEqual(response.status_code, 200)
+            response.close()
             response = client.get("/static/remote/code.js", secure=True)
             self.assertEqual(response.status_code, 200)
             response.close()
@@ -131,8 +133,8 @@ class Boundary(TransactionTestCase):
         for path in ("/overview/other", "/Overview", "/overview//"):
             self.assertEqual(client.get(path, secure=True).status_code, 404)
         response = client.get("/static/remote/home.html", secure=True)
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], "/account/?next=%2F")
+        self.assertEqual(response.status_code, 200)
+        response.close()
 
     def route_assets(self):
         temporary = tempfile.TemporaryDirectory(dir=settings.STATE)
@@ -165,14 +167,14 @@ class Boundary(TransactionTestCase):
                     self.assertTrue(opened.closed, "clean asset response retained its file")
         self.assertEqual(self.adapter.transport.commands, [])
 
-    def test_clean_page_login_uses_fixed_canonical_next_and_all_mutating_methods_are_denied(self):
+    def test_guest_pages_work_and_admin_login_uses_fixed_canonical_next(self):
         self.route_assets()
         client = Client()
         for ident, path, _ in PAGES:
             for method in ("get", "head"):
                 with self.subTest(path=path, method=method):
                     response = getattr(client, method)(path + "?next=https://foreign.invalid&token=private", secure=True)
-                    if ident == "access":
+                    if ident != "system":
                         self.assertEqual(response.status_code, 200)
                     else:
                         self.assertEqual(response.status_code, 302)
