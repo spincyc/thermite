@@ -344,9 +344,41 @@ class Permissions(unittest.TestCase):
         self.assertFalse((self.root / service.RECEIPT).exists())
         self.assertEqual(outside.stat(), before)
 
-    def test_deployment_cannot_issue_full_repair_receipt(self):
-        with self.assertRaisesRegex(service.ServiceError, "deployment-only"):
-            service.normalize_state(self.root, self.uid, self.gid, deployment=True, receipt=True)
+    def test_partial_repairs_cannot_issue_full_repair_receipt(self):
+        for scope in ({"deployment": True}, {"runtime": True}):
+            with self.subTest(scope=scope), self.assertRaisesRegex(service.ServiceError, "partial repair"):
+                service.normalize_state(self.root, self.uid, self.gid, receipt=True, **scope)
+
+    def test_runtime_scope_repairs_openhab_trees_and_leaves_other_stores_running(self):
+        native = [self.file("conf/yaml/site.yaml"), self.file("userdata/etc/logging.xml"),
+                  self.file("addons/fixture.jar"), self.file("secrets/fixture")]
+        # The live stores of running services: an entry a whole-tree walk
+        # refuses, and modes it would otherwise narrow.
+        sample = self.file("monitoring/prometheus/chunks/sample", 0o644)
+        os.mkfifo(self.root / "monitoring/prometheus/active-socket-like-entry")
+        pairing = self.file("atv/secrets/pairing", 0o644)
+        others = (sample.stat(), pairing.stat())
+        issues = service.normalize_state(self.root, self.uid, self.gid, runtime=True)
+        repaired = {issue.path.relative_to(self.root).parts[0] for issue in issues}
+        self.assertEqual(repaired, set(service.RUNTIME_STORES))
+        self.assertLessEqual(set(native), {issue.path for issue in issues})
+        self.assertEqual(service.audit_state(self.root, self.uid, self.gid, runtime=True), [])
+        self.assertEqual((sample.stat(), pairing.stat()), others)
+
+    def test_runtime_scope_keeps_the_full_receipt_unless_it_fails(self):
+        self.file("deploy/history")
+        service.normalize_state(self.root, self.uid, self.gid, receipt=True)
+        receipt = self.root / service.RECEIPT
+        before = receipt.stat()
+        self.file("userdata/etc/logging.xml", 0o644)
+        service.normalize_state(self.root, self.uid, self.gid, runtime=True)
+        self.assertEqual(receipt.stat(), before)
+        outside = Path(self.tmp.name, "external")
+        outside.write_text("keep")
+        os.link(outside, self.root / "userdata/external")
+        with self.assertRaisesRegex(service.ServiceError, "hard-linked"):
+            service.normalize_state(self.root, self.uid, self.gid, runtime=True)
+        self.assertFalse(receipt.exists(), "a failed openHAB repair sends the next deploy through a full one")
 
 
 class OwnedRuntime(unittest.TestCase):

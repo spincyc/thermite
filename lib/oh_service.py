@@ -44,6 +44,10 @@ PRIVATE_CACHE_PROGRAM = re.compile(
 SHARED = ("conf", "metrics", "atv/app", "exporter/app", "deploy")
 PRIVATE = ("secrets", "atv/secrets", "monitoring/secrets", "userdata")
 NATIVE_ROOTS = ("conf", "userdata", "addons", "atv", "deploy", "secrets", "metrics", "monitoring", "exporter", "backups")
+#: The openHAB container's own trees, its volumes. A deploy that changes only
+#: openHAB repairs just these while openHAB alone is stopped: the gateway,
+#: the Apple TV helper and monitoring keep running on their own stores.
+RUNTIME_STORES = ("conf", "userdata", "addons", "secrets")
 RUNTIME_ROOTS = ("", "addons", "atv", "atv/venv", "monitoring", "monitoring/prometheus", "monitoring/grafana",
                  "monitoring/alertmanager", "monitoring/ntfy", "exporter")
 DEPLOY_RECORDS = ("deploy/history", "deploy/deployed.json", "deploy/atv-restart", "deploy/metrics-restart", RECEIPT)
@@ -164,10 +168,13 @@ def _entries(root: Path, device: int | None = None):
 
 
 @contextlib.contextmanager
-def _selected_entries(root: Path, deployment: bool):
+def _selected_entries(root: Path, deployment: bool, runtime: bool = False):
+    if deployment and runtime:
+        raise ServiceError("choose one repair scope")
+    whole = not deployment and not runtime
     first = _open_root(root)
     device = os.fstat(first).st_dev
-    if not deployment:
+    if whole:
         try:
             os.stat("access", dir_fd=first, follow_symlinks=False)
         except FileNotFoundError:
@@ -177,9 +184,9 @@ def _selected_entries(root: Path, deployment: bool):
             raise ServiceError("native state contains access custody; relocate/repair access separately before normalization")
 
     def selected():
-        if not deployment:
+        if whole:
             yield "", first, os.fstat(first)
-        for relative in SHARED if deployment else NATIVE_ROOTS:
+        for relative in SHARED if deployment else RUNTIME_STORES if runtime else NATIVE_ROOTS:
             try:
                 with _entries(root / relative, device) as entries:
                     for child, descriptor, info in entries:
@@ -227,10 +234,11 @@ def _issues(root: Path, entries, uid: int, gid: int) -> list[Issue]:
     return issues
 
 
-def audit_state(root: Path, uid: int = UID, gid: int = GID, *, deployment: bool = False) -> list[Issue]:
+def audit_state(root: Path, uid: int = UID, gid: int = GID, *, deployment: bool = False,
+                runtime: bool = False) -> list[Issue]:
     validate_identity(uid, gid)
     root = Path(os.path.abspath(root))
-    with _selected_entries(root, deployment) as entries:
+    with _selected_entries(root, deployment, runtime) as entries:
         return _issues(root, entries, uid, gid)
 
 
@@ -335,19 +343,23 @@ def _write_receipt(root: Path, uid: int, gid: int) -> None:
 
 
 def normalize_state(root: Path, uid: int = UID, gid: int = GID, *, deployment: bool = False,
-                    receipt: bool = False) -> list[Issue]:
-    """Repair only this state tree; return its pre-repair differences."""
+                    receipt: bool = False, runtime: bool = False) -> list[Issue]:
+    """Repair only this state tree; return its pre-repair differences.
+
+    `runtime` repairs only openHAB's own trees (RUNTIME_STORES) and keeps an
+    earlier full repair's receipt; if it fails, the receipt is removed, so
+    the next deploy repairs the whole tree with every service stopped."""
     validate_identity(uid, gid)
-    if deployment and receipt:
-        raise ServiceError("a full service-account receipt cannot be written by a deployment-only repair")
+    if (deployment or runtime) and receipt:
+        raise ServiceError("a full service-account receipt cannot be written by a partial repair")
     root = Path(os.path.abspath(root))
     # Validate the whole tree before any mutation. The repair walk repeats
     # inode checks as it opens entries; descriptors stay bounded by depth.
     try:
-        issues = audit_state(root, uid, gid, deployment=deployment)
-        if not deployment:
+        issues = audit_state(root, uid, gid, deployment=deployment, runtime=runtime)
+        if not deployment and not runtime:
             _remove_receipt(root)
-        with _selected_entries(root, deployment) as entries:
+        with _selected_entries(root, deployment, runtime) as entries:
             for relative, descriptor, info, wanted in _policy_entries(entries, uid, gid):
                 if (info.st_uid, info.st_gid) != (uid, gid):
                     if stat.S_ISLNK(info.st_mode):
@@ -400,21 +412,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--uid", type=int, default=UID)
     parser.add_argument("--gid", type=int, default=GID)
     parser.add_argument("--deployment", action="store_true", help="repair only shared deployment outputs; leave active stores alone")
+    parser.add_argument("--runtime", action="store_true",
+                        help="repair only openHAB's own trees, with only openHAB stopped; keep the full-repair receipt")
     parser.add_argument("--receipt", action="store_true", help="record successful full repair at deploy/service-account.json")
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--check", action="store_true")
     action.add_argument("--check-pairing-logging", action="store_true")
     args = parser.parse_args(argv)
-    if args.receipt and (args.deployment or args.check or args.check_pairing_logging):
+    if args.receipt and (args.deployment or args.runtime or args.check or args.check_pairing_logging):
         parser.error("--receipt requires a full repair")
+    if args.deployment and args.runtime:
+        parser.error("choose --deployment or --runtime")
     try:
         if args.check_pairing_logging:
             if not pairing_logging(args.root):
                 parser.exit(PAIRING_LOGGING_UNPROTECTED,
                             "service state: pairing logging protection is missing; run thermite install before deploying\n")
             return 0
-        issues = (audit_state(args.root, args.uid, args.gid, deployment=args.deployment) if args.check else
-                  normalize_state(args.root, args.uid, args.gid, deployment=args.deployment, receipt=args.receipt))
+        issues = (audit_state(args.root, args.uid, args.gid, deployment=args.deployment, runtime=args.runtime)
+                  if args.check else
+                  normalize_state(args.root, args.uid, args.gid, deployment=args.deployment, receipt=args.receipt,
+                                  runtime=args.runtime))
         if args.check:
             for issue in issues:
                 print(f"{issue.path}: expected {issue.wanted_uid}:{issue.wanted_gid} {issue.wanted_mode:04o}")

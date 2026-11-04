@@ -1072,46 +1072,64 @@ def state_owned(context: Context, system: System) -> bool:
     return True
 
 
+#: The installed files that define openHAB's own container. Another unit's
+#: change (the Apple TV helper's, a metrics service's) restarts only that unit.
+RUNTIME_FILES = (deploy.QUADLET, deploy.CONTAINER_DROPINS[oh_units.RUNTIME])
+
+
 class NativePreparation(Step):
+    """Offline openHAB preparation, in one of two scopes. Custody (a missing
+    receipt, account or directory) repairs the whole state tree, which every
+    service writes, so it stops them all. Otherwise only openHAB stops and
+    only its own trees are repaired: the gateway, the Apple TV helper and
+    monitoring keep running through an openHAB-only change."""
     title = "Native state and ownership"
 
     def __init__(self, context: Context):
         self.context = context
         self.applied = False
 
+    def custody(self, system: System) -> bool:
+        return bool(not service_receipt(self.context, system)
+                    or StateDirectories(self.context).wrong(system) or MetricsDirectories(self.context).wrong(system)
+                    or Account(self.context).missing(system))
+
     def check(self, system: System) -> Check:
         if self.applied:
-            return Check(True, "offline preparation, native guards and complete ownership repair succeeded")
+            return Check(True, "offline preparation, native guards and ownership repair succeeded")
+        if self.custody(system):
+            return Check(False, "stop every active native/metrics process and restart path, repair custody, prepare native userdata without root, then verify guards and repair final modes")
         start, restart, _ = Services(self.context).plan(system)
-        needed = (not service_receipt(self.context, system)
-                  or StateDirectories(self.context).wrong(system) or MetricsDirectories(self.context).wrong(system)
-                  or Account(self.context).missing(system)
-                  or "thermite-openhab.service" in (*start, *restart)
-                  or Units(self.context).stale(system, deploy.OPENHAB_UNITS)
+        needed = (oh_units.RUNTIME in (*start, *restart)
+                  or Units(self.context).stale(system, RUNTIME_FILES)
                   or not PairingLogging(self.context).check(system).done
                   or not NativeListeners(self.context).check(system).done)
         return Check(not needed, "service ownership and native preparation are recorded" if not needed else
-                     "stop every active native/metrics process and restart path, repair custody, prepare native userdata without root, then verify guards and repair final modes")
+                     "stop openHAB only, prepare its userdata without root, then verify guards and repair its own files; other services keep running")
 
     def actions(self, system: System) -> list[Action]:
         PROGRAM = self.context.program
+        custody = self.custody(system)
         self.applied = True
         host, root = self.context.host, self.context.layout.root
         owned = ownership.inspect(self.context, system)
-        paths = [name for name in owned.units(Stop.PATHS) if system.unit(name).active in ACTIVE]
-        running = [name for name in owned.units(Stop.SERVICES) if system.unit(name).active in ACTIVE]
+        paths = [name for name in owned.units(Stop.PATHS) if system.unit(name).active in ACTIVE] if custody else []
+        running = [name for name in owned.units(Stop.SERVICES if custody else (oh_units.RUNTIME,))
+                   if system.unit(name).active in ACTIVE]
         helper = ("/usr/bin/python3", str(PROGRAM / "lib/oh_service.py"), str(root),
                   "--uid", str(host["uid"]), "--gid", str(host["gid"]))
+        # Only a full repair may record the receipt; openHAB's own repair keeps it.
+        repair, final = (helper, (*helper, "--receipt")) if custody else ((*helper, "--runtime"),) * 2
         userdata = str(self.context.layout.userdata)
         return [*([Command(("systemctl", "stop", *paths), root=True, stops=_restartable(paths))] if paths else []),
                 *([Command(("systemctl", "stop", *running), root=True, stops=_restartable(running))] if running else []),
-                Command(helper, root=True),
+                Command(repair, root=True),
                 Command(deploy.prepare_openhab_argv(self.context.versions, host), root=True),
                 Command(("python3", str(PROGRAM / "lib/oh_logging.py"), userdata, "--http-port", str(host["http_port"])), root=True),
                 Command(("python3", str(PROGRAM / "lib/oh_ports.py"), userdata, "--http-port", str(host["http_port"]),
                          "--uid", str(host["uid"]), "--gid", str(host["gid"])), root=True),
                 Command((*helper, "--check-pairing-logging"), root=True),
-                Command((*helper, "--receipt"), root=True)]
+                Command(final, root=True)]
 
 
 def _restartable(names: list[str]) -> tuple[str, ...]:
@@ -2109,7 +2127,7 @@ class Backup(Step):
         raise ValueError("too many occupied backup names; inspect the backup directory before retrying")
 
     def check(self, system: System) -> Check:
-        if not Units(self.context).stale(system, deploy.OPENHAB_UNITS) and NativePreparation(self.context).check(system).done:
+        if not Units(self.context).stale(system, RUNTIME_FILES) and NativePreparation(self.context).check(system).done:
             return Check(True, "openHAB's units are installed already, so nothing changes that a backup would undo")
         latest = self.latest(system)
         if latest:
@@ -2118,7 +2136,7 @@ class Backup(Step):
         self.grafana = system.stat(self.context.layout.grafana_data) is not None
         self.target = self.available(system)
         return Check(False, f"to stop {' and '.join(self.stopped(self.grafana))} and write {self.file}"
-                            + (", with Grafana's data" if self.grafana else "")
+                            + (", with Grafana's data; Grafana starts again straight after" if self.grafana else "")
                             + "; not Prometheus' samples (up to the retention size, and nothing restores them)")
 
     @staticmethod
@@ -2142,6 +2160,11 @@ class Backup(Step):
         actions.append(Command(("python3", str(PROGRAM / "lib/oh_install/backup.py"), str(self.context.layout.root),
                                 "--name", self.file.name, "--uid", str(host["uid"]), "--gid", str(host["gid"]),
                                 *(("--grafana",) if self.grafana else ())), root=True))
+        # Grafana stopped only for a consistent copy of its database; openHAB
+        # stays stopped for its offline preparation.
+        grafana = [name for name in running if name != oh_units.RUNTIME]
+        if grafana:
+            actions.append(Command(("systemctl", "start", *grafana), root=True, starts=tuple(grafana)))
         return actions
 
 

@@ -77,7 +77,6 @@ INSTALLED = {
        for source in CONTAINER_DROPINS.values()},
 }
 #: The units of openHAB and its helper, and those of metrics and dashboards.
-OPENHAB_UNITS = (QUADLET, ATV_QUADLET, ATV_RESTART_PATH, ATV_RESTART_SERVICE)
 METRICS_UNITS = (*METRICS_QUADLETS.values(), METRICS_RESTART_PATH, METRICS_RESTART_SERVICE)
 SERVICES = (oh_units.RUNTIME, oh_units.ATV, oh_units.ATV_RESTART_PATH, *metrics.SERVICE_UNITS,
             oh_units.METRICS_RESTART_PATH, oh_units.TARGET)

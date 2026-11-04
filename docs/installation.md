@@ -436,6 +436,16 @@ pip, site-pin, native-runtime or access-release update sequence. For a reviewed
 local checkout or an explicit Git revision, use `--source DIR` or `--revision REV`;
 see [application releases](packaging.md#update-and-roll-back).
 
+An upgrade restarts only the services whose generated unit files changed. A
+change to openHAB's own unit stops openHAB alone for its offline preparation,
+and the ownership repair then covers only openHAB's trees; the HTTPS gateway,
+the Apple TV helper and monitoring keep running. Grafana stops only while the
+pre-upgrade backup copies its database and starts again straight after. A
+missing service-account receipt, account or state directory still stops every
+service for a full ownership repair. Reapplying the native-port boundary does
+not restart openHAB: openHAB's unit wants the boundary and loads the same rules
+itself before every start, so it never starts without them.
+
 The site's committed `versions.json` still selects native component versions.
 Updating Thermite does not silently replace those pins. Keep the private
 repository clean and retain `var/application-releases/`, `var/gateway/authority/`,
