@@ -183,6 +183,7 @@
     "lib/oh_identity/streams.py",
     "lib/oh_identity/test_settings.py",
     "lib/oh_identity/tests/__init__.py",
+    "lib/oh_identity/tests/test_asset_cache.py",
     "lib/oh_identity/tests/test_batches.py",
     "lib/oh_identity/tests/test_boundary.py",
     "lib/oh_identity/tests/test_core.py",

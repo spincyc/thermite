@@ -244,6 +244,12 @@ known fields. Free String values fail closed. Site house.js/JSON assets remain
 available to Guests through the same finite projection; administrative assets
 still require management authority even when marked public in the asset declaration;
 all filesystem assets are exact basenames under a configured asset root.
+Private pages (every page but Account), house.js, JSON and administrative
+assets are `no-store`. Every other file carries an ETag and answers
+`If-None-Match` with 304. Generated pages name each non-page file as
+`/static/remote/<name>?v=<hash>`; only a request whose sole query is the served
+bytes' current hash is `public, max-age=31536000, immutable`, and any other URL,
+a stale hash included, is `no-cache`.
 Pairing metadata comes only from the compiled `pairings` map; its command
 Item state is always NULL and is never fetched. Status/result reads are
 projected. Only Admin can submit REQUEST/AGAIN/CANCEL or a metadata-validated

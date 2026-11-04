@@ -1,18 +1,20 @@
 """Small JSON interfaces; framework authentication owns credential handling."""
 
 import json
+import mimetypes
 from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import logout
-from django.http import FileResponse, HttpResponse, HttpResponseRedirect, JsonResponse
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.middleware.csrf import get_token
 from django.db import close_old_connections, connection, connections, transaction
 from django.utils import timezone
+from django.utils.cache import get_conditional_response
 
 from oh_features.remote_system import ADMIN_ASSETS
 from oh_room_policy import STALE_AFTER, active, empty, manual_hold, with_manual_hold
-from oh_routes import ASSET_ROUTES
+from oh_routes import ASSET_ROUTES, asset_version
 
 from .auth import api, failure, login_user, not_allowed, problem_response, require_admin
 from .guest import access_config, listener
@@ -409,7 +411,8 @@ def asset(request, name):
     if request.method not in ("GET", "HEAD"):
         return not_allowed("GET", "HEAD")
     admin_only = bool(spec.get("admin")) or name in ADMIN_ASSETS
-    if spec.get("private") or admin_only or name == "house.js" or name.endswith(".json"):
+    gated = bool(spec.get("private") or admin_only or name == "house.js" or name.endswith(".json"))
+    if gated:
         from .auth import principal
         try:
             user = principal(request)
@@ -425,12 +428,37 @@ def asset(request, name):
     target = (adapter.contract.asset_root / name).resolve()
     if target.parent != adapter.contract.asset_root or not target.is_file():
         return failure("not_found", 404)
-    response = FileResponse(target.open("rb"))
-    if request.method == "HEAD":
-        # Keep GET metadata and normal file disposal, without exposing a body
-        # even when this view is called without a server's HEAD suppression.
-        response.streaming_content = ()
-    response["Cache-Control"] = "no-store" if spec.get("private") or admin_only or name == "house.js" or name.endswith(".json") else "no-cache"
+    return file_response(request, name, target.read_bytes(), shared=not gated)
+
+
+#: A ?v= URL names exact bytes (oh_routes.asset_version), so a browser may keep it.
+IMMUTABLE = "public, max-age=31536000, immutable"
+
+
+def file_response(request, name, data, *, shared):
+    """One asset's bytes, read whole: assets are small, and an in-memory body
+    needs no file handle or synchronous iterator under ASGI.
+
+    An unshared asset (private, administrative, house.js or JSON) is never
+    stored or validated. A shared one has an ETag and answers If-None-Match
+    with 304. It is immutable only at a non-HTML URL whose sole query is ?v=
+    of these bytes; any other URL, a stale ?v= included, is revalidated on
+    every use, so no URL is kept with bytes it does not name.
+    """
+    headers = {"Cache-Control": "no-store"}
+    if shared:
+        version = asset_version(data)
+        current = not name.endswith(".html") and list(request.GET.lists()) == [("v", [version])]
+        headers = {"Cache-Control": IMMUTABLE if current else "no-cache", "ETag": f'"{version}"'}
+    response = HttpResponse(content_type=mimetypes.guess_type(name)[0] or "application/octet-stream", headers=headers)
+    if shared:
+        conditional = get_conditional_response(request, etag=headers["ETag"], response=response)
+        if conditional is not response:
+            return conditional
+    response["Content-Length"] = str(len(data))
+    # HEAD keeps GET's headers without a body, even when this view is called
+    # without a server's HEAD suppression.
+    response.content = b"" if request.method == "HEAD" else data
     return response
 
 

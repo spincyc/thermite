@@ -12,7 +12,6 @@ from urllib.parse import urlencode
 from asgiref.sync import async_to_sync, sync_to_async
 from django.conf import settings
 from django.db import close_old_connections
-from django.http import FileResponse
 from django.test import Client, TransactionTestCase, override_settings
 
 from oh_routes import ALIASES, PAGES
@@ -154,17 +153,15 @@ class Boundary(TransactionTestCase):
         client = self.session_client(self.admin)
         for _, path, name in PAGES:
             for method in ("get", "head"):
-                with self.subTest(path=path, method=method), patch("oh_identity.views.FileResponse", wraps=FileResponse) as files:
+                with self.subTest(path=path, method=method):
                     response = getattr(client, method)(path, secure=True)
                     self.assertEqual(response.status_code, 200)
                     self.assertNotIn("Location", response)
                     self.assertEqual(response["Content-Length"], str((root / name).stat().st_size))
                     self.assertEqual(response["Content-Type"], "text/html")
-                    opened = files.call_args.args[0]
-                    data = b"".join(response.streaming_content)
-                    self.assertEqual(data, b"" if method == "head" else (root / name).read_bytes())
-                    response.close()
-                    self.assertTrue(opened.closed, "clean asset response retained its file")
+                    # Read whole: no file handle or synchronous iterator outlives the view.
+                    self.assertFalse(response.streaming)
+                    self.assertEqual(response.content, b"" if method == "head" else (root / name).read_bytes())
         self.assertEqual(self.adapter.transport.commands, [])
 
     def test_guest_pages_work_and_admin_login_uses_fixed_canonical_next(self):

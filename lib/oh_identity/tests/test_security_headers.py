@@ -65,7 +65,7 @@ class SecurityHeaders(TransactionTestCase):
             try:
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response["X-Frame-Options"], "DENY")
-                self.assertIn(b"HTML fixture", b"".join(response.streaming_content))
+                self.assertIn(b"HTML fixture", response.content)
                 self.assertEqual(adapter.transport.commands, [])
             finally:
                 response.close()
