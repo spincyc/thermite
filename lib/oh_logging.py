@@ -1,4 +1,4 @@
-"""Keep pairing credentials out of openHAB's native logs.
+"""Keep pairing credentials out of openHAB's native logs, and send its own log to the journal.
 
 Item command events and REST DEBUG messages include command values. Filters on
 each native logger drop messages naming a pairing command Item.
@@ -6,6 +6,27 @@ Pax Logging bypasses Log4j2's global filter on its direct backend path, so a
 global filter alone is insufficient. Status/result Items and ordinary commands
 remain visible. Install it while openHAB is stopped; editing the XML alone does
 not prove that a running logger has reloaded it.
+
+What openhab.log gets (the Root logger's routes: bindings, rule engines, the
+JavaScript rules' console lines) also goes to the JOURNAL Console appender,
+the container's stdout, which Podman's journald driver files under
+thermite-openhab.service with SYSLOG_IDENTIFIER and CONTAINER_NAME
+thermite-openhab. Any journal reader (root, adm, systemd-journal, and wheel
+where the distribution grants it) reads it without sudo:
+
+    journalctl -u thermite-openhab.service
+
+This is safer than opening userdata/logs to the thermite group. That would
+need group traversal into the service-private userdata, whose jsondb holds
+users, API tokens and Thing credentials and whose siblings hold pairing
+material; group-readable log files against the runtime's 0077 umask through
+every rotation; and weaker custody checks (oh_service). The journal changes
+no file mode, and journald bounds, rotates and rate-limits what it keeps.
+openhab.log stays as it was. events.log stays file-only: the openhab.event
+logger is not additive, and its item traffic is voluminous and records the
+household's activity. Every logger scope keeps the pairing guard first, and
+the journal appender carries it as well, so the new route sees no pairing
+payload: protected() and journaled() check both.
 """
 
 from __future__ import annotations
@@ -29,6 +50,11 @@ PATTERN = r"(?s).*\b[A-Za-z_][A-Za-z0-9_]*_pairing\b.*"
 ATTRIBUTES = {"regex": PATTERN, "onMatch": "DENY", "onMismatch": "NEUTRAL", "useRawMsg": "false"}
 PAIRING_RULES = frozenset(f"automation/js/{name}.js" for name in
                          ("sony_ip_control", "androidtv_googletv", "pyatv_http"))
+#: The Root logger's journal route: a Console appender on the JVM's stdout.
+#: journald stamps each line, so it carries no time, and the logger's full
+#: name, so rules' lines can be found (org.openhab.automation.jsscripting.file.<script>).
+JOURNAL = "THERMITE_JOURNAL"
+JOURNAL_PATTERN = "[%-5.5p] [%c] - %m%n"
 
 
 def pairing_conf(files: dict) -> bool:
@@ -122,42 +148,119 @@ def guard_scope(root: ET.Element) -> None:
     root.insert(max([position, *declarations]), group)
 
 
-def guarded(data: bytes) -> bytes:
-    """Prepend DENY at every native route without replacing existing configuration."""
-    if protected(data):
+def journal_appender() -> ET.Element:
+    """The journal route, guarded itself: a pairing payload that reached it
+    any other way than through a guarded logger would still be dropped."""
+    appender = ET.Element("Console", {"name": JOURNAL, "target": "SYSTEM_OUT"})
+    appender.append(ET.Element("RegexFilter", ATTRIBUTES))
+    appender.append(ET.Element("PatternLayout", {"pattern": JOURNAL_PATTERN}))
+    return appender
+
+
+def _shape(element: ET.Element) -> tuple:
+    return (element.tag, sorted(element.attrib.items()),
+            [_shape(child) for child in element if isinstance(child.tag, str)])
+
+
+def _containers(root: ET.Element) -> list[ET.Element]:
+    return [child for child in root if isinstance(child.tag, str) and child.tag.lower() == "appenders"]
+
+
+def _root_logger(root: ET.Element) -> ET.Element:
+    return next(scope for scope in scopes(root)[1:] if scope.tag.lower() in ("root", "asyncroot"))
+
+
+def _journal_refs(logger: ET.Element) -> list[ET.Element]:
+    return [child for child in logger if isinstance(child.tag, str)
+            and child.tag.lower() == "appenderref" and child.get("ref") == JOURNAL]
+
+
+def journaled(data: bytes) -> bool:
+    """openhab.log's routes also reach the journal: exactly one appender
+    named JOURNAL, exactly journal_appender(), and one plain reference to it
+    on the Root logger."""
+    try:
+        root = document(data)
+        named = [appender for container in _containers(root) for appender in container
+                 if isinstance(appender.tag, str) and appender.get("name") == JOURNAL]
+        refs = _journal_refs(_root_logger(root))
+    except (ValueError, ET.ParseError):
+        return False
+    return (len(named) == 1 and _shape(named[0]) == _shape(journal_appender())
+            and len(refs) == 1 and _shape(refs[0]) == ("AppenderRef", [("ref", JOURNAL)], []))
+
+
+def configured(data: bytes) -> bool:
+    """What installation leaves: every route guarded, and openhab.log's journaled."""
+    return protected(data) and journaled(data)
+
+
+def _append(parent: ET.Element, child: ET.Element) -> None:
+    """Append in the parent's existing indentation, for whoever reads the file."""
+    if len(parent):
+        child.tail = parent[-1].tail
+        parent[-1].tail = parent.text
+    parent.append(child)
+
+
+def journal_route(root: ET.Element) -> None:
+    """Replace any appender named JOURNAL, and any Root reference to it, with exactly ours."""
+    containers = _containers(root)
+    if not containers:
+        loggers = next((index for index, child in enumerate(root)
+                        if isinstance(child.tag, str) and child.tag.lower() == "loggers"), len(root))
+        root.insert(loggers, ET.Element("Appenders"))
+        containers = _containers(root)
+    for container in containers:
+        for appender in [child for child in container if isinstance(child.tag, str) and child.get("name") == JOURNAL]:
+            container.remove(appender)
+    _append(containers[0], journal_appender())
+    logger = _root_logger(root)
+    for ref in _journal_refs(logger):
+        logger.remove(ref)
+    _append(logger, ET.Element("AppenderRef", {"ref": JOURNAL}))
+
+
+def guarded(data: bytes, *, journal: bool = True) -> bytes:
+    """Prepend DENY at every native route without replacing existing
+    configuration; with `journal`, also route openhab.log to the journal."""
+    if protected(data) and (not journal or journaled(data)):
         return data
     root = document(data)
     for scope in scopes(root):
         if not scope_protected(scope):
             guard_scope(scope)
+    if journal and not journaled(ET.tostring(root)):
+        journal_route(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def _install_at(etc: int, userdata: Path) -> bool:
+def _install_at(etc: int, userdata: Path, *, journal: bool = True) -> bool:
     _selected(etc, userdata)
     before, info = read_regular(etc, RELATIVE.name)
-    after = guarded(before)
+    after = guarded(before, journal=journal)
     if before == after:
         return False
     replace_regular(etc, RELATIVE.name, after, info)
     return True
 
 
-def install(userdata: Path, *, anchored: bool = False) -> bool:
+def install(userdata: Path, *, anchored: bool = False, journal: bool = True) -> bool:
     """Atomically protect an initialized, stopped instance, preserving ownership/mode.
 
     No symbolic link below userdata is followed and hard-linked files are
     refused. The root helper also anchors userdata itself (anchored=True).
+    A development sandbox keeps its own console (journal=False).
     """
     with native_etc(userdata, anchored=anchored) as etc:
-        return _install_at(etc, userdata)
+        return _install_at(etc, userdata, journal=journal)
 
 
 def ready(userdata: Path) -> bool:
     try:
         with native_etc(userdata, anchored=False) as etc:
             _selected(etc, userdata)
-            return protected(read_regular(etc, RELATIVE.name)[0])
+            return configured(read_regular(etc, RELATIVE.name)[0])
     except (OSError, ValueError):
         return False
 

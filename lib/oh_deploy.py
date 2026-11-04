@@ -780,6 +780,8 @@ def render_atv_restart_service(host: dict) -> str:
         f"Slice={oh_units.SLICE}",
         "Type=oneshot",
         f"ExecStart=/usr/bin/systemctl try-restart {oh_units.ATV}",
+        # The journal names this unit, not the program it runs (systemctl).
+        f"SyslogIdentifier={oh_units.ATV_RESTART_SERVICE.removesuffix('.service')}",
         "",
     ]
     return "\n".join(lines)
@@ -927,6 +929,7 @@ def render_metrics_restart_service(host: dict) -> str:
         f"Slice={oh_units.SLICE}",
         "Type=oneshot",
         f"ExecStart=/usr/bin/systemctl try-restart {' '.join(METRICS_RESTARTED)}",
+        f"SyslogIdentifier={oh_units.METRICS_RESTART_SERVICE.removesuffix('.service')}",
         "",
     ]
     return "\n".join(lines)
@@ -1519,19 +1522,45 @@ class Deployed:
     reloads: list[str] = dataclasses.field(default_factory=list)
     #: Whether the commit has no metrics/ or no exporter, so the deployed ones were left as they are.
     metrics_kept: bool = False
+    #: The history entry this deploy appended (or, dry run, would append): history_entry.
+    history: dict = dataclasses.field(default_factory=dict)
 
 
 def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bool = False,
            dry_run: bool = False, how: str = "deploy", host: dict | None = None,
-           ownership_approved: bool = False, expected_conf_digest: str | None = None) -> Deployed:
+           ownership_approved: bool = False, expected_conf_digest: str | None = None,
+           backup: str | None = None, marker=None) -> Deployed:
     """Install commit `rev`'s conf/ into the state's conf and the helper's
     files into atv/app (and, once the state has their directories, its
     metrics/ into metrics and the exporter into exporter/app), then record
     it; host gives the metrics services' ports. Its conf must have passed
     `thermite test boot` on this host unless `force`; deploying HEAD needs
     a clean area, since make check has just tested the working tree.
-    `how` (deploy or rollback) goes into the history."""
+    `how` (deploy, install, upgrade or rollback) and `backup` (the state
+    backup the upgrade took first) go into the history.
+
+    `marker(line, priority)` receives one start and one end line for the
+    journal (journal_marker; the CLI passes it, tests and dry runs do not)."""
     commit = resolve(area, rev)
+    mark = None if dry_run else marker
+    if mark is not None:
+        mark(marker_line("start", commit=commit, how=how, by=getpass.getuser()), "info")
+    try:
+        result = _deploy(area, layout, var, commit, force=force, dry_run=dry_run, how=how, host=host,
+                         ownership_approved=ownership_approved, expected_conf_digest=expected_conf_digest,
+                         backup=backup)
+    except BaseException as exc:
+        if mark is not None:
+            mark(marker_line("end", commit=commit, how=how, outcome="failed", error=type(exc).__name__), "warning")
+        raise
+    if mark is not None:
+        mark(end_marker(result), "info")
+    return result
+
+
+def _deploy(area: Path, layout: State, var: Path, commit: str, *, force: bool, dry_run: bool, how: str,
+            host: dict | None, ownership_approved: bool, expected_conf_digest: str | None,
+            backup: str | None) -> Deployed:
     if commit == resolve(area, "HEAD"):
         dirt = uncommitted(area)
         if dirt:
@@ -1551,7 +1580,7 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
             host = committed_inputs(area, commit)[1]
     return install(files, commit, subject(area, commit), layout, var, force=force, dry_run=dry_run,
                    how=how, host=host, application=application,
-                   ownership_approved=ownership_approved)
+                   ownership_approved=ownership_approved, backup=backup)
 
 
 def deployment_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
@@ -1643,7 +1672,7 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
 def install(files: dict[str, Blob], commit: str, title: str, layout: State, var: Path, *,
             force: bool = False, dry_run: bool = False, how: str = "deploy",
             host: dict | None = None, post=None, application: dict | None = None,
-            ownership_approved: bool = False) -> Deployed:
+            ownership_approved: bool = False, backup: str | None = None) -> Deployed:
     """deploy() once the commit's files ({area path: Blob}) are exported."""
     conf = {path[len("conf/"):]: blob for path, blob in files.items() if path.startswith("conf/")}
     app = {path: files[path] for path in ATV_APP if path in files}
@@ -1702,20 +1731,32 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
         elif kept:
             record.update({key: previous[key] for key in ("metrics", "exporter_app") if key in previous})
         reloads: list[str] = []
+        outcomes: list[dict] = []
+        changes = {"conf": conf_changes, "atv_app": app_changes,
+                   **({"metrics": metrics_changes, "exporter_app": exporter_changes} if synced else {})}
+        entry = history_entry(record, how, changes, outcomes, metrics_kept=kept, backup=backup)
         if not dry_run:
             _replace(layout.record, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"), FILE_MODE)
             _settle_pending(layout, commit, {key: paths for key, paths in pending.items() if key not in wanted})
-            entry ={key: record[key] for key in ("deployed_at", "commit", "by", "boot_checked")}
-            if application is not None:
-                entry["application"] = application
-            _shared_write(layout.history, json.dumps({**entry, "how": how, "subject": record["subject"]}) + "\n", append=True)
-            if app_changes:
-                # A plain write: the path unit reacts to the file being closed.
-                _shared_write(layout.atv_restart, f"{record['deployed_at']} {commit}\n")
-            if synced:
-                reloads = apply_metrics(layout, host or {}, metrics_changes, exporter_changes, record, post or http_post)
+            try:
+                if app_changes:
+                    # A plain write: the path unit reacts to the file being closed.
+                    _shared_write(layout.atv_restart, f"{record['deployed_at']} {commit}\n")
+                    outcomes.append({"unit": oh_units.ATV_RESTART_PATH, "outcome": "triggered",
+                                     "restarts": [oh_units.ATV]})
+                if synced:
+                    reloads = apply_metrics(layout, host or {}, metrics_changes, exporter_changes, record,
+                                            post or http_post, outcomes)
+            except BaseException as exc:
+                outcomes.append({"outcome": "failed", "error": type(exc).__name__})
+                raise
+            finally:
+                # Once the reloads are asked for, so the entry says what became
+                # of them; and even when one failed, since deployed.json
+                # already names this commit.
+                _shared_write(layout.history, json.dumps(entry, sort_keys=True) + "\n", append=True)
         return Deployed(commit, record["subject"], conf_changes, app_changes, record, dry_run, with_metrics,
-                        metrics_changes, exporter_changes, reloads, kept)
+                        metrics_changes, exporter_changes, reloads, kept, entry)
 
 
 def _touched(changes: Changes) -> list[str]:
@@ -1732,11 +1773,14 @@ def metrics_restart_needed(metrics_changes: Changes, exporter_changes: Changes) 
 
 
 def apply_metrics(layout: State, host: dict, metrics_changes: Changes, exporter_changes: Changes, record: dict,
-                  post) -> list[str]:
+                  post, outcomes: list[dict] | None = None) -> list[str]:
     """Make the running metrics services take a deploy's changes, without
     root: Prometheus and blackbox_exporter reload over HTTP, and the trigger
-    file has thermite-metrics-restart.path restart the exporter and Grafana."""
+    file has thermite-metrics-restart.path restart the exporter and Grafana.
+    Says what became of each, in words; `outcomes` also gets each as it
+    happens, for the history: {unit, outcome, and status or restarts}."""
     said = []
+    outcomes = [] if outcomes is None else outcomes
     port = metrics.ports(host)
     touched = _touched(metrics_changes)
     for name, prefix, unit, key in (("Prometheus", "prometheus/", oh_units.PROMETHEUS, "prometheus"),
@@ -1746,17 +1790,138 @@ def apply_metrics(layout: State, host: dict, metrics_changes: Changes, exporter_
             continue
         status = post(f"http://{metrics.LOOPBACK}:{port[key]}/-/reload")
         if status is None:
+            outcomes.append({"unit": unit, "outcome": "not-running"})
             said.append(f"{name} is not running yet; it reads the new configuration when it starts")
         elif 200 <= status < 300:
+            outcomes.append({"unit": unit, "outcome": "reloaded", "status": status})
             said.append(f"{name} reloaded its configuration")
         else:
+            outcomes.append({"unit": unit, "outcome": "refused", "status": status})
             said.append(f"{name} refused the reload (HTTP {status}) and keeps the old configuration: "
                         f"sudo journalctl -u {unit} says why")
     if metrics_restart_needed(metrics_changes, exporter_changes):
         _shared_write(layout.metrics_restart, f"{record['deployed_at']} {record['commit']}\n")
+        outcomes.append({"unit": oh_units.METRICS_RESTART_PATH, "outcome": "triggered",
+                         "restarts": list(METRICS_RESTARTED)})
         said.append(f"{Path(METRICS_RESTART_PATH).name} restarts {' and '.join(METRICS_RESTARTED)} "
                     f"({layout.metrics_restart})")
     return said
+
+
+# --------------------------------------------------------------------------
+# the history: <state>/deploy/history, one JSON object a line (thermite history)
+
+#: The most paths a history entry names for each kind of change in each
+#: tree; its counts stay exact, and truncated says when it names fewer.
+HISTORY_PATHS = 50
+#: What a deploy's history line holds besides when, what, who, how and the
+#: boot test, in deploys written since the history recorded them.
+HISTORY_DETAILS = ("conf_digest", "application", "changes", "metrics_kept", "reloads", "backup")
+#: A completed gateway activation's line, written by the install or upgrade
+#: that activated it (oh_install.access.Gateway): {"event": "gateway", ...}.
+GATEWAY_EVENT = ("at", "by", "commit", "application", "release", "previous_release", "backup")
+#: The journal identifier of a deploy's start and end lines: journalctl -t thermite-deploy.
+JOURNAL_TAG = "thermite-deploy"
+
+
+def change_entry(changes: Changes, limit: int = HISTORY_PATHS) -> dict:
+    """One tree's changes as the history keeps them: the paths, at most
+    `limit` of each kind, and the exact counts."""
+    kinds = ("added", "changed", "removed")
+    entry: dict = {kind: getattr(changes, kind)[:limit] for kind in kinds}
+    entry["counts"] = {**{kind: len(getattr(changes, kind)) for kind in kinds}, "unchanged": changes.unchanged}
+    entry["truncated"] = any(len(getattr(changes, kind)) > limit for kind in kinds)
+    return entry
+
+
+def history_entry(record: dict, how: str, changes: dict[str, Changes], reloads: list[dict], *,
+                  metrics_kept: bool = False, backup: str | None = None) -> dict:
+    """A deploy's history line: deployed.json's who, when and what, how it
+    came (deploy, install, upgrade or rollback), each synced tree's changes,
+    what became of the reloads and restarts they asked for (apply_metrics),
+    and the state backup an upgrade took before it."""
+    entry = {key: record[key] for key in ("deployed_at", "commit", "by", "boot_checked", "conf_digest")}
+    entry.update(how=how, subject=record["subject"])
+    if "application" in record:
+        entry["application"] = record["application"]
+    entry["changes"] = {tree: change_entry(found) for tree, found in changes.items()}
+    if metrics_kept:
+        entry["metrics_kept"] = True
+    entry["reloads"] = reloads
+    if backup is not None:
+        entry["backup"] = str(backup)
+    return entry
+
+
+def changed_paths(entry: dict) -> int:
+    """How many paths a deploy's history entry says it added, changed or removed."""
+    return sum(tree["counts"][kind] for tree in entry.get("changes", {}).values()
+               for kind in ("added", "changed", "removed"))
+
+
+_MARKER_VALUE = re.compile(r"[^A-Za-z0-9._@:+,/-]")
+
+
+def marker_line(event: str, **fields: object) -> str:
+    """`deploy EVENT key=value ...`, one line, its values without spaces or
+    `=`, so journal searches can match it whole."""
+    return " ".join(("deploy", event, *(f"{key}={_MARKER_VALUE.sub('_', str(value)) or '-'}"
+                                        for key, value in fields.items())))
+
+
+def end_marker(result: Deployed) -> str:
+    entry = result.history
+    reloads = ",".join(f"{outcome.get('unit', '-')}:{outcome['outcome']}" for outcome in entry.get("reloads", ()))
+    return marker_line("end", commit=result.commit, how=entry.get("how", "deploy"), outcome="ok",
+                       changes=changed_paths(entry), reloads=reloads or "none")
+
+
+def journal_marker(line: str, priority: str = "info") -> None:
+    """Send one line to the journal as thermite-deploy. Best effort: a host
+    without systemd-cat, or a journal that does not take the line within
+    seconds, never fails or holds up a deploy. The lines carry commit
+    hashes, counts and unit names only."""
+    program = shutil.which("systemd-cat")
+    if program is None:
+        return
+    try:
+        subprocess.run((program, "-t", JOURNAL_TAG, "-p", priority), input=line + "\n", text=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+
+
+def _optional_path(value: object, what: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.startswith("/") or any(ord(c) < 32 for c in value):
+        raise DeployError(f"the gateway {what} is not an absolute path")
+    return value
+
+
+def record_gateway(layout: State, event: dict) -> dict:
+    """Append a completed gateway activation to the history: the site
+    commit and application it serves, its release, the release it
+    replaced (None on the first install) and the complete identity backup
+    taken before migrating. thermite history shows it with that commit's
+    latest deploy."""
+    unknown = set(event) - {"commit", "application", "release", "previous_release", "backup"}
+    if unknown or not _COMMIT.match(str(event.get("commit", ""))):
+        raise DeployError("a gateway history event names a site commit and the gateway's release, "
+                          "previous release, backup and application only")
+    application = event.get("application")
+    if application is not None and not (isinstance(application, dict)
+                                        and all(isinstance(value, str) for value in application.values())):
+        raise DeployError("the gateway's application is not a mapping of names")
+    line = {"event": "gateway", "at": _now(), "by": getpass.getuser(), "commit": event["commit"],
+            "application": application,
+            "release": _optional_path(event.get("release"), "release"),
+            "previous_release": _optional_path(event.get("previous_release"), "previous release"),
+            "backup": _optional_path(event.get("backup"), "backup")}
+    if line["release"] is None:
+        raise DeployError("a gateway history event needs the activated release")
+    _shared_write(layout.history, json.dumps(line, sort_keys=True) + "\n", append=True)
+    return line
 
 
 def history(layout: State, count: int = 10) -> list[str]:
@@ -1769,38 +1934,52 @@ def history(layout: State, count: int = 10) -> list[str]:
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
-def _history_entry(line: str) -> dict | None:
+def _history_line(line: str) -> dict | None:
     """One history line: a JSON object, or, as deploys wrote it before they
     recorded the boot test, `TIME COMMIT USER SUBJECT`."""
     if line.startswith("{"):
         try:
-            entry = json.loads(line)
+            value = json.loads(line)
         except ValueError:
             return None
-        if not isinstance(entry, dict) or not _COMMIT.match(str(entry.get("commit", ""))):
+        if not isinstance(value, dict) or not _COMMIT.match(str(value.get("commit", ""))):
             return None
-    else:
-        parts = line.split(" ", 3)
-        if len(parts) < 3 or not _COMMIT.match(parts[1]):
-            return None
-        entry = {"deployed_at": parts[0], "commit": parts[1], "by": parts[2],
-                 "subject": parts[3] if len(parts) > 3 else ""}
-    return {"deployed_at": str(entry.get("deployed_at", "")), "commit": entry["commit"],
-            "by": str(entry.get("by", "")), "boot_checked": entry.get("boot_checked"),
-            "how": entry.get("how") or "deploy", "subject": str(entry.get("subject", ""))}
+        return value
+    parts = line.split(" ", 3)
+    if len(parts) < 3 or not _COMMIT.match(parts[1]):
+        return None
+    return {"deployed_at": parts[0], "commit": parts[1], "by": parts[2],
+            "subject": parts[3] if len(parts) > 3 else ""}
+
+
+def _history_entry(value: dict) -> dict:
+    entry = {"deployed_at": str(value.get("deployed_at", "")), "commit": value["commit"],
+             "by": str(value.get("by", "")), "boot_checked": value.get("boot_checked"),
+             "how": value.get("how") or "deploy", "subject": str(value.get("subject", ""))}
+    entry.update({key: value[key] for key in HISTORY_DETAILS if key in value})
+    return entry
 
 
 def deploys(layout: State) -> list[dict]:
     """Every deploy in the history, oldest first: number (from 1),
     deployed_at, commit, by, boot_checked (None when an old line does not
-    say and deployed.json is not about that deploy), how (deploy or
-    rollback), subject, and current: the one deployed now."""
+    say and deployed.json is not about that deploy), how (deploy, install,
+    upgrade or rollback), subject, current: the one deployed now, and what
+    newer lines recorded: HISTORY_DETAILS, and gateway, the gateway
+    activations (GATEWAY_EVENT) recorded after that commit's deploy."""
     try:
         lines = layout.history.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
         return []
     record = read_record(layout)
-    entries = [entry for entry in map(_history_entry, lines) if entry]
+    entries: list[dict] = []
+    for value in filter(None, map(_history_line, lines)):
+        if "event" not in value:
+            entries.append(_history_entry(value))
+        elif value["event"] == "gateway":
+            owner = next((entry for entry in reversed(entries) if entry["commit"] == value["commit"]), None)
+            if owner is not None:
+                owner.setdefault("gateway", []).append({key: value.get(key) for key in GATEWAY_EVENT})
     now = (record.get("commit"), record.get("deployed_at"))
     current = next((i for i in range(len(entries) - 1, -1, -1)
                     if (entries[i]["commit"], entries[i]["deployed_at"]) == now), None)

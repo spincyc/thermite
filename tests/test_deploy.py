@@ -216,6 +216,14 @@ class Units(unittest.TestCase):
         self.assertIn("ExecStart=/usr/bin/systemctl try-restart thermite-atv.service",
                       deploy.render_atv_restart_service(HOST))
 
+    def test_restart_services_log_under_their_own_names(self):
+        units = deploy.render_units(VERSIONS, HOST)
+        for source in (deploy.ATV_RESTART_SERVICE, deploy.METRICS_RESTART_SERVICE):
+            with self.subTest(unit=source):
+                service = configparser.ConfigParser(interpolation=None, strict=False)
+                service.read_string(units[source])
+                self.assertEqual(service["Service"]["SyslogIdentifier"], Path(source).stem)
+
     def test_every_generated_unit_and_dropin_has_an_install_destination(self):
         self.assertEqual(set(deploy.render_units(VERSIONS, HOST)), set(deploy.INSTALLED))
 
@@ -1213,6 +1221,27 @@ class MetricsDeploy(Install):
         self.assertEqual(result.reloads, ["blackbox_exporter refused the reload (HTTP 400) and keeps the old "
                                           "configuration: sudo journalctl -u thermite-blackbox.service says why"])
 
+    def test_the_history_says_what_became_of_each_reload(self):
+        self.deploy()
+        entry = json.loads(deploy.history(self.layout)[-1])
+        self.assertEqual(set(entry["changes"]), {"conf", "atv_app", "metrics", "exporter_app"})
+        self.assertEqual(entry["changes"]["metrics"]["counts"]["added"], 5)
+        self.assertEqual(entry["reloads"], [
+            {"unit": "thermite-atv-restart.path", "outcome": "triggered", "restarts": ["thermite-atv.service"]},
+            {"unit": "thermite-prometheus.service", "outcome": "reloaded", "status": 200},
+            {"unit": "thermite-blackbox.service", "outcome": "reloaded", "status": 200},
+            {"unit": "thermite-metrics-restart.path", "outcome": "triggered", "restarts": list(deploy.METRICS_RESTARTED)}])
+        self.status = 400
+        result = self.deploy(**{"metrics/blackbox/blackbox.yml": "modules: {a: {}}\n"})
+        self.assertEqual(result.history["reloads"], [{"unit": "thermite-blackbox.service", "outcome": "refused", "status": 400}])
+        self.status = None
+        self.deploy(**{"metrics/blackbox/blackbox.yml": "modules: {a: {}}\n",
+                       "metrics/prometheus/prometheus.yml": "global: {scrape_interval: 1m}\n"})
+        self.assertEqual(json.loads(deploy.history(self.layout)[-1])["reloads"],
+                         [{"unit": "thermite-prometheus.service", "outcome": "not-running"}])
+        self.assertNotIn("metrics_kept", entry)
+        self.assertTrue(json.loads(self.install(self.FILES) and deploy.history(self.layout)[-1])["metrics_kept"])
+
     def test_a_dry_run_posts_and_writes_nothing(self):
         result = self.install({**self.FILES, **self.METRICS}, dry_run=True)
         self.assertEqual(len(result.metrics.added), 5)
@@ -1369,6 +1398,177 @@ class PendingRecord(unittest.TestCase):
                     self.install()
                 self.assertEqual(list(self.layout.conf.iterdir()), [])
                 self.assertEqual(path.read_bytes(), content)
+
+
+GATEWAY = "/srv/thermite/access/releases/0123456789abcdef01234567-a1b2c3"
+
+
+class DeployHistory(unittest.TestCase):
+    """The history line says what a deploy changed, reloaded and backed up."""
+
+    FILES = Install.FILES
+    setUp, tearDown, install = Install.setUp, Install.tearDown, Install.install
+
+    def lines(self) -> list[dict]:
+        return [json.loads(line) for line in deploy.history(self.layout, 0)]
+
+    def test_entry_records_changes_triggers_and_the_digest_rollback_trusts(self):
+        first = self.install(how="upgrade", backup="/srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz")
+        entry = self.lines()[-1]
+        self.assertEqual(entry, first.history)
+        record = deploy.read_record(self.layout)
+        self.assertEqual({key: entry[key] for key in ("commit", "deployed_at", "conf_digest", "how", "backup")},
+                         {"commit": "c" * 40, "deployed_at": record["deployed_at"], "conf_digest": record["conf_digest"],
+                          "how": "upgrade", "backup": "/srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz"})
+        self.assertEqual(entry["changes"]["conf"], {"added": ["html/remote/index.html", "yaml/a.yaml"], "changed": [],
+                                                    "removed": [], "truncated": False,
+                                                    "counts": {"added": 2, "changed": 0, "removed": 0, "unchanged": 0}})
+        self.assertEqual(entry["reloads"], [{"unit": "thermite-atv-restart.path", "outcome": "triggered",
+                                             "restarts": ["thermite-atv.service"]}])
+        files = {**self.FILES, "conf/yaml/a.yaml": blob("a: 2\n")}
+        deploy.record_boot_check(self.var, deploy.tree_digest({p[5:]: b for p, b in files.items() if p.startswith("conf/")}))
+        self.install(files)
+        entry = self.lines()[-1]
+        self.assertEqual((entry["how"], entry["changes"]["conf"]["changed"], entry["changes"]["atv_app"]["counts"]["unchanged"],
+                          entry["reloads"]), ("deploy", ["yaml/a.yaml"], len(deploy.ATV_APP), []))
+        self.assertNotIn("backup", entry)
+        # Rollback waives the boot test only for the digest the history recorded.
+        self.assertEqual([found["conf_digest"] for found in deploy.deploys(self.layout)],
+                         [first.record["conf_digest"], deploy.read_record(self.layout)["conf_digest"]])
+
+    def test_paths_are_bounded_and_counts_exact(self):
+        many = deploy.Changes(added=[f"items/{n:03}.items" for n in range(deploy.HISTORY_PATHS + 7)], changed=["a"], unchanged=3)
+        entry = deploy.change_entry(many)
+        self.assertEqual(len(entry["added"]), deploy.HISTORY_PATHS)
+        self.assertEqual(entry["counts"], {"added": deploy.HISTORY_PATHS + 7, "changed": 1, "removed": 0, "unchanged": 3})
+        self.assertTrue(entry["truncated"])
+        self.assertFalse(deploy.change_entry(deploy.Changes(changed=["a"]))["truncated"])
+
+    def test_a_failed_trigger_is_still_recorded_with_its_outcome(self):
+        real = deploy._shared_write
+
+        def write(target, data, *, append=False):
+            if Path(target) == self.layout.atv_restart:
+                raise OSError("disk full")
+            return real(target, data, append=append)
+
+        with mock.patch.object(deploy, "_shared_write", side_effect=write), self.assertRaisesRegex(OSError, "disk full"):
+            self.install()
+        self.assertEqual(self.lines()[-1]["reloads"], [{"outcome": "failed", "error": "OSError"}])
+        self.assertEqual(self.lines()[-1]["commit"], deploy.read_record(self.layout)["commit"])
+
+    def test_a_dry_run_appends_nothing(self):
+        result = self.install(dry_run=True)
+        self.assertEqual(self.lines(), [])
+        self.assertEqual(result.history["changes"]["conf"]["counts"]["added"], 2)
+
+    def test_markers_bracket_a_deploy_and_say_how_it_ended(self):
+        said = []
+        result = self.install(how="upgrade")
+        with mock.patch.object(deploy, "resolve", return_value="c" * 40), \
+                mock.patch.object(deploy, "_deploy", return_value=result) as applied:
+            self.assertIs(deploy.deploy(Path("/nonexistent"), self.layout, self.var, how="upgrade",
+                                        marker=lambda line, priority: said.append((priority, line))), result)
+        self.assertEqual(applied.call_args.kwargs["how"], "upgrade")
+        self.assertEqual(said, [
+            ("info", f"deploy start commit={'c' * 40} how=upgrade by={deploy.getpass.getuser()}"),
+            ("info", f"deploy end commit={'c' * 40} how=upgrade outcome=ok changes={2 + len(deploy.ATV_APP)} "
+                     "reloads=thermite-atv-restart.path:triggered")])
+        said.clear()
+        with mock.patch.object(deploy, "resolve", return_value="c" * 40), \
+                mock.patch.object(deploy, "_deploy", side_effect=deploy.DeployError("refused")), \
+                self.assertRaises(deploy.DeployError):
+            deploy.deploy(Path("/nonexistent"), self.layout, self.var, how="rollback",
+                          marker=lambda line, priority: said.append((priority, line)))
+        self.assertEqual(said[-1], ("warning", f"deploy end commit={'c' * 40} how=rollback outcome=failed error=DeployError"))
+        said.clear()
+        with mock.patch.object(deploy, "resolve", return_value="c" * 40), \
+                mock.patch.object(deploy, "_deploy", return_value=result):
+            deploy.deploy(Path("/nonexistent"), self.layout, self.var, dry_run=True,
+                          marker=lambda line, priority: said.append(line))
+        self.assertEqual(said, [], "a dry run writes no journal markers")
+
+    def test_marker_values_are_single_words(self):
+        self.assertEqual(deploy.marker_line("start", by="a b=c\nd", empty=""), "deploy start by=a_b_c_d empty=-")
+
+    def test_journal_marker_is_best_effort(self):
+        with mock.patch.object(deploy.shutil, "which", return_value=None), \
+                mock.patch.object(deploy.subprocess, "run") as run:
+            deploy.journal_marker("deploy start commit=x")
+        run.assert_not_called()
+        for failure in (FileNotFoundError("gone"), subprocess.TimeoutExpired("systemd-cat", 5), PermissionError("no")):
+            with self.subTest(failure=type(failure).__name__), \
+                    mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/systemd-cat"), \
+                    mock.patch.object(deploy.subprocess, "run", side_effect=failure):
+                self.assertIsNone(deploy.journal_marker("deploy end commit=x outcome=ok", "warning"))
+        with mock.patch.object(deploy.shutil, "which", return_value="/usr/bin/systemd-cat"), \
+                mock.patch.object(deploy.subprocess, "run") as run:
+            deploy.journal_marker("deploy end commit=x outcome=failed", "warning")
+        self.assertEqual(run.call_args.args[0], ("/usr/bin/systemd-cat", "-t", "thermite-deploy", "-p", "warning"))
+        self.assertEqual(run.call_args.kwargs["input"], "deploy end commit=x outcome=failed\n")
+        self.assertEqual(run.call_args.kwargs["timeout"], 5)
+
+    def test_gateway_activations_join_their_commits_deploy(self):
+        self.install(how="install")
+        older = GATEWAY.replace("a1b2c3", "000000")
+        event = deploy.record_gateway(self.layout, {"commit": "c" * 40, "application": {"version": "1.2.3", "digest": "b" * 64},
+                                                    "release": GATEWAY, "previous_release": older,
+                                                    "backup": "/srv/thermite/access/backups/0123456789abcdef01234567-d4e5f6.tar.gz"})
+        deploy.record_gateway(self.layout, {"commit": "d" * 40, "release": GATEWAY})
+        with self.layout.history.open("a") as history:
+            history.write(json.dumps({"event": "future", "commit": "c" * 40}) + "\n")
+        entries = deploy.deploys(self.layout)
+        self.assertEqual(len(entries), 1, "events are not deploys")
+        self.assertEqual(entries[0]["gateway"], [{key: event[key] for key in deploy.GATEWAY_EVENT}])
+        self.assertEqual((entries[0]["gateway"][0]["release"], entries[0]["gateway"][0]["previous_release"]), (GATEWAY, older))
+        self.assertTrue(entries[0]["current"])
+
+    def test_gateway_events_are_validated(self):
+        for event in ({"commit": "c" * 40}, {"commit": "c" * 12, "release": GATEWAY},
+                      {"commit": "c" * 40, "release": "releases/relative"},
+                      {"commit": "c" * 40, "release": GATEWAY, "backup": GATEWAY + "\n{}"},
+                      {"commit": "c" * 40, "release": GATEWAY, "token": "x"},
+                      {"commit": "c" * 40, "release": GATEWAY, "application": ["1.2.3"]}):
+            with self.subTest(event=event), self.assertRaises(deploy.DeployError):
+                deploy.record_gateway(self.layout, event)
+        self.assertEqual(deploy.history(self.layout), [])
+
+    def test_history_details_and_the_installers_gateway_record(self):
+        from oh_cli import history as history_cli
+        self.install(how="upgrade", backup="/srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz")
+        event = {"commit": "c" * 40, "application": {"version": "1.2.3", "digest": "b" * 64}, "release": GATEWAY,
+                 "previous_release": None, "backup": "/srv/thermite/access/backups/0123456789abcdef01234567-d4e5f6.tar.gz"}
+        state = ["--state", str(self.layout.root)]
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(history_cli.main([*state, "--_record-gateway", json.dumps(event)]), 0)
+        with contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(history_cli.main([*state, "--_record-gateway", json.dumps({**event, "release": "relative"})]), 2)
+        self.assertIn("could not record the gateway release", error.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()) as plain:
+            self.assertEqual(history_cli.main(state), 0)
+        self.assertEqual(len(plain.getvalue().splitlines()), 2, "the table alone, without --details")
+        self.assertTrue(plain.getvalue().splitlines()[1].endswith("a subject (upgrade)"))
+        with contextlib.redirect_stdout(io.StringIO()) as detailed:
+            self.assertEqual(history_cli.main([*state, "--details"]), 0)
+        details = [line.strip() for line in detailed.getvalue().splitlines()[2:]]
+        self.assertEqual(details[0], "conf     2 added, 0 changed, 0 removed: +html/remote/index.html +yaml/a.yaml")
+        self.assertTrue(details[1].startswith(f"helper   {len(deploy.ATV_APP)} added, 0 changed, 0 removed: +"))
+        self.assertIn("reloads  thermite-atv-restart.path triggered", details)
+        self.assertIn("backup   /srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz", details)
+        self.assertRegex(details[-1], r"^gateway  \d{4}-\d\d-\d\d \d\d:\d\d:\d\d release 0123456789abcdef01234567-a1b2c3, "
+                                      r"replacing none; identity backup /srv/thermite/access/backups/\S+\.tar\.gz$")
+        with contextlib.redirect_stdout(io.StringIO()) as as_json:
+            self.assertEqual(history_cli.main([*state, "--json"]), 0)
+        self.assertEqual(json.loads(as_json.getvalue())[0]["gateway"][0]["release"], GATEWAY)
+
+    def test_older_lines_still_read(self):
+        self.layout.history.write_text(f"2026-01-01T00:00:00+00:00 {'a' * 40} ops An old deploy\n"
+                                       + json.dumps({"deployed_at": "2026-02-01T00:00:00+00:00", "commit": "b" * 40,
+                                                     "by": "ops", "boot_checked": True, "how": "deploy",
+                                                     "subject": "Before details"}) + "\n")
+        entries = deploy.deploys(self.layout)
+        self.assertEqual([(entry["number"], entry["subject"]) for entry in entries], [(1, "An old deploy"), (2, "Before details")])
+        self.assertNotIn("changes", entries[1])
 
 
 class Export(unittest.TestCase):
@@ -1542,6 +1742,23 @@ class CliApproval(unittest.TestCase):
             self.assertEqual(apply.call_args.kwargs["ownership_approved"], approved)
             self.assertEqual(apply.call_args.kwargs["dry_run"], dry_run)
             self.assertFalse(apply.call_args.kwargs["force"])
+            self.assertEqual((apply.call_args.kwargs["how"], apply.call_args.kwargs["backup"]), ("install", None))
+            self.assertIs(apply.call_args.kwargs["marker"], deploy.journal_marker)
+
+    def test_the_installer_phase_names_an_upgrade_and_its_backup_for_the_history(self):
+        backup = "/srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz"
+        with mock.patch.object(deploy_cli.deploy, "load", return_value=(VERSIONS, HOST)), \
+                mock.patch.object(deploy_cli.deploy, "deploy", side_effect=deploy.DeployError("fixture stop")) as apply, \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(deploy_cli.main(["--_configuration-phase", "--_how", "upgrade", "--_backup", backup]), 2)
+        self.assertEqual((apply.call_args.kwargs["how"], apply.call_args.kwargs["backup"]), ("upgrade", backup))
+        for arguments in (["--_how", "upgrade"], ["--_backup", backup]):
+            with self.subTest(arguments=arguments), \
+                    mock.patch.object(deploy_cli.deploy, "deploy") as apply, \
+                    contextlib.redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(deploy_cli.main(arguments), 2)
+            apply.assert_not_called()
+            self.assertIn("complete install workflow", error.getvalue())
 
 
 if __name__ == "__main__":

@@ -68,8 +68,23 @@ def unit_text() -> str:
             "Before=thermite-openhab.service\nAfter=nftables.service firewalld.service\n"
             "[Service]\nType=oneshot\nRemainAfterExit=yes\n"
             "ExecStart=/usr/bin/env nft -f /etc/thermite-native.nft\n"
+            # The journal names the unit, not env.
+            "SyslogIdentifier=thermite-native-boundary\n"
             # Stopping Thermite never removes protection from a running JVM.
             "[Install]\nWantedBy=multi-user.target\n")
+
+
+#: The unit exactly as installers wrote it before it named its journal
+#: identifier: an install replaces it rather than refusing it as foreign.
+PREVIOUS_UNIT_TEXT = (MARKER + "[Unit]\nDescription=Thermite native listener boundary\n"
+                      "Before=thermite-openhab.service\nAfter=nftables.service firewalld.service\n"
+                      "[Service]\nType=oneshot\nRemainAfterExit=yes\n"
+                      "ExecStart=/usr/bin/env nft -f /etc/thermite-native.nft\n"
+                      "[Install]\nWantedBy=multi-user.target\n")
+
+
+def recognized_unit(content: bytes) -> bool:
+    return content in (unit_text().encode(), PREVIOUS_UNIT_TEXT.encode())
 
 
 class NativeIngress(Step):
@@ -88,7 +103,7 @@ class NativeIngress(Step):
                 file = system.unit_file(path)
                 if (file is None or file.uid != 0 or file.mode & 0o022 or not file.ancestors_trusted
                         or not file.content.startswith(MARKER.encode())
-                        or path == UNIT_FILE and file.content != unit_text().encode()):
+                        or path == UNIT_FILE and not recognized_unit(file.content)):
                     return Check(False, "", f"unrecognized native boundary file: {path}")
                 if path == RULE_FILE:
                     try:

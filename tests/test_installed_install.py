@@ -119,6 +119,32 @@ class InstalledInstall(unittest.TestCase):
             self.assertTrue(verification[0].show_output)
             self.assertFalse(verification[0].terminal)
 
+    def test_an_upgrades_deploy_and_gateway_activation_reach_the_deploy_history(self):
+        backup = steps.Backup(self.context, "20261104T120000Z", "5.2.3")
+        deployment = steps.Deploy(self.context)
+        deployment.how, deployment.backup = "upgrade", backup
+        with patch.object(oh_paths, "PROGRAM", self.program):
+            action = deployment.actions(self.host)[-1]
+            self.assertEqual(action.argv, self.command("deploy", "--_configuration-phase", "--_how", "upgrade"),
+                             "no backup was planned: the units were current")
+            backup.target = backup.context.layout.backups / "20261104T120000Z-openhab-5.2.3.tar.gz"
+            action = deployment.actions(self.host)[-1]
+        trail = ("--_how", "upgrade", "--_backup", "/srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz")
+        self.assertEqual(action.argv, self.command("deploy", "--_configuration-phase", *trail))
+        self.assertEqual(action.approved_argv, self.command("deploy", "--_configuration-phase", *trail, "--yes", "--quiet"))
+        event = {"commit": "a" * 40, "release": "/srv/thermite/access/releases/fixture-a1b2c3", "previous_release": None,
+                 "backup": "/srv/thermite/access/backups/fixture-d4e5f6.tar.gz", "application": {"version": "1.2.3"}}
+        record = steps.gateway_history(self.context)
+        for code, recorded in ((0, True), (1, False), (None, False)):
+            with self.subTest(code=code), patch.object(oh_paths, "PROGRAM", self.program), \
+                    patch("oh_install.runner.perform", return_value=code) as perform:
+                self.assertIs(record(self.host, event), recorded)
+            command, host, area = perform.call_args.args
+            self.assertEqual((host, area), (self.host, self.site))
+            self.assertEqual(command.argv, self.command("history", "--state", "/srv/thermite/runtime",
+                                                        "--_record-gateway", json.dumps(event, sort_keys=True)))
+            self.assertFalse(command.root)
+
     def test_group_refresh_preserves_quoted_program_site_and_interpreter(self):
         self.host.process_groups.return_value = {1000}
         self.host.which.return_value = "/usr/bin/sg"

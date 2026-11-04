@@ -776,8 +776,8 @@ class PairingLogging(Step):
     def check(self, system: System) -> Check:
         data = system.read_bytes(self.context.layout.userdata / oh_logging.RELATIVE)
         selector = system.read_bytes(self.context.layout.userdata / oh_logging.SELECTOR)
-        if data is not None and selector is not None and oh_logging.selected_default(selector) and oh_logging.protected(data):
-            return Check(True, "native logger filters drop pairing command payloads")
+        if data is not None and selector is not None and oh_logging.selected_default(selector) and oh_logging.configured(data):
+            return Check(True, "native logger filters drop pairing command payloads; openhab.log also reaches the journal")
         if data is None and _opaque(system, self.context, self.context.layout.userdata / oh_logging.RELATIVE) and (self.applied or service_receipt(self.context, system)):
             return Check(True, "pairing logging protection verified under private service custody")
         return Check(False, "install the pairing filter before deploying its Items; an existing service is stopped "
@@ -806,10 +806,19 @@ class PairingLogging(Step):
 
 class Deploy(Step):
     title = "Deploy this commit"
+    #: What the deploy history calls it, and the Backup step whose state
+    #: backup the upgrade took before it (thermite upgrade sets both).
+    how = "install"
+    backup = None
 
     def __init__(self, context: Context):
         self.context = context
         self.applied = False
+
+    def trail(self) -> tuple[str, ...]:
+        taken = self.backup is not None and (self.backup.found or self.backup.target)
+        return (*(("--_how", self.how) if self.how != "install" else ()),
+                *(("--_backup", str(self.backup.file)) if taken else ()))
 
     def check(self, system: System) -> Check:
         head, layout = self.context.head, self.context.layout
@@ -838,8 +847,8 @@ class Deploy(Step):
     def actions(self, system: System) -> list[Action]:
         self.applied = True
         revision = (self.context.head, "--state", str(self.context.layout.root)) if self.context.prepared is not None else ()
-        argv = application(self.context, "deploy", *revision, "--_configuration-phase")
-        approved = application(self.context, "deploy", *revision, "--_configuration-phase", "--yes", *(("--quiet",) if not oh_cli.switches.verbose else ()))
+        argv = application(self.context, "deploy", *revision, "--_configuration-phase", *self.trail())
+        approved = application(self.context, "deploy", *revision, "--_configuration-phase", *self.trail(), "--yes", *(("--quiet",) if not oh_cli.switches.verbose else ()))
         # Installation checks the selected configuration just as the packaged
         # application does. The full unit suite is a developer/release gate;
         # repeating it here delays deployment and can expire sudo credentials.
@@ -1860,10 +1869,21 @@ class Commissioning:
         return selected
 
 
+def gateway_history(context: Context):
+    """Gateway record hook: append the activated release to the runtime
+    deploy history, through the thermite group as the deploy itself does."""
+    def record(system: System, event: dict) -> bool:
+        from oh_install.runner import perform
+        argv = application(context, "history", "--state", str(context.layout.root),
+                           "--_record-gateway", json.dumps(event, sort_keys=True))
+        return perform(operator_command(context, system, argv), system, context.area) == 0
+    return record
+
+
 def gateway_steps(context: Context, native: NativeDeadline) -> list[Step]:
     """Settle native REST, then commission and activate the HTTPS gateway."""
     hook = Commissioning(context, native)
-    hook.gateway = Gateway(context, boundary=hook)
+    hook.gateway = Gateway(context, boundary=hook, record=gateway_history(context))
     return [NativeSettle(context, native), hook.gateway]
 
 
@@ -2205,12 +2225,12 @@ def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
 def boundary_owned(system: System) -> bool | None:
     """Whether the native boundary unit is the installer's exact root-owned
     file; None when there is none."""
-    from oh_install.ingress import UNIT_FILE, unit_text
+    from oh_install.ingress import UNIT_FILE, recognized_unit
     if not system.lexists(UNIT_FILE):
         return None
     file = system.unit_file(UNIT_FILE)
     return (file is not None and file.uid == 0 and not file.mode & 0o022 and file.ancestors_trusted
-            and file.content == unit_text().encode())
+            and recognized_unit(file.content))
 
 
 class Stop(Step):

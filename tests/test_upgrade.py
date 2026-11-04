@@ -86,6 +86,10 @@ class Upgrade(unittest.TestCase):
         self.assertTrue(run.call_args.kwargs["root_confirmed"])
         confirm.assert_called_once()
         self.system.run.assert_not_called()
+        deployment = next(step for step in sequence if isinstance(step, steps.Deploy))
+        self.assertEqual((deployment.how, deployment.backup),
+                         ("upgrade", next(step for step in sequence if isinstance(step, steps.Backup))),
+                         "the history records an upgrade with the state backup it took")
 
     def test_current_native_deployment_propagates_gateway_failure(self):
         with self.planning(), patch.object(upgrade_cli, "AREA", self.site), \

@@ -21,7 +21,8 @@ import stat
 ACCOUNT = GROUP = "thermite"
 UID = GID = 9001
 RECEIPT_VERSION = 1
-POLICY = "thermite-service-v3"
+#: v4: native preparation also routes openhab.log to the journal (oh_logging.JOURNAL).
+POLICY = "thermite-service-v4"
 RECEIPT = "deploy/service-account.json"
 SHARED_DIR = 0o2770
 SHARED_FILE = 0o660

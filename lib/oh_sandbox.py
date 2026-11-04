@@ -824,7 +824,8 @@ def init_userdata(rt: Runtime, inst: Instance, log=print) -> bool:
     _cfg_set(shell_cfg, "sshHost", "127.0.0.1")
     oh_ports.configure_shutdown(inst.userdata, inst.shutdown_port)
     (inst.userdata / "etc" / "org.apache.karaf.features.xml").write_text(FEATURES_PROCESSING, encoding="utf-8")
-    oh_logging.install(inst.userdata)
+    # The sandbox's stdout is its unrotated console.log beside openhab.log.
+    oh_logging.install(inst.userdata, journal=False)
     return created
 
 

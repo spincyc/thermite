@@ -297,6 +297,22 @@ class NativeIngress(unittest.TestCase):
                 self.assertEqual(system.files, {})
                 self.assertIsNone(system.live)
 
+    def test_unit_logs_as_itself_and_replaces_the_exact_unit_before_it(self):
+        self.assertIn("\nExecStart=/usr/bin/env nft -f /etc/thermite-native.nft\nSyslogIdentifier=thermite-native-boundary\n",
+                      ingress.unit_text())
+        system = System(installed=OLD, live=OLD)
+        system.files[ingress.UNIT_FILE] = UnitFile(ingress.PREVIOUS_UNIT_TEXT.encode(), 0, 0o644)
+        self.assertIsNone(self.step.check(system).problem, "an upgrade adopts the unit an earlier install wrote")
+        self.save_previous()
+        self.assertEqual(self.perform(system), 0)
+        self.assertEqual(system.files[ingress.UNIT_FILE].content, ingress.unit_text().encode())
+        from oh_install import steps
+        for content, owned in ((ingress.PREVIOUS_UNIT_TEXT.encode(), True), (ingress.unit_text().encode(), True),
+                               (ingress.PREVIOUS_UNIT_TEXT.encode() + b"# edited\n", False)):
+            system.files[ingress.UNIT_FILE] = UnitFile(content, 0, 0o644)
+            with self.subTest(owned=owned):
+                self.assertIs(steps.boundary_owned(system), owned)
+
     def test_preflight_rejects_changed_root_files_or_service_overrides(self):
         for case in ("permissions", "rule_body", "unit_body", "parent", "dropin", "unknown"):
             system = System(installed=OLD, live=OLD)

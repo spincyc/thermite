@@ -114,17 +114,22 @@ class Gateway(Step):
     ``boundary`` is an optional installer hook called after inputs are adopted.
     It receives (system, metadata, existing_callback_path) and returns a private
     callback configuration path or None. Existing callbacks cannot be discarded.
+
+    ``record`` is an optional installer hook called once per completed
+    activation with {commit, application, release, previous_release, backup};
+    it returns whether the runtime deploy history (thermite history) took it.
     """
 
     title = "HTTPS gateway and identity state"
     always = True
     stop_on_failure = True
 
-    def __init__(self, context, *, boundary=None, callbacks=None, options=None):
+    def __init__(self, context, *, boundary=None, callbacks=None, options=None, record=None):
         self.context = context
         self.boundary = boundary
         self.callbacks = callbacks
         self.options = options or {}
+        self.record = record
         import oh_release
         application = context.application or {"version": oh_release.VERSION, "source_commit": context.head}
         self.versions = {"site": context.head, "application": application}
@@ -550,6 +555,24 @@ class Gateway(Step):
                       "release": receipt["destination"], "state": metadata["state"],
                       "versions": self.versions, "journal": str(self.journal_path)})
 
+    def _history(self, system, journal, receipt):
+        """Add a completed activation to the deploy history once, and retry a
+        missed one on the next run; the gateway never fails over it."""
+        if self.record is None or journal.get("recorded") == [receipt["destination"], journal.get("backup")]:
+            return
+        event = {"commit": self.context.head, "application": self.versions["application"],
+                 "release": receipt["destination"], "previous_release": journal.get("previous_release"),
+                 "backup": journal.get("backup")}
+        try:
+            recorded = self.record(system, event)
+        except (OSError, ValueError):
+            recorded = False
+        if recorded:
+            self._save(journal, recorded=[event["release"], event["backup"]])
+        else:
+            system.say("   The gateway release was not added to thermite history; "
+                       "its record stays in " + str(self.journal_path))
+
     def perform(self, system):
         journal = None
         try:
@@ -576,6 +599,7 @@ class Gateway(Step):
                     url = self._https(metadata)
                     self._guest_http()
                     self._profile(journal, metadata, receipt, url)
+                    self._history(system, journal, receipt)
                     return 0
                 except _UnitAuthorityError:
                     raise
@@ -619,6 +643,7 @@ class Gateway(Step):
             self._upstream(system, journal, receipt)
             self._save(journal, phase="complete", url=url)
             self._profile(journal, metadata, receipt, url)
+            self._history(system, journal, receipt)
             system.say("   Gateway verified: " + url)
             for line in guest_report:
                 system.say(line)

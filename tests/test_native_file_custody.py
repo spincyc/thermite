@@ -187,6 +187,95 @@ class Logging(Scratch):
         self.assertVictimUntouched()
 
 
+#: The shape of the pinned openHAB template: a file, a console and an events
+#: route, and the non-additive event logger.
+TEMPLATE = b"""<?xml version="1.0" encoding="UTF-8"?><Configuration monitorInterval="10">
+\t<Appenders>
+\t\t<Console name="STDOUT"><PatternLayout pattern="%m%n"/></Console>
+\t\t<RollingFile fileName="openhab.log" filePattern="openhab.log.%i.gz" name="LOGFILE"><PatternLayout pattern="%m%n"/></RollingFile>
+\t\t<RollingRandomAccessFile fileName="events.log" filePattern="events.log.%i.gz" name="EVENT"><PatternLayout pattern="%m%n"/></RollingRandomAccessFile>
+\t\t<PaxOsgi filter="*" name="OSGI"/>
+\t</Appenders>
+\t<Loggers>
+\t\t<Root level="WARN">
+\t\t\t<AppenderRef ref="LOGFILE"/>
+\t\t\t<AppenderRef ref="OSGI"/>
+\t\t</Root>
+\t\t<Logger level="OFF" name="org.apache.karaf.shell.support"><AppenderRef ref="STDOUT"/></Logger>
+\t\t<Logger level="INFO" name="org.openhab"/>
+\t\t<Logger additivity="false" level="INFO" name="openhab.event"><AppenderRef ref="EVENT"/><AppenderRef ref="OSGI"/></Logger>
+\t</Loggers>
+</Configuration>
+"""
+
+
+class JournalRoute(unittest.TestCase):
+    """openhab.log also reaches the journal, through a guarded route only."""
+
+    def journal(self, data):
+        root = oh_logging.document(data)
+        appenders = [appender for container in root if container.tag == "Appenders" for appender in container
+                     if appender.get("name") == oh_logging.JOURNAL]
+        loggers = {element.get("name", element.tag): [ref.get("ref") for ref in element if ref.tag == "AppenderRef"]
+                   for container in root if container.tag == "Loggers" for element in container}
+        return appenders, loggers
+
+    def test_template_gains_one_guarded_console_route_on_root_only(self):
+        self.assertFalse(oh_logging.journaled(TEMPLATE))
+        data = oh_logging.guarded(TEMPLATE)
+        self.assertTrue(oh_logging.configured(data))
+        self.assertEqual(oh_logging.guarded(data), data, "idempotent")
+        appenders, loggers = self.journal(data)
+        self.assertEqual(len(appenders), 1)
+        self.assertEqual((appenders[0].tag, appenders[0].attrib), ("Console", {"name": oh_logging.JOURNAL, "target": "SYSTEM_OUT"}))
+        self.assertTrue(oh_logging.is_guard(list(appenders[0])[0]), "the route drops pairing payloads itself")
+        self.assertEqual(loggers["Root"], ["LOGFILE", "OSGI", oh_logging.JOURNAL])
+        self.assertEqual(loggers["openhab.event"], ["EVENT", "OSGI"], "events.log stays file-only")
+        self.assertIn(b"\n\t\t\t<AppenderRef ref=\"THERMITE_JOURNAL\" />\n\t\t</Root>", data)
+
+    def test_a_configuration_without_appenders_gets_them(self):
+        data = oh_logging.guarded(LOG4J)
+        self.assertTrue(oh_logging.configured(data))
+        self.assertEqual([child.tag for child in oh_logging.document(data)], ["Filters", "Appenders", "Loggers"])
+
+    def test_sandbox_keeps_pairing_protection_without_the_route(self):
+        data = oh_logging.guarded(TEMPLATE, journal=False)
+        self.assertTrue(oh_logging.protected(data))
+        self.assertFalse(oh_logging.journaled(data))
+        self.assertTrue(oh_logging.configured(oh_logging.guarded(data)))
+
+    def test_an_altered_route_is_not_journaled_and_is_replaced_whole(self):
+        data = oh_logging.guarded(TEMPLATE).decode()
+        appender = data[data.index('<Console name="THERMITE_JOURNAL"'):data.index("</Console>", data.index("THERMITE_JOURNAL")) + len("</Console>")]
+        guard = appender[appender.index("<RegexFilter"):appender.index("/>") + 2]
+        reference = '<AppenderRef ref="THERMITE_JOURNAL" />'
+        for case, altered in (
+                ("unguarded", data.replace(appender, appender.replace(guard, ""))),
+                ("accepting first", data.replace(appender, appender.replace(
+                    guard, '<ThresholdFilter level="INFO" onMatch="ACCEPT"/>' + guard))),
+                ("stderr", data.replace('target="SYSTEM_OUT"', 'target="SYSTEM_ERR"')),
+                ("duplicate", data.replace(appender, appender + appender)),
+                ("silenced", data.replace(reference, '<AppenderRef ref="THERMITE_JOURNAL" level="OFF" />')),
+                ("unreferenced", data.replace(reference, "")),
+                ("referenced twice", data.replace(reference, reference + reference))):
+            with self.subTest(case=case):
+                self.assertTrue(oh_logging.protected(altered.encode()))
+                self.assertFalse(oh_logging.journaled(altered.encode()))
+                repaired = oh_logging.guarded(altered.encode())
+                self.assertTrue(oh_logging.configured(repaired))
+                appenders, loggers = self.journal(repaired)
+                self.assertEqual(len(appenders), 1)
+                self.assertEqual(loggers["Root"].count(oh_logging.JOURNAL), 1)
+
+    def test_the_route_never_stands_in_for_a_logger_guard(self):
+        data = oh_logging.guarded(TEMPLATE).decode()
+        logger = data.index('name="org.openhab"')
+        unguarded = data[:logger] + data[logger:].replace("<Filters>", "<Filters><ThresholdFilter level=\"INFO\"/>", 1)
+        self.assertTrue(oh_logging.journaled(unguarded.encode()))
+        self.assertFalse(oh_logging.protected(unguarded.encode()))
+        self.assertFalse(oh_logging.configured(unguarded.encode()))
+
+
 class Seeding(Scratch):
     def template(self):
         template = self.root / "template"

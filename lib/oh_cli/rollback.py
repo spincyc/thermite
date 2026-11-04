@@ -108,7 +108,7 @@ def roll_back(args, layout: deploy.State, installed: dict[str, Path] | None = No
         print(line)
     verified = {"expected_conf_digest": expected_digest} if expected_digest is not None else {}
     result = deploy.deploy(AREA, layout, VAR, commit, force=args.force or ran_here, dry_run=args.dry_run,
-                           how="rollback", host=host, **verified)
+                           how="rollback", host=host, marker=deploy.journal_marker, **verified)
     print(f"{'dry run ' if args.dry_run else 'deploy  '}{result.commit[:12]} {result.subject}")
     print_changes("conf", result.conf)
     print_changes("helper", result.atv_app)

@@ -166,6 +166,11 @@ def upgrade(system: System, dry_run: bool, when: str | None = None, *, runtime_t
         return code
     plan = steps.plan(context, system)
     rest = steps.upgrade(context, plan, when)
+    for step in rest:
+        if isinstance(step, steps.Deploy):
+            # The history records an upgrade, with the state backup it took.
+            step.how = "upgrade"
+            step.backup = next((found for found in rest if isinstance(found, steps.Backup)), None)
     if not dry_run:
         system.say(f"Upgrade: {plan.describe()}. This run includes the boot test, any needed backup, "
                    "sudo commands, service restarts, deployment and health checks.")

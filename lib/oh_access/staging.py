@@ -54,7 +54,8 @@ def units(destination, user=ACCOUNT, *, state, callbacks=False):
         suffix = "" if name == "serve" else "-" + name
         config_name = "callbacks.json" if name == "callbacks" else "config.json"
         writable = "" if name == "callbacks" else "\nReadWritePaths=" + systemd(state)
-        result["thermite-access" + suffix + ".service"] = (
+        unit = "thermite-access" + suffix
+        result[unit + ".service"] = (
             "[Unit]\nDescription=thermite " + {"worker": "room policy worker", "serve": "authenticated site", "callbacks": "verified UPnP callback ingress"}[name] +
             f"\nAfter=network-online.target\nWants=network-online.target\nPartOf={oh_units.TARGET}\n\n[Service]\nType=simple\nUser=" + user +
             "\nGroup=" + GROUP + f"\nSlice={oh_units.SLICE}\nUMask=0077\nWorkingDirectory=" + _working_directory(root) +
@@ -62,6 +63,8 @@ def units(destination, user=ACCOUNT, *, state, callbacks=False):
             # executable token itself from containing quotes/backslashes. ':'
             # disables its environment substitution so every '$' stays literal.
             "\nExecStart=:/usr/bin/env -- " + " ".join(systemd(x) for x in [*command, name, "--config", root / config_name]) +
+            # Without it the journal would name every one of them env.
+            "\nSyslogIdentifier=" + unit +
             "\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only" + writable +
             f"\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy={oh_units.TARGET}\n")
     return result

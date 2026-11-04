@@ -72,7 +72,8 @@ def deployment_host(rev: str, *, area: Path | None = None) -> dict:
 def apply(args, host: dict) -> int:
     layout = deploy.State(args.state) if args.state else deploy.state(host)
     result = deploy.deploy(AREA, layout, VAR, args.rev, force=args.force, dry_run=args.dry_run, host=host,
-                           ownership_approved=getattr(args, "yes", False))
+                           ownership_approved=getattr(args, "yes", False), how=getattr(args, "_how", "install"),
+                           backup=getattr(args, "_backup", None), marker=deploy.journal_marker)
     short = result.commit[:12]
     print(f"{'dry run ' if args.dry_run else 'deploy  '}{short} {result.subject}")
     print_changes("conf", result.conf)
@@ -107,10 +108,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state", type=Path, metavar="DIR",
                         help="the runtime state (default: runtime/ in instance/host.yaml's root, /srv/thermite)")
     parser.add_argument("--_configuration-phase", action="store_true", help=argparse.SUPPRESS)
+    # The installer's phase says, for the history, whether an install or an
+    # upgrade runs it, and which state backup that upgrade took first.
+    parser.add_argument("--_how", choices=("install", "upgrade"), default="install", help=argparse.SUPPRESS)
+    parser.add_argument("--_backup", metavar="FILE", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
         if not args._configuration_phase:
-            if args.rev != "HEAD" or args.force or args.state or args.yes:
+            if args.rev != "HEAD" or args.force or args.state or args.yes or args._how != "install" or args._backup:
                 raise deploy.DeployError("deployment now uses the complete install workflow; select a committed private site "
                                          "with --config DIR and run thermite install (or thermite upgrade for a new application)")
             from oh_cli.install import main as install

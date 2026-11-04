@@ -385,6 +385,16 @@ class Lifecycle(PrivateFixture):
         json_private(gateway.journal_path, journal)
         return gateway
 
+    def test_every_access_unit_logs_under_its_own_name_not_env(self):
+        units = staging.units(self.root / "release", state=self.root / "state", callbacks=True)
+        self.assertEqual(set(units), set(staging.ACCESS_UNITS))
+        for name, text in units.items():
+            with self.subTest(unit=name):
+                service = text.split("[Service]\n", 1)[1].split("\n\n", 1)[0].splitlines()
+                self.assertTrue(any(line.startswith("ExecStart=:/usr/bin/env -- ") for line in service))
+                self.assertEqual([line for line in service if line.startswith("SyslogIdentifier=")],
+                                 ["SyslogIdentifier=" + name.removesuffix(".service")])
+
     def test_failed_migration_never_activates_and_retry_reuses_backup_and_release(self):
         gateway, system = self.gateway(), Host()
         system.installed = Path("/srv/old-release")
@@ -474,6 +484,33 @@ class Lifecycle(PrivateFixture):
         with patch.object(gateway, "_https", side_effect=[ValueError("stopped"), "https://house.example.test:13600"]):
             self.assertEqual(gateway.perform(system), 0)
         self.assertNotEqual(json.loads(gateway.journal_path.read_bytes())["backup"], original)
+
+    def test_each_activation_reaches_the_deploy_history_once_and_a_missed_one_is_retried(self):
+        gateway, system = self.gateway(), Host()
+        events, answers = [], [False, True, True]
+
+        def record(seen, event):
+            self.assertIs(seen, system)
+            events.append(event)
+            return answers.pop(0)
+
+        gateway.record = record
+        with patch.object(gateway, "_https", return_value="https://house.example.test:13600"):
+            self.assertEqual(gateway.perform(system), 0, "an unrecorded activation still succeeds")
+            journal = json.loads(gateway.journal_path.read_bytes())
+            self.assertEqual(events, [{"commit": "a" * 40, "application": {"version": "1.2.3", "digest": "b" * 64},
+                                       "release": str(self.root / "release"), "previous_release": "/srv/old-release",
+                                       "backup": journal["backup"]}])
+            self.assertIn("   The gateway release was not added to thermite history; its record stays in "
+                          + str(gateway.journal_path), system.messages)
+            self.assertEqual(gateway.perform(system), 0)
+            self.assertEqual(events[1], events[0], "the next run records the activation it missed")
+            self.assertEqual(gateway.perform(system), 0)
+            self.assertEqual(len(events), 2, "a recorded activation is not recorded again")
+        with patch.object(gateway, "_https", side_effect=[ValueError("stopped"), "https://house.example.test:13600"]):
+            self.assertEqual(gateway.perform(system), 0)
+        self.assertEqual(len(events), 3, "a repair is a new activation with its own backup")
+        self.assertNotEqual(events[2]["backup"], events[0]["backup"])
 
     def test_completed_release_repairs_changed_protected_unit_before_success(self):
         gateway, system = self.gateway(), Host()
