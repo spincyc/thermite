@@ -106,8 +106,11 @@
   // Delays before reopening event streams a browser closed for good.
   const REOPEN_MS = [1000, 2000, 5000, 15000, 30000];
   const EVENT_TYPES = { command: "ItemCommandEvent", stateupdated: "ItemStateUpdatedEvent", statechanged: "ItemStateChangedEvent" };
-  // Three SSE connections and two background reads leave an HTTP/1.1 origin
-  // connection available for controls. Commands never enter this queue.
+  // Over HTTP/1.1 a browser allows six connections per origin across all its
+  // tabs: three SSE connections and two background reads leave one for
+  // controls. The authenticated gateway serves HTTP/2, which carries them all
+  // on one connection; HTTP/1.1 origins and clients still need this budget.
+  // Commands never enter this queue.
   const BACKGROUND_READS = 2;
   const SNAPSHOT_TIMEOUT = 8000;
 
@@ -1170,7 +1173,8 @@
     if (this.timers.reopen.unref) this.timers.reopen.unref();
   };
 
-  // Hidden browser tabs must release the origin's limited HTTP/1.1 slots.
+  // Hidden browser tabs release their event streams, which hold an HTTP/1.1
+  // origin's few connections and the gateway's per-peer stream allowance.
   // TUI callers remain active unless they explicitly opt into this lifecycle.
   OpenHabBackend.prototype.setActive = function (active) {
     const next = Boolean(active);

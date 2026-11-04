@@ -31,8 +31,10 @@ MAX_GLOBS = 8
 MAX_TOPICS = 1000
 # Streams are unauthenticated for Guests and each holds upstream connections.
 # One web remote opens up to three (web/remote/backend.js EVENT_STREAMS), so a
-# client with a few pages and a terminal fits; the total leaves most of the
-# service's 100 connections (oh_access/service.py) for ordinary requests.
+# client with a few pages and a terminal fits. Over HTTP/2 one browser carries
+# them all on one connection; HTTP/1.1 clients still spend a connection each.
+# The total leaves most of the gateway's 100 in-flight requests
+# (oh_access/service.py MAX_REQUESTS) for ordinary requests.
 PEER_STREAMS = 12
 TOTAL_STREAMS = 64
 TYPES = {"stateupdated": "ItemStateUpdatedEvent", "statechanged": "ItemStateChangedEvent", "command": "ItemCommandEvent"}

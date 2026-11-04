@@ -68,6 +68,13 @@ that command batches drain before transport pools close, inside server shutdown
 before Uvicorn re-raises SIGTERM. An idempotent outer cleanup still handles
 startup/listener errors.
 
+The gateway has since moved from Uvicorn to Hypercorn to serve HTTP/2. Its
+shutdown keeps the order and bounds tested here: 15 seconds for held requests,
+5 seconds for leftover tasks, then the command drain and transport close. It
+then returns normally instead of re-raising SIGTERM, so systemd records exit
+status 0. The stop measurements in this document describe the Uvicorn
+artifacts; they are not a guest acceptance claim for the Hypercorn gateway.
+
 Boot-report collection retains its absolute deadline and strict response
 validation while using full Things DTOs only for final classification. Native
 readiness uses the same exact account-free HEOS warning predicate as `main`;
@@ -201,7 +208,7 @@ Authenticated held-stream shutdown is a separate check: bounded Uvicorn
 shutdown closes the stream and re-raises SIGTERM. Systemd reports
 `Result=success`, `ExecMainCode=2`, `ExecMainStatus=15`; that is successful
 shutdown, not a zero-process-exit-status claim. All owned guests subsequently
-completed clean poweroff.
+completed clean poweroff. (The later Hypercorn gateway exits 0; see above.)
 
 The passive display remains `passive_endpoint:example_tv`, with degraded
 enforcement. This fixture establishes no physical picture/sound, hardware

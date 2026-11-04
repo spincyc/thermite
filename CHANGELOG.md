@@ -31,6 +31,13 @@ rollback. The unified deployment workflow uses a separate committed private site
   locks out, a username; room commands no longer evict the security audit;
   server and worker errors are logged; event streams are capped; responses carry
   a Content-Security-Policy, `Allow` and `Retry-After`; SQLite runs in WAL mode.
+- The HTTPS gateway serves HTTP/2, so several open remote pages no longer
+  starve each other. Over HTTP/1.1 a browser shares six connections per origin
+  between its tabs, and two visible remotes' event streams held all six, so
+  policy reads, commands and assets queued until controls paused. The gateway
+  now runs on Hypercorn instead of Uvicorn, with the same certificate, 100
+  requests in flight (each HTTP/2 stream counting alone), 5 s keep-alive and a
+  15 s shutdown deadline; WebSocket handshakes are refused.
 - A locked room no longer blocks shared sources in other rooms: another room is
   refused only what would change the locked room's route, such as driving a
   device it is showing. Lock and Unlock live under Info on Remotes; the remote

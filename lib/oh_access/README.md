@@ -137,7 +137,11 @@ matching backup before activating the prior release. Do not mix an older
 database with newer signing keys or a different site identity.
 
 `serve --config …` loads a private compiled contract and explicit host list,
-validates the TLS certificate/key, and runs one direct-TLS ASGI process. It
+validates the TLS certificate/key, and runs one direct-TLS ASGI process on
+Hypercorn. TLS 1.2 or later offers HTTP/2 before HTTP/1.1, so one browser's
+pages share a connection. At most 100 requests run at once, each HTTP/2 stream
+counting alone, and more are answered 503; WebSocket handshakes are refused.
+Shutdown gives requests 15 seconds, then cancels the rest. It
 does not trust proxy headers, environment HTTP proxies, redirects, cookies
 from the native runtime, or arbitrary caller-supplied upstream URLs. The
 separate `worker --config …` uses the same SQLite database and sorted
