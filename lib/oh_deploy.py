@@ -952,7 +952,8 @@ def render_slice() -> str:
         "Description=Thermite services",
         "",
         "[Slice]",
-        "CPUAccounting=yes",
+        # No CPUAccounting=: cgroup v2 always accounts CPU, and current
+        # systemd ignores the option with a warning at every unit load.
         "MemoryAccounting=yes",
         "TasksAccounting=yes",
         "",

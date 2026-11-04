@@ -240,7 +240,9 @@ class Units(unittest.TestCase):
                     self.assertNotIn("Wants", parsed["Unit"])
                     self.assertNotIn("Requires", parsed["Unit"])
                 elif name == deploy.SLICE:
-                    self.assertEqual(parsed["Slice"]["CPUAccounting"], "yes")
+                    # Current systemd ignores CPUAccounting= with a warning
+                    # at every load; cgroup v2 always accounts CPU.
+                    self.assertNotIn("CPUAccounting", parsed["Slice"])
                     self.assertEqual(parsed["Slice"]["MemoryAccounting"], "yes")
                     self.assertNotIn("Install", parsed)
                 else:
