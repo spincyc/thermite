@@ -19,6 +19,7 @@ import oh_cli
 import oh_render as render
 import oh_sandbox as lib
 from oh_features import all_off, remote, routing
+from oh_integrations import _instr as instr, vrroom_http
 
 SUMMARY = "the room Source selectors end to end, against simulated matrices"
 
@@ -82,8 +83,9 @@ STAND_INS = "yaml/routing-check.yaml"
 COMMAND = re.compile(r"Item '([^']+)' received command (.*?)(?: \(source: .*\))?$")
 STOP_TIMEOUT = 3
 SIGNAL_WAIT = 30
-#: Seconds a step may take: a poll (2s), a command and its re-read.
-STEP = 15
+#: Seconds a step may take: a poll of a matrix or HDMI switch Thing and its
+#: timeout, a command and its re-read.
+STEP = max(instr.REFRESH, vrroom_http.REFRESH) + 10
 EXECUTOR_QUIET = 0.25
 #: The event stream the remote page listens to (web/remote/backend.js).
 REMOTE_EVENTS = "/rest/events?topics=openhab/items/loc_*_source/stateupdated"
