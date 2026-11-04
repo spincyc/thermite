@@ -15,7 +15,6 @@ tests/test_remote_ui.py keeps them so.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 
@@ -70,7 +69,7 @@ def served_manifest(content: str, versions: dict[str, str] | None = None) -> str
 
 
 def asset_versions(files: dict) -> dict[str, str]:
-    return {name: hashlib.sha256(value.encode() if isinstance(value, str) else value).hexdigest()[:16]
+    return {name: oh_routes.asset_version(value.encode() if isinstance(value, str) else value)
             for name in FILES if not name.endswith(".html")
             for value in [files[f"{TARGET}/{name}"]]}
 
