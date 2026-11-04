@@ -1063,22 +1063,34 @@ examples:
                                     the same for a runtime state somewhere else
 </pre>
 </section>
-<section class="verb" id="history"><h3><code>thermite history</code></h3><p>This host&#x27;s deploys, numbered, the latest last.</p><pre class="help">usage: thermite history [-h] [--config DIR] [--last N] [--json] [--state DIR]
+<section class="verb" id="history"><h3><code>thermite history</code></h3><p>This host&#x27;s deploys, numbered, the latest last.</p><pre class="help">usage: thermite history [-h] [--config DIR] [--last N] [--details] [--json]
+                        [--state DIR]
 
-List, read-only, what thermite deploy and thermite rollback installed on
+List, read-only, what thermite install, upgrade and rollback deployed on
 this host, from &lt;state&gt;/deploy/history: numbered from the first deploy,
 oldest first and the latest last, one line each: the number, when (UTC),
 the commit, who deployed it, whether thermite test boot had passed on its
-conf/ here, and its subject. * marks the one deployed now; a rollback says
-so after its subject. thermite rollback deploys the one before it.
+conf/ here, and its subject, followed by how it came when not a plain
+deploy (install, upgrade or rollback). * marks the one deployed now.
+thermite rollback deploys the one before it.
+
+--details adds what each deploy recorded: the files it added (+), changed
+(~) and removed (-) in each tree, what became of the reloads and restarts
+they asked for, the state backup an upgrade took first, and each HTTPS
+gateway release an install or upgrade then activated, with the release it
+replaced and the identity backup taken before migrating. --json has all of
+it, with up to 50 paths of each kind per tree and exact counts.
 
 Deploys from before the history recorded the boot test show ? there,
-except the one deployed now, which deployed.json describes.
+except the one deployed now, which deployed.json describes; older deploys
+have no details. Each deploy also writes a start and an end line to the
+journal: journalctl -t thermite-deploy.
 
 options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
   --last N              the last N deploys; 0 for every one (default: 10)
+  --details             also what each deploy changed, reloaded, backed up and activated
   --json                print the report as JSON
   --state DIR           the runtime state (default: runtime/ in instance/host.yaml&#x27;s
                         root, /srv/thermite)
@@ -1090,6 +1102,8 @@ switches every verb takes:
 
 examples:
   thermite history                  the last 10 deploys here
+  thermite history --last 1 --details
+                                    what the latest one changed, reloaded and activated
   thermite history --last 0         every one
   thermite history --json           the same, as JSON
   thermite history --state /tmp/state
@@ -1949,6 +1963,8 @@ actions:
     worker              run the single room-policy worker
     verify              verify service custody without initializing state
     prune               delete saved policies for rooms the compiled house no longer has
+    audit               read the security audit (logins, tokens, accounts, locks, the
+                        security switch)
     callbacks           run the explicitly configured plaintext UPnP NOTIFY listener
     login               log this terminal into a site
     logout              revoke this terminal&#x27;s site credential
@@ -1977,6 +1993,8 @@ examples:
                                     run the single supervised room-policy worker
   thermite access prune --config /srv/thermite/access/releases/RELEASE/config.json
                                     delete saved policies for rooms the house no longer has
+  thermite access audit --config /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login
+                                    read the security audit as the service account
 </pre>
 <details id="access-bootstrap"><summary><code>thermite access bootstrap</code></summary><pre class="help">usage: thermite access bootstrap [-h] --config CONFIG --user USER
 
@@ -2097,6 +2115,28 @@ switches every verb takes:
 examples:
   thermite access prune --config /srv/thermite/access/releases/RELEASE/config.json
                                     delete saved policies for rooms the house no longer has
+</pre></details>
+<details id="access-audit"><summary><code>thermite access audit</code></summary><pre class="help">usage: thermite access audit [-h] --config CONFIG [--since WHEN] [--action ACTION]
+                             [--json]
+
+Read the security audit (logins, tokens, accounts, locks, the security switch).
+
+options:
+  -h, --help       show this help message and exit
+  --config CONFIG  private site service configuration
+  --since WHEN     only rows since 30m, 12h, 7d, or an ISO date or time (site timezone)
+  --action ACTION  only this action or family, such as login, token or room.lock
+                   (repeatable)
+  --json           print the report as JSON
+
+switches every verb takes:
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access audit --config /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login
+                                    read the security audit as the service account
 </pre></details>
 <details id="access-callbacks"><summary><code>thermite access callbacks</code></summary><pre class="help">usage: thermite access callbacks [-h] --config CONFIG
 

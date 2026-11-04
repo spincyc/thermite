@@ -418,6 +418,100 @@ Weigh the trade-offs before enabling it:
   leaves this port alone; on a host with its own firewall, open 13626/tcp
   (or your `port`) from the guest network, and from nowhere else.
 
+## Trace a command
+
+Every command gets an 8-character ID, such as `1a2b3c4d`. The gateway
+(`thermite-access.service`) or the policy worker
+(`thermite-access-worker.service`) logs it in one `cmd` line; openHAB
+receives it as the command's event source, `thermite.<origin>:<id>`; and the
+routing rule logs the route and each device step it caused with
+`route=<id>` in `thermite-openhab.service`'s journal, which carries
+openhab.log (events.log stays a file in openHAB's userdata). One search
+therefore follows a command from the client to the devices. Reading the
+system journal needs membership in the `systemd-journal` group (or `adm`,
+`wheel` where the distribution grants it, or sudo).
+
+Who turned the den off around 18:00, and from where:
+
+```sh
+journalctl -u thermite-access.service -u thermite-access-worker.service \
+  -S '2026-11-04 17:55' -U '2026-11-04 18:05' -g 'cmd .*room=den .*value=off'
+```
+
+`origin` is `web`, `tui`, `guest` (the plain-HTTP Guest listener), `api` (a
+client that does not name itself), `all_off`, `schedule` or `repair` (the
+worker). `client` is the browser tab's `web/<tab>` or the terminal's
+`tui/<host>`: a label the client sends, not proof. `user` and `principal`
+(`session`, `token`, `guest`, `local` or `worker`) name who sent it; `token`
+is the first 8 characters of a personal token's ID, and a terminal names its
+token after its host. `peer` is the first 8 characters of a keyed digest of
+the client's address, never the address: match it against other lines, such
+as that account's `audit action=login` lines. A room's All off command
+carries `batch=` the `id` of its `all_off` line. `req` is the request's
+`X-Request-Id`.
+
+Why a switch failed or was slow:
+
+```sh
+journalctl -u thermite-access.service -g 'cmd .*outcome=runtime_unavailable'
+journalctl -u thermite-access.service -g 'cmd .* ms=[0-9]{4,}'
+journalctl -u thermite-access.service -u thermite-openhab.service -g 1a2b3c4d
+```
+
+`outcome` is `accepted` (openHAB took the command), a refusal (`room_locked`,
+`device_locked`, `runtime_busy`, `policy_unavailable`) or
+`runtime_unavailable(http=503)` or `runtime_unavailable(exc=ConnectTimeout)`:
+openHAB's HTTP status or the exception class, never a message. `ms` includes
+the wait for the room's lock. In openHAB's journal, `routing command` is the
+routing rule receiving it, each `routing ticket` line one device step (its
+`resource`, `value`, `outcome`, `reason`, whether a read-back confirmed it,
+`ms`, `wait` in the queue, `polls`, and an HTTP status or exception class),
+and a `routing deadline` warning names the steps still waiting, cleaning up or
+failed when the route's time ran out:
+
+```sh
+journalctl -u thermite-openhab.service -g 'routing ticket .*(reason=[a-z]|readback=unconfirmed)'
+journalctl -u thermite-openhab.service -g 'routing (deadline|ticket .* ms=[0-9]{4,})'
+```
+
+Which lock blocked a command, and who set it:
+
+```sh
+journalctl -u thermite-access.service -g 'cmd .*outcome=(room_locked|device_locked)'
+journalctl -u thermite-access.service -g 'audit action=(room\.lock|room\.unlock|policy\.update) .*target=den'
+journalctl -u thermite-access-worker.service -g '(boundary|phase) .*room=den'
+```
+
+`lock=manual` is an administrator's manual lock and `lock=schedule` a
+schedule, held by `lock_room` (a shared device can be locked by another
+room). The `audit` lines name who locked or unlocked the room or saved its
+schedule, when and from which `peer`; the worker's `boundary` and `phase`
+lines say when a schedule window started or ended and what it sent.
+
+Security events: every audit row is also an `audit` line.
+
+```sh
+journalctl -u thermite-access.service -g 'audit action='
+journalctl -u thermite-access.service -g 'audit action=login outcome=denied'
+journalctl -u thermite-access.service -u thermite-access-worker.service -p warning
+journalctl -u thermite-openhab.service -g '^\[(WARN|ERROR)'
+RELEASE=$(systemctl show -P WorkingDirectory thermite-access.service)
+sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" \
+  access audit --config "$RELEASE/config.json" --since 7d --action login
+```
+
+A denied sign-in names the account's ID in `target` when the name exists,
+and never what was typed. `thermite access audit` reads the audit table,
+which outlives the journal's retention: the latest 5000 events and 1000
+denied sign-ins. Requests that change something or fail have a `req` line
+(method, path, status, `ms`, `peer`); successful reads and polls have none.
+Event streams log `stream open` and `stream close` with their duration and
+the peer's and gateway's stream counts. openHAB writes everything to the
+journal at one priority, so its warnings are found by their `[WARN ]` text.
+Deploys write a start and an end line, `journalctl -t thermite-deploy`, and
+`thermite history --details` lists what each changed and reloaded and the
+gateway release it activated.
+
 ## Update or remove
 
 Use the same owner command from any directory; `--native-timeout SECONDS`

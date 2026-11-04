@@ -78,6 +78,30 @@ rollback. The unified deployment workflow uses a separate committed private site
   `CPUAccounting=` (cgroup v2 always accounts CPU). The thingHandler telemetry
   rule changes its observed time once per 15 s sample instead of twice, about
   5,800 fewer events.log lines a day.
+- Commands are traceable. Every command from Remotes, the terminal, Guests,
+  All off and the policy worker gets an 8-character ID and one journal line
+  naming its origin, the client's own label, the account and credential, the
+  request, room, item, value, outcome (the lock that refused it, or openHAB's
+  HTTP status or exception class) and duration. openHAB records the ID as the
+  command's event source, and the routing rule logs each device step and
+  missed deadline under it. Audit rows also go to the journal, and
+  `thermite access audit` reads them; requests that change something or fail,
+  event streams, worker boundaries, repairs and phase changes are logged, and
+  every response carries `X-Request-Id`. Addresses appear only as a keyed
+  digest and pairing values never. Token sign-ins are audited as password
+  sign-ins with their peer, lock and Security changes name their peer, a
+  terminal's token is named after its host, and a denied sign-in records an
+  existing account's ID instead of the typed name. openHAB's own log
+  (openhab.log, with the pairing filter) also reaches the journal under
+  `thermite-openhab.service`; events.log stays a file. Each deploy writes a
+  start and an end line (`journalctl -t thermite-deploy`), and `thermite
+  history --details` shows the paths it changed, what became of each reload
+  and restart, the upgrade's state backup and the gateway release it
+  activated, with the release it replaced and its identity backup. Every
+  unit logs under its own name instead of `env` or `systemctl`. "Trace a
+  command" in the installation guide lists the searches. The next install
+  or upgrade reruns native preparation once to route the log, restarting
+  openHAB.
 - A locked room no longer blocks shared sources in other rooms: another room is
   refused only what would change the locked room's route, such as driving a
   device it is showing. Lock and Unlock live under Info on Remotes; the remote
