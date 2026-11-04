@@ -86,7 +86,10 @@ class EventRuntime(FakeRuntime):
     """The fake runtime with native events: one upstream subscription that
     reports one update, then stays quiet until the gateway closes it."""
 
+    subscriptions = 0
+
     async def subscribe(self, filters, *, project, opened=None):
+        self.subscriptions += 1
         opened()
         value = project({"topic": TOPIC, "type": "ItemStateUpdatedEvent",
                          "payload": json.dumps({"type": "String", "value": "player"})})

@@ -10,24 +10,28 @@ import socket
 import tempfile
 import threading
 import time
+from contextlib import AsyncExitStack
 from pathlib import Path
 from urllib.parse import parse_qs, urljoin, urlsplit
 
+import httpx
 from asgiref.sync import async_to_sync
 from django.conf import settings
-from django.test import AsyncClient, Client, RequestFactory, SimpleTestCase, TestCase, TransactionTestCase
+from django.test import AsyncClient, Client, RequestFactory, SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.urls import resolve
 
 from oh_access import service
 from oh_access.guest import SCOPE, Listener
 from oh_features.remote import FILES
 from oh_features.remote_system import ADMIN_ASSETS
-from oh_identity import guest
+from oh_identity import guest, streams
+from oh_identity.asgi import application
 from oh_identity.batches import commands
 from oh_identity.models import RoomPolicy, SecurityState
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter
 from oh_identity.services import bootstrap, issue_token
 from oh_identity.tests.test_core import PASSPHRASE, FakeRuntime, Policy, adapter
+from oh_identity.tests.test_gateway_server import HOST as LOOPBACK, EventRuntime, Running, Seen
 from oh_identity.urls import urlpatterns
 from oh_routes import asset_version
 
@@ -527,3 +531,88 @@ class Sockets(SimpleTestCase):
                 service._run_server(self.listeners(service.Admission(self.app)))
         self.assertEqual(stopped.exception.code, service.STARTUP_FAILURE)
         self.assertIn("Access server could not bind", logs.output[0])
+
+
+#: The Guest browser's address: the listener closes connections from its own.
+PEER = "127.0.0.2"
+
+
+class GuestListener(Running):
+    """The plain-HTTP Guest listener alone on loopback, bound as service.serve
+    binds it, admitting the one peer address PEER."""
+
+    def __init__(self, application, *, graceful=2):
+        with socket.socket() as probe:
+            probe.bind((LOOPBACK, 0))
+            self.port = probe.getsockname()[1]
+        config = {"allowed_hosts": [LOOPBACK], "port": self.port + 1,
+                  "guest_http": {"port": self.port, "listen": [LOOPBACK], "clients": [PEER + "/32"], "names": []}}
+        (marked, listener), = service.guest_listeners(config, application)
+        listener.graceful_timeout = graceful
+        self.config, self.sockets = listener, listener.create_sockets()
+        self.bound = [(marked, listener, self.sockets)]
+        self.drained = threading.Event()
+        self.started = threading.Event()
+
+
+@override_settings(ALLOWED_HOSTS=[LOOPBACK])
+class GuestHttp11Gateway(TransactionTestCase):
+    """A Guest's browser on the plain-HTTP listener: HTTP/1.1, and at most six
+    connections to the origin shared by all of its tabs, each event stream
+    holding one for as long as its page is shown."""
+
+    def setUp(self):
+        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
+        self.runtime = EventRuntime()
+        install_adapter(RuntimeAdapter(adapter().contract, self.runtime, Policy()))
+
+    def test_one_stream_per_page_leaves_a_browsers_six_connections_room_for_requests(self):
+        # Three Remotes tabs, Home and Topology: one stream each
+        # (web/remote/backend.js). The remote's earlier three streams a page
+        # filled all six connections with two Remotes tabs.
+        pages = ("remote", "remote", "remote", "home", "home")
+        seen = Seen(application)
+
+        async def exercise(port):
+            limits = httpx.Limits(max_connections=6, max_keepalive_connections=6)
+            transport = httpx.AsyncHTTPTransport(local_address=PEER, limits=limits)
+            async with httpx.AsyncClient(transport=transport, trust_env=False, timeout=10,
+                                         base_url=f"http://{LOOPBACK}:{port}") as client, AsyncExitStack() as stack:
+                held = [await stack.enter_async_context(client.stream("GET", "/api/v1/events/" + view)) for view in pages]
+                self.assertEqual({(each.status_code, each.http_version) for each in held}, {(200, "HTTP/1.1")})
+                # A page keeps reading its stream; a dropped line iterator would close it.
+                lines = [each.aiter_lines() for each in held]
+
+                async def snapshot(page):
+                    while not (line := await anext(page)).startswith("data:"):
+                        pass
+                    return json.loads(line[5:])
+                frames = await asyncio.gather(*(snapshot(page) for page in lines))
+                self.assertEqual([(frame["type"], frame["view"]) for frame in frames], [("snapshot", view) for view in pages])
+                self.assertEqual(streams.slots.count(), len(pages))
+                # Every page's reads and a command share the sixth connection.
+                started = time.monotonic()
+                answers = await asyncio.gather(*(client.get(path) for path in ("/api/v1/me", "/api/v1/locks", "/api/v1/rooms/den/policy") * 3),
+                                               client.post("/api/v1/rooms/den/commands", json={"action": "source", "value": "player"},
+                                                           headers={"Origin": f"http://{LOOPBACK}:{port}"}))
+                elapsed = time.monotonic() - started
+                # A sixth stream takes the last connection: nothing else is served.
+                await stack.enter_async_context(client.stream("GET", "/api/v1/events/home"))
+                with self.assertRaises(httpx.PoolTimeout):
+                    await client.get("/api/v1/locks", timeout=httpx.Timeout(10, pool=.5))
+                self.assertEqual(streams.slots.count(), len(pages) + 1)
+                del lines
+                return answers, elapsed
+
+        with GuestListener(service.Admission(seen)) as server:
+            answers, elapsed = asyncio.run(exercise(server.port))
+        self.assertEqual([answer.status_code for answer in answers], [200] * 9 + [202])
+        self.assertEqual({answer.json().get("username") for answer in answers[:9:3]}, {"Guest"})
+        self.assertLess(elapsed, 2)
+        connections = {client for kind, _, client in seen.scopes if kind == "http"}
+        self.assertEqual({version for kind, version, _ in seen.scopes if kind == "http"}, {"1.1"})
+        self.assertEqual(len(connections), 6)
+        self.assertEqual({client[0] for client in connections}, {PEER})
+        # Every stream, of either view, is served from one upstream subscription.
+        self.assertEqual(self.runtime.subscriptions, 1)
+        self.assertEqual(streams.slots.count(), 0)
