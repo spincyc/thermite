@@ -38,6 +38,46 @@ rollback. The unified deployment workflow uses a separate committed private site
   now runs on Hypercorn instead of Uvicorn, with the same certificate, 100
   requests in flight (each HTTP/2 stream counting alone), 5 s keep-alive and a
   15 s shutdown deadline; WebSocket handshakes are refused.
+- The web and terminal remotes no longer pause controls while a room's lock
+  status is unknown. Commands are sent unless the room is known to be locked,
+  and the server still refuses them in a locked room. After a refusal the
+  remote reads the lock again. If the lock can't be read, the remote shows
+  "Room lock status unknown" instead of "Control is paused".
+- The gateway caches its web files. Generated pages already name each script,
+  style and icon with a hash of its contents; the gateway now serves those URLs
+  as immutable for a year when the hash matches and otherwise asks the browser
+  to revalidate. Shared files carry an ETag and answer unchanged requests with
+  304, and static text is gzipped. Pages that need a signed-in principal, house
+  data and administrative files are still never stored or compressed. The
+  gateway no longer logs Django's synchronous-iterator warning for every file
+  it serves.
+- The HDMI and USB matrices, the VRROOM and the Dr. HDMI are polled every 10 s
+  instead of every 2 s, with a 2 s timeout instead of 3 s. A switch made at a
+  front panel or a vendor web page can take up to 10 s to show; choices made in
+  Thermite are still read back about a second after they are sent. One poll no
+  longer overlaps the next on the matrices' one-at-a-time web API, and a matrix
+  that sends headers but no answer shows as offline rather than online with
+  unknown state. These Things send about a fifth of the events they did.
+- The room policy worker compiles each room's route for a choice once and
+  reuses it, instead of compiling it again on every step and boundary check.
+- An upgrade restarts only the services whose generated unit files changed. An
+  openHAB-only change stops openHAB alone and repairs ownership of only its
+  trees, so the HTTPS gateway, the Apple TV helper and monitoring keep running;
+  Grafana starts again straight after the pre-upgrade backup. A missing
+  service-account receipt, account or state directory still stops everything
+  for a full repair. openHAB's unit wants the native-port boundary instead of
+  requiring it, so reapplying the boundary no longer restarts openHAB; openHAB
+  still loads the same rules before every start and never starts without them.
+  The metrics exporter and notifications run under an init (`catatonit`, now
+  installed on Ubuntu) and stop on SIGTERM instead of being killed.
+- openHAB's Java heap is capped at 1.5 GiB, and a heap that still runs out
+  exits so systemd restarts openHAB; the sandbox uses the same options.
+- Quieter logs: Grafana logs warnings, keeps its search-manifest watcher to
+  errors and no longer loads the 13 bundled data source plugins Thermite does
+  not use; ntfy logs warnings; `thermite.slice` drops the deprecated
+  `CPUAccounting=` (cgroup v2 always accounts CPU). The thingHandler telemetry
+  rule changes its observed time once per 15 s sample instead of twice, about
+  5,800 fewer events.log lines a day.
 - A locked room no longer blocks shared sources in other rooms: another room is
   refused only what would change the locked room's route, such as driving a
   device it is showing. Lock and Unlock live under Info on Remotes; the remote
