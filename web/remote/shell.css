@@ -15,6 +15,7 @@ body.thermite-app { --thermite-nav-width: 176px; --thermite-header-height: 0px; 
 .thermite-shell button { font: inherit; min-height: 36px; padding: 7px 10px; border: 1px solid var(--th-line); border-radius: 7px; color: var(--th-text); background: transparent; cursor: pointer; }
 .thermite-shell .thermite-theme { width: 38px; margin: auto 8px 0; font-size: 18px; }
 .thermite-shell .thermite-menu { display: none; }
+.thermite-shell .thermite-menu svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .thermite-shell :focus-visible { outline: 2px solid var(--th-focus); outline-offset: 2px; }
 .thermite-content { margin-left: var(--thermite-nav-width); min-width: 0; }
 .thermite-content :is(h1,h2,h3,p,code) { overflow-wrap: anywhere; }
@@ -45,8 +46,10 @@ body.thermite-app { --thermite-nav-width: 176px; --thermite-header-height: 0px; 
   .thermite-shell { position: sticky; inset: auto; top: 0; width: 100%; height: var(--thermite-header-height); padding: 4px 12px; flex-direction: row; align-items: center; gap: 10px; border-right: none; border-bottom: 1px solid var(--th-line); }
   .thermite-shell .thermite-brand { padding: 0; flex: none; font-size: 14px; }
   .thermite-breadcrumbs { display: flex; flex: 1; }
-  .thermite-shell .thermite-menu { display: block; }
-  .thermite-shell .thermite-theme { margin: 0; }
+  .thermite-shell .thermite-menu { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 40px; height: 40px; min-height: 0; margin-left: -6px; padding: 0; border-color: transparent; }
+  .thermite-shell .thermite-menu:hover, .thermite-shell .thermite-menu[aria-expanded="true"] { background: var(--th-raised); }
+  .thermite-shell .thermite-theme { margin: 0; width: 40px; height: 40px; min-height: 0; padding: 0; border-color: transparent; }
+  .thermite-shell .thermite-theme:hover { background: var(--th-raised); }
   .thermite-navigation { display: none; position: absolute; top: calc(var(--thermite-header-height) - 1px); left: 0; width: min(260px,100vw); padding: 12px; background: var(--th-surface); border: 1px solid var(--th-line); border-left: 0; border-radius: 0 0 9px 0; box-shadow: 0 12px 24px #0002; }
   .thermite-shell.is-open .thermite-navigation { display: flex; }
   .thermite-content { margin-left: 0; }

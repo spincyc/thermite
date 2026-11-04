@@ -24,8 +24,14 @@
   const brand = link(pages[0], "thermite-brand"); brand.textContent = "";
   const mark = node("img", "thermite-mark"); mark.src = navigation.asset("mark.svg"); mark.alt = ""; mark.width = 44; mark.height = 35;
   brand.append(mark, node("span", "", "thermite"));
-  const menu = node("button", "thermite-menu", "Views"); menu.type = "button";
-  menu.setAttribute("aria-expanded", "false"); menu.setAttribute("aria-controls", "thermite-navigation");
+  // Three bars at the left of a narrow header open the views; wide screens show them as a sidebar.
+  const menu = node("button", "thermite-menu"); menu.type = "button";
+  menu.setAttribute("aria-label", "Menu"); menu.setAttribute("aria-expanded", "false"); menu.setAttribute("aria-controls", "thermite-navigation");
+  const bars = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  bars.setAttribute("viewBox", "0 0 24 24"); bars.setAttribute("aria-hidden", "true"); bars.setAttribute("focusable", "false");
+  const lines = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  lines.setAttribute("d", "M4 6.5h16M4 12h16M4 17.5h16");
+  bars.appendChild(lines); menu.appendChild(bars);
   const nav = node("nav", "thermite-navigation"); nav.id = "thermite-navigation";
   nav.setAttribute("aria-label", "thermite views");
   pages.forEach(entry => {
@@ -44,20 +50,19 @@
     document.documentElement.dataset.theme = mode;
     try { localStorage.setItem("remote.theme", mode); } catch (_) {}
   });
-  menu.addEventListener("click", () => {
-    const open = menu.getAttribute("aria-expanded") !== "true";
-    menu.setAttribute("aria-expanded", String(open)); shell.classList.toggle("is-open", open);
-  });
+  const setOpen = open => { menu.setAttribute("aria-expanded", String(open)); shell.classList.toggle("is-open", open); };
+  menu.addEventListener("click", () => setOpen(menu.getAttribute("aria-expanded") !== "true"));
+  document.addEventListener("click", event => { if (shell.classList.contains("is-open") && !shell.contains(event.target)) setOpen(false); });
   // A focused navigation control owns its keys, including on the Remote page.
   shell.addEventListener("keydown", event => {
-    if (event.key === "Escape") { shell.classList.remove("is-open"); menu.setAttribute("aria-expanded", "false"); menu.focus(); }
+    if (event.key === "Escape" && shell.classList.contains("is-open")) { setOpen(false); menu.focus(); }
     event.stopPropagation();
   });
   const content = node("div", "thermite-content");
   const crumbs = node("nav", "thermite-breadcrumbs"); crumbs.setAttribute("aria-label", "Page hierarchy");
   if (page.parent) { crumbs.append(link(pages.find(entry => entry.id === page.parent)), node("span", "", "›")); }
   const active = node("span", "", page.label); active.setAttribute("aria-current", "page"); crumbs.append(active);
-  shell.append(brand, crumbs, menu, nav, theme);
+  shell.append(menu, brand, crumbs, nav, theme);
   const main = document.querySelector("main, .app");
   if (!main) return;
   main.before(shell, content); content.appendChild(main);

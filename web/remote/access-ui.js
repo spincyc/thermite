@@ -126,12 +126,17 @@
     });
   }
   const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  // Day toggles: a real checkbox per day, shown as a chip.
   function days(values) {
-    const field = node("div", null, { class: "access-days" });
-    DAYS.forEach((name, id) => { const label = input(name, "day", "checkbox", values.includes(id)); label.firstElementChild.value = id; field.appendChild(label); });
+    const field = node("fieldset", null, { class: "access-days" }); field.appendChild(node("legend", "Days", { class: "sr-only" }));
+    DAYS.forEach((name, id) => {
+      const chip = node("label", null, { class: "access-day" }), box = node("input", null, { type: "checkbox", name: "day", value: id });
+      box.checked = values.includes(id); chip.append(box, node("span", name)); field.appendChild(chip);
+    });
     return field;
   }
   const selectedDays = (row) => Array.from(row.querySelectorAll('[name="day"]:checked'), (item) => Number(item.value));
+  const clock = (value) => { const at = new Date(value); return Number.isFinite(at.getTime()) ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""; };
   let turn = 0, revision = 0, currentRoom = null, serial = 0;
   async function policy() {
     const selector = $("[data-policy-room]");
@@ -139,46 +144,69 @@
     let requested = new URLSearchParams(location.search).get("room");
     if (!requested) { try { requested = localStorage.getItem("remote.room"); } catch (_) {} }
     if (house.rooms.some((room) => room.id === requested)) selector.value = requested;
-    selector.addEventListener("change", readPolicy); $("[data-policy-reload]").addEventListener("click", readPolicy); await readPolicy();
+    selector.addEventListener("change", () => {
+      try { const address = new URL(location.href); address.searchParams.set("room", selector.value); history.replaceState(null, "", address); } catch (_) {}
+      readPolicy();
+    });
+    await readPolicy();
   }
   async function readPolicy() {
     const current = ++turn, room = $("[data-policy-room]").value; currentRoom = room; status("Reading schedule…");
     try { const answer = await client.loadPolicy(room); if (current !== turn) return; revision = answer.revision; drawPolicy(answer); status(""); }
     catch (error) { if (current === turn) { $("[data-policy]").replaceChildren(); status(error.message, true); } }
   }
+  // One line for what the room does now; detail only while it is locked.
+  function policyStatus(answer, config) {
+    const effective = answer.effective, box = node("div", null, { class: "policy-status" });
+    const source = (id) => id === "off" ? "Off" : house.sources[id]?.label || "an unavailable source";
+    let headline = "Status not reported", detail = [];
+    if (effective?.locked) {
+      headline = answer.manual_lock ? "Locked until an administrator unlocks it" : "Locked by schedule" + (effective.until && clock(effective.until) ? " until " + clock(effective.until) : "");
+      if (effective.desired) detail.push("Holds " + source(effective.desired));
+      detail.push(({ verified: "verified", degraded: "needs attention", unknown: "awaiting verification" })[answer.enforcement?.state] || "verification not reported");
+    } else if (effective) headline = config.enabled ? "Unlocked · schedule on" : "Unlocked · no schedule";
+    box.dataset.tone = effective?.locked ? "locked" : "";
+    box.appendChild(node("strong", headline));
+    if (detail.length) box.appendChild(node("span", detail.join(" · ")));
+    return box;
+  }
   function drawPolicy(answer) {
     const room = house.rooms.find((entry) => entry.id === currentRoom), editable = answer.can_edit === true && client.canEdit();
     const config = answer.config || { version: 1, enabled: false, daily_off: [], locks: [] };
-    const host = $("[data-policy]"); host.replaceChildren();
-    const summary = node("div", null, { class: "access-summary" });
-    const fact = (name, value) => { const box = node("span", value); box.prepend(node("strong", name)); summary.appendChild(box); };
-    fact("Schedule timezone", config.timezone || "Site timezone");
-    fact("Current policy", answer.effective?.locked ? answer.manual_lock ? "Locked until unlocked" : "Locked by schedule" : answer.effective ? "Unlocked" : "Not reported");
-    fact("Last verification", ({ verified: "Verified", degraded: "Needs attention", unknown: "Unknown" })[answer.enforcement?.state] || "Not reported");
-    const stamp = answer.enforcement?.updated_at;
-    fact("Verification time", typeof stamp === "string" && Number.isFinite(Date.parse(stamp)) ? new Date(stamp).toLocaleString() : "Not reported");
-    if (answer.effective?.locked && answer.effective.desired) fact("Lock holds", answer.effective.desired === "off" ? "Off" : house.sources[answer.effective.desired]?.label || "Source unavailable");
-    host.appendChild(summary);
-    if (!editable) host.appendChild(node("p", "Schedule values are read-only for your account.", { class: "access-readonly" }));
-    const form = node("form", null, { class: "access-form access-form--wide" }), fields = node("fieldset"); fields.disabled = !editable;
-    const enabled = input("Enable room schedule", "enabled", "checkbox", config.enabled); enabled.className = "access-check"; fields.appendChild(enabled);
+    const host = $("[data-policy]"); host.replaceChildren(policyStatus(answer, config));
+    if (!editable) host.appendChild(node("p", "Only administrators can change this schedule.", { class: "access-readonly" }));
+    const form = node("form", null, { class: "policy-form" }), fields = node("fieldset", null, { class: "policy-fields" }); fields.disabled = !editable;
+    const enabled = input("Use a schedule", "enabled", "checkbox", config.enabled); enabled.className = "access-check access-switch";
+    enabled.firstElementChild.setAttribute("role", "switch");
+    fields.append(enabled, node("p", "Times use " + (config.timezone || "the site's timezone") + ". A lock that ends earlier than it starts runs overnight.", { class: "access-note" }));
     const sources = [["off", "Off"], ...room.sources.map((id) => [id, house.sources[id]?.label || id])];
-    const daily = node("div"), locks = node("div"), ruleIds = new Set([...(config.daily_off || []), ...(config.locks || [])].map((rule) => rule.id));
+    const ruleIds = new Set([...(config.daily_off || []), ...(config.locks || [])].map((rule) => rule.id));
+    const groups = {};
+    function group(kind, title, addLabel) {
+      const section = node("section", null, { class: "policy-group" }), head = node("div", null, { class: "policy-group__head" });
+      const list = node("ol", null, { class: "policy-rules" }), empty = node("p", kind === "locks" ? "No lock windows." : "No daily off times.", { class: "policy-empty" });
+      head.append(node("h2", title), button(addLabel, () => add(kind, {})));
+      section.append(head, list, empty); fields.appendChild(section);
+      groups[kind] = { list, empty };
+    }
+    const refresh = (kind) => { groups[kind].empty.hidden = groups[kind].list.children.length > 0; };
     function add(kind, value) {
-      const row = node("div", null, { class: "access-rule" + (kind === "locks" ? " access-rule--lock" : ""), "data-rule": kind });
+      const row = node("li", null, { class: "policy-rule" + (kind === "locks" ? " policy-rule--lock" : ""), "data-rule": kind });
       if (value.id) row.dataset.id = value.id;
       else { do { row.dataset.id = "rule-" + (++serial); } while (ruleIds.has(row.dataset.id)); ruleIds.add(row.dataset.id); }
-      if (kind === "daily_off") row.appendChild(input("Turn off at", "time", "time", value.time || "22:00"));
-      else row.append(input("Lock starts", "start", "time", value.start || "23:00"), input("Lock ends", "end", "time", value.end || "07:00"),
-        select("During lock", "desired", sources, value.desired || "off"), select("After unlock", "unlock", [["leave", "Leave as is"], ...sources], value.unlock || "leave"));
-      row.append(button("Remove", () => row.remove()), days(value.days || [0, 1, 2, 3, 4, 5, 6]));
-      (kind === "locks" ? locks : daily).appendChild(row);
+      const times = node("div", null, { class: "policy-times" });
+      if (kind === "daily_off") times.appendChild(input("Turn off at", "time", "time", value.time || "22:00"));
+      else times.append(input("From", "start", "time", value.start || "23:00"), input("Until", "end", "time", value.end || "07:00"),
+        select("Hold", "desired", sources, value.desired || "off"), select("Afterwards", "unlock", [["leave", "Leave as is"], ...sources], value.unlock || "leave"));
+      const remove = button("×", () => { row.remove(); refresh(kind); });
+      remove.className = "policy-remove"; remove.setAttribute("aria-label", kind === "locks" ? "Remove this lock window" : "Remove this daily off time");
+      row.append(times, days(value.days || [0, 1, 2, 3, 4, 5, 6]), remove);
+      groups[kind].list.appendChild(row); refresh(kind);
     }
-    fields.append(node("h2", "Daily off"), daily); (config.daily_off || []).forEach((value) => add("daily_off", value));
-    fields.appendChild(button("Add daily off", () => add("daily_off", {})));
-    fields.append(node("h2", "Lock windows"), node("p", "Locks hold the chosen source or Off. Overnight windows end the next day.", { class: "access-note" }), locks);
-    (config.locks || []).forEach((value) => add("locks", value)); fields.appendChild(button("Add lock window", () => add("locks", {})));
-    form.appendChild(fields); const save = node("button", "Save schedule", { type: "submit" }); save.disabled = !editable; form.appendChild(save); host.appendChild(form);
+    group("daily_off", "Daily off", "Add time"); (config.daily_off || []).forEach((value) => add("daily_off", value)); refresh("daily_off");
+    group("locks", "Lock windows", "Add window"); (config.locks || []).forEach((value) => add("locks", value)); refresh("locks");
+    form.appendChild(fields);
+    const save = node("button", "Save schedule", { type: "submit", class: "policy-save" }); save.hidden = !editable; form.appendChild(save); host.appendChild(form);
     form.addEventListener("submit", async (event) => {
       event.preventDefault(); if (!editable) return;
       const value = { version: 1, enabled: fields.querySelector('[name="enabled"]').checked, daily_off: [], locks: [] };
@@ -188,7 +216,12 @@
       });
       save.disabled = true; const roomId = currentRoom, generation = turn;
       try { const saved = await client.savePolicy(roomId, revision, value); if (turn === generation) { revision = saved.revision; status("Schedule saved."); } }
-      catch (error) { if (turn === generation) status(error.message, true); }
+      catch (error) {
+        if (turn !== generation) return;
+        // Someone else changed it: show the current schedule, then say why.
+        if (error.code === "revision_conflict") await readPolicy();
+        status(error.message, true);
+      }
       finally { if (turn === generation) save.disabled = false; }
     });
   }
@@ -237,7 +270,7 @@
   else if (page === "security") security().catch((error) => status(error.message, true));
   else client.ready().then(() => {
     if (!client.authEnabled()) {
-      document.querySelectorAll("form, [data-policy-room], [data-policy-reload], .access-toolbar").forEach((item) => { item.hidden = true; });
+      document.querySelectorAll("form, .settings-room, .access-toolbar").forEach((item) => { item.hidden = true; });
       status("Enable authentication in Security to use accounts, locks and room schedules."); return;
     }
     return page === "users" ? users() : policy();
