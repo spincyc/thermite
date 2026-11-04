@@ -14,6 +14,10 @@ rollback. The unified deployment workflow uses a separate committed private site
 - Installation checks firewall access, policy ownership and kernel rule support
   before stopping services or replacing units. Failed firewall inspection now
   shows its diagnostic and explains recovery when kernel modules are missing.
+- Gateway commissioning writes the callback port in jUPnP's required integer
+  string format and repairs an earlier decimal-string value on retry. Timeout
+  errors identify the stalled operation; failed runs only claim an identity
+  backup when that backup has actually been recorded.
 - Gateway deployment adopts existing authority and TLS, backs up stopped identity
   state before migrations, verifies callback routes and seals native ingress.
   Local terminal clients discover the verified HTTPS endpoint and certificate;

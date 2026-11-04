@@ -422,28 +422,47 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
     if not token or len(token) > 8192 or any(ord(char) < 33 or ord(char) > 126 for char in token):
         raise BoundaryError("Invalid private runtime credential")
 
+    phase, observation = "Sonos callback discovery", None
+    resources = {AUTH_CONFIG: "REST authentication configuration", UPNP_CONFIG: "jUPnP configuration"}
+
+    def stage(value):
+        nonlocal phase, observation
+        if value != phase:
+            phase, observation = value, None
+
+    def deadline_error():
+        # Only fixed labels, configuration keys we own and HTTP status codes
+        # belong here; native values, descriptions and addresses stay private.
+        detail = " (" + observation + ")" if observation else ""
+        return BoundaryError("Native commissioning exceeded its deadline during " + phase + detail
+                             + "; rerun the deployment")
+
     def bounded_request(method, url, *, headers, body=None, timeout=5, max_bytes=MAX_BODY):
         left = deadline - clock()
         if left <= 0:
-            raise BoundaryError("Native commissioning exceeded its deadline; rerun the deployment")
-        return request(method, url, headers=headers, body=body, timeout=min(timeout, left), max_bytes=max_bytes)
+            raise deadline_error()
+        try:
+            return request(method, url, headers=headers, body=body, timeout=min(timeout, left), max_bytes=max_bytes)
+        except BoundaryError:
+            if clock() >= deadline:
+                raise deadline_error() from None
+            raise
 
     def call(method, path, *, body=None, authenticated=True):
-        left = deadline - clock()
-        if left <= 0:
-            raise BoundaryError("Native commissioning exceeded its deadline; rerun the deployment")
         headers = {"Accept": "application/json"}
         if authenticated:
             headers["Authorization"] = "Bearer " + token
         if body is not None:
             headers["Content-Type"] = "application/json"
         response = bounded_request(method, runtime_url + path, headers=headers, body=body,
-                           timeout=min(5, left), max_bytes=MAX_BODY)
+                                   timeout=5, max_bytes=MAX_BODY)
         if authenticated and response.status in {401, 403}:
             raise BoundaryError("Native commissioning rejected the internal credential; no replacement was made")
         return response
 
-    def read(path):
+    def read(path, *, readback=False):
+        nonlocal observation
+        stage(resources[path] + (" readback" if readback else " read"))
         # A configuration update can briefly unregister its REST resource.
         while True:
             response = call("GET", path)
@@ -454,21 +473,33 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
                 return value
             if response.status not in {404, 500, 502, 503, 504}:
                 raise BoundaryError("Native configuration could not be read")
+            observation = "last HTTP status " + str(response.status)
             sleep(min(1, max(0, deadline - clock())))
 
     def update(path, desired):
+        nonlocal observation
         original = read(path)
         intended = {**original, **desired}
         if original != intended or any(type(original.get(key)) is not type(value) for key, value in desired.items()):
+            stage(resources[path] + " update")
             response = call("PUT", path, body=json.dumps(intended, allow_nan=False, separators=(",", ":")).encode())
             if response.status not in {200, 204}:
                 raise BoundaryError("Native configuration update was not confirmed; rerun the deployment")
         while True:
-            actual = read(path)
+            actual = read(path, readback=True)
             if actual == intended and all(type(actual.get(key)) is type(value) for key, value in desired.items()):
                 return
             if any(actual.get(key) != value for key, value in original.items() if key not in desired):
                 raise BoundaryError("Unrelated native settings changed during commissioning; review before retrying")
+            mismatches = []
+            for key, value in desired.items():
+                if key not in actual:
+                    mismatches.append(key + " missing")
+                elif type(actual[key]) is not type(value):
+                    mismatches.append(key + " type mismatch")
+                elif actual[key] != value:
+                    mismatches.append(key + " value mismatch")
+            observation = ", ".join(mismatches) or "configuration keys differ"
             sleep(min(1, max(0, deadline - clock())))
 
     if existing_callbacks is not None:
@@ -484,10 +515,15 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
         upnp = read(UPNP_CONFIG)
         if upnp.get("callbackURI", CALLBACK_URI) != CALLBACK_URI:
             raise BoundaryError("Existing jUPnP callback namespace differs from the verified relay paths")
-        update(UPNP_CONFIG, {"httpProxyPort": callbacks["port"]})
+        # jUPnP has no openHAB config description to normalize JSON numbers.
+        # The generic REST/OSGi path can persist an integer as "13614.0",
+        # which jUPnP's Integer.parseInt rejects. Preserve a decimal string.
+        update(UPNP_CONFIG, {"httpProxyPort": str(callbacks["port"])})
+    stage("authenticated Item access")
     authenticated = call("GET", ITEMS)
     if authenticated.status != 200 or not isinstance(_json(authenticated), list):
         raise BoundaryError("Internal native Item access did not pass commissioning")
+    stage("anonymous Item access")
     anonymous = call("GET", ITEMS, authenticated=False)
     if anonymous.status not in {401, 403}:
         raise BoundaryError("Anonymous native Item access remains available; commissioning is incomplete")

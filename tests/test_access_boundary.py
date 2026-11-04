@@ -38,7 +38,7 @@ def callback_config(port=13614):
 class Native:
     def __init__(self):
         self.configs = {boundary.AUTH_CONFIG: {"implicitUserRole": True, "trustedNetworks": "192.0.2.0/24", "allowBasicAuth": False, "cacheExpiration": 321},
-                        boundary.UPNP_CONFIG: {"interfaces": "eth1", "streamListenPort": 13601}}
+                        boundary.UPNP_CONFIG: {"interfaces": "eth1", "streamListenPort": "13601"}}
         self.calls = []
         self.anonymous = 401
         self.authenticated = 200
@@ -49,6 +49,7 @@ class Native:
         self.alter_unrelated = False
         self.ignore_put = False
         self.descriptor_status = 200
+        self.read_status = {}
 
     def sleep(self, seconds):
         self.now += seconds
@@ -70,7 +71,15 @@ class Native:
         if method == "PUT":
             previous = copy.deepcopy(self.configs[path])
             if not self.ignore_put:
-                self.configs[path] = json.loads(options["body"])
+                if path == boundary.UPNP_CONFIG:
+                    # This PID has no config description: Gson's untyped JSON
+                    # numbers reach OSGi through Double.toString(), which leaves
+                    # a decimal point that jUPnP's Integer.parseInt rejects.
+                    values = json.loads(options["body"], parse_int=float, parse_float=float)
+                    self.configs[path] = {key: str(value) if type(value) is float else value
+                                          for key, value in values.items()}
+                else:
+                    self.configs[path] = json.loads(options["body"])
             if self.alter_unrelated:
                 self.configs[path]["cacheExpiration"] = 999
             self.wait = self.fail_after_put
@@ -78,6 +87,8 @@ class Native:
         if self.wait:
             self.wait -= 1
             return boundary.Response(404, {"content-type": "text/plain"}, b"resource reloading")
+        if path in self.read_status:
+            return boundary.Response(self.read_status[path], {"content-type": "text/plain"}, b"private-native-response")
         return boundary.Response(200, {"content-type": "application/json"}, json.dumps(self.configs[path]).encode())
 
 
@@ -179,7 +190,25 @@ class Commissioning(unittest.TestCase):
     def test_missing_or_non_boolean_security_readback_never_counts_as_done(self):
         self.native.ignore_put = True
         self.native.configs[boundary.AUTH_CONFIG] = {"implicitUserRole": 0, "trustedNetworks": ""}
-        with self.assertRaisesRegex(boundary.BoundaryError, "deadline"):
+        with self.assertRaisesRegex(boundary.BoundaryError, r"deadline during REST authentication configuration readback \(implicitUserRole type mismatch\)"):
+            self.configure()
+        self.assertEqual(sum(call[0] == "PUT" for call in self.native.calls), 1)
+
+    def test_configuration_read_timeout_identifies_resource_and_status_without_payload(self):
+        for path, name in ((boundary.AUTH_CONFIG, "REST authentication"), (boundary.UPNP_CONFIG, "jUPnP")):
+            with self.subTest(path=path):
+                self.native = Native()
+                self.native.read_status[path] = 503
+                with self.assertRaisesRegex(boundary.BoundaryError, name + r" configuration read \(last HTTP status 503\)") as raised:
+                    self.configure(existing_callbacks=callback_config())
+                message = str(raised.exception)
+                for private in ("private-native-response", "private-test-token", "192.0.2.10", str(self.token)):
+                    self.assertNotIn(private, message)
+                self.assertFalse(any(method == "PUT" and url.endswith(path) for method, url, _ in self.native.calls))
+
+    def test_configuration_reload_timeout_identifies_readback_and_last_status(self):
+        self.native.fail_after_put = 10
+        with self.assertRaisesRegex(boundary.BoundaryError, r"REST authentication configuration readback \(last HTTP status 404\)"):
             self.configure()
         self.assertEqual(sum(call[0] == "PUT" for call in self.native.calls), 1)
 
@@ -209,14 +238,39 @@ class Commissioning(unittest.TestCase):
     def test_sonos_configures_advertised_callback_port_preserving_settings(self):
         result = self.configure(house={"devices": [DEVICE]})
         self.assertEqual(result["callbacks"], callback_config())
-        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG], {"interfaces": "eth1", "streamListenPort": 13601, "httpProxyPort": 13614})
+        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG], {"interfaces": "eth1", "streamListenPort": "13601", "httpProxyPort": "13614"})
+
+    def test_jupnp_decimal_port_is_repaired_without_changing_other_settings_and_repeat_is_idempotent(self):
+        original = {"asyncThreadPoolSize": "20", "multicastResponsePort": "0", "threadPoolSize": "20",
+                    "felix.fileinstall.filename": "file:/fictional/runtime/etc/org.jupnp.cfg"}
+        self.native.configs[boundary.UPNP_CONFIG] = {**original, "httpProxyPort": "13614.0"}
+        self.configure(existing_callbacks=callback_config())
+        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG], {**original, "httpProxyPort": "13614"})
+        puts = [options for method, url, options in self.native.calls if method == "PUT" and url.endswith(boundary.UPNP_CONFIG)]
+        self.assertEqual(len(puts), 1)
+        self.assertEqual(json.loads(puts[0]["body"]), {**original, "httpProxyPort": "13614"})
+        self.native.calls.clear()
+        self.configure(existing_callbacks=callback_config())
+        self.assertFalse(any(method == "PUT" for method, _, _ in self.native.calls))
+
+    def test_jupnp_decimal_or_non_string_readback_never_counts_as_configured(self):
+        for value in ("13614.0", 13614, 13614.0, True):
+            with self.subTest(value=value):
+                self.native = Native()
+                self.native.configs[boundary.AUTH_CONFIG] = {"implicitUserRole": False, "trustedNetworks": ""}
+                self.native.configs[boundary.UPNP_CONFIG]["httpProxyPort"] = value
+                self.native.ignore_put = True
+                mismatch = "value" if type(value) is str else "type"
+                with self.assertRaisesRegex(boundary.BoundaryError, r"jUPnP configuration readback \(httpProxyPort " + mismatch + r" mismatch\)"):
+                    self.configure(existing_callbacks=callback_config())
+                self.assertEqual(sum(call[0] == "PUT" for call in self.native.calls), 1)
 
     def test_adoption_preserves_exact_routes_listener_and_relocated_port(self):
         config = callback_config(14614)
         result = self.configure(house={"devices": [DEVICE]}, existing_callbacks=config)
         self.assertEqual(result["callbacks"], config)
         self.assertFalse(any(DEVICE["ip"] in call[1] for call in self.native.calls))
-        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG]["httpProxyPort"], 14614)
+        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG]["httpProxyPort"], "14614")
 
     def test_wrong_existing_namespace_is_not_silently_replaced(self):
         self.native.configs[boundary.UPNP_CONFIG]["callbackURI"] = "http://localhost/other"
@@ -281,6 +335,13 @@ class NativeFilter(unittest.TestCase):
         for snapshot in (good.replace("127.0.0.1", "0.0.0.0"), good.splitlines()[0], ""):
             with self.subTest(snapshot=snapshot), self.assertRaises(boundary.BoundaryError):
                 boundary.verify_native_listeners(snapshot, http_port=13601, https_port=13602, filtered=True)
+
+    def test_listener_proof_accepts_mapped_loopback_and_rejects_mapped_lan_addresses(self):
+        good = "LISTEN 0 50 [::ffff:127.0.0.1]:13601 [::]:*\nLISTEN 0 50 [::ffff:127.0.0.1]:13602 [::]:*\n"
+        self.assertEqual(boundary.verify_native_listeners(good, http_port=13601, https_port=13602), {"native_listeners": True})
+        for address in ("192.0.2.1", "0.0.0.0"):
+            with self.subTest(address=address), self.assertRaises(boundary.BoundaryError):
+                boundary.verify_native_listeners(good.replace("127.0.0.1", address), http_port=13601, https_port=13602)
 
 
 if __name__ == "__main__":

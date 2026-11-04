@@ -118,7 +118,7 @@ class Gateway(Step):
         root = argv[0] == "sudo"
         code = perform(Command(argv[1:] if root else argv, root=root, terminal=root), system, self.context.area)
         if code is None or code:
-            raise AccessError("gateway deployment command failed; rerun the same install to resume")
+            raise AccessError("gateway deployment command failed; rerun the same command to resume")
 
     def _helper(self, system, *argv):
         staging._trusted_ancestors(self.directory, "Gateway plan")
@@ -463,5 +463,9 @@ class Gateway(Step):
             return 0
         except (OSError, ValueError, http.client.HTTPException) as exc:
             system.say("   " + str(exc))
-            system.say("   Gateway deployment is incomplete; rerun install to resume. Previous release and complete state backup are retained.")
+            system.say("   Gateway deployment is incomplete; rerun the same install or upgrade command to resume.")
+            if journal and journal.get("previous_release"):
+                system.say("   Previous gateway release retained: " + journal["previous_release"])
+            if journal and journal.get("backup"):
+                system.say("   Complete identity backup retained: " + journal["backup"])
             return 1

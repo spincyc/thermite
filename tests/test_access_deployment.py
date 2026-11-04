@@ -307,6 +307,7 @@ class Lifecycle(PrivateFixture):
             self.assertFalse(any("--now" in command for command in system.commands))
             journal = json.loads(gateway.journal_path.read_bytes())
             self.assertEqual(journal["phase"], "backed-up")
+            self.assertIn("   Complete identity backup retained: " + journal["backup"], system.messages)
             backup = next(command for command in system.commands if "backup" in command)
             migration_index = next(index for index, command in enumerate(system.commands) if "migrate" in command)
             backup_index = system.commands.index(backup)
@@ -331,6 +332,14 @@ class Lifecycle(PrivateFixture):
             self.assertEqual(gateway.perform(system), 0)
         self.assertTrue(any("migrate" in command for command in system.commands))
         self.assertFalse(any("stop" in command for command in system.commands))
+
+    def test_commissioning_failure_does_not_claim_an_identity_backup_exists(self):
+        gateway, system = self.gateway(), Host()
+        with patch.object(gateway, "_boundary", side_effect=ValueError("native commissioning failed")):
+            self.assertEqual(gateway.perform(system), 1)
+        self.assertFalse(any("identity backup" in message.lower() for message in system.messages))
+        self.assertTrue(any("same install or upgrade command" in message for message in system.messages))
+        self.assertFalse(any("backup" in command or "migrate" in command or "--now" in command for command in system.commands))
 
     def test_installed_private_release_is_discovered_from_unit_not_readability(self):
         system = Host()
