@@ -23,6 +23,9 @@ const GLYPHS = {
 };
 const LIT = "\u25cf";
 const UNLIT = "\u25cb";
+// A locked room's lit bubble, in place of its LED. The padlock emoji takes
+// two columns; this squared key takes one, as the LEDs do.
+const LOCK = "\u26bf";
 const ARROW = { left: "\u2039", right: "\u203a" };
 // A block's left eighths, one to eight.
 const EIGHTHS = ["\u258f", "\u258e", "\u258d", "\u258c", "\u258b", "\u258a", "\u2589", "\u2588"];
@@ -319,7 +322,8 @@ function paneHelp(ctx) {
     case "settings": case "users": case "account": return ["Account & settings", [["↑↓"], "choose"], [["Enter"], "open"], [["PgUp/PgDn"], "scroll"]];
     case "rooms": return ["Rooms", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "apply source"]];
     case "sheet:rooms": return ["Rooms", [["\u2191\u2193"], "select room"], [["Enter"], "remote"]];
-    case "sources": return ["Sources", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "activate"]];
+    case "sources": return ["Sources", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "activate"]]
+      .concat(ctx.session?.roomLock().canManage ? [[["o"], "lock menu"]] : []);
     case "remote": return ["Remote", [["\u2190\u2191\u2192\u2193"], "D-pad"], [["Enter"], "OK"]]
       .concat(ctx.session?.roomLock().canManage ? [[["k"], "lock/unlock room"]] : []);
     case "info": return ["Info", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"]];
@@ -332,6 +336,7 @@ function paneHelp(ctx) {
     case "sheet:help": return ["Help", [["\u2191\u2193"], "scroll"], [["Esc"], "close"]];
     case "sheet:signal": return ["Signal & audio", [["\u2191\u2193"], "scroll"], [["Esc"], "close"]];
     case "sheet:inputs": return ["Inputs", [["\u2191\u2193"], "choose"], [["Enter"], "select"]];
+    case "sheet:lock-menu": return ["Room lock", [["\u2191\u2193"], "choose"], [["Enter"], "select"], [["Esc"], "close"]];
     default: return null;
   }
 }
@@ -419,7 +424,7 @@ function remoteScreen(frame, ctx, rect) {
   const sourceHeight = mainHeight >= 6 ? 3 : 0;
   if (sourceHeight) panel(frame, ctx, { x: rect.x + roomsWidth, y: rect.y, w: remoteWidth, h: sourceHeight }, {
     key: "sources", color: "remote", title: "sources", right: "\u2190\u2192 choose \u00b7 Enter",
-    content: (inner, w) => bubbleRow(frame, inner, w, ctx, session.controls(), target, session.state(current.id))
+    content: (inner, w) => bubbleRow(frame, inner, w, ctx, session.controls(), session.state(current.id))
   });
   panel(frame, ctx, { x: rect.x + roomsWidth, y: rect.y + sourceHeight, w: remoteWidth, h: mainHeight - sourceHeight }, {
     key: "remote", color: "remote", title: current.label,
@@ -585,11 +590,13 @@ function remoteContent(frame, g, w, ctx) {
   const target = session.activeTarget(list);
   const state = session.state(current.id);
   let y = 0;
-  const lock = session.roomLock(), blocked = session.controlBlock();
-  if (lock.text) y = paragraph(g, 2, y, w - 4, lock.text, lock.locked ? "strong" : "dim");
-  else if (blocked && lock.status !== "checking") y = paragraph(g, 2, y, w - 4, "Read-only · " + blocked, "dim");
+  // The padlock bubble shows a lock; words only where no bubble can.
+  const notice = session.lockNotice();
+  if (notice) y = paragraph(g, 2, y, w - 4, "Read-only · " + notice, "dim");
   const shown = session.view(current, state);
   if (shown.problem) y = paragraph(g, 2, y, w - 4, "\u26a0 " + shown.problem, "alert");
+  // A room that is off shows no remote until a device bubble is tapped.
+  if (session.remoteHidden(list)) return paragraph(g, 2, y + 1, w - 4, "Off \u00b7 choose a source, or a device for its buttons", "dim");
   const remote = session.remoteOf(target);
   const groups = remote && remote.keyGroups ? remote.keyGroups : null;
   const dense = w >= 104 && remote && remote.wide && groups && groups.some((group) => !group.primary);
@@ -640,7 +647,7 @@ function groupRows(g, ctx, w, y, groups) {
 
 // The bubbles: Off and the room's sources, then set apart its display and
 // audio device; a row too wide scrolls, keeping what the room shows in sight.
-function bubbleRow(frame, g, w, ctx, list, target, state) {
+function bubbleRow(frame, g, w, ctx, list, state) {
   const session = ctx.session;
   const items = session.bubbles(list);
   if (!items.length) return 0;
@@ -650,10 +657,13 @@ function bubbleRow(frame, g, w, ctx, list, target, state) {
       parts.push({ gap: true, width: 3 });
     }
     const shown = session.bubbleState(item, state);
+    const lock = session.bubbleLock(item, shown);
     const led = shown === "current" ? "ok" : shown === "switching" ? "busy" : "off";
-    const text = " " + (item.digit ? item.digit + " " : "") + (item.choose ? ledChar(led, ctx.ui.blink) + " " : "") + item.label + " ";
-    parts.push({ item: item, shown: shown, led: led, text: text, width: length(text) });
+    const mark = lock.locked ? LOCK : item.choose ? ledChar(led, ctx.ui.blink) : "";
+    const text = " " + (item.digit ? item.digit + " " : "") + (mark ? mark + " " : "") + item.label + " ";
+    parts.push({ item: item, shown: shown, lock: lock, led: led, text: text, width: length(text) });
   });
+  const selectedId = session.selectedBubble(list);
   const total = parts.reduce((sum, part) => sum + part.width, 0) + parts.length - 1;
   const row = new Grid(Math.max(total, 1), 1, "base");
   let x = 0;
@@ -669,14 +679,13 @@ function bubbleRow(frame, g, w, ctx, list, target, state) {
     }
     const item = part.item;
     const key = "bubble:" + item.id;
-    const selected = target && item.id === target.id;
-    let style = part.shown === "current" ? "bubble.current" : part.shown === "switching" ? "bubble.switching"
-      : selected ? "bubble.selected" : "bubble";
+    let style = part.lock.inert ? "bubble.inert" : part.shown === "current" ? "bubble.current"
+      : part.shown === "switching" ? "bubble.switching" : item.id === selectedId ? "bubble.selected" : "bubble";
     const cursor = !ctx.ui.overlay && ctx.ui.pane !== "remote" && ctx.ui.sourceCursor[session.current().id] === item.id;
     if (focused(ctx, key) || cursor) style = "bubble.focus";
     const remote = item.remote ? ctx.layouts.remotes[item.remote] : null;
     const hit = {
-      kind: "bubble", item: item, key: key, focus: true,
+      kind: "bubble", item: item, key: key, focus: true, disabled: part.lock.inert,
       label: session.bubbleLabel(item, part.shown) + (remote ? " \u00b7 " + remote.label : "") + (item.digit ? "  (" + item.digit + ")" : "")
     };
     let at = x;
@@ -686,7 +695,7 @@ function bubbleRow(frame, g, w, ctx, list, target, state) {
     } else {
       row.put(at, 0, part.text, style, hit);
     }
-    if (item.choose && style !== "bubble.focus") {
+    if (item.choose && style !== "bubble.focus" && !part.lock.locked) {
       row.put(at + 1, 0, ledChar(part.led, ctx.ui.blink), style.split("+")[0] + "+" + ledStyle(part.led));
     }
     if ((focused(ctx, key) || cursor) && ctx.ui.revealFocus !== false) focus = { from: x, to: x + part.width, id: item.id };
@@ -995,7 +1004,8 @@ function logContent(g, w, ctx) {
 function sheet(frame, ctx, width, height) {
   const overlay = ctx.ui.overlay;
   frame.grid.hit(0, 0, width, height, { kind: "dismiss" });
-  const w = Math.min(width - 2, ["signal", "topology"].includes(overlay.kind) ? 100 : ["info", "help", "cameras"].includes(overlay.kind) ? 66 : 50);
+  const w = Math.min(width - 2, ["signal", "topology"].includes(overlay.kind) ? 100 : ["info", "help", "cameras"].includes(overlay.kind) ? 66
+    : overlay.kind === "lock-menu" ? 40 : 50);
   const content = {
     "access-form": (inner, iw) => ctx.access.formContent(inner, iw, ctx),
     rooms: (inner, iw) => roomsContent(inner, iw, ctx),
@@ -1009,6 +1019,11 @@ function sheet(frame, ctx, width, height) {
       if (Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) button(inner, ctx, 1, 6, "Pair devices · F6", "menu:pairing", { kind: "screen", screen: "pairing", key: "menu:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
       else paragraph(inner, 1, 6, iw - 2, ctx.access.authEnabled() ? "Sign in as an administrator to pair devices." : "Enable authentication in Security (F3) to pair devices.", "dim");
     },
+    // A bubble's lock menu (right-click, or o): what the session offers.
+    "lock-menu": (inner, iw) => ctx.session.lockMenu(overlay.item).forEach((entry, index) => {
+      const key = "lock-menu:" + index;
+      button(inner, ctx, 1, index * 3, entry.label, key, { kind: "lock-menu", entry, key, focus: true, label: entry.label }, entry.disabled ? "key.off" : "key");
+    }),
     cameras: (inner, iw) => Cameras.content(inner, iw, ctx),
     topology: (inner, iw) => Topology.content(inner, iw, ctx)
   }[overlay.kind];
@@ -1083,8 +1098,10 @@ function helpContent(g, w, ctx) {
     });
     y++;
   };
+  const manage = ctx.ui.screen === "remote" && ctx.session?.roomLock().canManage;
   if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "v", "F6"].includes(entry[0][0])))
-    .concat(ctx.session?.roomLock().canManage ? [[["K"], "Lock or unlock this room (administrators)"]] : []));
+    .concat(manage ? [[["K"], "Lock or unlock this room (administrators)"],
+      [["o"], "Lock menu of the selected source or Off: lock on it, or unlock (administrators)"]] : []));
   else if (ctx.ui.screen === "pairing") rows("Pair devices", PAIR_SHORTCUTS.filter(entry => !["Tab", "L", "F1", "?", "q"].includes(entry[0][0])).concat([[["s/S"], "Sort/reverse"]]));
   else {
     const help = paneHelp({ ...ctx, ui: { ...ctx.ui, overlay: null, pane: ctx.ui.screen } });
@@ -1093,7 +1110,7 @@ function helpContent(g, w, ctx) {
   rows("Navigation", TUI_SHORTCUTS.filter(entry => /^F\d+$/.test(entry[0][0]) && entry[0][0] !== "F6"));
   rows("Terminal", TUI_SHORTCUTS.filter(entry => ["Tab", "t", "a", "L", "?", "q"].includes(entry[0][0])));
   y = heading(g, y + 1, "Mouse");
-  return paragraph(g, 2, y, w - 4, MOUSE_HELP, "base");
+  return paragraph(g, 2, y, w - 4, MOUSE_HELP + (manage ? " Right-click a source or Off for its lock menu." : ""), "base");
 }
 
 // ---- the Pairing screen -----------------------------------------------------

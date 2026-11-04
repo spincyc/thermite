@@ -152,11 +152,44 @@ class ManualLocks(Requests, TestCase):
         self.assertFalse(RoomPolicy.objects.exists())
 
     def test_caller_cannot_supply_target_or_invalid_lock_shape(self):
-        for data in ({"locked": True, "revision": 0, "desired": "off"}, {"locked": 1, "revision": 0},
-                     {"locked": True, "revision": True}, {"locked": True, "revision": -1}, {}):
-            self.assertEqual(self.request("put", "/api/v1/rooms/den/lock", data).status_code, 400)
+        with patch.object(self.adapter.transport, "read", side_effect=AssertionError("invalid lock read the room")):
+            for data in ({"locked": 1, "revision": 0}, {"locked": True, "revision": True}, {"locked": True, "revision": -1}, {},
+                         {"locked": False, "revision": 0, "desired": "off"}, {"locked": True, "revision": 0, "desired": None},
+                         {"locked": True, "revision": 0, "desired": "unconfigured-source"},
+                         {"locked": True, "revision": 0, "desired": ["off"]}, {"locked": True, "revision": 0, "target": "off"}):
+                with self.subTest(data=data):
+                    response = self.request("put", "/api/v1/rooms/den/lock", data)
+                    self.assertEqual(response.status_code, 400)
+                    self.assertEqual(response.json()["error"], "invalid_lock")
         self.assertEqual(self.lock(room="missing").status_code, 404)
         self.assertFalse(RoomPolicy.objects.exists())
+
+    def test_desired_locks_what_the_room_still_reads(self):
+        for room, source in (("den", "player"), ("desk", "off")):
+            with self.subTest(room=room):
+                response = self.request("put", f"/api/v1/rooms/{room}/lock", {"revision": 0, "locked": True, "desired": source})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["manual_lock"]["desired"], source)
+                self.assertTrue(response.json()["effective"]["locked"])
+        self.assertEqual(Audit.objects.filter(action="room.lock").count(), 2)
+        self.assertEqual(self.adapter.transport.commands, [])
+
+    def test_desired_mismatch_is_refused_storing_and_auditing_nothing(self):
+        response = self.request("put", "/api/v1/rooms/den/lock", {"revision": 0, "locked": True, "desired": "off"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "room_state_changed")
+        self.assertFalse(RoomPolicy.objects.exists())
+        self.assertFalse(Audit.objects.filter(action__startswith="room.").exists())
+        # A hold already on another source is not reported as this lock either.
+        held = self.lock().json()
+        with patch.object(self.adapter.transport, "read", side_effect=AssertionError("idempotent hold recaptured")):
+            response = self.request("put", "/api/v1/rooms/den/lock", {"revision": 1, "locked": True, "desired": "off"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "room_state_changed")
+        self.assertEqual(RoomPolicy.objects.get().revision, 1)
+        self.assertEqual(RoomPolicy.objects.get().config["manual_lock"], held["manual_lock"])
+        self.assertEqual(Audit.objects.filter(action="room.lock").count(), 1)
+        self.assertEqual(self.adapter.transport.commands, [])
 
     def test_cas_rejects_stale_toggle_and_schedule_editor_preserves_hold(self):
         first = self.lock().json()

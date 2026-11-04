@@ -129,6 +129,7 @@ console.log = console.info = () => {};
     for (const id of ["example_tv", "fixture_android", "fixture_avr", "fixture_wiim"]) {
       const shared = Shared.load(); shared.house = structuredClone(test.model);
       shared.house.rooms.find(room => room.id === "example_west").audio = id;
+      shared.house.initial = { example_west: "example_player" }; // an Off room draws no remote
       const parts = Main.assemble(Main.parse(["--mock", "--room", "example_west", "--still", "--volume", "slider"]), {
         shared, setInterval: () => 0, clearInterval() {}, setTimeout: () => 0, clearTimeout() {}
       });

@@ -35,6 +35,9 @@
   const CORNERS = ["tl", "tr", "bl", "br"];
   const UPDATE_EVERY = 60000;
   const RANGE_KEYS = { ArrowUp: true, ArrowDown: true, ArrowLeft: true, ArrowRight: true, Home: true, End: true, PageUp: true, PageDown: true };
+  // A touch held this long on a bubble, moving no further, opens its lock menu.
+  const LONG_PRESS_MS = 500;
+  const LONG_PRESS_SLOP = 10;
 
   const hints = Session.keyHints();
   let ready = false;
@@ -46,6 +49,9 @@
   let infoView = "devices";
   let signalRunning = false;
   let signalFocus = false;
+  // The bubble whose lock menu is open, and a touch held on a bubble.
+  let menuFor = null;
+  let press = null;
 
   session.subscribe(onSession);
   session.start(params.get("room"))
@@ -109,16 +115,14 @@
     updateSignal();
     syncSignal();
     updateRoomLock();
-    const lock = session.roomLock(), blocked = session.controlBlock();
-    all('[data-button], [data-choose], [data-action="control"], [data-action="input"]').forEach((button) => {
+    updateLockMenu();
+    // The bubbles follow the lock themselves (updateTargets).
+    const blocked = session.controlBlock();
+    all('[data-button], [data-action="control"], [data-action="input"]').forEach((button) => {
       if (blocked && !button.hasAttribute("data-policy-disabled")) { button.dataset.policyDisabled = String(button.disabled); button.disabled = true; }
       else if (!blocked && button.hasAttribute("data-policy-disabled")) { button.disabled = button.dataset.policyDisabled === "true"; delete button.dataset.policyDisabled; }
     });
-    if (blocked) {
-      $("[data-fader-input]").disabled = true;
-      // The lock row explains locks; a brief first check stays quiet.
-      if (!lock.text && lock.status !== "checking") { $("#alert").hidden = false; $("#alert-text").textContent = [$("#alert-text").textContent, blocked].filter(Boolean).join(" · "); }
-    }
+    if (blocked) $("[data-fader-input]").disabled = true;
   }
 
   // Writes only what changed, so a screen reader and keyboard focus are not
@@ -126,9 +130,6 @@
   function updateRoomLock() {
     const lock = session.roomLock();
     const set = (element, property, value) => { if (element[property] !== value) element[property] = value; };
-    const row = $("[data-room-lock]");
-    set(row, "hidden", !lock.enabled || !lock.text);
-    set(row, "textContent", lock.text);
     const info = [lock.text || "Unlocked. Locking holds the current source or Off until you unlock it.", lock.error || lock.reason].filter(Boolean).join(" ");
     all("[data-room-lock-section]").forEach((section) => set(section, "hidden", !lock.canManage));
     all("[data-room-lock-info]").forEach((note) => set(note, "textContent", info));
@@ -170,18 +171,21 @@
     });
   }
 
-  // The bubbles show what is on; only a source that cannot be known needs words.
+  // The bubbles show what is on and a locked room's padlock; only a source
+  // that cannot be known, or a lock with no lit bubble to carry it, needs words.
   function updateAlert() {
     const current = session.current();
-    const shown = session.view(current, session.state(current.id));
-    $("#alert").hidden = !shown.problem;
-    $("#alert-text").textContent = shown.problem || "";
+    const words = [session.view(current, session.state(current.id)).problem, session.lockNotice()].filter(Boolean).join(" · ");
+    $("#alert").hidden = !words;
+    $("#alert-text").textContent = words;
   }
 
   function updateControls() {
     const list = session.controls();
     const target = session.activeTarget(list);
-    updateTargets(list, target);
+    updateTargets(list);
+    // A room that is off shows no remote until a device bubble is tapped.
+    $("#controls").hidden = session.remoteHidden(list);
     const key = session.current().id + "/" + (target ? target.id : "");
     if (key !== drawn) {
       drawn = key;
@@ -200,13 +204,14 @@
       title: remote ? item.label + " · " + remote.label : "Turn the room off"
     }, [
       node("span", { class: "led", "aria-hidden": "true" }),
+      icon("i-lock", "target__lock"),
       node("span", { class: "target__label" }, item.label)
     ]);
     tab.item = item;
     return tab;
   }
 
-  function updateTargets(list, target) {
+  function updateTargets(list) {
     const current = session.current();
     const box = $("[data-targets]");
     const items = session.bubbles(list);
@@ -224,11 +229,14 @@
     }
     box.parentNode.hidden = !items.length;
     const state = session.state(current.id);
-    const selected = target ? target.id : null;
+    const selected = session.selectedBubble(list);
     let lit = null;
     all("[data-targets] .target").forEach((tab) => {
       const shown = session.bubbleState(tab.item, state);
+      const lock = session.bubbleLock(tab.item, shown);
       tab.setAttribute("data-state", shown);
+      tab.toggleAttribute("data-locked", lock.locked);
+      if (tab.disabled !== lock.inert) tab.disabled = lock.inert;
       // Buttons, not tabs: choosing a source sends a command, and the arrow
       // keys belong to the D-pad. aria-current marks the remote on show.
       if (tab.item.id === selected) tab.setAttribute("aria-current", "true"); else tab.removeAttribute("aria-current");
@@ -360,9 +368,10 @@
       const to = session.drives(id, target);
       const available = session.canPress(id, target);
       const note = !available && target && target.availability ? target.availability.note : "";
-      element.disabled = !available;
-      // Permission restoration must restore the current profile availability.
-      if (element.hasAttribute("data-policy-disabled")) element.dataset.policyDisabled = String(!available);
+      // A policy-disabled key stays disabled; restoring it restores the current profile availability.
+      const held = element.hasAttribute("data-policy-disabled");
+      element.disabled = held || !available;
+      if (held) element.dataset.policyDisabled = String(!available);
       element.setAttribute("aria-label", label + ". " + to + (note ? ". " + note : ""));
       element.setAttribute("title", note || label + " → " + to);
     });
@@ -711,6 +720,7 @@
     document.addEventListener("click", onClick);
     document.addEventListener("pointerdown", onPointerDown);
     ["pointerup", "pointercancel"].forEach((type) => document.addEventListener(type, stopRepeat));
+    bindLockMenu();
     document.addEventListener("keydown", onKey);
     document.addEventListener("focusin", (event) => {
       signalFocus = Boolean(event.target.closest && event.target.closest("[data-signal]"));
@@ -792,6 +802,8 @@
         break;
       }
       case "bubble":
+        // The release of a long press that opened the menu is not a tap.
+        if (press && press.opened && press.tab === action && event.detail > 0) break;
         session.tapBubble(action.item);
         break;
       case "control":
@@ -914,6 +926,141 @@
     }
   }
 
+  // ---- the lock menu -------------------------------------------------------
+
+  // Administrators lock the room from a source or Off bubble: a right-click,
+  // a long press, Shift+F10 or the Menu key opens a menu of what the session
+  // offers (lockMenu). With nothing to offer the browser keeps its own menu.
+  function bindLockMenu() {
+    const menu = $("#lock-menu");
+    document.addEventListener("contextmenu", onContextMenu);
+    document.addEventListener("pointerdown", (event) => {
+      if (menuFor !== null && !event.target.closest("#lock-menu")) closeLockMenu(false);
+      startPress(event);
+    });
+    document.addEventListener("pointermove", (event) => {
+      if (press && press.timer && Math.hypot(event.clientX - press.x, event.clientY - press.y) > LONG_PRESS_SLOP) endPress();
+    }, { passive: true });
+    ["pointerup", "pointercancel"].forEach((type) => document.addEventListener(type, endPress));
+    $("[data-targets]").addEventListener("scroll", () => { endPress(); placeLockMenu(); }, { passive: true });
+    window.addEventListener("resize", () => placeLockMenu());
+    menu.addEventListener("click", (event) => {
+      const item = event.target.closest("[role=menuitem]");
+      if (!item || item.getAttribute("aria-disabled") === "true") return;
+      closeLockMenu(true);
+      item.entry.run();
+    });
+    menu.addEventListener("keydown", (event) => {
+      const items = all("#lock-menu [role=menuitem]");
+      const at = items.indexOf(document.activeElement);
+      if (event.key === "Escape" || event.key === "Tab") {
+        event.preventDefault();
+        closeLockMenu(true);
+      } else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        items[event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (at + step + items.length) % items.length].focus();
+      }
+      // The menu owns its keys: none reaches the remote's shortcuts.
+      event.stopPropagation();
+    });
+  }
+
+  function onContextMenu(event) {
+    const tab = event.target.closest ? event.target.closest("[data-targets] .target") : null;
+    if (!tab || tab.disabled) return;
+    const held = press && press.tab === tab ? press : null;
+    endPress();
+    // A long press may have opened it already; the browser's menu stays away.
+    if (menuFor !== tab.item.id && !openLockMenu(tab)) return;
+    event.preventDefault();
+    if (held) held.opened = true;
+  }
+
+  // A touch or pen held on a bubble; a mouse has its right button.
+  function startPress(event) {
+    endPress();
+    press = null;
+    const tab = event.target.closest("[data-targets] .target");
+    if (!tab || tab.disabled || event.pointerType === "mouse" || !event.isPrimary) return;
+    const held = press = { tab: tab, x: event.clientX, y: event.clientY, opened: false, timer: 0 };
+    held.timer = setTimeout(() => {
+      held.timer = 0;
+      if (openLockMenu(tab)) { held.opened = true; haptic(); }
+    }, LONG_PRESS_MS);
+  }
+
+  // Lifting, moving or scrolling ends the wait; press stays for the click that follows.
+  function endPress() {
+    if (!press || !press.timer) return;
+    clearTimeout(press.timer);
+    press.timer = 0;
+  }
+
+  function openLockMenu(tab) {
+    const entries = session.lockMenu(tab.item);
+    if (!entries.length) return false;
+    menuFor = tab.item.id;
+    const menu = $("#lock-menu");
+    menu.setAttribute("aria-label", "Room lock: " + tab.item.label);
+    fillLockMenu(entries);
+    menu.hidden = false;
+    placeLockMenu();
+    menu.querySelector("[role=menuitem]").focus();
+    return true;
+  }
+
+  const menuSignature = (entries) => entries.map((entry) => entry.label + (entry.disabled ? " (busy)" : "")).join("\n");
+
+  function fillLockMenu(entries) {
+    const menu = $("#lock-menu");
+    menu.signature = menuSignature(entries);
+    menu.textContent = "";
+    entries.forEach((entry) => {
+      const item = node("button", { type: "button", class: "lock-menu__item", role: "menuitem", tabindex: "-1",
+        "aria-disabled": entry.disabled ? "true" : null }, entry.label);
+      item.entry = entry;
+      menu.appendChild(item);
+    });
+  }
+
+  // Under its bubble, or over it near the bottom, inside a 16px gutter.
+  function placeLockMenu() {
+    const menu = $("#lock-menu"), tab = menuFor !== null && document.getElementById("target-" + menuFor);
+    if (!tab) return;
+    const at = tab.getBoundingClientRect(), gutter = 16, gap = 6;
+    const below = at.bottom + gap + menu.offsetHeight <= window.innerHeight - gutter;
+    menu.style.left = Math.max(gutter, Math.min(at.left, window.innerWidth - menu.offsetWidth - gutter)) + "px";
+    menu.style.top = (below ? at.bottom + gap : Math.max(gutter, at.top - gap - menu.offsetHeight)) + "px";
+  }
+
+  function closeLockMenu(focusBubble) {
+    if (menuFor === null) return;
+    const tab = document.getElementById("target-" + menuFor);
+    menuFor = null;
+    $("#lock-menu").hidden = true;
+    if (focusBubble && tab && !tab.disabled) tab.focus();
+  }
+
+  // An open menu follows what the session offers now, or closes.
+  function updateLockMenu() {
+    if (menuFor === null) return;
+    const menu = $("#lock-menu"), tab = document.getElementById("target-" + menuFor);
+    const entries = tab && !tab.disabled ? session.lockMenu(tab.item) : [];
+    if (!entries.length) {
+      closeLockMenu(menu.contains(document.activeElement));
+      return;
+    }
+    const inside = menu.contains(document.activeElement);
+    if (menuSignature(entries) !== menu.signature) {
+      fillLockMenu(entries);
+      if (inside) menu.querySelector("[role=menuitem]").focus();
+    } else {
+      all("#lock-menu [role=menuitem]").forEach((item, index) => { item.entry = entries[index]; });
+    }
+    placeLockMenu();
+  }
+
   // ---- chrome ------------------------------------------------------------
 
   function applyTheme(theme, save) {
@@ -959,6 +1106,7 @@
   }
 
   function openSheet(id) {
+    closeLockMenu(false);
     const dialog = document.getElementById(id);
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");

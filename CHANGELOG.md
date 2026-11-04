@@ -35,6 +35,23 @@ rollback. The unified deployment workflow uses a separate committed private site
   refused only what would change the locked room's route, such as driving a
   device it is showing. Lock and Unlock live under Info on Remotes; the remote
   itself shows only the lock state.
+- Remotes: a locked room shows a padlock on the bubble for what it shows, Off
+  included, greys out every other bubble, and explains the lock (with a
+  schedule's end) when the padlocked bubble is selected; the separate lock line
+  is gone. Administrators can right-click or long-press a source or Off on the
+  web, or right-click it or press `o` in the terminal, to lock the room on it:
+  another source is chosen first and the room is locked only once it reports
+  that source, and the lock API's optional `desired` refuses with 409
+  `room_state_changed` if the room no longer shows it. While a room is locked,
+  its keys and controls are greyed too. A room that is Off now selects Off and
+  shows no remote until a device bubble is chosen.
+- Routing: rooms on different zones of one receiver can share a source cabled
+  to the receiver itself: list it under each room's `receiver.sources` on its
+  input. Each room switches and powers only its own zone, so either can turn
+  off without taking the other's picture; the source is never synced, never one
+  room's sleep source, and under `idle: standby` sleeps only once no room uses
+  it. Validation refuses rooms on one receiver that disagree about which input
+  such a source is on, or that put another signal on it.
 - Routing: a receiver zone can follow another room's zone of the same
   receiver (`receiver.sync_with: ROOM`). While both rooms show the same matrix
   source, the follower's zone takes the leader's input, so both screens show

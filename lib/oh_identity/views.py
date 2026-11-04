@@ -281,7 +281,14 @@ def room_lock(request, room):
     if not adapter.policy:
         raise Problem("policy_unavailable", 503)
     data = body(request)
-    if set(data) != {"revision", "locked"} or type(data["revision"]) is not int or data["revision"] < 0 or type(data["locked"]) is not bool:
+    spec = adapter.contract.rooms[room]
+    if (set(data) - {"desired"} != {"revision", "locked"} or type(data["revision"]) is not int or data["revision"] < 0
+            or type(data["locked"]) is not bool):
+        raise Problem("invalid_lock")
+    # An optional desired is what the caller saw: the lock captures only that,
+    # never a source the room changed to since. It cannot name a new target.
+    expected = data.get("desired")
+    if "desired" in data and (data["locked"] is not True or expected not in ("off", *spec["sources"])):
         raise Problem("invalid_lock")
     # Hold the same room lock as commands and the worker, but no database write
     # transaction during native I/O. Recheck credentials and CAS after the read.
@@ -293,13 +300,16 @@ def room_lock(request, room):
             raise Problem("revision_conflict", 409)
         manual = manual_hold(saved.config) if saved else None
         if (manual is not None) == data["locked"]:
+            if expected is not None and manual.get("desired") != expected:
+                raise Problem("room_state_changed", 409)
             return JsonResponse(policy_data(adapter, room, request.identity_user, saved))
         captured = None
         if data["locked"]:
-            spec = adapter.contract.rooms[room]
             desired = adapter.read(spec["source_item"])
             if desired not in ("off", *spec["sources"]):
                 raise Problem("room_state_unavailable", 409)
+            if expected is not None and desired != expected:
+                raise Problem("room_state_changed", 409)
             captured = {"desired": desired, "started_at": timezone.now().isoformat()}
         with transaction.atomic():
             actor = admin_actor(request.identity_user)

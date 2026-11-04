@@ -559,12 +559,29 @@ button {
   color: var(--key-ink-muted);
   background: transparent;
   cursor: pointer;
-  transition: background var(--dur-state), color var(--dur-state);
+  transition: background var(--dur-state), color var(--dur-state), opacity var(--dur-state);
+  /* A long press opens the lock menu (remote.js), not the system's own. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .target:active,
 .target.is-pressed {
   background: var(--panel-hover);
+}
+
+/* A read-only room greys every bubble but the one carrying its padlock. */
+.target:disabled {
+  opacity: 0.38;
+  cursor: default;
+  background: transparent;
+}
+
+/* ...and every key and control it disabled (remote.js update). */
+[data-policy-disabled] {
+  opacity: 0.38;
+  cursor: default;
 }
 
 .target[aria-current="true"] {
@@ -596,6 +613,30 @@ button {
   animation: blink 0.8s ease-in-out infinite alternate;
 }
 
+/* A locked room's lit bubble: a padlock in the bubble's ink takes the LED's place. */
+.target__lock {
+  display: none;
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.2;
+}
+
+.target[data-locked] {
+  color: var(--key-ink);
+}
+
+.target[data-locked] .led {
+  display: none;
+}
+
+.target[data-locked] .target__lock {
+  display: block;
+}
+
+.target[data-locked][data-state="switching"] .target__lock {
+  animation: blink 0.8s ease-in-out infinite alternate;
+}
+
 /* Between the sources and the room's display and audio. */
 .targets__gap {
   flex: none;
@@ -606,16 +647,54 @@ button {
   background: var(--panel-border);
 }
 
+/* A bubble's lock menu, as the navigation menu's popover (shell.css). */
+.lock-menu {
+  position: fixed;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 168px;
+  max-width: calc(100vw - 32px);
+  padding: 6px;
+  border: 1px solid var(--th-line);
+  border-radius: 9px;
+  background: var(--th-surface);
+  box-shadow: 0 12px 24px #0002;
+}
+
+.lock-menu[hidden] {
+  display: none;
+}
+
+.lock-menu__item {
+  min-height: 40px;
+  padding: 9px 13px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  font-size: 14px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  background: transparent;
+  cursor: pointer;
+}
+
+.lock-menu__item:hover,
+.lock-menu__item:focus {
+  background: var(--th-raised);
+}
+
+.lock-menu__item[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 /* ---- a problem with the room's source ------------------------------------ */
 
-.room-lock {
-  margin: var(--space-2) var(--space-4) 0;
-  padding: 8px 12px;
-  border: 1px solid currentColor;
-  border-radius: 12px;
-  font-size: 13px;
-}
-.room-lock[hidden], [data-room-lock-section][hidden] { display: none; }
+[data-room-lock-section][hidden] { display: none; }
 .room-lock__toggle { min-height: 40px; }
 .room-lock__toggle[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
 
@@ -650,6 +729,11 @@ button {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-4) var(--space-4) var(--space-3);
+}
+
+/* A room that is off shows no remote until a device bubble is tapped. */
+.controls[hidden] {
+  display: none;
 }
 
 /* The device's own keys; the volume row under it stays put. A remote with

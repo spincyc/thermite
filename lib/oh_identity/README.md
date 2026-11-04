@@ -174,7 +174,12 @@ new boundary action.
 PUT `/api/v1/rooms/<id>/lock` uses `{revision,locked}` and requires an
 authenticated Admin. Enabling captures the server's current reported room
 source or Off; callers cannot supply the target. Unavailable or unknown
-readback is rejected. The persisted `manual_lock` contains `desired` and
+readback is rejected. A lock may add `desired` (Off or one of the room's
+sources; only with `locked: true`, otherwise `invalid_lock`): the source the
+caller saw. When the readback, or an existing hold, differs, the answer is 409
+`room_state_changed` and nothing is stored or audited, so a remote that chose a
+source before locking never captures one the room changed to since. The
+persisted `manual_lock` contains `desired` and
 `started_at`; status exposes it with `can_lock`, and an active manual hold has
 `effective.reason=manual_lock` and no end time. It survives restarts, overrides
 scheduled actions, and remains active when the schedule's `enabled` flag is

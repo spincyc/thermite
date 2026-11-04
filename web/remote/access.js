@@ -10,6 +10,7 @@
     device_locked: "A locked room is using this device or route, so it cannot change now.",
     policy_checking: "Checking whether this room is locked. Try again in a moment.",
     room_state_unavailable: "Wait until the room reports a current source or Off before locking it.",
+    room_state_changed: "The room changed before it could be locked. Check what it shows and try again.",
     runtime_unavailable: "The room could not be read. Try again when it is connected.",
     revision_conflict: "The room policy changed. Review its current state and try again.", last_admin: "Keep at least one active administrator.",
     invalid_password: "Choose a stronger password.", invalid_policy: "Check the schedule times, days and sources.",
@@ -254,7 +255,8 @@
         policies[room] = { ...policies[room], ...saved }; notify("policy");
         await client.loadPolicy(room); return saved;
       },
-      async setRoomLock(room, revision, locked) {
+      // desired, when given, is what the caller saw: the server locks only if the room still reads it.
+      async setRoomLock(room, revision, locked, desired) {
         await ready();
         const authority = authRevision;
         if (!client.authEnabled()) throw problem("auth_disabled", 403);
@@ -262,7 +264,8 @@
         if (policyWrites.has(room)) return null;
         policyWrites.add(room); policyReads[room] = (policyReads[room] || 0) + 1;
         try {
-          const saved = await json("/api/v1/rooms/" + encodeURIComponent(room) + "/lock", "PUT", { revision, locked });
+          const saved = await json("/api/v1/rooms/" + encodeURIComponent(room) + "/lock", "PUT",
+            desired === undefined ? { revision, locked } : { revision, locked, desired });
           stale(authority);
           if (saved.room !== room || !Number.isInteger(saved.revision) || typeof saved.effective?.allowed !== "boolean"
               || typeof saved.effective?.locked !== "boolean") throw problem("invalid_response");

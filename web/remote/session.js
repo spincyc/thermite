@@ -67,6 +67,8 @@
   const SLIDE_HOLD = 6000;
   // Power off and All off take a second press this soon after the first.
   const OFF_AGAIN_MS = 3000;
+  // How long lockOn() waits for the room to report a source it chose.
+  const LOCK_WAIT_MS = 45000;
 
   function memoryStore() {
     const memory = {};
@@ -146,6 +148,7 @@
 
     const lockRequests = new Set();
     let lockError = null;
+    const SWITCHING = "Wait for the room to finish switching and report its source.";
     const clock = (value) => {
       const at = new Date(value);
       if (!Number.isFinite(at.getTime())) return "";
@@ -164,14 +167,15 @@
       const busy = Boolean(room && lockRequests.has(room.id));
       const canManage = enabled && access.canEdit() && policy?.can_lock === true;
       const unavailable = status === "unavailable" || policy?.effective?.reason === "policy_unavailable";
+      const until = locked && !manual && policy.effective.until ? clock(policy.effective.until) : "";
       let text = "";
       if (unavailable) text = "Room lock status unavailable · controls paused";
       else if (locked && manual) text = "Locked · until unlocked";
-      else if (locked) text = "Locked by schedule" + (policy.effective.until && clock(policy.effective.until) ? " until " + clock(policy.effective.until) : "");
+      else if (locked) text = "Locked by schedule" + (until ? " until " + until : "");
       const reason = busy || !canManage || manual ? "" : unavailable ? "Lock status is unavailable."
-        : !settled ? "Wait for the room to finish switching and report its source." : "";
+        : !settled ? SWITCHING : "";
       const error = lockError && lockError.room === room?.id && lockError.revision === policy?.revision ? lockError.message : "";
-      return { room: room?.id || null, enabled, status, manual, locked, busy, canManage, text, reason, error,
+      return { room: room?.id || null, enabled, status, manual, locked, busy, canManage, text, until, reason, error,
         disabled: busy || !canManage || Boolean(reason), label: busy ? "Saving…" : manual ? "Unlock room" : "Lock room" };
     }
 
@@ -196,13 +200,91 @@
       } finally { lockRequests.delete(room.id); emit({ type: "change" }); }
     }
 
+    // Locks the room on a source or Off. One the room already reports is
+    // locked at once; any other is chosen first, as a tap would, and locked
+    // once the room reports it. The server holds only what it still reads
+    // (desired), so a change in between is refused, never captured.
+    async function lockOn(sourceId, expectedRoom) {
+      const lock = roomLock(), room = current, target = room && option(room, sourceId);
+      if (!target || expectedRoom && expectedRoom !== room.id || lock.busy || !lock.canManage || lock.manual
+          || lock.status !== "ready") return false;
+      const state = states[room.id];
+      if (state.pending) {
+        toast(room.label, SWITCHING, "muted");
+        return false;
+      }
+      const shown = state.value === sourceId;
+      if (!shown && refused()) return false;
+      lockError = null;
+      lockRequests.add(room.id); emit({ type: "change" });
+      try {
+        if (!shown) await chooseReported(room, target);
+        const saved = await backend.access.setRoomLock(room.id, backend.access.policy(room.id)?.revision, true, sourceId);
+        if (!saved) return false;
+        toast(room.label, "Room locked " + (sourceId === Remote.OFF ? "off" : "on " + target.label) + " until you unlock it.");
+        return true;
+      } catch (error) {
+        if (error.stale) return false;
+        lockError = { room: room.id, revision: backend.access.policy(room.id)?.revision, message: error.message };
+        toast(room.label, error.message, "bad");
+        return false;
+      } finally { lockRequests.delete(room.id); emit({ type: "change" }); }
+    }
+
+    // Chooses target as a tap would and resolves once the room reports it
+    // settled; rejects when the choice is refused, the room settles on
+    // anything else, or LOCK_WAIT_MS pass first.
+    function chooseReported(room, target) {
+      return new Promise((resolve, reject) => {
+        // seen: the room switched to target; sent: the choice was taken. A
+        // refused one settles the room back first, which is not the answer.
+        let seen = false, sent = false;
+        const finish = (message) => {
+          stop(); cancel(timer);
+          if (message) reject(new Error(message)); else resolve();
+        };
+        const check = () => {
+          const state = states[room.id];
+          if (state.pending === target.id) seen = true;
+          if (!seen || state.pending) return;
+          if (state.value === target.id) return finish("");
+          const shown = option(room, state.value);
+          if (sent) finish(shown ? "The room shows " + shown.label + ", not " + target.label + ", so it was not locked."
+            : "The room did not confirm " + target.label + ", so it was not locked.");
+        };
+        const stop = subscribe((event) => { if (event.type === "change") check(); });
+        const timer = later(() => finish("The room did not report " + target.label + " within " + LOCK_WAIT_MS / 1000
+          + " seconds, so it was not locked."), LOCK_WAIT_MS);
+        delete picked[room.id];
+        backend.choose(room.id, target.id).then(() => { seen = sent = true; check(); },
+          (error) => finish("Could not switch to " + target.label + ", so the room was not locked. " + error.message));
+      });
+    }
+
+    // What a bubble's menu (right-click, a long press, or a key) offers an
+    // administrator: lock the room on that source or Off, unlock it, or keep
+    // a schedule's lock on what the room shows. Empty: no menu.
+    function lockMenu(item) {
+      const lock = roomLock(), room = current;
+      if (!room || !item.choose || !lock.canManage || lock.status !== "ready") return [];
+      const entry = (label, run) => ({ label: label, run: run, disabled: lock.busy });
+      if (lock.manual) return [entry("Unlock room", () => toggleRoomLock(room.id))];
+      if (lock.locked) {
+        return bubbleState(item, states[room.id]) === "idle" ? [] : [entry("Lock until unlocked", () => lockOn(item.id, room.id))];
+      }
+      return [entry(item.id === Remote.OFF ? "Lock off" : "Lock on " + item.label, () => lockOn(item.id, room.id))];
+    }
+
     // Why ordinary controls cannot act on the current room, or null. Both
     // clients show this one answer; the server still checks every command.
     function controlBlock() {
       const access = backend.access;
       if (!current || !access || access.canControl(current.id)) return null;
       const lock = roomLock();
-      if (lock.locked) return lock.manual ? "This room is locked until an administrator unlocks it." : "This room is locked by its schedule.";
+      if (lock.locked) {
+        return lock.manual ? "This room is locked until an administrator unlocks it."
+          : "This room is locked by its schedule" + (lock.until ? " until " + lock.until : "") + ".";
+      }
       if (lock.status === "checking") return "Checking whether this room is locked…";
       if (lock.status === "unavailable") return "Room lock status is unavailable, so controls are paused.";
       return "Room control is unavailable.";
@@ -411,6 +493,10 @@
 
     function press(button) {
       if (!current || refused()) return Promise.resolve(null);
+      if (remoteHidden()) {
+        toast(spec(button) ? spec(button).label : button, "Nothing is on in the " + current.label + ": choose a source first", "muted");
+        return Promise.resolve(null);
+      }
       const target = activeTarget(controls());
       if (!canPress(button, target)) {
         toast(spec(button) ? spec(button).label : button,
@@ -559,7 +645,7 @@
     // The slider moved to value; final when it was let go.
     function slide(value, final) {
       const audio = current && current.audio;
-      if (!audio || controlBlock()) return;
+      if (!audio || controlBlock() || remoteHidden()) return;
       if (final) fader.dragging = false;
       const control = Remote.controlOf(house, audio.id);
       if (!control || !control.volume) return;
@@ -636,11 +722,23 @@
       return Remote.controlsFor(house, current.id, Remote.showing(states[current.id]));
     }
 
+    // A room that is off shows no remote until a device bubble is tapped.
     function activeTarget(list) {
       const choice = picked[current.id];
-      const kept = choice && choice.value === Remote.showing(states[current.id])
-        && list.targets.find((target) => target.id === choice.device);
-      return kept || list.targets.find((target) => target.id === list.preferred) || null;
+      const showing = Remote.showing(states[current.id]);
+      const kept = choice && choice.value === showing && list.targets.find((target) => target.id === choice.device);
+      return kept || (showing === Remote.OFF ? null : list.targets.find((target) => target.id === list.preferred) || null);
+    }
+
+    // True while the clients draw no remote at all: no keys, no volume.
+    function remoteHidden(list) {
+      return Remote.showing(states[current.id]) === Remote.OFF && !activeTarget(list || controls());
+    }
+
+    // The bubble with the selected look: the remote on show, or Off while there is none.
+    function selectedBubble(list) {
+      const target = activeTarget(list);
+      return target ? target.id : remoteHidden(list) ? Remote.OFF : null;
     }
 
     function pick(deviceId) {
@@ -692,17 +790,34 @@
     }
 
     function bubbleLabel(item, shown) {
-      if (item.choose) {
-        if (shown === "switching") return item.label + ", switching";
-        if (item.id === Remote.OFF) return shown === "current" ? "Off, the room is off" : "Off: turn the room off";
-        return item.label + (shown === "current" ? ", on the screen" : ", source");
-      }
-      return item.label + ", " + (KIND_NAME[item.kind] || item.kind);
+      if (!item.choose) return item.label + ", " + (KIND_NAME[item.kind] || item.kind);
+      const label = shown === "switching" ? item.label + ", switching"
+        : item.id === Remote.OFF ? (shown === "current" ? "Off, the room is off" : "Off: turn the room off")
+          : item.label + (shown === "current" ? ", on the screen" : ", source");
+      return bubbleLock(item, shown).locked ? label + ". " + roomLock().text : label;
+    }
+
+    // A locked room's padlock takes the LED of the bubble lit for what it
+    // shows. While ordinary controls are blocked every other bubble is inert;
+    // the lit one still answers a tap with why (tapBubble).
+    function bubbleLock(item, shown) {
+      const locked = shown !== "idle" && roomLock().locked;
+      return { locked: locked, inert: !locked && Boolean(controlBlock()) };
+    }
+
+    // What the remote's face says about the lock in words: nothing while a
+    // padlock bubble shows it, or during the first brief check.
+    function lockNotice() {
+      const reason = controlBlock();
+      if (!reason || roomLock().status === "checking") return "";
+      const showing = Remote.showing(states[current.id]);
+      return roomLock().locked && current.options.some((choice) => choice.id === showing) ? "" : reason;
     }
 
     // Off and the room's sources switch the room; any other bubble only brings
-    // up its device's buttons.
+    // up its device's buttons. Neither acts while the room is read-only.
     function tapBubble(item) {
+      if (refused()) return;
       if (item.choose) {
         chooseSource(item.id);
         return;
@@ -858,9 +973,14 @@
       controlBlock,
       roomLock,
       toggleRoomLock,
+      lockOn,
+      lockMenu,
+      lockNotice,
       audioView: audioView,
       controls: controls,
       activeTarget: activeTarget,
+      remoteHidden: remoteHidden,
+      selectedBubble: selectedBubble,
       target: () => activeTarget(controls()),
       pick: pick,
       remoteOf: remoteOf,
@@ -869,6 +989,7 @@
       bubbles: bubbles,
       bubbleState: bubbleState,
       bubbleLabel: bubbleLabel,
+      bubbleLock: bubbleLock,
       tapBubble: tapBubble,
       info: info,
       diagnostics: diagnostics,
@@ -890,6 +1011,7 @@
     SLIDE_EVERY: SLIDE_EVERY,
     SLIDE_HOLD: SLIDE_HOLD,
     OFF_AGAIN_MS: OFF_AGAIN_MS,
+    LOCK_WAIT_MS: LOCK_WAIT_MS,
     keyHints: keyHints,
     memoryStore: memoryStore,
     create: create

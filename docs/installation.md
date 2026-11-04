@@ -238,8 +238,10 @@ also lead there. The web and terminal interfaces share navigation, room and
 device controls, pairing, diagnostics, camera status, topology, accounts and
 room schedules. Camera media and specialist administration open in a browser
 from an explicit terminal choice. Ordinary controls are available without a
-login in either authentication mode. Guests can control unlocked rooms; locked
-rooms retain the remote layout and show their lock status with controls disabled.
+login in either authentication mode. Guests can control unlocked rooms. A room
+that is Off shows no remote until a device is chosen for its buttons. In a
+locked room the bubble for what it shows, Off included, carries a padlock and
+the others are greyed out; selecting the padlocked bubble explains the lock.
 The Security page enables accounts. Each account is either an administrator
 or an ordinary account, with no other roles or per-account room access.
 Guests control unlocked rooms; ordinary accounts add camera snapshots and live
@@ -248,7 +250,10 @@ schedules, users, pairing and the system. Guests still see camera status.
 
 Administrators can use **Lock room**, under Info on Remotes, to hold the current reported
 source or Off until **Unlock room** is selected. The server captures the source;
-an unknown source cannot be locked. This manual lock survives restarts and takes
+an unknown source cannot be locked. To lock on a particular source, right-click
+or long-press its bubble, or Off (in the terminal, right-click it or press `o`),
+and choose **Lock on** it; another source is chosen first and the room is locked
+only once it reports that source. This manual lock survives restarts and takes
 precedence over schedules, even when the schedule itself is disabled. Unlocking
 always succeeds and releases the manual hold; an active scheduled lock can still
 keep the room locked. The lock blocks ordinary controls, including administrator

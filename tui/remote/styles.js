@@ -101,6 +101,8 @@ function styles(c) {
     "bubble.switching": on(selected, busy, true),
     "bubble.focus": focusStyle(),
     "bubble.digit": on(key, faint),
+    // Greyed while the room is read-only: below the contrast the others keep.
+    "bubble.inert": { fg: faint, bg: key, bold: false, underline: false },
     alert: { fg: bad, bold: true },
     danger: on(surface, bad),
     "danger.armed": on(mix(surface, bad, 0.2), bad, true),

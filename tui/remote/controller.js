@@ -325,6 +325,11 @@ function create(options) {
     if (access.state.form && ui.overlay?.kind !== "access-form") {
       ui.returnPane = ui.pane; ui.overlay = { kind: "access-form", title: access.state.form.kind === "policy" ? "Room schedule" : (access.state.form.id ? "Edit " : "Add ") + access.state.form.kind }; ui.pane = "sheet:access-form"; ui.focus = null;
     } else if (!access.state.form && ui.overlay?.kind === "access-form") { ui.overlay = null; ui.pane = ui.screen; ui.focus = null; }
+    // A lock menu closes once it has nothing left to offer.
+    if (ui.overlay?.kind === "lock-menu" && !(ui.screen === "remote" && session.current()?.id === ui.overlay.room
+        && session.lockMenu(ui.overlay.item).length)) {
+      ui.overlay = null; ui.pane = ui.returnPane || "remote"; ui.focus = null;
+    }
     const current = ui.ready && session.current();
     const nextContext = current ? current.id + ":" + session.state(current.id).value : null;
     if (nextContext !== signalContext) {
@@ -483,7 +488,7 @@ function create(options) {
 
   // ---- sheets and screens ----------------------------------------------
 
-  function openSheet(kind, title) {
+  function openSheet(kind, title, extra) {
     stopRepeat();
     if (kind === "cameras") return setScreen("cameras");
     if (kind === "topology") return setScreen("topology");
@@ -495,7 +500,7 @@ function create(options) {
     if (ui.overlay && ui.overlay.kind === "cameras" && kind !== "cameras" && cameras.backend) cameras.backend.close();
     if (ui.overlay && ui.overlay.kind === "topology" && kind !== "topology" && topology.backend) topology.backend.close();
     ui.returnPane = ui.pane;
-    ui.overlay = { kind: kind, title: title || "" };
+    ui.overlay = Object.assign({ kind: kind, title: title || "" }, extra);
     ui.pane = "sheet:" + kind;
     ui.scroll["sheet:" + kind] = 0;
     ui.focusVisible = kind !== "help";
@@ -616,13 +621,13 @@ function create(options) {
   function activate(hit) {
     // A page switch can outrun a terminal redraw. Old control hit boxes must
     // not operate a device once its page has been left.
-    if (["bubble", "key", "volume-mode", "control", "input", "all-off", "room-lock", "simulate-matrix", "simulate-external", "scroll-bubbles"].includes(hit.kind)
+    if (["bubble", "key", "volume-mode", "control", "input", "all-off", "room-lock", "lock-menu", "simulate-matrix", "simulate-external", "scroll-bubbles"].includes(hit.kind)
         && ui.screen !== "remote") return;
     if (hit.kind.startsWith("pair-") || ["send-code", "new-code", "code"].includes(hit.kind)) {
       if (ui.screen !== "pairing") return;
     }
     const blocked = session.controlBlock();
-    if (blocked && (["key", "control", "input"].includes(hit.kind) || hit.kind === "bubble" && hit.item?.choose)) return toast("Read-only", blocked);
+    if (blocked && ["key", "control", "input", "bubble"].includes(hit.kind)) return toast("Read-only", blocked);
     if (hit.kind === "access-action" || hit.kind === "access-field") {
       if (hit.action === "settings" || hit.action === "users") setScreen(hit.action);
       else { access.activate(hit); changed(); }
@@ -631,6 +636,10 @@ function create(options) {
     switch (hit.kind) {
       case "room-lock":
         toggleRoomLock(hit.room);
+        break;
+      case "lock-menu":
+        closeSheet();
+        if (!hit.entry.disabled) hit.entry.run();
         break;
       case "pair-sort":
         if (!pairing.backend || pairing.backend.view(pairing.selected)?.confirm || !View.PAIR_FIELDS.includes(hit.field)) return;
@@ -766,6 +775,29 @@ function create(options) {
     if (!lock.canManage) return toast("Room lock", lock.enabled ? "Sign in as an administrator to lock rooms" : "Enable authentication in Security to lock rooms");
     if (lock.disabled) return toast("Room lock", lock.reason || "Wait for the current change to finish");
     session.toggleRoomLock(room);
+  }
+
+  // A bubble's lock menu as a small sheet; false when it offers nothing.
+  function openLockMenu(item) {
+    if (!item || !session.lockMenu(item).length) return false;
+    const room = session.current().id;
+    ui.sourceCursor[room] = item.id;
+    ui.paneFocus.sources = "bubble:" + item.id;
+    openSheet("lock-menu", "Room lock: " + item.label, { item: item, room: room });
+    return true;
+  }
+
+  // o: the focused bubble's menu, else the source cursor's, else what the room shows.
+  function lockMenuKey() {
+    const lock = session.roomLock();
+    if (!lock.canManage) return toast("Room lock", lock.enabled ? "Sign in as an administrator to lock rooms" : "Enable authentication in Security to lock rooms");
+    const room = session.current().id, hit = ui.focusVisible ? focusedHit() : null;
+    const id = hit && hit.kind === "bubble" ? hit.item.id
+      : ui.pane === "remote" ? options.Remote.showing(session.state(room)) : ui.sourceCursor[room] || session.state(room).value;
+    const item = session.bubbles(session.controls()).find((entry) => entry.id === id);
+    if (openLockMenu(item)) return;
+    toast("Room lock", lock.status !== "ready" ? lock.reason || "Room lock status is not known yet"
+      : lock.locked ? "A schedule holds this room: only what it shows can stay locked" : "Choose Off or a source to lock the room on");
   }
 
   function pressKey(candidates) {
@@ -927,7 +959,7 @@ function create(options) {
       return;
     }
     if (name === "pageup" || name === "pagedown") return pageScroll(name === "pageup" ? -1 : 1);
-    if (ui.overlay.kind === "remotes-menu" && ["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
+    if (["remotes-menu", "lock-menu"].includes(ui.overlay.kind) && ["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
     if (ui.overlay.kind === "topology") {
       if (name === "up" || name === "down") return stepTopology("room", name === "up" ? -1 : 1);
       if (name === "left" || name === "right") return stepTopology("source", name === "left" ? -1 : 1);
@@ -1009,6 +1041,7 @@ function create(options) {
     if (lower === "t") return toggleTheme();
     if (lower === "a") return toggleStill();
     if (lower === "k") return toggleRoomLock();
+    if (lower === "o") return lockMenuKey();
     const buttons = Session.KEYS[KEY_NAMES[name] || ch];
     if (["backspace", "escape"].includes(name) && ui.pane !== "remote") return;
     if (buttons) pressKey(buttons);
@@ -1138,6 +1171,8 @@ function create(options) {
         ui.focus = hit.key;
         ui.paneFocus[ui.pane] = hit.key;
       }
+      // A right-click on a source or Off opens its lock menu; with none, it clicks.
+      if (event.button === "right" && hit.kind === "bubble" && ui.screen === "remote" && openLockMenu(hit.item)) return;
       if (hit.kind === "slider" && ui.screen === "remote") {
         if (session.controlBlock()) return;
         dragging = entry;
