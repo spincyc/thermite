@@ -60,7 +60,7 @@ devices:
       control: [sony_ip_control]
 ```
 
-`observe` lists interfaces thermite may read. `control` lists interfaces it may command. The sample address above is reserved for documentation; use the TV's actual address in your private site.
+`observe` lists interfaces thermite may read. `control` lists interfaces it may command. The sample address above is reserved for documentation; use the TV's actual address in your private site. `mac` is optional except for Sonos devices, and `notes` and `control4` are accepted for your own documentation. Unknown keys are refused with a "did you mean" hint; an invalid or missing file exits with status 2 and names the file, line and column.
 
 Create a private Git repository for that site. Commit real inventory, host settings, native version pins and `thermite-site.json`. Generated `conf/`, `metrics/` and `deploy/`, credentials and runtime state stay outside Git. The public application repository should contain only fictional examples.
 
@@ -74,12 +74,12 @@ thermite validate
 thermite test boot
 ```
 
-The boot check loads the generated configuration in an isolated openHAB runtime and reports what loads. Follow the [server installation guide](installation.html) to prepare the host, commit your private site and deploy it. `thermite install --dry-run` shows the planned installation steps. `thermite status` reports the running services and their addresses.
+`thermite validate` runs every check `thermite generate` runs. `thermite generate --prune` removes files an earlier generate wrote that nothing generates now. The boot check loads the generated configuration in an isolated openHAB runtime and reports what loads. Follow the [server installation guide](installation.html) to prepare the host, commit your private site and deploy it. `thermite install --dry-run` shows the planned installation steps. `thermite status` reports the running services and their addresses.
 
 ## Connect and use it
 
-Installation prints your HTTPS address and trust certificate. Ordinary controls
-work with Security off. Use the Security page to enable authentication and
+Installation prints your HTTPS address and the certificate authority file each
+browser or terminal trusts once. Ordinary controls work with Security off. Use the Security page to enable authentication and
 create the first administrator with owner proof. The local terminal uses the
 installed site's verified endpoint and certificate automatically:
 
@@ -88,8 +88,10 @@ thermite remote --config /path/to/private-site
 ```
 
 With authentication enabled, first run `thermite access login --config
-/path/to/private-site --user admin`. Other computers use `--url` and, for a
-private certificate authority, `--ca-file` at login. Choose a room and source
+/path/to/private-site --user admin`. Other computers use `--url` and
+`--ca-file` with a copy of that authority file at login. Guests control
+unlocked rooms; signed-in accounts add camera snapshots and live video;
+administrators manage locks, schedules, users and pairing. Choose a room and source
 in Remotes; use Pair devices for equipment that needs an on-screen code.
 Cameras and Site show cameras and connections. Alarm-device status requires
 an alarm integration.

@@ -42,7 +42,7 @@ They show the actual clients with fictional inventory and simulated controls. Se
 
 ### Which Linux account runs the services?
 
-Application services use the non-login account `thermite:thermite`, UID/GID 9001. Use your own login for the CLI and private Git; systemd and Podman's backend remain root-managed. The [service ownership guide](https://spincyc.github.io/thermite/service-account.html) covers permissions and migration from the older `openhab` account.
+Application services use the non-login account `thermite:thermite`, UID/GID 9001. Use your own login for the CLI and private Git; systemd and Podman's backend remain root-managed. The [service ownership guide](https://spincyc.github.io/thermite/service-account.html) covers permissions and how upgrades prove unit ownership.
 
 ### Where does my house configuration belong?
 
@@ -50,7 +50,7 @@ In a private site created by `thermite init`. Commit inventory, host settings an
 
 ### How do application upgrades and rollback work?
 
-Install the reviewed package, run `thermite init --upgrade /path/to/site`, then generate, validate and privately commit before deployment. Configuration and state are preserved. Rollback needs the older revision's exact cached application release; retain that cache. See [Application releases](https://spincyc.github.io/thermite/packaging.html) for the full workflow and separate runtime pins.
+Run `thermite upgrade --config /path/to/site`. One approved run fetches and verifies the application, commits the site's release pin, and updates native services, monitoring, the HTTPS gateway and the identity schema; configuration and state are preserved, and an interrupted run resumes when rerun. Rollback needs the older revision's exact cached application release; retain that cache. See [Application releases](https://spincyc.github.io/thermite/packaging.html) for the full workflow and separate runtime pins.
 
 ### Why "thermite", and why a bowl?
 

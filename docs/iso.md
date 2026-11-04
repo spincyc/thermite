@@ -129,31 +129,58 @@ Runtime commissioning still needs Internet access.
 Boot Ubuntu's install entry, keep the bundled installer version, choose the
 disk and owner login, and review Ubuntu's destructive-storage confirmation.
 Every normal installer screen remains interactive. No `autoinstall` kernel
-flag, storage plan or identity defaults are added. A late command copies
-and verifies the bundled wheels after Ubuntu installs the selected target.
-It creates the application environment without pip or network access.
+flag, storage plan or identity defaults are added. Late commands copy the
+bundled media into the installed target, install `python3-venv` and `git`
+there when the media or a mirror provides them, then verify the bundled wheels
+and create the application environment without pip or network access. An
+offline installation without those packages still completes; the first-boot
+instructions give the one command to install them before `thermite install`.
 The builder refreshes Ubuntu's media checksum list for replaced and added
 files. Reboot from the installed disk and log in as your chosen owner.
 
 ## First boot
 
-The login instructions are also in `/opt/thermite/FIRST-BOOT.txt`. Run
-`thermite --version`, then follow [installation](installation.md) from
-“Create your private site.” Edit the fictional example before controlling
-hardware, initialize private Git, generate and validate configuration,
-commit it, then review `thermite install --dry-run` before commissioning.
+The login instructions are also in `/opt/thermite/FIRST-BOOT.txt`. Log in as
+your owner account and connect to the Internet. On the Ubuntu image, first
+make sure the prerequisites are present; nothing changes when they already
+are:
+
+```sh
+sudo apt-get update && sudo apt-get install python3-venv git
+```
+
+Then create the private site, replace its fictional inventory, validate and
+commit it, and deploy it with one approval:
+
+```sh
+thermite init "$HOME/thermite-site"
+cd "$HOME/thermite-site"
+thermite check --config "$HOME/thermite-site"
+git init --initial-branch=main
+git add .
+git commit -m 'Initialize private Thermite site'
+thermite install --config "$HOME/thermite-site" --dry-run
+thermite install --config "$HOME/thermite-site"
+```
+
+Edit `instance/devices.yaml` and `instance/host.yaml` before `thermite check`.
+Installation prints the HTTPS URL and the certificate authority file each
+browser or terminal client must trust once. Keep `~/.local/bin` on your PATH.
+[Installation](installation.md#create-your-private-site) describes each step.
 
 Commissioning creates the non-login `thermite:thermite` service identity,
 UID/GID 9001. Your owner login continues to own private Git and run the CLI.
 Log out and back in for its new group membership to apply. See
 [service ownership](service-account.md).
 
-The ISO application environment contains no pip. For later updates, follow
-[packaging](packaging.md#update-and-roll-back) to create an owner-managed
-environment from a reviewed wheel and reconnect the private site to it.
-Arch system upgrades can change Python's minor version; create a new
-environment with the current interpreter after such a change. Keep
-application and private-site backups.
+The ISO application environment contains no pip. The first
+`thermite install` prepares Thermite's own owner-managed application
+environment and selects it through `~/.local/bin/thermite`; update later with
+`thermite upgrade --config "$HOME/thermite-site"`
+([application releases](packaging.md#update-and-roll-back)). Arch system
+upgrades can change Python's minor version; the next install or upgrade
+rebuilds an application environment built for an older one. Keep application
+and private-site backups.
 
 ## Validation and limits
 

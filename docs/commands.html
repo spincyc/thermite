@@ -144,8 +144,8 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
-  --upgrade             update the release pin and retire generated launchers; preserve
-                        configuration and state
+  --upgrade             update the release pin and ignore rules; preserve configuration
+                        and state
   --json                print the report as JSON
 
 switches every verb takes:
@@ -543,10 +543,9 @@ console listens on 127.0.0.1:13617. Bindings still open UPnP/mDNS sockets on
 the LAN.
 
 It runs on var/sandbox/conf, a copy of conf/ in which every HTTP binding
-channel is READONLY, the receivers&#x27; Items are display-only and the
-projector&#x27;s rule sends nothing (oh_render.read_only): it reads the matrices
-and the devices under control but cannot command them, and every other
-read-write channel is guarded in conf/ itself.
+channel is READONLY, every Item linked to a channel that could command a
+device is display-only and every rule&#x27;s SEND is off (oh_render.read_only):
+it reads the matrices and the devices under control but cannot command them.
 `reload` refreshes the copy after `thermite generate`; the running sandbox
 picks the change up.
 
@@ -749,7 +748,8 @@ examples:
 </section>
 <section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, with one approval for the whole run.</p><pre class="help">usage: thermite install [-h] [--config DIR] [-n] [--clean] [--restart-runtime]
                         [--runtime-token-file RUNTIME_TOKEN_FILE] [--source SOURCE]
-                        [--revision REVISION]
+                        [--revision REVISION] [--native-timeout SECONDS]
+                        [--allow-downgrade]
 
 Deploy the complete Thermite installation using committed private configuration.
 Run as your ordinary owner with --config DIR. The current application release
@@ -766,15 +766,20 @@ its TLS certificate and starts with Security off. Enable Security on its page
 to bootstrap the first administrator with owner proof.
 
 The command in ~/.local/bin is switched only after every check passes. Keep
-that directory on PATH. Rerun after a failure to resume; prior environments,
-releases and backups are retained. Application setup never changes OS Python.
+that directory first on PATH; a successful run warns when it is not. Rerun
+after a failure to resume; prior environments, releases and backups are
+retained. Application setup never changes OS Python. Install refuses to pin a
+release older than the site&#x27;s committed one unless --allow-downgrade is given,
+after deliberately restoring state that the newer release may have migrated.
 
 --clean deletes the native state and local runtime/monitoring credentials;
 it requires typing the exact state path. Gateway identity/TLS state is retained.
 --restart-runtime requests one fresh native start and its readiness checks.
---dry-run reports the whole workflow without fetching, committing or changing
-the host. The exact host plan is resolved after an approved application fetch.
-Use -v for details. Agents only use --dry-run; they never run sudo.
+--native-timeout sets the one native readiness allowance (300-7200 seconds).
+--dry-run fetches, commits and changes nothing. When the site pins the release
+running it, it also prints that release&#x27;s provisional host plan for this host;
+otherwise the host plan is resolved after approval. Use -v for details. Agents
+only use --dry-run; they never run sudo.
 
 options:
   -h, --help                    show this help message and exit
@@ -789,12 +794,23 @@ options:
                                 from your private file
   --source SOURCE               use a clean application checkout for this deployment
   --revision REVISION           application Git revision to deploy from --source
+  --native-timeout SECONDS      one native readiness allowance shared by runtime
+                                startup, gateway commissioning and final settlement
+                                (default 900)
+  --allow-downgrade             pin a release older than the site&#x27;s committed one, after
+                                restoring compatible state
 
 switches every verb takes:
   -q, --quiet                   print only errors
   -v, --verbose                 also print, on stderr, the commands and HTTP requests it
                                 runs
   --no-color                    no color in what it prints (as NO_COLOR=1 does)
+
+exit status:
+  0  complete and verified
+  1  declined or a step failed
+  2  invalid inputs, an older release without --allow-downgrade, or run as root
+  130  interrupted; the running step stopped its own commands first
 
 examples:
   thermite install --config /path/to/private-site
@@ -809,7 +825,8 @@ examples:
 </section>
 <section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Update the application, native services and HTTPS gateway together.</p><pre class="help">usage: thermite upgrade [-h] [--config DIR] [-n]
                         [--runtime-token-file RUNTIME_TOKEN_FILE] [--source SOURCE]
-                        [--revision REVISION]
+                        [--revision REVISION] [--native-timeout SECONDS]
+                        [--allow-downgrade]
 
 Upgrade the complete Thermite installation from the official GitHub main branch.
 Select your committed private site with --config DIR. Use --revision REV to
@@ -827,10 +844,18 @@ are stopped before the complete identity backup and any schema migration.
 
 The previous owner command remains selected until every readiness check passes.
 An interrupted run retains its candidate, site commit, prior release and backup;
-rerun the same command to resume. Previous releases do not automatically undo
-schema changes. --dry-run changes nothing and does not fetch: the remote
-revision and exact host differences remain unknown until an approved run.
-Run as your ordinary user. Use -v for details. Agents only use --dry-run.
+rerun the printed Resume command, which names the fetched commit. Ctrl-C lets
+the running step stop its own commands first. Meanwhile the previous owner
+command runs site commands with the site&#x27;s pinned release, verified from its
+var/application-releases. Previous releases do not undo schema changes, and
+upgrade refuses to pin a release older than the site&#x27;s unless --allow-downgrade
+is given after deliberate recovery. --native-timeout sets the one native
+readiness allowance (300-7200 seconds).
+
+--dry-run changes nothing and does not fetch: the remote revision and its exact
+host differences remain unknown until an approved run. When the site pins the
+release running it, it prints that release&#x27;s provisional host plan for this
+host. Run as your ordinary user. Use -v for details. Agents only use --dry-run.
 
 options:
   -h, --help                    show this help message and exit
@@ -842,6 +867,11 @@ options:
   --source SOURCE               upgrade from a clean application checkout instead of the
                                 official repository
   --revision REVISION           application Git revision (default: official main)
+  --native-timeout SECONDS      one native readiness allowance shared by runtime
+                                startup, gateway commissioning and final settlement
+                                (default 900)
+  --allow-downgrade             pin a release older than the site&#x27;s committed one, after
+                                restoring compatible state
 
 switches every verb takes:
   -q, --quiet                   print only errors
@@ -852,7 +882,9 @@ switches every verb takes:
 exit status:
   0  complete and verified
   1  declined or a step failed
-  2  invalid inputs, missing installation, or run as root
+  2  invalid inputs, an older release without --allow-downgrade, missing
+     installation, or run as root
+  130  interrupted; the running step stopped its own commands first
 
 examples:
   thermite upgrade -n               what upgrading would do here; runs nothing
@@ -864,10 +896,11 @@ examples:
 Undo thermite install on this host, as apt remove does: stop runtime, the
 Apple TV helper, the metrics services (Prometheus, node_exporter,
 blackbox_exporter, the runtime exporter, Grafana) and their restart paths
-(and disable the path units), remove the unit files thermite install
-installed, and systemctl daemon-reload. The services come from quadlets,
-which systemd generates from those files, so removing them is what keeps
-them from starting at the next boot.
+(and disable the path units and the boot-time native port boundary),
+remove the unit files thermite install installed and its unit manifest,
+and systemctl daemon-reload. The services come from quadlets, which systemd
+generates from those files, so removing them is what keeps them from
+starting at the next boot.
 
 It keeps the state root (conf, userdata, secrets, the deploy records and
 backups, Prometheus&#x27; samples, Grafana&#x27;s data and the metrics secrets), the
@@ -875,8 +908,9 @@ thermite user and group, the packages, images and host node-exporter
 confinement configuration, and says so: thermite
 install puts runtime and the metrics back on the same state. --purge, as apt
 purge does, also deletes the state root; before that step it shows the path
-and asks you to type it. Separately staged authenticated-access releases
-and state are managed separately.
+and asks you to type it. The HTTPS gateway, its worker and callback units,
+and their identity state (accounts, TLS key) are kept, with the commands
+that remove them; so are the loaded native port filter and its rule file.
 
 One y/n question approves this uninstall run, including its sudo commands.
 Compact status shows each stage; -v/--verbose shows details and commands.
@@ -937,20 +971,25 @@ examples:
 </section>
 <section class="verb" id="rollback"><h3><code>thermite rollback</code></h3><p>Deploy the commit deployed before the current one, or another.</p><pre class="help">usage: thermite rollback [-h] [--config DIR] [-n] [--force] [--state DIR] [COMMIT]
 
-Put back an earlier commit&#x27;s conf/ and Apple TV helper, as helm rollback
-does: without COMMIT, the commit deployed before the one deployed now
-(thermite history lists them); with it, that commit. It deploys as
-thermite deploy does, as you, through the thermite group, with an explicit
+Put back an earlier site commit&#x27;s runtime configuration (conf/), Apple TV
+helper files and monitoring configuration (metrics/), rendered with that
+commit&#x27;s exact cached application release: without COMMIT, the commit
+deployed before the one deployed now (thermite history lists them); with it,
+that commit. It deploys as you, through the thermite group, with an explicit
 ownership handoff to thermite:thermite, and records a rollback in the history.
 
-A commit this host&#x27;s history holds ran here before, so it needs no fresh
-boot test. Any other commit needs thermite test boot to have passed on its
-conf/ here, or --force.
+Only those files change. Rollback does not select another application for the
+owner command, change systemd units or native versions, or restore runtime
+data, the HTTPS gateway or identity state; docs/installation.md#update-or-remove
+and docs/packaging.md#update-and-roll-back describe that recovery.
 
-A deploy never changes the systemd units. When the commit&#x27;s deploy/ holds
-other units than the installed ones (an older runtime pin, or a helper
-unit from before the apple-tv verb, which runs `atv serve`), it warns and
-names what the owner installs for that commit to run as it did.
+A commit this host&#x27;s history holds ran here before, so it needs no fresh boot
+test, provided its configuration renders to the exact digest recorded then;
+the deploy checks that digest again before writing. Any other commit needs
+thermite test boot to have passed on its conf/ here, or --force.
+
+When the commit&#x27;s deploy/ holds other units than the installed ones (an older
+runtime pin, for example), it warns and names how the owner installs them.
 
 positional arguments:
   COMMIT                the commit to deploy (default: the one deployed before the
@@ -1064,7 +1103,7 @@ The runtime answers /rest/things and /rest/addons only with credentials; pass
 an API token file (the sandbox writes var/sandbox/api-token). --sandbox
 checks the sandbox on 127.0.0.1:13615, with that token when it exists.
 --production checks production runtime on this host, on 127.0.0.1 at
-instance/host.yaml&#x27;s http_port, with the token bin/thermite install saved in
+instance/host.yaml&#x27;s http_port, with the token thermite install saved in
 var/&lt;this host&#x27;s name&gt;/api-token, and the metrics services beside it:
 Prometheus ready with every scrape target up, and Grafana answering.
 Before thermite upgrade has installed them it says they are not installed yet.
@@ -1376,14 +1415,11 @@ exit status:
      device pairs elsewhere
 
 examples:
-  thermite pair living_room_tv      have that Sony TV show a PIN, then type it to pair it with production
-  thermite pair living_room_tv --sandbox
-                                    the same with the sandbox
-  thermite pair living_room_tv 1234
-                                    send the PIN the TV shows already
-  thermite pair bedroom_tv --sandbox
-                                    ask an Android TV to show a pairing code
-  thermite pair bedroom_tv A1B2C3 --sandbox
+  thermite pair DEVICE              have that Sony TV show a PIN, then type it to pair it with production
+  thermite pair DEVICE --sandbox    the same with the sandbox
+  thermite pair DEVICE 1234         send the PIN the TV shows already
+  thermite pair DEVICE --sandbox    ask an Android TV to show a pairing code
+  thermite pair DEVICE A1B2C3 --sandbox
                                     send the code it shows; wait for it to come ONLINE
   thermite pair --check             whether every Sony TV is paired with production
 </pre>
@@ -1775,8 +1811,8 @@ keys:
 examples:
   thermite remote                   thermite landing page on this host; Remotes choices really switch rooms
   thermite remote --mock            the page&#x27;s mock backend, which sends nothing
-  thermite remote --sandbox --room living_room
-                                    the sandbox, starting in the living room
+  thermite remote --sandbox --room ROOM
+                                    the sandbox, starting in that room
   thermite remote --pair            start on the Pairing screen
   thermite remote --url http://thermite.example:13601 --light
                                     thermite on another host, light
@@ -1813,6 +1849,7 @@ actions:
     serve               serve one HTTPS site
     worker              run the single room-policy worker
     verify              verify service custody without initializing state
+    prune               delete saved policies for rooms the compiled house no longer has
     callbacks           run the explicitly configured plaintext UPnP NOTIFY listener
     login               log this terminal into a site
     logout              revoke this terminal&#x27;s site credential
@@ -1839,6 +1876,8 @@ examples:
                                     serve the compiled site over verified TLS
   thermite access worker --config /srv/thermite/config.json
                                     run the single supervised room-policy worker
+  thermite access prune --config /srv/thermite/config.json
+                                    delete saved policies for rooms the house no longer has
 </pre>
 <details id="access-bootstrap"><summary><code>thermite access bootstrap</code></summary><pre class="help">usage: thermite access bootstrap [-h] --config CONFIG --user USER
 
@@ -1942,6 +1981,23 @@ switches every verb takes:
 examples:
   thermite access verify --config /srv/thermite-access/releases/current/config.json
                                     check service ownership and configuration as thermite before activation
+</pre></details>
+<details id="access-prune"><summary><code>thermite access prune</code></summary><pre class="help">usage: thermite access prune [-h] --config CONFIG
+
+Delete saved policies for rooms the compiled house no longer has.
+
+options:
+  -h, --help       show this help message and exit
+  --config CONFIG  private site service configuration
+
+switches every verb takes:
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access prune --config /srv/thermite/config.json
+                                    delete saved policies for rooms the house no longer has
 </pre></details>
 <details id="access-callbacks"><summary><code>thermite access callbacks</code></summary><pre class="help">usage: thermite access callbacks [-h] --config CONFIG
 

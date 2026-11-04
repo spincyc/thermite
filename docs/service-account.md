@@ -19,9 +19,8 @@ membership only to people who administer the installation.
 
 ## Files and permissions
 
-The private source checkout or site, its launcher and its Git history stay
-owned by their human operator. The deployed service tree is owned by
-`thermite:thermite`. The installer creates the layout and the deploy command
+The private site and its Git history stay owned by their human operator.
+The deployed service tree is owned by `thermite:thermite`. The installer creates the layout and the deploy command
 preserves its permissions:
 
 | Deployed files | Directories | Files |
@@ -73,9 +72,8 @@ Privileged host service management remains the administrator's responsibility.
 
 ## Upgrade an existing installation
 
-Existing Thermite installations can migrate their old `openhab*` unit and
-container names while preserving the service account and data. From your
-private site, as its owner:
+Upgrades keep the service account, its numeric IDs and the data in place.
+From your private site, as its owner:
 
 ```sh
 thermite upgrade --config /path/to/private-site --dry-run
@@ -86,29 +84,27 @@ The same command updates the application environment, native services and
 HTTPS gateway. Review the plan and keep a current backup before applying it.
 One approval covers the complete workflow.
 
-The migration verifies generated unit contents, their state bindings and
-the effective systemd registration before stopping or removing them. New
-inactive unit files are installed before old registrations are retired, so
-an interrupted migration retains proof of ownership for the next run. A
-shadowing service, unknown modification or ambiguous ownership stops the
-migration for review. Independently installed `openhab`, `prometheus` and
-`grafana` services are left alone. A nonempty state directory also needs proof
-that it belongs to Thermite; an unrelated application directory is not adopted.
-Empty installation scaffolding can be resumed.
+Before changing or removing a unit, the installer proves it is Thermite's.
+It records each unit file it installs, with its digest and the application
+release that rendered it, in the root-owned `/etc/thermite/units.json`. A
+root-owned unit file is recognized when its exact bytes match that record, the
+unit the current committed inputs render, or a unit an earlier verified build
+of this site rendered; units installed before the record existed are taken
+over once that way. Time zone edits and template changes therefore do not
+block an upgrade. The effective unit must also resolve to that file without
+unowned drop-ins. An unknown modification or other ownership stops the run for
+review; independently installed `openhab`, `prometheus` and `grafana`
+services are left alone.
 
-An independent `openhab` account with different numeric IDs can coexist.
-Older Thermite installations that still use an `openhab` account at the
-configured service UID/GID need an administrator to resolve that collision
-first. The installer does not infer exclusive account ownership from its
-name or numeric ID and does not rename it automatically. Preserve numeric
-ownership for existing Thermite data; do not change IDs merely to bypass this
-check.
+If the configured service UID or GID already belongs to another account, such
+as an independent `openhab` account, the installer stops: it does not rename
+or adopt another service account. An administrator must resolve that
+collision first. Preserve numeric ownership for existing Thermite data; do not
+change IDs merely to bypass this check.
 
-Unit migration does not relocate the state root or reinitialize a database.
-Keep your existing `state_root`, even if it is named
-`/srv/old-runtime`. Configuration, users, pairings, histories and data
-stay in place. Do not replace them with the fictional example or change the
-numeric IDs to obtain the new account name.
+Upgrades do not relocate the state root or reinitialize a database. Keep your
+existing `state_root`. Configuration, users, pairings, histories and data stay
+in place. Do not replace them with the fictional example.
 
 After the workflow succeeds, log out and back in, then check:
 
@@ -163,6 +159,10 @@ native services. Their releases and identity state live outside the native
 state root, by default at the same path with `-access` appended. Release
 parents belong to the operator; private release files and persistent identity
 belong to `thermite:thermite`. Root owns the installed unit copies and backups.
+
+The gateway's private certificate authority is separate: it lives in the
+private site's `var/gateway/authority/`, owned by the operator (directory 0700,
+key 0600). Back it up with the site's other private state.
 
 The workflow retains existing identity and TLS state, stops gateway writers,
 backs up the complete private state, migrates the schema, starts the new

@@ -32,7 +32,7 @@ The same controls in your terminal. Both screenshots show **demo mode with ficti
 
 This repository contains the application, tests and fictional example. `thermite init` creates your separate private site; installing the application starts no service.
 
-Use an always-on x86-64 host. The [system requirements](https://spincyc.github.io/thermite/requirements.html) cover sizing, networking and tested configurations; [service ownership](https://spincyc.github.io/thermite/service-account.html) covers permissions and migration.
+Use an always-on x86-64 host. The [system requirements](https://spincyc.github.io/thermite/requirements.html) cover sizing, networking and tested configurations; [service ownership](https://spincyc.github.io/thermite/service-account.html) covers permissions and upgrades.
 
 ## Explore
 

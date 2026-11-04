@@ -15,6 +15,71 @@ rollback. The unified deployment workflow uses a separate committed private site
   and disabled controls; management, camera snapshots and live video still
   require a signed-in account while authentication is on.
 
+- Security-relevant change: with Guests able to control every unlocked room in
+  both authentication modes, roles, Viewer, custom roles and per-account room
+  grants restricted nothing and are removed. Accounts are either ordinary
+  accounts, which add camera media while authentication is on, or
+  administrators, who manage locks, schedules, users, pairing and the system.
+  The upgrade keeps existing administrators and makes every other account an
+  ordinary one; the roles API and role editor are gone.
+- Unlocking a room always succeeds; a schedule that no longer validates is kept
+  disabled, and unlocking into an active window applies it once unless the room
+  already shows its source. One unreadable policy no longer stops enforcement in
+  unrelated rooms, and `thermite access prune` removes policies for rooms no
+  longer in the house.
+- The gateway throttles sign-in per user and device pair and delays, rather than
+  locks out, a username; room commands no longer evict the security audit;
+  server and worker errors are logged; event streams are capped; responses carry
+  a Content-Security-Policy, `Allow` and `Retry-After`; SQLite runs in WAL mode.
+- Remotes: the terminal locks and unlocks a room with `K`; web keyboard
+  shortcuts obey locks; the lock control states its reason and last error;
+  schedule locks show their end time; one failed status refresh no longer pauses
+  controls; a Guest asking for an account-only page is not signed out; browser
+  live updates reconnect after a gateway restart; source bubbles are announced
+  as buttons rather than tabs.
+- Installs and upgrades share one native readiness allowance
+  (`--native-timeout`) across startup, a settle before gateway commissioning,
+  commissioning and final readiness. Dropped native reads retry until the
+  deadline and writes never repeat; bridged and initializing Things are
+  pending, only configuration errors fail fast, and Things still initializing
+  at the final check are warnings. A failed or crash-looping unit ends a wait.
+- A run that fails after stopping services restarts them; Ctrl-C lets the host
+  phase clean up. Unit ownership is recorded in `/etc/thermite/units.json`, so
+  timezone and template changes no longer block upgrades. After a failed
+  upgrade the installed command runs the pinned release, the Resume line names
+  the fetched commit, and re-pinning an older release needs `--allow-downgrade`.
+  Application environments install from a hashed lock and are rebuilt after a
+  Python upgrade. Legacy unit namespaces, site launchers and renamed-verb
+  aliases are removed.
+- Root helpers refuse symlinked or hard-linked native configuration and never
+  write through it. The HTTPS gateway uses a private certificate authority with
+  an 825-day server certificate that renews automatically; a legacy self-signed
+  certificate is replaced once, with a notice to trust the new authority on each
+  client. `host.yaml` is validated before any unit is generated, and
+  interrupted deploys stay tracked for cleanup.
+- House files are validated strictly: unknown or mistyped keys get "did you
+  mean" hints, and missing, unparsable or invalid house and host files exit 2
+  with `file:line:col`. `mac` is optional except for Sonos; `notes` and
+  `control4` are accepted documentation keys. `validate` runs every generate
+  check, `generate --prune` removes outdated generated files, and `status`,
+  `discover` and `ir-profile` have real `--json` output and exit codes.
+  `docs export` no longer deletes the Markdown it builds from.
+- The sandbox's read-only configuration fails closed: every Item on a
+  commanding channel is guarded whatever its binding, and a rule without a SEND
+  declaration is refused.
+- Routing quarantines a device only when a command may have been sent without
+  an answer; an unreachable or refusing device fails only that route, and
+  quarantine clears itself after a fresh read. HEOS reads the receiver in its
+  verified AppCommand format, and Android TV pairing no longer loops on a failed
+  restore or reports a transient PIN state as unpaired.
+- Vendor facts (probe and discovery ports, remote layouts, readback inputs,
+  device keys, Control4 validation, the Android TV handler pool) live in their
+  integration modules; generated output is unchanged. Denon and Marantz
+  receivers report their selected input in room diagnostics.
+- The build backend reads `[project]` and builds sdists; CI runs the checks on
+  Python 3.11-3.14 for pushes and pull requests, and docs publish only after it
+  passes. The Ubuntu ISO installs `python3-venv`.
+
 - `thermite install --config DIR` deploys the complete stack and `thermite
   upgrade --config DIR` updates the application, native services, monitoring,
   HTTPS gateway and identity schema in one approved run. The stable command

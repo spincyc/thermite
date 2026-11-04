@@ -77,7 +77,9 @@ the clone lacks its runtime token, installation can reconnect using the
 service's saved monitoring token. Under the normal install approval, it
 validates that token against the loopback runtime and saves a private operator
 copy. It does not replace an existing local token or managed credential record.
-Keep private backups of `var/` for other state and historical releases.
+Keep private backups of `var/` for other state and historical releases. Restore
+`var/gateway/authority/` into the clone before installing: without it, the run
+creates a new certificate authority and every client must trust it again.
 
 New sites use manifest schema 2. Deployment exports the selected Git revision's
 inputs and renders them with that revision's exact verified application from
@@ -130,17 +132,19 @@ explicit source checkout, verifies the owner command can be replaced safely,
 and asks once to approve the entire run. It fetches the selected source when
 needed, prepares or reuses a private application environment under
 `~/.local/share/thermite/application/`, and verifies every installed release
-file. Python package installation happens inside that environment, never in
-the OS-managed interpreter. A dry run performs no fetch, environment creation,
+file. Python package installation happens inside that environment, from the
+hashed `lib/requirements-app.txt`, never in the OS-managed interpreter. An
+environment built for another Python minor version is rebuilt; the old one is
+retained. A dry run performs no fetch, environment creation,
 site update or service change; the remote revision remains unknown until the
 approved fetch.
 
 The candidate validates the private site before committing its exact
 application version and release digest in `thermite-site.json`. The same
-bounded transaction may update ignore rules and remove recognized generated
-legacy launchers or an unchanged generated Makefile. Customized launchers
-require review; custom Makefiles, inventory, runtime pins and unrelated Git
-files remain untouched. Nothing is pushed to the site's remote repository.
+bounded transaction may update ignore rules. Inventory, runtime pins and
+unrelated Git files remain untouched. Nothing is pushed to the site's remote
+repository. Pinning a release older than the site's committed one is refused
+unless `--allow-downgrade` is given after deliberate state recovery.
 
 The candidate then runs the complete native and access workflow: boot checks,
 native backups when required, deployment and service readiness, gateway
@@ -148,11 +152,14 @@ staging, a complete stopped-state identity backup, schema migration, activation,
 native authentication and callback configuration, and live HTTPS verification.
 Existing identity, security settings, certificates and callback routes are
 adopted. A fresh gateway has authentication off until owner-authorized first
-administrator setup on Security; it prints its HTTPS URL and self-signed trust
-certificate path. Each client must trust that certificate independently.
+administrator setup on Security; it prints its HTTPS URL and the path of its
+private certificate authority's certificate, which each client trusts once.
+The authority lives in the site's `var/gateway/authority/`; see
+[HTTPS and accounts](installation.md#set-up-https-and-accounts).
 
 Only a successful complete run selects the candidate through
-`~/.local/bin/thermite`. Keep that directory on PATH. A recognized standard
+`~/.local/bin/thermite`. Keep that directory first on PATH; a successful run
+warns when `thermite` on PATH is a different launcher. A recognized standard
 pip-installed owner entry point is backed up before adoption; a custom command
 is not overwritten. The one-time application bootstrap in the
 [server guide](installation.md) is the only normal pip/environment setup.
@@ -170,21 +177,29 @@ Validation or commit failures restore only the upgrade's bounded site edits
 when those files have not changed concurrently. Concurrent edits are preserved
 for review. If a host phase fails, the committed candidate pin and candidate
 environment remain available, while the previous owner command stays selected.
-Rerun the printed install or upgrade command: it revalidates and reuses the
-candidate and resumes completed stages without a duplicate pin commit. A
-changed or damaged retained release is refused.
+Rerun the printed Resume command, which names the fetched commit with
+`--revision`: it revalidates and reuses the candidate and resumes completed
+stages without a duplicate pin commit. Meanwhile the previous owner command
+runs site commands with the site's pinned release, verified from
+`var/application-releases/<digest>`, instead of refusing. A changed or damaged
+retained release is refused. `--dry-run` shows a provisional host plan only
+when the site pins the release that is running it.
 
 Retaining the previous launcher is not an automatic rollback of services,
 native data or identity schemas. The native backup and complete identity
 backup have different recovery purposes. A failed cutover can leave services
-stopped; follow its recorded failure and backup paths. Before selecting an
-older gateway, establish that it supports the current schema, or restore the
-matching stopped-state identity backup as part of deliberate recovery. Do not
-bootstrap a new authority, reset accounts or replace credentials to retry.
+stopped; follow its recorded failure and backup paths. To go back to the
+previously deployed release, follow the printed advice: restore the backup when
+one was made, revert the site's release-pin commit, then run that release's
+cached `var/application-releases/<digest>/bin/thermite install --config DIR`.
+Before selecting an older gateway, establish that it supports the current
+schema, or restore the matching stopped-state identity backup as part of
+deliberate recovery. Do not bootstrap a new authority, reset accounts or
+replace credentials to retry.
 
 Verified application releases are also cached under
-`var/application-releases/`. Keep that cache, previous application environments,
-gateway releases and original artifacts. A historical deployment resolves the
+`var/application-releases/`. Keep that cache, `var/gateway/authority/`,
+previous application environments, gateway releases and original artifacts. A historical deployment resolves the
 private Git revision's exact application requirement, renders configuration
 with that release and copies its finite helper files. A missing cache can use
 the exact installed release; unavailable or modified artifacts fail before

@@ -110,9 +110,10 @@ and says so.
 Read the plan first. One approval covers application preparation, the private
 site's release commit, native services and the HTTPS gateway, including their
 sudo commands. Install uses the application release that launched it. It
-prepares a private environment, validates that release and the site, then
-commits only the application requirement and any recognized legacy site-wrapper
-migration. Your inventory and native pins stay under your control.
+prepares a private environment, installing its dependencies from the hashed
+`lib/requirements-app.txt`, validates that release and the site, then commits
+only the application requirement. Your inventory and native pins stay under
+your control.
 
 The host workflow checks architecture, kernel support, ports and IDs; installs
 prerequisites; creates the service account and state directories; boots the
@@ -121,16 +122,28 @@ units; starts services; and provisions internal runtime access. It also stages
 and activates the HTTPS gateway, its worker and required callbacks, backs up
 existing identity state before migration, and verifies native authentication,
 live service releases and HTTPS readiness. It switches
-`~/.local/bin/thermite` to the prepared application only after every phase passes.
+`~/.local/bin/thermite` to the prepared application only after every phase passes,
+and a successful run warns when `thermite` on PATH is a different launcher.
 No separate access staging, handoff or activation commands are required.
 
-Gateway commissioning can reload native authentication and jUPnP services.
-The authoritative native readiness check runs after commissioning and service
-activation, and requires ten uninterrupted seconds of complete initialization.
-It then checks monitoring and final health. `UNINITIALIZED`, `INITIALIZING` and
-`UNKNOWN` do not count as ready; reviewed pairing and connectivity problems stay
-visible warnings. Configuration errors remain failures. One bounded native wait
-owns the startup allowance and the existing optional recovery restart.
+Each run has one native readiness allowance, 900 seconds by default. Runtime
+startup, a settle before gateway commissioning, commissioning itself and the
+final native readiness wait share it; time outside those phases, such as image
+downloads, does not count. Give a slower host more with
+`--native-timeout SECONDS` (300–7200). Gateway commissioning can reload native
+authentication and jUPnP services, so the authoritative readiness check runs
+after commissioning and service activation and requires ten uninterrupted
+seconds of complete initialization. Only Thing configuration errors fail
+immediately. Handler, bridge and device initialization (`UNINITIALIZED`,
+`INITIALIZING`, `UNKNOWN`) is pending until the allowance ends; reviewed
+pairing and connectivity problems stay visible warnings. A failed or
+crash-looping `thermite-openhab.service` ends the wait early with a
+`journalctl` hint.
+
+The run ends with a read-only check, `thermite health --production
+--installation --settle 120`. It polls Things still initializing for up to two
+minutes and reports any that remain as warnings, not failures; configuration
+errors, missing add-ons, monitoring and web-entry failures still fail.
 
 Keep `~/.local/bin` on your shell's PATH. If you activated the bootstrap
 environment above, leave it with `deactivate` after this first deployment and
@@ -155,10 +168,11 @@ a readable, nonempty administrator credential as the service user, including
 after an interrupted installation and reboot. Existing administrator databases
 and passwords are preserved.
 
-Existing installations retain their Thermite account IDs and data paths when
-legacy unit names are migrated. Independent application accounts are not
-renamed; see
-[service ownership and migration](service-account.md).
+The installer records the unit files it installs, with their digests, in the
+root-owned `/etc/thermite/units.json`. A later run recognizes its own units from
+that record, so time zone edits and template changes do not block an upgrade.
+An unknown modification or an unowned drop-in stops for review; see
+[service ownership](service-account.md).
 
 ### Startup and recovery
 
@@ -188,18 +202,19 @@ offline preparation does not run its managed rules or Things.
 After validating the API token, installation waits for the required add-ons,
 Thing handlers and authenticated native metrics. Unchanged known first-start
 handler symptoms can prompt one reviewed restart of `thermite-openhab.service` within
-the startup budget. Configuration and authentication errors require fixing
+the native readiness allowance. Configuration and authentication errors require fixing
 their reported cause. A persistent failure stops installation and retains
 userdata and credentials. Failed fresh cache priming also retains its
 `.thermite-prime-incomplete` marker and logs; inspect them before explicit
 recovery. Preparation and normal startup refuse that incomplete cache.
 
 On a slow machine or under software CPU emulation, give the boot check a
-longer startup budget, then rerun the installer:
+longer startup budget, then rerun the installer with a larger native
+readiness allowance:
 
 ```sh
 thermite test boot --config "$HOME/thermite-site" --timeout 1800
-thermite install --config "$HOME/thermite-site"
+thermite install --config "$HOME/thermite-site" --native-timeout 1800
 ```
 
 A failed check does not approve a deployment. The longer check must pass
@@ -225,18 +240,22 @@ room schedules. Camera media and specialist administration open in a browser
 from an explicit terminal choice. Ordinary controls are available without a
 login in either authentication mode. Guests can control unlocked rooms; locked
 rooms retain the remote layout and show their lock status with controls disabled.
-The Security page enables accounts. Guests control unlocked rooms;
-signed-in accounts can also view cameras; administrators manage locks,
-schedules, users, pairing and the system. While authentication is on, camera
-snapshots and live video require sign-in; Guests still see camera status.
+The Security page enables accounts. Each account is either an administrator
+or an ordinary account, with no other roles or per-account room access.
+Guests control unlocked rooms; ordinary accounts add camera snapshots and live
+video while authentication is on; administrators also manage locks,
+schedules, users, pairing and the system. Guests still see camera status.
 
 Administrators can use **Lock room** on Remotes to hold the current reported
 source or Off until **Unlock room** is selected. The server captures the source;
 an unknown source cannot be locked. This manual lock survives restarts and takes
 precedence over schedules, even when the schedule itself is disabled. Unlocking
-releases the manual hold; an active scheduled lock can still keep the room locked.
-The lock blocks ordinary controls, including administrator commands and All Off,
-and uses the same configured-device enforcement as scheduled locks.
+always succeeds and releases the manual hold; an active scheduled lock can still
+keep the room locked. The lock blocks ordinary controls, including administrator
+commands and All Off, and uses the same configured-device enforcement as
+scheduled locks. Saved policies for rooms removed from the house remain stored
+until `thermite access prune --config FILE`, run as the `thermite` account with
+the gateway's service configuration file, deletes them.
 
 Use System (F10 in the terminal) for deliberate access to openHAB, Grafana,
 Prometheus, Alertmanager and ntfy. Local-only tools remain local and provide
@@ -255,17 +274,28 @@ automation; `thermite pair --help` lists supported pairing steps.
 ## Set up HTTPS and accounts
 
 Installation prints the verified HTTPS URL and the path to its trust
-certificate. A new site receives a self-signed certificate for the hostnames
-and addresses the installer selected. Add that certificate to each browser or
-terminal client's trust configuration before using the URL. Existing
-installations retain their certificate, private key and allowed hostnames.
-Client trust is local to each client; installing the server cannot install
-trust in your other devices.
+certificate, `tls-cert.pem` in the gateway root (by default the state root
+with `-access` appended). The installer creates a private certificate authority
+for the site once, in `var/gateway/authority/` (directory mode 0700, key
+0600, valid for 10 years), and serves an 825-day server certificate it signed
+for the hostnames and addresses the installer selected. The trust file is the
+authority's certificate: add it once to each browser or terminal client's
+trust configuration. Client trust is local to each client; installing the
+server cannot install trust in your other devices.
+
+Each install or upgrade reissues the server certificate from the same
+authority when fewer than 90 days remain, and clients need no change. Run an
+upgrade at least every two years so the certificate does not expire.
+An installation that still serves an older self-signed certificate replaces it
+once, at its next install or upgrade, and prints a notice to trust the new
+authority file on every client. Back up `var/gateway/authority/` with the
+site's other private state: if it is lost, the next run creates a new
+authority and every client must trust it again.
 
 A new identity starts with authentication **off**. Ordinary house controls
 remain available through HTTPS without a household login when authentication
-is enabled; signed-in accounts can also view cameras, and administrators
-manage locks, schedules, users, pairing and the system. Open **Security** to
+is enabled; ordinary accounts can also view camera snapshots and live video,
+and administrators manage locks, schedules, users, pairing and the system. Open **Security** to
 enable accounts when ready. The first enable requires owner-authorized
 setup and creation of the first administrator; visiting the page does not
 claim ownership. Once an administrator exists, changing the switch requires
@@ -293,16 +323,18 @@ repairs it when rerun; no manual configuration edit is needed. If commissioning
 times out, its error identifies the operation waiting for readback without
 printing private native settings or credentials.
 
-The local terminal automatically uses the verified gateway URL and public TLS
-certificate saved by installation. Run `thermite remote --config DIR` for
+The local terminal automatically uses the verified gateway URL and the
+authority certificate saved by installation. Run `thermite remote --config DIR` for
 ordinary controls without a login. To view cameras or administer the site, log in with
 `thermite access login --config DIR --user USER`. This creates a personal
 credential; installation itself creates no household account. Other computers
-still need the server's URL and trusted certificate.
+need the server's URL and a copy of `tls-cert.pem`, passed once with
+`--ca-file` at login.
 
 ## Update or remove
 
-Use the same owner command from any directory:
+Use the same owner command from any directory; `--native-timeout SECONDS`
+applies to upgrades as it does to installs:
 
 ```sh
 thermite upgrade --config "$HOME/thermite-site" --dry-run
@@ -321,18 +353,40 @@ see [application releases](packaging.md#update-and-roll-back).
 
 The site's committed `versions.json` still selects native component versions.
 Updating Thermite does not silently replace those pins. Keep the private
-repository clean and retain `var/application-releases/`, previous application
-environments, gateway releases and the printed backup paths for recovery.
+repository clean and retain `var/application-releases/`, `var/gateway/authority/`,
+previous application environments, gateway releases and the printed backup
+paths for recovery. Application environments install their dependencies from
+the hashed `lib/requirements-app.txt` and are rebuilt automatically after a
+Python minor-version upgrade; the previous environment is retained.
 
 Preparation or validation failures restore the bounded site edits when safe;
 concurrent user edits are preserved. A host failure retains the committed
-candidate pin and previous owner launcher, and prints the command to resume.
-Rerun that command after fixing the cause. The launcher staying on its previous
-application does **not** undo services already changed, and does not restore
-native data or an identity database. A failed migration or cutover can leave
-services stopped. Recover native and identity state from their corresponding
+candidate pin and previous owner launcher, and prints a Resume command that
+names the fetched commit with `--revision <commit>`. Rerun that command after
+fixing the cause. Until then, the installed `thermite` runs site commands with
+the site's pinned release from `var/application-releases/<digest>` and says so.
+
+If a run fails after stopping services, it starts them again and says so;
+the installation remains incomplete until a rerun succeeds. Ctrl-C lets the
+running host step stop its own commands and then prints the command that
+restarts any stopped services, without running it. Before commissioning
+replaces a native service configuration, it saves the original privately in
+the gateway deployment directory.
+
+The launcher staying on its previous application does **not** undo services
+already changed, and does not restore native data or an identity database.
+To go back, follow the printed recovery advice: restore the printed backup
+when one was made, revert the site's release-pin commit, then run the older
+release's cached launcher, `python3 var/application-releases/<digest>/bin/thermite
+install --config DIR`; that install also reinstalls the release's units.
+Pinning a release older than the site's committed one requires
+`--allow-downgrade`, after deliberately restoring state the newer release may
+have migrated. Recover native and identity state from their corresponding
 backups only with the appropriate compatible application release; do not
 initialize new accounts or replace credentials merely to retry.
+
+`--dry-run` prints a provisional host plan only when the site pins the release
+that is running it; otherwise the host plan is resolved after approval.
 
 If a missing kernel module stopped an older installer after services were
 stopped, reboot into the installed kernel and then rerun the upgrade. The
@@ -340,18 +394,22 @@ reboot alone does not complete deployment: the upgrade must install and verify
 the native-port boundary before starting the runtime. Keep the printed backup
 until the upgrade succeeds.
 
-Runtime and monitoring readiness poll within their startup allowances. Once the
+Runtime and monitoring readiness poll within their allowances. Once the
 required readiness or settling condition passes, that result completes the step;
 an extra request outside the wait loop cannot fail it during a brief startup
 interruption. Each later check and deployment run still queries the running
-services. Commissioning and staged gateway authentication checks also retry
-known transient REST failures, without repeating configuration writes or
-replacing credentials.
+services. Dropped, refused or transiently failing native reads retry until the
+native deadline; writes are never repeated, and credentials are not replaced.
 
 `thermite uninstall --config "$HOME/thermite-site" --dry-run` shows service
-removal. State is retained by default; review the explicit purge option
-separately. Back up private configuration, runtime data, credentials and release
-artifacts before deleting an installation.
+removal, including the boot-time `thermite-native-boundary.service`. State is
+retained by default; review the explicit purge option separately. Uninstall
+keeps the HTTPS gateway units, their identity state in `<state_root>-access`
+(accounts, sessions and the TLS key) and the native port filter (the
+`inet thermite_native` nft table and its rule file), and prints the commands
+that remove each. Back up private configuration, runtime data, credentials,
+`var/gateway/authority/` and release artifacts before deleting an
+installation.
 
 ## Native lifecycle regression
 

@@ -58,11 +58,11 @@
 <h3 id="are-the-screenshots-from-a-real-house">Are the screenshots from a real house?</h3>
 <p>They show the actual clients with fictional inventory and simulated controls. See the <a href="screenshots.html">capture recipe</a>, or try <code>thermite remote --mock</code>.</p>
 <h3 id="which-linux-account-runs-the-services">Which Linux account runs the services?</h3>
-<p>Application services use the non-login account <code>thermite:thermite</code>, UID/GID 9001. Use your own login for the CLI and private Git; systemd and Podman's backend remain root-managed. The <a href="service-account.html">service ownership guide</a> covers permissions and migration from the older <code>openhab</code> account.</p>
+<p>Application services use the non-login account <code>thermite:thermite</code>, UID/GID 9001. Use your own login for the CLI and private Git; systemd and Podman's backend remain root-managed. The <a href="service-account.html">service ownership guide</a> covers permissions and how upgrades prove unit ownership.</p>
 <h3 id="where-does-my-house-configuration-belong">Where does my house configuration belong?</h3>
 <p>In a private site created by <code>thermite init</code>. Commit inventory, host settings and version pins to private Git. Generated output, credentials and runtime state stay outside Git. See <a href="start.html">Get started</a>.</p>
 <h3 id="how-do-application-upgrades-and-rollback-work">How do application upgrades and rollback work?</h3>
-<p>Install the reviewed package, run <code>thermite init --upgrade /path/to/site</code>, then generate, validate and privately commit before deployment. Configuration and state are preserved. Rollback needs the older revision's exact cached application release; retain that cache. See <a href="packaging.html">Application releases</a> for the full workflow and separate runtime pins.</p>
+<p>Run <code>thermite upgrade --config /path/to/site</code>. One approved run fetches and verifies the application, commits the site's release pin, and updates native services, monitoring, the HTTPS gateway and the identity schema; configuration and state are preserved, and an interrupted run resumes when rerun. Rollback needs the older revision's exact cached application release; retain that cache. See <a href="packaging.html">Application releases</a> for the full workflow and separate runtime pins.</p>
 <h3 id="why-thermite-and-why-a-bowl">Why "thermite", and why a bowl?</h3>
 <p>The name and bowl draw on aluminothermic metalworking. See the <a href="colors.html">design notes</a>.</p>
 <h3 id="can-i-use-it">Can I use it?</h3>

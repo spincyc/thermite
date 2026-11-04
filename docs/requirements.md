@@ -91,8 +91,9 @@ Plain NAT and port forwarding alone do not establish that behavior.
 Thermite's containers use host networking; UPnP discovery is limited to the
 local subnet. [openHAB networking](https://www.openhab.org/docs/installation/docker.html#explanation-of-arguments-passed-to-docker)
 
-Allow the selected services through your host firewall and provide trusted
-TLS and a resolvable hostname for authenticated access. See the
+Allow the selected services through your host firewall and use a resolvable
+hostname or stable address for the gateway. Each client trusts the
+installation's private certificate authority once. See the
 [ports](ports.md) and [installation](installation.md#set-up-https-and-accounts)
 guides. Pass through any USB radio or serial adapter your integrations need.
 
