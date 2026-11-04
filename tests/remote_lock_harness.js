@@ -62,9 +62,6 @@ function gateway(options) {
       return site.refuseCommands ? json({ error: "room_locked" }, 423) : json({ accepted: true }, 202);
     }
     if (route.startsWith("/unifi/media/")) return json({ error: "login_required" }, 401);
-    match = /^\/rest\/items\/loc_([a-z0-9_]+)_source\/state$/.exec(route);
-    if (match) return text(site.sources[match[1]] || "off");
-    if (/^\/rest\/items\/[^/]+\/state$/.test(route)) return text("NULL");
     return json({ error: "not_found" }, 404);
   };
   return site;
@@ -82,9 +79,21 @@ class Element {
   get lastChild() { return this.children.at(-1) || null; }
 }
 
-class QuietEvents {
-  constructor() { this.readyState = 0; setImmediate(() => { if (this.readyState !== 2) { this.readyState = 1; if (this.onopen) this.onopen({}); } }); }
-  close() { this.readyState = 2; }
+// The gateway's view stream: a snapshot of each room's Source, then quiet.
+function views(site) {
+  return class ViewEvents {
+    constructor(url) {
+      this.readyState = 0;
+      setImmediate(() => {
+        if (this.readyState === 2) return;
+        this.readyState = 1;
+        if (this.onopen) this.onopen({});
+        const states = Object.fromEntries(ROOMS.map(id => ["loc_" + id + "_source", site.sources[id] || "off"]));
+        if (this.onmessage) this.onmessage({ data: JSON.stringify({ type: "snapshot", view: url.split("/").pop(), states }) });
+      });
+    }
+    close() { this.readyState = 2; }
+  };
 }
 
 // Timers the test fires itself: the session's and the terminal's.
@@ -99,7 +108,7 @@ function assemble(site, room, options) {
   const shared = Shared.load(), timers = clock();
   const access = shared.Access.create({ base: origin, fetch: site.fetch, policyInterval: 3600000, ...options });
   const parts = Main.assemble(Main.parse(["--url", origin, "--room", room, "--still"]), {
-    shared, access, fetch: site.fetch, EventSource: QuietEvents, environ: {},
+    shared, access, fetch: site.fetch, EventSource: views(site), environ: {},
     setInterval: () => 0, clearInterval() {}, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout
   });
   const toasts = [];
@@ -532,7 +541,7 @@ const pause = () => new Promise(resolve => setTimeout(resolve, 5));
   // source, its label is the lock in words; an unlocked room shows none.
   const homeShared = Shared.load(), homeAccess = homeShared.Access.create({ base: origin, fetch: lists.fetch, policyInterval: 3600000 });
   const homeBackend = homeShared.Remote.create(homeShared.house, { backend: "openhab", base: origin, access: homeAccess,
-    fetch: homeAccess.fetch, EventSource: homeAccess.eventSource(QuietEvents) });
+    fetch: homeAccess.fetch, EventSource: homeAccess.eventSource(views(lists)), view: "home" });
   const tbody = new Element("tbody"), notice = new Element("p"), homeCalls = lists.calls.length;
   const page = { URLSearchParams, REMOTE_HOUSE: homeShared.house, RemoteSession: homeShared.Session, ThermiteAccess: { client: homeAccess },
     RemoteBackend: { create: () => homeBackend }, ThermiteShell: { href: () => "#" }, location: { search: "" }, addEventListener() {},

@@ -62,14 +62,21 @@
  * create() picks OpenHabBackend when openHAB serves the page (conf/html/ is
  * /static/), and MockBackend otherwise (the page opened from disk or another
  * server); settings.backend ("openhab" or "mock") overrides that.
- * OpenHabBackend uses openHAB's REST API on the page's own origin, with no
- * login (openHAB gives anonymous clients the user role):
- *   getState   GET  /rest/items/loc_<room>_source/state
+ * OpenHabBackend follows one view of the house over one event stream
+ * (settings.view): "remote", the remote page and the terminal (each room's
+ * Source as stateupdated; each control's power, volume, mute and input Item,
+ * each device's problem Item and each room's route problem as statechanged;
+ * and the activity feed's Items), or "home", Home and Topology (the rooms'
+ * Sources as statechanged, no activity feed). Through the gateway the stream
+ * is GET /api/v1/events/<view>, whose first frame is a snapshot of the view's
+ * Items, {"type":"snapshot","states":{item: value}}, sent again after any gap,
+ * and {"type":"unavailable"} while openHAB is not answering it. Served by
+ * openHAB itself (native), it is /rest/events with wildcard topics, and the
+ * snapshot one GET /rest/items?fields=name,state when the stream opens.
+ *   getState   the room as the snapshot and the events since say; it waits
+ *              for the first snapshot (up to SNAPSHOT_TIMEOUT)
  *   choose     POST /rest/items/loc_<room>_source, text/plain body "off" or a source id;
  *              pending stays set until the Item's next update arrives, or CONFIRM_MS pass
- *   subscribe  EventSource on /rest/events: the loc_*_source Items' stateupdated events, and
- *              those of each control's power, volume, mute and input Items and of each
- *              device's problem Item
  *   press, setVolume, setInput
  *              POST /rest/items/<Item>, text/plain body: ON or OFF, a volume, an input value, or
  *              the button id for control.key; the device's integration turns it into the
@@ -96,63 +103,28 @@
   // read is missed).
   const AIM_MS = { volume: 3000, mute: 12000 };
   const FIELDS = ["power", "volume", "mute", "input"];
-  const EVENTS = "/rest/events?topics=openhab/items/loc_*_source/stateupdated";
   // The Item openHAB turns everything off on (lib/oh_features/all_off).
   const ALL_OFF = "house_all_off";
-  const UPDATE_TOPIC = /^openhab\/items\/([^/]+)\/stateupdated$/;
+  const TOPIC = /^openhab\/items\/([^/]+)\/(stateupdated|statechanged|command)$/;
   const ACTIVITY_PATH = "/static/remote/activity.json";
-  const EVENT_URL_BYTES = 6000;
-  const EVENT_STREAMS = 3;
-  // Delays before reopening event streams a browser closed for good.
+  // Each view's topics when openHAB serves the page itself. openHAB tests
+  // every filter against every event, so a few wildcards cost it less than
+  // an exact list; this page drops the other Items unread. A room's Source
+  // arrives as both state verbs there, and the view keeps one.
+  const NATIVE_TOPICS = {
+    remote: "openhab/items/loc_*_source/stateupdated,openhab/items/*/statechanged,openhab/items/*/command",
+    home: "openhab/items/loc_*_source/statechanged"
+  };
+  const STATES_PATH = "/rest/items?fields=name,state";
+  // Delays before reopening an event stream a browser closed for good.
   const REOPEN_MS = [1000, 2000, 5000, 15000, 30000];
   const EVENT_TYPES = { command: "ItemCommandEvent", stateupdated: "ItemStateUpdatedEvent", statechanged: "ItemStateChangedEvent" };
-  // Over HTTP/1.1 a browser allows six connections per origin across all its
-  // tabs: three SSE connections and two background reads leave one for
-  // controls. The authenticated gateway serves HTTP/2, which carries them all
-  // on one connection; HTTP/1.1 origins and clients still need this budget.
-  // Commands never enter this queue.
+  // Background reads: the diagnostics panel's Items, the two static
+  // catalogues and, served by openHAB itself, the snapshot. Over HTTP/1.1 a
+  // browser allows six connections per origin across its tabs, and each page
+  // holds one for its stream. Commands never enter this queue.
   const BACKGROUND_READS = 2;
   const SNAPSHOT_TIMEOUT = 8000;
-
-  // Exact known Items, bounded below Jetty's request-line limit. A public
-  // Item needing commands and states can share one suffix wildcard; never
-  // broaden an Item name or a private/pairing subscription.
-  function eventUrls(base, topics) {
-    const prefix = base + "/rest/events?topics=";
-    const bytes = (text) => encodeURIComponent(text).replace(/%[A-F\d]{2}/g, "x").length;
-    const unique = [...new Set(topics)];
-    const sources = "openhab/items/loc_*_source/stateupdated";
-    const filtered = unique.filter((topic) => !(unique.includes(sources)
-      && /^openhab\/items\/loc_[A-Za-z0-9_]+_source\/stateupdated$/.test(topic)));
-    const exact = /^openhab\/items\/([A-Za-z][A-Za-z0-9_]*)\/(command|stateupdated|statechanged)$/;
-    const privateItem = /(?:^|_)(?:password|passwd|passphrase|secret|token|psk|authorization|credential|auth)(?:_|$)/i;
-    const verbs = new Map();
-    filtered.forEach((topic) => {
-      const match = exact.exec(topic);
-      if (!match || privateItem.test(match[1]) || /_pairing/i.test(match[1])) return;
-      if (!verbs.has(match[1])) verbs.set(match[1], new Set());
-      verbs.get(match[1]).add(match[2]);
-    });
-    const combined = new Set([...verbs].filter(([, names]) => names.has("command")
-      && (names.has("stateupdated") || names.has("statechanged"))).map(([name]) => name));
-    const packed = [...new Set(filtered.map((topic) => {
-      const match = exact.exec(topic);
-      return match && combined.has(match[1]) ? "openhab/items/" + match[1] + "/*" : topic;
-    }))];
-    const urls = [];
-    let current = prefix;
-    for (const topic of packed) {
-      const next = current + (current === prefix ? "" : ",") + topic;
-      if (bytes(next) > EVENT_URL_BYTES) {
-        if (current === prefix) throw new Error("Activity topic is too long");
-        urls.push(current);
-        current = prefix + topic;
-      } else current = next;
-    }
-    if (current !== prefix) urls.push(current);
-    if (urls.length > EVENT_STREAMS) throw new Error("Activity topic budget exceeded");
-    return urls;
-  }
 
   // A choice is never shown as made, but its buttons are offered at once.
   function showing(state) {
@@ -772,27 +744,29 @@
     this.fetch = config.fetch || ((url, init) => global.fetch(url, init));
     this.EventSource = config.EventSource || global.EventSource;
     this.timeout = config.timeout != null ? config.timeout : CONFIRM_MS;
+    this.view = config.view === "home" ? "home" : "remote";
+    // The state verb a room's Source arrives as in this view.
+    this.sourceVerb = this.view === "home" ? "statechanged" : "stateupdated";
     this.listeners = [];
     this.items = {};
     this.byItem = Object.create(null);
     this.routeProblemItems = Object.create(null);
-    this.routeProblemRevisions = Object.create(null);
-    this.sourceRevisions = Object.create(null);
-    this.readLifecycle = 0;
+    // The latest value of every Item the view carries, to seed the activity feed.
+    this.values = Object.create(null);
     this.readQueue = [];
-    this.queuedReads = new Map();
     this.runningReads = new Set();
-    this.snapshotSweep = null;
     this.snapshotTimeout = config.snapshotTimeout || SNAPSHOT_TIMEOUT;
+    this.synced = false;
+    this.syncWaiters = [];
+    this.touched = null;
     this.timers = {};
     this.waiting = {};
     this.connected = null;
     this.now = config.now || (() => Date.now());
-    this.eventSources = [];
+    this.source = null;
     this.streamGeneration = 0;
     this.stopped = false;
     this.active = config.active !== false;
-    this.streamUrls = null;
     this.diagnosticsSpec = config.diagnosticsManifest || null;
     this.diagnosticsLoading = null;
     this.diagnosticsModel = null;
@@ -800,22 +774,17 @@
     this.diagnosticsGeneration = 0;
     this.activityRetryDelay = 1000;
     this.activityNoticed = false;
+    const remote = this.view === "remote";
     house.rooms.forEach((room) => {
       this.items[room.id] = { value: NULL_STATE, pending: null };
-      this.sourceRevisions[room.id] = 0;
       this.byItem[sourceItem(room.id)] = room.id;
-      if (room.routeProblem) {
-        this.routeProblemItems[room.routeProblem] = room.id;
-        this.routeProblemRevisions[room.routeProblem] = 0;
-      }
+      if (remote && room.routeProblem) this.routeProblemItems[room.routeProblem] = room.id;
     });
     this.aims = {};
     this.problems = {};
     this.devices = unread(house);
-    this.controlItems = controlItems(house);
-    this.problemItems = problemItems(house);
-    this.itemRevisions = Object.create(null);
-    Object.keys(this.controlItems).concat(Object.keys(this.problemItems)).forEach((item) => { this.itemRevisions[item] = 0; });
+    this.controlItems = remote ? controlItems(house) : Object.create(null);
+    this.problemItems = remote ? problemItems(house) : Object.create(null);
     if (this.access && !this.access.native) {
       this.access.subscribe((event) => {
         if (event.type === "unauthorized") {
@@ -825,19 +794,22 @@
         this.emit({ type: "access", unauthorized: event.type === "unauthorized", guest: event.guest === true });
       });
     }
-    if (config.activityManifest && global.RemoteActivity) {
-      this.activateActivity(config.activityManifest);
-      this.activityReady = Promise.resolve();
-    } else {
-      this.listen();
-      this.activityReady = global.RemoteActivity ? this.loadActivity() : Promise.resolve();
+    if (remote && global.RemoteActivity) {
+      if (config.activityManifest) this.activateActivity(config.activityManifest);
+      else this.loadActivity();
     }
+    this.listen();
   }
 
   Object.assign(OpenHabBackend.prototype, Common);
 
-  OpenHabBackend.prototype.request = function (method, path, body, signal) {
-    const init = { method: method, headers: { Accept: "text/plain" } };
+  // Served by openHAB itself: no gateway, so no view stream or command API.
+  OpenHabBackend.prototype.native = function () {
+    return !this.access || this.access.native === true;
+  };
+
+  OpenHabBackend.prototype.request = function (method, path, body, signal, accept) {
+    const init = { method: method, headers: { Accept: accept || "text/plain" } };
     if (signal) init.signal = signal;
     if (method === "GET") init.cache = "no-cache";
     if (body !== undefined) {
@@ -853,22 +825,18 @@
     });
   };
 
-  // All backend GETs share admission: exact Item reads and the two static
-  // catalogues. Job kinds keep snapshot revisions and diagnostics cancellation
-  // separate. Duplicate queued reads share their HTTP result. A canceled
-  // request holds its slot until fetch actually settles, so even a custom
-  // transport without abort support cannot grow concurrency.
-  OpenHabBackend.prototype.backgroundRequest = function (path, kind = "snapshot") {
+  // Background GETs share BACKGROUND_READS slots, each with a deadline that
+  // includes queueing. A cancelled request holds its slot until fetch
+  // settles, so a transport without abort support cannot grow concurrency.
+  // A hidden page starts none but the activity catalogue.
+  OpenHabBackend.prototype.backgroundRequest = function (path, kind, accept) {
     if (this.stopped || !this.active && kind !== "activity") return Promise.resolve(null);
-    const key = kind + ":" + path, queued = this.queuedReads.get(key);
-    if (queued) return queued.promise;
-    const job = { key, kind, path, controller: global.AbortController ? new global.AbortController() : null, completed: false };
+    const job = { kind, path, accept, controller: global.AbortController ? new global.AbortController() : null, completed: false };
     job.promise = new Promise((resolve, reject) => {
       job.finish = (text, error) => {
         if (job.completed) return;
         job.completed = true;
         clearTimeout(job.timer);
-        if (this.queuedReads.get(key) === job) this.queuedReads.delete(key);
         if (!this.runningReads.has(job)) this.readQueue = this.readQueue.filter((entry) => entry !== job);
         if (error) reject(error); else resolve(text);
       };
@@ -877,29 +845,18 @@
       job.finish(null, error);
       if (job.controller) job.controller.abort();
     };
-    // The deadline includes queueing, so a slow runtime cannot leave startup
-    // or an explicit read waiting behind an entire house of old snapshots.
     const unavailable = kind === "diagnostics" ? "Diagnostics unavailable" : kind === "activity" ? "Activity feed unavailable" : "Snapshot unavailable";
     job.timer = setTimeout(() => job.cancel(new Error(unavailable)), kind === "diagnostics" ? this.diagnosticsTimeout : this.snapshotTimeout);
-    this.queuedReads.set(key, job);
     this.readQueue.push(job);
     this.drainReads();
     return job.promise;
   };
 
-  OpenHabBackend.prototype.snapshotRequest = function (path) {
-    return this.backgroundRequest(path);
-  };
-
   OpenHabBackend.prototype.drainReads = function () {
     while (!this.stopped && this.runningReads.size < BACKGROUND_READS && this.readQueue.length) {
-      // Allow the finite static Activity catalogue during hidden startup,
-      // under the same budget and deadline. Hidden dynamic reads cannot
-      // acquire a slot.
       const index = this.active ? 0 : this.readQueue.findIndex((job) => job.kind === "activity");
       if (index < 0) break;
       const job = this.readQueue.splice(index, 1)[0];
-      if (this.queuedReads.get(job.key) === job) this.queuedReads.delete(job.key);
       if (job.completed) continue;
       this.runningReads.add(job);
       const finished = (text, error) => {
@@ -908,30 +865,20 @@
         this.drainReads();
       };
       let request;
-      try { request = this.request("GET", job.path, undefined, job.controller && job.controller.signal); }
+      try { request = this.request("GET", job.path, undefined, job.controller && job.controller.signal, job.accept); }
       catch (error) { request = Promise.reject(error); }
       Promise.resolve(request).then((text) => finished(text), (error) => finished(null, error));
     }
   };
 
-  OpenHabBackend.prototype.cancelReads = function (kind, path) {
+  OpenHabBackend.prototype.cancelReads = function (kind) {
     for (const job of this.readQueue.concat([...this.runningReads])) {
-      if ((!kind || job.kind === kind) && (!path || job.path === path)) job.cancel();
+      if (!kind || job.kind === kind) job.cancel();
     }
   };
 
-  OpenHabBackend.prototype.cancelSnapshot = function (path) {
-    this.cancelReads("snapshot", path);
-  };
-
-  OpenHabBackend.prototype.retireSnapshots = function () {
-    this.readLifecycle += 1;
-    this.snapshotSweep = null;
-    this.cancelReads("snapshot");
-  };
-
-  // Diagnostics never expand the SSE topic set or run on a button's path.
-  // Exact, integration-described Items only; share slots with recovery reads.
+  // Diagnostics never widen the event stream or run on a button's path.
+  // Exact, integration-described Items only.
   OpenHabBackend.prototype.diagnosticsRequest = function (path) {
     return this.backgroundRequest(path, "diagnostics").then((text) => {
       if (text === null) throw new Error("Diagnostics unavailable");
@@ -979,47 +926,32 @@
     });
   };
 
-  OpenHabBackend.prototype.read = function (roomId) {
-    if (this.stopped || !this.active) return Promise.resolve(this.snapshot(roomId));
-    const revision = ++this.sourceRevisions[roomId], lifecycle = this.readLifecycle;
-    const current = () => !this.stopped && this.active && lifecycle === this.readLifecycle
-      && revision === this.sourceRevisions[roomId];
-    return this.snapshotRequest("/rest/items/" + sourceItem(roomId) + "/state").then((text) => {
-      // An SSE update or a later read/choice can overtake this response.
-      // Return the current snapshot without emitting or seeding older data.
-      const accepted = text !== null && current();
-      if (accepted) this.update(roomId, text.trim());
-      const room = findRoom(this.house, roomId);
-      return accepted && this.items[roomId].value === UNDEF && room.routeProblem
-        ? this.readRouteProblem(room.routeProblem).then(() => this.snapshot(roomId)) : this.snapshot(roomId);
-    }, (error) => {
-      if (!current()) return this.snapshot(roomId);
-      throw error;
-    });
-  };
-
   OpenHabBackend.prototype.getState = function (roomId) {
     try {
       findRoom(this.house, roomId);
     } catch (error) {
       return Promise.reject(error);
     }
-    return this.read(roomId);
+    return this.whenSynced().then(() => this.snapshot(roomId));
   };
 
-  // Every room, control and problem again: after (re)connecting, an update may have been missed.
-  OpenHabBackend.prototype.readAll = function () {
-    if (this.stopped || !this.active) return Promise.resolve([]);
-    if (this.snapshotSweep) return this.snapshotSweep.promise;
-    const sweep = {};
-    this.snapshotSweep = sweep;
-    const rooms = this.house.rooms.map((room) => this.read(room.id));
-    const controls = this.watched().map((item) => this.routeProblemItems[item] ? this.readRouteProblem(item) : this.readItem(item));
-    sweep.promise = Promise.all(rooms.concat(controls).map((reading) => reading.catch((error) => {
-      console.warn(error);
-      return null;
-    }))).finally(() => { if (this.snapshotSweep === sweep) this.snapshotSweep = null; });
-    return sweep.promise;
+  // Resolves once the view's snapshot is applied, after snapshotTimeout
+  // without one, or at once while the page is hidden or stopped.
+  OpenHabBackend.prototype.whenSynced = function () {
+    if (this.synced || this.stopped || !this.active || !this.EventSource) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiter = () => {
+        clearTimeout(timer);
+        this.syncWaiters = this.syncWaiters.filter((entry) => entry !== waiter);
+        resolve();
+      };
+      const timer = setTimeout(waiter, this.snapshotTimeout);
+      this.syncWaiters.push(waiter);
+    });
+  };
+
+  OpenHabBackend.prototype.release = function () {
+    this.syncWaiters.slice().forEach((waiter) => waiter());
   };
 
   // Every Item a control is read from, then every problem Item.
@@ -1027,52 +959,78 @@
     return Object.keys(this.controlItems).concat(Object.keys(this.problemItems), Object.keys(this.routeProblemItems));
   };
 
-  // Reconnect snapshots share the same ordering contract as room Sources:
-  // an accepted event (even unchanged), newer read or retired stream wins.
-  OpenHabBackend.prototype.readItem = function (item) {
-    if (this.stopped || !this.active || !Object.prototype.hasOwnProperty.call(this.itemRevisions, item)) return Promise.resolve();
-    const revision = ++this.itemRevisions[item], lifecycle = this.readLifecycle, stream = this.streamGeneration;
-    const current = () => !this.stopped && this.active && lifecycle === this.readLifecycle
-      && stream === this.streamGeneration && revision === this.itemRevisions[item];
-    return this.snapshotRequest("/rest/items/" + item + "/state").then((text) => {
-      if (text !== null && current()) this.updateItem(item, text.trim());
-    }, (error) => {
-      if (current()) throw error;
-    });
-  };
-
-  OpenHabBackend.prototype.readRouteProblem = function (item) {
-    if (this.stopped || !this.active) return Promise.resolve();
-    const revision = ++this.routeProblemRevisions[item], lifecycle = this.readLifecycle;
-    return this.snapshotRequest("/rest/items/" + item + "/state").then((text) => {
-      if (text !== null && !this.stopped && this.active && lifecycle === this.readLifecycle && revision === this.routeProblemRevisions[item])
-        this.updateRouteProblem(item, text.trim());
-    }).catch(() => null);
-  };
-
   OpenHabBackend.prototype.updateRouteProblem = function (item, value) {
     const room = this.routeProblemItems[item];
-    if (!room) return;
-    this.routeProblemRevisions[item] += 1;
-    if (this.items[room].diagnosis === value) return;
+    if (!room || this.items[room].diagnosis === value) return;
     this.items[room].diagnosis = value;
     this.emitState(room);
   };
 
   OpenHabBackend.prototype.updateItem = function (item, value) {
     if (this.routeProblemItems[item]) { this.updateRouteProblem(item, value); return; }
-    if (!Object.prototype.hasOwnProperty.call(this.itemRevisions, item)) return;
-    this.itemRevisions[item] += 1;
-    if (this.activity) this.activity.seed(item, value);
     const entry = this.controlItems[item];
     if (entry) this.updateDevice(entry[0], entry[1], value);
-    else this.updateProblem(this.problemItems[item], value);
+    else if (this.problemItems[item]) this.updateProblem(this.problemItems[item], value);
   };
 
-  // The rooms' Source Items, then the watched ones.
+  // The view's Items as the gateway (or openHAB) holds them now: after a
+  // (re)connection, all the page shows. An Item an event has reported since
+  // a native read began keeps that newer value.
+  OpenHabBackend.prototype.applySnapshot = function (states, touched) {
+    const fresh = (item) => Object.prototype.hasOwnProperty.call(states, item) && typeof states[item] === "string"
+      && !(touched && touched.has(item));
+    Object.keys(states).forEach((item) => {
+      if (!fresh(item)) return;
+      this.values[item] = states[item];
+      // What the feed reports next is a change from this, not from before the gap.
+      if (this.activity) this.activity.seed(item, states[item], true);
+    });
+    this.watched().forEach((item) => { if (fresh(item)) this.updateItem(item, states[item]); });
+    Object.keys(this.byItem).forEach((item) => { if (fresh(item)) this.update(this.byItem[item], states[item]); });
+    this.synced = true;
+    this.reconnected();
+    this.release();
+  };
+
+  OpenHabBackend.prototype.reconnected = function () {
+    if (this.connected === false) {
+      this.emit({ type: "connection", connected: true });
+      if (this.activity) this.activityNotice("Connected to thermite again", "Events during the gap may be missing");
+    }
+    this.connected = true;
+  };
+
+  OpenHabBackend.prototype.disconnected = function () {
+    this.synced = false;
+    this.touched = null;
+    this.cancelReads("snapshot");
+    if (this.connected !== false) {
+      this.emit({ type: "connection", connected: false });
+      if (this.activity) this.activityNotice("Lost the connection to thermite", "Events during the gap may be missing", "bad");
+    }
+    this.connected = false;
+  };
+
   OpenHabBackend.prototype.eventsUrl = function () {
-    return this.base + [EVENTS].concat(this.watched().map((item) =>
-      "openhab/items/" + item + "/stateupdated")).join(",");
+    return this.base + (this.native() ? "/rest/events?topics=" + NATIVE_TOPICS[this.view] : "/api/v1/events/" + this.view);
+  };
+
+  // openHAB itself has no snapshot frame: the view's states are read once
+  // the stream is open, so no event between the read and the stream is lost.
+  OpenHabBackend.prototype.readStates = function (generation) {
+    const touched = this.touched = new Set();
+    this.backgroundRequest(STATES_PATH, "snapshot", "application/json").then((text) => {
+      if (text === null || generation !== this.streamGeneration || this.touched !== touched) return;
+      const states = Object.create(null);
+      const list = JSON.parse(text);
+      (Array.isArray(list) ? list : []).forEach((entry) => {
+        if (entry && typeof entry.name === "string" && typeof entry.state === "string") states[entry.name] = entry.state;
+      });
+      this.touched = null;
+      this.applySnapshot(states, touched);
+    }).catch((error) => {
+      if (generation === this.streamGeneration && this.touched === touched) { this.touched = null; console.warn(error); }
+    });
   };
 
   OpenHabBackend.prototype.activityNotice = function (title, body, tone) {
@@ -1104,65 +1062,46 @@
     return this.activityLoading;
   };
 
+  // The feed reads the events the view's stream already carries.
   OpenHabBackend.prototype.activateActivity = function (manifest) {
     if (!manifest || manifest.version !== 1 || !manifest.items || typeof manifest.items !== "object") throw new Error("Invalid activity manifest");
-    const activity = global.RemoteActivity.create({ items: manifest.items, house: this.house, layouts: global.REMOTE_LAYOUTS,
-      now: this.now, watched: this.watched().concat(Object.keys(this.byItem)), emit: (event) => this.emit(event) });
-    const topics = this.eventsUrl().split("?topics=")[1].split(",").concat(activity.topics());
-    const urls = eventUrls(this.base, topics);
-    Object.keys(this.byItem).forEach((item) => {
-      if (this.items[this.byItem[item]].value !== NULL_STATE) activity.seed(item, this.items[this.byItem[item]].value);
-    });
+    const activity = global.RemoteActivity.create({ items: manifest.items, layouts: global.REMOTE_LAYOUTS,
+      now: this.now, emit: (event) => this.emit(event) });
+    Object.keys(this.values).forEach((item) => activity.seed(item, this.values[item]));
     this.activity = activity;
-    this.listen(urls);
   };
 
-  OpenHabBackend.prototype.listen = function (urls) {
-    if (urls) this.streamUrls = urls;
-    this.retireSnapshots();
-    if (!this.EventSource) return;
-    this.eventSources.forEach((source) => source.close());
-    this.eventSources = [];
+  // The view's one event stream, open while the page is shown.
+  OpenHabBackend.prototype.listen = function () {
+    if (this.source) this.source.close();
+    this.source = null;
     const generation = ++this.streamGeneration;
-    if (!this.active || this.stopped) return;
-    const addresses = this.streamUrls || [this.eventsUrl()];
-    const opened = addresses.map(() => false);
-    let ready = false;
-    this.eventSources = addresses.map((url, index) => {
-      const source = new this.EventSource(url);
-      source.onmessage = (message) => { if (generation === this.streamGeneration && !this.stopped) this.onMessage(message.data); };
-      source.onopen = () => {
-        if (generation !== this.streamGeneration || this.stopped) return;
-        opened[index] = true;
-        if (!opened.every(Boolean)) return;
-        if (this.connected === false) {
-          this.emit({ type: "connection", connected: true });
-          if (this.activity) this.activityNotice("Connected to thermite again", "Events during the gap may be missing");
-        }
-        this.connected = true;
-        this.reopenAttempt = 0;
-        if (!ready) { ready = true; this.readAll(); }
-      };
-      source.onerror = () => {
-        if (generation !== this.streamGeneration || this.stopped) return;
-        if (ready || this.connected !== false) this.retireSnapshots();
-        opened[index] = false;
-        ready = false;
-        if (this.connected !== false) {
-          this.emit({ type: "connection", connected: false });
-          if (this.activity) this.activityNotice("Lost the connection to thermite", "Events during the gap may be missing", "bad");
-        }
-        this.connected = false;
-        // A browser closes a stream for good on any non-200 answer, such as a
-        // 502 while the gateway restarts; it never retries that by itself.
-        if (source.readyState === 2) this.reopenStreams(generation);
-      };
-      return source;
-    });
-    this.events = this.eventSources[0];
+    this.synced = false;
+    this.touched = null;
+    this.cancelReads("snapshot");
+    if (!this.EventSource || !this.active || this.stopped) {
+      this.release();
+      return;
+    }
+    const source = this.source = new this.EventSource(this.eventsUrl());
+    const current = () => generation === this.streamGeneration && !this.stopped;
+    source.onmessage = (message) => { if (current()) this.onMessage(message.data); };
+    source.onopen = () => {
+      if (!current()) return;
+      this.reopenAttempt = 0;
+      // The gateway's first frame is the snapshot; openHAB is read instead.
+      if (this.native()) { this.reconnected(); this.readStates(generation); }
+    };
+    source.onerror = () => {
+      if (!current()) return;
+      this.disconnected();
+      // A browser closes a stream for good on any non-200 answer, such as a
+      // 502 while the gateway restarts; it never retries that by itself.
+      if (source.readyState === 2) this.reopenStream(generation);
+    };
   };
 
-  OpenHabBackend.prototype.reopenStreams = function (generation) {
+  OpenHabBackend.prototype.reopenStream = function (generation) {
     if (this.timers.reopen) return;
     const attempt = this.reopenAttempt || 0;
     this.reopenAttempt = attempt + 1;
@@ -1173,9 +1112,9 @@
     if (this.timers.reopen.unref) this.timers.reopen.unref();
   };
 
-  // Hidden browser tabs release their event streams, which hold an HTTP/1.1
-  // origin's few connections and the gateway's per-peer stream allowance.
-  // TUI callers remain active unless they explicitly opt into this lifecycle.
+  // A hidden page releases its stream, which holds an HTTP/1.1 origin's few
+  // connections and the gateway's per-peer stream allowance, and reopens it
+  // (with a fresh snapshot) when shown. Terminal callers stay active.
   OpenHabBackend.prototype.setActive = function (active) {
     const next = Boolean(active);
     if (next === this.active || this.stopped) return;
@@ -1187,12 +1126,12 @@
   OpenHabBackend.prototype.stop = function () {
     if (this.access) this.access.stop();
     this.stopped = true;
-    this.retireSnapshots();
     this.cancelDiagnostics();
     this.cancelReads();
     this.streamGeneration += 1;
-    this.eventSources.forEach((source) => source.close());
-    this.eventSources = [];
+    if (this.source) this.source.close();
+    this.source = null;
+    this.release();
     Object.values(this.timers).forEach((timer) => clearTimeout(timer));
   };
 
@@ -1204,28 +1143,32 @@
     } catch (error) {
       return;
     }
-    if (!event || typeof event.topic !== "string") return;
-    const verb = event.topic.slice(event.topic.lastIndexOf("/") + 1);
-    if (!Object.prototype.hasOwnProperty.call(EVENT_TYPES, verb)
-        || (event.type !== undefined && event.type !== EVENT_TYPES[verb])) return;
+    if (!event || typeof event !== "object") return;
+    if (event.type === "snapshot" && typeof event.topic !== "string") {
+      if (!this.native() && event.states && typeof event.states === "object") this.applySnapshot(event.states);
+      return;
+    }
+    if (event.type === "unavailable") { this.disconnected(); return; }
+    const match = TOPIC.exec(typeof event.topic === "string" ? event.topic : "");
+    if (!match || (event.type !== undefined && event.type !== EVENT_TYPES[match[2]])) return;
+    const item = match[1], verb = match[2], roomId = this.byItem[item];
+    // A room's Source is followed as one state verb.
+    if (roomId && verb !== "command" && verb !== this.sourceVerb) return;
     if (this.activity) this.activity.accept(event.topic, event.payload);
-    const match = UPDATE_TOPIC.exec(event.topic || "");
-    // Unknown Items and all command payloads are ignored before inner parsing.
-    if (!match || !(this.byItem[match[1]] || this.controlItems[match[1]] || this.problemItems[match[1]] || this.routeProblemItems[match[1]])) return;
+    // Commands and Items the view does not show are ignored before inner parsing.
+    if (verb === "command" || !(roomId || this.controlItems[item] || this.problemItems[item] || this.routeProblemItems[item])) return;
     try { payload = JSON.parse(event.payload); } catch (error) { return; }
-    if (!match || !payload || payload.value === undefined) return;
-    this.cancelSnapshot("/rest/items/" + match[1] + "/state");
-    const roomId = this.byItem[match[1]];
-    if (roomId) this.update(roomId, String(payload.value));
-    else this.updateItem(match[1], String(payload.value));
+    if (!payload || payload.value === undefined) return;
+    const value = String(payload.value);
+    if (this.touched) this.touched.add(item);
+    this.values[item] = value;
+    if (roomId) this.update(roomId, value);
+    else this.updateItem(item, value);
   };
 
   // A read-back: it confirms a pending choice when it shows that source, or
   // ends it when the matrix does not answer.
   OpenHabBackend.prototype.update = function (roomId, value) {
-    // Even an unchanged state event is newer evidence than an in-flight GET.
-    this.sourceRevisions[roomId] += 1;
-    if (this.activity) this.activity.seed(sourceItem(roomId), value);
     const item = this.items[roomId];
     const before = item.value + "\n" + item.pending;
     item.value = value;
@@ -1261,14 +1204,14 @@
 
   // The room switching to the source until it is read back; resolves with its state then.
   OpenHabBackend.prototype.expectChoice = function (roomId, sourceId) {
-    this.sourceRevisions[roomId] += 1;
     this.settle(roomId);
     this.items[roomId].pending = sourceId;
     this.emitState(roomId);
     return new Promise((resolve) => { this.waiting[roomId] = resolve; });
   };
 
-  // openHAB took the command: wait for the read-back, then read the Item again.
+  // openHAB took the command: wait for the read-back, or CONFIRM_MS. The
+  // stream (and its snapshot after any gap) holds what the room reads.
   OpenHabBackend.prototype.choiceSent = function (roomId, sourceId) {
     const item = this.items[roomId];
     if (item.pending !== sourceId) return;
@@ -1279,11 +1222,10 @@
       return;
     }
     this.timers[roomId] = setTimeout(() => {
-      this.read(roomId).catch(() => null).then(() => {
-        if (item.pending !== sourceId) return;
-        this.settle(roomId);
-        this.emitState(roomId);
-      });
+      delete this.timers[roomId];
+      if (item.pending !== sourceId) return;
+      this.settle(roomId);
+      this.emitState(roomId);
     }, this.timeout);
   };
 
@@ -1360,7 +1302,6 @@
     AUDIO: AUDIO,
     AIM_MS: AIM_MS,
     ALL_OFF: ALL_OFF,
-    eventUrls: eventUrls,
     MockBackend: MockBackend,
     OpenHabBackend: OpenHabBackend,
     controlsFor: controlsFor,

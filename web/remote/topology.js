@@ -382,7 +382,7 @@
       $("[data-unlinked-count]").textContent = unlinked.length + " other inventory devices";
       unlinked.forEach(node => $("[data-unlinked]").appendChild(element("li", {}, node.label + " · " + locationLabel(node.room))));
       headers("video", VIDEO_COLUMNS); headers("data", DATA_COLUMNS);
-      backend = global.RemoteBackend.create(global.REMOTE_HOUSE, { backend: params.get("backend") === "mock" ? "mock" : undefined, active: document.visibilityState !== "hidden" });
+      backend = global.RemoteBackend.create(global.REMOTE_HOUSE, { backend: params.get("backend") === "mock" ? "mock" : undefined, view: "home", active: document.visibilityState !== "hidden" });
       backend.subscribe(event => {
         if (event.type === "state") { turns[event.room] = (turns[event.room] || 0) + 1; states[event.room] = event.state; draw(); }
         if (event.type === "connection") { connected = event.connected; draw(); }

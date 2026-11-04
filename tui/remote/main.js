@@ -115,7 +115,8 @@ function assemble(args, env) {
     backend: backend, house: shared.house, layouts: shared.layouts, store: store, volume: args.volume
   }, timers));
   const createPairing = () => shared.Pairing.create(Object.assign({
-    backend: args.mock ? "mock" : "openhab", base: args.url || "", fetch: request, EventSource: Events, location: null
+    backend: args.mock ? "mock" : "openhab", base: args.url || "", fetch: request, EventSource: Events, location: null,
+    native: !access || access.native === true
   }, timers.setTimeout ? { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } : {},
   timers.now ? { now: timers.now } : {}));
   const controller = Controller.create(Object.assign({
@@ -178,7 +179,6 @@ function main(argv) {
   const finish = (status) => {
     if (parts) parts.controller.stop();
     if (parts && parts.backend.stop) parts.backend.stop();
-    else if (parts && parts.backend.events) parts.backend.events.close();
     if (app) app.destroy();
     if (kept.length) process.stderr.write(kept.slice(-20).join("\n") + "\n");
     process.exit(status);

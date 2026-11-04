@@ -1,7 +1,7 @@
 /*
- * A browser's EventSource for node, over http and https: openHAB's
- * /rest/events stream for OpenHabBackend and PairingBackend, which take
- * it as their EventSource. Like a browser's, it reconnects after `retry`
+ * A browser's EventSource for node, over http and https: the gateway's
+ * view stream (/api/v1/events/<view>), or openHAB's /rest/events, for
+ * OpenHabBackend and PairingBackend, which take it as their EventSource. Like a browser's, it reconnects after `retry`
  * ms when the stream drops or cannot be reached (onerror, readyState
  * CONNECTING). Temporary HTTP failures reconnect too: openHAB can answer
  * 404 before its REST resources finish starting. Authentication failures,

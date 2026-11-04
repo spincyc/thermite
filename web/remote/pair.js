@@ -13,15 +13,19 @@
  *            for a device whose pairing again is confirmed first (its
  *            confirm text), AGAIN once confirmed, and CANCEL to go back to
  *            the pairing it had while it pairs again (status repairing).
- *   follow   EventSource on the status and result Items' stateupdated events; the list
- *            is read again whenever the stream (re)opens, and every 5 s
- *            instead when there is no stream.
+ *   follow   through the gateway, its pair view, GET /api/v1/events/pair: the status
+ *            and result Items' stateupdated events after a snapshot of their
+ *            states, sent again after any gap; served by openHAB itself,
+ *            /rest/events on the same Items, with the list read again whenever
+ *            the stream (re)opens. The list is read every 5 s instead when
+ *            there is no stream.
  */
 (function (global) {
   "use strict";
 
   const LIST_URL = "/rest/items?metadata=pairing&fields=name,state,metadata";
   const EVENTS_URL = "/rest/events?topics=openhab/items/*_pairing_status/stateupdated,openhab/items/*_pairing_result/stateupdated";
+  const VIEW_URL = "/api/v1/events/pair";
   const REQUEST = "REQUEST";
   const AGAIN = "AGAIN";
   const CANCEL = "CANCEL";
@@ -218,6 +222,9 @@
       this.fetch = config.fetch || ((url, init) => global.fetch(url, init));
       this.EventSource = "EventSource" in config ? config.EventSource : global.EventSource;
     }
+    // Served by openHAB itself, with no gateway and so no pair view.
+    const access = global.ThermiteAccess && global.ThermiteAccess.client;
+    this.native = this.mock || ("native" in config ? Boolean(config.native) : !access || access.native === true);
     this.rooms = [];
     this.devices = {};
     this.byStatus = {};
@@ -675,7 +682,7 @@
 
   Backend.prototype.listen = function () {
     if (this.stopped || !this.active) return;
-    const source = new this.EventSource(this.base + EVENTS_URL);
+    const source = new this.EventSource(this.base + (this.native ? EVENTS_URL : VIEW_URL));
     this.source = source;
     this.failures = 0;
     source.onmessage = (message) => {
@@ -684,8 +691,9 @@
     source.onopen = () => {
       if (this.source !== source || this.stopped || !this.active) return;
       this.failures = 0;
-      if (this.connected === false) this.emit({ type: "connection", connected: true });
-      this.connected = true;
+      // The gateway's first frame is the snapshot; openHAB's list is read instead.
+      if (!this.native) return;
+      this.reconnected();
       this.load().catch(() => null);
     };
     source.onerror = () => {
@@ -717,11 +725,37 @@
     this.pollTimer = this.setTimeout(tick, this.pollMs);
   };
 
+  Backend.prototype.reconnected = function () {
+    if (this.connected === false) this.emit({ type: "connection", connected: true });
+    this.connected = true;
+  };
+
+  // The pair view's states now, as merge() takes a list's: statuses, then
+  // results that only settle what they answer.
+  Backend.prototype.applySnapshot = function (states) {
+    Object.keys(states).forEach((item) => {
+      if (this.byStatus[item] && typeof states[item] === "string") this.applyStatus(this.byStatus[item], states[item]);
+    });
+    Object.keys(states).forEach((item) => {
+      if (this.byResult[item] && typeof states[item] === "string") this.applyResult(this.byResult[item], resultOf(states[item]), false);
+    });
+    this.reconnected();
+  };
+
   Backend.prototype.onMessage = function (data) {
     let event;
     let payload;
     try {
       event = JSON.parse(data);
+      if (event && event.type === "snapshot" && event.states && typeof event.states === "object") {
+        if (!this.native) this.applySnapshot(event.states);
+        return;
+      }
+      if (event && event.type === "unavailable") {
+        if (this.connected !== false) this.emit({ type: "connection", connected: false });
+        this.connected = false;
+        return;
+      }
       payload = typeof event.payload === "string" ? JSON.parse(event.payload) : event.payload;
     } catch (error) {
       return;
@@ -840,6 +874,7 @@
   global.PairingBackend = {
     LIST_URL: LIST_URL,
     EVENTS_URL: EVENTS_URL,
+    VIEW_URL: VIEW_URL,
     REQUEST: REQUEST,
     AGAIN: AGAIN,
     CANCEL: CANCEL,

@@ -87,7 +87,8 @@ SIGNAL_WAIT = 30
 #: timeout, a command and its re-read.
 STEP = max(instr.REFRESH, vrroom_http.REFRESH) + 10
 EXECUTOR_QUIET = 0.25
-#: The event stream the remote page listens to (web/remote/backend.js).
+#: The room Sources' updates, as the remote page follows them when openHAB
+#: serves it (web/remote/backend.js NATIVE_TOPICS) and the gateway's hub does.
 REMOTE_EVENTS = "/rest/events?topics=openhab/items/loc_*_source/stateupdated"
 
 

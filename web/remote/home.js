@@ -8,7 +8,8 @@
     system.href = global.ThermiteShell.href("system", location.search);
   }).catch(() => {});
   const mock = new URLSearchParams(location.search).get("backend") === "mock";
-  const backend = global.RemoteBackend.create(house, { backend: mock ? "mock" : undefined, active: document.visibilityState !== "hidden" });
+  // The "home" view: only the rooms' Sources, and no activity feed.
+  const backend = global.RemoteBackend.create(house, { backend: mock ? "mock" : undefined, view: "home", active: document.visibilityState !== "hidden" });
   // Home starts no remote; an idle session still words each room's lock as the remote does.
   const session = global.RemoteSession?.create({ backend, house });
   access?.ready().then(() => access.watchLocks(true)).catch(() => {});

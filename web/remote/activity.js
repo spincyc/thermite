@@ -1,6 +1,9 @@
 /* Public house activity projected from typed openHAB events. No raw event,
  * command, source, response text or pairing credential leaves this module.
  * at is the client's receipt time. History belongs to each visible client.
+ * It reads the events the remote's stream already carries (backend.js): an
+ * Item's state as statechanged, or as stateupdated (a room's Source), whose
+ * repeats are dropped against the last value seen.
  */
 (function (global) {
   "use strict";
@@ -26,15 +29,13 @@
     const now = config.now || (() => Date.now());
     const descriptors = Object.create(null);
     const previous = Object.create(null);
-    const watched = new Set(config.watched || []);
     Object.keys(config.items || {}).forEach((name) => {
       const desc = config.items[name];
       if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name) || PRIVATE_ITEM.test(name) || !desc || !KINDS.has(desc.kind)) return;
       const pairing = name.includes("_pairing");
       if (pairing && !((name.endsWith("_pairing_status") && desc.kind === "pairing_status")
           || (name.endsWith("_pairing_result") && desc.kind === "pairing_result"))) return;
-      const stateEvent = watched.has(name) && desc.kind !== "problem" ? "stateupdated" : "statechanged";
-      descriptors[name] = Object.assign({}, desc, { commands: !pairing && desc.commands === true, stateEvent });
+      descriptors[name] = Object.assign({}, desc, { commands: !pairing && desc.commands === true });
     });
     function push(desc, kind, body, tone) {
       emit({ type: "activity", at: now(), kind, room: clean(desc.room, 80) || null,
@@ -82,7 +83,9 @@
       if (!match || !own(descriptors, match[1])) return;
       const desc = descriptors[match[1]];
       const verb = match[2];
-      if (verb === "command" ? !desc.commands : !desc.states || verb !== desc.stateEvent) return;
+      if (verb === "command" ? !desc.commands : !desc.states) return;
+      // A problem's or a pairing result's report is a change from its old value.
+      if (verb === "stateupdated" && (desc.kind === "problem" || desc.kind === "pairing_result")) return;
       let payload;
       try { payload = typeof payloadText === "string" ? JSON.parse(payloadText) : null; } catch (error) { return; }
       if (!payload || typeof payload.value !== "string") return;
@@ -101,10 +104,10 @@
         return;
       }
       const value = valueOf(desc, payload.value, false);
+      const valueKey = value ? value.valueKey : "unknown";
+      const before = previous[match[1]];
+      previous[match[1]] = valueKey;
       if (verb === "stateupdated") {
-        const valueKey = value ? value.valueKey : "unknown";
-        const before = previous[match[1]];
-        previous[match[1]] = valueKey;
         if (before === undefined || before === valueKey) return;
       } else if (value && desc.kind !== "redacted") {
         const old = valueOf(desc, payload.oldValue, false);
@@ -112,21 +115,14 @@
       }
       push(desc, "state", value ? "Reported: " + value.text : "Reported value changed (value hidden)", value && value.tone);
     }
-    function topics() {
-      const out = [];
-      Object.keys(descriptors).forEach((name) => {
-        const desc = descriptors[name];
-        if (desc.states) out.push("openhab/items/" + name + "/" + desc.stateEvent);
-        if (desc.commands) out.push("openhab/items/" + name + "/command");
-      });
-      return out;
-    }
-    function seed(name, value) {
-      if (!own(descriptors, name) || previous[name] !== undefined) return;
+    // The value an Item's next report is compared with; replace, after a
+    // snapshot, even one already seen.
+    function seed(name, value, replace) {
+      if (!own(descriptors, name) || previous[name] !== undefined && !replace) return;
       const projected = valueOf(descriptors[name], value, false);
       previous[name] = projected ? projected.valueKey : "unknown";
     }
-    return { topics, accept, seed };
+    return { accept, seed };
   }
   function preview(house) {
     const items = Object.create(null);
