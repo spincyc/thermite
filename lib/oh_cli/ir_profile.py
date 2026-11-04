@@ -1,7 +1,6 @@
 """Validate a learned IR profile or print a packet without transmitting."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import sys
 
@@ -12,7 +11,8 @@ pending and missing keys. --dry-run prints the packet the native iTach
 IP2IR binding would send; it never connects to an emitter or transmits IR.
 No code, endpoint, device power or playback state is inferred."""
 EXAMPLES = (("thermite ir-profile instance/ir/sony-bluray.json", "validate the profile without transmitting"),
-            ("thermite ir-profile instance/ir/sony-bluray.json --dry-run --key play --connector 2", "print the exact packet only"))
+            ("thermite ir-profile instance/ir/sony-bluray.json --dry-run --key play --connector 2", "print the exact packet only"),
+            ("thermite ir-profile instance/ir/sony-bluray.json --json", "the keys (and any packet) as JSON"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,5 +37,13 @@ def main(argv: list[str] | None = None) -> int:
     except ir.ProfileError as error:
         print(f"thermite ir-profile: {error}", file=sys.stderr)
         return 2
-    print(json.dumps(result, indent=2))
+    if args.json:
+        oh_cli.emit(result)
+        return 0
+    print(f"model    {result['model']}")
+    for key in ("verified", "pending", "missing"):
+        print(f"{key:<9}{', '.join(result[key]) if result[key] else '(none)'}")
+    if "packet" in result:
+        print(f"packet   {result['packet']}")
+    print("transmitted nothing")
     return 0

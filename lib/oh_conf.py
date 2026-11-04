@@ -35,7 +35,8 @@ GUARD_ADDON_WHY = "the transform:JS profile that keeps phase-1 Items display-onl
 
 #: A rendered rule that talks to its devices itself, with no binding between,
 #: holds RULE_SENDS once; oh_render.read_only() swaps it for RULE_SILENT, so
-#: the rule still reads its devices but sends them no command.
+#: the rule still reads its devices but sends them no command, and refuses a
+#: rule with no such line unless it is one of oh_render.ITEM_ONLY_RULES.
 RULE_SENDS = "const SEND = true;"
 RULE_SILENT = "const SEND = false;"
 

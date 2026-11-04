@@ -1,4 +1,22 @@
-"Configured site devices and AV/USB connections for the remote's map.\n\nThis is configuration, not discovered wiring or live state. Video paths come\nfrom diagnostics, including its local-source bypasses and passive observers.\nPorts retain their native numbering: an edge's fromPort is the preceding\ndevice's configured output, and toPort is the following device's input.\nUnknown ports are omitted rather than inferred from a model or receiver zone.\n\nUSB edges describe only known source-to-matrix host cables. A route's usb\nentries identify the matrix's device ports assigned to that source, respecting\nusb_only; an off/uncabled host is omitted. The inventory does not identify the\ndownstream peripherals, so no matrix-to-peripheral cable is invented.\n\nRooms group devices by their inventory location. A logical routed room such\nas example names that physical location in location and shares its device\ngroup. Nodes retain their physical room IDs; routes retain the logical IDs\nused by the confirmed Source Items. No addresses, credentials, provider Items\nor live readings are copied into this public manifest.\n"
+"""Configured site devices and AV/USB connections for the remote's map.
+
+This is configuration, not discovered wiring or live state. Video paths come
+from diagnostics, including its local-source bypasses and passive observers.
+Ports retain their native numbering: an edge's fromPort is the preceding
+device's configured output, and toPort is the following device's input.
+Unknown ports are omitted rather than inferred from a model or receiver zone.
+
+USB edges describe only known source-to-matrix host cables. A route's usb
+entries identify the matrix's device ports assigned to that source, respecting
+usb_only; an off/uncabled host is omitted. The inventory does not identify the
+downstream peripherals, so no matrix-to-peripheral cable is invented.
+
+Rooms group devices by their inventory location. A routed room whose routing
+entry names another `room` (routing.home) gives that physical room as its
+location and shares its device group. Nodes retain their physical room IDs;
+routes retain the logical IDs used by the confirmed Source Items. No addresses, credentials, provider Items
+or live readings are copied into this public manifest.
+"""
 
 from __future__ import annotations
 

@@ -25,8 +25,9 @@ if either finds anything:
     instead, so an empty listing never passes. A line that must carry a
     credential-looking word for a documented reason ends with the marker
     `lint: allow`.
-  - the docs' make targets: every openhab-* target README.md or docs/*.md
-    cites must be one the Makefile defines.
+  - the docs' make targets: every `make TARGET` that README.md, FAQ.md,
+    docs/*.md or site/pages/*.md cite in code must be one the Makefile
+    defines.
 """
 
 EXAMPLES = (("thermite lint", "scan the area's files Git has or would add, and check the docs' make targets"),)
@@ -54,8 +55,10 @@ def doc_targets() -> int:
     import oh_paths
     if not (AREA / "Makefile").exists() and oh_paths.descriptor(AREA) is not None:
         return 0
-    documents = [AREA / "README.md", *sorted((AREA / "docs").glob("*.md"))]
-    problems = oh_docs.stale_targets(AREA / "Makefile", [d for d in documents if d.exists()])
+    documents = [AREA / "README.md", AREA / "FAQ.md", *sorted((AREA / "docs").glob("*.md")),
+                 *sorted((AREA / "site/pages").glob("*.md"))]
+    documents = [d for d in documents if d.exists()]
+    problems = oh_docs.stale_targets(AREA / "Makefile", documents)
     for problem in problems:
         print(f"thermite lint: {problem}", file=sys.stderr)
     print(f"make targets in the docs: {len(documents)} documents, {len(problems)} stale")

@@ -23,14 +23,17 @@ The docs site is plain HTML, made from site/: its pages, every verb's own
 help (the commands page), and the torch and color themes. The thermite
 repository publishes it with GitHub Pages, so it is public: every action
 first refuses a site that names this house: an address, a MAC, the host's
-name, state root or time zone, a device's id, name, model or make, a room's
-label, or a word in instance/private-words.txt. The house-only verbs are left out.
+state root or time zone, a device's id, name, model or make, a room's label,
+or a word in instance/private-words.txt (list the host's name there if the
+site must not name it).
 """
 
 NOTES = """\
 export writes docs/ (the site), README.md, FAQ.md and the Pages workflow
-into a checkout of the thermite repository, and removes files under docs/
-that the site no longer has. Commit and push there to publish.
+into a checkout of the thermite repository, and removes the site's own
+files under docs/ (its pages, assets/, themes/ and examples/) that it no
+longer has; the Markdown sources and any other file there stay untouched.
+Commit and push there to publish.
 
 --with-code also exports the reviewed portable source and a fictional
 sample house. It checks privacy and runs offline configuration, help,
@@ -169,7 +172,7 @@ def cmd_export(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = command("docs", DESCRIPTION, (
-        ("thermite docs serve", "preview the site at http://127.0.0.1:13621/"),
+        ("thermite docs serve", f"preview the site at http://127.0.0.1:{oh_ports.DOCS_PORT}/"),
         ("thermite docs check", "does it build, without naming this house?"),
         ("thermite docs export --to ../thermite", "update the thermite repository's copy"),
     ), notes=NOTES)
@@ -182,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     build.set_defaults(func=cmd_build)
 
     serve = action(sub, "serve", "preview the site on 127.0.0.1, without writing it anywhere", examples=(
-        ("thermite docs serve", "at http://127.0.0.1:13621/"),
+        ("thermite docs serve", f"at http://127.0.0.1:{oh_ports.DOCS_PORT}/"),
         ("thermite docs serve --port 0", "on any free port; it prints which"),
     ))
     serve.add_argument("--port", type=int, default=oh_ports.DOCS_PORT, help=f"the port (default: {oh_ports.DOCS_PORT})")

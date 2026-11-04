@@ -39,7 +39,7 @@
 <h1 id="commands">Commands</h1>
 <p>One program, <code>thermite</code>, with a verb for each job. Every verb answers <code>--help</code> (or <code>thermite help VERB</code>) with what it does, its switches and examples; this page is that help, word for word.</p>
 <h2 id="house">The house file, and what is generated from it</h2>
-<table class="verbs"><tbody><tr><td><a href="#init"><code>thermite init</code></a></td><td>create a private site, or pin an installed application upgrade</td></tr><tr><td><a href="#check"><code>thermite check</code></a></td><td>generate, validate and lint the selected configuration</td></tr><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that conf/ agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#init"><code>thermite init</code></a></td><td>create a private site, or pin an installed application upgrade</td></tr><tr><td><a href="#check"><code>thermite check</code></a></td><td>generate, validate and lint the selected configuration</td></tr><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ and metrics/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that conf/ agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
 <h2 id="test">Test on a test runtime, never production</h2>
 <table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
@@ -60,7 +60,7 @@ remotes. One program, a verb for each job; `thermite help VERB` explains one.
 the house file, and what is generated from it:
   init                 create a private site, or pin an installed application upgrade
   check                generate, validate and lint the selected configuration
-  generate             write conf/ from the house file, and deploy/&#x27;s systemd units
+  generate             write conf/ and metrics/ from the house file, and deploy/&#x27;s systemd units
   validate             check the house file, and that conf/ agrees with it
   lint                 refuse credentials in Git, and docs naming a missing make target
 
@@ -127,7 +127,7 @@ exit status, in every verb (its help names any other):
 examples:
   thermite generate                 after any change to the house file or lib/
   thermite test boot                before a deploy: does conf/ load cleanly?
-  thermite deploy --dry-run         what a deploy would change here
+  thermite install --dry-run        what an install would change here
   thermite upgrade -n               what moving to the pinned runtime would run here
   thermite remote --mock            the remote in a terminal, sending nothing
   thermite theme show               the flaming bowl, in this terminal&#x27;s colors
@@ -179,7 +179,8 @@ examples:
                                     check configuration before committing or installing
 </pre>
 </section>
-<section class="verb" id="generate"><h3><code>thermite generate</code></h3><p>Write conf/ from the house file, and deploy/&#x27;s systemd units.</p><pre class="help">usage: thermite generate [-h] [--config DIR] [--check] [--house FILE] [--conf DIR]
+<section class="verb" id="generate"><h3><code>thermite generate</code></h3><p>Write conf/ and metrics/ from the house file, and deploy/&#x27;s systemd units.</p><pre class="help">usage: thermite generate [-h] [--config DIR] [--check | --prune] [--house FILE]
+                         [--conf DIR]
 
 Generate conf/ from the house file (instance/devices.yaml), metrics/ (the
 Prometheus, blackbox_exporter, Grafana and exporter configuration, and the
@@ -190,12 +191,16 @@ then run this; never edit conf/, metrics/ or deploy/ by hand.
 
 It validates the house file first and writes nothing while it has a
 problem. Writing never deletes: a file under conf/ or metrics/ that nothing
-generates is reported and makes the exit status 1.
+generates is reported and makes the exit status 1; --prune removes such a
+file when it carries the generated header (an earlier generate wrote it)
+and only reports any other.
 
 options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
   --check               change nothing; exit 1 if conf/, metrics/ or deploy/ is stale
+  --prune               also remove files under conf/ and metrics/ with the generated
+                        header that nothing generates now
   --house FILE          the house file (default: instance/devices.yaml)
   --conf DIR            the runtime conf directory (default: conf/)
 
@@ -207,13 +212,15 @@ switches every verb takes:
 exit status:
   0  conf/, metrics/ and deploy/ are what the house file, the host file and
      versions.json generate (with --check: and nothing was written)
-  1  the house file has a problem, a file is stale or missing (with
-     --check), or conf/ or metrics/ holds a file nothing generates
-  2  a wrong switch, or a file that cannot be read
+  1  a file is stale or missing (with --check), or conf/ or metrics/
+     holds a file nothing generates
+  2  a wrong switch, or a house or host file that is missing, cannot be
+     read or has a problem (nothing is generated)
 
 examples:
   thermite generate                 validate the house file, then write every file under conf/, metrics/ and deploy/ that differs
   thermite generate --check         change nothing; name every stale, missing or stray file
+  thermite generate --prune         write, and remove generated files nothing generates any more
 </pre>
 </section>
 <section class="verb" id="validate"><h3><code>thermite validate</code></h3><p>Check the house file, and that conf/ agrees with it.</p><pre class="help">usage: thermite validate [-h] [--config DIR] [--house FILE] [--conf DIR] [--json]
@@ -232,6 +239,12 @@ switches every verb takes:
   -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
   --no-color            no color in what it prints (as NO_COLOR=1 does)
 
+exit status:
+  0  the house file is valid and conf/ agrees with it
+  1  conf/ is missing, empty or disagrees with the house file
+  2  a wrong switch, or a house file that is missing, cannot be read or
+     has a problem (conf/ is not checked)
+
 examples:
   thermite validate                 check the house file and conf/ against it
   thermite validate --json          the same, as JSON
@@ -249,8 +262,9 @@ if either finds anything:
     instead, so an empty listing never passes. A line that must carry a
     credential-looking word for a documented reason ends with the marker
     `lint: allow`.
-  - the docs&#x27; make targets: every openhab-* target README.md or docs/*.md
-    cites must be one the Makefile defines.
+  - the docs&#x27; make targets: every `make TARGET` that README.md, FAQ.md,
+    docs/*.md or site/pages/*.md cite in code must be one the Makefile
+    defines.
 
 options:
   -h, --help            show this help message and exit
@@ -966,7 +980,7 @@ examples:
   thermite rollback 3d22e36         deploy that commit (thermite history lists them)
 </pre>
 </section>
-<section class="verb" id="status"><h3><code>thermite status</code></h3><p>What is deployed and running here, against this checkout.</p><pre class="help">usage: thermite status [-h] [--config DIR] [--state DIR]
+<section class="verb" id="status"><h3><code>thermite status</code></h3><p>What is deployed and running here, against this checkout.</p><pre class="help">usage: thermite status [-h] [--config DIR] [--json] [--state DIR]
 
 Report, read-only, what runs here: the commit thermite deploy installed
 (and whether HEAD is it, or how many commits after it), whether the
@@ -980,6 +994,7 @@ history lists more).
 options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
+  --json                print the report as JSON
   --state DIR           the state root (default: instance/host.yaml state_root)
 
 switches every verb takes:
@@ -987,8 +1002,17 @@ switches every verb takes:
   -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
   --no-color            no color in what it prints (as NO_COLOR=1 does)
 
+exit status:
+  0  what HEAD (or the selected commit) holds is deployed, unchanged, and
+     its services and runtime are up
+  1  nothing is deployed, HEAD is not what is deployed, a deployed file or
+     unit differs or is missing, a service is not active, or runtime does
+     not answer
+  2  a wrong switch, or the host file or deploy record cannot be read
+
 examples:
   thermite status                   the deployed commit against HEAD, the units, the services, runtime
+  thermite status --json            the same, as JSON, with the problems that make it exit 1
   thermite status --state /tmp/state
                                     the same for a state root somewhere else
 </pre>
@@ -1027,7 +1051,8 @@ examples:
 </section>
 <section class="verb" id="health"><h3><code>thermite health</code></h3><p>Read-only: every Thing ONLINE in the runtime.</p><pre class="help">usage: thermite health [-h] [--config DIR] (--production | --sandbox | --url URL)
                        [--token-file FILE] [--allow-offline ID [ID ...] |
-                       --installation] [--addons FILE] [--timeout SECONDS] [--json]
+                       --installation] [--addons FILE] [--settle SECONDS]
+                       [--timeout SECONDS] [--json]
 
 Read-only checks against the running runtime: every Thing ONLINE, Items whose
 state is NULL or UNDEF, and the installed add-ons (compared with an
@@ -1044,11 +1069,15 @@ var/&lt;this host&#x27;s name&gt;/api-token, and the metrics services beside it:
 Prometheus ready with every scrape target up, and Grafana answering.
 Before thermite upgrade has installed them it says they are not installed yet.
 
---production --installation checks installation readiness. Offline devices
-waiting for pairing or connectivity are visible warnings; missing handlers,
-unfinished initialization, configuration errors, required add-ons and
-monitoring failures still fail. Thermite&#x27;s web entry must redirect correctly.
-Normal health checks remain strict.
+--production --installation checks installation readiness with the same
+Thing policy as the installer&#x27;s native readiness wait. Offline devices
+waiting for pairing or connectivity are visible warnings. Thing configuration
+errors, required add-ons and monitoring failures still fail, and Thermite&#x27;s
+web entry must redirect correctly. Things still initializing (missing or
+reloading handlers, UNINITIALIZED, INITIALIZING, UNKNOWN) are polled for up
+to --settle seconds (default 120 with --installation), as are transient REST
+outages; any still initializing then are reported as warnings. Normal health
+checks remain strict and take one snapshot.
 
 options:
   -h, --help                   show this help message and exit
@@ -1061,6 +1090,8 @@ options:
   --installation               with --production, verify installation and report offline
                                devices as warnings
   --addons FILE                fail if an add-on listed in this addons.cfg is missing
+  --settle SECONDS             with --installation, poll Things still initializing this
+                               long (default 120)
   --timeout SECONDS            seconds to wait for each answer (default: 15)
   --json                       print the report as JSON
 
@@ -1081,7 +1112,9 @@ exit status:
 Items in NULL/UNDEF are reported but do not fail the check; Group Items
 without an aggregation function are skipped, since they never carry state.
 With --installation, exit 0 means installation is ready, possibly with
-device warnings. Compact output omits individual undefined Item states.
+device warnings or Things still initializing after the settle window; only
+configuration errors, missing add-ons, monitoring or entry failures exit 1.
+Compact output omits individual undefined Item states.
 
 examples:
   thermite health --sandbox         check the sandbox, with its API token
@@ -1092,7 +1125,7 @@ examples:
                                     runtime at that URL, without a token, as JSON
 </pre>
 </section>
-<section class="verb" id="dhcp-reservations"><h3><code>thermite dhcp-reservations</code></h3><p>List the UniFi DHCP reservations the house file needs.</p><pre class="help">usage: thermite dhcp-reservations [-h] [--config DIR] [--csv]
+<section class="verb" id="dhcp-reservations"><h3><code>thermite dhcp-reservations</code></h3><p>List the UniFi DHCP reservations the house file needs.</p><pre class="help">usage: thermite dhcp-reservations [-h] [--config DIR] [--csv] [--house FILE]
 
 List the UniFi DHCP reservations instance/devices.yaml needs.
 
@@ -1100,11 +1133,18 @@ options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
   --csv                 print CSV: alias, mac, ip
+  --house FILE          the house file (default: instance/devices.yaml)
 
 switches every verb takes:
   -q, --quiet           print only errors
   -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
   --no-color            no color in what it prints (as NO_COLOR=1 does)
+
+exit status:
+  0  every device with its own address has a reservation
+  1  a device with its own address has no mac, so no reservation
+  2  a wrong switch, or a house file that is missing, cannot be read or
+     has a problem
 
 examples:
   thermite dhcp-reservations        one line per reservation: alias, MAC and IP
@@ -1233,8 +1273,8 @@ examples:
                                     that export
 </pre></details>
 </section>
-<section class="verb" id="discover"><h3><code>thermite discover</code></h3><p>Scan the LAN read-only and compare it with the house file.</p><pre class="help">usage: thermite discover [-h] [--config DIR] [--no-ping] [--quick] [--output DIR]
-                         [--json]
+<section class="verb" id="discover"><h3><code>thermite discover</code></h3><p>Scan the LAN read-only and compare it with the house file.</p><pre class="help">usage: thermite discover [-h] [--config DIR] [--no-ping] [--quick] [--network CIDR]
+                         [--save | --output DIR] [--house FILE] [--json]
 
 Scan the LAN read-only and compare what answers with instance/devices.yaml.
 
@@ -1243,7 +1283,10 @@ options:
   --config, --site DIR  use this private configuration directory
   --no-ping             use the neighbour table only; do not ping the network
   --quick               listen for device announcements for less time
-  --output DIR          where to write scan.json (default: var/discovery/&lt;UTC time&gt;/)
+  --network CIDR        the network to scan (default: this host&#x27;s, on its default route)
+  --save                write scan.json under var/discovery/&lt;UTC time&gt;/
+  --output DIR          write scan.json in DIR
+  --house FILE          the house file (default: instance/devices.yaml)
   --json                print the report as JSON
 
 switches every verb takes:
@@ -1251,10 +1294,23 @@ switches every verb takes:
   -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
   --no-color            no color in what it prints (as NO_COLOR=1 does)
 
+It pings every address of this host&#x27;s network only when that network is a
+/22 or narrower; name a wider one with --network to ping it.
+
+exit status:
+  0  every house device with a mac answered at its address, and no address
+     is reused
+  1  a house device moved address or did not answer, or its address now
+     answers with another MAC
+  2  a wrong switch, a house file with a problem, or no network to scan
+
 examples:
   thermite discover                 ping the LAN, listen for device announcements, and compare
   thermite discover --no-ping --quick
                                     the neighbour table and short listening windows only
+  thermite discover --network 192.0.2.0/24
+                                    ping that network instead of this host&#x27;s
+  thermite discover --save          also keep the whole scan under var/discovery/&lt;UTC time&gt;/
   thermite discover --json          the comparison as JSON
 </pre>
 </section>
@@ -1622,6 +1678,8 @@ examples:
                                     validate the profile without transmitting
   thermite ir-profile instance/ir/sony-bluray.json --dry-run --key play --connector 2
                                     print the exact packet only
+  thermite ir-profile instance/ir/sony-bluray.json --json
+                                    the keys (and any packet) as JSON
 </pre>
 </section>
 <section class="verb" id="remote"><h3><code>thermite remote</code></h3><p>The house remote in a terminal.</p><pre class="help">usage: thermite remote [-h] [--config DIR] [--production | --sandbox | --url URL |
@@ -2171,8 +2229,9 @@ The docs site is plain HTML, made from site/: its pages, every verb&#x27;s own
 help (the commands page), and the torch and color themes. The thermite
 repository publishes it with GitHub Pages, so it is public: every action
 first refuses a site that names this house: an address, a MAC, the host&#x27;s
-name, state root or time zone, a device&#x27;s id, name, model or make, a room&#x27;s
-label, or a word in instance/private-words.txt. The house-only verbs are left out.
+state root or time zone, a device&#x27;s id, name, model or make, a room&#x27;s label,
+or a word in instance/private-words.txt (list the host&#x27;s name there if the
+site must not name it).
 
 options:
   -h, --help            show this help message and exit
@@ -2192,8 +2251,10 @@ switches every verb takes:
   --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 export writes docs/ (the site), README.md, FAQ.md and the Pages workflow
-into a checkout of the thermite repository, and removes files under docs/
-that the site no longer has. Commit and push there to publish.
+into a checkout of the thermite repository, and removes the site&#x27;s own
+files under docs/ (its pages, assets/, themes/ and examples/) that it no
+longer has; the Markdown sources and any other file there stay untouched.
+Commit and push there to publish.
 
 --with-code also exports the reviewed portable source and a fictional
 sample house. It checks privacy and runs offline configuration, help,

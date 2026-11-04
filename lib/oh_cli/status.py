@@ -1,6 +1,6 @@
 """What is deployed and running on this host, against this checkout.
 
-    thermite status [--state DIR]
+    thermite status [--state DIR] [--json]
 """
 
 from __future__ import annotations
@@ -27,86 +27,137 @@ history lists more).
 
 EXAMPLES = (
     ("thermite status", "the deployed commit against HEAD, the units, the services, runtime"),
+    ("thermite status --json", "the same, as JSON, with the problems that make it exit 1"),
     ("thermite status --state /tmp/state", "the same for a state root somewhere else"),
 )
 
+NOTES = """\
+exit status:
+  0  what HEAD (or the selected commit) holds is deployed, unchanged, and
+     its services and runtime are up
+  1  nothing is deployed, HEAD is not what is deployed, a deployed file or
+     unit differs or is missing, a service is not active, or runtime does
+     not answer
+  2  a wrong switch, or the host file or deploy record cannot be read
+"""
 
-def show_metrics(host: dict, installed: dict[str, Path] | None = None) -> None:
+
+def show_metrics(host: dict, installed: dict[str, Path] | None = None, report: dict | None = None) -> None:
+    say = print if report is None else _quiet
+    report = {} if report is None else report
     if not deploy.metrics_installed(installed):
-        print("metrics  not installed; thermite upgrade installs them")
+        report["metrics"] = None
+        say("metrics  not installed; thermite upgrade installs them")
         return
     health = deploy.metrics_health(host, deploy.lan_address())
-    print(f"grafana  {health.grafana}: " + ("answers; anonymous visitors view the dashboards" if health.grafana_ok else
-                                           "not answering"))
+    report["metrics"] = {"grafana": health.grafana, "grafana_ok": bool(health.grafana_ok),
+                         "prometheus": health.prometheus, "prometheus_ok": bool(health.prometheus_ok),
+                         "targets_up": health.up, "targets": health.total, "down": list(health.down),
+                         "systemd": health.systemd}
+    say(f"grafana  {health.grafana}: " + ("answers; anonymous visitors view the dashboards" if health.grafana_ok else
+                                         "not answering"))
     if not health.prometheus_ok:
-        print(f"prometheus {health.prometheus}: not answering")
+        say(f"prometheus {health.prometheus}: not answering")
     elif health.total is None:
-        print(f"prometheus {health.prometheus}: ready; its targets could not be read")
+        say(f"prometheus {health.prometheus}: ready; its targets could not be read")
     else:
-        print(f"prometheus {health.prometheus}: ready, targets {health.up}/{health.total} up"
-              + (f"; down: {', '.join(health.down)}" if health.down else ""))
+        say(f"prometheus {health.prometheus}: ready, targets {health.up}/{health.total} up"
+            + (f"; down: {', '.join(health.down)}" if health.down else ""))
     if health.systemd is not None:
-        print("systemd  " + ("node_exporter reads the units' states over D-Bus" if health.systemd else
-                             "node_exporter's systemd collector fails: sudo journalctl -u "
-                             "thermite-node-exporter.service says why"))
+        say("systemd  " + ("node_exporter reads the units' states over D-Bus" if health.systemd else
+                           "node_exporter's systemd collector fails: sudo journalctl -u "
+                           "thermite-node-exporter.service says why"))
+
+
+def _quiet(*_args, **_kwargs) -> None:
+    pass
 
 
 def show(args, host: dict) -> int:
+    """Print (or with args.json, emit as JSON) what runs here; 1 when
+    something drifted from the deploy or is down."""
+    as_json = getattr(args, "json", False)
+    say = _quiet if as_json else print
+    report: dict = {"deployed": None, "trees": {}, "units": {}, "services": {}, "problems": []}
+    problems = report["problems"]
     layout = deploy.State(args.state) if args.state else deploy.state(host)
     record = deploy.read_record(layout)
     if record:
-        print(f"deployed {record['commit'][:12]} {record.get('subject', '')}")
-        print(f"         at {record.get('deployed_at')} by {record.get('by')}"
-              + ("" if record.get("boot_checked") else " (without passing thermite test boot)"))
+        report["deployed"] = {"commit": record["commit"], "subject": record.get("subject", ""),
+                              "at": record.get("deployed_at"), "by": record.get("by"),
+                              "boot_checked": bool(record.get("boot_checked"))}
+        say(f"deployed {record['commit'][:12]} {record.get('subject', '')}")
+        say(f"         at {record.get('deployed_at')} by {record.get('by')}"
+            + ("" if record.get("boot_checked") else " (without passing thermite test boot)"))
         revision = getattr(args, "revision", None)
         head = deploy.resolve(AREA, revision or "HEAD")
         label = "selected" if revision else "HEAD"
+        report["selected"] = head
         if head == record["commit"]:
-            print(f"{label:<9}is what is deployed")
+            say(f"{label:<9}is what is deployed")
         else:
+            problems.append(f"{label} {head[:12]} is not what is deployed")
             try:
-                print(f"{label:<9}{head[:12]}, {deploy.ahead(AREA, record['commit'], head)} commit(s) after "
-                      "the deployed one")
+                say(f"{label:<9}{head[:12]}, {deploy.ahead(AREA, record['commit'], head)} commit(s) after "
+                    "the deployed one")
             except deploy.DeployError:
-                print(f"{label:<9}{head[:12]}; the deployed commit is not in this clone")
+                say(f"{label:<9}{head[:12]}; the deployed commit is not in this clone")
         for label, target, key in (("conf", layout.conf, "conf"), ("helper", layout.atv_app, "atv_app"),
                                    ("metrics", layout.metrics, "metrics"),
                                    ("exporter", layout.exporter_app, "exporter_app")):
             if key not in record and not target.is_dir():
-                print(f"{label:<9}not deployed: {target} does not exist yet (thermite upgrade makes it)")
+                report["trees"][label] = None
+                say(f"{label:<9}not deployed: {target} does not exist yet (thermite upgrade makes it)")
                 continue
-            report = deploy.drift(target, record.get(key, {}))
-            problems = [f"{len(v)} {k}" for k, v in report.items() if v and k != "foreign"]
-            print(f"{label:<9}{'as deployed' if not problems else ', '.join(problems) + ' since the deploy'}"
-                  + (f"; {len(report['foreign'])} file(s) no deploy installed" if report["foreign"] else ""))
+            drift = deploy.drift(target, record.get(key, {}))
+            report["trees"][label] = {kind: list(paths) for kind, paths in drift.items()}
+            changed = [f"{len(v)} {k}" for k, v in drift.items() if v and k != "foreign"]
+            if changed:
+                problems.append(f"{label}: {', '.join(changed)} since the deploy")
+            say(f"{label:<9}{'as deployed' if not changed else ', '.join(changed) + ' since the deploy'}"
+                + (f"; {len(drift['foreign'])} file(s) no deploy installed" if drift["foreign"] else ""))
             for kind in ("modified", "missing"):
-                for path in report[kind]:
-                    print(f"           {kind:<9}{path}")
+                for path in drift[kind]:
+                    say(f"           {kind:<9}{path}")
     else:
-        print(f"deployed nothing yet ({layout.record} does not exist)")
+        problems.append("nothing is deployed")
+        say(f"deployed nothing yet ({layout.record} does not exist)")
     revision = getattr(args, "revision", None)
     units = deploy.installed_units(AREA, rev=revision) if revision else deploy.installed_units(AREA)
     for name, target, how in units:
-        print(f"unit     {target}: {how}" + (f" (the owner installs {name}: thermite upgrade)"
-                                             if how in ("differs", "missing") else ""))
+        report["units"][str(target)] = how
+        if how in ("differs", "missing"):
+            problems.append(f"unit {target}: {how}")
+        say(f"unit     {target}: {how}" + (f" (the owner installs {name}: thermite upgrade)"
+                                           if how in ("differs", "missing") else ""))
     for service, active in deploy.service_states().items():
-        print(f"service  {service}: {active}")
+        report["services"][service] = active
+        if active != "active":
+            problems.append(f"service {service}: {active}")
+        say(f"service  {service}: {active}")
     url = deploy.production_url(host)
     version = deploy.openhab_version(url)
     lan = deploy.production_url(host, deploy.lan_address() or deploy.hostname())
-    print(f"runtime  {url}: " + (f"runtime {version} answers; from the LAN: {lan}" if version else "not answering"))
-    show_metrics(host)
+    report["runtime"] = {"url": url, "lan": lan, "version": version}
+    if not version:
+        problems.append(f"runtime {url}: not answering")
+    say(f"runtime  {url}: " + (f"runtime {version} answers; from the LAN: {lan}" if version else "not answering"))
+    show_metrics(host, report=report if as_json else None)
     entries = deploy.deploys(layout)
+    report["deploys"] = len(entries)
     if entries:
-        print("history  (latest last; * deployed now)")
+        say("history  (latest last; * deployed now)")
         for line in history_lines(entries[-5:]):
-            print(f"       {line}")
-        print(f"         thermite history shows more ({len(entries)} deploy{'s' if len(entries) != 1 else ''} here)")
-    return 0
+            say(f"       {line}")
+        say(f"         thermite history shows more ({len(entries)} deploy{'s' if len(entries) != 1 else ''} here)")
+    if as_json:
+        oh_cli.emit(report)
+    return 1 if problems else 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = oh_cli.command("status", DESCRIPTION, EXAMPLES)
+    parser = oh_cli.command("status", DESCRIPTION, EXAMPLES, NOTES)
+    oh_cli.add_json(parser)
     parser.add_argument("--revision", help=argparse.SUPPRESS)
     parser.add_argument("--state", type=Path, metavar="DIR",
                         help="the state root (default: instance/host.yaml state_root)")

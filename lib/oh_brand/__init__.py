@@ -575,23 +575,27 @@ def _painted(surface: str, layers: tuple[tuple[str, str, float], ...], size: int
     left, top, side = (float(value) for value in TILE)
     count = size * samples
     step = side / count
-    shapes = [(rgb(color), shape) for color, path, width in layers for shape in stroke_shapes(path, width)]
-    back = rgb(surface)
+    # With each outline's vertical extent: a line outside it crosses none of its edges.
+    shapes = [(bytes(rgb(color)), shape, min(y for _, y in shape), max(y for _, y in shape))
+              for color, path, width in layers for shape in stroke_shapes(path, width)]
+    back = bytes(rgb(surface))
     total = samples * samples
+    stride = 3 * samples
     rows = []
     for row in range(size):
         sums = [0] * (size * 3)
         for sub in range(samples):
             y = top + (row * samples + sub + 0.5) * step
-            line = [back] * count
-            for color, points in shapes:
+            # Each sample's RGB, 3 bytes apiece; byte k of a pixel's sample j
+            # is at 3 * (x * samples + j) + k.
+            line = bytearray(back * count)
+            for color, points, low, high in shapes:
+                if not low <= y < high:
+                    continue
                 for first, end in _spans(points, y, left, step, count):
-                    line[first:end] = [color] * (end - first)
-            for x, (r, g, b) in enumerate(line):
-                at = x // samples * 3
-                sums[at] += r
-                sums[at + 1] += g
-                sums[at + 2] += b
+                    line[3 * first:3 * end] = color * (end - first)
+            for k in range(3):
+                sums[k::3] = map(sum, zip(sums[k::3], *(line[3 * j + k::stride] for j in range(samples))))
         rows.append(bytes((value + total // 2) // total for value in sums))
     return _png(rows, size, size)
 

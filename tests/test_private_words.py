@@ -69,6 +69,16 @@ class PrivateWords(unittest.TestCase):
         self.assertEqual(oh_site.guard(payload, set()), [])
         self.assertEqual(oh_public.guard(payload, self.site), [])
 
+    def test_build_host_name_is_not_a_fact_unless_listed(self):
+        house = self.write("instance/devices.yaml", "version: 1\nrooms: {}\ndevices: []\n")
+        payload = {"fixture.md": b"Run thermite on a machine called fixture-buildhost."}
+        with mock.patch("socket.gethostname", return_value="fixture-buildhost.example"):
+            self.assertNotIn("fixture-buildhost", oh_site.house_facts(house, self.site / "instance/host.yaml"))
+            self.assertEqual(oh_site.guard(payload, oh_site.house_facts(house, self.site / "absent.yaml")), [])
+            self.assertEqual(oh_public.guard(payload, self.site), [])
+            self.write("instance/private-words.txt", "fixture-buildhost\n")
+            self.assert_blocked_by_both_guards("fixture-buildhost")
+
 
 if __name__ == "__main__":
     unittest.main()

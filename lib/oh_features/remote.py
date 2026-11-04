@@ -115,7 +115,7 @@ def render(house: House, conf: Conf) -> None:
     drawn = themed(palette(house.data))
     for name in FILES:
         if name == "house.js":
-            conf.files[f"{TARGET}/{name}"] = remote_model.script(house, remote_model.presentation(SOURCE / name))
+            conf.files[f"{TARGET}/{name}"] = remote_model.script(house)
         elif name == "access-config.js":
             conf.files[f"{TARGET}/{name}"] = oh_access_mode.script(house.data)
         elif name == "system.json":

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import oh_integrations as integrations
 from oh_conf import Conf, House, is_guarded, parse_options
-from oh_features import remote, remote_activity, remote_cameras, remote_diagnostics, remote_system, routing
+from oh_features import remote, remote_activity, remote_cameras, remote_diagnostics, remote_model, remote_system, routing
 
 PRIVATE = re.compile(r"(?:^|_)(?:password|passwd|secret|token|psk|credential|authorization|auth)(?:_|$)", re.I)
 TEXT = {"kind": "text", "max_length": 192, "pattern": r"[^\x00-\x1f\x7f-\x9f]{1,192}"}
@@ -25,11 +25,9 @@ def readable(name: str) -> bool:
 
 
 def capabilities(device: dict):
-    for module in integrations.REGISTRY:
-        control = module.remote(device) if hasattr(module, "remote") else None
-        if control:
-            return module, copy.deepcopy(control)
-    return None, {}
+    """remote_model.provider(), with a copy of its control Items ({} without one)."""
+    module, control = remote_model.provider(device)
+    return module, copy.deepcopy(control or {})
 
 
 def keys(module, device):

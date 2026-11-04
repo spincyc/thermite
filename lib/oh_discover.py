@@ -119,6 +119,20 @@ def local_interface() -> tuple[str, ipaddress.IPv4Network]:
     raise RuntimeError(f"no interface carries {address}")
 
 
+#: The widest network ping_sweep() pings unless it was named explicitly:
+#: a /22 is 1022 addresses.
+SWEEP_PREFIX = 22
+
+
+def sweep_refusal(network: ipaddress.IPv4Network, explicit: bool) -> str | None:
+    """Why a ping sweep of `network` is refused, or None: one wider than
+    SWEEP_PREFIX must be named explicitly."""
+    if explicit or network.prefixlen >= SWEEP_PREFIX:
+        return None
+    return (f"{network} has {network.num_addresses - 2} addresses, more than a /{SWEEP_PREFIX}; name it with "
+            "--network to ping it all, or use --no-ping")
+
+
 def ping_sweep(network: ipaddress.IPv4Network, workers: int = 256) -> set[str]:
     def ping(address: str) -> tuple[str, bool]:
         result = subprocess.run(["ping", "-c1", "-W1", address],
@@ -286,11 +300,13 @@ def is_av(host: dict) -> bool:
 
 
 def compare(inventory: dict, hosts: dict[str, dict]) -> dict[str, list]:
-    """How a scan differs from devices.yaml, matched by MAC address."""
+    """How a scan differs from devices.yaml, matched by MAC address;
+    no_mac names the devices with an address but no mac to match by."""
     known = list(inventory.get("devices") or []) + list(inventory.get("later") or [])
     by_mac = {d["mac"]: d for d in known if d.get("mac")}
     seen_macs = {h.get("mac"): ip for ip, h in hosts.items() if h.get("mac")}
-    report: dict[str, list] = {"moved": [], "missing": [], "unknown": [], "address_reused": []}
+    report: dict[str, list] = {"moved": [], "missing": [], "unknown": [], "address_reused": [],
+                               "no_mac": sorted(str(d.get("id") or d["ip"]) for d in known if d.get("ip") and not d.get("mac"))}
     for mac, device in sorted(by_mac.items(), key=lambda kv: kv[1]["id"]):
         if mac not in seen_macs:
             report["missing"].append(device["id"])

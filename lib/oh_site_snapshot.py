@@ -59,8 +59,13 @@ def render(inputs: dict[str, bytes], release: Path, work: Path, expected: str) -
             raise SnapshotError("the pinned application could not render the committed site") from exc
         if result.returncode:
             # Config parser errors can include input lines. Keep private data
-            # out of installer reports and exception messages.
-            raise SnapshotError("the pinned application refused the committed site configuration")
+            # out of installer reports and exception messages: the child's
+            # output goes to a file only the owner reads, named instead.
+            descriptor, log = tempfile.mkstemp(prefix="site-render-error-", suffix=".log", dir=work)
+            with os.fdopen(descriptor, "wb") as file:
+                file.write((result.stderr or b"") + (result.stdout or b""))
+            raise SnapshotError("the pinned application refused the committed site configuration; "
+                                f"its output is in {log}")
         files = {}
         for prefix in GENERATED:
             tree = site / prefix

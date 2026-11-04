@@ -144,6 +144,6 @@ class Integration(unittest.TestCase):
             with mock.patch.object(generate, "AREA", root), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 result = generate.main(["--house", str(house), "--conf", str(output / "conf"),
                                         "--root", str(output)])
-            self.assertEqual(result, 1)
+            self.assertEqual(result, 2)
             self.assertIn("nothing generated", err.getvalue())
             self.assertFalse(output.exists())

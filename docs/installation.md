@@ -225,10 +225,10 @@ room schedules. Camera media and specialist administration open in a browser
 from an explicit terminal choice. Ordinary controls are available without a
 login in either authentication mode. Guests can control unlocked rooms; locked
 rooms retain the remote layout and show their lock status with controls disabled.
-The Security page enables accounts, pairing and room policies. Account and
-room-policy administration require a signed-in administrator. While
-authentication is on, camera snapshots and live video also require sign-in;
-Guests still see camera status.
+The Security page enables accounts. Guests control unlocked rooms;
+signed-in accounts can also view cameras; administrators manage locks,
+schedules, users, pairing and the system. While authentication is on, camera
+snapshots and live video require sign-in; Guests still see camera status.
 
 Administrators can use **Lock room** on Remotes to hold the current reported
 source or Off until **Unlock room** is selected. The server captures the source;
@@ -264,14 +264,14 @@ trust in your other devices.
 
 A new identity starts with authentication **off**. Ordinary house controls
 remain available through HTTPS without a household login when authentication
-is enabled; sign-in grants management access. Open **Security** to
-enable accounts and room policies when ready. The first enable requires owner-authorized
+is enabled; signed-in accounts can also view cameras, and administrators
+manage locks, schedules, users, pairing and the system. Open **Security** to
+enable accounts when ready. The first enable requires owner-authorized
 setup and creation of the first administrator; visiting the page does not
 claim ownership. Once an administrator exists, changing the switch requires
 administrator authentication. Disabling it suspends locks and schedules while
-preserving accounts and policies for later use; existing sessions and personal
-tokens are revoked. Signed-in account room grants do not restrict anonymous
-access to unlocked rooms. See the
+preserving accounts, locks and schedules for later use; existing sessions and
+personal tokens are revoked. See the
 [identity reference](https://github.com/spincyc/thermite/blob/main/lib/oh_identity/README.md)
 for owner setup and the account model.
 
@@ -295,9 +295,9 @@ printing private native settings or credentials.
 
 The local terminal automatically uses the verified gateway URL and public TLS
 certificate saved by installation. Run `thermite remote --config DIR` for
-ordinary controls without a login. To use an account's management permissions, log in with
+ordinary controls without a login. To view cameras or administer the site, log in with
 `thermite access login --config DIR --user USER`. This creates a personal
-credential; installation itself grants no household role. Other computers
+credential; installation itself creates no household account. Other computers
 still need the server's URL and trusted certificate.
 
 ## Update or remove

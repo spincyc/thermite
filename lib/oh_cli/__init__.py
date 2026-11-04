@@ -26,17 +26,18 @@ import dataclasses
 import difflib
 import importlib
 import io
+import json
 import os
 import re
 import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import NamedTuple, Sequence
 
 from oh_paths import PROGRAM as PROGRAM_ROOT, SITE as AREA
 from oh_release import VERSION
-from oh_ports import SANDBOX_URL
+from oh_ports import HTTP_PORT, SANDBOX_URL
 BIN = AREA / "bin"
 PROGRAM = "thermite"
 #: thermite's own version; the commit (`thermite --version`) tells builds apart.
@@ -52,81 +53,49 @@ GROUPS = (
     ("program", "this program"),
 )
 
-#: verb: (group, summary). The summaries are what `thermite --help` lists.
+class Verb(NamedTuple):
+    group: str
+    summary: str
+    #: Whether it runs on the selected private site, so the dispatcher first
+    #: checks that site suits this application (oh_paths.require_compatible).
+    site: bool = True
+
+
+#: verb: Verb. The summaries are what `thermite --help` lists.
 VERBS = {
-    "init": ("house", "create a private site, or pin an installed application upgrade"),
-    "check": ("house", "generate, validate and lint the selected configuration"),
-    "generate": ("house", "write conf/ from the house file, and deploy/'s systemd units"),
-    "validate": ("house", "check the house file, and that conf/ agrees with it"),
-    "lint": ("house", "refuse credentials in Git, and docs naming a missing make target"),
-    "test": ("test", "boot conf/ on a test runtime; test routing and the controls end to end"),
-    "sandbox": ("test", "run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615"),
-    "install": ("production", "install thermite on this host, with one approval for the whole run"),
-    "upgrade": ("production", "update the application, native services and HTTPS gateway together"),
-    "uninstall": ("production", "stop thermite here and remove its units; --purge deletes its state"),
-    "deploy": ("production", "compatibility alias for the complete install workflow"),
-    "rollback": ("production", "deploy the commit deployed before the current one, or another"),
-    "status": ("production", "what is deployed and running here, against this checkout"),
-    "history": ("production", "this host's deploys, numbered, the latest last"),
-    "health": ("production", "read-only: every Thing ONLINE in the runtime"),
-    "dhcp-reservations": ("devices", "list the UniFi DHCP reservations the house file needs"),
-    "matrix-settings": ("devices", "show matrix settings that differ from the house file; --apply sets them"),
-    "control4": ("devices", "export the Control4 project read-only and compare it"),
-    "discover": ("devices", "scan the LAN read-only and compare it with the house file"),
-    "pair": ("devices", "pair a TV with runtime, or check the Sony TVs' pairing"),
-    "cameras": ("devices", "read camera status, or configure native Protect bridges privately"),
-    "apple-tv": ("devices", "run the Apple TV helper runtime calls"),
-    "ir-profile": ("devices", "validate verified IR keys or print an iTach packet without transmitting"),
-    "remote": ("use", "the house remote in a terminal"),
-    "access": ("use", "site login, local identity bootstrap, HTTPS service and room policies"),
-    "theme": ("use", "the flaming bowl mark and color themes: show, check, export"),
-    "docs": ("use", "build the docs site, or export it to the thermite repository"),
-    "version": ("program", "thermite's version, and runtime's: pinned, and running here"),
-    "package": ("program", "build a privacy-checked portable application wheel"),
-    "iso": ("program", "build a bootable installer for a dedicated Thermite machine"),
-    "completion": ("program", "print a completion script for bash, zsh or fish"),
+    "init": Verb("house", "create a private site, or pin an installed application upgrade", site=False),
+    "check": Verb("house", "generate, validate and lint the selected configuration"),
+    "generate": Verb("house", "write conf/ and metrics/ from the house file, and deploy/'s systemd units"),
+    "validate": Verb("house", "check the house file, and that conf/ agrees with it"),
+    "lint": Verb("house", "refuse credentials in Git, and docs naming a missing make target"),
+    "test": Verb("test", "boot conf/ on a test runtime; test routing and the controls end to end"),
+    "sandbox": Verb("test", f"run a thermite sandbox from a copy of conf/ on {SANDBOX_URL.split('//')[1]}"),
+    "install": Verb("production", "install thermite on this host, with one approval for the whole run", site=False),
+    "upgrade": Verb("production", "update the application, native services and HTTPS gateway together", site=False),
+    "uninstall": Verb("production", "stop thermite here and remove its units; --purge deletes its state"),
+    "deploy": Verb("production", "compatibility alias for the complete install workflow", site=False),
+    "rollback": Verb("production", "deploy the commit deployed before the current one, or another"),
+    "status": Verb("production", "what is deployed and running here, against this checkout"),
+    "history": Verb("production", "this host's deploys, numbered, the latest last"),
+    "health": Verb("production", "read-only: every Thing ONLINE in the runtime"),
+    "dhcp-reservations": Verb("devices", "list the UniFi DHCP reservations the house file needs"),
+    "matrix-settings": Verb("devices", "show matrix settings that differ from the house file; --apply sets them"),
+    "control4": Verb("devices", "export the Control4 project read-only and compare it"),
+    "discover": Verb("devices", "scan the LAN read-only and compare it with the house file"),
+    "pair": Verb("devices", "pair a TV with runtime, or check the Sony TVs' pairing"),
+    "cameras": Verb("devices", "read camera status, or configure native Protect bridges privately"),
+    "apple-tv": Verb("devices", "run the Apple TV helper runtime calls"),
+    "ir-profile": Verb("devices", "validate verified IR keys or print an iTach packet without transmitting"),
+    "remote": Verb("use", "the house remote in a terminal"),
+    "access": Verb("use", "site login, local identity bootstrap, HTTPS service and room policies"),
+    "theme": Verb("use", "the flaming bowl mark and color themes: show, check, export", site=False),
+    "docs": Verb("use", "build the docs site, or export it to the thermite repository", site=False),
+    "version": Verb("program", "thermite's version, and runtime's: pinned, and running here", site=False),
+    "package": Verb("program", "build a privacy-checked portable application wheel", site=False),
+    "iso": Verb("program", "build a bootable installer for a dedicated Thermite machine", site=False),
+    "completion": Verb("program", "print a completion script for bash, zsh or fish", site=False),
 }
 
-#: Verbs for one house's own tools and migration (its old controller, its
-#: network, its matrices' settings); the public docs leave them out.
-HOUSE_ONLY = frozenset()
-
-#: Old names that still run a verb, listed nowhere. The installed helper
-#: unit from before apple-tv runs `bin/thermite atv serve`; this goes once
-#: the owner installs the regenerated deploy/thermite-atv.container.
-ALIASES = {"atv": "apple-tv"}
-
-#: A quadlet installed before bin/thermite runs the Apple TV helper as
-#: /app/bin/openhab-atv; deploys keep a copy of bin/thermite there while it
-#: does (oh_deploy.LEGACY_ATV_PROGRAM), and this maps that name to its verb.
-LEGACY = {"openhab-atv": "apple-tv"}
-
-#: Verbs that are gone, and the command that does their job now. They only
-#: name it: running one runs nothing.
-RENAMED = {
-    "render": "generate",
-    "deploy-render": "generate",
-    "inventory-check": "validate",
-    "secret-scan": "lint",
-    "doc-targets": "lint",
-    "boot-check": "test boot",
-    "routing-check": "test routing",
-    "av-check": "test controls",
-    "smoke": "health",
-    "reservations": "dhcp-reservations",
-    "sony-psk": "pair",
-    "control4-export": "control4",
-    "brand": "theme",
-    "site": "docs",
-}
-#: The same for actions that are gone: (verb, action): the command now.
-RENAMED_ACTIONS = {
-    ("deploy", "apply"): "deploy",
-    ("deploy", "status"): "status",
-    ("sandbox", "sync"): "sandbox reload",
-    ("sandbox", "pair"): "pair --sandbox",
-    ("control4", "summarize"): "control4 summary",
-}
 
 #: Switches that mean the same in every verb that has them (the add_*
 #: helpers), as `thermite --help` explains them.
@@ -162,7 +131,7 @@ EXIT_STATUS = (
 OVERVIEW_EXAMPLES = (
     ("thermite generate", "after any change to the house file or lib/"),
     ("thermite test boot", "before a deploy: does conf/ load cleanly?"),
-    ("thermite deploy --dry-run", "what a deploy would change here"),
+    ("thermite install --dry-run", "what an install would change here"),
     ("thermite upgrade -n", "what moving to the pinned runtime would run here"),
     ("thermite remote --mock", "the remote in a terminal, sending nothing"),
     ("thermite theme show", "the flaming bowl, in this terminal's colors"),
@@ -222,6 +191,9 @@ switches = Switches()
 #: Set by run(): this process is bin/thermite itself, so -q may silence the
 #: programs it starts too, not only this Python's sys.stdout.
 _whole_process = False
+#: Set by main() for a verb that runs on the selected site (Verb.site): its
+#: parser's parse_args checks the site once the switches parse.
+_site_check = False
 
 
 def is_global(word: str) -> bool:
@@ -308,10 +280,18 @@ class Parser(argparse.ArgumentParser):
     capturing = False
 
     def parse_args(self, args=None, namespace=None):
+        global _site_check
         if Parser.capturing:
             raise Captured(self)
         namespace = super().parse_args(args, namespace)
         _apply(namespace)
+        if _site_check:
+            _site_check = False
+            import oh_paths
+            try:
+                oh_paths.require_compatible()
+            except ValueError as exc:
+                raise SystemExit(usage_error(str(exc))) from None
         return namespace
 
     def _usage_actions(self) -> list[argparse.Action]:
@@ -387,6 +367,11 @@ def add_json(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
 
 
+def emit(report: object) -> None:
+    """Print a --json report: one line of JSON, keys sorted, as every verb does."""
+    print(json.dumps(report, sort_keys=True))
+
+
 def add_dry_run(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-n", "--dry-run", action="store_true", help="report what it would do; change nothing")
 
@@ -417,7 +402,7 @@ def add_conf(parser: argparse.ArgumentParser, default: Path | None = AREA / "con
 TARGETS = {
     "production": "production runtime on this host",
     "sandbox": f"the sandbox, {SANDBOX_URL} (thermite sandbox)",
-    "url": "runtime at URL, e.g. http://thermite.example:13601",
+    "url": f"runtime at URL, e.g. http://thermite.example:{HTTP_PORT}",
     "mock": "the remote page's mock backend, which sends nothing",
 }
 
@@ -497,7 +482,7 @@ def overview(verbs: Sequence[str] | None = None) -> str:
     ]
     for group, heading in GROUPS:
         lines += ["", f"{heading}:"]
-        lines += [f"  {verb:<{width}}{summary}" for verb, (g, summary) in VERBS.items() if g == group and verb in verbs]
+        lines += [f"  {verb:<{width}}{spec.summary}" for verb, spec in VERBS.items() if spec.group == group and verb in verbs]
     lines += ["", "switches that mean the same in every verb that has them:", *_rows(STANDARD_SWITCHES)]
     lines += ["", "switches every verb takes, before it or after it:",
               *_rows([(", ".join(options), text) for options, _, text in GLOBAL_SWITCHES]),
@@ -548,26 +533,28 @@ def _main(argv: list[str]) -> int:
         return _main([*argv[1:], *pulled, "--help"])
     if first.startswith("-"):
         return usage_error(f"{first} goes after a verb: {PROGRAM} VERB {first}")
-    first = ALIASES.get(first, first)
-    if first in RENAMED:
-        return usage_error(f"no verb {first!r}; it is now `{PROGRAM} {RENAMED[first]}`")
-    if len(argv) > 1 and (first, argv[1]) in RENAMED_ACTIONS:
-        return usage_error(f"no `{PROGRAM} {first} {argv[1]}`; it is now "
-                           f"`{PROGRAM} {RENAMED_ACTIONS[first, argv[1]]}`")
     if first not in VERBS:
         close = difflib.get_close_matches(first, list(VERBS), n=1)
         return usage_error(f"no verb {first!r}" + (f"; did you mean {close[0]}?" if close else ""))
-    if first not in {"install", "upgrade", "deploy", "init", "package", "iso", "theme", "docs", "completion", "version"} and not any(arg in {"-h", "--help"} for arg in argv):
-        import oh_paths
-        try:
-            oh_paths.require_compatible()
-        except ValueError as exc:
-            return usage_error(str(exc))
-    return importlib.import_module(module_name(first)).main([*pulled, *argv[1:]])
+    global _site_check
+    # Checked once the verb's switches parse (Parser.parse_args), so that its
+    # help, and a wrong switch, need no compatible site.
+    _site_check = VERBS[first].site
+    try:
+        return importlib.import_module(module_name(first)).main([*pulled, *argv[1:]])
+    except Exception as exc:
+        inventory = sys.modules.get("oh_inventory")
+        if inventory is None or not isinstance(exc, inventory.ConfigError):
+            raise
+        for line in exc.lines():
+            print(f"{PROGRAM} {first}: {line}", file=sys.stderr)
+        return 2
+    finally:
+        _site_check = False
 
 
 def run(program: str, argv: list[str]) -> int:
     """bin/thermite's entry point, as `program` (its file name) with `argv`."""
     global _whole_process
     _whole_process = True
-    return main([LEGACY[program], *argv] if program in LEGACY else argv)
+    return main(argv)

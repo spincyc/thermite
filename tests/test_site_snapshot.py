@@ -184,6 +184,10 @@ for name, value in outputs.items():
                 oh_site_snapshot.render(inputs, cache, self.var, release["digest"])
         self.assertNotIn("private fixture input", str(error.exception))
         self.assertFalse(list(self.var.glob(".site-render-*")))
+        [log] = self.var.glob("site-render-error-*.log")
+        self.assertIn(str(log), str(error.exception))
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+        self.assertIn(b"private fixture input", log.read_bytes())
 
     def test_upgrade_accepts_the_legacy_launcher_and_preserves_private_state_and_ignore_rules(self):
         _, cached = self.release("launcher")

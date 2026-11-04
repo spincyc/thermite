@@ -5,9 +5,8 @@ build() returns the whole site as {path: bytes}: plain HTML, CSS, SVG and
 JSON, with no build step where it is served. export() writes it into a
 checkout of the thermite repository (the site under docs/, which its Pages
 workflow publishes, and README.md and FAQ.md at the top). guard() refuses
-anything that names this house (its addresses, MACs, host name, device and
-source ids): they live in the private homelab repository, and the site is
-public.
+anything that names this house (its addresses, MACs, device and source
+ids): they live in the private homelab repository, and the site is public.
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ from html.parser import HTMLParser
 import json
 import posixpath
 import re
-import socket
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -188,7 +186,7 @@ def plain(text: str) -> str:
 
 
 def public_verbs() -> list[str]:
-    return [verb for verb in oh_cli.VERBS if verb not in oh_cli.HOUSE_ONLY]
+    return list(oh_cli.VERBS)
 
 
 def commands_page() -> str:
@@ -198,7 +196,7 @@ def commands_page() -> str:
              "<code>--help</code> (or <code>thermite help VERB</code>) with what it does, its switches and "
              "examples; this page is that help, word for word.</p>"]
     for group, heading in oh_cli.GROUPS:
-        rows = [(verb, summary) for verb, (g, summary) in oh_cli.VERBS.items() if g == group and verb in verbs]
+        rows = [(verb, spec[1]) for verb, spec in oh_cli.VERBS.items() if spec[0] == group and verb in verbs]
         parts.append(f'<h2 id="{group}">{html.escape(heading[:1].upper() + heading[1:])}</h2>')
         parts.append('<table class="verbs"><tbody>' + "".join(
             f'<tr><td><a href="#{verb}"><code>thermite {verb}</code></a></td><td>{html.escape(summary)}</td></tr>'
@@ -372,7 +370,9 @@ def house_facts(house: Path = oh_cli.HOUSE, host_file: Path = HOST_FILE) -> set[
     """Strings that would name this house: every address, MAC and compound
     id (one-word ids such as a room called office are ordinary words), the
     devices' names and models, their makes but PUBLIC_MAKES, the rooms'
-    labels, the host's name, state root and time zone."""
+    labels, the host's state root and time zone; but public_defaults(). The
+    build host's own name is not one: a site that must not name it lists it
+    in private-words.txt."""
     import yaml
     data = yaml.safe_load(house.read_text(encoding="utf-8")) or {}
     facts: set[str] = set()
@@ -402,7 +402,6 @@ def house_facts(house: Path = oh_cli.HOUSE, host_file: Path = HOST_FILE) -> set[
         walk(data.get(section) or [])
     facts.update(key for key in (data.get("rooms") or {}) if "_" in key)
     facts.update(key for key in ((data.get("routing") or {}).get("sources") or {}) if "_" in key)
-    facts.add(socket.gethostname().split(".")[0].lower())
     host = (yaml.safe_load(host_file.read_text(encoding="utf-8")) if host_file.exists() else None) or {}
     if host.get("state_root"):
         facts.add(str(host["state_root"]).rstrip("/").lower())
@@ -411,7 +410,20 @@ def house_facts(house: Path = oh_cli.HOUSE, host_file: Path = HOST_FILE) -> set[
         facts.update({zone, zone.rsplit("/", 1)[-1].replace("_", " ")})
     # Role names of the house file's schema, not facts about this house.
     facts -= {"hdmi_input", "usb_host", "hdmi_output", "on_actions", "off_actions", "c4_item"}
-    return facts - set(['', '/srv/thermite', 'apple', 'computer', 'etc/utc', 'example computer', 'example display', 'example east', 'example matrix', 'example player', 'example tv', 'example west', 'example_computer', 'example_display', 'example_matrix', 'example_player', 'example_tv', 'hdmi matrix', 'sony', 'utc'])
+    return facts - public_defaults()
+
+
+def public_defaults() -> set[str]:
+    """What the public site may name though a house shares it: the fictional
+    sample house's (oh_public.demo()) ids, names, makes, models and room
+    labels, and the default host's state root and time zone."""
+    import oh_public
+    sample = oh_public.demo()
+    out = {"", "utc", "etc/utc", "/srv/thermite"}
+    for device in sample["devices"]:
+        out.update(str(device.get(key) or "").lower() for key in ("id", "name", "make", "model"))
+    out.update(room["label"].lower() for room in sample["rooms"].values())
+    return out
 
 
 def private_words(path: Path | None = None) -> list[str]:
@@ -497,13 +509,20 @@ def repository_files() -> dict[str, bytes]:
     return out
 
 
+#: The paths under docs/ that build() writes: its pages and its assets/,
+#: themes/ and examples/. export() removes a stray file only here, so the
+#: Markdown sources docs/ also holds (DOCUMENT_PAGES) and anything else
+#: there are never removed.
+BUILT = re.compile(r"docs/(?:[^/]+\.html|theme\.schema\.json|(?:assets|themes|examples)/.+)")
+
+
 def compare(root: Path, files: dict[str, bytes]) -> tuple[list[str], list[str]]:
-    """(paths that differ or are missing, stray files under docs/)."""
+    """(paths that differ or are missing, stray built files under docs/)."""
     stale = [path for path, data in files.items()
              if not (root / path).is_file() or (root / path).read_bytes() != data]
     present = {p.relative_to(root).as_posix() for p in (root / "docs").rglob("*") if p.is_file()} \
         if (root / "docs").is_dir() else set()
-    stray = sorted(present - set(files))
+    stray = sorted(path for path in present - set(files) if BUILT.fullmatch(path))
     return sorted(stale), stray
 
 

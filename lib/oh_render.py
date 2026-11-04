@@ -8,6 +8,7 @@ rendering the devices that list it) and then the house-wide features
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -16,7 +17,8 @@ import oh_features as features
 import oh_integrations as integrations
 import oh_inventory as inventory
 import oh_ports
-from oh_conf import GUARD_ADDON_WHY, RULE_SENDS, RULE_SILENT, Addon, Conf, House, dump, guard, linked, uses
+from oh_conf import (ADDONS_CFG, COMMAND_SCRIPTS, GUARD_ADDON_WHY, GUARD_PROFILE, RULE_SENDS, RULE_SILENT, Addon, Conf,
+                     House, dump, guard, linked, uses)
 
 #: openHAB's own metrics, which Prometheus scrapes (lib/oh_metrics); every
 #: house has them, whatever its devices.
@@ -88,56 +90,91 @@ def render(data: dict, *, system_metadata: dict | None = None) -> dict[str, str 
 
 READ_ONLY_HEADER = (
     "Read-only copy for the sandbox or the boot check (oh_render.read_only):",
-    "every HTTP binding channel is READONLY and every Item of another binding",
-    "that could send a command is display-only, so it reads its devices and",
-    "sends nothing.",
+    "every HTTP binding channel is READONLY and every Item linked to any other",
+    "channel is display-only, so it reads its devices and sends nothing.",
 )
-#: Bindings other than HTTP whose Items an integration's control phase links
-#: read-write (oh_integrations CONTROL); read_only() makes those Items
-#: display-only.
-COMMANDING_BINDINGS = frozenset({"denonmarantz", "androidtv", "sonos"})
+#: Rules under automation/js/ that hold no RULE_SENDS because they open no
+#: connection of their own: they command Items only, which read_only()
+#: guards, or watch the runtime. Any other rule without a SEND declaration
+#: is refused.
+ITEM_ONLY_RULES = frozenset({
+    "automation/js/all_off.js", "automation/js/routing.js", "automation/js/thermite_entry.js",
+    "automation/js/thermite_handler_pool.js", "automation/js/unifi_protect.js",
+    "automation/js/node_modules/thermite-routing-lifecycle/index.js",
+})
+#: RULE_SENDS, however it is spaced.
+SEND_DECLARATION = re.compile(r"^(\s*)(?:const|let|var)\s+SEND\s*=\s*true\s*;?\s*$")
+
+
+def safe_link(uid: str, link: object, readonly: set[str]) -> bool:
+    """Whether a link carries no command: its channel is READONLY, or it is a
+    guard (oh_conf.GUARD_NOTE) that passes no command on."""
+    return uid in readonly or (isinstance(link, dict) and link.get("profile") == GUARD_PROFILE
+                               and not COMMAND_SCRIPTS & set(link))
 
 
 def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
     """conf files that read every device and command none. The sandbox and
-    the boot check run on this: every HTTP binding channel is READONLY, every
-    Item linked to a COMMANDING_BINDINGS channel is guarded
-    (oh_conf.GUARD_NOTE), and a rule that talks to its devices itself has
-    RULE_SENDS turned into RULE_SILENT. Every other read-write channel is
-    already guarded."""
+    the boot check run on this. It fails closed: every HTTP binding channel
+    is made READONLY; every Item with a link that is neither to a READONLY
+    channel nor a guard is guarded (oh_conf.GUARD_NOTE), whatever its
+    binding; a rule has its SEND declaration turned into RULE_SILENT; and a
+    rule with none (but ITEM_ONLY_RULES), Things or Items in a format it
+    cannot read, or a guard without the add-on that runs it, is a
+    ValueError."""
     out = dict(files)
     for path, text in files.items():
-        if path.startswith("automation/js/") and isinstance(text, str):
+        if path.startswith(("things/", "items/")):
+            raise ValueError(f"{path}: the read-only copy reads only conf/yaml/")
+        if path.startswith("automation/") and not (path.startswith("automation/js/") and path.endswith(".js")):
+            if path.endswith(".jar") and path.startswith("automation/js/node_modules/"):
+                continue
+            raise ValueError(f"{path}: the read-only copy runs only JavaScript rules")
+        if path.startswith("automation/js/"):
+            if not isinstance(text, str):
+                raise ValueError(f"{path}: a rule that is not text cannot be made read-only")
             out[path] = silenced(path, text)
-            continue
-        if not (path.startswith("yaml/") and path.endswith(".yaml")):
-            continue
-        document = yaml.safe_load(text) or {}
-        changed = False
+    documents = {path: yaml.safe_load(text) or {} for path, text in files.items()
+                 if path.startswith("yaml/") and path.endswith(".yaml")}
+    readonly: set[str] = set()
+    changed: set[str] = set()
+    for path, document in documents.items():
         for uid, thing in (document.get("things") or {}).items():
-            if uid.startswith("http:"):
-                for channel in (thing.get("channels") or {}).values():
+            for channel_id, channel in (thing.get("channels") or {}).items():
+                if uid.startswith("http:"):
                     channel.setdefault("config", {})["mode"] = "READONLY"
-                changed = True
+                    changed.add(path)
+                if ((channel or {}).get("config") or {}).get("mode") == "READONLY":
+                    readonly.add(f"{uid}:{channel_id}")
+    guarded = False
+    for path, document in documents.items():
         items = document.get("items") or {}
         for name, item in items.items():
-            if any(uid.split(":")[0] in COMMANDING_BINDINGS for uid in linked(item)):
+            links = item.get("channels") if isinstance(item.get("channels"), dict) else {}
+            if not all(safe_link(uid, links.get(uid), readonly) for uid in linked(item)):
                 items[name] = guard(item)
-                changed = True
-        if changed:
-            out[path] = dump(READ_ONLY_HEADER, {key: document.get(key) or {} for key in ("things", "items", "pages")})
+                changed.add(path)
+                guarded = True
+    if guarded and not re.search(r"^automation\s*=.*\bjsscripting\b", str(files.get(ADDONS_CFG, "")), re.MULTILINE):
+        raise ValueError(f"{ADDONS_CFG}: the read-only copy guards Items, which needs automation = jsscripting")
+    for path in changed:
+        document = documents[path]
+        out[path] = dump(READ_ONLY_HEADER, {key: document.get(key) or {} for key in ("things", "items", "pages")})
     return out
 
 
 def silenced(path: str, text: str) -> str:
-    """A rule with its RULE_SENDS line, if it has one, made RULE_SILENT."""
+    """A rule with its SEND declaration (RULE_SENDS, however spaced) made
+    RULE_SILENT; a rule with none must be one of ITEM_ONLY_RULES."""
     lines = text.split("\n")
-    sends = [index for index, line in enumerate(lines) if line == RULE_SENDS]
+    sends = [index for index, line in enumerate(lines) if SEND_DECLARATION.match(line)]
     if not sends:
-        return text
+        if path in ITEM_ONLY_RULES:
+            return text
+        raise ValueError(f"{path}: a rule with no {RULE_SENDS!r} line cannot be made read-only")
     if len(sends) > 1:
         raise ValueError(f"{path}: {RULE_SENDS!r} appears {len(sends)} times")
-    lines[sends[0]] = RULE_SILENT
+    lines[sends[0]] = SEND_DECLARATION.match(lines[sends[0]]).group(1) + RULE_SILENT
     return "\n".join(lines)
 
 

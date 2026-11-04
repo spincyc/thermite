@@ -1,13 +1,14 @@
 """Metrics and dashboards for the house: the tree bin/thermite generate writes
 to metrics/ from instance/devices.yaml and instance/host.yaml.
 
-metrics/ is output only, committed like conf/ and never edited by hand. It
-holds the Prometheus scrape configuration (prometheus/prometheus.yml), the
-blackbox_exporter modules (blackbox/blackbox.yml), Grafana's settings,
-provisioning and dashboards (grafana/), and the map the thermite exporter
-(lib/oh_metrics/exporter.py) turns openHAB's REST answers into series with
-(exporter/map.json). render() is pure: the same house and host give the
-same bytes, so `generate --check` can compare.
+metrics/ is local derived output like conf/: Git ignores it and nobody edits
+it by hand. It holds the Prometheus scrape configuration
+(prometheus/prometheus.yml), the blackbox_exporter modules
+(blackbox/blackbox.yml), Grafana's settings, provisioning and dashboards
+(grafana/), and the map the thermite exporter (lib/oh_metrics/exporter.py)
+turns openHAB's REST answers into series with (exporter/map.json). render()
+is pure: the same house and host give the same bytes, so `generate --check`
+can compare.
 
 What the house file decides is found from the conf/ it generates
 (oh_render.build), never listed twice: the Things of each device, its
@@ -684,9 +685,10 @@ def _json(document: dict) -> str:
     return json.dumps(document, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
 
 
-def render(inventory: dict, host: dict, versions: dict | None = None) -> dict[str, str]:
-    """Path under metrics/ -> text, for every file metrics/ must hold."""
-    conf = _build(inventory)
+def render(inventory: dict, host: dict, versions: dict | None = None, *, conf=None) -> dict[str, str]:
+    """Path under metrics/ -> text, for every file metrics/ must hold; `conf`
+    is the house's oh_render.build(), when the caller has built it already."""
+    conf = conf if conf is not None else _build(inventory)
     mapping = exporter_map(inventory, conf)
     found, _ = probes(inventory, conf)
     files = {

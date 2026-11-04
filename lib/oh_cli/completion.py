@@ -106,7 +106,7 @@ def describe(parser: argparse.ArgumentParser) -> Command:
 
 def verbs() -> dict[str, tuple[str, Command]]:
     """Every verb thermite runs under its own name: no alias and no removed name."""
-    return {verb: (summary, describe(oh_cli.parser_of(verb))) for verb, (_, summary) in oh_cli.VERBS.items()}
+    return {verb: (spec.summary, describe(oh_cli.parser_of(verb))) for verb, spec in oh_cli.VERBS.items()}
 
 
 TOP = Command([Option(("-h", "--help"), "show the verbs, and exit", False),

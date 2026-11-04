@@ -7,7 +7,6 @@ it is never copied into the public artifact.
 from __future__ import annotations
 
 import ast
-import io
 import html
 import hashlib
 import ipaddress
@@ -15,374 +14,33 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-import socket
 import subprocess
 import struct
 import sys
 import tempfile
-import tokenize
 
 import oh_cli
 import oh_secrets
-from oh_conf import House
-from oh_features import remote_model, remote_cameras, remote_topology, remote_diagnostics, remote_activity, remote_system
 
 MANIFEST = ".thermite-export.json"
-SOURCE_FILES = (
-    'bin/thermite',
-    'pyproject.toml',
-    'CHANGELOG.md',
-    'docs/packaging.md',
-    'docs/installation.md',
-    'docs/installation-handoff.md',
-    'docs/requirements.md',
-    'docs/iso.md',
-    'docs/ports.md',
-    'docs/service-account.md',
-    'iso/bootstrap.py',
-    'iso/arch-config.json',
-    'iso/arch-install.sh',
-    'iso/arch-plugin.py',
-    'iso/first-boot.txt',
-    'iso/inputs.json',
-    'lib/oh_paths.py',
-    'lib/oh_release.py',
-    'lib/oh_package.py',
-    'lib/oh_init.py',
-    'lib/oh_iso.py',
-    'lib/oh_ports.py',
-    'lib/oh_apparmor.py',
-    'lib/thermite-node-exporter.apparmor',
-    'lib/thermite-node-exporter.apparmor.LICENSE',
-    'lib/oh_access/README.md',
-    'lib/oh_access/__init__.py',
-    'lib/oh_access/callback_service.py',
-    'lib/oh_access/callbacks.py',
-    'lib/oh_access/custody.py',
-    'lib/oh_access/client.py',
-    'lib/oh_access/files.py',
-    'lib/oh_access/service.py',
-    'lib/oh_access/staging.py',
-    'lib/oh_access/worker.py',
-    'lib/oh_adcp_sim.py',
-    'lib/oh_atv.py',
-    'lib/oh_atv_sim.py',
-    'lib/oh_av_sim.py',
-    'lib/oh_brand/__init__.py',
-    'lib/oh_brand/palettes/contrast.json',
-    'lib/oh_brand/palettes/thermite.json',
-    'lib/oh_brand/theme.schema.json',
-    'lib/oh_cli/__init__.py',
-    'lib/oh_cli/init.py',
-    'lib/oh_cli/package.py',
-    'lib/oh_cli/iso.py',
-    'lib/oh_cli/access.py',
-    'lib/oh_cli/apple_tv.py',
-    'lib/oh_cli/cameras.py',
-    'lib/oh_cli/completion.py',
-    'lib/oh_cli/deploy.py',
-    'lib/oh_cli/discover.py',
-    'lib/oh_cli/docs.py',
-    'lib/oh_cli/generate.py',
-    'lib/oh_cli/health.py',
-    'lib/oh_cli/history.py',
-    'lib/oh_cli/install.py',
-    'lib/oh_cli/ir_profile.py',
-    'lib/oh_cli/lint.py',
-    'lib/oh_cli/pair.py',
-    'lib/oh_cli/remote.py',
-    'lib/oh_cli/rollback.py',
-    'lib/oh_cli/sandbox.py',
-    'lib/oh_cli/status.py',
-    'lib/oh_cli/test.py',
-    'lib/oh_cli/theme.py',
-    'lib/oh_cli/uninstall.py',
-    'lib/oh_cli/upgrade.py',
-    'lib/oh_cli/validate.py',
-    'lib/oh_cli/version.py',
-    'lib/oh_climate/__init__.py',
-    'lib/oh_climate/nuheat_api.py',
-    'lib/oh_cec_sim.py',
-    'lib/oh_conf.py',
-    'lib/oh_deploy.py',
-    'lib/oh_discover.py',
-    'lib/oh_docs.py',
-    'lib/oh_http.py',
-    'lib/oh_features/__init__.py',
-    'lib/oh_features/all_off/__init__.py',
-    'lib/oh_features/all_off/all_off.js',
-    'lib/oh_features/model.py',
-    'lib/oh_features/overview.py',
-    'lib/oh_features/remote.py',
-    'lib/oh_features/remote_activity.py',
-    'lib/oh_features/remote_cameras.py',
-    'lib/oh_features/remote_diagnostics.py',
-    'lib/oh_features/remote_model.py',
-    'lib/oh_features/remote_system.py',
-    'lib/oh_features/remote_topology.py',
-    'lib/oh_features/routing/__init__.py',
-    'lib/oh_features/routing/lifecycle.py',
-    'lib/oh_features/routing/lifecycle.js',
-    'lib/oh_features/routing/lifecycle_io.py',
-    'lib/oh_features/routing/lifecycle_io.js',
-    'lib/oh_features/routing/routing.js',
-    'lib/oh_features/threadpools.py',
-    'lib/oh_features/threadpools.js',
-    'lib/oh_entry/__init__.py',
-    'lib/oh_entry/EntryFilter.java',
-    'lib/oh_entry/loader.js',
-    'lib/oh_entry/inputs.json',
-    'lib/oh_entry/filter.jar',
-    'lib/oh_entry/README.md',
-    'lib/oh_googletv_sim.py',
-    'lib/oh_identity/README.md',
-    'lib/oh_identity/__init__.py',
-    'lib/oh_identity/apps.py',
-    'lib/oh_identity/asgi.py',
-    'lib/oh_identity/auth.py',
-    'lib/oh_identity/batches.py',
-    'lib/oh_identity/composition.py',
-    'lib/oh_identity/migrations/0001_initial.py',
-    'lib/oh_identity/migrations/__init__.py',
-    'lib/oh_identity/models.py',
-    'lib/oh_identity/policy_store.py',
-    'lib/oh_identity/runtime.py',
-    'lib/oh_identity/services.py',
-    'lib/oh_identity/settings.py',
-    'lib/oh_identity/state.py',
-    'lib/oh_identity/streams.py',
-    'lib/oh_identity/transport.py',
-    'lib/oh_identity/urls.py',
-    'lib/oh_identity/views.py',
-    'lib/oh_install/__init__.py',
-    'lib/oh_install/backup.py',
-    'lib/oh_install/model.py',
-    'lib/oh_install/native_auth.py',
-    'lib/oh_install/ownership.py',
-    'lib/oh_install/output.py',
-    'lib/oh_install/progress.py',
-    'lib/oh_install/runner.py',
-    'lib/oh_install/secrets.py',
-    'lib/oh_install/steps.py',
-    'lib/oh_install/system.py',
-    'lib/oh_units.py',
-    'lib/oh_integrations/__init__.py',
-    'lib/oh_integrations/_diagnostics.py',
-    'lib/oh_integrations/_instr.py',
-    'lib/oh_integrations/_io.py',
-    'lib/oh_integrations/_io.js',
-    'lib/oh_integrations/_pairing.py',
-    'lib/oh_integrations/androidtv_googletv/__init__.py',
-    'lib/oh_integrations/androidtv_googletv/androidtv_googletv.js',
-    'lib/oh_integrations/avpro_telnet/__init__.py',
-    'lib/oh_integrations/avpro_telnet/avpro_telnet.js',
-    'lib/oh_integrations/bk808_http.py',
-    'lib/oh_integrations/bk808_cec.py',
-    'lib/oh_integrations/bk808_cec.js',
-    'lib/oh_integrations/cast.py',
-    'lib/oh_integrations/denonmarantz_http.py',
-    'lib/oh_integrations/globalcache_ir.py',
-    'lib/oh_integrations/globalcache_ir.js',
-    'lib/oh_integrations/heos.py',
-    'lib/oh_integrations/heos.js',
-    'lib/oh_integrations/drhdmi_http.py',
-    'lib/oh_integrations/network_ping.py',
-    'lib/oh_integrations/pyatv_http/__init__.py',
-    'lib/oh_integrations/pyatv_http/pyatv_http.js',
-    'lib/oh_integrations/sonos.py',
-    'lib/oh_integrations/sonos_control.js',
-    'lib/oh_integrations/sony_adcp/__init__.py',
-    'lib/oh_integrations/sony_adcp/sony_adcp.js',
-    'lib/oh_integrations/sony_ip_control/__init__.py',
-    'lib/oh_integrations/sony_ip_control/sony_ip_control.js',
-    'lib/oh_integrations/sony_rest.py',
-    'lib/oh_integrations/ukm404_http.py',
-    'lib/oh_integrations/unifi_protect.py',
-    'lib/oh_integrations/vrroom_http.py',
-    'lib/oh_integrations/wiim_http/__init__.py',
-    'lib/oh_integrations/wiim_http/hex-to-utf8.js',
-    'lib/oh_access_mode.py',
-    'lib/oh_androidtv_patch/GoogleTVSocketLifecycle.java',
-    'lib/oh_androidtv_patch/README.md',
-    'lib/oh_androidtv_patch/__init__.py',
-    'lib/oh_androidtv_patch/__main__.py',
-    'lib/oh_androidtv_patch/googletv-lifecycle.patch',
-    'lib/oh_androidtv_patch/handler-ownership.patch',
-    'lib/oh_androidtv_patch/inputs.json',
-    'lib/oh_androidtv_patch/integrity.py',
-    'lib/oh_androidtv_patch/owner_files.py',
-    'lib/oh_androidtv_patch/maintenance.py',
-    'lib/oh_androidtv_patch/maintenance_probe.js',
-    'lib/oh_androidtv_patch/owner_run.py',
-    'lib/oh_inventory.py',
-    'lib/oh_ir_sim.py',
-    'lib/oh_logging.py',
-    'lib/oh_matrix_sim.py',
-    'lib/oh_metrics/__init__.py',
-    'lib/oh_metrics/alerts.py',
-    'lib/oh_metrics/notifications.py',
-    'lib/oh_metrics/dashboards.py',
-    'lib/oh_metrics/exporter.py',
-    'lib/oh_metrics/yoke.py',
-    'lib/oh_public.py',
-    'lib/oh_render.py',
-    'lib/oh_routes.py',
-    'lib/oh_room_policy/__init__.py',
-    'lib/oh_room_policy/model.py',
-    'lib/oh_room_policy/plan.py',
-    'lib/oh_room_policy/schedule.py',
-    'lib/oh_room_policy/worker.py',
-    'lib/oh_sandbox.py',
-    'lib/oh_secrets.py',
-    'lib/oh_service.py',
-    'lib/oh_semantic.py',
-    'lib/oh_site.py',
-    'lib/oh_site_contract.py',
-    'lib/oh_sonos_sim.py',
-    'lib/oh_sony_sim.py',
-    'lib/oh_testing/__init__.py',
-    'lib/oh_testing/boot.py',
-    'lib/oh_testing/controls.py',
-    'lib/oh_testing/routing.py',
-    'lib/requirements-pyatv.txt',
-    'lib/requirements-site.txt',
-    'site/FAQ.md',
-    'site/README.md',
-    'site/capture-docs.py',
-    'site/capture-docs.cjs',
-    'site/capture-docs.md',
-    'site/assets/screenshots/manifest.json',
-    'site/assets/screenshots/web-remote.png',
-    'site/assets/screenshots/terminal-remote.png',
-    'site/examples/harbor.json',
-    'site/pages.yml',
-    'site/pages/colors.md',
-    'site/pages/dashboards.md',
-    'site/pages/index.md',
-    'site/pages/start.md',
-    'site/site.css',
-    'site/site.js',
-    'site/template.html',
-    'tests/androidtv_patch/AndroidTVHandler.java',
-    'tests/androidtv_patch/AndroidTVTranslationProvider.java',
-    'tests/androidtv_patch/LifecycleTest.java',
-    'tests/androidtv_patch/ActivationTest.java',
-    'tests/test_androidtv_patch.py',
-    'tests/test_androidtv_integrity.py',
-    'tests/test_androidtv_owner_files.py',
-    'tests/test_androidtv_maintenance.py',
-    'tests/test_androidtv_system_adapter.py',
-    'tests/androidtv_maintenance_probe.cjs',
-    'tests/backend_item_read_order_harness.js',
-    'tests/test_backend_item_read_order.py',
-    'tests/backend_snapshot_harness.js',
-    'tests/test_backend_snapshots.py',
-    'tests/integration_io_harness.js',
-    'tests/integration_io/NativeTest.java',
-    'tests/test_integration_io.py',
-    'tests/lifecycle_planner_harness.js',
-    'tests/test_lifecycle_planner.py',
-    'tests/lifecycle_io_harness.js',
-    'tests/lifecycle_io/NativeLifecycleTest.java',
-    'tests/test_lifecycle_io.py',
-    'tests/test_volume_limits.py',
-    'tests/test_atv_lifecycle.py',
-    'tests/test_ports.py',
-    'tests/test_yoke_metrics.py',
-    'tests/test_iso.py',
-    'tests/test_apparmor.py',
-    'tests/test_installed_install.py',
-    'tests/test_install_output.py',
-    'tests/test_install_progress.py',
-    'tests/test_install_secret_files.py',
-    'tests/test_native_auth.py',
-    'tests/test_native_auth_storage.py',
-    'tests/test_service_account.py',
-    'tests/test_access_custody.py',
-    'tests/test_boot.py',
-    'tests/test_health.py',
-    'tests/test_remote_system.py',
-    'tests/test_system_ui.py',
-    'tests/system_ui_harness.js',
-    'tests/test_entry.py',
-    'tests/test_clean_routes.py',
-    'tests/entry/EntryFilterTest.java',
-    'tests/test_native_prepare.py',
-    'tests/test_install_backup.py',
-    'tests/test_startup_http.py',
-    'tests/e2e/fixture.py',
-    'tests/e2e/README.md',
-    'tests/e2e/dummy-tv.py',
-    'tests/e2e/check_access.py',
-    'tests/e2e/check_tui.cjs',
-    'tests/e2e/check_browser.cjs',
-    'tui/remote/administration.js',
-    'tui/remote/app.js',
-    'tui/remote/cameras.js',
-    'tui/remote/controller.js',
-    'tui/remote/credentials.js',
-    'tui/remote/events.js',
-    'tui/remote/grid.js',
-    'tui/remote/landing.js',
-    'tui/remote/main.js',
-    'tui/remote/package-lock.json',
-    'tui/remote/package.json',
-    'tui/remote/paint.js',
-    'tui/remote/shared.js',
-    'tui/remote/store.js',
-    'tui/remote/styles.js',
-    'tui/remote/theme.js',
-    'tui/remote/topology.js',
-    'tui/remote/torch.js',
-    'tui/remote/view.js',
-    'versions.json',
-    'web/remote/access-config.js',
-    'web/remote/access-ui.js',
-    'web/remote/access.css',
-    'web/remote/access.html',
-    'web/remote/access.js',
-    'web/remote/activity.js',
-    'web/remote/appearance.js',
-    'web/remote/apple-touch-icon.png',
-    'web/remote/backend.js',
-    'web/remote/cameras.css',
-    'web/remote/cameras.html',
-    'web/remote/cameras.js',
-    'web/remote/diagnostics.js',
-    'web/remote/home.css',
-    'web/remote/home.html',
-    'web/remote/home.js',
-    'web/remote/icon.svg',
-    'web/remote/index.html',
-    'web/remote/log.js',
-    'web/remote/manifest.webmanifest',
-    'web/remote/navigation.js',
-    'web/remote/pair.css',
-    'web/remote/pair.html',
-    'web/remote/pair.js',
-    'web/remote/remote.css',
-    'web/remote/remote.js',
-    'web/remote/remotes.js',
-    'web/remote/security.html',
-    'web/remote/session.js',
-    'web/remote/settings.html',
-    'web/remote/shell.css',
-    'web/remote/shell.js',
-    'web/remote/system.html',
-    'web/remote/system.js',
-    'web/remote/theme.css',
-    'web/remote/topology.css',
-    'web/remote/topology.html',
-    'web/remote/topology.js',
-    'web/remote/users.html',
-)
-OMITTED = {"control4", "dhcp-reservations", "matrix-settings"}
 PROTOCOL_IPS = {"0.0.0.0", "127.0.0.1", "224.0.0.251", "239.255.255.250", "255.255.255.255"}
 IP = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 MAC = re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![\w:])")
 CODE_WORDS = {"control4", "sddp", "bk-808", "wattbox", "shield", "fire tv", "alarm.com", "qolsys", "myq",
               "ratgdo", "lutron", "grafik", "subvolume", "btrfs", "adr 0", "homelab", "factory/",
               "automation/openhab", "make openhab-", "office"}
+
+
+#: Per-file exceptions to guard(), each reviewed. Addresses a file may name
+#: besides PROTOCOL_IPS and the documentation ranges: the discovery probe's
+#: public resolver.
+ALLOWED_ADDRESSES = {"lib/oh_discover.py": frozenset({".".join(["1"] * 4)})}
+#: Installation fixtures, which use separate guest-loopback devices.
+LOOPBACK_FILES = frozenset({"tests/e2e/fixture.py", "tests/e2e/dummy-tv.py", "tests/e2e/check_access.py"})
+#: Integrations whose remote_of() returns a remote layout's id
+#: (web/remote/remotes.js), which may also be a private word.
+LAYOUT_RETURN_FILES = frozenset({"lib/oh_integrations/globalcache_ir.py", "lib/oh_integrations/denonmarantz_http.py",
+                                 "lib/oh_integrations/bk808_cec.py"})
 
 
 class PublicError(ValueError):
@@ -445,7 +103,6 @@ def _private(area: Path) -> set[str]:
         if words.is_file():
             facts.update(line.strip().lower() for line in words.read_text().splitlines()
                          if line.strip() and not line.lstrip().startswith("#") and line.strip().lower() not in CODE_WORDS)
-    facts.add(socket.gethostname().split(".")[0].lower())
     allowed = {d["id"] for d in demo()["devices"]} | {r["label"].lower() for r in demo()["rooms"].values()}
     allowed |= {d["name"].lower() for d in demo()["devices"]} | {"computer"}
     return {f for f in facts - allowed - CODE_WORDS if len(f) >= 4 or f in identifiers}
@@ -456,287 +113,18 @@ def _pattern(facts):
                       + r")(?=$|_|[^\w])", re.IGNORECASE) if facts else None
 
 
-def _replace_spans(text, spans):
-    lines = text.splitlines(keepends=True)
-    offsets = [0]
-    for line in lines:
-        offsets.append(offsets[-1] + len(line))
-    for start, end, value in sorted(spans, reverse=True):
-        a = offsets[start[0] - 1] + start[1]
-        b = offsets[end[0] - 1] + end[1]
-        text = text[:a] + value + text[b:]
-    return text
-
-
-def _neutral_prose(text: str, facts: set[str]) -> str:
-    """Change comments/docstrings only; unknown executable private facts fail the gate."""
-    pattern = _pattern(facts)
-    return pattern.sub("example", text) if pattern else text
-
-
-def _python(text: str, facts: set[str], *, cli=False, site=False) -> str:
-    tree = ast.parse(text)
-    spans = []
-    lines = text.splitlines(keepends=True)
-    def point(line, byte_column):
-        return line, len(lines[line - 1].encode()[:byte_column].decode())
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.body:
-            doc = node.body[0]
-            if isinstance(doc, ast.Expr) and isinstance(doc.value, ast.Constant) and isinstance(doc.value.value, str):
-                new = _neutral_prose(doc.value.value, facts)
-                if new != doc.value.value:
-                    spans.append((point(doc.lineno, doc.col_offset), point(doc.end_lineno, doc.end_col_offset), repr(new)))
-        if cli and isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "VERBS" for t in node.targets):
-            if not isinstance(node.value, ast.Dict):
-                raise PublicError("CLI registry is no longer a literal dictionary")
-            for key, value in zip(node.value.keys, node.value.values):
-                if isinstance(key, ast.Constant) and key.value in OMITTED:
-                    spans.append(((key.lineno, 0), (value.end_lineno + 1, 0), ""))
-        if site and isinstance(node, ast.FunctionDef) and node.name == "house_facts":
-            public_defaults = {"utc", "etc/utc", "/srv/thermite"}
-            for device in demo()["devices"]:
-                public_defaults.update(str(device.get(k) or "").lower() for k in ("id", "name", "make", "model"))
-            public_defaults.update(room["label"].lower() for room in demo()["rooms"].values())
-            expression = "facts - set(" + repr(sorted(public_defaults)) + ")"
-            canonical = ast.dump(ast.parse(expression, mode="eval").body)
-            returns = [n for n in ast.walk(node) if isinstance(n, ast.Return) and isinstance(n.value, ast.Name)
-                       and n.value.id == "facts"]
-            returns += [n for n in ast.walk(node) if isinstance(n, ast.Return) and ast.dump(n.value) == canonical]
-            if len(returns) != 1:
-                raise PublicError("docs fact collection changed; review public-default exemption")
-            node = returns[0]
-            spans.append((point(node.lineno, node.col_offset), point(node.end_lineno, node.end_col_offset),
-                          "return " + expression))
-    for token in tokenize.generate_tokens(io.StringIO(text).readline):
-        if token.type == tokenize.COMMENT:
-            new = _neutral_prose(token.string, facts)
-            if new != token.string:
-                spans.append((token.start, token.end, new))
-    out = _replace_spans(text, spans)
-    parsed = ast.parse(out)
-    if cli:
-        registry = next(n.value for n in parsed.body if isinstance(n, ast.Assign)
-                        and any(isinstance(t, ast.Name) and t.id == "VERBS" for t in n.targets))
-        assert not OMITTED & {k.value for k in registry.keys}
-    return out
-
-
-def _scanner(text):
-    """Only the known documented shell placeholder is not a credential."""
-    tree = ast.parse(text)
-    function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "scan_text")
-    prefix = '    if not code:\n        import html\n        text = html.unescape(text).replace("Bearer $(cat var/sandbox/api-token)", "<token>")\n'
-    if ast.dump(function.body[1]) == ast.dump(ast.parse(prefix.lstrip()).body[0]):
-        return text
-    at = function.body[1].lineno - 1
-    lines = text.splitlines(keepends=True)
-    lines.insert(at, prefix)
-    out = "".join(lines)
-    ast.parse(out)
-    return out
-
-
-def _js_comments(text, facts):
-    token = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|`(?:\\.|[^`\\])*`|//[^\n]*|/\*[\s\S]*?\*/')
-    return token.sub(lambda m: _neutral_prose(m.group(), facts) if m.group().startswith(("//", "/*")) else m.group(), text)
-
-
-def _pair_mock(text):
-    arrays = [["example_player", "pyatv_http", "Example Player", "Apple TV", "Example West", 1, 4, "digits", True,
-               "unpaired", "Ask for a code while standing where you can see the screen."],
-              ["example_tv", "sony_ip_control", "Example TV", "Sony TV", "Example West", 1, 4, "digits", True,
-               "paired", "Check Normal IP authentication on the TV before asking for a code."],
-              ["example_streamer", "androidtv_googletv", "Example Streamer", "Google TV", "Example East", 3, 6,
-               "hex", True, "paired", "Wake the screen with its own remote, then ask for a code."]]
-    pattern = r"(function mockItems\(\) \{\s*const devices = )\[[\s\S]*?\];"
-    text, count = re.subn(pattern, lambda m: m[1] + json.dumps(arrays) + ";", text)
-    if count != 1:
-        raise PublicError("pairing demo changed; review the portable fixture")
-    text, count = re.subn(r'const items = \[\{ name: "loc_[a-z_]+_source", state: "off" \}\];',
-                          'const items = [{ name: "loc_example_west_source", state: "off" }];', text)
-    if count != 1:
-        raise PublicError("pairing demo source changed; review its portable fixture")
-    return text
-
-
-PUBLIC_TEST = '''"""Portable offline checks; no device or runtime process is started."""
-import contextlib
-import io
-import json
-from pathlib import Path
-import shutil
-import sys
-import tempfile
-import unittest
-
-AREA = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(AREA / "lib"))
-import oh_cli
-import oh_brand
-import oh_inventory
-import oh_render
-from oh_features import remote_model
-
-def command(argv):
-    out, err = io.StringIO(), io.StringIO()
-    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        try:
-            result = oh_cli.run("thermite", argv)
-        except SystemExit as error:
-            result = error.code
-    if result:
-        raise AssertionError(" ".join(argv) + " failed: " + err.getvalue() + out.getvalue())
-
-class Portable(unittest.TestCase):
-    def test_every_available_help_and_themes(self):
-        command(["--help"])
-        for verb in oh_cli.VERBS:
-            command([verb, "--help"])
-        command(["theme", "check", *oh_brand.builtin()])
-
-    def test_sample_generation_and_editing(self):
-        scratch = AREA / ".scratch"
-        scratch.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
-            root = Path(temporary)
-            house = root / "devices.yaml"
-            shutil.copyfile(AREA / "instance/devices.yaml", house)
-            args = ["--house", str(house), "--conf", str(root / "conf")]
-            command(["generate", *args, "--root", str(root)])
-            command(["generate", "--check", *args, "--root", str(root)])
-            command(["validate", *args])
-            data = oh_inventory.load(house)
-            data["devices"][0]["name"] = "Renamed example display"
-            data["devices"][0]["volume_max"] = 73
-            house.write_text(json.dumps(data))
-            command(["generate", *args, "--root", str(root)])
-            model = remote_model.literal((root / "conf/html/remote/house.js").read_text())
-            self.assertEqual(model["devices"][data["devices"][0]["id"]]["label"], "Renamed example display")
-            self.assertEqual(model["devices"][data["devices"][0]["id"]]["control"]["volume"]["max"], 73)
-            self.assertEqual(set(model["devices"]), {d["id"] for d in data["devices"]})
-
-    def test_docs_and_lint(self):
-        scratch = AREA / ".scratch"
-        scratch.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
-            command(["docs", "build", "--out", temporary])
-            self.assertTrue((Path(temporary) / "index.html").is_file())
-        command(["lint"])
-'''
-
-MAKEFILE = '''PYTHON ?= python3
-.PHONY: help check generate docs
-help:
-\t@$(PYTHON) bin/thermite --help
-check:
-\t@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s tests -t . -q
-generate:
-\t@$(PYTHON) bin/thermite generate
-docs:
-\t@$(PYTHON) bin/thermite docs build --out .scratch/site
-'''
-
-
 def bundle(doc_files: dict[str, bytes], area: Path = oh_cli.PROGRAM_ROOT) -> dict[str, bytes]:
-    """Build the complete reviewed artifact in memory. No destination writes."""
-    from oh_release import FILE as RELEASE_MANIFEST
-    if (Path(area) / MANIFEST).is_file() or (Path(area) / RELEASE_MANIFEST).is_file():
-        # Thermite owns its source now. The legacy private-tree conversion below
-        # remains available for old checkouts; never rewrite canonical code.
-        import oh_package
-        files = {**oh_package.public_files(Path(area)), **doc_files}
-        files[MANIFEST] = _data({"version": 1, "paths": sorted(files)})
-        problems = guard(files, area)
-        if problems:
-            raise PublicError("public source refused:\n" + "\n".join(problems))
-        return files
-    import oh_brand
-    import oh_render
-    area = Path(area)
-    facts = _private(area)
-    if oh_cli.AREA != area and (oh_cli.AREA / "instance/devices.yaml").is_file():
-        facts |= _private(oh_cli.AREA)
-    out = dict(doc_files)
-    for name in SOURCE_FILES:
-        path = area / name
-        if path.is_symlink() or not path.is_file():
-            raise PublicError(f"portable source missing or not a regular file: {name}")
-        value = path.read_bytes()
-        if path.suffix == ".py":
-            value = _python(value.decode(), facts, cli=name == "lib/oh_cli/__init__.py",
-                            site=name == "lib/oh_site.py").encode()
-            if name == "lib/oh_secrets.py":
-                value = _scanner(value.decode()).encode()
-        elif path.suffix == ".js":
-            value = _js_comments(value.decode(), facts).encode()
-        if name == "web/remote/pair.js":
-            value = _pair_mock(value.decode()).encode()
-        out[name] = value
-    data = demo()
-    problems = oh_render.validate(data)
-    if problems:
-        raise PublicError("invalid public sample: " + "; ".join(problems))
-    import oh_access_mode
-    system = remote_system.manifest(demo_host(), json.loads(out["versions.json"])["openhab"]["version"], mode=oh_access_mode.mode(data))
-    conf = oh_render.build(data, system_metadata=system)
-    house = House(data)
-    out["instance/devices.yaml"], out["instance/host.yaml"] = _data(data), _data(demo_host())
-    out["web/remote/house.js"] = remote_model.script(house).encode()
-    for filename, manifest in [("activity.json", remote_activity.manifest(house, conf)),
-                               ("diagnostics.json", remote_diagnostics.manifest(house, conf)),
-                               ("cameras.json", remote_cameras.manifest(house)),
-                               ("topology.json", remote_topology.manifest(house, conf)),
-                               ("system.json", system)]:
-        out[f"web/remote/{filename}"] = _data(manifest)
-    out["web/remote/README.md"] = b"# Web remote\n\nRun `bin/thermite generate` after editing the house file. The generated Home is served at / and Remotes at /remotes/. Source previews use the fictional sample; `?backend=mock` sends no commands.\n"
-    out["tui/remote/README.md"] = b"# Terminal remote\n\nRun `bin/thermite remote --mock` for a fictional house without device commands. Node.js and the locked blessed package are required. Run `bin/thermite generate` after editing the house file; the terminal prefers that generated house model.\n"
-    # Development-only identity fixtures are deliberately outside this source
-    # manifest. Keep the public instructions executable from the shipped tree.
-    identity_readme = out["lib/oh_identity/README.md"].decode()
-    private_tests = (
-        "Run the actual tests (including real-file SQLite concurrency, no runtime/device\n"
-        "calls): set THERMITE_IDENTITY_STATE to a 0700 scratch directory, PYTHONPATH=lib,\n"
-        "DJANGO_SETTINGS_MODULE=oh_identity.test_settings, then\n"
-        "`python -m django test oh_identity --noinput`. This package's tests are explicit\n"
-        "Django tests; they do not silently skip when the framework is absent.\n")
-    portable_tests = (
-        "## Testing\n\nRun `make check` from the repository root for the shipped portable\n"
-        "configuration, documentation and offline smoke checks. Full identity\n"
-        "development fixtures and their Django test settings are not included\n"
-        "in this portable source export.\n")
-    if identity_readme.endswith(private_tests) and identity_readme.count(private_tests) == 1:
-        identity_readme = identity_readme[:-len(private_tests)] + portable_tests
-    elif not (identity_readme.endswith(portable_tests) and identity_readme.count(portable_tests) == 1):
-        raise PublicError("Identity test instructions changed; review portable README adaptation")
-    out["lib/oh_identity/README.md"] = identity_readme.encode()
-    out["Makefile"] = MAKEFILE.encode()
-    out["requirements.txt"] = b"# Base configuration and documentation dependency. Optional helpers have their own locks.\nPyYAML>=6.0,<7\n"
-    out[".gitignore"] = b"/.scratch/\n/var/\n/build/\n/conf/\n/metrics/\n/deploy/\n/.venv/\n__pycache__/\n*.pyc\nnode_modules/\n"
-    out["tests/__init__.py"] = b""
-    out["tests/test_public.py"] = PUBLIC_TEST.encode()
-    workflow = out.get(".github/workflows/pages.yml", b"").decode()
-    marker = "      - run: test -f docs/index.html && test -f docs/commands.html"
-    if workflow.count(marker) != 1:
-        raise PublicError("Pages workflow changed; review portable test insertion")
-    workflow = re.sub(r"      # docs/ is built[\s\S]*?(?=      - run: test -f docs/index.html)", "", workflow)
-    out[".github/workflows/pages.yml"] = workflow.replace(marker,
-        "      - run: python3 -m pip install -r requirements.txt\n"
-        "      - run: make check\n" + marker).encode()
-    # site/README.md is the complete public README. Keeping installation and
-    # preview instructions there gives both publication paths the same text.
-    # Default source previews are canonical generated assets, never an opaque image copy.
-    out["web/remote/theme.css"] = oh_brand.css().encode()
-    out["web/remote/icon.svg"] = oh_brand.svg(tile=True).encode()
-    out["web/remote/apple-touch-icon.png"] = oh_brand.png()
-    if hasattr(oh_brand, "mark_svg"):
-        out["web/remote/mark.svg"] = oh_brand.mark_svg().encode()
-        out["web/remote/mark-light.svg"] = oh_brand.mark_svg(mode="light").encode()
-    out[MANIFEST] = _data({"version": 1, "paths": sorted([*out, MANIFEST])})
-    problems = guard(out, area)
+    """The reviewed application files (oh_package.public_files: the
+    .thermite-export.json manifest, or an installed release's) and the docs,
+    with a manifest of them all, in memory; refused if guard() finds
+    anything. No destination writes."""
+    import oh_package
+    files = {**oh_package.public_files(Path(area)), **doc_files}
+    files[MANIFEST] = _data({"version": 1, "paths": sorted(files)})
+    problems = guard(files, area)
     if problems:
         raise PublicError("public source refused:\n" + "\n".join(problems))
-    return out
+    return files
 
 
 def _screenshots(files: dict[str, bytes]) -> dict[str, str]:
@@ -809,11 +197,10 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
                 problems.append(f"{name}: unapproved binary asset")
             continue
         for match in IP.findall(text):
-            allowed = match in PROTOCOL_IPS or (name == "lib/oh_discover.py" and match == ".".join(["1"] * 4))
+            allowed = match in PROTOCOL_IPS or match in ALLOWED_ADDRESSES.get(name, ())
             try:
                 address = ipaddress.ip_address(match)
-                # Installation fixtures use separate guest-loopback devices.
-                allowed |= address.is_loopback and name in {"tests/e2e/fixture.py", "tests/e2e/dummy-tv.py", "tests/e2e/check_access.py"}
+                allowed |= address.is_loopback and name in LOOPBACK_FILES
                 allowed |= any(address in ipaddress.ip_network(prefix) for prefix in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"))
             except ValueError:
                 pass
@@ -823,8 +210,7 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
             if not (name == "instance/devices.yaml" and match.lower() in allowed_macs):
                 problems.append(f"{name}: non-demo MAC address")
         layout_returns = []
-        if name in {"lib/oh_integrations/globalcache_ir.py", "lib/oh_integrations/denonmarantz_http.py",
-                    "lib/oh_integrations/bk808_cec.py"}:
+        if name in LAYOUT_RETURN_FILES:
             offsets = [0]
             for row in text.splitlines(keepends=True): offsets.append(offsets[-1] + len(row))
             for function in ast.parse(text).body:
