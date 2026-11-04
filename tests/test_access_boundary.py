@@ -50,6 +50,7 @@ class Native:
         self.ignore_put = False
         self.descriptor_status = 200
         self.read_status = {}
+        self.item_responses = {True: [], False: []}
 
     def sleep(self, seconds):
         self.now += seconds
@@ -65,7 +66,10 @@ class Native:
         assert parsed.hostname == "127.0.0.1"
         path = parsed.path
         if path == "/rest/items":
-            status = self.authenticated if "Authorization" in options["headers"] else self.anonymous
+            authenticated = "Authorization" in options["headers"]
+            if self.item_responses[authenticated]:
+                return self.item_responses[authenticated].pop(0)
+            status = self.authenticated if authenticated else self.anonymous
             return boundary.Response(status, {"content-type": "application/json"}, b'[{"name":"room_source"}]')
         assert options["headers"].get("Authorization") == "Bearer private-test-token"
         if method == "PUT":
@@ -223,17 +227,76 @@ class Commissioning(unittest.TestCase):
         with self.assertRaisesRegex(boundary.BoundaryError, "Unrelated"):
             self.configure()
 
-    def test_anonymous_success_redirect_or_failure_does_not_prove_boundary(self):
-        for status in (200, 302, 404, 500):
-            self.native.anonymous = status
-            with self.subTest(status=status), self.assertRaisesRegex(boundary.BoundaryError, "Anonymous"):
-                self.configure()
+    def test_items_resource_reload_after_readback_retries_only_verification(self):
+        for status in (404, 500, 502, 503, 504):
+            with self.subTest(status=status):
+                self.native = Native()
+                self.native.item_responses[True] = [boundary.Response(status, {}, b"private-native-response")]
+                result = self.configure(existing_callbacks=callback_config())
+                self.assertTrue(result["native_security"])
+                items = [call for call in self.native.calls if "/rest/items?" in call[1]]
+                self.assertEqual(len(items), 3)
+                self.assertTrue(all("Authorization" in call[2]["headers"] for call in items[:2]))
+                self.assertNotIn("Authorization", items[-1][2]["headers"])
+                puts = [url for method, url, _ in self.native.calls if method == "PUT"]
+                self.assertEqual(puts, [ORIGIN + boundary.AUTH_CONFIG, ORIGIN + boundary.UPNP_CONFIG])
+                self.assertGreaterEqual(self.native.now, 1)
+                self.assertLess(self.native.now, 3)
 
-    def test_internal_credential_must_still_work(self):
-        for status in (401, 403, 404, 500):
+    def test_anonymous_access_waits_for_authentication_to_apply_without_repeating_writes(self):
+        self.native.item_responses[False] = [
+            boundary.Response(200, {"content-type": "application/json"}, b"[]"),
+            boundary.Response(404, {}, b"private-native-response")]
+        self.assertTrue(self.configure()["native_security"])
+        items = [call for call in self.native.calls if "/rest/items?" in call[1]]
+        self.assertEqual(len(items), 4)
+        self.assertIn("Authorization", items[0][2]["headers"])
+        self.assertTrue(all("Authorization" not in call[2]["headers"] for call in items[1:]))
+        self.assertEqual(sum(call[0] == "PUT" for call in self.native.calls), 1)
+        self.assertLess(self.native.now, 3)
+
+    def test_unproven_items_access_exhausts_the_original_deadline_without_repeating_writes(self):
+        for authenticated in (True, False):
+            for status in ((404, 500, 502, 503, 504) if authenticated else (200, 404, 500, 502, 503, 504)):
+                with self.subTest(authenticated=authenticated, status=status):
+                    self.native = Native()
+                    if authenticated:
+                        self.native.authenticated = status
+                    else:
+                        self.native.anonymous = status
+                    label = "authenticated" if authenticated else "anonymous"
+                    with self.assertRaisesRegex(boundary.BoundaryError, label + r" Item access \(last HTTP status " + str(status) + r"\)") as raised:
+                        self.configure()
+                    self.assertEqual(self.native.now, 3)
+                    self.assertEqual(sum(call[0] == "PUT" for call in self.native.calls), 1)
+                    for private in ("private-native-response", "private-test-token", "room_source", str(self.token)):
+                        self.assertNotIn(private, str(raised.exception))
+
+    def test_items_redirects_and_malformed_success_are_terminal_for_both_clients(self):
+        for authenticated in (True, False):
+            for response in (boundary.Response(302, {}, b""),
+                             boundary.Response(200, {"content-type": "application/json"}, b"{"),
+                             boundary.Response(200, {"content-type": "application/json"}, b"{}"),
+                             boundary.Response(200, {"content-type": "text/plain"}, b"[]")):
+                with self.subTest(authenticated=authenticated, response=response):
+                    self.native = Native()
+                    self.native.item_responses[authenticated] = [response]
+                    with self.assertRaises(boundary.BoundaryError):
+                        self.configure()
+                    self.assertLess(self.native.now, 1, "invalid verification must fail without polling")
+                    items = [call for call in self.native.calls if "/rest/items?" in call[1]
+                             and ("Authorization" in call[2]["headers"]) == authenticated]
+                    self.assertEqual(len(items), 1)
+
+    def test_internal_credential_rejection_is_terminal_and_preserves_the_saved_token(self):
+        for status in (401, 403):
+            self.native = Native()
             self.native.authenticated = status
-            with self.subTest(status=status), self.assertRaises(boundary.BoundaryError):
+            with self.subTest(status=status), self.assertRaisesRegex(boundary.BoundaryError, "rejected the internal credential"):
                 self.configure()
+            self.assertLess(self.native.now, 1)
+            self.assertEqual(self.token.read_bytes(), b"private-test-token\n")
+            self.assertEqual(sum("/rest/items?" in call[1] for call in self.native.calls), 1)
 
     def test_sonos_configures_advertised_callback_port_preserving_settings(self):
         result = self.configure(house={"devices": [DEVICE]})

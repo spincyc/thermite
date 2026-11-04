@@ -62,6 +62,10 @@ PENDING_STATUSES = frozenset({"INITIALIZING", "UNKNOWN"})
 # UNINITIALIZED details that mean the handler itself has not arrived yet.
 HANDLER_PENDING_DETAILS = ("HANDLER_MISSING_ERROR", "NOT_YET_READY")
 FAIL_DETAILS = frozenset({"HANDLER_CONFIGURATION_PENDING", "CONFIGURATION_ERROR"})
+# Only completed handlers waiting for a device are installation warnings.
+# Unknown/unfinished initialization and handler/configuration errors remain
+# failures, including any new status detail that has not been reviewed here.
+DEVICE_OFFLINE_DETAILS = frozenset({None, "NONE", "COMMUNICATION_ERROR", "BRIDGE_OFFLINE"})
 
 
 class SandboxError(Exception):
@@ -411,6 +415,17 @@ def optional_heos_account(thing: dict) -> bool:
             and info.get("description") == "Can't log in. Username or password not set.")
 
 
+def installation_thing_verdict(thing: dict) -> str:
+    """Classify a full Thing DTO with the installation health policy."""
+    info = thing.get("statusInfo", {})
+    status, detail = info.get("status", "?"), info.get("statusDetail", "NONE")
+    verdict = classify_thing(status, detail, require_online=True)
+    if verdict == "fail" and (optional_heos_account(thing)
+                              or status == "OFFLINE" and detail in DEVICE_OFFLINE_DETAILS):
+        return "warn"
+    return verdict
+
+
 def thing_pending(thing: dict, devices: bool = True) -> bool:
     """Still waiting for its handler (or start level 30), or with devices=True for its device too."""
     info = thing.get("statusInfo", {})
@@ -475,7 +490,8 @@ class Settler:
                 and now - self.progressed >= self.stall)
 
 
-def summarize_things(things: list[dict], require_online: bool = False, allow: frozenset = frozenset()) -> dict:
+def summarize_things(things: list[dict], require_online: bool = False, allow: frozenset = frozenset(), *,
+                     installation: bool = False) -> dict:
     by_status: dict[str, int] = {}
     rows = []
     failed = []
@@ -485,9 +501,12 @@ def summarize_things(things: list[dict], require_online: bool = False, allow: fr
         detail = info.get("statusDetail", "NONE")
         key = status if detail in (None, "NONE") else f"{status}/{detail}"
         by_status[key] = by_status.get(key, 0) + 1
-        verdict = classify_thing(status, detail, require_online)
-        if verdict == "fail" and optional_heos_account(thing):
-            verdict = "warn"
+        if installation:
+            verdict = installation_thing_verdict(thing)
+        else:
+            verdict = classify_thing(status, detail, require_online)
+            if verdict == "fail" and optional_heos_account(thing):
+                verdict = "warn"
         if thing.get("UID") in allow and verdict == "fail" and status != "UNINITIALIZED" and detail not in FAIL_DETAILS:
             verdict = "allowed"
         row = {

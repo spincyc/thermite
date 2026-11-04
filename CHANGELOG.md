@@ -22,6 +22,13 @@ rollback. The unified deployment workflow uses a separate committed private site
   result to complete their step. A redundant request can no longer turn a
   successful wait into an immediate failure during startup; later checks still
   query the running services.
+- Final native readiness now follows gateway commissioning and service
+  activation, then requires ten seconds of complete, stable initialization.
+  Readiness and final health share the same Thing policy. Brief REST and Sonos
+  handler reloads caused by commissioning are polled within their deadlines;
+  authentication and configuration failures still stop deployment. A real
+  isolated openHAB/jUPnP lifecycle regression covers configuration readback,
+  handler recovery and unchanged credentials without restarting the JVM.
 - Gateway deployment adopts existing authority and TLS, backs up stopped identity
   state before migrations, verifies callback routes and seals native ingress.
   Local terminal clients discover the verified HTTPS endpoint and certificate;

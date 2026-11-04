@@ -171,6 +171,46 @@ class StagedUpstream(PrivateFixture):
             deployment.upstream(config, expected, service=(os.geteuid(), os.getegid()), connection_factory=factory)
         self.assertEqual(len(requests), calls, "wrong staged credentials must not reach the native listener")
 
+    def test_staged_upstream_waits_for_reload_but_refuses_authentication_and_malformed_data(self):
+        token, config, expected = self.material()
+        for replies, succeeds in (((404, 503, 200), True), ((401,), False), ((302,), False), (("malformed",), False)):
+            with self.subTest(replies=replies):
+                now, requests, closes = [0.0], [], []
+                remaining = iter(replies)
+
+                def factory(*args, **kwargs):
+                    status = next(remaining)
+                    response = SimpleNamespace(status=200 if status == "malformed" else status,
+                                               read=lambda maximum: b"{}" if status == "malformed" else b"[]")
+                    return SimpleNamespace(request=lambda *args, **kwargs: requests.append(kwargs["headers"]),
+                                           getresponse=lambda: response, close=lambda: closes.append(True))
+
+                kwargs = dict(service=(os.geteuid(), os.getegid()), connection_factory=factory,
+                              clock=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay))
+                if succeeds:
+                    deployment.upstream(config, expected, **kwargs)
+                    self.assertEqual(now[0], 2)
+                else:
+                    with self.assertRaisesRegex(deployment.DeploymentError, "readiness failed"):
+                        deployment.upstream(config, expected, **kwargs)
+                    self.assertEqual(now[0], 0)
+                self.assertEqual(len(requests), len(replies))
+                self.assertEqual(len(closes), len(requests))
+                self.assertTrue(all(headers["Authorization"] == "Bearer staged-credential" for headers in requests))
+                self.assertEqual(token.read_text(), "staged-credential")
+
+    def test_staged_upstream_transient_failure_has_one_bounded_allowance(self):
+        _, config, expected = self.material()
+        now = [0.0]
+        connection = SimpleNamespace(request=lambda *args, **kwargs: None,
+                                     getresponse=lambda: SimpleNamespace(status=503, read=lambda maximum: b"[]"),
+                                     close=lambda: None)
+        with self.assertRaisesRegex(deployment.DeploymentError, "after 30 seconds"):
+            deployment.upstream(config, expected, service=(os.geteuid(), os.getegid()),
+                                connection_factory=lambda *args, **kwargs: connection,
+                                clock=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay))
+        self.assertEqual(now[0], 30)
+
     def test_privileges_are_dropped_before_service_data_and_network(self):
         _, config, expected = self.material()
         uid, gid = os.geteuid(), os.getegid()

@@ -5,6 +5,7 @@ import os
 import json
 import argparse
 import secrets
+from contextlib import ExitStack
 from pathlib import Path
 import subprocess
 import sys
@@ -17,9 +18,11 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_application_update
 import oh_paths
 from oh_cli import deploy, install, upgrade
-from oh_install import steps
+from oh_install import runner, steps
 from oh_install.access import Gateway
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites, unit_text
+from oh_install.model import Check, Task
+from oh_install.system import NativeProbe, System, Unit
 
 
 class UnifiedInstall(unittest.TestCase):
@@ -117,8 +120,13 @@ class UnifiedInstall(unittest.TestCase):
             types = [type(step) for step in sequence]
             native = steps.Restart if steps.Restart in types else steps.Services
             self.assertLess(types.index(NativeIngress), types.index(native))
-            self.assertLess(types.index(steps.NativeReady), types.index(Gateway))
-            self.assertLess(types.index(Gateway), types.index(steps.Verify))
+            self.assertLess(types.index(steps.Answers), types.index(Gateway))
+            self.assertLess(types.index(steps.Token), types.index(Gateway))
+            self.assertLess(types.index(Gateway), types.index(steps.NativeReady))
+            self.assertLess(types.index(steps.Target), types.index(steps.NativeReady))
+            self.assertEqual(types.count(steps.NativeReady), 1, "one authoritative wait owns the deadline and recovery budget")
+            self.assertEqual(types.index(steps.NativeReady) + 1, types.index(steps.MetricsAnswer))
+            self.assertEqual(types.index(steps.MetricsAnswer) + 1, types.index(steps.Verify))
             self.assertTrue(sequence[types.index(Gateway)].stop_on_failure)
         for sequence in (steps.install(context), steps.upgrade(context, plan, "fixture"), steps.clean_install(context)):
             types = [type(step) for step in sequence]
@@ -132,3 +140,102 @@ class UnifiedInstall(unittest.TestCase):
         unit = unit_text()
         self.assertIn("Before=thermite-openhab.service", unit)
         self.assertNotIn("ExecStop=", unit, "stopping services must retain the native filter")
+
+
+class GatewayReadinessLifecycle(unittest.TestCase):
+    def workflow(self, operation, *, terminal=False, persistent=False, resumed=False):
+        import oh_deploy
+        import oh_sandbox
+        context = steps.Context(AREA, {"openhab": {"version": "5.2.3"}},
+                                {"state_root": "/srv/fictional", "uid": 9001, "gid": 9001, "http_port": 13601},
+                                "a" * 40, "b" * 64, "fixture", None,
+                                prepared={"conf/services/addons.cfg": oh_deploy.Blob(b"binding=sonos\n")},
+                                application={"version": "0.1.0.dev0", "digest": "c" * 64})
+        system = Mock(spec=System)
+        now, events, active = [0.0], [], [False]
+        system.clock.side_effect = lambda: now[0]
+        system.sleep.side_effect = lambda seconds: now.__setitem__(0, now[0] + seconds)
+        system.read_private.return_value = "fictional-runtime-token"
+        system.interactive.return_value = True
+        system.unit.return_value = Unit("active", "enabled", 0, 1)
+        system.run.return_value = 0
+        system.unit.side_effect = lambda *args, **kwargs: Unit("active", "enabled", 0, 2 if system.run.called else 1)
+
+        def thing():
+            if persistent or 5 <= now[0] < 10:
+                state, detail = "UNINITIALIZED", "HANDLER_MISSING_ERROR"
+            elif 10 <= now[0] < 15:
+                state, detail = "UNINITIALIZED", "NONE"
+            elif 15 <= now[0] < 20:
+                state, detail = "INITIALIZING", "NONE"
+            elif now[0] == 25:
+                state, detail = "ONLINE", "NONE"
+            else:
+                state, detail = "OFFLINE", "COMMUNICATION_ERROR"
+            if terminal and now[0] >= 5:
+                state, detail = "OFFLINE", "CONFIGURATION_ERROR"
+            return {"UID": "sonos:PLAY1:fixture", "statusInfo": {"status": state, "statusDetail": detail}}
+
+        def probe(url, token, path, deadline, **kwargs):
+            self.assertTrue(active[0], "readiness must follow gateway and callback activation")
+            self.assertEqual(token, "fictional-runtime-token")
+            self.assertEqual(deadline, 90)
+            if path == steps.NativeReady.addons_path:
+                return NativeProbe(200, [{"uid": "binding-sonos", "installed": True}])
+            if path == steps.NativeReady.things_path:
+                row = thing()
+                events.append((now[0], row["statusInfo"]["status"], row["statusInfo"]["statusDetail"]))
+                return NativeProbe(200, [row])
+            self.assertEqual(path, steps.NativeReady.metrics_path)
+            return NativeProbe(200)
+
+        def gateway(_):
+            events.append((now[0], "gateway-resumed" if resumed else "gateway-updated"))
+            active[0] = True
+            return 0
+
+        def verify(_):
+            self.assertNotEqual(oh_sandbox.installation_thing_verdict(thing()), "fail")
+            events.append((now[0], "final-verification"))
+            return 0
+
+        system.native_probe.side_effect = probe
+        sequence = steps.install(context) if operation == "install" else steps.upgrade(context, Mock(), "fixture")
+        with ExitStack() as scope:
+            scope.enter_context(patch.object(steps, "WAIT", 90))
+            for step in sequence:
+                if isinstance(step, steps.NativeReady):
+                    continue
+                scope.enter_context(patch.object(step, "check", return_value=Check(True, "fixture prerequisite")))
+                action = gateway if isinstance(step, Gateway) else verify if isinstance(step, steps.Verify) else None
+                scope.enter_context(patch.object(step, "actions", return_value=[Task("fixture phase", action)] if action else []))
+            result = runner.run(sequence, system, AREA, root_confirmed=True)
+        return result, now[0], events, system
+
+    def test_gateway_reload_settles_before_install_upgrade_or_resume_can_complete(self):
+        for operation in ("install", "upgrade"):
+            for resumed in (False, True):
+                with self.subTest(operation=operation, resumed=resumed):
+                    result, elapsed, events, system = self.workflow(operation, resumed=resumed)
+                    self.assertEqual(result, 0)
+                    self.assertEqual(elapsed, 30, "the initial ready response must not hide a delayed handler reload")
+                    self.assertEqual(events[-1], (30, "final-verification"))
+                    self.assertIn((5, "UNINITIALIZED", "HANDLER_MISSING_ERROR"), events)
+                    self.assertIn((10, "UNINITIALIZED", "NONE"), events)
+                    self.assertIn((15, "INITIALIZING", "NONE"), events)
+                    system.run.assert_not_called()
+
+    def test_terminal_configuration_error_blocks_final_verification_without_restart(self):
+        result, elapsed, events, system = self.workflow("upgrade", terminal=True)
+        self.assertEqual(result, 1)
+        self.assertEqual(elapsed, 5)
+        self.assertFalse(any(event[-1] == "final-verification" for event in events))
+        system.run.assert_not_called()
+
+    def test_persistent_missing_handler_has_one_recovery_and_one_deadline(self):
+        result, elapsed, events, system = self.workflow("upgrade", persistent=True)
+        self.assertEqual(result, 1)
+        self.assertEqual(elapsed, 90)
+        self.assertFalse(any(event[-1] == "final-verification" for event in events))
+        system.run.assert_called_once()
+        self.assertEqual(system.run.call_args.args[0], ("sudo", "systemctl", "--no-block", "restart", "thermite-openhab.service"))

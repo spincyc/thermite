@@ -519,12 +519,23 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
         # The generic REST/OSGi path can persist an integer as "13614.0",
         # which jUPnP's Integer.parseInt rejects. Preserve a decimal string.
         update(UPNP_CONFIG, {"httpProxyPort": str(callbacks["port"])})
-    stage("authenticated Item access")
-    authenticated = call("GET", ITEMS)
-    if authenticated.status != 200 or not isinstance(_json(authenticated), list):
-        raise BoundaryError("Internal native Item access did not pass commissioning")
-    stage("anonymous Item access")
-    anonymous = call("GET", ITEMS, authenticated=False)
-    if anonymous.status not in {401, 403}:
-        raise BoundaryError("Anonymous native Item access remains available; commissioning is incomplete")
+    for authenticated in (True, False):
+        stage("authenticated Item access" if authenticated else "anonymous Item access")
+        failure = ("Internal native Item access did not pass commissioning" if authenticated else
+                   "Anonymous native Item access was not rejected; commissioning is incomplete")
+        while True:
+            response = call("GET", ITEMS, authenticated=authenticated)
+            if response.status == 200:
+                if not isinstance(_json(response), list):
+                    raise BoundaryError(failure)
+                if authenticated:
+                    break
+            elif not authenticated and response.status in {401, 403}:
+                break
+            elif response.status not in {404, 500, 502, 503, 504}:
+                raise BoundaryError(failure)
+            # Config Admin readback can precede REST resource re-registration
+            # and application of the auth filter. Only GET verification repeats.
+            observation = "last HTTP status " + str(response.status)
+            sleep(min(1, max(0, deadline - clock())))
     return {"native_security": True, "callbacks": callbacks}

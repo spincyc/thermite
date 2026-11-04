@@ -563,7 +563,12 @@ class ReadinessCompletion(unittest.TestCase):
                      NativeProbe(200, []), NativeProbe(200)]
         answers = iter([answer for state in states for answer in (ready if state == "ready" else [pending])])
         probe.side_effect = lambda *args, **kwargs: next(answers, pending)
-        return kind(context), system, probe, now
+        step = kind(context)
+        if kind is steps.NativeReady:
+            # These tests isolate result handoff; lifecycle tests cover the
+            # real settling interval and asynchronous configuration reloads.
+            step.settle = 0
+        return step, system, probe, now
 
     @staticmethod
     def sentinel():

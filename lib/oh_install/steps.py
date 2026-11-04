@@ -1381,6 +1381,7 @@ class _RestartBeforeDeadline:
 class NativeReady(ReadinessStep):
     title = "Native add-ons and handlers"
     grace = 60
+    settle = 10
     addons_path = "/rest/addons?serviceId=all"
     things_path = "/rest/things?summary=false"
     metrics_path = "/rest/metrics/prometheus"
@@ -1398,12 +1399,14 @@ class NativeReady(ReadinessStep):
         self.restarted = False
         self.previous_generation = None
         self.problem = None
+        self.ready_signature = None
+        self.ready_since = None
 
     def reset(self):
         self.signature = self.since = None
 
     def snapshot(self, system: System) -> tuple[Check, tuple | None]:
-        from oh_sandbox import FAIL_DETAILS, HANDLER_PENDING_DETAILS, installed_addon_uids, optional_heos_account
+        from oh_sandbox import HANDLER_PENDING_DETAILS, PENDING_STATUSES, installed_addon_uids, installation_thing_verdict
         if self.deadline is None:
             self.deadline = system.clock() + WAIT
         if system.clock() >= self.deadline:
@@ -1442,36 +1445,61 @@ class NativeReady(ReadinessStep):
             and (row["statusInfo"].get("statusDetail") is None or isinstance(row["statusInfo"]["statusDetail"], str)) for row in things)
         if not valid_addons or not valid_things:
             return Check(False, "", "native readiness returned an invalid add-on or Thing JSON shape"), None
-        if any(row["statusInfo"].get("statusDetail") in FAIL_DETAILS and not optional_heos_account(row) for row in things):
-            return Check(False, "", "native Things report a configuration error; fix the configuration before retrying; no recovery restart was requested"), None
+        pending = []
+        handlers_pending = []
+        for row in things:
+            info = row["statusInfo"]
+            if installation_thing_verdict(row) != "fail":
+                continue
+            status, detail = info["status"], info.get("statusDetail")
+            if status == "UNINITIALIZED" and detail in HANDLER_PENDING_DETAILS:
+                handlers_pending.append(row)
+                pending.append(row)
+            elif status in {"UNINITIALIZED", *PENDING_STATUSES} and detail in (None, "NONE"):
+                # jUPnP reloads pass through UNINITIALIZED/NONE and
+                # INITIALIZING before their handlers finish reattaching.
+                pending.append(row)
+            else:
+                return Check(False, "", "native Things report a configuration error or unsupported initialization state; "
+                             "fix the configuration before retrying; no recovery restart was requested"), None
         installed = installed_addon_uids(addons)
         missing = sorted(self.required - installed)
         if missing:
             return Check(False, "waiting for required add-ons: " + ", ".join(missing)), None
-        pending = [row for row in things if row["statusInfo"]["status"] == "UNINITIALIZED"
-                   and row["statusInfo"].get("statusDetail") in HANDLER_PENDING_DETAILS]
         metrics_status = values[self.metrics_path].status
         if not pending and metrics_status == 200:
-            return Check(True, "required add-ons installed, no missing Thing handlers, and authenticated native metrics answer"), None
-        detail = f"required add-ons installed; {len(pending)} Thing handler(s) waiting; native metrics HTTP {metrics_status}"
+            # Device reachability can fluctuate without invalidating an
+            # installation. Track the complete inventory, not ONLINE/OFFLINE.
+            signature = (tuple(sorted(installed)), tuple(sorted(row["UID"] for row in things)))
+            return Check(True, "required add-ons installed, Thing initialization complete, and authenticated native metrics answer"), signature
+        detail = f"required add-ons installed; {len(pending)} Thing(s) still initializing; native metrics HTTP {metrics_status}"
         signature = (tuple(sorted(installed)), tuple(sorted((row["UID"], row["statusInfo"]["status"],
-                     row["statusInfo"].get("statusDetail") or "NONE") for row in things)), metrics_status) if pending else None
+                     row["statusInfo"].get("statusDetail") or "NONE") for row in things)), metrics_status) if handlers_pending else None
         return Check(False, detail), signature
 
     def check(self, system: System) -> Check:
         found, signature = self.snapshot(system)
         self.problem = found.problem
-        if signature is None:
+        if found.done:
             self.reset()
-        elif signature != self.signature:
-            self.signature, self.since = signature, system.clock()
+            now = system.clock()
+            if signature != self.ready_signature or self.ready_since is None:
+                self.ready_signature, self.ready_since = signature, now
+            if now - self.ready_since < self.settle:
+                found = Check(False, f"native initialization is ready; waiting for {self.settle} seconds of stable readiness after commissioning")
+        else:
+            self.ready_signature = self.ready_since = None
+            if signature is None:
+                self.reset()
+            elif signature != self.signature:
+                self.signature, self.since = signature, system.clock()
         # A dry-run may reach this before its planned token creation/replacement.
         # Describe the current report, then let the actual task enforce terminal
         # authentication/configuration errors without retrying those failures.
         return Check(found.done, found.detail or found.problem)
 
     def actions(self, system: System) -> list[Action]:
-        return [Task(f"wait within the {WAIT // 60}-minute native startup allowance; offer at most one approved "
+        return [Task(f"wait for {self.settle} seconds of stable initialization within the {WAIT // 60}-minute native startup allowance; offer at most one approved "
                      "same-state restart after unchanged known first-start handler symptoms for 60 seconds", self.wait)]
 
     def wait(self, system: System) -> int:
@@ -1809,10 +1837,9 @@ class MetricsRestart(MetricsServices):
 
 
 def metrics_steps(context: Context, restart: bool = False) -> list[Step]:
-    """The steps that, once openHAB runs and is deployed, start the metrics
-    services on the secrets they read and check that they answer."""
+    """Activate monitoring; readiness follows the final native lifecycle wait."""
     return [MetricsToken(context), GrafanaPassword(context),
-            MetricsRestart(context) if restart else MetricsServices(context), MetricsAnswer(context)]
+            MetricsRestart(context) if restart else MetricsServices(context)]
 
 
 def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
@@ -1821,8 +1848,8 @@ def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     return [WhatChanges(plan_), Preconditions(context), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
             Units(context), LegacyMigration(context), Account(context), StateDirectories(context), MetricsDirectories(context),
             NativePreparation(context), NativeIngress(context), Deploy(context), Restart(context, restart_runtime=plan_.restart_runtime),
-            Answers(context), Token(context), NativeReady(context), Gateway(context),
-            *metrics_steps(context, restart=True), Target(context), Verify(context)]
+            Answers(context), Token(context), Gateway(context),
+            *metrics_steps(context, restart=True), Target(context), NativeReady(context), MetricsAnswer(context), Verify(context)]
 
 
 # --------------------------------------------------------------------------
@@ -2017,4 +2044,5 @@ def install(context: Context, *, preflight: bool = True) -> list[Step]:
     return [*(install_preflight(context) if preflight else []), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context),
             Units(context), LegacyMigration(context), Account(context), StateDirectories(context),
             MetricsDirectories(context), NativePreparation(context), NativeIngress(context), Deploy(context), Services(context, restart_runtime=context.restart_runtime),
-            Answers(context), Token(context), NativeReady(context), Gateway(context), *metrics_steps(context), Target(context), Verify(context)]
+            Answers(context), Token(context), Gateway(context), *metrics_steps(context), Target(context),
+            NativeReady(context), MetricsAnswer(context), Verify(context)]

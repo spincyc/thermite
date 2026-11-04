@@ -19,6 +19,7 @@ import pwd
 import stat
 import sys
 import tarfile
+import time
 from urllib.parse import urlsplit
 
 
@@ -222,7 +223,8 @@ def live(release, pids):
             raise DeploymentError("gateway is not running the expected release")
 
 
-def upstream(config, expectations, *, service=None, connection_factory=http.client.HTTPConnection):
+def upstream(config, expectations, *, service=None, connection_factory=http.client.HTTPConnection,
+             clock=time.monotonic, sleep=time.sleep):
     """Prove the actual staged bearer works, without Django or root networking.
 
     Read the operator's expectations before dropping privileges. All service
@@ -261,20 +263,37 @@ def upstream(config, expectations, *, service=None, connection_factory=http.clie
     token = raw.decode("utf-8").strip()
     if not token or len(token) > 8192 or any(ord(char) < 33 or ord(char) > 126 for char in token):
         raise DeploymentError("staged gateway runtime credential is invalid")
-    connection = connection_factory(origin.hostname, origin.port or 80, timeout=5)
-    try:
-        headers = {"Accept": "application/json"}
-        headers["Authorization"] = "Bearer " + token
-        connection.request("GET", "/rest/items?recursive=false&fields=name",
-                           headers=headers)
-        response = connection.getresponse()
-        body = response.read(256 * 1024 + 1)
-        if response.status != 200 or len(body) > 256 * 1024 or not isinstance(json.loads(body), list):
-            raise DeploymentError("staged gateway authenticated native readiness failed")
-    except (OSError, ValueError, http.client.HTTPException):
-        raise DeploymentError("staged gateway authenticated native readiness failed") from None
-    finally:
-        connection.close()
+    # Configuration reloads can briefly unregister REST resources after the
+    # boundary check. Retry only transient reads; custody and auth failures
+    # never become permission to replace credentials or accept a bad response.
+    deadline = clock() + 30
+    while clock() < deadline:
+        connection = None
+        try:
+            connection = connection_factory(origin.hostname, origin.port or 80, timeout=min(5, deadline - clock()))
+            headers = {"Accept": "application/json"}
+            headers["Authorization"] = "Bearer " + token
+            connection.request("GET", "/rest/items?recursive=false&fields=name", headers=headers)
+            response = connection.getresponse()
+            body = response.read(256 * 1024 + 1)
+            if response.status == 200:
+                try:
+                    valid = len(body) <= 256 * 1024 and isinstance(json.loads(body), list)
+                except ValueError:
+                    valid = False
+                if not valid:
+                    raise DeploymentError("staged gateway authenticated native readiness failed")
+                if clock() < deadline:
+                    return
+            elif response.status not in {404, 500, 502, 503, 504}:
+                raise DeploymentError("staged gateway authenticated native readiness failed")
+        except (OSError, http.client.HTTPException):
+            pass
+        finally:
+            if connection is not None:
+                connection.close()
+        sleep(min(1, max(0, deadline - clock())))
+    raise DeploymentError("staged gateway authenticated native readiness failed after 30 seconds; native REST did not settle")
 
 
 def main(argv=None):

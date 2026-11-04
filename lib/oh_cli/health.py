@@ -14,10 +14,6 @@ import oh_sandbox as lib
 from oh_cli import AREA
 
 SANDBOX_TOKEN = AREA / "var/sandbox/api-token"
-# Only completed handlers waiting for a device are installation warnings.
-# Unknown/unfinished initialization and handler/configuration errors remain
-# failures, including any new status detail that has not been reviewed here.
-DEVICE_OFFLINE_DETAILS = frozenset({None, "NONE", "COMMUNICATION_ERROR", "BRIDGE_OFFLINE"})
 
 DESCRIPTION = """\
 Read-only checks against the running runtime: every Thing ONLINE, Items whose
@@ -105,12 +101,7 @@ def run(args) -> dict:
     acode, addons = http.try_get_json("/rest/addons?serviceId=all")
 
     allow = frozenset(args.allow_offline or ())
-    summary = lib.summarize_things(things or [], require_online=True, allow=allow)
-    if installation:
-        for row in summary["things"]:
-            if row["verdict"] == "fail" and row["status"] == "OFFLINE" and row["detail"] in DEVICE_OFFLINE_DETAILS:
-                row["verdict"] = "warn"
-        summary["failed"] = [row for row in summary["things"] if row["verdict"] == "fail"]
+    summary = lib.summarize_things(things or [], require_online=True, allow=allow, installation=installation)
     unknown_allowed = sorted(allow - {t["uid"] for t in summary["things"]})
 
     undefined = []

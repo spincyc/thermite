@@ -353,6 +353,7 @@
     "tests/test_lifecycle_planner.py",
     "tests/test_native_auth.py",
     "tests/test_native_auth_storage.py",
+    "tests/test_native_gateway_lifecycle.py",
     "tests/test_native_ingress.py",
     "tests/test_native_prepare.py",
     "tests/test_packaging.py",

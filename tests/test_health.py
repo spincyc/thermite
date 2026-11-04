@@ -47,6 +47,47 @@ def observed_devices():
             heos("heos:bridge:fixture_receiver_a"), heos("heos:bridge:fixture_receiver_b")]
 
 
+class InstallationThingVerdicts(unittest.TestCase):
+    def test_complete_initializing_and_failed_states_use_the_strict_installation_policy(self):
+        cases = [("ONLINE", None, "ok"), ("ONLINE", "NONE", "ok"),
+                 *(('OFFLINE', detail, 'warn') for detail in (None, "NONE", "COMMUNICATION_ERROR", "BRIDGE_OFFLINE")),
+                 *(('OFFLINE', detail, 'fail') for detail in ("CONFIGURATION_ERROR", "HANDLER_CONFIGURATION_PENDING",
+                                                            "HANDLER_MISSING_ERROR", "UNEXPECTED_DETAIL")),
+                 ("ONLINE", "CONFIGURATION_ERROR", "fail"),
+                 *((status, detail, "fail") for status in ("INITIALIZING", "UNKNOWN", "UNINITIALIZED", "REMOVED")
+                   for detail in (None, "NONE", "HANDLER_MISSING_ERROR", "NOT_YET_READY"))]
+        for status, detail, expected in cases:
+            with self.subTest(status=status, detail=detail):
+                self.assertEqual(sandbox.installation_thing_verdict(thing("http:url:fixture", status, detail)), expected)
+
+    def test_optional_heos_warning_requires_the_complete_exact_account_free_bridge(self):
+        original = heos("heos:bridge:fixture")
+        self.assertEqual(sandbox.installation_thing_verdict(original), "warn")
+        for updates in ({"configuration": None}, {"configuration": {"username": "fixture-user"}},
+                        {"configuration": {"password": PRIVATE}}, {"thingTypeUID": "http:url"},
+                        {"UID": "heos:bridge:fixture:unexpected"},
+                        {"statusInfo": {**original["statusInfo"], "status": "OFFLINE"}},
+                        {"statusInfo": {**original["statusInfo"], "description": "Another configuration error"}}):
+            with self.subTest(fields=tuple(updates)):
+                self.assertEqual(sandbox.installation_thing_verdict({**original, **updates}), "fail")
+        summary_dto = {key: value for key, value in original.items() if key != "configuration"}
+        self.assertEqual(sandbox.installation_thing_verdict(summary_dto), "fail")
+
+    def test_installation_summary_preserves_rows_and_keeps_normal_health_strict(self):
+        rows = [thing("http:url:z_fixture", "INITIALIZING"), heos("heos:bridge:fixture"),
+                thing("http:url:a_fixture", "OFFLINE", "COMMUNICATION_ERROR"),
+                thing("http:url:a_fixture", "UNINITIALIZED", "HANDLER_MISSING_ERROR")]
+        before = copy.deepcopy(rows)
+        installation = sandbox.summarize_things(rows, installation=True)
+        strict = sandbox.summarize_things(rows, require_online=True)
+        self.assertEqual([row["verdict"] for row in installation["things"]], ["warn", "warn", "fail", "fail"])
+        self.assertEqual([row["verdict"] for row in strict["things"]], ["warn", "fail", "fail", "fail"])
+        self.assertEqual(len(installation["failed"]), 2)
+        self.assertEqual(installation["count"], 4)
+        self.assertEqual(rows, before)
+        self.assertNotIn(PRIVATE, json.dumps(installation))
+
+
 class Health(unittest.TestCase):
     def setUp(self):
         scratch = Path(os.environ.get("TMPDIR", AREA.parents[1] / ".scratch/install_health_tests"))

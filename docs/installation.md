@@ -124,6 +124,14 @@ live service releases and HTTPS readiness. It switches
 `~/.local/bin/thermite` to the prepared application only after every phase passes.
 No separate access staging, handoff or activation commands are required.
 
+Gateway commissioning can reload native authentication and jUPnP services.
+The authoritative native readiness check runs after commissioning and service
+activation, and requires ten uninterrupted seconds of complete initialization.
+It then checks monitoring and final health. `UNINITIALIZED`, `INITIALIZING` and
+`UNKNOWN` do not count as ready; reviewed pairing and connectivity problems stay
+visible warnings. Configuration errors remain failures. One bounded native wait
+owns the startup allowance and the existing optional recovery restart.
+
 Keep `~/.local/bin` on your shell's PATH. If you activated the bootstrap
 environment above, leave it with `deactivate` after this first deployment and
 use the stable owner command for subsequent runs. Do not run the whole CLI as
@@ -317,12 +325,38 @@ reboot alone does not complete deployment: the upgrade must install and verify
 the native-port boundary before starting the runtime. Keep the printed backup
 until the upgrade succeeds.
 
-Runtime and monitoring readiness poll within their startup allowances. Once a
-poll proves readiness, that result completes the step; an extra request outside
-the wait loop cannot fail it during a brief startup interruption. Each later
-check and deployment run still queries the running services.
+Runtime and monitoring readiness poll within their startup allowances. Once the
+required readiness or settling condition passes, that result completes the step;
+an extra request outside the wait loop cannot fail it during a brief startup
+interruption. Each later check and deployment run still queries the running
+services. Commissioning and staged gateway authentication checks also retry
+known transient REST failures, without repeating configuration writes or
+replacing credentials.
 
 `thermite uninstall --config "$HOME/thermite-site" --dry-run` shows service
 removal. State is retained by default; review the explicit purge option
 separately. Back up private configuration, runtime data, credentials and release
 artifacts before deleting an installation.
+
+## Native lifecycle regression
+
+Developers can run the commissioning regression with cached public dependencies:
+
+```sh
+THERMITE_JAVA=/path/to/pinned-jre/bin/java \
+THERMITE_RUNTIME=/path/to/openhab-distribution \
+THERMITE_RUNTIME_ARCHIVE=/path/to/pinned-openhab.zip \
+THERMITE_SONOS_JAR=/path/to/pinned-sonos.jar \
+python -m unittest tests.test_native_gateway_lifecycle -v
+```
+
+The test checks the pinned distribution archive checksum and runtime versions,
+then boots fresh configuration in isolated Linux user, network and PID
+namespaces. It makes no physical-device requests and copies no live userdata.
+It exercises real authentication, configuration and Sonos handler reloads,
+including the full readiness settling interval; only metrics availability is a
+test fixture. It verifies that credentials and the JVM survive unchanged, and
+stops the disposable runtime on success or failure. `unshare` and `iproute2` are
+required. Ordinary discovery reports an explicit skip without these optional
+dependency paths. The archive defaults to the adjacent sandbox download cache;
+the Sonos path can be omitted if its jar is already in the distribution.
