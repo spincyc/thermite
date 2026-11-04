@@ -31,6 +31,12 @@ FILTER = re.compile(r"openhab/items/(\*|[A-Za-z_][A-Za-z0-9_]*)/(stateupdated|st
 URL_BYTES = 6000
 #: Bytes of one read of every Item's state.
 STATES_BYTES = 8 * 1024 * 1024
+#: Seconds an upstream subscription may go without a byte before it is
+#: treated as dead and reconnected. A wildcard filter carries every Item's
+#: updates and openHAB sends periodic ALIVE events, so a live connection is
+#: rarely this quiet; a silently dropped one would otherwise freeze every
+#: client stream the hub serves.
+QUIET_SECONDS = 60
 
 
 def native_query(filters, base=NATIVE_URL):
@@ -190,7 +196,7 @@ class LoopbackTransport:
         so a state read after it cannot miss a later event."""
         query = native_query(filters, self.base)
         async with httpx.AsyncClient(trust_env=False, follow_redirects=False,
-                                     timeout=httpx.Timeout(15, read=None)) as client:
+                                     timeout=httpx.Timeout(15, read=QUIET_SECONDS)) as client:
             async for raw in self._events(client, query, opened):
                 value = project(raw)
                 if value is not None:
