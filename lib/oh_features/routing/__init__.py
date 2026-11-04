@@ -20,6 +20,17 @@ turned on in. A room without an `hdmi_output` offers only sources cabled
 to it, and one whose id is not a room's names its room (`room`), as the
 example beside the Office's desk screen does.
 
+Rooms may take different zones of one receiver (`zone`). A source cabled to
+the receiver is on one of its inputs, which each zone can select, so any of
+those rooms may offer it by listing it under its receiver's `sources` on that
+input: the rooms then share it, as they share a matrix source. Each room
+switches and powers only its own zone, Off included, so neither takes the
+other's picture away; the source is never one room's dedicated source
+(`sleep_sources`), and under `idle: standby` the lifecycle planner idles it
+only once no room uses it. It is never synced (below). Across the rooms on
+one device, such a source is on one input, and that input carries it alone:
+no other source, and not the signal another room's zone takes from before it.
+
 A receiver may name `sync_with: <room>`, its leader: the room whose
 receiver is another zone of the same device. While both rooms show the same
 source from the HDMI matrix (one both offer and neither has cabled to it
@@ -403,6 +414,7 @@ def validate(data: object) -> list[str]:
             problems.append(f"{where}.label: must be a name")
         for key in sorted(set(entry) - ROOM_KEYS):
             problems.append(f"{where}: unknown key '{key}'")
+    problems += _wiring_problems(rooms_section)
     problems += _sync_problems(rooms_section, sources, devices)
 
     if routing.get("edid") is not None and hdmi is not None:
@@ -558,6 +570,39 @@ def _stage_problems(where: str, spec: object, offered: list, sources: dict, devi
             problems.append(f"{at}: {input_} is already a locally cabled source input")
     for key in sorted(set(spec) - STAGE_KEYS):
         problems.append(f"{where}: unknown key '{key}'")
+    return problems
+
+
+def _wiring_problems(rooms: dict) -> list[str]:
+    """Problems with a source cabled to a device whose zones several rooms
+    take (the module docstring says what holds). A room's own inputs are
+    _stage_problems()'s, and two rooms' signals from before their zones
+    _sync_problems()'s."""
+    problems: list[str] = []
+    carried: dict[tuple, tuple] = {}  # (device, input) -> (its signal, cabled source or None, room, where)
+    placed: dict[tuple, tuple] = {}  # (device, source) -> (its input, room, where)
+    for room, entry in rooms.items():
+        for key in STAGES:
+            spec = entry.get(key) if isinstance(entry, dict) else None
+            if not isinstance(spec, dict):
+                continue
+            where, device = f"routing.rooms.{room}.{key}", spec.get("device")
+            overrides, cabled = (spec.get(name) if isinstance(spec.get(name), dict) else {}
+                                 for name in ("input_by_source", "sources"))
+            wiring = [(f"{where}.input", spec.get("input"), None)]
+            wiring += [(f"{where}.input_by_source.{source}", value, None) for source, value in overrides.items()]
+            wiring += [(f"{where}.sources.{source}", value, source) for source, value in cabled.items()]
+            for at, value, source in wiring:
+                if not isinstance(value, str):
+                    continue
+                signal = source or f"{room}'s signal"
+                held, local, other, there = carried.setdefault((device, value), (signal, source, room, at))
+                if other != room and held != signal and (source or local):
+                    problems.append(f"{at}: {device} has {held} on {value!r} ({there})")
+                elif source:
+                    first, other, there = placed.setdefault((device, source), (value, room, at))
+                    if other != room and first != value:
+                        problems.append(f"{at}: {device} has {source} on {first!r} ({there})")
     return problems
 
 

@@ -5,6 +5,10 @@ A synthetic two-room house with fictional ids and documentation addresses:
 the Example Cinema's receiver is the main zone of an AVR, the Example
 Lounge's is its zone 2 and follows the Cinema. The JavaScript runs the
 production routing.js and lifecycle planner (tests/zone_sync_harness.js).
+
+The player is cabled to the receiver itself (MPLAY); in the `shared` house
+the Lounge offers it too, on the same input of its zone, so the two rooms
+share a source no matrix carries and that is never synced.
 """
 import copy
 from datetime import timedelta
@@ -20,13 +24,14 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_render  # noqa: E402
 from oh_features import routing  # noqa: E402
-from oh_room_policy import Field, Observation, conflicts, expected_plan, repair_plan, verify  # noqa: E402
+from oh_room_policy import Field, Observation, PolicyError, conflicts, expected_plan, repair_plan, verify  # noqa: E402
 from oh_access.worker import NativeCache, observed_fields  # noqa: E402
 from tests.test_room_policy_worker import Harness, at, policy  # noqa: E402
 
 CINEMA, LOUNGE = "example_cinema", "example_lounge"
 COMPUTER, DISC, GAME, PLAYER = "example_computer", "example_disc", "example_game", "example_player"
 OUT1, OUT2, ZONE2 = "example_matrix_output1_input", "example_matrix_output2_input", "example_avr_zone2_input"
+MAIN, PLAYER_POWER = "example_avr_main_input", "example_player_power"
 WHERE = f"routing.rooms.{LOUNGE}.receiver.sync_with"
 
 
@@ -77,6 +82,16 @@ def house(change=None):
     if change:
         change(data["routing"]["rooms"], data)
     return data
+
+
+def shared(rooms, data, idle="standby"):
+    """The Lounge offers the player too: its zone 2 selects the player's input
+    (MPLAY) as the Cinema's main zone does. The player wakes over its own
+    integration and, under `idle: standby`, sleeps once no room uses it."""
+    rooms[LOUNGE]["sources"].insert(1, PLAYER)
+    rooms[LOUNGE]["receiver"]["sources"] = {PLAYER: "MPLAY"}
+    next(d for d in data["devices"] if d["id"] == PLAYER)["controls"] = {"control": ["pyatv_http"]}
+    data["routing"]["sources"][PLAYER]["idle"] = idle
 
 
 def rendered_table(data):
@@ -262,11 +277,87 @@ class LockedFollower(Harness, unittest.TestCase):
         self.assertEqual(status["repair"], ZONE2)
 
 
+class SharedSource(unittest.TestCase):
+    """The player, cabled to the receiver, offered on both of its zones."""
+
+    def test_the_zones_offer_it_on_the_input_it_is_cabled_to(self):
+        self.assertEqual(oh_render.validate(house(shared)), [])
+        where = f"routing.rooms.{LOUNGE}.receiver"
+        cabled = f"(routing.rooms.{CINEMA}.receiver.sources.{PLAYER})"
+
+        def lounge(**spec):
+            return lambda rooms, data: (shared(rooms, data), rooms[LOUNGE]["receiver"].update(spec))
+
+        def sleeps(rooms, data):
+            shared(rooms, data, idle="preserve")
+            rooms[CINEMA]["sleep_sources"] = [PLAYER]
+
+        cases = {
+            "another input": (lounge(sources={PLAYER: "SAT/CBL"}),
+                              f"{where}.sources.{PLAYER}: example_avr has {PLAYER} on 'MPLAY' {cabled}"),
+            "another source on its input": (lambda rooms, _: rooms[LOUNGE]["receiver"].update(sources={DISC: "MPLAY"}),
+                                            f"{where}.sources.{DISC}: example_avr has {PLAYER} on 'MPLAY' {cabled}"),
+            "the leader's signal": (lounge(sources={PLAYER: "BD"}),
+                                    f"{where}.sources.{PLAYER}: example_avr has {CINEMA}'s signal on 'BD' "
+                                    f"(routing.rooms.{CINEMA}.receiver.input)"),
+            "its own signal": (lounge(input="MPLAY", sources={}),
+                               f"{where}.input: example_avr has {PLAYER} on 'MPLAY' {cabled}"),
+            "one room's sleep": (sleeps, f"routing.rooms.{CINEMA}.sleep_sources: {PLAYER!r} is shared with {LOUNGE}"),
+        }
+        for name, (change, problem) in cases.items():
+            with self.subTest(name):
+                self.assertIn(problem, routing.validate(house(change)))
+        with self.assertRaises(PolicyError) as unsafe:
+            expected_plan(house(sleeps), CINEMA, "off")
+        self.assertEqual(unsafe.exception.code, "unsafe_shared_source_sleep")
+
+    def test_each_room_switches_and_powers_only_its_own_zone(self):
+        table = routing.table(house(shared))
+        lounge = table["rooms"][LOUNGE]
+        self.assertEqual(lounge["inputs"][PLAYER], [["example_tv_input", "hdmi2"], [ZONE2, "MPLAY"]])
+        self.assertEqual(lounge["choices"][PLAYER], [[OUT2, 8], ["example_usb_device2_host", 4]])
+        self.assertEqual(lounge["stages"][1]["readback"], {"MPLAY": PLAYER})
+        self.assertNotIn(PLAYER, lounge["sync"]["choices"], "a source no matrix carries is never synced")
+        descriptor = table["lifecycle"]
+        zones = {CINEMA: {"example_avr_main_power": "ON", MAIN: "MPLAY"},
+                 LOUNGE: {"example_avr_zone2_power": "ON", ZONE2: "MPLAY"}}
+        for room, other in ((CINEMA, LOUNGE), (LOUNGE, CINEMA)):
+            for choice, route in descriptor["endpoints"][room]["choices"].items():
+                touched = {item for key in ("requirements", "release", "deactivate", "leases")
+                           for item in route.get(key, {})}
+                self.assertFalse(touched & set(zones[other]), f"{room} {choice} reaches {other}'s zone")
+            requirements = descriptor["endpoints"][room]["choices"][PLAYER]["requirements"]
+            self.assertEqual({item: value for item, value in requirements.items()
+                              if item.startswith(("example_avr", PLAYER))}, {**zones[room], PLAYER_POWER: "ON"})
+        self.assertIn({"source": PLAYER, "requirements": {"example_avr_zone2_power": "ON", ZONE2: "MPLAY"}},
+                      descriptor["consumers"])
+        self.assertEqual(descriptor["sources"][PLAYER], {"power": PLAYER_POWER, "idle": "standby", "capable": True})
+        self.assertEqual(descriptor["resources"][PLAYER_POWER]["release"], "OFF")
+
+    def test_a_room_held_on_it_lets_the_other_choose_it(self):
+        data = house(shared)
+        lounge = expected_plan(data, LOUNGE, PLAYER)
+        self.assertEqual({field.item: field.value for field in lounge.fields},
+                         {"example_tv_power": "ON", "example_avr_zone2_power": "ON", PLAYER_POWER: "ON",
+                          "example_tv_input": "hdmi2", ZONE2: "MPLAY"})
+        self.assertEqual(lounge.conditions, ())
+        for held_room, other in ((CINEMA, LOUNGE), (LOUNGE, CINEMA)):
+            held = expected_plan(data, held_room, PLAYER)
+            # The player's own controls from the other room are refused (the
+            # gateway compares resources); its routes are not.
+            self.assertIn(f"device:{PLAYER}", held.resources)
+            for choice in ["off", *data["routing"]["rooms"][other]["sources"]]:
+                with self.subTest(held=held_room, choice=choice):
+                    self.assertEqual(conflicts(expected_plan(data, other, choice), [held]), [])
+
+
 @unittest.skipUnless(shutil.which("node"), "node is required for the production routing script")
 class Runtime(unittest.TestCase):
-    def test_break_before_make_after_and_the_lease_end_to_end(self):
+    def test_break_before_make_after_the_lease_and_a_shared_source_end_to_end(self):
         tables = {"lifecycle": rendered_table(house()),
-                  "plain": rendered_table(house(lambda rooms, _: rooms[LOUNGE].pop("usb_unused")))}
+                  "plain": rendered_table(house(lambda rooms, _: rooms[LOUNGE].pop("usb_unused"))),
+                  "shared": rendered_table(house(shared)),
+                  "preserve": rendered_table(house(lambda rooms, data: shared(rooms, data, idle="preserve")))}
         self.assertIn("lifecycle", tables["lifecycle"])
         self.assertNotIn("lifecycle", tables["plain"])
         result = subprocess.run([shutil.which("node"), str(AREA / "tests/zone_sync_harness.js"),
@@ -274,7 +365,7 @@ class Runtime(unittest.TestCase):
                                 input=json.dumps(tables), capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual((report["passed"], report["failed"]), (14, 0))
+        self.assertEqual((report["passed"], report["failed"]), (19, 0))
 
 
 if __name__ == "__main__":

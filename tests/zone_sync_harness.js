@@ -14,12 +14,16 @@ function test(name, fn) { tests.push([name, fn]); }
 const CINEMA = 'example_cinema', LOUNGE = 'example_lounge';
 const COMPUTER = 'example_computer', DISC = 'example_disc', GAME = 'example_game';
 const OUT1 = 'example_matrix_output1_input', OUT2 = 'example_matrix_output2_input';
-const ZONE2 = 'example_avr_zone2_input';
+const ZONE2 = 'example_avr_zone2_input', MAIN = 'example_avr_main_input';
+// The player is cabled to the receiver (MPLAY); TABLES.shared and
+// TABLES.preserve offer it on both zones, with and without standby.
+const PLAYER = 'example_player', PLAYER_POWER = 'example_player_power';
 const SYNCED = choice => `${choice}@${CINEMA}`;
 // Everything off: outputs parked, stages off on their matrix feeds.
 const OFF = { [OUT1]: '8', [OUT2]: '8', example_usb_device1_host: '4', example_usb_device2_host: '4',
-  example_avr_main_power: 'OFF', example_avr_main_input: 'BD', example_avr_zone2_power: 'OFF', [ZONE2]: 'AUX2',
-  example_screen_power: 'OFF', example_screen_input: 'hdmi1', example_tv_power: 'OFF', example_tv_input: 'hdmi2' };
+  example_avr_main_power: 'OFF', [MAIN]: 'BD', example_avr_zone2_power: 'OFF', [ZONE2]: 'AUX2',
+  example_screen_power: 'OFF', example_screen_input: 'hdmi1', example_tv_power: 'OFF', example_tv_input: 'hdmi2',
+  [PLAYER_POWER]: 'OFF' };
 
 function names(table) {
   const out = new Set(Object.keys(OFF));
@@ -383,6 +387,101 @@ test('a follower yielded to a manual command is not moved for zone sync', () => 
     effectResources: [] });
   w.command(CINEMA, DISC);
   assert.deepEqual(w.requests(), [`request ${CINEMA} ${DISC} tx${w.tx}`]);
+});
+
+// A source cabled to the receiver, offered on both of its zones: each room
+// takes its own zone to the player's input, so neither turning off takes
+// the other's picture, and the last room to let go puts the player to sleep.
+const touches = (w, ...prefixes) => w.writes.filter((write) => prefixes.some((prefix) => write.startsWith(prefix)));
+
+test('(8) a shared receiver source: the leader turning off keeps it and its follower', () => {
+  const w = load(TABLES.shared);
+  w.command(CINEMA, PLAYER); w.settle();
+  w.clear();
+  w.command(LOUNGE, PLAYER);
+  assert.deepEqual(w.requests(), [`request ${LOUNGE} ${PLAYER} tx${w.tx}`], 'its own route: never synced');
+  w.settle();
+  assert.deepEqual([w.state(MAIN), w.state(ZONE2)], ['MPLAY', 'MPLAY'], 'both zones on the player at once');
+  assert.deepEqual(touches(w, 'example_avr_main', 'example_screen', OUT1, PLAYER_POWER), [], 'the Cinema is untouched');
+  assert.deepEqual([w.source(CINEMA), w.source(LOUNGE)], [PLAYER, PLAYER]);
+  w.clear();
+  w.command(CINEMA, 'off'); w.settle();
+  assert.equal(w.state('example_avr_main_power'), 'OFF');
+  assert.deepEqual(touches(w, 'example_avr_zone2', 'example_tv', OUT2, PLAYER_POWER), [], w.writes.join());
+  assert.deepEqual([w.state('example_avr_zone2_power'), w.state(ZONE2), w.state(PLAYER_POWER)], ['ON', 'MPLAY', 'ON']);
+  assert.equal(w.source(LOUNGE), PLAYER);
+  w.clear();
+  w.command(LOUNGE, 'off'); w.settle();
+  assert.deepEqual(touches(w, PLAYER_POWER), [`${PLAYER_POWER}=OFF`], 'the last room out puts the player to sleep');
+  assert.equal(w.state('example_avr_zone2_power'), 'OFF');
+});
+
+test('(9) a shared receiver source: the follower turning off keeps it and its leader', () => {
+  const w = load(TABLES.shared);
+  w.command(LOUNGE, PLAYER); w.settle();
+  w.command(CINEMA, PLAYER); w.settle();
+  assert.deepEqual([w.state(MAIN), w.state(ZONE2), w.state(PLAYER_POWER)], ['MPLAY', 'MPLAY', 'ON']);
+  w.clear();
+  w.command(LOUNGE, 'off'); w.settle();
+  assert.deepEqual(touches(w, 'example_avr_main', 'example_screen', PLAYER_POWER), [], w.writes.join());
+  assert.deepEqual([w.state('example_avr_main_power'), w.state(MAIN), w.state(PLAYER_POWER)], ['ON', 'MPLAY', 'ON']);
+  assert.equal(w.source(CINEMA), PLAYER);
+  w.clear();
+  w.command(CINEMA, 'off'); w.settle();
+  assert.deepEqual(touches(w, PLAYER_POWER), [`${PLAYER_POWER}=OFF`]);
+});
+
+test('(10) a shared receiver source beside a synced matrix source', () => {
+  const w = load(TABLES.shared);
+  w.command(CINEMA, COMPUTER); w.settle();
+  w.command(LOUNGE, COMPUTER); w.settle();
+  assert.equal(w.state(ZONE2), 'BD');
+  w.clear();
+  // The follower leaves its lease for the player: the leader output stays.
+  w.command(LOUNGE, PLAYER);
+  assert.deepEqual(w.requests(), [`request ${LOUNGE} ${PLAYER} tx${w.tx}`]);
+  w.settle();
+  assert.deepEqual([w.state(ZONE2), w.state(OUT1), w.state(OUT2)], ['MPLAY', '1', '8']);
+  assert.deepEqual(touches(w, OUT1, MAIN), [], 'the follower never writes the leader output');
+  assert.deepEqual(w.endpoint(LOUNGE).leases[OUT1], undefined);
+  assert.deepEqual([w.source(CINEMA), w.source(LOUNGE)], [COMPUTER, PLAYER]);
+  w.clear();
+  // The leader joins it: nothing to break, its own output is parked.
+  w.command(CINEMA, PLAYER);
+  assert.deepEqual(w.requests(), [`request ${CINEMA} ${PLAYER} tx${w.tx}`]);
+  w.settle();
+  assert.deepEqual([w.state(OUT1), w.state(MAIN), w.state(ZONE2)], ['8', 'MPLAY', 'MPLAY']);
+  // Both back on the computer: the follower syncs once the leader shows it,
+  // and the player sleeps once the second room has left it.
+  w.command(CINEMA, COMPUTER); w.settle();
+  assert.equal(w.state(PLAYER_POWER), 'ON', 'the Lounge is still on it');
+  w.clear();
+  w.command(LOUNGE, COMPUTER);
+  assert.deepEqual(w.requests(), [`request ${LOUNGE} ${SYNCED(COMPUTER)} tx${w.tx}`]);
+  w.settle();
+  assert.deepEqual([w.state(ZONE2), w.state(PLAYER_POWER)], ['BD', 'OFF']);
+  assert.deepEqual([w.source(CINEMA), w.source(LOUNGE)], [COMPUTER, COMPUTER]);
+});
+
+test('(11) a follower on a source cabled to the receiver reads it from its own zone', () => {
+  const on = { example_avr_zone2_power: 'ON', example_tv_power: 'ON' };
+  for (const leader of ['1', '8']) {
+    const w = load(TABLES.shared, { states: { ...OFF, ...on, [ZONE2]: 'MPLAY', [OUT1]: leader } });
+    assert.equal(w.source(LOUNGE), PLAYER, `leader output ${leader}`);
+    assert.equal(w.state(`loc_${LOUNGE}_source_problem`), 'UNDEF');
+  }
+});
+
+test('(12) a shared receiver source whose power has no ordered executor is woken, never put to sleep', () => {
+  const w = load(TABLES.preserve);
+  w.command(CINEMA, PLAYER); w.settle();
+  w.command(LOUNGE, PLAYER); w.settle();
+  assert(w.sent.some(([name, value]) => name === PLAYER_POWER && value === 'ON'));
+  w.command(CINEMA, 'off'); w.settle();
+  assert.deepEqual([w.state('example_avr_zone2_power'), w.state(ZONE2), w.source(LOUNGE)], ['ON', 'MPLAY', PLAYER]);
+  w.command(LOUNGE, 'off'); w.settle();
+  assert(!w.sent.some(([name, value]) => name === PLAYER_POWER && value === 'OFF'), JSON.stringify(w.sent));
+  assert.equal(w.state(PLAYER_POWER), 'ON');
 });
 
 let failed = 0;

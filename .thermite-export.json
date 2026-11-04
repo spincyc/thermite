@@ -190,6 +190,7 @@
     "lib/oh_identity/tests/test_optional_auth.py",
     "lib/oh_identity/tests/test_policy_status.py",
     "lib/oh_identity/tests/test_security_headers.py",
+    "lib/oh_identity/tests/test_shared_zone_source.py",
     "lib/oh_identity/tests/test_transport.py",
     "lib/oh_identity/transport.py",
     "lib/oh_identity/urls.py",
