@@ -199,7 +199,9 @@ for name, value in outputs.items():
         target = self.root / "initialized-site"
         oh_init.initialize(target, program=program)
         launcher = target / "bin/thermite"
+        launcher.parent.mkdir()
         launcher.write_text("#!" + sys.executable + "\n" + oh_init.LEGACY_WRAPPER)
+        (target / "Makefile").write_text(oh_init.MAKEFILE)
         descriptor = json.loads((target / "thermite-site.json").read_text())
         descriptor["version"] = 1
         (target / "thermite-site.json").write_text(json.dumps(descriptor))
@@ -208,7 +210,9 @@ for name, value in outputs.items():
         report = oh_init.initialize(target, program=program, upgrade=True)
         self.assertEqual(report["previous"]["version"], 1)
         self.assertEqual(json.loads((target / "thermite-site.json").read_text())["version"], 2)
-        self.assertEqual(launcher.read_text().partition("\n")[2], oh_init.WRAPPER)
+        self.assertFalse(launcher.exists())
+        self.assertFalse(launcher.parent.exists())
+        self.assertFalse((target / "Makefile").exists())
         self.assertEqual((target / "var/operator-state").read_bytes(), b"retain private state")
         self.assertTrue((target / ".gitignore").read_text().startswith("# owner rule\n/private-notes/\n"))
         self.assertTrue({"/conf/", "/metrics/", "/deploy/"} <= set((target / ".gitignore").read_text().splitlines()))

@@ -55,6 +55,7 @@ GROUPS = (
 #: verb: (group, summary). The summaries are what `thermite --help` lists.
 VERBS = {
     "init": ("house", "create a private site, or pin an installed application upgrade"),
+    "check": ("house", "generate, validate and lint the selected configuration"),
     "generate": ("house", "write conf/ from the house file, and deploy/'s systemd units"),
     "validate": ("house", "check the house file, and that conf/ agrees with it"),
     "lint": ("house", "refuse credentials in Git, and docs naming a missing make target"),
@@ -130,7 +131,7 @@ RENAMED_ACTIONS = {
 #: Switches that mean the same in every verb that has them (the add_*
 #: helpers), as `thermite --help` explains them.
 STANDARD_SWITCHES = (
-    ("--site DIR", "select a private site (also THERMITE_SITE; before or after the verb)"),
+    ("--config DIR", "select private configuration (--site is an alias; also THERMITE_SITE)"),
     ("--json", "print the report as JSON"),
     ("-n, --dry-run", "report what it would do; change nothing"),
     ("--check", "change nothing; exit 1 if what it writes is stale"),
@@ -355,6 +356,9 @@ def command(verb: str, description: str, examples: Examples, notes: str = "") ->
         raise ValueError(f"{verb} is not a {PROGRAM} verb")
     parser = Parser(prog=f"{PROGRAM} {verb}", description=description.rstrip("\n"),
                     epilog=epilog(examples, notes), formatter_class=Help)
+    # The bootstrap consumes this before importing modules with site paths.
+    # Keep it in each parser so help and shell completion expose the option.
+    parser.add_argument("--config", "--site", metavar="DIR", help="use this private configuration directory")
     add_global(parser)
     return parser
 

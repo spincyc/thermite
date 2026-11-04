@@ -39,7 +39,7 @@
 <h1 id="commands">Commands</h1>
 <p>One program, <code>thermite</code>, with a verb for each job. Every verb answers <code>--help</code> (or <code>thermite help VERB</code>) with what it does, its switches and examples; this page is that help, word for word.</p>
 <h2 id="house">The house file, and what is generated from it</h2>
-<table class="verbs"><tbody><tr><td><a href="#init"><code>thermite init</code></a></td><td>create a private site, or pin an installed application upgrade</td></tr><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that conf/ agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#init"><code>thermite init</code></a></td><td>create a private site, or pin an installed application upgrade</td></tr><tr><td><a href="#check"><code>thermite check</code></a></td><td>generate, validate and lint the selected configuration</td></tr><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that conf/ agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
 <h2 id="test">Test on a test runtime, never production</h2>
 <table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
@@ -59,6 +59,7 @@ remotes. One program, a verb for each job; `thermite help VERB` explains one.
 
 the house file, and what is generated from it:
   init                 create a private site, or pin an installed application upgrade
+  check                generate, validate and lint the selected configuration
   generate             write conf/ from the house file, and deploy/&#x27;s systemd units
   validate             check the house file, and that conf/ agrees with it
   lint                 refuse credentials in Git, and docs naming a missing make target
@@ -100,7 +101,7 @@ this program:
   completion           print a completion script for bash, zsh or fish
 
 switches that mean the same in every verb that has them:
-  --site DIR                        select a private site (also THERMITE_SITE; before or after the verb)
+  --config DIR                      select private configuration (--site is an alias; also THERMITE_SITE)
   --json                            print the report as JSON
   -n, --dry-run                     report what it would do; change nothing
   --check                           change nothing; exit 1 if what it writes is stale
@@ -133,23 +134,24 @@ examples:
   thermite help sandbox             one verb&#x27;s actions, switches and examples
   thermite completion bash          tab completion for bash (thermite help completion)
 </pre>
-<section class="verb" id="init"><h3><code>thermite init</code></h3><p>Create a private site, or pin an installed application upgrade.</p><pre class="help">usage: thermite init [-h] [--upgrade] [--json] directory
+<section class="verb" id="init"><h3><code>thermite init</code></h3><p>Create a private site, or pin an installed application upgrade.</p><pre class="help">usage: thermite init [-h] [--config DIR] [--upgrade] [--json] directory
 
 Create a separate private site, or explicitly select an installed upgrade.
 
 positional arguments:
-  directory      new private site directory, or the existing site for --upgrade
+  directory             new private site directory, or the existing site for --upgrade
 
 options:
-  -h, --help     show this help message and exit
-  --upgrade      update the application requirement and launcher; preserve configuration
-                 and state
-  --json         print the report as JSON
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --upgrade             update the release pin and retire generated launchers; preserve
+                        configuration and state
+  --json                print the report as JSON
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite init ~/my-site           write a fictional private site; start no service
@@ -157,7 +159,27 @@ examples:
                                     pin an installed upgrade while preserving all configuration and prior releases
 </pre>
 </section>
-<section class="verb" id="generate"><h3><code>thermite generate</code></h3><p>Write conf/ from the house file, and deploy/&#x27;s systemd units.</p><pre class="help">usage: thermite generate [-h] [--check] [--house FILE] [--conf DIR]
+<section class="verb" id="check"><h3><code>thermite check</code></h3><p>Generate, validate and lint the selected configuration.</p><pre class="help">usage: thermite check [-h] [--config DIR]
+
+Generate, validate and lint a private configuration directory.
+
+No service is changed. Generated configuration stays in the site&#x27;s ignored output.
+
+options:
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+
+switches every verb takes:
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite check --config /path/to/private-site
+                                    check configuration before committing or installing
+</pre>
+</section>
+<section class="verb" id="generate"><h3><code>thermite generate</code></h3><p>Write conf/ from the house file, and deploy/&#x27;s systemd units.</p><pre class="help">usage: thermite generate [-h] [--config DIR] [--check] [--house FILE] [--conf DIR]
 
 Generate conf/ from the house file (instance/devices.yaml), metrics/ (the
 Prometheus, blackbox_exporter, Grafana and exporter configuration, and the
@@ -171,15 +193,16 @@ problem. Writing never deletes: a file under conf/ or metrics/ that nothing
 generates is reported and makes the exit status 1.
 
 options:
-  -h, --help     show this help message and exit
-  --check        change nothing; exit 1 if conf/, metrics/ or deploy/ is stale
-  --house FILE   the house file (default: instance/devices.yaml)
-  --conf DIR     the runtime conf directory (default: conf/)
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --check               change nothing; exit 1 if conf/, metrics/ or deploy/ is stale
+  --house FILE          the house file (default: instance/devices.yaml)
+  --conf DIR            the runtime conf directory (default: conf/)
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  conf/, metrics/ and deploy/ are what the house file, the host file and
@@ -193,27 +216,28 @@ examples:
   thermite generate --check         change nothing; name every stale, missing or stray file
 </pre>
 </section>
-<section class="verb" id="validate"><h3><code>thermite validate</code></h3><p>Check the house file, and that conf/ agrees with it.</p><pre class="help">usage: thermite validate [-h] [--house FILE] [--conf DIR] [--json]
+<section class="verb" id="validate"><h3><code>thermite validate</code></h3><p>Check the house file, and that conf/ agrees with it.</p><pre class="help">usage: thermite validate [-h] [--config DIR] [--house FILE] [--conf DIR] [--json]
 
 Check instance/devices.yaml, and that conf/ agrees with it.
 
 options:
-  -h, --help     show this help message and exit
-  --house FILE   the house file (default: instance/devices.yaml)
-  --conf DIR     the runtime conf directory (default: conf/)
-  --json         print the report as JSON
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --house FILE          the house file (default: instance/devices.yaml)
+  --conf DIR            the runtime conf directory (default: conf/)
+  --json                print the report as JSON
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite validate                 check the house file and conf/ against it
   thermite validate --json          the same, as JSON
 </pre>
 </section>
-<section class="verb" id="lint"><h3><code>thermite lint</code></h3><p>Refuse credentials in Git, and docs naming a missing make target.</p><pre class="help">usage: thermite lint [-h]
+<section class="verb" id="lint"><h3><code>thermite lint</code></h3><p>Refuse credentials in Git, and docs naming a missing make target.</p><pre class="help">usage: thermite lint [-h] [--config DIR]
 
 Refuse credentials and runtime state in this area&#x27;s Git content, and docs
 that name a make target the Makefile lacks. It runs two checks, and exits 1
@@ -229,18 +253,19 @@ if either finds anything:
     cites must be one the Makefile defines.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite lint                     scan the area&#x27;s files Git has or would add, and check the docs&#x27; make targets
 </pre>
 </section>
-<section class="verb" id="test"><h3><code>thermite test</code></h3><p>Boot conf/ on a test runtime; test routing and the controls end to end.</p><pre class="help">usage: thermite test [-h] [--timeout SECONDS] [--house FILE] ACTION ...
+<section class="verb" id="test"><h3><code>thermite test</code></h3><p>Boot conf/ on a test runtime; test routing and the controls end to end.</p><pre class="help">usage: thermite test [-h] [--config DIR] [--timeout SECONDS] [--house FILE] ACTION ...
 
 Test conf/ on a test runtime, the pinned distribution on 127.0.0.1:13618,
 never production: `boot` boots conf/ and reports how it loads (thermite
@@ -255,21 +280,22 @@ test runtime, reports each, and exits with the worst status. Then
 conf/ itself). An action&#x27;s own switches go after it: thermite help test boot.
 
 options:
-  -h, --help         show this help message and exit
-  --timeout SECONDS  seconds to wait for each test&#x27;s runtime (default: 300)
-  --house FILE       the house file (default: instance/devices.yaml)
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --timeout SECONDS     seconds to wait for each test&#x27;s runtime (default: 300)
+  --house FILE          the house file (default: instance/devices.yaml)
 
 actions:
   ACTION
-    boot             boot conf/ on a test runtime and report how it loads
-    routing          the room Source selectors end to end, against simulated matrices
-    controls         receiver, streamer, projector and TV controls, plus Sonos Item
-                     contracts, against stand-ins
+    boot                boot conf/ on a test runtime and report how it loads
+    routing             the room Source selectors end to end, against simulated matrices
+    controls            receiver, streamer, projector and TV controls, plus Sonos Item
+                        contracts, against stand-ins
 
 switches every verb takes:
-  -q, --quiet        print only errors
-  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
-  --no-color         no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  every test passed
@@ -489,7 +515,7 @@ examples:
                                     give a slow host longer to boot
 </pre></details>
 </section>
-<section class="verb" id="sandbox"><h3><code>thermite sandbox</code></h3><p>Run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615.</p><pre class="help">usage: thermite sandbox [-h] ACTION ...
+<section class="verb" id="sandbox"><h3><code>thermite sandbox</code></h3><p>Run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615.</p><pre class="help">usage: thermite sandbox [-h] [--config DIR] ACTION ...
 
 Run a local runtime sandbox from the distribution zip and a Temurin JRE, both
 pinned in versions.json and cached under build/sandbox/. No root, container
@@ -529,22 +555,25 @@ from the distribution template when empty), openhab.pid, console.log,
 api-token and admin-password.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
 
 actions:
   ACTION
-    fetch        download, verify (sha256 from versions.json) and extract JRE +
-                 distribution
-    start        start the sandbox in the background and wait for REST
-    reload       refresh var/sandbox/conf from conf/, in the mode the sandbox started in
-    stop         stop gracefully (SIGTERM), SIGKILL after --timeout
-    status       report whether the sandbox runs and REST answers (exit 3 if stopped)
-    logs         show userdata/logs/openhab.log
+    fetch               download, verify (sha256 from versions.json) and extract JRE +
+                        distribution
+    start               start the sandbox in the background and wait for REST
+    reload              refresh var/sandbox/conf from conf/, in the mode the sandbox
+                        started in
+    stop                stop gracefully (SIGTERM), SIGKILL after --timeout
+    status              report whether the sandbox runs and REST answers (exit 3 if
+                        stopped)
+    logs                show userdata/logs/openhab.log
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 REST authentication:
   runtime 5 lets anonymous clients use &#x27;user&#x27; endpoints (implicit user role)
@@ -704,11 +733,12 @@ examples:
                                     production&#x27;s log (state_root: the host file)
 </pre></details>
 </section>
-<section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, with one approval for the whole run.</p><pre class="help">usage: thermite install [-h] [-n] [--clean] [--restart-runtime]
+<section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, with one approval for the whole run.</p><pre class="help">usage: thermite install [-h] [--config DIR] [-n] [--clean] [--restart-runtime]
                         [--runtime-token-file RUNTIME_TOKEN_FILE]
 
 Install thermite on this host, the one you run it on. Run
-it as your user, from a committed private site or a complete source checkout:
+it as your user with --config DIR to select committed private configuration
+from any working directory. A complete source checkout also works:
 it is safe to run again at any time. It finds this host&#x27;s name and address
 and your user as it runs; instance/host.yaml holds only what is the same on
 any host (the state root, ports, service UID and GID, and time zone).
@@ -742,6 +772,7 @@ agent uses only that: agents never run sudo.
 
 options:
   -h, --help                    show this help message and exit
+  --config, --site DIR          use this private configuration directory
   -n, --dry-run                 report what it would do; change nothing
   --clean                       delete native state and local API/Grafana credential
                                 copies, then reinstall; pairings are lost
@@ -758,13 +789,18 @@ switches every verb takes:
   --no-color                    no color in what it prints (as NO_COLOR=1 does)
 
 examples:
+  thermite install --config /path/to/private-site
+                                    install this site&#x27;s configuration on the host
+  thermite install --config /path/to/private-site --dry-run
+                                    review the plan without changing services
   thermite install --dry-run        each step, and what it would run here; runs nothing
   thermite install                  install with one approval for the whole run; safe to rerun
   thermite install --clean --dry-run
                                     review a complete native-state reset and fresh installation
 </pre>
 </section>
-<section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Upgrade thermite and the Apple TV helper here to the pinned versions.</p><pre class="help">usage: thermite upgrade [-h] [-n] [--runtime-token-file RUNTIME_TOKEN_FILE]
+<section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Upgrade thermite and the Apple TV helper here to the pinned versions.</p><pre class="help">usage: thermite upgrade [-h] [--config DIR] [-n]
+                        [--runtime-token-file RUNTIME_TOKEN_FILE]
 
 Move runtime, the Apple TV helper and the metrics services (Prometheus,
 node_exporter, blackbox_exporter, the runtime exporter, Grafana,
@@ -804,6 +840,7 @@ would run. An agent uses only that: agents never run sudo.
 
 options:
   -h, --help                    show this help message and exit
+  --config, --site DIR          use this private configuration directory
   -n, --dry-run                 report what it would do; change nothing
   --runtime-token-file RUNTIME_TOKEN_FILE
                                 advanced: import an existing internal runtime API token
@@ -832,7 +869,7 @@ examples:
   thermite upgrade                  upgrade, asking once for the whole run; safe to rerun
 </pre>
 </section>
-<section class="verb" id="uninstall"><h3><code>thermite uninstall</code></h3><p>Stop thermite here and remove its units; --purge deletes its state.</p><pre class="help">usage: thermite uninstall [-h] [-n] [--purge]
+<section class="verb" id="uninstall"><h3><code>thermite uninstall</code></h3><p>Stop thermite here and remove its units; --purge deletes its state.</p><pre class="help">usage: thermite uninstall [-h] [--config DIR] [-n] [--purge]
 
 Undo thermite install on this host, as apt remove does: stop runtime, the
 Apple TV helper, the metrics services (Prometheus, node_exporter,
@@ -859,15 +896,16 @@ it reports each step and what it would run. An agent uses only that:
 agents never run sudo.
 
 options:
-  -h, --help     show this help message and exit
-  -n, --dry-run  report what it would do; change nothing
-  --purge        also delete the state root: conf, userdata, secrets, deploy records,
-                 backups, metrics
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  -n, --dry-run         report what it would do; change nothing
+  --purge               also delete the state root: conf, userdata, secrets, deploy
+                        records, backups, metrics
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite uninstall -n             what uninstalling would do here; runs nothing
@@ -875,7 +913,7 @@ examples:
   thermite uninstall -n --purge     what deleting the state too would do
 </pre>
 </section>
-<section class="verb" id="deploy"><h3><code>thermite deploy</code></h3><p>Install a commit&#x27;s conf/ and Apple TV helper here.</p><pre class="help">usage: thermite deploy [-h] [-n] [--yes] [--force] [--state DIR] [REV]
+<section class="verb" id="deploy"><h3><code>thermite deploy</code></h3><p>Install a commit&#x27;s conf/ and Apple TV helper here.</p><pre class="help">usage: thermite deploy [-h] [--config DIR] [-n] [--yes] [--force] [--state DIR] [REV]
 
 Production runtime runs on the host thermite install ran on, from its state
 directory (the host file&#x27;s state_root). Run this there. It installs one
@@ -917,20 +955,21 @@ thermite status says when an installed unit differs from deploy/. To put
 back the commit deployed before, use thermite rollback.
 
 positional arguments:
-  REV            the commit (default: HEAD)
+  REV                   the commit (default: HEAD)
 
 options:
-  -h, --help     show this help message and exit
-  -n, --dry-run  report what it would do; change nothing
-  --yes          approve the ownership handoff for this invocation; install/upgrade use
-                 their run approval
-  --force        install a conf thermite test boot has not passed on here
-  --state DIR    the state root (default: instance/host.yaml state_root)
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  -n, --dry-run         report what it would do; change nothing
+  --yes                 approve the ownership handoff for this invocation;
+                        install/upgrade use their run approval
+  --force               install a conf thermite test boot has not passed on here
+  --state DIR           the state root (default: instance/host.yaml state_root)
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite deploy                   install HEAD, once thermite test boot has passed on it
@@ -938,7 +977,7 @@ examples:
   thermite deploy 3d22e36           install an older commit; thermite rollback does it for one deployed here
 </pre>
 </section>
-<section class="verb" id="rollback"><h3><code>thermite rollback</code></h3><p>Deploy the commit deployed before the current one, or another.</p><pre class="help">usage: thermite rollback [-h] [-n] [--force] [--state DIR] [COMMIT]
+<section class="verb" id="rollback"><h3><code>thermite rollback</code></h3><p>Deploy the commit deployed before the current one, or another.</p><pre class="help">usage: thermite rollback [-h] [--config DIR] [-n] [--force] [--state DIR] [COMMIT]
 
 Put back an earlier commit&#x27;s conf/ and Apple TV helper, as helm rollback
 does: without COMMIT, the commit deployed before the one deployed now
@@ -956,18 +995,21 @@ unit from before the apple-tv verb, which runs `atv serve`), it warns and
 names what the owner installs for that commit to run as it did.
 
 positional arguments:
-  COMMIT         the commit to deploy (default: the one deployed before the current one)
+  COMMIT                the commit to deploy (default: the one deployed before the
+                        current one)
 
 options:
-  -h, --help     show this help message and exit
-  -n, --dry-run  report what it would do; change nothing
-  --force        deploy a commit that never ran here without a passed thermite test boot
-  --state DIR    the state root (default: instance/host.yaml state_root)
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  -n, --dry-run         report what it would do; change nothing
+  --force               deploy a commit that never ran here without a passed thermite
+                        test boot
+  --state DIR           the state root (default: instance/host.yaml state_root)
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  rolled back (or, with --dry-run, it could)
@@ -980,7 +1022,7 @@ examples:
   thermite rollback 3d22e36         deploy that commit (thermite history lists them)
 </pre>
 </section>
-<section class="verb" id="status"><h3><code>thermite status</code></h3><p>What is deployed and running here, against this checkout.</p><pre class="help">usage: thermite status [-h] [--state DIR]
+<section class="verb" id="status"><h3><code>thermite status</code></h3><p>What is deployed and running here, against this checkout.</p><pre class="help">usage: thermite status [-h] [--config DIR] [--state DIR]
 
 Report, read-only, what runs here: the commit thermite deploy installed
 (and whether HEAD is it, or how many commits after it), whether the
@@ -992,13 +1034,14 @@ Prometheus&#x27; scrape targets (up of all), and the last deploys (thermite
 history lists more).
 
 options:
-  -h, --help     show this help message and exit
-  --state DIR    the state root (default: instance/host.yaml state_root)
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --state DIR           the state root (default: instance/host.yaml state_root)
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite status                   the deployed commit against HEAD, the units, the services, runtime
@@ -1006,7 +1049,7 @@ examples:
                                     the same for a state root somewhere else
 </pre>
 </section>
-<section class="verb" id="history"><h3><code>thermite history</code></h3><p>This host&#x27;s deploys, numbered, the latest last.</p><pre class="help">usage: thermite history [-h] [--last N] [--json] [--state DIR]
+<section class="verb" id="history"><h3><code>thermite history</code></h3><p>This host&#x27;s deploys, numbered, the latest last.</p><pre class="help">usage: thermite history [-h] [--config DIR] [--last N] [--json] [--state DIR]
 
 List, read-only, what thermite deploy and thermite rollback installed on
 this host, from &lt;state&gt;/deploy/history: numbered from the first deploy,
@@ -1019,15 +1062,16 @@ Deploys from before the history recorded the boot test show ? there,
 except the one deployed now, which deployed.json describes.
 
 options:
-  -h, --help     show this help message and exit
-  --last N       the last N deploys; 0 for every one (default: 10)
-  --json         print the report as JSON
-  --state DIR    the state root (default: instance/host.yaml state_root)
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --last N              the last N deploys; 0 for every one (default: 10)
+  --json                print the report as JSON
+  --state DIR           the state root (default: instance/host.yaml state_root)
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite history                  the last 10 deploys here
@@ -1037,9 +1081,9 @@ examples:
                                     the deploys of a state root somewhere else
 </pre>
 </section>
-<section class="verb" id="health"><h3><code>thermite health</code></h3><p>Read-only: every Thing ONLINE in the runtime.</p><pre class="help">usage: thermite health [-h] (--production | --sandbox | --url URL) [--token-file FILE]
-                       [--allow-offline ID [ID ...] | --installation] [--addons FILE]
-                       [--timeout SECONDS] [--json]
+<section class="verb" id="health"><h3><code>thermite health</code></h3><p>Read-only: every Thing ONLINE in the runtime.</p><pre class="help">usage: thermite health [-h] [--config DIR] (--production | --sandbox | --url URL)
+                       [--token-file FILE] [--allow-offline ID [ID ...] |
+                       --installation] [--addons FILE] [--timeout SECONDS] [--json]
 
 Read-only checks against the running runtime: every Thing ONLINE, Items whose
 state is NULL or UNDEF, and the installed add-ons (compared with an
@@ -1064,6 +1108,7 @@ Normal health checks remain strict.
 
 options:
   -h, --help                   show this help message and exit
+  --config, --site DIR         use this private configuration directory
   --production                 production runtime on this host
   --sandbox                    the sandbox, http://127.0.0.1:13615 (thermite sandbox)
   --url URL                    runtime at URL, e.g. http://thermite.example:13601
@@ -1103,26 +1148,27 @@ examples:
                                     runtime at that URL, without a token, as JSON
 </pre>
 </section>
-<section class="verb" id="dhcp-reservations"><h3><code>thermite dhcp-reservations</code></h3><p>List the UniFi DHCP reservations the house file needs.</p><pre class="help">usage: thermite dhcp-reservations [-h] [--csv]
+<section class="verb" id="dhcp-reservations"><h3><code>thermite dhcp-reservations</code></h3><p>List the UniFi DHCP reservations the house file needs.</p><pre class="help">usage: thermite dhcp-reservations [-h] [--config DIR] [--csv]
 
 List the UniFi DHCP reservations instance/devices.yaml needs.
 
 options:
-  -h, --help     show this help message and exit
-  --csv          print CSV: alias, mac, ip
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --csv                 print CSV: alias, mac, ip
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite dhcp-reservations        one line per reservation: alias, MAC and IP
   thermite dhcp-reservations --csv  the same as CSV, with a header row
 </pre>
 </section>
-<section class="verb" id="matrix-settings"><h3><code>thermite matrix-settings</code></h3><p>Show matrix settings that differ from the house file; --apply sets them.</p><pre class="help">usage: thermite matrix-settings [-h] [--apply] [--device ID] [--address HOST[:PORT]]
-                                [--house FILE]
+<section class="verb" id="matrix-settings"><h3><code>thermite matrix-settings</code></h3><p>Show matrix settings that differ from the house file; --apply sets them.</p><pre class="help">usage: thermite matrix-settings [-h] [--config DIR] [--apply] [--device ID]
+                                [--address HOST[:PORT]] [--house FILE]
 
 Read every matrix that has `settings` in instance/devices.yaml (on the
 BK-808: scaler, HDR and HDCP on each output, and the EDID of any input fixed
@@ -1138,6 +1184,7 @@ apply when nobody is watching.
 
 options:
   -h, --help             show this help message and exit
+  --config, --site DIR   use this private configuration directory
   --apply                send the settings to the matrices (without it: only show them)
   --device ID            only this device id
   --address HOST[:PORT]  talk to this address instead of the device&#x27;s ip (a simulator);
@@ -1159,23 +1206,24 @@ examples:
   thermite matrix-settings --apply  send those changes, when nobody is watching
 </pre>
 </section>
-<section class="verb" id="control4"><h3><code>thermite control4</code></h3><p>Export the Control4 project read-only and compare it.</p><pre class="help">usage: thermite control4 [-h] ACTION ...
+<section class="verb" id="control4"><h3><code>thermite control4</code></h3><p>Export the Control4 project read-only and compare it.</p><pre class="help">usage: thermite control4 [-h] [--config DIR] ACTION ...
 
 Export the Control4 project read-only and compare it with devices.yaml.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
 
 actions:
   ACTION
-    setup        create build/control4-venv with the pinned pyControl4
-    fetch        read the Director&#x27;s items (prompts for the account)
-    summary      rooms, classes and devices.yaml stubs
+    setup               create build/control4-venv with the pinned pyControl4
+    fetch               read the Director&#x27;s items (prompts for the account)
+    summary             rooms, classes and devices.yaml stubs
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite control4                 set up and fetch as needed, then the summary
@@ -1241,21 +1289,23 @@ examples:
                                     that export
 </pre></details>
 </section>
-<section class="verb" id="discover"><h3><code>thermite discover</code></h3><p>Scan the LAN read-only and compare it with the house file.</p><pre class="help">usage: thermite discover [-h] [--no-ping] [--quick] [--output DIR] [--json]
+<section class="verb" id="discover"><h3><code>thermite discover</code></h3><p>Scan the LAN read-only and compare it with the house file.</p><pre class="help">usage: thermite discover [-h] [--config DIR] [--no-ping] [--quick] [--output DIR]
+                         [--json]
 
 Scan the LAN read-only and compare what answers with instance/devices.yaml.
 
 options:
-  -h, --help     show this help message and exit
-  --no-ping      use the neighbour table only; do not ping the network
-  --quick        listen for device announcements for less time
-  --output DIR   where to write scan.json (default: var/discovery/&lt;UTC time&gt;/)
-  --json         print the report as JSON
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --no-ping             use the neighbour table only; do not ping the network
+  --quick               listen for device announcements for less time
+  --output DIR          where to write scan.json (default: var/discovery/&lt;UTC time&gt;/)
+  --json                print the report as JSON
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite discover                 ping the LAN, listen for device announcements, and compare
@@ -1264,8 +1314,8 @@ examples:
   thermite discover --json          the comparison as JSON
 </pre>
 </section>
-<section class="verb" id="pair"><h3><code>thermite pair</code></h3><p>Pair a TV with runtime, or check the Sony TVs&#x27; pairing.</p><pre class="help">usage: thermite pair [-h] [--check] [--production | --sandbox] [--house FILE]
-                     [--timeout SECONDS]
+<section class="verb" id="pair"><h3><code>thermite pair</code></h3><p>Pair a TV with runtime, or check the Sony TVs&#x27; pairing.</p><pre class="help">usage: thermite pair [-h] [--config DIR] [--check] [--production | --sandbox]
+                     [--house FILE] [--timeout SECONDS]
                      [DEVICE] [CODE]
 
 Pair a device with thermite, as its integration in the house file
@@ -1295,25 +1345,26 @@ Pair a device with thermite, as its integration in the house file
     page, through the Apple TV helper (thermite apple-tv).
 
 positional arguments:
-  DEVICE             the device&#x27;s id in the house file
-  CODE               the code the device shows: a Sony TV&#x27;s four digits, an Android TV&#x27;s
-                     six letters and digits (omit to ask the device for them)
+  DEVICE                the device&#x27;s id in the house file
+  CODE                  the code the device shows: a Sony TV&#x27;s four digits, an Android
+                        TV&#x27;s six letters and digits (omit to ask the device for them)
 
 options:
-  -h, --help         show this help message and exit
-  --check            change nothing; exit 1 if a Sony TV&#x27;s pairing (DEVICE&#x27;s, or any
-                     one&#x27;s) is stale
-  --production       production thermite on this host, with the API token bin/thermite
-                     install saved (default)
-  --sandbox          the sandbox, and its Android TV pairings
-  --house FILE       the house file (default: instance/devices.yaml)
-  --timeout SECONDS  seconds to wait for an Android TV to come ONLINE after its code
-                     (default: 30)
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --check               change nothing; exit 1 if a Sony TV&#x27;s pairing (DEVICE&#x27;s, or any
+                        one&#x27;s) is stale
+  --production          production thermite on this host, with the API token
+                        bin/thermite install saved (default)
+  --sandbox             the sandbox, and its Android TV pairings
+  --house FILE          the house file (default: instance/devices.yaml)
+  --timeout SECONDS     seconds to wait for an Android TV to come ONLINE after its code
+                        (default: 30)
 
 switches every verb takes:
-  -q, --quiet        print only errors
-  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
-  --no-color         no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
   0  done: the TV is paired, every TV checked is paired, or the TV was
@@ -1337,7 +1388,7 @@ examples:
   thermite pair --check             whether every Sony TV is paired with production
 </pre>
 </section>
-<section class="verb" id="cameras"><h3><code>thermite cameras</code></h3><p>Read camera status, or configure native Protect bridges privately.</p><pre class="help">usage: thermite cameras [-h] ACTION ...
+<section class="verb" id="cameras"><h3><code>thermite cameras</code></h3><p>Read camera status, or configure native Protect bridges privately.</p><pre class="help">usage: thermite cameras [-h] [--config DIR] ACTION ...
 
 Show the house&#x27;s UniFi Protect cameras, or configure their native runtime
 bridges. Homebridge and Apple Home are independent and stay in place.
@@ -1352,18 +1403,19 @@ The native binding manages WebRTC stream sessions when explicitly enabled
 with configure or streams; see docs/cameras.md for resource and permission needs.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
 
 actions:
   ACTION
-    list         read the configured camera status
-    configure    configure native Protect privately
-    streams      enable or stop native camera WebRTC sessions
+    list                read the configured camera status
+    configure           configure native Protect privately
+    streams             enable or stop native camera WebRTC sessions
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite cameras list             read the configured cameras&#x27; status
@@ -1478,7 +1530,7 @@ examples:
                                     reuse the existing console login and an explicitly supplied mode-0600 Protect token
 </pre></details>
 </section>
-<section class="verb" id="apple-tv"><h3><code>thermite apple-tv</code></h3><p>Run the Apple TV helper runtime calls.</p><pre class="help">usage: thermite apple-tv [-h] ACTION ...
+<section class="verb" id="apple-tv"><h3><code>thermite apple-tv</code></h3><p>Run the Apple TV helper runtime calls.</p><pre class="help">usage: thermite apple-tv [-h] [--config DIR] ACTION ...
 
 The runtime has no native Apple TV binding, so thermite drives the Apple TVs
 through this helper: a small HTTP service that keeps one pyatv Companion
@@ -1496,17 +1548,19 @@ was built from other pins or another Python, as the helper&#x27;s container in
 production does at every start.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
 
 actions:
   ACTION
-    setup        create build/pyatv-venv (or $OPENHAB_ATV_VENV) with the pinned pyatv
-    serve        run the helper (in build/pyatv-venv)
+    setup               create build/pyatv-venv (or $OPENHAB_ATV_VENV) with the pinned
+                        pyatv
+    serve               run the helper (in build/pyatv-venv)
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 pairing:
   Pairing happens from the thermite Pairing page, through this helper: the
@@ -1591,7 +1645,7 @@ examples:
                                     as the helper&#x27;s container runs it
 </pre></details>
 </section>
-<section class="verb" id="ir-profile"><h3><code>thermite ir-profile</code></h3><p>Validate verified IR keys or print an iTach packet without transmitting.</p><pre class="help">usage: thermite ir-profile [-h] [--json] [-n]
+<section class="verb" id="ir-profile"><h3><code>thermite ir-profile</code></h3><p>Validate verified IR keys or print an iTach packet without transmitting.</p><pre class="help">usage: thermite ir-profile [-h] [--config DIR] [--json] [-n]
                            [--key {audio,back,blue,bluetooth,display,down,eject,fast_forward,favorite,green,home,left,netflix,next,ok,options,pause,play,popup_menu,power,previous,red,rewind,right,stop,subtitle,top_menu,up,yellow}]
                            [--connector {1,2,3}]
                            profile
@@ -1606,6 +1660,7 @@ positional arguments:
 
 options:
   -h, --help                    show this help message and exit
+  --config, --site DIR          use this private configuration directory
   --json                        print the report as JSON
   -n, --dry-run                 report what it would do; change nothing
   --key {audio,back,blue,bluetooth,display,down,eject,fast_forward,favorite,green,home,left,netflix,next,ok,options,pause,play,popup_menu,power,previous,red,rewind,right,stop,subtitle,top_menu,up,yellow}
@@ -1625,9 +1680,9 @@ examples:
                                     print the exact packet only
 </pre>
 </section>
-<section class="verb" id="remote"><h3><code>thermite remote</code></h3><p>The house remote in a terminal.</p><pre class="help">usage: thermite remote [-h] [--production | --sandbox | --url URL | --mock] [--native]
-                       [--setup] [--pair] [--room ID] [--choose SOURCE]
-                       [--theme NAME|FILE] [--dark | --light]
+<section class="verb" id="remote"><h3><code>thermite remote</code></h3><p>The house remote in a terminal.</p><pre class="help">usage: thermite remote [-h] [--config DIR] [--production | --sandbox | --url URL |
+                       --mock] [--native] [--setup] [--pair] [--room ID]
+                       [--choose SOURCE] [--theme NAME|FILE] [--dark | --light]
                        [--volume {slider,buttons}] [--still] [--log | --no-log]
                        [--latency MS] [--matrix-down] [--state FILE]
 
@@ -1668,6 +1723,7 @@ tui/remote/package-lock.json into build/tui-remote with npm ci
 
 options:
   -h, --help                 show this help message and exit
+  --config, --site DIR       use this private configuration directory
   --production               production runtime on this host (default)
   --sandbox                  the sandbox, http://127.0.0.1:13615 (thermite sandbox)
   --url URL                  runtime at URL, e.g. http://thermite.example:13601
@@ -1728,7 +1784,7 @@ examples:
   thermite remote --setup           only install the pinned blessed, then exit
 </pre>
 </section>
-<section class="verb" id="access"><h3><code>thermite access</code></h3><p>Site login, local identity bootstrap, HTTPS service and room policies.</p><pre class="help">usage: thermite access [-h] ACTION ...
+<section class="verb" id="access"><h3><code>thermite access</code></h3><p>Site login, local identity bootstrap, HTTPS service and room policies.</p><pre class="help">usage: thermite access [-h] [--config DIR] ACTION ...
 
 Run a site&#x27;s authenticated HTTPS boundary and room-policy worker, or log
 this terminal into a site. Bootstrap is local and prompts privately for the first
@@ -1740,24 +1796,25 @@ native listener is sealed and device callbacks are preserved. Staging reports
 that owner activation checklist explicitly.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
 
 actions:
   ACTION
-    bootstrap    initialize the first admin locally
-    serve        serve one HTTPS site
-    worker       run the single room-policy worker
-    verify       verify service custody without initializing state
-    callbacks    run the explicitly configured plaintext UPnP NOTIFY listener
-    login        log this terminal into a site
-    logout       revoke this terminal&#x27;s site credential
-    status       read this terminal&#x27;s current site identity and policies
-    stage        prepare a persistent release and owner-installable units
+    bootstrap           initialize the first admin locally
+    serve               serve one HTTPS site
+    worker              run the single room-policy worker
+    verify              verify service custody without initializing state
+    callbacks           run the explicitly configured plaintext UPnP NOTIFY listener
+    login               log this terminal into a site
+    logout              revoke this terminal&#x27;s site credential
+    status              read this terminal&#x27;s current site identity and policies
+    stage               prepare a persistent release and owner-installable units
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite access login --url https://thermite.example:13600 --user operator
@@ -1965,7 +2022,7 @@ examples:
   thermite access stage --help      list the explicit custody and listener inputs
 </pre></details>
 </section>
-<section class="verb" id="theme"><h3><code>thermite theme</code></h3><p>The flaming bowl mark and color themes: show, check, export.</p><pre class="help">usage: thermite theme [-h] ACTION ...
+<section class="verb" id="theme"><h3><code>thermite theme</code></h3><p>The flaming bowl mark and color themes: show, check, export.</p><pre class="help">usage: thermite theme [-h] [--config DIR] ACTION ...
 
 thermite&#x27;s mark is a bowl of flame, drawn once and shown two ways: as SVG on the
 web and in a terminal as braille dots, eight to a character, for the flame
@@ -1979,19 +2036,20 @@ change only the roles you want; `thermite theme check` tells you what is
 wrong with it, including text too faint to read.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
 
 actions:
   ACTION
-    show         draw the flaming bowl and a theme&#x27;s swatches in this terminal
-    list         the built-in themes
-    check        check theme files: their shape, and that text stays readable
-    export       write the theme or the flaming bowl for another program
+    show                draw the flaming bowl and a theme&#x27;s swatches in this terminal
+    list                the built-in themes
+    check               check theme files: their shape, and that text stays readable
+    export              write the theme or the flaming bowl for another program
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 a theme file:
   {&quot;name&quot;: &quot;harbor&quot;, &quot;extends&quot;: &quot;thermite&quot;,
@@ -2119,7 +2177,7 @@ examples:
                                     the same for an iPhone&#x27;s home screen
 </pre></details>
 </section>
-<section class="verb" id="docs"><h3><code>thermite docs</code></h3><p>Build the docs site, or export it to the thermite repository.</p><pre class="help">usage: thermite docs [-h] ACTION ...
+<section class="verb" id="docs"><h3><code>thermite docs</code></h3><p>Build the docs site, or export it to the thermite repository.</p><pre class="help">usage: thermite docs [-h] [--config DIR] ACTION ...
 
 The docs site is plain HTML, made from site/: its pages, every verb&#x27;s own
 help (the commands page), and the torch and color themes. The thermite
@@ -2129,19 +2187,21 @@ name, state root or time zone, a device&#x27;s id, name, model or make, a room&#
 label, or a word in instance/private-words.txt. The house-only verbs are left out.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
 
 actions:
   ACTION
-    build        write the site into a directory
-    serve        preview the site on 127.0.0.1, without writing it anywhere
-    check        build the site in memory and refuse anything naming this house
-    export       write the site, README.md and FAQ.md into the thermite repository
+    build               write the site into a directory
+    serve               preview the site on 127.0.0.1, without writing it anywhere
+    check               build the site in memory and refuse anything naming this house
+    export              write the site, README.md and FAQ.md into the thermite
+                        repository
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 export writes docs/ (the site), README.md, FAQ.md and the Pages workflow
 into a checkout of the thermite repository, and removes files under docs/
@@ -2234,7 +2294,7 @@ examples:
                                     write them; then commit and push there
 </pre></details>
 </section>
-<section class="verb" id="version"><h3><code>thermite version</code></h3><p>Thermite&#x27;s version, and runtime&#x27;s: pinned, and running here.</p><pre class="help">usage: thermite version [-h] [--json] [--timeout SECONDS]
+<section class="verb" id="version"><h3><code>thermite version</code></h3><p>Thermite&#x27;s version, and runtime&#x27;s: pinned, and running here.</p><pre class="help">usage: thermite version [-h] [--config DIR] [--json] [--timeout SECONDS]
 
 Print thermite&#x27;s version and the commit of this checkout it runs from
 (`, modified` when the area&#x27;s tracked files differ from it), the runtime
@@ -2243,14 +2303,15 @@ reports, or that nothing answers there. thermite --version (-V) prints only
 the first line; without Git, or outside a repository, it has no commit.
 
 options:
-  -h, --help         show this help message and exit
-  --json             print the report as JSON
-  --timeout SECONDS  seconds to wait for production runtime to answer (default: 2)
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --json                print the report as JSON
+  --timeout SECONDS     seconds to wait for production runtime to answer (default: 2)
 
 switches every verb takes:
-  -q, --quiet        print only errors
-  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
-  --no-color         no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite version                  thermite&#x27;s version, the pinned runtime and the one running here
@@ -2258,25 +2319,26 @@ examples:
   thermite --version                only thermite&#x27;s
 </pre>
 </section>
-<section class="verb" id="package"><h3><code>thermite package</code></h3><p>Build a privacy-checked portable application wheel.</p><pre class="help">usage: thermite package [-h] --out OUT
+<section class="verb" id="package"><h3><code>thermite package</code></h3><p>Build a privacy-checked portable application wheel.</p><pre class="help">usage: thermite package [-h] [--config DIR] --out OUT
 
 Build the reviewed portable application wheel; never package the private inventory.
 
 options:
-  -h, --help     show this help message and exit
-  --out OUT      owned directory for the wheel and release receipt
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --out OUT             owned directory for the wheel and release receipt
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite package --out .scratch/releases
                                     privacy-check portable source and build a deterministic wheel
 </pre>
 </section>
-<section class="verb" id="iso"><h3><code>thermite iso</code></h3><p>Build a bootable installer for a dedicated Thermite machine.</p><pre class="help">usage: thermite iso [-h] ACTION ...
+<section class="verb" id="iso"><h3><code>thermite iso</code></h3><p>Build a bootable installer for a dedicated Thermite machine.</p><pre class="help">usage: thermite iso [-h] [--config DIR] ACTION ...
 
 Build a hybrid BIOS/UEFI Arch Linux installer containing the reviewed
 Thermite application. It asks for disk, network and owner account settings.
@@ -2290,17 +2352,18 @@ HTTPS and checks SHA256. build uses those cached inputs and writes an ISO plus a
 checksum and provenance receipt. Existing outputs are never overwritten.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
 
 actions:
   ACTION
-    fetch        download and verify pinned installer inputs
-    build        build a bootable ISO from the verified cache
+    fetch               download and verify pinned installer inputs
+    build               build a bootable ISO from the verified cache
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite iso fetch --cache .scratch/iso/cache
@@ -2349,7 +2412,7 @@ examples:
                                     build the bootable installer and checksum
 </pre></details>
 </section>
-<section class="verb" id="completion"><h3><code>thermite completion</code></h3><p>Print a completion script for bash, zsh or fish.</p><pre class="help">usage: thermite completion [-h] SHELL
+<section class="verb" id="completion"><h3><code>thermite completion</code></h3><p>Print a completion script for bash, zsh or fish.</p><pre class="help">usage: thermite completion [-h] [--config DIR] SHELL
 
 Print a script that teaches bash, zsh or fish to complete thermite&#x27;s
 command lines: every verb, each verb&#x27;s actions, each verb&#x27;s and action&#x27;s
@@ -2359,15 +2422,16 @@ parsers, so it completes what this thermite has. Install it again after an
 update that adds verbs or switches.
 
 positional arguments:
-  SHELL          bash, zsh or fish
+  SHELL                 bash, zsh or fish
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
 
 switches every verb takes:
-  -q, --quiet    print only errors
-  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
-  --no-color     no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 installing it:
   bash  for this shell: source &lt;(thermite completion bash)
@@ -2378,8 +2442,8 @@ installing it:
         with fpath+=(~/.zfunc) above compinit in ~/.zshrc
   fish  thermite completion fish &gt; ~/.config/fish/completions/thermite.fish
 
-  Each completes the command `thermite`; put bin/thermite on $PATH under that
-  name (a symlink will do).
+  Each completes the installed command `thermite`; activate its environment
+  or put its executable on PATH. Private configuration needs no launcher.
 
 examples:
   thermite completion bash          the bash script; source &lt;(thermite completion bash) uses it now

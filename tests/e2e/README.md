@@ -61,8 +61,7 @@ chmod 0700 "$TEST_ROOT"
 "$APP_PYTHON" "$PROGRAM/tests/e2e/fixture.py" > "$TEST_ROOT/dummy-house.json"
 cp "$TEST_ROOT/dummy-house.json" "$SITE/instance/devices.yaml"
 cd "$SITE"
-thermite generate
-thermite validate
+thermite check --config "$SITE"
 git init --initial-branch=main
 git config user.name 'Installation fixture'
 git config user.email 'fixture@example.invalid'
@@ -121,8 +120,8 @@ targets separately; do not imply that the production series were all parsed.
 Commission the native stack interactively as the owner:
 
 ```sh
-thermite install --dry-run
-thermite install
+thermite install --config "$SITE" --dry-run
+thermite install --config "$SITE"
 thermite status
 thermite health --production
 ```

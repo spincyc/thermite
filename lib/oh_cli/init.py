@@ -10,7 +10,7 @@ def main(argv=None):
     parser = oh_cli.command("init", __doc__, (("thermite init ~/my-site", "write a fictional private site; start no service"),
                                              ("thermite init --upgrade ~/my-site", "pin an installed upgrade while preserving all configuration and prior releases")))
     parser.add_argument("directory", type=Path, help="new private site directory, or the existing site for --upgrade")
-    parser.add_argument("--upgrade", action="store_true", help="update the application requirement and launcher; preserve configuration and state")
+    parser.add_argument("--upgrade", action="store_true", help="update the release pin and retire generated launchers; preserve configuration and state")
     oh_cli.add_json(parser)
     args = parser.parse_args(argv)
     try: report = initialize(args.directory, upgrade=args.upgrade)

@@ -26,21 +26,24 @@ For an offline wheel installation, supply PyYAML first, then run
 
 ```sh
 thermite init /path/to/private-site
-thermite --site /path/to/private-site generate
-thermite --site /path/to/private-site validate
+thermite check --config /path/to/private-site
 ```
 
 Init requires a new or empty directory. It writes a fictional inventory,
-sample host settings, runtime pins, a private launcher, a small Makefile and
+sample host settings, runtime pins, ignore rules and
 `thermite-site.json`. Configuration files are mode 0600. It rejects symlinks,
 application overlap and existing user files. Replace the example before
 commissioning hardware. Init creates no account or service and does not
 initialize or publish Git.
 
-Select a site with `--site DIR`, `THERMITE_SITE`, or by working inside its
-directory. The private launcher also selects its site and pinned Python
-environment, even when invoked as `python3 -B bin/thermite ...` with another
-Python. Keep that environment outside disposable source workspaces.
+Run `thermite install --config /path/to/private-site` from any directory.
+Use `--config DIR` to select a site; `--site DIR` remains an alias.
+Access service commands retain `--config FILE` for their service descriptor;
+use `--site DIR` when selecting a site for those commands.
+`THERMITE_SITE` or working inside the site also selects it. The application
+command comes from its installed environment, outside the private repository.
+New sites contain no launcher or Makefile. Keep the application environment
+outside disposable source workspaces.
 Help, themes, documentation, packaging and ISO builds work without a site;
 commands that create configuration or state require one. Complete source
 checkouts retain their original behavior.
@@ -65,7 +68,7 @@ materializes no persistent generated tree and changes no service.
 Production installation still requires clean committed inputs and a boot test
 of the exact derived configuration.
 
-The private site and launcher stay owned by the operator. Installed
+The private configuration stays owned by the operator. Installed
 application services use the non-login `thermite:thermite` account, UID/GID
 9001, and their deployed configuration and state belong to that account.
 The installer sets up trusted operator group access; see
@@ -97,8 +100,7 @@ python3 -m venv "$HOME/.local/share/thermite/venv"
 python -m pip install /path/to/thermite_app-0.1.0.dev0-py3-none-any.whl
 ```
 
-Keep that environment active for the site upgrade below. It rewrites the
-private launcher to use this interpreter. Use the same procedure with a
+Keep that environment active for the site upgrade below. Use the same procedure with a
 new environment after an Arch system update changes Python's minor version.
 Retain the previous application and private-site backups until the update
 has been verified.
@@ -109,14 +111,13 @@ With the new application environment active:
 
 ```sh
 thermite init --upgrade /path/to/private-site
-thermite --site /path/to/private-site generate
-thermite --site /path/to/private-site validate
+thermite check --config /path/to/private-site
 ```
 
-This selects schema 2 and updates the application requirement, launcher and
-ignore rules while preserving inventory, runtime pins, credentials and state.
-Both the earlier generated launcher and the pinned-interpreter launcher are
-recognized; customized launchers are refused for review. If the site previously
+This selects schema 2 and updates the application requirement and ignore rules
+while preserving inventory, runtime pins, credentials and state. It removes
+recognized generated launchers and an unchanged generated Makefile. Customized
+launchers are refused for review; custom Makefiles are preserved. If the site previously
 tracked generated output, remove that tracking before committing the new site
 revision:
 

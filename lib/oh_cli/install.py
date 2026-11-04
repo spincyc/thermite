@@ -1,6 +1,6 @@
 """Install thermite on this host, or show what that would do.
 
-    thermite install [--dry-run] [--clean] [--restart-runtime]
+    thermite install --config DIR [--dry-run] [--clean] [--restart-runtime]
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ from oh_install.system import System
 
 DESCRIPTION = """\
 Install thermite on this host, the one you run it on. Run
-it as your user, from a committed private site or a complete source checkout:
+it as your user with --config DIR to select committed private configuration
+from any working directory. A complete source checkout also works:
 it is safe to run again at any time. It finds this host's name and address
 and your user as it runs; instance/host.yaml holds only what is the same on
 any host (the state root, ports, service UID and GID, and time zone).
@@ -52,6 +53,8 @@ agent uses only that: agents never run sudo.
 """
 
 EXAMPLES = (
+    ("thermite install --config /path/to/private-site", "install this site's configuration on the host"),
+    ("thermite install --config /path/to/private-site --dry-run", "review the plan without changing services"),
     ("thermite install --dry-run", "each step, and what it would run here; runs nothing"),
     ("thermite install", "install with one approval for the whole run; safe to rerun"),
     ("thermite install --clean --dry-run", "review a complete native-state reset and fresh installation"),

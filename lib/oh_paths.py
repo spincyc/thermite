@@ -25,15 +25,31 @@ def select_args(argv: list[str]) -> list[str]:
     out, chosen, index = [], None, 0
     while index < len(argv):
         word = argv[index]
-        if word == "--site":
+        if word == "--":
+            out.extend(argv[index:])
+            break
+        # Access daemons already use --config FILE for their compiled service
+        # descriptor. Preserve that option; --site still selects their site.
+        leading = [value for value in out if value not in {"-q", "--quiet", "-v", "--verbose", "--no-color"}]
+        service_config = (len(leading) >= 2 and leading[0] == "access"
+                          and leading[1] in {"bootstrap", "serve", "worker", "verify", "callbacks"})
+        if service_config and (word == "--config" or word.startswith("--config=")):
+            out.append(word)
             index += 1
-            if index == len(argv): raise SiteError("--site needs a directory")
+            if word == "--config" and index < len(argv):
+                out.append(argv[index])
+                index += 1
+            continue
+        if word in {"--config", "--site"}:
+            index += 1
+            if index == len(argv) or argv[index].startswith("-"):
+                raise SiteError(f"{word} needs a directory")
             value = argv[index]
-        elif word.startswith("--site="):
+        elif word.startswith(("--config=", "--site=")):
             value = word.split("=", 1)[1]
         else:
             out.append(word); index += 1; continue
-        if chosen is not None or not value: raise SiteError("pass --site exactly once")
+        if chosen is not None or not value: raise SiteError("pass --config (or --site) exactly once")
         chosen = str(Path(value).expanduser().absolute())
         index += 1
     if chosen is not None: os.environ["THERMITE_SITE"] = chosen
@@ -75,7 +91,7 @@ def require_compatible() -> dict | None:
     installed = (PROGRAM / RELEASE_FILE).is_file()
     if data is None:
         if installed:
-            raise SiteError("select a private site with --site DIR, or run thermite init DIR first")
+            raise SiteError("select a private site with --config DIR, or run thermite init DIR first")
         return None  # Original complete-checkout behavior.
     if data["application"] != VERSION:
         raise SiteError(f"site requires thermite {data['application']}; installed application is {VERSION}")

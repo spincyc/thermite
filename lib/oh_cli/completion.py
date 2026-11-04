@@ -34,8 +34,8 @@ installing it:
         with fpath+=(~/.zfunc) above compinit in ~/.zshrc
   fish  thermite completion fish > ~/.config/fish/completions/thermite.fish
 
-  Each completes the command `thermite`; put bin/thermite on $PATH under that
-  name (a symlink will do).
+  Each completes the installed command `thermite`; activate its environment
+  or put its executable on PATH. Private configuration needs no launcher.
 """
 
 EXAMPLES = (

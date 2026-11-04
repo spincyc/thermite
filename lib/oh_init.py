@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import sys
 import tempfile
 
 import oh_paths
@@ -65,7 +64,7 @@ def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool 
     # Check every mutable destination before caching or creating anything. An
     # owned site's internal var/bin symlink must not redirect an upgrade into
     # the immutable application or another site's launcher.
-    for relative in ("bin/thermite", "var/application-releases", oh_paths.SITE_FILE, ".gitignore"):
+    for relative in ("bin/thermite", "Makefile", "var/application-releases", oh_paths.SITE_FILE, ".gitignore"):
         path = target / relative
         for parent in (path, *path.parents):
             if parent == target: break
@@ -80,7 +79,7 @@ def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool 
         previous = oh_paths.descriptor(target)
         if previous is None: raise ValueError("--upgrade needs an existing thermite site")
         launcher = target / "bin/thermite"
-        if (launcher.is_symlink() or not launcher.is_file()
+        if launcher.exists() and (not launcher.is_file()
                 or launcher.read_text().partition("\n")[2] not in (WRAPPER, LEGACY_WRAPPER)):
             raise ValueError("site launcher was customized; review it before upgrading")
     elif existed and any(target.iterdir()):
@@ -99,21 +98,25 @@ def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool 
         for name in ("instance/devices.yaml", "instance/host.yaml", "versions.json"):
             out = target / name; out.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(program / name, out); out.chmod(0o600)
-        (target / "bin").mkdir()
-        (target / "Makefile").write_text(MAKEFILE)
-        (target / "README.md").write_text("# Private thermite site\n\nThe initial devices are fictional. Edit instance/ before deployment. Commit instance/, versions.json and thermite-site.json only in private Git. conf/, metrics/ and deploy/ are ignored local build output: deployment derives them from committed inputs and the pinned application. Never publish site facts upstream. init starts no service; accounts and TLS require separate explicit commissioning.\n")
+        (target / "README.md").write_text("# Private thermite configuration\n\nThe initial devices are fictional. Edit instance/ before deployment. Run `thermite check --config .`, then commit instance/, versions.json and thermite-site.json in private Git. Install from any directory with `thermite install --config /path/to/this/site`. The application is installed separately; this directory needs no launcher or Makefile. conf/, metrics/ and deploy/ are ignored build output. Never publish site facts upstream. init starts no service; accounts and TLS require separate commissioning.\n")
     original = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
     missing = [line for line in IGNORED if line not in original.splitlines()]
     if missing:
         ignore.write_text(original + ("\n" if original and not original.endswith("\n") else "") + "\n".join(missing) + "\n",
                           encoding="utf-8")
-    (target / "bin/thermite").write_text("#!" + sys.executable + "\n" + WRAPPER)
-    (target / "bin/thermite").chmod(0o700)
     path = target / oh_paths.SITE_FILE
     handle, temporary = tempfile.mkstemp(prefix=".site-", dir=target)
     try:
         with os.fdopen(handle, "w") as out: json.dump(descriptor, out, indent=2); out.write("\n")
         os.replace(temporary, path)
     finally: Path(temporary).unlink(missing_ok=True)
+    if upgrade:
+        launcher = target / "bin/thermite"
+        launcher.unlink(missing_ok=True)
+        if launcher.parent.is_dir() and not any(launcher.parent.iterdir()):
+            launcher.parent.rmdir()
+        makefile = target / "Makefile"
+        if makefile.is_file() and makefile.read_text() == MAKEFILE:
+            makefile.unlink()
     return {"site": str(target), "application": release["application"], "release": release["digest"],
             "cached": str(cached), "upgraded": upgrade, "previous": previous, "activated": False}

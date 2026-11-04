@@ -6,13 +6,14 @@ from contextvars import ContextVar
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
+import shlex
 
 import oh_cli
 from oh_install import progress
 from oh_install.model import Action, Command, Step, Task
 from oh_install.system import System
 
-RERUN = "Run bin/thermite install again to go on from here."
+RERUN = f"Run thermite install --config {shlex.quote(str(oh_cli.AREA))} again to go on from here."
 _TASK_APPROVAL = ContextVar("thermite_task_approval", default=False)
 
 

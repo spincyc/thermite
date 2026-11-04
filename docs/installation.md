@@ -68,8 +68,7 @@ unless you explicitly intend unrestricted native access on your trusted LAN.
 Port assignments are listed in [ports](ports.md).
 
 ```sh
-thermite generate
-thermite validate
+thermite check --config "$HOME/thermite-site"
 git init --initial-branch=main
 git add .
 git commit -m 'Initialize private Thermite site'
@@ -81,17 +80,17 @@ repository private. Commit the site manifest, instance configuration and
 and runtime state stay outside Git. Init supplies the ignore rules. It creates no Git repository or
 commit automatically.
 
-Use commands from inside the site, or pass `thermite --site /path/to/site`.
-The private site's `bin/thermite` also selects its application environment.
-The installed application remains separate from mutable site files.
+Use the installed `thermite` command with `--config /path/to/site` from any
+directory. The application remains outside the private repository; the site
+needs no launcher or Makefile. `--site` remains a compatible alias.
 
 ## Commission the runtime
 
 Use a terminal on the server, as the owner account, with Internet access:
 
 ```sh
-thermite install --dry-run
-thermite install
+thermite install --config "$HOME/thermite-site" --dry-run
+thermite install --config "$HOME/thermite-site"
 ```
 
 Use `-v` for stage details and commands. Failures always show diagnostics;
@@ -110,7 +109,7 @@ step. Do not run the whole CLI as root.
 
 Application services run as the non-login user and group `thermite`, UID/GID
 9001, and deployed files belong to that account. Your login keeps ownership
-of the private site, launcher and Git repository. The host's systemd manager
+of the private configuration and Git repository. The host's systemd manager
 and Podman backend remain root-managed. The installer requires runc and selects
 it explicitly for container payloads. This preserves AppArmor confinement on
 Ubuntu 24.04, where crun can stack profiles under no-new-privileges and deny
@@ -222,8 +221,8 @@ distribution. Run these commands as the same owner who installed the private
 site, after
 logging back in for membership in group `thermite`. Adjust
 the hostname and certificate paths to match your installation. Enter your private
-site after logging in. Its launcher selects the application's Python
-environment, including when your previous shell's activation has ended:
+site after logging in. For a wheel installation, reactivate its Python
+environment if needed. ISO installations already have `thermite` on PATH:
 
 ```sh
 cd "$HOME/thermite-site"
@@ -237,7 +236,7 @@ install -d -m 0700 "$PLAN_ROOT"
 PLAN="$PLAN_ROOT/first"
 sudo install -d -o "$(id -un)" -g thermite -m 2750 \
   "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
-bin/thermite access stage \
+thermite access stage --config "$HOME/thermite-site" \
   --destination "$ACCESS_ROOT/releases/first" \
   --state "$ACCESS_ROOT/state" \
   --assets "$PWD/conf/html/remote" \
@@ -342,8 +341,8 @@ native-listener cutover or create accounts:
 ```sh
 more "$PLAN/activate.sh"
 sh "$PLAN/activate.sh"
-bin/thermite access login --url "https://$SITE_HOST:13600" --user admin
-bin/thermite remote --url "https://$SITE_HOST:13600"
+thermite access login --config "$HOME/thermite-site" --url "https://$SITE_HOST:13600" --user admin
+thermite remote --config "$HOME/thermite-site" --url "https://$SITE_HOST:13600"
 ```
 
 With a private CA, add `--ca-file /path/to/ca.pem` at terminal login and
@@ -374,7 +373,7 @@ inputs, and the **same** `--state` directory:
 ```sh
 RELEASE="$ACCESS_ROOT/releases/second"
 PLAN="$PLAN_ROOT/second"
-bin/thermite access stage \
+thermite access stage --config "$HOME/thermite-site" \
   --destination "$RELEASE" --plan-directory "$PLAN" \
   --state "$ACCESS_ROOT/state" \
   --assets "$PWD/conf/html/remote" \

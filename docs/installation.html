@@ -58,21 +58,20 @@ thermite --version</code></pre>
 <pre><code class="language-sh">thermite init "$HOME/thermite-site"
 cd "$HOME/thermite-site"</code></pre>
 <p>Edit <code>instance/devices.yaml</code> and <code>instance/host.yaml</code> for your own equipment, time zone and state directory. Init's inventory is fictional: use it only for the mock example, then replace its devices before commissioning real equipment. Keep the default authenticated access mode unless you explicitly intend unrestricted native access on your trusted LAN. Port assignments are listed in <a href="ports.html">ports</a>.</p>
-<pre><code class="language-sh">thermite generate
-thermite validate
+<pre><code class="language-sh">thermite check --config "$HOME/thermite-site"
 git init --initial-branch=main
 git add .
 git commit -m 'Initialize private Thermite site'</code></pre>
 <p>Configure your Git author name and email if Git requests them. Keep this repository private. Commit the site manifest, instance configuration and <code>versions.json</code>. Generated <code>conf/</code>, <code>deploy/</code>, <code>metrics/</code>, credentials, caches and runtime state stay outside Git. Init supplies the ignore rules. It creates no Git repository or commit automatically.</p>
-<p>Use commands from inside the site, or pass <code>thermite --site /path/to/site</code>. The private site's <code>bin/thermite</code> also selects its application environment. The installed application remains separate from mutable site files.</p>
+<p>Use the installed <code>thermite</code> command with <code>--config /path/to/site</code> from any directory. The application remains outside the private repository; the site needs no launcher or Makefile. <code>--site</code> remains a compatible alias.</p>
 <h2 id="commission-the-runtime">Commission the runtime</h2>
 <p>Use a terminal on the server, as the owner account, with Internet access:</p>
-<pre><code class="language-sh">thermite install --dry-run
-thermite install</code></pre>
+<pre><code class="language-sh">thermite install --config "$HOME/thermite-site" --dry-run
+thermite install --config "$HOME/thermite-site"</code></pre>
 <p>Use <code>-v</code> for stage details and commands. Failures always show diagnostics; interactive commands keep control of the terminal. <code>--dry-run</code> lists planned commands without running them.</p>
 <p>Read the plan first. The installer checks architecture, kernel support, ports and IDs; installs prerequisites; creates the service account and state directories; boots the configuration on a test runtime; deploys the committed site; installs systemd Quadlets; starts services; and provisions internal runtime access. It asks once to approve the whole run, including root commands and the deployment ownership handoff. It can be rerun after a failure or a declined step. Do not run the whole CLI as root.</p>
 <h3 id="service-ownership">Service ownership</h3>
-<p>Application services run as the non-login user and group <code>thermite</code>, UID/GID 9001, and deployed files belong to that account. Your login keeps ownership of the private site, launcher and Git repository. The host's systemd manager and Podman backend remain root-managed. The installer requires runc and selects it explicitly for container payloads. This preserves AppArmor confinement on Ubuntu 24.04, where crun can stack profiles under no-new-privileges and deny application signals. Native shutdown gets a 60-second grace period. On AppArmor hosts, node_exporter receives a separate policy for read-only systemd D-Bus queries. Its container configuration applies only to that service; other containers retain their default profiles. The installer presents policy loading and enables AppArmor's boot-time loading when needed. Grafana startup waits for a readable, nonempty administrator credential as the service user, including after an interrupted installation and reboot. Existing administrator databases and passwords are preserved.</p>
+<p>Application services run as the non-login user and group <code>thermite</code>, UID/GID 9001, and deployed files belong to that account. Your login keeps ownership of the private configuration and Git repository. The host's systemd manager and Podman backend remain root-managed. The installer requires runc and selects it explicitly for container payloads. This preserves AppArmor confinement on Ubuntu 24.04, where crun can stack profiles under no-new-privileges and deny application signals. Native shutdown gets a 60-second grace period. On AppArmor hosts, node_exporter receives a separate policy for read-only systemd D-Bus queries. Its container configuration applies only to that service; other containers retain their default profiles. The installer presents policy loading and enables AppArmor's boot-time loading when needed. Grafana startup waits for a readable, nonempty administrator credential as the service user, including after an interrupted installation and reboot. Existing administrator databases and passwords are preserved.</p>
 <p>Existing installations retain their Thermite account IDs and data paths when legacy unit names are migrated. Independent application accounts are not renamed; see <a href="service-account.html">service ownership and migration</a>.</p>
 <h3 id="startup-and-recovery">Startup and recovery</h3>
 <p>The native boot test downloads its pinned runtime and JRE. Before starting or restarting a service, the installer downloads any missing pinned container image with visible progress. Downloads finish before the service startup timer begins. This can take several minutes. Follow the installer through its checks. It provisions private internal runtime access automatically, without a separate account page or token paste. Existing valid access is preserved; interrupted setup resumes from its private credential record. Log out and back in after the installer adds you to the service group.</p>
@@ -95,7 +94,7 @@ thermite access --help</code></pre>
 <p>Before staging, ensure <code>instance/devices.yaml</code> selects authenticated access:</p>
 <pre><code class="language-yaml">access: {mode: authenticated}</code></pre>
 <p>Regenerate, validate and commit the selected configuration before staging. Stage copies the generated assets named by <code>--assets</code>, including their access mode; it does not convert native-mode client assets into authenticated clients. When switching from native testing, keep the live native assets available until the coordinated cutover below. Use the existing-state procedure when resuming an identity, rather than creating a new administrator.</p>
-<p>The application setup above provides Python virtual environments on either distribution. Run these commands as the same owner who installed the private site, after logging back in for membership in group <code>thermite</code>. Adjust the hostname and certificate paths to match your installation. Enter your private site after logging in. Its launcher selects the application's Python environment, including when your previous shell's activation has ended:</p>
+<p>The application setup above provides Python virtual environments on either distribution. Run these commands as the same owner who installed the private site, after logging back in for membership in group <code>thermite</code>. Adjust the hostname and certificate paths to match your installation. Enter your private site after logging in. For a wheel installation, reactivate its Python environment if needed. ISO installations already have <code>thermite</code> on PATH:</p>
 <pre><code class="language-sh">cd "$HOME/thermite-site"
 HOST_ID=$(python3 -c 'import socket; print(socket.gethostname().split(".", 1)[0])')
 ACCESS_ROOT=/srv/thermite-access
@@ -107,7 +106,7 @@ install -d -m 0700 "$PLAN_ROOT"
 PLAN="$PLAN_ROOT/first"
 sudo install -d -o "$(id -un)" -g thermite -m 2750 \
   "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
-bin/thermite access stage \
+thermite access stage --config "$HOME/thermite-site" \
   --destination "$ACCESS_ROOT/releases/first" \
   --state "$ACCESS_ROOT/state" \
   --assets "$PWD/conf/html/remote" \
@@ -133,8 +132,8 @@ sh "$PLAN/handoff.sh"</code></pre>
 <p>After resolving the activation requirements printed by stage (also saved in <code>$PLAN/stage.json</code>), review and run the saved activation script as the operator. It verifies custody before stopping any existing access services, installs the protected unit copies, reloads systemd, enables/starts the staged services and checks that each active process runs from this release. Only its explicit administrative commands use sudo. It also stops and disables an old callback unit when the new release omits callbacks. The script does not perform the native-listener cutover or create accounts:</p>
 <pre><code class="language-sh">more "$PLAN/activate.sh"
 sh "$PLAN/activate.sh"
-bin/thermite access login --url "https://$SITE_HOST:13600" --user admin
-bin/thermite remote --url "https://$SITE_HOST:13600"</code></pre>
+thermite access login --config "$HOME/thermite-site" --url "https://$SITE_HOST:13600" --user admin
+thermite remote --config "$HOME/thermite-site" --url "https://$SITE_HOST:13600"</code></pre>
 <p>With a private CA, add <code>--ca-file /path/to/ca.pem</code> at terminal login and install that CA in each browser's trust store. Open <code>https://&lt;your-hostname&gt;:13600/</code> in the browser. Use its Users screen to create household accounts and room grants. Verify that anonymous requests fail and that each role can access only its granted rooms. Do not expose this service directly to the Internet; remote network access can use your existing VPN.</p>
 <h2 id="update-or-remove">Update or remove</h2>
 <p>Keep the private site's verified application release cache under <code>var/application-releases/</code> for rollback. Application updates and runtime updates are separate: install a new reviewed application artifact, run <code>thermite init --upgrade /path/to/site</code>, generate, validate and commit the site, then review <code>thermite upgrade --dry-run</code>. See <a href="packaging.html">packaging</a>.</p>
@@ -142,7 +141,7 @@ bin/thermite remote --url "https://$SITE_HOST:13600"</code></pre>
 <p>The HTTPS gateway and worker use their own copied release. Updating the application or native runtime does not switch those running processes. Keep the current access release and its protected plan for recovery, and keep a backup of its persistent state. Choose new release and plan names, then repeat the stage command above with those paths, the original TLS/token inputs, and the <strong>same</strong> <code>--state</code> directory:</p>
 <pre><code class="language-sh">RELEASE="$ACCESS_ROOT/releases/second"
 PLAN="$PLAN_ROOT/second"
-bin/thermite access stage \
+thermite access stage --config "$HOME/thermite-site" \
   --destination "$RELEASE" --plan-directory "$PLAN" \
   --state "$ACCESS_ROOT/state" \
   --assets "$PWD/conf/html/remote" \

@@ -66,6 +66,8 @@ class Packaging(unittest.TestCase):
     def test_new_site_tracks_inputs_and_ignores_derived_configuration(self):
         site = self.root / "new-schema-site"
         oh_init.initialize(site, program=self.program)
+        self.assertFalse((site / "bin").exists())
+        self.assertFalse((site / "Makefile").exists())
         descriptor = json.loads((site / oh_paths.SITE_FILE).read_text())
         self.assertEqual(descriptor, {"version": 2, "application": self.release["application"],
                                       "release": self.release["digest"]})
@@ -125,6 +127,9 @@ class Packaging(unittest.TestCase):
         first = oh_init.initialize(site, program=self.program)
         (site / "instance/devices.yaml").write_text("owner configuration\n")
         (site / "var/owner-state").write_text("keep state\n")
+        (site / "bin").mkdir()
+        (site / "bin/thermite").write_text("#!" + sys.executable + "\n" + oh_init.WRAPPER)
+        (site / "Makefile").write_text("# Owner's custom tooling\n")
         second_program = self.root / "program-next"
         shutil.copytree(self.program, second_program)
         filename = "lib/oh_atv.py"
@@ -136,6 +141,8 @@ class Packaging(unittest.TestCase):
         self.assertNotEqual(first["release"], second["release"])
         self.assertEqual((site / "instance/devices.yaml").read_text(), "owner configuration\n")
         self.assertEqual((site / "var/owner-state").read_text(), "keep state\n")
+        self.assertFalse((site / "bin").exists())
+        self.assertEqual((site / "Makefile").read_text(), "# Owner's custom tooling\n")
         for identity in (first["release"], second["release"]):
             self.assertEqual(oh_release.manifest(site / "var/application-releases" / identity)["digest"], identity)
         self.assertEqual((site / oh_paths.SITE_FILE).stat().st_mode & 0o777, 0o600)
@@ -149,6 +156,7 @@ class Packaging(unittest.TestCase):
         with self.assertRaises(ValueError): oh_init.initialize(link, program=self.program)
         with self.assertRaises(ValueError): oh_init.initialize(self.program, program=self.program)
         site = self.root / "customized"; oh_init.initialize(site, program=self.program)
+        (site / "bin").mkdir()
         (site / "bin/thermite").write_text("owner customization")
         before = hashes(site)
         with self.assertRaises(ValueError): oh_init.initialize(site, program=self.program, upgrade=True)
@@ -164,8 +172,8 @@ class Packaging(unittest.TestCase):
                 else:
                     outside = self.root / "other-private-bin"
                     outside.mkdir()
-                    shutil.copyfile(site / "bin/thermite", outside / "thermite")
-                shutil.rmtree(site / component)
+                    (outside / "thermite").write_text("#!" + sys.executable + "\n" + oh_init.WRAPPER)
+                if (site / component).exists(): shutil.rmtree(site / component)
                 (site / component).symlink_to(outside, target_is_directory=True)
                 program_before, outside_before, site_before = hashes(self.program), hashes(outside), hashes(site)
                 with self.assertRaises(ValueError): oh_init.initialize(site, program=self.program, upgrade=True)
@@ -328,11 +336,26 @@ class Packaging(unittest.TestCase):
         self.assertEqual((cwd / "repackaged" / self.wheel.name).read_bytes(), self.wheel.read_bytes(),
                          "rebuilding the exported/installed application must retain its exact release bytes")
         command("generate", expected=2)
-        site = self.root / "installed-site"
+        site = self.root / "installed site with spaces"
         command("init", site)
-        command("--site", site, "generate")
+        self.assertFalse((site / "bin").exists())
+        self.assertFalse((site / "Makefile").exists())
+        command("--config", site, "check")
+        command("check", "--config=" + str(site))
         command("--site", site, "generate", "--check")
         self.assertEqual(json.loads(command("--site", site, "validate", "--json"))["status"], "ok")
+        # A config argument selects the site before module-level paths are imported.
+        subprocess.run(["git", "-C", str(site), "init", "--initial-branch=fixture"],
+                       check=True, capture_output=True)
+        refused = subprocess.run([str(entry), "install", "--config", str(site), "--dry-run"],
+                                 cwd=cwd, env=clean, capture_output=True, text=True, timeout=30)
+        self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+        self.assertIn("git rev-parse", refused.stderr)
+        self.assertNotIn("unrecognized arguments", refused.stderr)
+        self.assertFalse((site / "bin").exists())
+        for options in (("--config",), ("--config", "--dry-run"), ("--config=" ,),
+                        ("--config", site, "--site", site)):
+            command("install", *options, expected=2)
         description = json.loads((site / oh_paths.SITE_FILE).read_text()); description["application"] = "9.9.9"
         (site / oh_paths.SITE_FILE).write_text(json.dumps(description))
         current = hashes(site)
