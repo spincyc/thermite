@@ -18,6 +18,10 @@ rollback. The unified deployment workflow uses a separate committed private site
   string format and repairs an earlier decimal-string value on retry. Timeout
   errors identify the stalled operation; failed runs only claim an identity
   backup when that backup has actually been recorded.
+- Runtime, native add-on and monitoring readiness use the successful polling
+  result to complete their step. A redundant request can no longer turn a
+  successful wait into an immediate failure during startup; later checks still
+  query the running services.
 - Gateway deployment adopts existing authority and TLS, backs up stopped identity
   state before migrations, verifies callback routes and seals native ingress.
   Local terminal clients discover the verified HTTPS endpoint and certificate;

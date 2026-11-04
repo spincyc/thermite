@@ -74,3 +74,31 @@ class Step:
 
     def actions(self, system: System) -> list[Action]:
         return []
+
+    def after_actions(self, system: System) -> Check:
+        """Verify completed actions; ordinary installation steps read back state."""
+        return self.check(system)
+
+
+class ReadinessStep(Step):
+    """Hand a polling task's successful live observation to the runner once.
+
+    check() remains a fresh observation, including dry runs and later runs.
+    Only post-action verification can consume the result of the current wait.
+    """
+
+    def __init__(self):
+        self._readiness_result = None
+
+    def begin_wait(self):
+        self._readiness_result = None
+
+    def ready(self, result: Check) -> int:
+        if not result.done or result.problem:
+            raise ValueError("readiness completion requires a successful live check")
+        self._readiness_result = result
+        return 0
+
+    def after_actions(self, system: System) -> Check:
+        result, self._readiness_result = self._readiness_result, None
+        return result if result is not None else self.check(system)

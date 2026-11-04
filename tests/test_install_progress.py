@@ -8,6 +8,7 @@ import sys
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 AREA = Path(__file__).resolve().parents[1]
@@ -16,8 +17,10 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_cli
 from oh_install import progress, runner
 from oh_install import output
+from oh_install import steps
 from oh_install.model import Check, Command, Step, Task
-from oh_install.system import System
+from oh_install.system import NativeProbe, System
+from oh_deploy import MetricsHealth
 
 
 class CaptureDiagnostics(unittest.TestCase):
@@ -524,6 +527,138 @@ class Presentation(unittest.TestCase):
                 else:
                     self.assertEqual(code, 0)
                     self.assertEqual(command.call_args.kwargs["timeout"], expected)
+
+
+class ReadinessCompletion(unittest.TestCase):
+    kinds = (steps.Answers, steps.MetricsAnswer, steps.NativeReady)
+
+    def setUp(self):
+        for patch in (mock.patch.object(oh_cli, "switches", oh_cli.Switches(verbose=True)),
+                      mock.patch.object(steps, "WAIT", 10), mock.patch.object(steps, "METRICS_WAIT", 10),
+                      mock.patch.object(steps, "POLL", 5)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def fixture(self, kind, states):
+        context = SimpleNamespace(url="http://127.0.0.1:13601", area=AREA,
+                                  token_file=Path("fictional-api-token"), host={}, address="192.0.2.10",
+                                  hostname="fixture", grafana_url="http://127.0.0.1:13610/",
+                                  prepared={"conf/services/addons.cfg": SimpleNamespace(data=b"binding=http\nmisc=metrics\n")})
+        system = mock.Mock(spec=System)
+        now = [0.0]
+        system.clock.side_effect = lambda: now[0]
+        system.sleep.side_effect = lambda seconds: now.__setitem__(0, now[0] + seconds)
+        system.interactive.return_value = False
+        system.read_private.return_value = "fictional-fixture-token"
+        if kind is steps.Answers:
+            probe, pending, ready = system.openhab_version, None, ["5.2.3"]
+        elif kind is steps.MetricsAnswer:
+            pending = MetricsHealth("http://127.0.0.1:13606", None, None, None, (), context.grafana_url, None)
+            ready = [MetricsHealth("http://127.0.0.1:13606", 200, 2, 2, (), context.grafana_url, 200, True)]
+            probe = system.metrics_health
+        else:
+            probe, pending = system.native_probe, NativeProbe(0)
+            ready = [NativeProbe(200, [{"uid": "binding-http", "installed": True},
+                                       {"uid": "misc-metrics", "installed": True}]),
+                     NativeProbe(200, []), NativeProbe(200)]
+        answers = iter([answer for state in states for answer in (ready if state == "ready" else [pending])])
+        probe.side_effect = lambda *args, **kwargs: next(answers, pending)
+        return kind(context), system, probe, now
+
+    @staticmethod
+    def sentinel():
+        step = mock.Mock(spec=Step)
+        step.title, step.always = "Following stage", False
+        step.check.return_value = Check(True, "following stage reached")
+        return step
+
+    def run_steps(self, sequence, system, **kwargs):
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = runner.run(sequence, system, AREA, **kwargs)
+        self.assertIsNone(progress.current.get())
+        return result
+
+    def test_polling_success_reaches_next_step_without_a_duplicate_probe(self):
+        for kind in self.kinds:
+            with self.subTest(step=kind.__name__):
+                step, system, probe, now = self.fixture(kind, ("pending", "ready", "pending"))
+                following = self.sentinel()
+                self.assertEqual(self.run_steps([step, following], system), 0)
+                following.check.assert_called_once_with(system)
+                expected = 4 if kind is steps.NativeReady else 2
+                self.assertEqual(probe.call_count, expected)
+                self.assertEqual(now[0], 0)
+                messages = "\n".join(call.args[0] for call in system.say.call_args_list)
+                detail = {steps.Answers: "openHAB 5.2.3", steps.MetricsAnswer: "targets 2/2 up",
+                          steps.NativeReady: "authenticated native metrics answer"}[kind]
+                self.assertIn(detail, messages)
+                if kind is steps.NativeReady:
+                    self.assertEqual([call.args[2] for call in probe.call_args_list],
+                                     [step.addons_path, step.addons_path, step.things_path, step.metrics_path])
+                    self.assertEqual({call.args[1] for call in probe.call_args_list}, {"fictional-fixture-token"})
+                    self.assertEqual({call.args[3] for call in probe.call_args_list}, {10})
+                self.assertFalse(step.check(system).done, "ordinary checks must read the host again")
+                self.assertEqual(probe.call_count, expected + 1)
+                self.assertFalse(step.after_actions(system).done, "the successful observation must be consumed only once")
+                self.assertEqual(probe.call_count, expected + 2)
+
+    def test_completed_wait_does_not_hide_failure_from_a_dry_run_or_later_run(self):
+        for kind in self.kinds:
+            with self.subTest(step=kind.__name__):
+                step, system, probe, now = self.fixture(kind, ("pending", "ready"))
+                self.assertEqual(self.run_steps([step], system), 0)
+                calls = probe.call_count
+                system.say.reset_mock()
+                self.assertEqual(self.run_steps([step], system, dry_run=True), 0)
+                self.assertEqual(probe.call_count, calls + 1)
+                self.assertEqual(now[0], 0, "a dry run must not wait")
+                self.assertTrue(any("would" in call.args[0] for call in system.say.call_args_list))
+                following = self.sentinel()
+                self.assertEqual(self.run_steps([step, following], system), 1)
+                following.check.assert_not_called()
+                self.assertEqual(now[0], 10, "later failure must use the startup allowance, not cached success")
+
+    def test_persistent_readiness_failure_uses_the_full_allowance_and_stops_the_runner(self):
+        for kind in self.kinds:
+            with self.subTest(step=kind.__name__):
+                step, system, probe, now = self.fixture(kind, ("pending",))
+                following = self.sentinel()
+                self.assertEqual(self.run_steps([step, following], system), 1)
+                following.check.assert_not_called()
+                self.assertEqual(now[0], 10)
+                self.assertEqual([call.args[0] for call in system.sleep.call_args_list], [5, 5])
+                system.run.assert_not_called()
+
+    def test_a_failed_new_wait_clears_an_unconsumed_success(self):
+        for kind in self.kinds:
+            with self.subTest(step=kind.__name__):
+                step, system, probe, now = self.fixture(kind, ("ready",))
+                self.assertEqual(step.wait(system), 0)
+                self.assertEqual(step.wait(system), 1)
+                self.assertEqual(now[0], 10)
+                self.assertFalse(step.after_actions(system).done)
+
+    def test_native_authentication_and_configuration_failures_cannot_complete_readiness(self):
+        for fault in ("authentication", "configuration"):
+            with self.subTest(fault=fault):
+                step, system, probe, now = self.fixture(steps.NativeReady, ())
+                replies = [NativeProbe(0)]
+                if fault == "authentication":
+                    replies.append(NativeProbe(401))
+                else:
+                    replies.extend((NativeProbe(200, [{"uid": "binding-http", "installed": True},
+                                                      {"uid": "misc-metrics", "installed": True}]),
+                                    NativeProbe(200, [{"UID": "http:fixture:device", "statusInfo": {
+                                        "status": "OFFLINE", "statusDetail": "CONFIGURATION_ERROR"}}]),
+                                    NativeProbe(200)))
+                probe.side_effect = replies
+                following = self.sentinel()
+                self.assertEqual(self.run_steps([step, following], system), 1)
+                following.check.assert_not_called()
+                system.run.assert_not_called()
+                self.assertEqual(now[0], 0, "terminal errors must not be polled until the deadline")
+                messages = "\n".join(call.args[0] for call in system.say.call_args_list)
+                self.assertIn("HTTP 401" if fault == "authentication" else "configuration error", messages)
 
 
 if __name__ == "__main__":

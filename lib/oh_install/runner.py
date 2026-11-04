@@ -112,7 +112,7 @@ def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = Fa
                     display.passed(found.detail)
                 status = status or failed
                 continue
-            after = step.check(system)
+            after = step.after_actions(system)
             if after.problem or not after.done:
                 display.finish("FAIL", f"still not done: {after.problem or after.detail}")
                 display.message(f"Stopped. {rerun}", error=True)

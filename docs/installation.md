@@ -317,6 +317,11 @@ reboot alone does not complete deployment: the upgrade must install and verify
 the native-port boundary before starting the runtime. Keep the printed backup
 until the upgrade succeeds.
 
+Runtime and monitoring readiness poll within their startup allowances. Once a
+poll proves readiness, that result completes the step; an extra request outside
+the wait loop cannot fail it during a brief startup interruption. Each later
+check and deployment run still queries the running services.
+
 `thermite uninstall --config "$HOME/thermite-site" --dry-run` shows service
 removal. State is retained by default; review the explicit purge option
 separately. Back up private configuration, runtime data, credentials and release

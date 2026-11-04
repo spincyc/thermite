@@ -22,7 +22,7 @@ import oh_metrics as metrics
 from oh_install import backup, ownership
 from oh_install.access import Gateway
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
-from oh_install.model import Action, Check, Command, Step, Task
+from oh_install.model import Action, Check, Command, ReadinessStep, Step, Task
 from oh_install.system import System
 
 #: Podman runs openHAB through runc; Git and make carry the deploys; Python with PyYAML
@@ -1081,10 +1081,11 @@ class GrafanaPassword(Step):
         return 0
 
 
-class MetricsAnswer(Step):
+class MetricsAnswer(ReadinessStep):
     title = "Monitoring readiness"
 
     def __init__(self, context: Context):
+        super().__init__()
         self.context = context
 
     def health(self, system: System) -> deploy.MetricsHealth:
@@ -1104,10 +1105,12 @@ class MetricsAnswer(Step):
                      f"{self.context.grafana_url}api/health", self.wait)]
 
     def wait(self, system: System) -> int:
+        self.begin_wait()
         deadline = system.clock() + METRICS_WAIT
         while system.clock() < deadline:
-            if self.check(system).done:
-                return 0
+            found = self.check(system)
+            if found.done:
+                return self.ready(found)
             system.sleep(POLL)
         health = self.health(system)
         if health.down:
@@ -1118,10 +1121,11 @@ class MetricsAnswer(Step):
         return 1
 
 
-class Answers(Step):
+class Answers(ReadinessStep):
     title = "Runtime readiness"
 
     def __init__(self, context: Context):
+        super().__init__()
         self.context = context
 
     def check(self, system: System) -> Check:
@@ -1135,10 +1139,12 @@ class Answers(Step):
         return [Task(f"wait up to {WAIT // 60} minutes for {self.context.url}/rest/", self.wait)]
 
     def wait(self, system: System) -> int:
+        self.begin_wait()
         deadline = system.clock() + WAIT
         while system.clock() < deadline:
-            if system.openhab_version(self.context.url):
-                return 0
+            found = self.check(system)
+            if found.done:
+                return self.ready(found)
             system.sleep(POLL)
         system.say("   still nothing; `sudo journalctl -u thermite-openhab.service` shows why")
         return 1
@@ -1372,7 +1378,7 @@ class _RestartBeforeDeadline:
         return self.system.run(argv, area, timeout=remaining)
 
 
-class NativeReady(Step):
+class NativeReady(ReadinessStep):
     title = "Native add-ons and handlers"
     grace = 60
     addons_path = "/rest/addons?serviceId=all"
@@ -1380,6 +1386,7 @@ class NativeReady(Step):
     metrics_path = "/rest/metrics/prometheus"
 
     def __init__(self, context: Context):
+        super().__init__()
         from oh_sandbox import addon_uids, parse_addons_cfg, read_requested_addons
         self.context = context
         requested = (parse_addons_cfg(context.prepared["conf/services/addons.cfg"].data.decode("utf-8"))
@@ -1468,6 +1475,7 @@ class NativeReady(Step):
                      "same-state restart after unchanged known first-start handler symptoms for 60 seconds", self.wait)]
 
     def wait(self, system: System) -> int:
+        self.begin_wait()
         from oh_install import runner
         if self.problem:
             system.say("   " + self.problem)
@@ -1478,7 +1486,7 @@ class NativeReady(Step):
                 system.say("   " + self.problem)
                 return 1
             if found.done:
-                return 0
+                return self.ready(found)
             if not self.restarted and self.since is not None and system.clock() - self.since >= self.grace:
                 generation = system.unit("thermite-openhab.service", timeout=max(0.001, self.deadline - system.clock())).generation
                 if generation is None:
