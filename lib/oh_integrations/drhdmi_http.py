@@ -23,7 +23,11 @@ HEADER = (
 ADDONS = (Addon("binding", "http"), Addon("automation", "jsscripting", "read-only Dr HDMI signal snapshots"))
 ASSETS: dict[str, str] = {}
 STATUS = "/ssi/edidpage.ssi"
-REFRESH = 2
+#: Seconds between polls and the request timeout in ms, as for the matrices
+#: (oh_integrations._instr explains both). The snapshot is no routed state;
+#: the diagnostics() window (maxAgeSeconds) covers a poll and a timeout.
+REFRESH = 10
+TIMEOUT = 2000
 FIELDS = ["rxhpd", "txhpd", "rx5v", "frlrate", "tmdsclk", "tmdsclkf", "tmdsratio", "scramble",
           "edidmode", "edidcustomtable", "edidoverflow"] + [
               side + field for side in ("rx", "tx") for field in (
@@ -74,7 +78,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     uid = thing_uid(device)
     out.things[uid] = {
         "label": f"{house.label(device)} status", "location": house.room_label(device["room"]),
-        "config": {"baseURL": f"http://{device['ip']}", "refresh": REFRESH, "timeout": 3000,
+        "config": {"baseURL": f"http://{device['ip']}", "refresh": REFRESH, "timeout": TIMEOUT,
                    "stateMethod": "GET", "strictErrorHandling": True},
         "channels": {"signal": diag.channel("HDMI link and EDID snapshot", "drhdmi-signal.js", stateExtension=STATUS)},
     }

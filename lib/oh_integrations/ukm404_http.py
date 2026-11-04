@@ -1,9 +1,9 @@
 """4x4 USB 3.2 Gen 1 matrix (OREI UKM-404 family) over its JSON API.
 
 One Number point per device port, `<id>_device<N>_host`: the host it is
-attached to, read back every few seconds, and moved by commanding the Item.
-The matrix cannot detach a port; parking it on a host with nothing cabled
-does that.
+attached to, read back at each poll (_instr.REFRESH), and moved by
+commanding the Item. The matrix cannot detach a port; parking it on a host
+with nothing cabled does that.
 """
 
 from __future__ import annotations

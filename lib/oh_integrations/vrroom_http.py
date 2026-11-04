@@ -1,8 +1,8 @@
 """HDFury VRROOM HDMI switch over its web API.
 
 One Number point, `<id>_input`: the input (0-3, the VRROOM's own numbers)
-shown on TX0, read back every few seconds and switched by commanding the
-Item. The VRROOM answers GET /ssi/infopage.ssi with its state as JSON
+shown on TX0, read back at each poll (REFRESH) and switched by commanding
+the Item. The VRROOM answers GET /ssi/infopage.ssi with its state as JSON
 (`portseltx0` is TX0's input) and switches on GET /cmd?insel=<TX0> <TX1>,
 as its own web page does; TX1 is sent as a copy of TX0 (4), which in
 splitter mode it always is. Neither needs a login. A read-only String
@@ -41,8 +41,10 @@ STATUS = "/ssi/infopage.ssi"
 #: All that the Thing ever sends, named as lib/oh_matrix_sim's stand-in
 #: records it: the status page and the insel command.
 COMHEADS = frozenset({"get infopage.ssi", "insel"})
-#: Seconds between polls, as for the matrices (oh_integrations._instr).
-REFRESH = 2
+#: Seconds between polls and the request timeout in ms, as for the matrices
+#: (oh_integrations._instr explains both): TX0's input is routed state.
+REFRESH = 10
+TIMEOUT = 2000
 
 
 def thing_uid(device: dict) -> str:
@@ -106,7 +108,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         "config": {
             "baseURL": url(device["ip"]),
             "refresh": REFRESH,
-            "timeout": 3000,
+            "timeout": TIMEOUT,
             "delay": 100,
             "stateMethod": "GET",
             "commandMethod": "GET",

@@ -366,6 +366,7 @@
     "tests/test_health.py",
     "tests/test_host_layout.py",
     "tests/test_house_config.py",
+    "tests/test_http_polling.py",
     "tests/test_install_backup.py",
     "tests/test_install_output.py",
     "tests/test_install_progress.py",

@@ -21,9 +21,24 @@ ADDONS = (
     Addon("transformation", "jsonpath"),
     Addon("automation", "jsscripting", "the inline JS that builds matrix commands"),
 )
-#: Seconds between polls: how soon a change made elsewhere (Control4, the
-#: front panel, the web page) shows up. One request per poll per Thing.
-REFRESH = 2
+#: Seconds between polls: how soon a change made elsewhere (the front panel,
+#: the vendor web page) shows up. A command re-reads its own poll a second
+#: later (refreshAfterCommand), whatever this is. Each poll updates every
+#: linked Item, changed or not, so a shorter interval mostly adds events.
+#: The room policy worker needs each routed Item updated within its 30 s
+#: max_age (oh_room_policy.plan.Field), so this stays at 20 s or less; at
+#: 10 s a lost poll still leaves the reading fresh.
+REFRESH = 10
+#: Milliseconds the binding waits for an answer. It is below REFRESH, so
+#: each poll's requests are answered or abandoned before the next poll sends
+#: its own, and the one-at-a-time CGI never queues one poll behind the last.
+#: It is also well below 6 s: a stuck matrix CGI sends its headers and no
+#: body, then closes at about 6 s, and openHAB's HTTP binding counts any 2xx
+#: as a success, so a longer timeout would show a dead matrix as an ONLINE
+#: Thing with UNDEF channels. Healthy units answer in about 0.1 s. The
+#: binding keeps polling at REFRESH while a Thing is OFFLINE; it has no
+#: back-off. tests/test_http_polling.py checks these limits.
+TIMEOUT = 2000
 COMHEADS = frozenset({
     "get video status", "video switch", "get input status", "get output status",
     "set edid", "set video scaler", "set hdr conversion", "tx hdcp",
@@ -55,7 +70,7 @@ def thing(device: dict, house: House) -> dict:
         "config": {
             "baseURL": url(device["ip"]),
             "refresh": REFRESH,
-            "timeout": 3000,
+            "timeout": TIMEOUT,
             # Space requests 100 ms apart; the CGI serves one at a time.
             "delay": 100,
             "stateMethod": "POST",

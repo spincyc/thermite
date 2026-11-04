@@ -1,7 +1,7 @@
 """OREI BK-808 8x8 HDMI matrix (an HDCVT HDP-MXC88A) over its JSON API.
 
-Two Number points per port pair, read back every few seconds and set by
-commanding the Item:
+Two Number points per port pair, read back at each poll (_instr.REFRESH)
+and set by commanding the Item:
 
 - `<id>_output<N>_input`: the input routed to output N;
 - `<id>_input<N>_edid`: the EDID code input N presents to its source (EDID
