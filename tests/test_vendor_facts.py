@@ -5,6 +5,8 @@ import copy
 import json
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import sys
 import types
 import unittest
@@ -128,6 +130,15 @@ class HandlerPool(unittest.TestCase):
             text = oh_render.render(android_house())[threadpools.FILE]
         self.assertIn("while a TV blocks it and Google TV connections block thingHandler.", text)
         self.assertIn("thingHandler=40", text)
+
+    @unittest.skipUnless(shutil.which("node"), "node is required for the production telemetry rule")
+    def test_a_steady_pool_changes_one_item_per_sample_and_never_mixes_samples(self):
+        # Each change is an events.log line; an UNDEF bracket on every
+        # 15-second sample made two (about 11.5k a day).
+        result = subprocess.run([shutil.which("node"), str(AREA / "tests/threadpools_harness.js"), str(threadpools.SOURCE)],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)["passed"], 5)
 
     def test_declared_house_items_and_item_only_rules_are_accepted(self):
         self.assertLessEqual({*threadpools.HOUSE_ITEMS, *unifi_protect.HOUSE_ITEMS},

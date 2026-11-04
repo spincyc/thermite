@@ -412,6 +412,7 @@
     "tests/test_web_frame.py",
     "tests/test_yoke_metrics.py",
     "tests/test_zone_sync.py",
+    "tests/threadpools_harness.js",
     "tests/zone_sync_harness.js",
     "tui/remote/README.md",
     "tui/remote/administration.js",
