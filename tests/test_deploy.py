@@ -533,6 +533,17 @@ class MetricsUnits(unittest.TestCase):
                 if python:
                     self.assertEqual(parsed["Service"]["SuccessExitStatus"], "143")
 
+    def test_grafana_and_ntfy_log_warnings_and_grafana_loads_only_prometheus(self):
+        parsed = configparser.ConfigParser(interpolation=None)
+        parsed.read_string(deploy.metrics.grafana_ini(HOST))
+        self.assertEqual(dict(parsed["log"]), {"mode": "console", "level": "warn",
+                                               "filters": "search-manifest-watcher:error"})
+        disabled = parsed["plugins"]["disable_plugins"].split(",")
+        self.assertEqual(len(disabled), 13)
+        self.assertIn("loki", disabled)
+        self.assertNotIn("prometheus", disabled)
+        self.assertEqual(deploy.metrics.alerts.ntfy(13612)["log-level"], "warn")
+
     def test_grafana_reads_its_password_from_a_file(self):
         text = self.unit("grafana")
         self.assertIn("Environment=GF_SECURITY_ADMIN_PASSWORD__FILE=/secrets/grafana-admin-password\n", text)

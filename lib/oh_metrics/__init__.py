@@ -619,6 +619,11 @@ def blackbox_yml() -> str:
                   "HTTP checks of openHAB, the Apple TV helper and Grafana."], document)
 
 
+#: Bundled Grafana data source backends that no provisioned data source uses.
+GRAFANA_UNUSED_PLUGINS = ("cloudwatch", "elasticsearch", "grafana-postgresql-datasource", "grafana-pyroscope-datasource",
+                          "influxdb", "jaeger", "loki", "mssql", "mysql", "opentsdb", "stackdriver", "tempo", "zipkin")
+
+
 def grafana_settings(host: dict) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
     """grafana.ini, as (section, ((key, value), ...))."""
     return (
@@ -633,13 +638,18 @@ def grafana_settings(host: dict) -> tuple[tuple[str, tuple[tuple[str, str], ...]
         ("analytics", (("reporting_enabled", "false"), ("check_for_updates", "false"),
                        ("check_for_plugin_updates", "false"), ("feedback_links_enabled", "false"))),
         # Grafana 12 and later install and update app plugins from grafana.com at every start.
-        ("plugins", (("preinstall_disabled", "true"), ("preinstall_auto_update", "false"))),
+        # Only Prometheus is provisioned: the other bundled data source backends
+        # cost about 153 threads and 150 MB between them, unused.
+        ("plugins", (("preinstall_disabled", "true"), ("preinstall_auto_update", "false"),
+                     ("disable_plugins", ",".join(GRAFANA_UNUSED_PLUGINS)))),
         ("news", (("news_feed_enabled", "false"),)),
         ("snapshots", (("enabled", "false"), ("external_enabled", "false"))),
         ("public_dashboards", (("enabled", "false"),)),
         ("unified_alerting", (("enabled", "false"),)),
         ("dashboards", (("default_home_dashboard_path", f"{GRAFANA_CONFIG_DIR}/dashboards/{dashboards.HOUSE}.json"),)),
-        ("log", (("mode", "console"),)),
+        # Warnings and errors only; the search manifest watcher logs at
+        # warn every few seconds when nothing is wrong.
+        ("log", (("mode", "console"), ("level", "warn"), ("filters", "search-manifest-watcher:error"))),
     )
 
 

@@ -52,4 +52,4 @@ def ntfy(port):
     # Explicitly no Firebase/APNs/upstream. This listener never opens to the LAN.
     return {"base-url": f"http://127.0.0.1:{port}", "listen-http": f"127.0.0.1:{port}",
             "cache-file": "/var/lib/ntfy/cache.db", "cache-duration": "48h", "enable-metrics": True,
-            "upstream-base-url": "", "behind-proxy": False}
+            "upstream-base-url": "", "behind-proxy": False, "log-level": "warn"}
