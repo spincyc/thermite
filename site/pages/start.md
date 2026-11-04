@@ -88,8 +88,11 @@ thermite remote --config /path/to/private-site
 ```
 
 With authentication enabled, first run `thermite access login --config
-/path/to/private-site --user admin`. Other computers use `--url` and
-`--ca-file` with a copy of that authority file at login. Guests control
+/path/to/private-site --user admin`. Any other computer with thermite
+installed runs `thermite tui`, which needs no private site and opens
+`https://thermite:13600` (`--url` names another server); pass a copy of that
+authority file once with `--ca-file`. Use the same `--url` and `--ca-file`
+with `thermite access login` to sign in there. Guests control
 unlocked rooms; signed-in accounts add camera snapshots and live video;
 administrators manage locks, schedules, users and pairing. Choose a room and source
 in Remotes; use Pair devices for equipment that needs an on-screen code.

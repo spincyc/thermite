@@ -47,7 +47,7 @@
 <h2 id="devices">The house&#x27;s devices</h2>
 <table class="verbs"><tbody><tr><td><a href="#dhcp-reservations"><code>thermite dhcp-reservations</code></a></td><td>list the UniFi DHCP reservations the house file needs</td></tr><tr><td><a href="#matrix-settings"><code>thermite matrix-settings</code></a></td><td>show matrix settings that differ from the house file; --apply sets them</td></tr><tr><td><a href="#control4"><code>thermite control4</code></a></td><td>export the Control4 project read-only and compare it</td></tr><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
-<table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#access"><code>thermite access</code></a></td><td>site login, local identity bootstrap, HTTPS service and room policies</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the flaming bowl mark and color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#tui"><code>thermite tui</code></a></td><td>the house remote in a terminal on any computer, from its HTTPS gateway</td></tr><tr><td><a href="#access"><code>thermite access</code></a></td><td>site login, local identity bootstrap, HTTPS service and room policies</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the flaming bowl mark and color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
 <h2 id="program">This program</h2>
 <table class="verbs"><tbody><tr><td><a href="#version"><code>thermite version</code></a></td><td>thermite&#x27;s version, and runtime&#x27;s: pinned, and running here</td></tr><tr><td><a href="#package"><code>thermite package</code></a></td><td>build a privacy-checked portable application wheel</td></tr><tr><td><a href="#iso"><code>thermite iso</code></a></td><td>build a bootable installer for a dedicated Thermite machine</td></tr><tr><td><a href="#completion"><code>thermite completion</code></a></td><td>print a completion script for bash, zsh or fish</td></tr></tbody></table>
 <h2 id="overview">thermite --help</h2>
@@ -90,6 +90,7 @@ the house&#x27;s devices:
 
 front ends, themes and docs:
   remote               the house remote in a terminal
+  tui                  the house remote in a terminal on any computer, from its HTTPS gateway
   access               site login, local identity bootstrap, HTTPS service and room policies
   theme                the flaming bowl mark and color themes: show, check, export
   docs                 build the docs site, or export it to the thermite repository
@@ -130,6 +131,7 @@ examples:
   thermite install --dry-run        what an install would change here
   thermite upgrade -n               what moving to the pinned runtime would run here
   thermite remote --mock            the remote in a terminal, sending nothing
+  thermite tui                      the remote from a laptop: the gateway on the server named thermite
   thermite theme show               the flaming bowl, in this terminal&#x27;s colors
   thermite help sandbox             one verb&#x27;s actions, switches and examples
   thermite completion bash          tab completion for bash (thermite help completion)
@@ -1820,6 +1822,97 @@ examples:
                                     in the high-contrast theme
   thermite remote --no-log          give the log pane&#x27;s rows to the controls; L shows it again
   thermite remote --setup           only install the pinned blessed, then exit
+</pre>
+</section>
+<section class="verb" id="tui"><h3><code>thermite tui</code></h3><p>The house remote in a terminal on any computer, from its HTTPS gateway.</p><pre class="help">usage: thermite tui [-h] [--config DIR] [--url URL] [--ca-file FILE] [--pair]
+                    [--room ID] [--choose SOURCE] [--theme NAME|FILE] [--dark | --light]
+                    [--volume {slider,buttons}] [--still] [--log | --no-log]
+                    [--state FILE]
+
+The house remote in this terminal, as thermite remote draws it, against a
+Thermite gateway: from the server itself or from any other computer with
+thermite installed, such as a laptop. It needs no private configuration:
+the gateway serves the house&#x27;s rooms and controls. It needs Node.js; the
+first run installs the pinned blessed into ~/.cache/thermite/tui-remote
+($XDG_CACHE_HOME) with npm ci.
+
+Without --url it opens https://thermite:13600: most homes run their
+Thermite server on a computer named thermite. --url names the gateway as
+https://HOST:PORT, or as HOST:PORT or HOST, which mean https (on port
+13600 without one). Plain http reaches only this computer:
+localhost, 127.0.0.1 or [::1].
+
+Guests control unlocked rooms without a login. After thermite access login
+for the same address, that account&#x27;s personal credential is used.
+
+options:
+  -h, --help                 show this help message and exit
+  --config, --site DIR       use this private configuration directory
+  --url URL                  the gateway: https://HOST:PORT, HOST:PORT or HOST (default:
+                             https://thermite:13600)
+  --ca-file FILE             trust this copy of the server&#x27;s tls-cert.pem; remembered
+                             for that address
+  --pair                     start on the Pairing screen
+  --room ID                  start in this room (else the last one used, then the first)
+  --choose SOURCE            choose this source in the room at start; on thermite this
+                             really switches it
+  --theme NAME|FILE          the colors: a built-in theme&#x27;s name or a theme file
+                             (default: thermite)
+  --dark                     the theme&#x27;s dark mode for this run (t switches and keeps
+                             it)
+  --light                    the theme&#x27;s light mode for this run (t switches and keeps
+                             it)
+  --volume {slider,buttons}  the volume as a slider or as the + and - keys (v switches
+                             and keeps it)
+  --still                    nothing moves (as THERMITE_REMOTE_STILL=1 does); a switches
+                             it and keeps it
+  --log                      show the log pane when the window has room, for this run (L
+                             switches and keeps it)
+  --no-log                   hide the log pane and give its rows to the controls, for
+                             this run
+  --state FILE               where the last room, volume mode, theme mode, motion and
+                             log visibility are kept (default:
+                             ~/.local/state/thermite/tui-remote/state.json, under
+                             $XDG_STATE_HOME)
+
+switches every verb takes:
+  -q, --quiet                print only errors
+  -v, --verbose              also print, on stderr, the commands and HTTP requests it
+                             runs
+  --no-color                 no color in what it prints (as NO_COLOR=1 does)
+
+trust:
+  The gateway&#x27;s certificate is signed by the server&#x27;s private certificate
+  authority: tls-cert.pem in the gateway root, which is the state root with
+  -access appended (e.g. /srv/thermite-access/tls-cert.pem); thermite
+  install prints its path. On the server itself the installation&#x27;s copy is
+  used. On another computer, copy that file once and pass it with
+  --ca-file; it is then remembered for that address, as thermite access
+  login --ca-file remembers it. Certificates are always verified.
+
+keys:
+  as on the page: arrows D-pad, Enter OK, Backspace or Esc Back, + and -
+  volume, M mute, P play/pause, 0 Off, 1-9 a source, [ and ] the room;
+  and Tab to move the focus, Space to press it, r rooms, i info,
+  v volume slider, t theme, a motion, L log pane,
+  F1 Home, F2 Remotes, F3 Security, F4 Cameras, F5 Site;
+  within Remotes, F6 or Ctrl-P opens Pair devices;
+  ? help, q quit.
+
+exit status:
+  0  the remote was quit
+  1  the remote stopped on an error (printed once the terminal is restored)
+  2  a wrong switch, no Node.js, the gateway not found, not answering or not
+     serving a house, or its certificate not trusted
+
+examples:
+  thermite tui                      the house on https://thermite:13600, the server named thermite
+  thermite tui --url 192.0.2.50     a server of another name: https://192.0.2.50:13600
+  thermite tui --url https://192.0.2.50:13600 --ca-file ~/thermite-ca.pem
+                                    from a laptop, trusting a copy of the server&#x27;s tls-cert.pem
+  thermite access login --url https://thermite:13600 --user operator
+                                    sign in once; thermite tui then uses that account
+  thermite tui --room ROOM --light  start in that room, in the theme&#x27;s light mode
 </pre>
 </section>
 <section class="verb" id="access"><h3><code>thermite access</code></h3><p>Site login, local identity bootstrap, HTTPS service and room policies.</p><pre class="help">usage: thermite access [-h] [--config DIR] ACTION ...

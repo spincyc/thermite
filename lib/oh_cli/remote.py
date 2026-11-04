@@ -111,10 +111,10 @@ def ready(build: Path = BUILD, tui: Path = TUI) -> bool:
     return (modules(build) / "blessed/package.json").is_file() and stamp == lock_digest(tui)
 
 
-def setup(build: Path = BUILD, tui: Path = TUI, npm: str | None = None) -> int:
+def setup(build: Path = BUILD, tui: Path = TUI, npm: str | None = None, verb: str = "remote") -> int:
     npm = npm or shutil.which("npm")
     if not npm:
-        print("thermite remote: npm is needed once, to install blessed (Arch: pacman -S npm)", file=sys.stderr)
+        print(f"thermite {verb}: npm is needed once, to install blessed (Arch: pacman -S npm)", file=sys.stderr)
         return 2
     build.mkdir(parents=True, exist_ok=True)
     (build / STAMP).unlink(missing_ok=True)
@@ -164,11 +164,11 @@ def target(arguments: argparse.Namespace) -> list[str]:
     return ["--url", deploy.production_url(deploy.load(AREA)[1])]
 
 
-def node_argv(arguments: argparse.Namespace, node: str = "node", build: Path = BUILD) -> list[str]:
-    argv = [node, str(TUI / "main.js"), "--modules", str(modules(build)), "--state", str(arguments.state)]
-    argv += target(arguments)
-    if native_mode(arguments):
-        argv.append("--native")
+def main_js(node: str, build: Path, state: Path, backend: list[str], arguments: argparse.Namespace) -> list[str]:
+    """main.js's command line: blessed in build, the state file, the backend
+    (--url URL [--native], or --mock), then the view switches add_view()
+    adds (and the mock's, where the parser has them)."""
+    argv = [node, str(TUI / "main.js"), "--modules", str(modules(build)), "--state", str(state), *backend]
     if arguments.pair:
         argv.append("--pair")
     if arguments.still:
@@ -177,12 +177,17 @@ def node_argv(arguments: argparse.Namespace, node: str = "node", build: Path = B
         argv.append("--log" if arguments.log_visible else "--no-log")
     for flag, name in (("room", "room"), ("choose", "choose"), ("mode", "mode"), ("volume", "volume"),
                        ("latency", "latency")):
-        value = getattr(arguments, name)
+        value = getattr(arguments, name, None)
         if value is not None:
             argv += [f"--{flag}", str(value)]
-    if arguments.matrix_down:
+    if getattr(arguments, "matrix_down", False):
         argv.append("--matrix-down")
     return argv
+
+
+def node_argv(arguments: argparse.Namespace, node: str = "node", build: Path = BUILD) -> list[str]:
+    backend = target(arguments) + (["--native"] if native_mode(arguments) else [])
+    return main_js(node, build, arguments.state, backend, arguments)
 
 
 def palette(spec: str | None, house: Path = oh_cli.HOUSE):
@@ -213,13 +218,26 @@ def parser() -> argparse.ArgumentParser:
                         help="explicitly use the native runtime instead of site authentication (owner/testing only)")
     parser.add_argument("--setup", action="store_true",
                         help="only install the pinned blessed into build/tui-remote, then exit")
+    add_view(parser, "the house file's theme, else thermite")
+    parser.add_argument("--latency", type=int, metavar="MS", help="mock only: how long a choice takes (default 600)")
+    parser.add_argument("--matrix-down", action="store_true",
+                        help="mock only: start with the HDMI matrix not answering")
+    parser.add_argument("--state", type=Path, default=STATE, metavar="FILE",
+                        help="where the last room, volume mode, theme mode, motion and log visibility are kept "
+                             "(default var/tui-remote/state.json)")
+    return parser
+
+
+def add_view(parser: argparse.ArgumentParser, theme: str) -> None:
+    """What the terminal shows at start (--pair, --room, --choose, --theme
+    defaulting to `theme`, --dark, --light, --volume, --still, --log,
+    --no-log): thermite remote's and thermite tui's alike."""
     parser.add_argument("--pair", action="store_true", help="start on the Pairing screen")
     parser.add_argument("--room", metavar="ID", help="start in this room (else the last one used, then the first)")
     parser.add_argument("--choose", metavar="SOURCE",
                         help="choose this source in the room at start; on thermite this really switches it")
     parser.add_argument("--theme", metavar="NAME|FILE",
-                        help="the colors: a built-in theme's name or a theme file "
-                             "(default: the house file's theme, else thermite)")
+                        help=f"the colors: a built-in theme's name or a theme file (default: {theme})")
     oh_cli.add_mode(parser, default=None, note=" for this run (t switches and keeps it)")
     parser.add_argument("--volume", choices=("slider", "buttons"),
                         help="the volume as a slider or as the + and - keys (v switches and keeps it)")
@@ -231,13 +249,27 @@ def parser() -> argparse.ArgumentParser:
     logging.add_argument("--no-log", dest="log_visible", action="store_false",
                          help="hide the log pane and give its rows to the controls, for this run")
     parser.set_defaults(log_visible=None)
-    parser.add_argument("--latency", type=int, metavar="MS", help="mock only: how long a choice takes (default 600)")
-    parser.add_argument("--matrix-down", action="store_true",
-                        help="mock only: start with the HDMI matrix not answering")
-    parser.add_argument("--state", type=Path, default=STATE, metavar="FILE",
-                        help="where the last room, volume mode, theme mode, motion and log visibility are kept "
-                             "(default var/tui-remote/state.json)")
-    return parser
+
+
+def cached_model(content: bytes, directory: Path) -> Path:
+    """A private, content-addressed copy of a remote model in directory, once
+    it reads as data (never evaluated) of the shape main.js needs; raises
+    ValueError or OSError."""
+    from oh_access.files import atomic_private, private_directory, read_private
+    from oh_features import remote_model
+
+    if len(content) > MODEL_LIMIT:
+        raise ValueError("remote model exceeds its limit")
+    model = remote_model.literal(content.decode("utf-8"))
+    if (model.get("version") != 1 or not isinstance(model.get("rooms"), list)
+            or not all(isinstance(model.get(key), dict) for key in ("sources", "devices", "initial"))):
+        raise ValueError("invalid remote model")
+    path = private_directory(directory) / (hashlib.sha256(content).hexdigest() + ".js")
+    if path.exists() or path.is_symlink():
+        if read_private(path, MODEL_LIMIT) == content:
+            return path
+    atomic_private(path, content)
+    return path
 
 
 def model_file(arguments) -> Path | None:
@@ -254,24 +286,8 @@ def model_file(arguments) -> Path | None:
             if not generated.is_file():
                 raise RemoteModelError("no generated remote model for this site; run thermite generate")
             return generated
-        from oh_access.files import atomic_private, private_directory, read_private
-        from oh_features import remote_model
-
         prepared, _ = deploy.prepared_files(AREA, deploy.resolve(AREA, "HEAD"), AREA / "var")
-        content = prepared[MODEL].data
-        if len(content) > MODEL_LIMIT:
-            raise ValueError("remote model exceeds its limit")
-        model = remote_model.literal(content.decode("utf-8"))
-        if (model.get("version") != 1 or not isinstance(model.get("rooms"), list)
-                or not all(isinstance(model.get(key), dict) for key in ("sources", "devices", "initial"))):
-            raise ValueError("invalid remote model")
-        directory = private_directory(AREA / "var/tui-remote/models")
-        path = directory / (hashlib.sha256(content).hexdigest() + ".js")
-        if path.exists() or path.is_symlink():
-            if read_private(path, MODEL_LIMIT) == content:
-                return path
-        atomic_private(path, content)
-        return path
+        return cached_model(prepared[MODEL].data, AREA / "var/tui-remote/models")
     except RemoteModelError:
         raise
     except (OSError, ValueError, KeyError, deploy.DeployError):
@@ -292,16 +308,67 @@ def launch_environment(arguments, chosen):
     from oh_access import client
     url = target(arguments)[1]
     path = client.credential_path(url)
+    profile = client.deployment(AREA)
+    ca = profile["ca_file"] if profile and profile["url"] == client.origin(url) else client.saved_ca(path)
+    return gateway_environment(environment, path, ca)
+
+
+def gateway_environment(environment: dict, credential: Path | None, ca: str | None) -> dict:
+    """environment for main.js on an HTTPS gateway: the personal credential
+    file thermite access login saved, if there is one, and the CA to trust."""
     environment.pop("THERMITE_REMOTE_TOKEN_FILE", None)
     # The gateway may explicitly allow anonymous ordinary controls. Let the
     # shared client discover that state; a missing credential is never native mode.
-    if path.exists() or path.is_symlink():
-        environment["THERMITE_REMOTE_TOKEN_FILE"] = str(path)
-    profile = client.deployment(AREA)
-    ca = profile["ca_file"] if profile and profile["url"] == client.origin(url) else client.saved_ca(path)
+    if credential is not None and (credential.exists() or credential.is_symlink()):
+        environment["THERMITE_REMOTE_TOKEN_FILE"] = str(credential)
     if ca:
         environment["NODE_EXTRA_CA_CERTS"] = ca
     return environment
+
+
+def colors(verb: str, load):
+    """The theme load() returns, with a warning where it is hard to read;
+    None, having said why, when it cannot be loaded."""
+    import oh_brand as brand
+
+    try:
+        chosen = load()
+    except brand.PaletteError as exc:
+        print(f"thermite {verb}: {exc}", file=sys.stderr)
+        return None
+    problems = brand.contrast_problems(chosen)
+    if problems:
+        print(f"thermite {verb}: {chosen.name} is hard to read in places: {'; '.join(problems)}", file=sys.stderr)
+    return chosen
+
+
+class LaunchError(Exception):
+    """Why main.js cannot start, printed after `thermite VERB: `."""
+
+
+def launch(verb: str, prepare, build: Path = BUILD) -> int:
+    """What thermite remote and thermite tui share once their switches are
+    read: Node.js, the pinned blessed in build (installed once), then main.js
+    in this process's place. prepare(node) returns main.js's command line and
+    environment, or raises LaunchError."""
+    node = shutil.which("node")
+    if not node:
+        print(f"thermite {verb}: needs Node.js (Arch: pacman -S nodejs npm)", file=sys.stderr)
+        return 2
+    if not ready(build):
+        shown = build.relative_to(AREA) if build.is_relative_to(AREA) else build
+        print(f"thermite {verb}: installing the pinned blessed into {shown} (once)", file=sys.stderr)
+        status = setup(build, verb=verb)
+        if status:
+            return status
+    try:
+        command, environment = prepare(node)
+    except LaunchError as exc:
+        print(f"thermite {verb}: {exc}", file=sys.stderr)
+        return 2
+    oh_cli.trace_run(command)
+    os.execve(node, command, environment)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -313,34 +380,17 @@ def main(argv: list[str] | None = None) -> int:
         options.error("--latency and --matrix-down are for --mock")
     if arguments.setup:
         return setup()
-    import oh_brand as brand
+    chosen = colors("remote", lambda: palette(arguments.theme))
+    if chosen is None:
+        return 2
 
-    try:
-        chosen = palette(arguments.theme)
-    except brand.PaletteError as exc:
-        print(f"thermite remote: {exc}", file=sys.stderr)
-        return 2
-    problems = brand.contrast_problems(chosen)
-    if problems:
-        print(f"thermite remote: {chosen.name} is hard to read in places: {'; '.join(problems)}", file=sys.stderr)
-    node = shutil.which("node")
-    if not node:
-        print("thermite remote: needs Node.js (Arch: pacman -S nodejs npm)", file=sys.stderr)
-        return 2
-    if not ready():
-        print("thermite remote: installing the pinned blessed into build/tui-remote (once)", file=sys.stderr)
-        status = setup()
-        if status:
-            return status
-    try:
-        command = node_argv(arguments, node)
-        environment = launch_environment(arguments, chosen)
-    except RemoteModelError as exc:
-        print(f"thermite remote: {exc}", file=sys.stderr)
-        return 2
-    except ValueError:
-        print("thermite remote: log in with thermite access login, or explicitly choose --native for owner/testing access", file=sys.stderr)
-        return 2
-    oh_cli.trace_run(command)
-    os.execve(node, command, environment)
-    return 0
+    def prepare(node: str) -> tuple[list[str], dict]:
+        try:
+            return node_argv(arguments, node), launch_environment(arguments, chosen)
+        except RemoteModelError as exc:
+            raise LaunchError(str(exc)) from None
+        except ValueError:
+            raise LaunchError("log in with thermite access login, or explicitly choose --native "
+                              "for owner/testing access") from None
+
+    return launch("remote", prepare)

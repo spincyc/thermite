@@ -35,6 +35,13 @@ rollback. The unified deployment workflow uses a separate committed private site
   refused only what would change the locked room's route, such as driving a
   device it is showing. Lock and Unlock live under Info on Remotes; the remote
   itself shows only the lock state.
+- `thermite tui` runs the terminal remote on any computer with thermite
+  installed, with no private site: it reads the house from the gateway, opens
+  `https://thermite:13600` by default, and takes `--url` as `HOST`,
+  `HOST:PORT` or an https URL. `--ca-file` trusts a copy of the server's
+  `tls-cert.pem` once and is remembered for that address; on the server, the
+  installed gateway's authority is used automatically. An unreachable,
+  unresolvable or untrusted gateway gets a two-line explanation.
 - Remotes: the terminal locks and unlocks a room with `K`; web keyboard
   shortcuts obey locks; the lock control states its reason and last error;
   schedule locks show their end time; one failed status refresh no longer pauses

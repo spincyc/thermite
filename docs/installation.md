@@ -329,7 +329,9 @@ ordinary controls without a login. To view cameras or administer the site, log i
 `thermite access login --config DIR --user USER`. This creates a personal
 credential; installation itself creates no household account. Other computers
 need the server's URL and a copy of `tls-cert.pem`, passed once with
-`--ca-file` at login.
+`--ca-file`: `thermite tui --url URL --ca-file FILE` opens the terminal remote
+there without a private site (with no `--url` it opens `https://thermite:13600`),
+and `thermite access login` takes the same switches.
 
 ## Update or remove
 
