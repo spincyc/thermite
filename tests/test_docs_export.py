@@ -12,6 +12,9 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_cli
 import oh_site
 
+#: The Python whose argparse builds the committed command reference.
+HELP_PYTHON = (3, 13)
+
 
 def thermite(*argv):
     out, err = io.StringIO(), io.StringIO()
@@ -64,6 +67,10 @@ class CommittedSite(unittest.TestCase):
         if not (root / "docs/index.html").is_file():
             self.skipTest("no committed docs site here")
         stale, stray = oh_site.compare(root, oh_site.repository_files())
+        if sys.version_info < HELP_PYTHON:
+            # The command reference embeds argparse help, whose usage lines
+            # wrap differently before Python 3.13; it is built and checked there.
+            stale = [path for path in stale if path != "docs/commands.html"]
         self.assertEqual((stale, stray), ([], []),
                          "the committed site drifted from site/, docs/*.md or the help: "
                          "run bin/thermite docs export --to . and commit the result")
