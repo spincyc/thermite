@@ -90,6 +90,11 @@ def bearer(request):
 
 class IdentityCSRF(CsrfViewMiddleware):
     def process_view(self, request, callback, callback_args, callback_kwargs):
+        from .guest import listener
+        if listener(request):
+            # No cookie or credential reaches here; GuestListener required the
+            # listener's own Origin and a JSON body instead.
+            return None
         if getattr(callback, "token_login", False):
             if request.method != "POST":
                 return None  # The view answers 405 with its Allow header.

@@ -22,7 +22,7 @@ import oh_public
 import oh_render
 import oh_sandbox
 from oh_access import AccessError
-from oh_access.service import load_config
+from oh_access.service import CONFIG_VERSION, load_config
 from oh_cli import docs
 from oh_install import steps
 from oh_metrics import exporter
@@ -31,11 +31,12 @@ from oh_metrics import exporter
 class Allocation(unittest.TestCase):
     def test_one_contiguous_run_with_distinct_application_anchor(self):
         self.assertEqual(oh_ports.ACCESS_PORT, 13600)
-        self.assertEqual(list(oh_ports.DEFAULTS.values()), list(range(13600, 13626)))
+        self.assertEqual(list(oh_ports.DEFAULTS.values()), list(range(13600, 13627)))
         self.assertEqual(len(set(oh_ports.DEFAULTS.values())), len(oh_ports.DEFAULTS))
-        self.assertEqual(tuple(oh_ports.DEFAULTS)[-3:], ("native_shutdown", "sandbox_shutdown", "boot_shutdown"))
+        self.assertEqual(tuple(oh_ports.DEFAULTS)[-4:], ("native_shutdown", "sandbox_shutdown", "boot_shutdown", "guest_http"))
         self.assertEqual([oh_ports.DEFAULTS[name] for name in ("native_shutdown", "sandbox_shutdown", "boot_shutdown")],
                          [13623, 13624, 13625])
+        self.assertEqual(oh_ports.GUEST_HTTP_PORT, 13626)
 
     def test_overrides_cannot_take_other_production_or_development_listeners(self):
         for host in ({"http_port": oh_ports.HTTPS_PORT},
@@ -379,10 +380,10 @@ class Consumers(unittest.TestCase):
                 path = root / name
                 path.write_text("{}")
                 path.chmod(0o600)
-            config = {"version": 1, "state": str(root), "contract_file": str(root / "contract"),
+            config = {"version": CONFIG_VERSION, "state": str(root), "contract_file": str(root / "contract"),
                       "runtime_url": oh_ports.NATIVE_URL, "runtime_token_file": str(root / "token"),
                       "allowed_hosts": ["example.test"], "bind_host": "127.0.0.1", "port": oh_ports.HTTP_PORT,
-                      "tls_cert": str(root / "cert"), "tls_key": str(root / "key"), "timezone": "UTC"}
+                      "tls_cert": str(root / "cert"), "tls_key": str(root / "key"), "timezone": "UTC", "guest_http": None}
             path = root / "config.json"
             path.write_text(json.dumps(config)); path.chmod(0o600)
             with self.assertRaises(AccessError):

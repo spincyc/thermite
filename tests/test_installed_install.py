@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import os
 import shlex
 import sys
@@ -197,7 +198,11 @@ class InstalledInstall(unittest.TestCase):
                                     runtime_token_file=root / "bearer", tls_cert=root / "cert", tls_key=root / "key",
                                     allowed_hosts=["site.example"], bind_host="127.0.0.1", port=13600,
                                     timezone="Etc/UTC", install_environment=False,
-                                    plan_directory=root / "operator-plan")
+                                    plan_directory=root / "operator-plan",
+                                    guest_http={"listen": ["192.0.2.10", "192.0.2.10"], "clients": ["192.0.2.0/24"]})
+        config = json.loads((target / "config.json").read_text())
+        self.assertEqual((config["version"], config["guest_http"]),
+                         (2, {"port": 13626, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"], "names": []}))
         self.assertEqual((target / "program/lib/reviewed.py").read_text(), "# application resource\n")
         self.assertEqual((target / "program/bin/thermite").read_text(), "# application launcher\n")
         self.assertFalse((self.site / "lib").exists())

@@ -45,6 +45,7 @@ import oh_ports
 import oh_service
 import oh_units
 import oh_metrics as metrics
+from oh_access import guest
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.RUNTIME]}.container"
@@ -121,7 +122,7 @@ ACCESS = "access"
 #: The installation root's mode; root owns it.
 ROOT_MODE = 0o755
 HOST_REQUIRED = ("timezone", "http_port", "https_port", "uid", "gid")
-HOST_KEYS = frozenset((*HOST_REQUIRED, "root", "metrics"))
+HOST_KEYS = frozenset((*HOST_REQUIRED, "root", "metrics", "guest_http"))
 METRICS_KEYS = frozenset(("units", "retention", "retention_size", "yoke_targets",
                           *(name + "_port" for name in oh_ports.METRICS)))
 #: Host values are pasted into unit files, container arguments and shell
@@ -174,6 +175,7 @@ def validate_host(host: object, where: str = "instance/host.yaml") -> dict:
                                                   and _SIZE.fullmatch(overrides["retention_size"])):
             fail("metrics.retention_size must be a Prometheus size such as 12GB")
     try:
+        guest.settings(host.get("guest_http"))
         oh_service.validate_identity(host["uid"], host["gid"])
         oh_ports.effective(host)
         metrics.yoke_targets(host)

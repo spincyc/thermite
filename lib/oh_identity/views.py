@@ -15,6 +15,7 @@ from oh_room_policy import STALE_AFTER, active, empty, manual_hold, with_manual_
 from oh_routes import ASSET_ROUTES
 
 from .auth import api, failure, login_user, not_allowed, problem_response, require_admin
+from .guest import access_config, listener
 from .models import PersonalToken, ReconcileState, RoomPolicy, User
 from .policy_store import TOKEN_RETENTION, next_revision
 from .runtime import get_adapter, policy_problem
@@ -55,7 +56,8 @@ def security(request):
             logout(request)
         else:
             raise Problem("method_not_allowed", 405, allow=("GET", "POST"))
-        response = JsonResponse({**data, "csrf": get_token(request)})
+        # The cookieless Guest listener has no CSRF token to hand out.
+        response = JsonResponse(data if listener(request) else {**data, "csrf": get_token(request)})
         response["Cache-Control"] = "no-store"
         return response
     except Problem as exc:
@@ -393,9 +395,8 @@ def page_alias(request, target):
 def asset(request, name):
     if name == "access-config.js" and request.method in ("GET", "HEAD"):
         # A deployed native-mode asset must never bypass the bounded gateway.
-        response = HttpResponse("" if request.method == "HEAD" else
-            'globalThis.THERMITE_ACCESS_CONFIG = Object.freeze({"version":1,"mode":"authenticated"});\n',
-            content_type="application/javascript")
+        response = HttpResponse("" if request.method == "HEAD" else access_config(request),
+                                content_type="application/javascript")
         response["Cache-Control"] = "no-store"
         return response
     try:

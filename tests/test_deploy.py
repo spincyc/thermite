@@ -1206,7 +1206,7 @@ class HostFacts(unittest.TestCase):
             deploy.validate_host(["root"])
         self.refused("unknown metrics setting retension", metrics={"retension": "30d"})
         # The installation root replaced state_root, which has no other meaning now.
-        self.refused(r"unknown setting state_root \(allowed: gid, http_port, https_port, metrics, root, timezone, uid\)",
+        self.refused(r"unknown setting state_root \(allowed: gid, guest_http, http_port, https_port, metrics, root, timezone, uid\)",
                      state_root="/srv/thermite")
 
     def test_values_cannot_inject_unit_directives(self):

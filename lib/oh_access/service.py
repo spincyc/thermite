@@ -1,4 +1,5 @@
-"""Explicit, TLS-only site composition. No service starts on import."""
+"""Explicit site composition: TLS, plus the opt-in plain-HTTP Guest listener
+(oh_access.guest). No service starts on import."""
 
 from contextlib import contextmanager
 import asyncio
@@ -14,11 +15,13 @@ import sys
 
 import oh_ports
 
-from . import AccessError
+from . import AccessError, guest
 from .files import json_private, private_directory, read_private, require_service_account
 
 CONFIG_FIELDS = {"version", "state", "contract_file", "runtime_url", "runtime_token_file", "allowed_hosts",
-                 "bind_host", "port", "tls_cert", "tls_key", "timezone"}
+                 "bind_host", "port", "tls_cert", "tls_key", "timezone", "guest_http"}
+#: Version 2 added guest_http: the optional plain-HTTP Guest listener, or null.
+CONFIG_VERSION = 2
 # Uvicorn's exit status for a server that never started; systemd sees a failure.
 STARTUP_FAILURE = 3
 # In-flight HTTP requests across the gateway; every HTTP/2 stream counts.
@@ -35,18 +38,20 @@ def _native_port(runtime_url):
     return oh_ports.checked("native HTTP", loopback_origin(runtime_url).port or 80)
 
 
-def validate_listeners(runtime_url, port, *, callback_port=None, host_ports=None):
+def validate_listeners(runtime_url, port, *, callback_port=None, guest_port=None, host_ports=None):
     """Stage against the site's allocation; runtime loaders check actual endpoints."""
     selected = {"access": port}
     if callback_port is not None:
         selected["callbacks"] = callback_port
+    if guest_port is not None:
+        selected["guest_http"] = guest_port
     return oh_ports.listeners(selected, upstream=_native_port(runtime_url), allocated=host_ports)
 
 
 def load_config(path, *, tls=True):
     try:
         data = json.loads(read_private(path, 65536))
-        if not isinstance(data, dict) or set(data) != CONFIG_FIELDS or data["version"] != 1:
+        if not isinstance(data, dict) or set(data) != CONFIG_FIELDS or data["version"] != CONFIG_VERSION:
             raise ValueError()
         for field in ("state", "contract_file", "runtime_token_file", "tls_cert", "tls_key"):
             if not isinstance(data[field], str) or not Path(data[field]).is_absolute():
@@ -55,9 +60,13 @@ def load_config(path, *, tls=True):
         if not isinstance(hosts, list) or not hosts or any(not isinstance(x, str) or not re.fullmatch(r"[A-Za-z0-9.:[\]-]+", x) or x.startswith(".") or "*" in x for x in hosts):
             raise ValueError()
         ipaddress.ip_address(data["bind_host"])
+        guest_http = data["guest_http"]
+        if guest_http is not None and guest.settings(guest_http) != guest_http:
+            raise ValueError()
         # Staging checks the full site allocation. This runtime configuration
         # names actual endpoints; defaults cannot describe relocated services.
-        oh_ports.unique({"access": data["port"], "native HTTP": _native_port(data["runtime_url"])})
+        oh_ports.unique({"access": data["port"], "native HTTP": _native_port(data["runtime_url"]),
+                         **({"guest HTTP": guest_http["port"]} if guest_http else {})})
         from zoneinfo import ZoneInfo
         ZoneInfo(data["timezone"])
         private_directory(data["state"])
@@ -240,8 +249,9 @@ class Admission:
             await send({"type": "websocket.close"})
 
 
-def listener(host, port, tls=None):
-    """Hypercorn settings for one gateway listener; tls None serves plain HTTP."""
+def listener(host, port, tls=None, clients=None):
+    """Hypercorn settings for one gateway listener; tls None serves plain HTTP.
+    clients (oh_access.guest.Clients) closes connections from elsewhere."""
     from hypercorn.config import Config
 
     class Listener(Config):
@@ -250,6 +260,12 @@ def listener(host, port, tls=None):
 
         def create_ssl_context(self):
             return tls
+
+        def create_sockets(self):
+            sockets = super().create_sockets()
+            if clients is not None:
+                sockets.insecure_sockets[:] = map(clients.only, sockets.insecure_sockets)
+            return sockets
 
     config = Listener()
     config.bind = [f"[{host}]:{port}" if ipaddress.ip_address(host).version == 6 else f"{host}:{port}"]
@@ -362,6 +378,19 @@ async def _serve(bound, *, on_shutdown=None, stop=None):
             raise result
 
 
+def guest_listeners(config, admission):
+    """(application, listener) pairs for the opt-in Guest listener, one per
+    address. They share admission, so its request budget, with HTTPS; each
+    request carries the listener in its ASGI scope (guest.mark)."""
+    settings = config["guest_http"]
+    if settings is None:
+        return []
+    secure = guest.origin("https", config["allowed_hosts"][0].strip("[]"), config["port"])
+    application = guest.mark(admission, guest.Listener(frozenset(guest.origins(settings)), secure))
+    clients = guest.Clients(settings["clients"])
+    return [(application, listener(address, settings["port"], clients=clients)) for address in settings["listen"]]
+
+
 def serve(config_path):
     require_service_account()
     config, adapter, _ = configured(config_path)
@@ -387,10 +416,12 @@ def serve(config_path):
             raise AccessError("An authenticated site requires an active administrator")
         rebase_timezone(adapter, config["timezone"])
         from oh_identity.asgi import application
-        # Direct TLS only. Hypercorn trusts no proxy or forwarded header: the
-        # ASGI client is always the socket peer.
+        # Direct TLS, and plain HTTP only on the opt-in Guest listener.
+        # Hypercorn trusts no proxy or forwarded header: the ASGI client is
+        # always the socket peer.
         tls = tls_context(config["tls_cert"], config["tls_key"])
-        _run_server([(Admission(application), listener(config["bind_host"], config["port"], tls))],
-                    on_shutdown=cleanup)
+        admission = Admission(application)
+        _run_server([(admission, listener(config["bind_host"], config["port"], tls)),
+                     *guest_listeners(config, admission)], on_shutdown=cleanup)
     finally:
         cleanup()

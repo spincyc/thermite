@@ -424,13 +424,16 @@ def _export_plan(descriptor, receipt, custody, unit_sources=None):
 
 def stage(destination, *, state, house, assets, runtime_url, runtime_token_file, tls_cert, tls_key,
           allowed_hosts, bind_host, port, timezone, user=None, wheelhouse=None, area=None,
-          install_environment=True, callbacks=None, plan_directory=None, host_ports=None):
+          install_environment=True, callbacks=None, plan_directory=None, host_ports=None, guest_http=None):
     """A new release with explicit reusable site state. No database is migrated.
+
+    guest_http is host.yaml's optional Guest listener mapping (oh_access.guest).
 
     Owner installs the units only AFTER resolving the activation checklist. The
     program and assets are copied, so no service points into a disposable checkout.
     """
-    from .service import compile_contract, load_config, validate_listeners
+    from . import guest
+    from .service import CONFIG_VERSION, compile_contract, load_config, validate_listeners
     from oh_paths import PROGRAM, SITE, SITE_FILE
     if plan_directory is None:
         raise AccessError("An operator-owned --plan-directory is required for a safe, replayable custody handoff")
@@ -461,9 +464,10 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
         from .callback_service import load_config as load_callbacks
         callback_config = load_callbacks(callbacks, runtime_url=runtime_url)
     try:
+        guest_http = guest.settings(guest_http)
         validate_listeners(runtime_url, port,
                            callback_port=callback_config["port"] if callback_config is not None else None,
-                           host_ports=host_ports)
+                           guest_port=guest_http["port"] if guest_http else None, host_ports=host_ports)
     except (ValueError, TypeError) as exc:
         raise AccessError(str(exc)) from None
     generated_units = units(target, user, state=state, callbacks=callback_config is not None)
@@ -498,9 +502,10 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
                 raise AccessError("Private asset inventory is incomplete")
             atomic_private(private_assets / name, source.read_bytes())
         compile_contract(house, private_assets, target / "contract.json")
-        config = {"version": 1, "state": str(state), "contract_file": str(target / "contract.json"),
+        config = {"version": CONFIG_VERSION, "state": str(state), "contract_file": str(target / "contract.json"),
                   "runtime_url": runtime_url, "runtime_token_file": str(target / "secrets/runtime-bearer"),
                   "allowed_hosts": allowed_hosts, "bind_host": bind_host, "port": port, "timezone": timezone,
+                  "guest_http": guest_http,
                   "tls_cert": str(target / "secrets/tls-cert.pem"), "tls_key": str(target / "secrets/tls-key.pem")}
         json_private(target / "config.json", config)
         # Runtime loading deliberately requires current-user custody. Validate this

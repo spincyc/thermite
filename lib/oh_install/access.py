@@ -15,7 +15,7 @@ import socket
 import ssl
 
 import oh_ports
-from oh_access import AccessError, staging
+from oh_access import AccessError, guest, staging
 from oh_access.files import atomic_private, json_private, private_directory, read_private, service_identity
 from oh_install.model import Check, Command, Step, Task
 
@@ -364,7 +364,8 @@ class Gateway(Step):
                                     allowed_hosts=metadata["allowed_hosts"], bind_host=metadata["bind_host"],
                                     port=metadata["port"], timezone=metadata["timezone"],
                                     area=self.context.area, plan_directory=plan, callbacks=callback,
-                                    wheelhouse=self.options.get("wheelhouse"), host_ports=oh_ports.effective(self.context.host))
+                                    wheelhouse=self.options.get("wheelhouse"), host_ports=oh_ports.effective(self.context.host),
+                                    guest_http=self.context.host.get("guest_http"))
         self._save(journal, stage=receipt, phase="staged")
         return receipt
 
@@ -494,6 +495,33 @@ class Gateway(Step):
             connection.close()
         return url
 
+    def _guest_http(self):
+        """Check the opt-in Guest listener answers a Guest on each address its
+        client networks admit from this host, where that address is the peer.
+        Returns the report lines."""
+        settings = guest.settings(self.context.host.get("guest_http"))
+        if settings is None:
+            return []
+        networks = [ipaddress.ip_network(value) for value in settings["clients"]]
+        report = []
+        for address, url in zip(settings["listen"], guest.origins(settings)):
+            if not guest.admitted((address, 0), networks):
+                report.append(f"   Guest HTTP {url}/ not checked: this host's address is outside guest_http.clients")
+                continue
+            connection = http.client.HTTPConnection(address, settings["port"], timeout=5)
+            try:
+                connection.sock = socket.create_connection((address, settings["port"]), timeout=5, source_address=(address, 0))
+                connection.request("GET", "/api/v1/me", headers={"Accept": "application/json"})
+                response = connection.getresponse()
+                body = response.read(65537)
+                value = json.loads(body) if len(body) <= 65536 else None
+                if response.status != 200 or not isinstance(value, dict) or value.get("is_guest") is not True:
+                    raise AccessError("gateway Guest HTTP listener returned an unexpected response")
+            finally:
+                connection.close()
+            report.append(f"   Guest HTTP verified: {url}/")
+        return report
+
     def _verify_boundary(self, system):
         from oh_access.native_boundary import verify_firewall, verify_native_listeners
         self._run(system, "sudo", "-v")
@@ -546,6 +574,7 @@ class Gateway(Step):
                     self._upstream(system, journal, receipt)
                     self._live(system, receipt)
                     url = self._https(metadata)
+                    self._guest_http()
                     self._profile(journal, metadata, receipt, url)
                     return 0
                 except _UnitAuthorityError:
@@ -577,6 +606,7 @@ class Gateway(Step):
                 try:
                     self._live(system, receipt)
                     url = self._https(metadata)
+                    guest_report = self._guest_http()
                     break
                 except _UnitAuthorityError:
                     raise
@@ -590,6 +620,8 @@ class Gateway(Step):
             self._save(journal, phase="complete", url=url)
             self._profile(journal, metadata, receipt, url)
             system.say("   Gateway verified: " + url)
+            for line in guest_report:
+                system.say(line)
             system.say("   TLS trust certificate: " + str(public_cert))
             system.say("   Complete identity backup: " + str(backup_path))
             return 0

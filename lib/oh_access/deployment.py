@@ -90,7 +90,11 @@ def adopt(config, destination, *, uid, gid, service_uid):
     original = json.loads(read(config, maximum=65536, owner=service_uid))
     fields = {"version", "state", "contract_file", "runtime_url", "runtime_token_file", "allowed_hosts",
               "bind_host", "port", "tls_cert", "tls_key", "timezone"}
-    if not isinstance(original, dict) or set(original) != fields or original["version"] != 1:
+    # Upgrades adopt the installed release's configuration, so version 1 is
+    # read until a release with version 2 (the Guest listener) is installed.
+    # guest_http is not adopted: host.yaml supplies it afresh.
+    known = {1: fields, 2: fields | {"guest_http"}}
+    if not isinstance(original, dict) or type(original.get("version")) is not int or known.get(original["version"]) != set(original):
         raise DeploymentError("installed gateway configuration is not recognized")
     state = absolute(original["state"])
     if state == config.parent or config.parent in state.parents:

@@ -14,8 +14,11 @@ ALLOWED_HOSTS = [x.strip() for x in os.environ.get("THERMITE_ALLOWED_HOSTS", "lo
 ROOT_URLCONF = "oh_identity.urls"
 ASGI_APPLICATION = "oh_identity.asgi.application"
 INSTALLED_APPS = ["django.contrib.auth", "django.contrib.contenttypes", "django.contrib.sessions", "oh_identity"]
-MIDDLEWARE = ["oh_identity.hardening.SecurityHeaders", "django.middleware.security.SecurityMiddleware", "django.middleware.clickjacking.XFrameOptionsMiddleware",
-              "django.contrib.sessions.middleware.SessionMiddleware",
+# GuestListener admits plain-HTTP Guest listener requests (oh_identity.guest):
+# inside the header middleware, so its refusals carry them, and outside the
+# session and CSRF middleware, whose cookies it withholds.
+MIDDLEWARE = ["oh_identity.hardening.SecurityHeaders", "oh_identity.guest.TransportSecurity", "django.middleware.clickjacking.XFrameOptionsMiddleware",
+              "oh_identity.guest.GuestListener", "django.contrib.sessions.middleware.SessionMiddleware",
               "django.contrib.auth.middleware.AuthenticationMiddleware", "oh_identity.auth.IdentityCSRF"]
 AUTH_USER_MODEL = "oh_identity.User"
 DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": STATE / "identity.sqlite3",
@@ -31,6 +34,8 @@ AUTH_PASSWORD_VALIDATORS = [{"NAME": "django.contrib.auth.password_validation.Mi
                             {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"}]
 SESSION_ENGINE = "django.contrib.sessions.backends.db"
 SESSION_COOKIE_NAME = COOKIE_PREFIX + "_session"
+# Secure cookies never travel over the plain-HTTP Guest listener, which
+# neither reads nor sets any cookie.
 SESSION_COOKIE_SECURE = True
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
@@ -39,6 +44,7 @@ CSRF_COOKIE_SECURE = True
 CSRF_COOKIE_NAME = COOKIE_PREFIX + "_csrf"
 CSRF_COOKIE_SAMESITE = "Lax"
 CSRF_FAILURE_VIEW = "oh_identity.auth.csrf_failure"
+# Except on the Guest listener (oh_identity.guest.TransportSecurity).
 SECURE_SSL_REDIRECT = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"

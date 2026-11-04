@@ -11,6 +11,7 @@ from pathlib import Path
 
 import oh_cli
 import oh_deploy as deploy
+from oh_access import guest
 from oh_cli import AREA
 from oh_cli.history import lines as history_lines
 
@@ -20,9 +21,9 @@ Report, read-only, what runs here: the commit thermite deploy installed
 installed conf/, Apple TV helper, metrics/ and metrics exporter still match
 that deploy, whether each installed systemd unit matches deploy/ (the owner
 installs one that differs, with thermite upgrade), the services, whether
-runtime answers, Grafana's address on the LAN and whether it answers,
-Prometheus' scrape targets (up of all), and the last deploys (thermite
-history lists more).
+runtime answers, the plain-HTTP Guest addresses instance/host.yaml opens,
+Grafana's address on the LAN and whether it answers, Prometheus' scrape
+targets (up of all), and the last deploys (thermite history lists more).
 """
 
 EXAMPLES = (
@@ -67,6 +68,14 @@ def show_metrics(host: dict, installed: dict[str, Path] | None = None, report: d
         say("systemd  " + ("node_exporter reads the units' states over D-Bus" if health.systemd else
                            "node_exporter's systemd collector fails: sudo journalctl -u "
                            "thermite-node-exporter.service says why"))
+
+
+def show_guest(host: dict, report: dict, say) -> None:
+    """The opt-in plain-HTTP Guest listener's addresses, from instance/host.yaml."""
+    settings = guest.settings(host.get("guest_http"))
+    report["guest_http"] = [url + "/" for url in guest.origins(settings)] if settings else []
+    for url in report["guest_http"]:
+        say(f"guest    {url}: Guest controls over plain HTTP, for {', '.join(settings['clients'])}")
 
 
 def _quiet(*_args, **_kwargs) -> None:
@@ -142,6 +151,7 @@ def show(args, host: dict) -> int:
     if not version:
         problems.append(f"runtime {url}: not answering")
     say(f"runtime  {url}: " + (f"runtime {version} answers; from the LAN: {lan}" if version else "not answering"))
+    show_guest(host, report, say)
     show_metrics(host, report=report if as_json else None)
     entries = deploy.deploys(layout)
     report["deploys"] = len(entries)

@@ -35,9 +35,11 @@ CODE_WORDS = {"control4", "sddp", "bk-808", "wattbox", "shield", "fire tv", "ala
 #: besides PROTOCOL_IPS and the documentation ranges: the discovery probe's
 #: public resolver.
 ALLOWED_ADDRESSES = {"lib/oh_discover.py": frozenset({".".join(["1"] * 4)})}
-#: Installation fixtures, which use separate guest-loopback devices.
+#: Installation fixtures, which use separate guest-loopback devices, and the
+#: Guest listener's tests, which connect from loopback peers outside its clients.
 LOOPBACK_FILES = frozenset({"tests/e2e/fixture.py", "tests/e2e/dummy-tv.py", "tests/e2e/check_access.py",
-                            "tests/test_house_config.py"})
+                            "tests/test_house_config.py", "tests/test_guest_http.py",
+                            "lib/oh_identity/tests/test_guest_listener.py"})
 #: Integrations whose remote_of() returns a remote layout's id
 #: (web/remote/remotes.js), which may also be a private word.
 LAYOUT_RETURN_FILES = frozenset({"lib/oh_integrations/globalcache_ir.py", "lib/oh_integrations/denonmarantz_http.py",
