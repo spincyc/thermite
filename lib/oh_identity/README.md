@@ -249,7 +249,8 @@ assets are `no-store`. Every other file carries an ETag and answers
 `If-None-Match` with 304. Generated pages name each non-page file as
 `/static/remote/<name>?v=<hash>`; only a request whose sole query is the served
 bytes' current hash is `public, max-age=31536000, immutable`, and any other URL,
-a stale hash included, is `no-cache`.
+a stale hash included, is `no-cache`. Those static files, never a no-store
+asset or API answer, are gzipped for a client that accepts it.
 Pairing metadata comes only from the compiled `pairings` map; its command
 Item state is always NULL and is never fetched. Status/result reads are
 projected. Only Admin can submit REQUEST/AGAIN/CANCEL or a metadata-validated

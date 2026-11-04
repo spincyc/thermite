@@ -1,5 +1,6 @@
 """Small JSON interfaces; framework authentication owns credential handling."""
 
+import gzip
 import json
 import mimetypes
 from urllib.parse import urlencode
@@ -433,6 +434,26 @@ def asset(request, name):
 
 #: A ?v= URL names exact bytes (oh_routes.asset_version), so a browser may keep it.
 IMMUTABLE = "public, max-age=31536000, immutable"
+#: Static text worth compressing; images are already compressed.
+TEXT = (".css", ".html", ".js", ".svg", ".webmanifest")
+
+
+def accepts_gzip(header):
+    """Whether an Accept-Encoding value admits gzip, by name or by *, with a
+    nonzero quality."""
+    weights = {}
+    for entry in header.split(","):
+        coding, *parameters = (part.strip() for part in entry.split(";"))
+        weight = 1.0
+        for parameter in parameters:
+            key, _, value = parameter.partition("=")
+            if key.strip().lower() == "q":
+                try:
+                    weight = float(value)
+                except ValueError:
+                    weight = 0.0
+        weights[coding.lower()] = weight
+    return weights.get("gzip", weights.get("*", 0.0)) > 0
 
 
 def file_response(request, name, data, *, shared):
@@ -440,21 +461,31 @@ def file_response(request, name, data, *, shared):
     needs no file handle or synchronous iterator under ASGI.
 
     An unshared asset (private, administrative, house.js or JSON) is never
-    stored or validated. A shared one has an ETag and answers If-None-Match
-    with 304. It is immutable only at a non-HTML URL whose sole query is ?v=
-    of these bytes; any other URL, a stale ?v= included, is revalidated on
-    every use, so no URL is kept with bytes it does not name.
+    stored, validated or compressed. A shared one has an ETag and answers
+    If-None-Match with 304. It is immutable only at a non-HTML URL whose sole
+    query is ?v= of these bytes; any other URL, a stale ?v= included, is
+    revalidated on every use, so no URL is kept with bytes it does not name.
+    Shared text is gzipped for a client that accepts it: these files are
+    static and hold no secret, so compression reveals nothing (BREACH needs a
+    secret beside reflected input). Unshared assets and API answers never are.
     """
-    headers = {"Cache-Control": "no-store"}
+    encoding, headers = None, {"Cache-Control": "no-store"}
     if shared:
         version = asset_version(data)
         current = not name.endswith(".html") and list(request.GET.lists()) == [("v", [version])]
         headers = {"Cache-Control": IMMUTABLE if current else "no-cache", "ETag": f'"{version}"'}
+        if name.endswith(TEXT):
+            headers["Vary"] = "Accept-Encoding"
+            if accepts_gzip(request.headers.get("Accept-Encoding", "")):
+                encoding = "gzip"
+                headers.update({"Content-Encoding": "gzip", "ETag": f'"{version}-gzip"'})
     response = HttpResponse(content_type=mimetypes.guess_type(name)[0] or "application/octet-stream", headers=headers)
     if shared:
         conditional = get_conditional_response(request, etag=headers["ETag"], response=response)
         if conditional is not response:
             return conditional
+    if encoding:
+        data = gzip.compress(data, mtime=0)
     response["Content-Length"] = str(len(data))
     # HEAD keeps GET's headers without a body, even when this view is called
     # without a server's HEAD suppression.
