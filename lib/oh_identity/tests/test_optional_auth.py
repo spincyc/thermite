@@ -125,7 +125,7 @@ class OptionalAuthentication(SecurityClient, TestCase):
         old = arm_setup()
         code = arm_setup()
         self.assertEqual(self.toggle(True, setup_code=old).status_code, 403)
-        self.assertEqual(self.toggle(True, setup_code=code, password="short").status_code, 400)  # lint: allow — synthetic invalid password fixture
+        self.assertEqual(self.toggle(True, setup_code=code, password=PASSPHRASE[:5]).status_code, 400)
         self.assertFalse(User.objects.exists())
         self.assertFalse(Role.objects.exists())
         self.assertEqual(get_state().revision, 1)
@@ -140,7 +140,7 @@ class OptionalAuthentication(SecurityClient, TestCase):
     def test_toggle_requires_active_admin_password_and_current_revision(self):
         owner = bootstrap("owner", PASSPHRASE)
         operator = User.objects.create_user("operator", password=PASSPHRASE, role=Role.objects.get(name="User"))
-        self.assertEqual(self.toggle(False, password="incorrect").status_code, 401)  # lint: allow — synthetic invalid password fixture
+        self.assertEqual(self.toggle(False, password=PASSPHRASE[::-1]).status_code, 401)
         self.assertEqual(self.toggle(False, username=operator.username).status_code, 403)
         self.assertEqual(self.toggle(False, revision=get_state().revision - 1).status_code, 409)
         self.assertTrue(get_state().enabled)
@@ -374,12 +374,13 @@ class SecurityConcurrency(SecurityClient, TransactionTestCase):
 
 class SecurityMigration(TransactionTestCase):
     def test_data_migration_preserves_existing_accounts_and_defaults_empty_sites_off(self):
+        from django.contrib.auth.hashers import make_password
         from django.db.migrations.executor import MigrationExecutor
         executor = MigrationExecutor(connection)
         try:
             executor.migrate([("oh_identity", "0001_initial")])
             historical = executor.loader.project_state([("oh_identity", "0001_initial")]).apps
-            historical.get_model("oh_identity", "User").objects.create(username="existing-owner", password="!")
+            historical.get_model("oh_identity", "User").objects.create(username="existing-owner", password=make_password(None))
             executor = MigrationExecutor(connection)
             executor.migrate([("oh_identity", "0002_security_state")])
             self.assertTrue(get_state().enabled)
