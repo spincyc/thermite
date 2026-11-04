@@ -8,7 +8,9 @@ import logging
 import os
 from pathlib import Path
 import re
+import signal
 import ssl
+import sys
 
 import oh_ports
 
@@ -17,6 +19,12 @@ from .files import json_private, private_directory, read_private, require_servic
 
 CONFIG_FIELDS = {"version", "state", "contract_file", "runtime_url", "runtime_token_file", "allowed_hosts",
                  "bind_host", "port", "tls_cert", "tls_key", "timezone"}
+# Uvicorn's exit status for a server that never started; systemd sees a failure.
+STARTUP_FAILURE = 3
+# In-flight HTTP requests across the gateway; every HTTP/2 stream counts.
+MAX_REQUESTS = 100
+# Once the listeners have drained, leftover tasks get this long to cancel.
+CANCEL_SECONDS = 5
 
 
 def _native_port(runtime_url):
@@ -55,12 +63,23 @@ def load_config(path, *, tls=True):
         read_private(data["contract_file"])
         if tls:
             read_private(data["tls_key"], 65536)
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            context.minimum_version = ssl.TLSVersion.TLSv1_2
-            context.load_cert_chain(data["tls_cert"], data["tls_key"])
+            tls_context(data["tls_cert"], data["tls_key"])
     except (ValueError, KeyError, TypeError, OSError, ssl.SSLError):
         raise AccessError("Invalid access configuration, TLS material, or private file permissions") from None
     return data
+
+
+def tls_context(cert, key):
+    """The gateway's TLS: version 1.2 or later, offering HTTP/2 before HTTP/1.1."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    # RFC 9113 section 9.2: HTTP/2 over TLS 1.2 forbids compression and
+    # renegotiation and needs an ephemeral AEAD suite. TLS 1.3 is unaffected.
+    context.options |= ssl.OP_NO_COMPRESSION | ssl.OP_NO_RENEGOTIATION
+    context.set_ciphers("ECDHE+AESGCM:ECDHE+CHACHA20")
+    context.set_alpn_protocols(["h2", "http/1.1"])
+    context.load_cert_chain(cert, key)
+    return context
 
 
 def setup(config, *, transport=None):
@@ -181,39 +200,138 @@ def prepare_setup(config_path):
     return arm_setup()
 
 
-def _run_server(application, *, on_shutdown=None, **options):
-    import uvicorn
+class Admission:
+    """The ASGI boundary in front of the site. Only HTTP reaches the
+    application: lifespan is answered here and a WebSocket handshake is
+    refused with 403. At most `limit` HTTP requests run at once, each HTTP/2
+    stream counting alone, so streams reset by their client still count until
+    their handler returns. A request over the limit is answered 503 at once,
+    as uvicorn's limit_concurrency answered it. Listeners that share one
+    instance share one budget."""
 
-    class Server(uvicorn.Server):
-        async def shutdown(self, sockets=None):
-            await super().shutdown(sockets)
-            # Uvicorn cancels over-budget requests, then re-raises SIGTERM.
-            # Django also spawns response/stream tasks outside ServerState.tasks.
-            # This loop belongs to this single-worker server: finish its normal
-            # runner cancellation here, before SIGTERM can bypass runner cleanup.
-            pending = asyncio.all_tasks() - {asyncio.current_task()}
-            if pending:
-                for task in pending:
-                    if not task.cancelling():
-                        task.cancel()
-                done, unfinished = await asyncio.wait(pending, timeout=5)
-                failed = sum(not task.cancelled() and task.exception() is not None for task in done)
-                if unfinished or failed:
-                    logging.getLogger("uvicorn.error").warning(
-                        "Access shutdown cleanup incomplete: %d unfinished task(s), %d failed task(s).",
-                        len(unfinished), failed)
-            # capture_signals re-raises SIGTERM after shutdown returns, which
-            # can bypass serve's outer finally. Drain/close before that point.
-            if on_shutdown:
-                on_shutdown()
+    UNAVAILABLE = b"Service Unavailable"
 
-    server = Server(uvicorn.Config(application, **options))
+    def __init__(self, application, limit=MAX_REQUESTS):
+        self.application, self.limit, self.active = application, limit, 0
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            if self.active >= self.limit:
+                await send({"type": "http.response.start", "status": 503, "headers": [
+                    (b"content-type", b"text/plain; charset=utf-8"),
+                    (b"content-length", b"%d" % len(self.UNAVAILABLE)), (b"connection", b"close")]})
+                await send({"type": "http.response.body", "body": self.UNAVAILABLE})
+                return
+            self.active += 1
+            try:
+                await self.application(scope, receive, send)
+            finally:
+                self.active -= 1
+        elif scope["type"] == "lifespan":
+            while (await receive())["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            await send({"type": "lifespan.shutdown.complete"})
+        else:
+            # Hypercorn's only other scope. Closing a WebSocket before
+            # accepting it answers HTTP 403.
+            await send({"type": "websocket.close"})
+
+
+def listener(host, port, tls=None):
+    """Hypercorn settings for one gateway listener; tls None serves plain HTTP."""
+    from hypercorn.config import Config
+
+    class Listener(Config):
+        # Serve the context tls_context() built, not one from certificate paths.
+        ssl_enabled = tls is not None
+
+        def create_ssl_context(self):
+            return tls
+
+    config = Listener()
+    config.bind = [f"[{host}]:{port}" if ipaddress.ip_address(host).version == 6 else f"{host}:{port}"]
+    # No access log and no Server header. Errors use the logger Django's
+    # LOGGING sends to the journal; hypercorn configures no logging itself.
+    config.accesslog = None
+    config.errorlog = logging.getLogger("hypercorn.error")
+    config.include_server_header = False
+    config.keep_alive_timeout = 5
+    config.graceful_timeout = 15
+    # Hypercorn ends a connection after this many requests, and over HTTP/2
+    # that drops every event stream it carries. A browser shares one
+    # connection between its pages, each polling policy every 5 s.
+    config.keep_alive_max_requests = sys.maxsize
+    config.h11_max_incomplete_size = 16 * 1024
+    # One browser holds at most 12 event streams (oh_identity/streams.py
+    # PEER_STREAMS), which leaves 20 streams for reads, commands and assets;
+    # a browser queues the rest. Header lists are bounded as HTTP/1.1 heads
+    # are, and inbound frames to the protocol's minimum size.
+    config.h2_max_concurrent_streams = 32
+    config.h2_max_header_list_size = 16 * 1024
+    config.h2_max_inbound_frame_size = 2 ** 14
+    return config
+
+
+def _run_server(listeners, *, on_shutdown=None):
+    """Serve (ASGI application, listener config) pairs in one event loop until
+    SIGTERM or SIGINT, then drain them together."""
     try:
-        server.run()
-    except KeyboardInterrupt:
-        pass  # Match uvicorn.run's single-process signal handling.
-    if not server.started:
-        raise SystemExit(uvicorn.config.STARTUP_FAILURE)
+        bound = [(application, config, config.create_sockets()) for application, config in listeners]
+    except OSError as error:
+        logging.getLogger("hypercorn.error").error("Access server could not bind: %s", error)
+        raise SystemExit(STARTUP_FAILURE) from None
+    asyncio.run(_serve(bound, on_shutdown=on_shutdown))
+
+
+async def _serve(bound, *, on_shutdown=None, stop=None):
+    # hypercorn.asyncio.serve cannot take sockets bound before the loop starts.
+    from hypercorn.app_wrappers import ASGIWrapper
+    from hypercorn.asyncio.run import worker_serve
+
+    if stop is None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(signum, stop.set)
+
+    async def listen(application, config, sockets):
+        try:
+            await worker_serve(ASGIWrapper(application), config, sockets=sockets, shutdown_trigger=stop.wait)
+        finally:
+            stop.set()  # One listener ending ends them all.
+
+    listeners = [asyncio.create_task(listen(*each)) for each in bound]
+    try:
+        await stop.wait()
+        # Hypercorn waits in asyncio.Server.wait_closed() for every connection
+        # to end before its own graceful_timeout starts (Python 3.12.1 and
+        # later), so one held event stream would hold shutdown until systemd
+        # kills the unit. Keep the deadline here.
+        grace = max(config.graceful_timeout for _, config, _ in bound)
+        _, overdue = await asyncio.wait(listeners, timeout=grace)
+        for task in overdue:
+            task.cancel()
+        ended = await asyncio.gather(*listeners, return_exceptions=True)
+    finally:
+        # Cancel what is left: connections still open at the deadline, and
+        # the response/stream tasks Django spawns outside them. Then drain
+        # and close before the loop and the process end.
+        pending = asyncio.all_tasks() - {asyncio.current_task()}
+        if pending:
+            for task in pending:
+                if not task.cancelling():
+                    task.cancel()
+            done, unfinished = await asyncio.wait(pending, timeout=CANCEL_SECONDS)
+            failed = sum(not task.cancelled() and task.exception() is not None for task in done)
+            if unfinished or failed:
+                logging.getLogger("hypercorn.error").warning(
+                    "Access shutdown cleanup incomplete: %d unfinished task(s), %d failed task(s).",
+                    len(unfinished), failed)
+        if on_shutdown:
+            on_shutdown()
+    for result in ended:
+        if isinstance(result, Exception):  # A listener cancelled at the deadline is no failure.
+            raise result
 
 
 def serve(config_path):
@@ -241,13 +359,10 @@ def serve(config_path):
             raise AccessError("An authenticated site requires an active administrator")
         rebase_timezone(adapter, config["timezone"])
         from oh_identity.asgi import application
-        # Direct TLS only. Proxy headers and forwarded client/origin claims are ignored.
-        _run_server(application, on_shutdown=cleanup,
-                    host=config["bind_host"], port=config["port"], ssl_certfile=config["tls_cert"],
-                    ssl_keyfile=config["tls_key"], ssl_version=ssl.PROTOCOL_TLS_SERVER,
-                    proxy_headers=False, forwarded_allow_ips="", access_log=False,
-                    server_header=False, limit_concurrency=100, timeout_keep_alive=5,
-                    timeout_graceful_shutdown=15,
-                    log_config=None, workers=1)
+        # Direct TLS only. Hypercorn trusts no proxy or forwarded header: the
+        # ASGI client is always the socket peer.
+        tls = tls_context(config["tls_cert"], config["tls_key"])
+        _run_server([(Admission(application), listener(config["bind_host"], config["port"], tls))],
+                    on_shutdown=cleanup)
     finally:
         cleanup()

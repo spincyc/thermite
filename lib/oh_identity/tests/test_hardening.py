@@ -150,7 +150,7 @@ class Logging(TestCase):
         config = settings.LOGGING if "test_settings" not in settings.SETTINGS_MODULE else sys.modules["oh_identity.settings"].LOGGING
         self.assertEqual(config["loggers"]["django.request"]["handlers"], ["journal"])
         self.assertEqual(config["loggers"]["django.request"]["level"], "ERROR")
-        for name in ("oh_identity", "oh_access", "oh_room_policy", "uvicorn.error", "asyncio"):
+        for name in ("oh_identity", "oh_access", "oh_room_policy", "hypercorn.error", "asyncio"):
             self.assertEqual(config["loggers"][name]["handlers"], ["journal"])
         self.assertEqual(config["handlers"]["journal"]["stream"], "ext://sys.stderr")
         try:

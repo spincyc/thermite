@@ -59,6 +59,7 @@ LOGGING = {"version": 1, "disable_existing_loggers": False,
            "loggers": {"django.request": {**_JOURNAL, "level": "ERROR"},
                        "django.security.csrf": {"handlers": ["null"], "propagate": False},
                        "oh_identity": _JOURNAL, "oh_access": _JOURNAL, "oh_room_policy": _JOURNAL,
-                       # The server runs uvicorn with log_config=None; its errors and
-                       # unretrieved task exceptions use the same private handler.
-                       "uvicorn.error": _JOURNAL, "asyncio": _JOURNAL}}
+                       # Hypercorn configures no logging of its own (oh_access/service.py
+                       # listener); its errors and unretrieved task exceptions use the
+                       # same private handler.
+                       "hypercorn.error": _JOURNAL, "asyncio": _JOURNAL}}

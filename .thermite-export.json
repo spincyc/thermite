@@ -185,6 +185,7 @@
     "lib/oh_identity/tests/test_boundary.py",
     "lib/oh_identity/tests/test_core.py",
     "lib/oh_identity/tests/test_features.py",
+    "lib/oh_identity/tests/test_gateway_server.py",
     "lib/oh_identity/tests/test_hardening.py",
     "lib/oh_identity/tests/test_lock_summary.py",
     "lib/oh_identity/tests/test_manual_lock.py",
