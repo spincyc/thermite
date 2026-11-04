@@ -301,6 +301,20 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
                 release_values.setdefault(item, str(value))
             for _, stage in stages(data, room):
                 release_values[stage["power"]] = "OFF"
+        # A follower's synced route is its own with its zone on the leader's
+        # input, and leases the leader's matrix output at the source: the
+        # reference count that keeps the leader from moving it, and the
+        # planner from parking it, while either room holds it. Its holder
+        # never writes it and releases it only for a leader that released it
+        # (lifecycle.js).
+        sync = raw.get("sync")
+        for source, synced in (sync["choices"] if sync else {}).items():
+            route = dict(choices[source], requirements={
+                item: synced["value"] if item == sync["input"] else value
+                for item, value in choices[source]["requirements"].items()})
+            if include(sync["hdmi"]):
+                route["leases"] = {sync["hdmi"]: str(sources[source]["hdmi_input"])}
+            choices[synced["plan"]] = route
         endpoints[room] = {"choices": choices}
 
     # AVR inputs are physical connectors shared by configured zones. A zone

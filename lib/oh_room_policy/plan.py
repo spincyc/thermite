@@ -13,12 +13,16 @@ from .schedule import utc
 
 @dataclass(frozen=True)
 class Field:
+    """A route's target for one Item. An alternative (value, condition Item,
+    condition value) is matched too while its condition Item is freshly
+    observed at its condition value; a repair still writes only `value`."""
     item: str
     value: str
     resource: str
     allowed: tuple[str, ...]
     native_power: bool = False
     max_age: float = 30.0
+    alternatives: tuple[tuple[str, str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,8 @@ class Observation:
 
 @dataclass(frozen=True)
 class Plan:
+    """`conditions` are Items the fields' alternatives depend on: observed
+    with the fields, never repaired or compared for conflicts."""
     room: str
     target: str
     source_item: str
@@ -37,6 +43,11 @@ class Plan:
     resources: tuple[str, ...]
     boundary_effects: tuple[tuple[str, str], ...]
     limitations: tuple[str, ...] = ()
+    conditions: tuple[Field, ...] = ()
+
+    def observed(self) -> tuple[str, ...]:
+        """Every Item verify() reads: the fields', then the conditions'."""
+        return tuple(dict.fromkeys(field.item for field in (*self.fields, *self.conditions)))
 
 
 def expected_plan(house, room: str, choice: str) -> Plan:
@@ -45,6 +56,8 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     Only the chosen physical path is verified. Parking an unused matrix
     for a local source does not add that matrix's health as a dependency.
     Boundary effects include one-shot actions/EDID, but fields never do.
+    A room whose receiver syncs with a leader also accepts its zone on the
+    leader's input while the leader's matrix output shows the source.
     """
     data = house.data if hasattr(house, "data") else house
     if not isinstance(data, dict) or "routing" not in data or "devices" not in data:
@@ -86,6 +99,9 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     # Boundary-scoped parking and imperative actions remain effects below.
     from oh_features.routing.lifecycle import active_requirements
     active = active_requirements(data, room, choice) if choice != "off" else None
+    sync = raw.get("sync")
+    synced = sync["choices"].get(choice) if sync else None
+    leader_input = str(config["sources"][choice]["hdmi_input"]) if synced else None
     steps = (routing.power(data, room, choice) + routing.commands(data, room, choice) + inputs
              + [step for step in routing.after(data, room, choice) if step[0] in relevant_power or step[0] in allowed])
     fields = []
@@ -100,7 +116,9 @@ def expected_plan(house, room: str, choice: str) -> Plan:
         module = routing.switcher(device)
         if module is not None:
             accepted.update(str(n) for n in range(1, module.ports(device)[0] + 1))
-        fields.append(Field(item, str(value), "device:" + ident, tuple(sorted(accepted)), item in native_items))
+        alternatives = ((synced["value"], sync["hdmi"], leader_input),) if synced and item == sync["input"] else ()
+        fields.append(Field(item, str(value), "device:" + ident, tuple(sorted(accepted)), item in native_items,
+                            alternatives=alternatives))
     # Keep command order, but a field occurring twice has one final target.
     by_item = {field.item: field for field in fields}
     fields = list(by_item.values())
@@ -119,8 +137,13 @@ def expected_plan(house, room: str, choice: str) -> Plan:
             resources.add("device:" + ident)
     limits = ["passive_endpoint:" + entry[key]["device"] for key in ("receiver", "display")
               if entry.get(key, {}).get("passive") is True]
+    conditions = ()
+    if synced:
+        matrix = devices[config["hdmi_matrix"]]
+        numbers = tuple(sorted(str(n) for n in range(1, routing.switcher(matrix).ports(matrix)[0] + 1)))
+        conditions = (Field(sync["hdmi"], leader_input, "device:" + matrix["id"], numbers),)
     return Plan(room, choice, raw["item"], tuple(fields), tuple(sorted(resources)),
-                tuple((item, str(value)) for item, value in effects), tuple(limits))
+                tuple((item, str(value)) for item, value in effects), tuple(limits), conditions)
 
 
 def _value(value: object, allowed: tuple[str, ...]) -> str | None:
@@ -140,21 +163,34 @@ def _value(value: object, allowed: tuple[str, ...]) -> str | None:
     return None
 
 
+def _fresh(field: Field, observations: dict[str, Observation], now: datetime) -> str | None:
+    """The field Item's fresh native reading as one of its allowed values."""
+    reading = observations.get(field.item)
+    valid = isinstance(reading, Observation) and reading.observed_at is not None
+    if valid:
+        try:
+            at = utc(reading.observed_at)
+            valid = 0 <= (now - at).total_seconds() <= field.max_age
+        except PolicyError:
+            valid = False
+        valid = valid and reading.basis in (("native_power",) if field.native_power else ("native", "native_power"))
+    return _value(reading.value, field.allowed) if valid else None
+
+
 def verify(plan: Plan, observations: dict[str, Observation], now_utc: datetime) -> dict:
-    """No ACK/receipt, stale/unknown reading, or passive endpoint is success."""
+    """No ACK/receipt, stale/unknown reading, or passive endpoint is success.
+    A field on an alternative matches while its condition is freshly
+    observed at its value, is unknown while the condition is, and else
+    mismatches."""
     now = utc(now_utc)
+    conditions = {condition.item: _fresh(condition, observations, now) for condition in plan.conditions}
     matched, mismatched, unknown = [], [], []
     for field in plan.fields:
-        reading = observations.get(field.item)
-        valid = isinstance(reading, Observation) and reading.observed_at is not None
-        if valid:
-            try:
-                at = utc(reading.observed_at)
-                valid = 0 <= (now - at).total_seconds() <= field.max_age
-            except PolicyError:
-                valid = False
-            valid = valid and reading.basis in (("native_power",) if field.native_power else ("native", "native_power"))
-        value = _value(reading.value, field.allowed) if valid else None
+        value = _fresh(field, observations, now)
+        if value is not None and value != field.value:
+            held = {conditions.get(item) == wanted if conditions.get(item) is not None else None
+                    for alternative, item, wanted in field.alternatives if alternative == value}
+            value = field.value if True in held else None if None in held else value
         if value is None:
             unknown.append(field.item)
         elif value != field.value:

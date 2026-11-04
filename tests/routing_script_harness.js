@@ -44,7 +44,7 @@ function load(options = {}) {
       if (options.refuse && options.refuse[id]) throw new Error(options.refuse[id]);
       return 1;
     },
-    observe() {}, snapshot: () => ({ slots, holds: {} }), recover(key, evidence) { calls.push(`recover ${key} ${evidence.terminal}`); },
+    observe() {}, snapshot: () => ({ slots, holds: {}, endpoints: {} }), recover(key, evidence) { calls.push(`recover ${key} ${evidence.terminal}`); },
     releaseHold(id) { calls.push('release ' + id); }, hold(id) { calls.push('hold ' + id); }, takeover: () => [], external() {},
     report(event) { calls.push(`report ${event.type} ${event.token}`); }, close() {},
   };

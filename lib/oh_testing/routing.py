@@ -155,6 +155,8 @@ def simulated_lifecycle(contract: dict, resources: set[str], *, endpoints: bool 
             for choice in endpoint["choices"].values():
                 for field in ("requirements", "release", "deactivate"):
                     choice[field] = {name: value for name, value in choice.get(field, {}).items() if name in selected}
+                if "leases" in choice:
+                    choice["leases"] = {name: value for name, value in choice["leases"].items() if name in selected}
                 choice["preserve"] = [name for name in choice.get("preserve", []) if name in selected]
     else:
         descriptor["endpoints"] = {}

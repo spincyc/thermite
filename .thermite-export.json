@@ -402,6 +402,8 @@
     "tests/test_vendor_facts.py",
     "tests/test_volume_limits.py",
     "tests/test_yoke_metrics.py",
+    "tests/test_zone_sync.py",
+    "tests/zone_sync_harness.js",
     "tui/remote/README.md",
     "tui/remote/administration.js",
     "tui/remote/app.js",

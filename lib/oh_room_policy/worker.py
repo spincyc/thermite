@@ -391,7 +391,7 @@ class Worker:
                 if not self._current(revisions):
                     return {"stale": True}
                 try:
-                    observations = self.io.read(tuple(field.item for field in plan.fields))
+                    observations = self.io.read(plan.observed())
                     if not self._current(revisions):
                         return {"stale": True}
                     observed_now = utc(self.wall_clock())

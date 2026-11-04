@@ -608,6 +608,81 @@ test('a planner fault is logged once at error with its journal path', () => {
   assert.equal(logged.length, 1); assert(logged[0].includes('journal-save-failed')); assert(logged[0].includes(path));
 });
 
+// Zone sync: a follower's synced route leases its leader's output (see the
+// lifecycle.js header). Leader and Follower share the leader's output.
+function syncDescriptor() {
+  const output = () => ({key: 'matrix', values: ['1', '2', '8'], release: '8', capable: true});
+  return {version: 1, deadlineMs: 10000, maxInFlight: 8,
+    resources: {LeaderOut: output(), FollowerOut: output(), Zone: {key: 'avr', values: ['AUX2', 'BD'], capable: true},
+      Screen: {key: 'screen', values: ['ON', 'OFF'], release: 'OFF', capable: true}},
+    sources: {S: {idle: 'preserve'}, T: {idle: 'preserve'}},
+    endpoints: {
+      Leader: {choices: {S: {requirements: {LeaderOut: '1', Screen: 'ON'}, uses: ['S']},
+        T: {requirements: {LeaderOut: '2', Screen: 'ON'}, uses: ['T']},
+        Off: {off: true, release: {LeaderOut: '8'}, deactivate: {Screen: 'OFF'}}}},
+      Follower: {choices: {S: {requirements: {FollowerOut: '1', Zone: 'AUX2'}, uses: ['S']},
+        'S@Leader': {requirements: {FollowerOut: '1', Zone: 'BD'}, leases: {LeaderOut: '1'}, uses: ['S']},
+        Off: {off: true, release: {FollowerOut: '8'}}}},
+    }};
+}
+function synced() {
+  const r = rig({config: syncDescriptor(), actual: {LeaderOut: '8', FollowerOut: '8', Zone: 'AUX2', Screen: 'OFF'}});
+  r.coordinator.request('Leader', 'S'); r.drain();
+  r.coordinator.request('Follower', 'S@Leader'); r.drain();
+  assert.equal(r.actual.Zone, 'BD');
+  assert(r.coordinator.snapshot().endpoints.Follower.pathReady);
+  r.writes.length = 0;
+  return r;
+}
+
+test('a synced lease refuses moving the leader output and is never written by its holder', () => {
+  const r = synced();
+  assert.throws(() => r.coordinator.request('Leader', 'T'), /^Error: lifecycle resource conflict: LeaderOut \(Follower,Leader\)$/);
+  assert.equal(r.coordinator.snapshot().endpoints.Leader.choice, 'S');
+  // A front-panel change is not undone on the lease's behalf.
+  r.actual.LeaderOut = '2'; r.coordinator.observe('LeaderOut', '2'); r.drain();
+  assert.deepEqual(r.writes, []);
+});
+
+test('break before: the follower leaves its lease without parking it, then the leader moves', () => {
+  const r = synced();
+  r.coordinator.request('Follower', 'S'); r.coordinator.request('Leader', 'T'); r.drain();
+  assert.deepEqual(r.writes.sort(), ['LeaderOut=2', 'Zone=AUX2']);
+  assert.equal(r.actual.FollowerOut, '1');
+});
+
+test('the leader output is parked only once neither room holds it', () => {
+  const r = synced();
+  r.coordinator.request('Leader', 'Off'); r.drain();
+  assert(!r.writes.includes('LeaderOut=8'));
+  assert.equal(r.coordinator.snapshot().endpoints.Leader.cleanup.LeaderOut, 'suppressed');
+  r.coordinator.request('Follower', 'S'); r.drain();
+  assert.equal(r.writes.filter(write => write === 'LeaderOut=8').length, 1);
+  const ordered = synced();
+  ordered.coordinator.request('Follower', 'S'); ordered.coordinator.request('Leader', 'Off'); ordered.drain();
+  assert.deepEqual(ordered.writes.sort(), ['LeaderOut=8', 'Screen=OFF', 'Zone=AUX2']);
+});
+
+test('a follower never parks the output of a leader yielded to a manual command', () => {
+  const r = synced();
+  assert.deepEqual(r.coordinator.takeover('Screen', null), ['Leader']);
+  r.coordinator.request('Follower', 'S'); r.drain();
+  assert.deepEqual(r.writes, ['Zone=AUX2']);
+  assert.equal(r.actual.LeaderOut, '1');
+});
+
+test('a follower left at its own devices relinquishes its claims and lease without a write', () => {
+  const r = synced();
+  r.actual.Zone = 'AUX2'; r.coordinator.observe('Zone', 'AUX2');
+  r.coordinator.relinquish('Follower'); r.drain();
+  const follower = r.coordinator.snapshot().endpoints.Follower;
+  assert(follower.yielded); assert.deepEqual(follower.leases, {}); assert.deepEqual(follower.requirements, {});
+  assert.equal(follower.choice, 'S@Leader');
+  r.coordinator.request('Leader', 'T'); r.drain();
+  assert.deepEqual(r.writes, ['LeaderOut=2']);
+  assert.throws(() => r.coordinator.relinquish('Nobody'), /unknown lifecycle route/);
+});
+
 let failed = 0;
 for (const [name, action] of tests) {
   try { action(); }

@@ -18,8 +18,28 @@ lights, say), which dedicated sources explicitly enter standby on Off
 `edid`, whether a source's input follows the EDID of the room display it is
 turned on in. A room without an `hdmi_output` offers only sources cabled
 to it, and one whose id is not a room's names its room (`room`), as the
-example beside the Office's desk screen does. This feature validates it
-and renders:
+example beside the Office's desk screen does.
+
+A receiver may name `sync_with: <room>`, its leader: the room whose
+receiver is another zone of the same device. While both rooms show the same
+source from the HDMI matrix (one both offer and neither has cabled to it
+alone), this room's zone takes the leader's input for that source (the
+leader receiver's `input`, or its `input_by_source`), so both screens show
+one picture. Both rooms need an `hdmi_output` and neither an
+`hdmi_audio_output`; the leader needs no `hdmi_switch` and no `sync_with` of
+its own. A synced route is the room's own for that source with its zone on
+the leader's input: its own matrix output stays on the source, so going
+back is only an input change. Off is never synced. routing.js moves a
+follower off the leader's output before the leader's next choice is
+claimed (break before), and onto it only once the leader chose the same
+source and its output shows it (make after); a follower turned off or
+switched elsewhere at its own devices is left alone. Under the lifecycle
+planner a synced route leases the leader's output at its source, the
+reference count: the leader cannot move it while a follower is synced, and
+it is parked only once the leader released it and neither room holds it.
+The follower never writes it.
+
+This feature validates the routing and renders:
 
 - one Source selector Item per room, `loc_<room>_source` (Main UI's Overview
   lists them, oh_features.overview);
@@ -30,7 +50,9 @@ and renders:
   power Item that wakes the source itself and the actions a choice sends,
   and which choice each input on the room's display, receiver, HDMI switch
   and HDMI output means; under `edid`, the EDID Item of each source's
-  input and the EDID code each room's output gives its sources. The rule
+  input and the EDID code each room's output gives its sources; for a room
+  whose receiver has `sync_with`, the synced route of each such source
+  (`sync`), which its leader lists under `followers`. The rule
   only commands; the Source state is always read back from the room's
   devices and the HDMI matrix.
 
@@ -71,7 +93,7 @@ EDID_KEYS = {"idle"}
 #: A room's devices that a choice powers and switches, in the order the
 #: signal reaches them: the screen is the last.
 STAGES = ("receiver", "display")
-STAGE_KEYS = {"device", "zone", "input", "input_by_source", "sources"}
+STAGE_KEYS = {"device", "zone", "input", "input_by_source", "sources", "sync_with"}
 #: The room keys of what its other devices are sent on any source, and on
 #: Off. Not `on` and `off`: YAML reads those as true and false.
 ACTIONS = ("on_actions", "off_actions")
@@ -381,6 +403,7 @@ def validate(data: object) -> list[str]:
             problems.append(f"{where}.label: must be a name")
         for key in sorted(set(entry) - ROOM_KEYS):
             problems.append(f"{where}: unknown key '{key}'")
+    problems += _sync_problems(rooms_section, sources, devices)
 
     if routing.get("edid") is not None and hdmi is not None:
         fixed = (devices[routing["hdmi_matrix"]].get("settings") or {}).get("edid") or {}
@@ -535,6 +558,76 @@ def _stage_problems(where: str, spec: object, offered: list, sources: dict, devi
             problems.append(f"{at}: {input_} is already a locally cabled source input")
     for key in sorted(set(spec) - STAGE_KEYS):
         problems.append(f"{where}: unknown key '{key}'")
+    return problems
+
+
+def _synced(entry: dict, leader: dict, sources: dict) -> dict:
+    """{source: the leader receiver's input for it} for each source a
+    follower room (`entry`) and its leader both take from the HDMI matrix,
+    as far as both are mappings: offered by both and cabled to neither alone."""
+    lead = leader.get("receiver") if isinstance(leader.get("receiver"), dict) else {}
+    by_source = lead.get("input_by_source") if isinstance(lead.get("input_by_source"), dict) else {}
+    offered = [entry.get("sources"), leader.get("sources")]
+    if "input" not in lead or not all(isinstance(names, list) for names in offered):
+        return {}
+    local = {**_local(entry), **_local(leader)}
+    return {source: by_source.get(source, lead["input"]) for source in offered[0]
+            if source in offered[1] and source not in local and isinstance(sources.get(source), dict)
+            and "hdmi_input" in sources[source]}
+
+
+def _sync_problems(rooms: dict, sources: dict, devices: dict) -> list[str]:
+    """Problems with each receiver's sync_with (the module docstring says
+    what a follower and its leader need)."""
+    problems: list[str] = []
+    followed = {}
+    for room, entry in rooms.items():
+        if not isinstance(entry, dict):
+            continue
+        if isinstance(entry.get("display"), dict) and "sync_with" in entry["display"]:
+            problems.append(f"routing.rooms.{room}.display.sync_with: only a receiver can sync with another room's")
+        if isinstance(entry.get("receiver"), dict) and "sync_with" in entry["receiver"]:
+            followed[room] = entry["receiver"]["sync_with"]
+    for room, leader in followed.items():
+        where = f"routing.rooms.{room}.receiver.sync_with"
+        entry = rooms[room]
+        other = rooms.get(leader) if isinstance(leader, str) and leader != room else None
+        if not isinstance(other, dict):
+            problems.append(f"{where}: {leader!r} is not another room under routing.rooms")
+            continue
+        spec, lead = entry["receiver"], other.get("receiver")
+        found = []
+        if "hdmi_output" not in entry or "hdmi_output" not in other:
+            found.append(f"{room} and {leader} both need an hdmi_output")
+        found += [f"{name} splits its audio (hdmi_audio_output), so its receiver does not show its picture"
+                  for name in (room, leader) if "hdmi_audio_output" in rooms[name]]
+        if "hdmi_switch" in other:
+            found.append(f"{leader} has an hdmi_switch, so its matrix output does not decide what its receiver shows")
+        if leader in followed:
+            found.append(f"{leader} syncs with {followed[leader]!r} itself; a leader cannot follow another room")
+        if (not isinstance(lead, dict) or lead.get("device") != spec.get("device")
+                or lead.get("zone") == spec.get("zone")):
+            found.append(f"{leader} needs a receiver on another zone of {spec.get('device')}")
+        problems += [f"{where}: {text}" for text in found]
+        device = devices.get(spec.get("device"))
+        module = stager(device) if device is not None and not found else None
+        stage = module.stage(device, spec.get("zone")) if module is not None else None
+        if stage is None:
+            continue  # what is wrong is said above, or by the receiver's own checks
+        shared = _synced(entry, other, sources)
+        if not shared:
+            problems.append(f"{where}: {room} and {leader} share no source from the HDMI matrix")
+        own = {spec.get("input")}
+        for key in ("input_by_source", "sources"):
+            if isinstance(spec.get(key), dict):
+                own.update(spec[key].values())
+        zone = f"{spec['device']} zone {spec['zone']}" if spec.get("zone") else f"{spec['device']}'s main zone"
+        for source, value in shared.items():
+            if value not in stage["inputs"]:
+                problems.append(f"{where}: {zone} cannot select {value!r}, {leader}'s input for {source}")
+            elif value in own:
+                problems.append(f"{where}: {value!r}, {leader}'s input for {source}, is already an input of {zone} "
+                                "in this room")
     return problems
 
 
@@ -784,6 +877,30 @@ def inputs(data: dict, room: str, choice: str) -> list[list]:
     return out
 
 
+def sync_sources(data: dict, room: str) -> dict[str, str]:
+    """{source: the input of the room's receiver zone that shows it from
+    its leader's matrix output} for a room whose receiver has sync_with:
+    each source both rooms take from the HDMI matrix. Empty without one."""
+    rooms = data["routing"]["rooms"]
+    leader = (rooms[room].get("receiver") or {}).get("sync_with")
+    return {} if leader is None else _synced(rooms[room], rooms[leader], data["routing"]["sources"])
+
+
+def sync_plan(source: str, leader: str) -> str:
+    """The lifecycle route of a follower's choice of `source` while synced
+    with `leader`; the room's Source choice stays `source`."""
+    return f"{source}@{leader}"
+
+
+def synced_inputs(data: dict, room: str, source: str) -> list[list]:
+    """inputs() of a follower's synced route: its receiver zone on the
+    leader's input for the source, its display as on its own route."""
+    receiver = data["routing"]["rooms"][room]["receiver"]
+    item = next(stage["input"] for spec, stage in stages(data, room) if spec is receiver)
+    value = sync_sources(data, room)[source]
+    return [[name, value if name == item else target] for name, target in inputs(data, room, source)]
+
+
 def after(data: dict, room: str, choice: str) -> list[list]:
     """[[Item, value], ...] sent last: for Off, explicitly selected dedicated
     sources sleep before the receiver and display; then the room's actions."""
@@ -855,18 +972,32 @@ def table(data: dict) -> dict:
         for raw_stage, (spec, _) in zip(rooms[room]["stages"], reversed(stages(data, room))):
             if spec.get("input_by_source"):
                 raw_stage["bySource"] = dict(spec["input_by_source"])
+        sync = sync_sources(data, room)
+        if sync:
+            leader = entry["receiver"]["sync_with"]
+            rooms[room]["sync"] = {
+                "leader": leader,
+                "hdmi": _port_item(devices, routing["hdmi_matrix"], routing["rooms"][leader]["hdmi_output"]),
+                "input": next(stage["input"] for spec, stage in stages(data, room) if spec is entry["receiver"]),
+                "choices": {source: {"plan": sync_plan(source, leader), "value": value,
+                                     "inputs": synced_inputs(data, room, source)} for source, value in sync.items()},
+            }
         checks = {}
         raw = rooms[room]
         for item, action in ([(raw[key], "read matrix output input") for key in ("hdmi", "audioHdmi") if raw.get(key)]) + (
                 [(raw["switch"]["item"], "read selected input")] if raw["switch"] else []) + [
                 (stage[field], action) for stage in raw["stages"]
-                for field, action in (("power", "read power"), ("input", "read selected input"))]:
+                for field, action in (("power", "read power"), ("input", "read selected input"))] + (
+                [(raw["sync"]["hdmi"], "read matrix output input")] if "sync" in raw else []):
             ident = next((ident for ident in sorted(devices, key=len, reverse=True) if item.startswith(ident + "_")), None)
             if ident:
                 device = devices[ident]
                 checks[item] = {"device": ident, "label": device.get("name") or device.get("model") or ident,
                                 "model": device.get("model") or "", "action": action}
         raw["diagnosis"] = {"item": problem_item_name(room), "checks": checks}
+    for room, raw in rooms.items():
+        if "sync" in raw:
+            rooms[raw["sync"]["leader"]].setdefault("followers", []).append(room)
     result = {"rooms": rooms, "edid": edid_table(data), "off": OFF}
     if lifecycle_enabled(data):
         from .lifecycle import compile_descriptor

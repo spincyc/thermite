@@ -35,6 +35,15 @@ rollback. The unified deployment workflow uses a separate committed private site
   refused only what would change the locked room's route, such as driving a
   device it is showing. Lock and Unlock live under Info on Remotes; the remote
   itself shows only the lock state.
+- Routing: a receiver zone can follow another room's zone of the same
+  receiver (`receiver.sync_with: ROOM`). While both rooms show the same matrix
+  source, the follower's zone takes the leader's input, so both screens show
+  one picture. The follower falls back to its own matrix output before the
+  leader changes (break before) and syncs only once the leader's output shows
+  the source (make after); a follower turned off or switched elsewhere at its
+  own devices is left alone. Under the lifecycle planner a synced route leases
+  the leader's output, so it is neither moved nor parked while either room
+  uses it. Room locks accept the synced input.
 - `thermite tui` runs the terminal remote on any computer with thermite
   installed, with no private site: it reads the house from the gateway, opens
   `https://thermite:13600` by default, and takes `--url` as `HOST`,

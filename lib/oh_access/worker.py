@@ -201,11 +201,10 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
     rebase_timezone(adapter, config["timezone"])
     from oh_identity.policy_store import Store
     from oh_identity.runtime import plain
-    from oh_room_policy import Worker, expected_plan
+    from oh_room_policy import Worker
     store = Store()
     house = plain(adapter.contract.house)
-    fields = [field for room, spec in adapter.contract.rooms.items() for choice in ("off", *spec["sources"])
-              for field in expected_plan(house, room, choice).fields]
+    fields = observed_fields(house, adapter.contract.rooms)
     import oh_integrations
     native_power = {}
     for device in house["devices"]:
@@ -221,8 +220,8 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
     rooms_by_item = {}
     for room, choices in io.plans.items():
         for plan in choices.values():
-            for field in plan.fields:
-                rooms_by_item.setdefault(field.item, set()).add(room)
+            for item in plan.observed():
+                rooms_by_item.setdefault(item, set()).add(room)
     def changed(item):
         for room in rooms_by_item.get(item, ()):
             worker.notify(room)
@@ -297,6 +296,14 @@ def maintain(store):
 
 def cache_items(fields):
     return {field.item for field in fields}
+
+
+def observed_fields(house, rooms):
+    """Every Field the native cache observes: each route plan's fields and the
+    conditions their alternatives depend on, which are never written."""
+    from oh_room_policy import expected_plan
+    return [field for room, spec in rooms.items() for choice in ("off", *spec["sources"])
+            for plan in (expected_plan(house, room, choice),) for field in (*plan.fields, *plan.conditions)]
 
 
 def validate_batches(cache, base, pack=None):
