@@ -20,11 +20,12 @@
     const a = node("a", cls, entry.label); a.href = href(entry.id, location.search);
     return a;
   };
-  const shell = node("aside", "thermite-shell"); shell.setAttribute("data-thermite-shell", "");
-  const brand = link(pages[0], "thermite-brand"); brand.textContent = "";
+  const shell = node("header", "thermite-shell"); shell.setAttribute("data-thermite-shell", "");
+  // The mark is decoration: Home is in the menu. It closes a narrow bar and heads a wide sidebar.
+  const brand = node("span", "thermite-brand"); brand.setAttribute("aria-hidden", "true");
   const mark = node("img", "thermite-mark"); mark.src = navigation.asset("mark.svg"); mark.alt = ""; mark.width = 44; mark.height = 35;
-  brand.append(mark, node("span", "", "thermite"));
-  // Three bars at the left of a narrow header open the views; wide screens show them as a sidebar.
+  brand.append(mark);
+  // Three bars at the left of a narrow bar open the views; wide screens show them as a sidebar.
   const menu = node("button", "thermite-menu"); menu.type = "button";
   menu.setAttribute("aria-label", "Menu"); menu.setAttribute("aria-expanded", "false"); menu.setAttribute("aria-controls", "thermite-navigation");
   const bars = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -43,30 +44,59 @@
     if (entry.id === page.parent) a.dataset.parentActive = "true";
     nav.appendChild(a);
   });
+  // The narrow bar keeps the theme switch at the foot of the menu; the sidebar keeps its own button.
+  const themeItem = node("button", "thermite-nav-link thermite-nav-theme"); themeItem.type = "button";
   const theme = node("button", "thermite-theme", "◐"); theme.type = "button";
   theme.setAttribute("aria-label", "Change color theme");
-  theme.addEventListener("click", () => {
+  const showTheme = () => { themeItem.textContent = document.documentElement.dataset.theme === "light" ? "Dark theme" : "Light theme"; };
+  const switchTheme = () => {
     const mode = document.documentElement.dataset.theme === "light" ? "dark" : "light";
     document.documentElement.dataset.theme = mode;
     try { localStorage.setItem("remote.theme", mode); } catch (_) {}
-  });
+    showTheme();
+  };
+  theme.addEventListener("click", switchTheme); themeItem.addEventListener("click", switchTheme);
+  showTheme(); nav.appendChild(themeItem);
   const setOpen = open => { menu.setAttribute("aria-expanded", String(open)); shell.classList.toggle("is-open", open); };
   menu.addEventListener("click", () => setOpen(menu.getAttribute("aria-expanded") !== "true"));
-  document.addEventListener("click", event => { if (shell.classList.contains("is-open") && !shell.contains(event.target)) setOpen(false); });
-  // A focused navigation control owns its keys, including on the Remote page.
+  document.addEventListener("click", event => {
+    if (shell.classList.contains("is-open") && !nav.contains(event.target) && !menu.contains(event.target)) setOpen(false);
+  });
+  // The shell's own controls own their keys, including on the Remote page;
+  // page controls lent to the bar (below) keep the page's keyboard shortcuts.
   shell.addEventListener("keydown", event => {
     if (event.key === "Escape" && shell.classList.contains("is-open")) { setOpen(false); menu.focus(); }
-    event.stopPropagation();
+    if (!event.target.closest("[data-thermite-bar]")) event.stopPropagation();
   });
   const content = node("div", "thermite-content");
   const crumbs = node("nav", "thermite-breadcrumbs"); crumbs.setAttribute("aria-label", "Page hierarchy");
   if (page.parent) { crumbs.append(link(pages.find(entry => entry.id === page.parent)), node("span", "", "›")); }
   const active = node("span", "", page.label); active.setAttribute("aria-current", "page"); crumbs.append(active);
-  shell.append(menu, brand, crumbs, nav, theme);
+  // A page may lend the narrow bar a control that names it (Remotes: the room) and a few actions.
+  const title = node("div", "thermite-title"), actions = node("div", "thermite-actions");
+  shell.append(menu, crumbs, title, actions, nav, theme, brand);
   const main = document.querySelector("main, .app");
   if (!main) return;
   main.before(shell, content); content.appendChild(main);
   body.classList.add("thermite-app");
+  const lent = [...document.querySelectorAll("[data-thermite-bar]")].map(item => {
+    const place = document.createComment("thermite-bar"); item.before(place);
+    return { item, place };
+  });
+  const narrow = global.matchMedia ? global.matchMedia("(max-width: 1179px)") : null;
+  const lend = () => {
+    const bar = Boolean(narrow && narrow.matches);
+    lent.forEach(({ item, place }) => {
+      if (bar) (item.dataset.thermiteBar === "title" ? title : actions).appendChild(item);
+      else place.after(item);
+    });
+    shell.toggleAttribute("data-titled", bar && title.childElementCount > 0);
+    document.querySelectorAll("[data-thermite-bar-host]").forEach(host => host.toggleAttribute("data-lent", bar));
+  };
+  if (lent.length) { lend(); narrow?.addEventListener?.("change", lend); }
+  // The bar names the page, so an h1 that only repeats it is left to screen readers on a phone.
+  const heading = main.querySelector("h1");
+  if (heading && heading.textContent.trim().toLowerCase() === page.label.toLowerCase()) heading.dataset.thermiteTitled = "";
   const access = global.ThermiteAccess && global.ThermiteAccess.client;
   const updateAccess = () => {
     shell.querySelectorAll("[data-view]").forEach((link) => {

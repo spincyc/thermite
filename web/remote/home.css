@@ -65,3 +65,5 @@
   .home .home__views .thermite-modules { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) { .home .thermite-module { transition: none; } }
+/* On a phone the bar names the page (shell.css) and carries the mark: the header keeps only its h1, for screen readers. */
+@media (max-width: 819px) { .home .home__header { margin-bottom: 0; } .home .home__header :is(p, .home__mark) { display: none; } }

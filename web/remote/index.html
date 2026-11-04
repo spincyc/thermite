@@ -82,15 +82,15 @@
     </aside>
 
     <main class="remote" id="remote" aria-label="Remote control">
-      <header class="remote__top">
+      <header class="remote__top" data-thermite-bar-host>
         <span class="torch remote__torch"><img src="mark.svg" width="44" height="35" alt="thermite"></span>
-        <button class="room-switch" id="room-switch" type="button" aria-haspopup="dialog" aria-controls="room-sheet">
+        <button class="room-switch" id="room-switch" data-thermite-bar="title" type="button" aria-haspopup="dialog" aria-controls="room-sheet">
           <span class="room-switch__name"><span data-room-name>Loading</span><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-down"></use></svg></span>
         </button>
-        <button class="icon-button" id="info-open" type="button" aria-haspopup="dialog" aria-controls="info-sheet" aria-label="Room devices, signal and audio">
+        <button class="icon-button" id="info-open" data-thermite-bar="action" type="button" aria-haspopup="dialog" aria-controls="info-sheet" aria-label="Room devices, signal and audio">
           <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-info"></use></svg>
         </button>
-        <button class="icon-button log-toggle" id="log-toggle" type="button" aria-expanded="false" aria-controls="activity-log" aria-label="Show log" aria-keyshortcuts="L" title="Show log (L)">Log</button>
+        <button class="icon-button log-toggle" id="log-toggle" data-thermite-bar="action" type="button" aria-expanded="false" aria-controls="activity-log" aria-label="Show log" aria-keyshortcuts="L" title="Show log (L)">Log</button>
         <button class="icon-button" id="theme-toggle" type="button" aria-label="Switch to light theme">
           <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-sun"></use></svg>
         </button>

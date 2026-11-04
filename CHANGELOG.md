@@ -42,6 +42,16 @@ rollback. The unified deployment workflow uses a separate committed private site
   refused only what would change the locked room's route, such as driving a
   device it is showing. Lock and Unlock live under Info on Remotes; the remote
   itself shows only the lock state.
+- Web layout: below 1180 pixels one bar holds the menu, the page title, the
+  page's actions and the mark at the right. On Remotes the room name with ▾
+  replaces "Remotes" and Info and Log leave the room row for the bar; the
+  light/dark switch moves into the menu, and phones no longer repeat the title,
+  or Home's mark and tagline, under it. The desktop sidebar is 128 pixels without
+  the wordmark, and a 60-pixel rail until Remotes shows its right panels at 1200;
+  without those panels the rooms list keeps a panel's width. A phone on its side
+  gets the whole remote, keys beside volume. Installed iPhone apps draw every
+  page under the translucent status bar with the safe-area inset in the bar, not
+  below it, and the remote clears the home indicator.
 - Host layout: everything Thermite keeps under `/srv` lives in one root-owned
   installation root, `/srv/thermite`, a Btrfs subvolume where its parent is
   Btrfs: `runtime/` holds the service's state (and is the `thermite` account's

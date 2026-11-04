@@ -23,3 +23,16 @@ reports it.
 
 Source previews use the fictional sample. Add `?backend=mock` to simulate
 controls without sending commands.
+
+Below 1180 pixels a bar runs across the top: ☰ opens every view and the
+light/dark switch, followed by the page title, the page's actions and the
+thermite mark. On Remotes the title is the room, which opens the room list, and
+the actions are Info and Log. From 1180 pixels a narrow sidebar lists the views
+with the theme switch at its foot; until Remotes shows its right-hand panels at
+1200 pixels it is a rail whose ☰ opens the same list. A phone on its side, 500
+pixels tall or less, shows the remote across the whole width with its keys
+beside the volume.
+
+Added to an iPhone home screen, every page draws under the translucent status
+bar: the bar (or sidebar) pads itself by the safe-area inset and the remote
+keeps clear of the home indicator.

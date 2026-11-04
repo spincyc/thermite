@@ -13,7 +13,7 @@
   min-width: 0;
   margin: 0 auto;
   padding:
-    calc(env(safe-area-inset-top) + var(--space-4))
+    var(--space-4)
     calc(env(safe-area-inset-right) + var(--space-4))
     calc(env(safe-area-inset-bottom) + var(--space-7))
     calc(env(safe-area-inset-left) + var(--space-4));

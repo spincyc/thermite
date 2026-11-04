@@ -243,7 +243,8 @@ button {
   flex-direction: column;
   min-height: 100vh;
   min-height: 100dvh;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  /* The frame (shell.css) keeps the top and side insets; the remote keeps clear of the home indicator. */
+  padding: 0 0 env(safe-area-inset-bottom);
   background: var(--th-surface);
   -webkit-user-select: none;
   user-select: none;
@@ -2173,4 +2174,64 @@ kbd {
   color: var(--ink-muted);
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* ---- a phone on its side --------------------------------------------------
+   Under 500px tall the device's keys sit beside the volume and playback
+   instead of above them, so the remote fits without scrolling (shell.css
+   gives it the whole width). */
+
+@media (orientation: landscape) and (max-height: 500px) {
+  :root {
+    --dpad: 180px;
+    --key: 48px;
+    --key-sm: 44px;
+    --key-play: 48px;
+    --label-h: 36px;
+    --glyph: 26px;
+    --rocker-w: 60px;
+    --rocker-h: 108px;
+  }
+
+  .targets-wrap {
+    margin-top: var(--space-2);
+  }
+
+  .controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) auto;
+    column-gap: var(--space-6);
+    row-gap: var(--space-1);
+    padding: var(--space-2) var(--space-5);
+  }
+
+  .controls > .layout {
+    grid-area: 1 / 1;
+    gap: var(--space-2);
+  }
+
+  .controls > .caption--source {
+    grid-area: 2 / 1;
+    justify-self: center;
+  }
+
+  .controls > .lower {
+    grid-area: 1 / 2 / 3 / 3;
+    align-self: center;
+    grid-template-columns: var(--rocker-w) auto var(--rocker-w);
+    width: auto;
+  }
+
+  .remote__mark {
+    display: none;
+  }
+}
+
+@supports (container-type: size) {
+  @media (orientation: landscape) and (max-height: 500px) and (max-width: 819px) {
+    .cluster-fit {
+      min-height: 150px;
+    }
+  }
 }
