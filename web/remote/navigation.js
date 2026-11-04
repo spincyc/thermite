@@ -14,7 +14,7 @@
       detail: "Configured video and USB connections", note: "Explore without switching a source", compact: "Configured connections" },
     { id: "system", screen: "system", key: "F10", label: "System", href: "system.html", top: true, system: true },
     { id: "settings", screen: "settings", key: "F7", label: "Room settings", href: "settings.html", account: true, auth: true },
-    { id: "users", screen: "users", key: "F8", label: "Users & roles", href: "users.html", parent: "system", admin: true, account: true },
+    { id: "users", screen: "users", key: "F8", label: "Users", href: "users.html", parent: "system", admin: true, account: true },
     { id: "access", screen: "account", key: "F9", label: "Account", href: "access.html", account: true }
   ].map(entry => Object.freeze({ ...entry, path: {
     home: "/", remotes: "/remotes/", pairing: "/pairing/", security: "/security/",

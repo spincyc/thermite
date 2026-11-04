@@ -348,8 +348,8 @@
     const model = create({ ...options, mock, manifestURL: global.ThermiteNavigation?.asset("cameras.json") || "cameras.json" });
     const find = (selector) => root.querySelector(selector);
     const access = global.ThermiteAccess?.client;
-    // Guests see camera status, but media needs an account while authentication is on.
-    const mediaNeedsAccount = () => !mock && Boolean(access && !access.native && access.authEnabled() && access.current()?.is_guest);
+    // Everyone sees camera status; media follows the camera.view permission.
+    const mediaNeedsAccount = () => !mock && Boolean(access && !access.native && access.current() && !access.has("camera.view"));
     const cards = new Map();
     let selected = global.location.hash.slice(1), filter = "all", stopped = false, mediaKind = "idle";
     const viewer = media({ ...options, mock, video: find("[data-camera-video]"), image: find("[data-camera-image]"),

@@ -16,7 +16,7 @@ from django.http import FileResponse
 from django.test import Client, TransactionTestCase, override_settings
 
 from oh_routes import ALIASES, PAGES
-from oh_identity.models import CATALOG, PersonalToken, Role, User
+from oh_identity.models import PersonalToken, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter
 from oh_identity.services import Problem, bootstrap, issue_token, save_user
 from oh_identity.security import get_state
@@ -51,12 +51,12 @@ class Boundary(TransactionTestCase):
         install_adapter(self.adapter)
 
     def test_simultaneous_admin_removals_keep_one(self):
-        other = User.objects.create_user("second", password=PASSPHRASE, role=self.admin.role)
+        other = User.objects.create_user("second", password=PASSPHRASE, admin=True)
         barrier = threading.Barrier(2)
 
         def demote(ident):
             close_old_connections()
-            actor = User.objects.select_related("role").get(pk=ident)
+            actor = User.objects.get(pk=ident)
             barrier.wait(timeout=3)
             try:
                 save_user(actor, {"active": False}, ident)
@@ -68,7 +68,7 @@ class Boundary(TransactionTestCase):
         with ThreadPoolExecutor(max_workers=2) as executor:
             result = list(executor.map(demote, [self.admin.pk, other.pk]))
         self.assertCountEqual(result, ["ok", "last_admin"])
-        self.assertEqual(User.objects.filter(role=self.admin.role, is_active=True).count(), 1)
+        self.assertEqual(User.objects.filter(admin=True, is_active=True).count(), 1)
 
     def test_token_login_has_no_cookie_and_rejects_browser_origin(self):
         client = Client(enforce_csrf_checks=True)
@@ -183,7 +183,8 @@ class Boundary(TransactionTestCase):
                     response.close()
             for method in ("post", "put", "patch", "delete"):
                 response = getattr(client, method)(path, secure=True)
-                self.assertEqual(response.status_code, 405 if path == "/" else 404)
+                self.assertEqual(response.status_code, 405)
+                self.assertEqual(response["Allow"], "GET, HEAD")
                 self.assertNotIn("Location", response)
         for path in ("/system/child", "/System/", "/settings/", "/remotes//"):
             self.assertEqual(client.get(path, secure=True).status_code, 404)
@@ -191,12 +192,12 @@ class Boundary(TransactionTestCase):
 
     def test_clean_system_and_users_aliases_keep_existing_asset_and_api_authorization(self):
         root = self.route_assets()
-        viewer = User.objects.create_user("viewer", password=PASSPHRASE, role=Role.objects.get(name="Viewer"))
-        client = self.session_client(viewer)
+        member = User.objects.create_user("member", password=PASSPHRASE)
+        client = self.session_client(member)
         for path in ("/system/", "/static/remote/system.html"):
             self.assertEqual(client.get(path, secure=True).status_code, 403)
         # Users HTML remains ordinary private presentation; its API requires
-        # users.manage. An explicit admin asset policy is also honored by aliases.
+        # an Admin. An explicit admin asset policy is also honored by aliases.
         response = client.get("/users/", secure=True)
         self.assertEqual(response.status_code, 200)
         response.close()
@@ -212,23 +213,19 @@ class Boundary(TransactionTestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response["Cache-Control"], "no-store")
             response.close()
-        self.admin.role.permissions = []
-        self.admin.role.save(update_fields=["permissions"])
+        User.objects.filter(pk=self.admin.pk).update(admin=False)
         self.assertEqual(admin.get("/system/", secure=True).status_code, 403)
         self.assertEqual(self.adapter.transport.commands, [])
 
-    def test_system_assets_require_site_read_and_authoritative_reserved_admin_session(self):
+    def test_system_assets_require_an_authoritative_admin_session(self):
         self.system_assets()
         anonymous = Client()
         response = anonymous.get("/static/remote/system.html?next=https://foreign.invalid", secure=True)
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "/account/?next=%2Fsystem%2F")
         self.assertEqual(anonymous.get("/static/remote/system.json", secure=True).status_code, 401)
-        viewer = User.objects.create_user("viewer", password=PASSPHRASE, role=Role.objects.get(name="Viewer"))
-        user = User.objects.create_user("operator", password=PASSPHRASE, role=Role.objects.get(name="User"))
-        fake_role = Role.objects.create(name="Permission-only administrator", permissions=list(CATALOG))
-        imposter = User.objects.create_user("imposter", password=PASSPHRASE, role=fake_role)
-        for actor in (viewer, user, imposter):
+        member = User.objects.create_user("operator", password=PASSPHRASE)
+        for actor in (member,):
             client = self.session_client(actor)
             for name in ("system.html", "system.json", "admin-note.html"):
                 self.assertEqual(client.get("/static/remote/" + name, secure=True).status_code, 403)
@@ -238,15 +235,14 @@ class Boundary(TransactionTestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response["Cache-Control"], "no-store")
             response.close()
-        self.admin.role.permissions = []
-        self.admin.role.save(update_fields=["permissions"])
+        User.objects.filter(pk=self.admin.pk).update(admin=False)
         self.assertEqual(admin.get("/static/remote/system.json", secure=True).status_code, 403)
         self.assertEqual(self.adapter.transport.commands, [])
 
     def test_system_assets_enforce_personal_token_revocation_and_token_channel(self):
         self.system_assets()
-        viewer = User.objects.create_user("viewer", password=PASSPHRASE, role=Role.objects.get(name="Viewer"))
-        _, viewer_raw = issue_token(viewer, "viewer")
+        member = User.objects.create_user("member", password=PASSPHRASE)
+        _, viewer_raw = issue_token(member, "member")
         token, admin_raw = issue_token(self.admin, "admin")
         client = Client(enforce_csrf_checks=True)
         for name in ("system.html", "system.json"):
@@ -278,6 +274,7 @@ class Boundary(TransactionTestCase):
         self.assertIsNone(frame(contract, allowed, {**event, "type": "ItemStateEvent"}))
         self.assertIsNone(frame(contract, allowed, {"topic": "openhab/items/tv_pairing/command", "payload": object()}))
 
+    @patch("oh_identity.streams.REVALIDATE", 0)
     def test_stream_revocation_and_disconnect_cleanup(self):
         token, _ = issue_token(self.admin, "stream")
         snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token.pk), "security_revision": get_state().revision}
@@ -338,7 +335,7 @@ class Boundary(TransactionTestCase):
             path.chmod(0o600)
             async_to_sync(check)(path)
 
-    def test_stream_checks_once_per_frame_and_fences_quiet_heartbeats(self):
+    def test_busy_stream_checks_at_most_once_per_interval_and_fences_quiet_heartbeats(self):
         topics = topics_for(self.adapter.contract, "openhab/items/loc_den_source/stateupdated")
         event = {"topic": topics[0], "type": "ItemStateUpdatedEvent",
                  "payload": json.dumps({"type": "String", "value": "player"})}
@@ -346,11 +343,15 @@ class Boundary(TransactionTestCase):
         async def check():
             transport = StreamTransport()
             frames = stream(RuntimeAdapter(self.adapter.contract, transport), topics, {})
-            with patch("oh_identity.streams.valid", return_value=True) as valid:
-                for _ in range(100):
+            clock = [1000.0]
+            with patch("oh_identity.streams.valid", return_value=True) as valid, \
+                    patch("oh_identity.streams.clock", side_effect=lambda: clock[0]):
+                for index in range(100):
+                    clock[0] = 1000.0 + index * .05
                     await transport.queue.put(event)
                     self.assertIn(b"player", await anext(frames))
-                self.assertEqual(valid.call_count, 101)
+                # One opening check, then one per elapsed second of frames.
+                self.assertEqual(valid.call_count, 1 + 4)
                 await frames.aclose()
             self.assertTrue(transport.closed)
 

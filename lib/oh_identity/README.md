@@ -8,13 +8,27 @@ Python 3.11 or newer is required. Install `lib/requirements-site.txt` with
 The Security page controls a persistent authentication property. New identity
 databases start with authentication off; existing databases with accounts
 migrate with authentication on. The gateway stays in place in both modes.
-An anonymous Guest can read the site and use ordinary controls in unlocked
-rooms in either authentication mode. While authentication is on, camera media
-(`/unifi/media/…` snapshots and live video) requires an account. Authentication enables account
-administration, pairing, room locks and schedules; these are disabled by the
-backend when the switch is off, and the worker cannot enforce saved policies. Saved
-accounts and policies remain in private storage. Native testing mode is a
-separate direct-runtime path, not this property or an authentication fallback.
+
+There are three principals. A **Guest** (no credential) reads the site and
+uses ordinary controls in unlocked rooms in either authentication mode, and
+sees camera media (`/unifi/media/…` snapshots and live video) only while
+authentication is off. A **Member** is any signed-in non-admin account and
+adds camera media. An **Admin** account (`admin: true`) adds account
+administration, pairing, room locks and schedules. Their canonical
+permissions, as `/api/v1/me` reports them:
+
+| Principal | Permissions |
+|---|---|
+| Guest | `site.read`, `room.control`, plus `camera.view` while authentication is off |
+| Member | `site.read`, `room.control`, `camera.view` |
+| Admin | Member plus `settings.manage`, `users.manage`, `pairing.manage` |
+
+There are no roles or per-account room grants: Guests already control every
+unlocked room, so neither could restrict anything. Account administration,
+pairing, room locks and schedules are disabled by the backend when the switch
+is off, and the worker cannot enforce saved policies. Saved accounts and
+policies remain in private storage. Native testing mode is a separate
+direct-runtime path, not this property or an authentication fallback.
 
 For first activation, the owner runs `thermite access setup --config …` on
 the service host. It prints a one-use code to an interactive terminal only.
@@ -44,10 +58,10 @@ invalid session/token is rejected rather than downgraded to Guest; sign out
 to return to anonymous controls.
 
 Privilege elevation is an account operation: sign out and sign in as an Admin,
-or have an Admin assign the required role on Users. Role changes revoke old
-authorization; a new sign-in is required. Custom roles can grant ordinary
-reading/control only. Admins still obey active room policies and receive no
-operating-system privileges, shell execution or arbitrary native REST access.
+or have an Admin set `admin` on Users. Any account change revokes that
+account's sessions and tokens; a new sign-in is required. Admins still obey
+active room policies and receive no operating-system privileges, shell
+execution or arbitrary native REST access.
 
 The service-owned state directory is 0700; database, site UUID and secret key
 are 0600, with umask 077 also protecting SQLite side files. An immutable site
@@ -55,7 +69,20 @@ UUID makes session and CSRF cookie names distinct between deployments on one
 hostname. Do not share one identity database between sites. Use validated TLS,
 an explicit host allowlist, and a trusted local proxy configuration. Disable
 access/request body logging; authentication and pairing secrets never belong
-in URLs or logs. No CORS or arbitrary proxy endpoint is provided.
+in URLs or logs. No CORS or arbitrary proxy endpoint is provided. SQLite runs
+in WAL mode (`synchronous=NORMAL`), so status reads proceed beside worker
+writes; the `-wal`/`-shm` side files are private like the database.
+
+Server errors (`django.request` 5xx) and `oh_identity`, `oh_access` and
+`oh_room_policy` warnings go to stderr, which the units send to the journal.
+Records carry the path, traceback frames and exception class only: never
+request objects, headers, bodies, query strings or exception messages. Client
+4xx answers and CSRF refusals are not logged. Every response carries
+`Content-Security-Policy: default-src 'self'; img-src 'self' blob:;
+object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action
+'self'` (camera snapshots display through `blob:` URLs; WebRTC is not governed
+by CSP). There is deliberately no HSTS: households reach the gateway through a
+self-signed certificate exception that HSTS would forbid.
 
 Browser login: GET `/api/v1/session` returns a CSRF token and secure CSRF cookie;
 POST the same endpoint with JSON `{username,password}` and `X-CSRFToken` from
@@ -64,26 +91,55 @@ CSRF protected. For TUI, POST JSON `/api/v1/token-login` with
 `{username,password,name,days}` without Cookie or Origin headers; this distinct
 password-authenticated channel issues a personal token and creates no browser
 cookie. It rejects browser Origin/cookie use and non-JSON bodies. Use
-the `Authorization` header with the `Bearer` scheme for subsequent TUI requests, including SSE;
+the `Authorization` header with the `Bearer` scheme (case-insensitive) for subsequent TUI requests, including SSE;
 never put the token in a query string. A token cannot mint another token.
+POST `/api/v1/logout` with an already invalid bearer token succeeds without
+effect. A session whose account changed is refused once (401) and flushed, so
+the next request continues as a Guest, as after a deleted session.
 
-GET `/api/v1/me` returns the site ID, current role ID, canonical permissions,
-room grants and can_edit. User controls unlocked granted rooms, Viewer reads,
-Admin manages users, roles and policies. Guest access is a baseline available
-without credentials: signed-in room grants and Viewer restrictions do not
-prevent someone from signing out and controlling unlocked rooms. GET/POST `/api/v1/users` and
-PATCH/DELETE `/api/v1/users/<id>` administer accounts; DELETE deactivates.
-Reserved Admin/User/Viewer roles cannot be edited/deleted. Custom roles can
-grant site.read/room.control; admin management capabilities remain reserved.
-Role edits and user mutations revoke prior authorization revisions. Concurrent
-last-Admin deactivation/demotion is serialized by SQLite IMMEDIATE transactions.
+Password attempts are throttled by the direct peer only (forwarded headers are
+ignored); an IPv6 peer counts as its /64 and an IPv4-mapped address as IPv4.
+Only failures count. Five failures for one username from one peer lock that
+pair for five minutes. A username failing from many peers is slowed, never
+locked: after ten failures each attempt waits 1, 2, 4… up to 60 seconds after
+the last one. One peer is refused after 30 failures across usernames. Refusals
+answer 429 `login_throttled` with `Retry-After`. Two password verifications run
+at once at most. Unknown usernames create no account bucket, so throttle rows
+are bounded per peer and expire. A malformed body (missing field, wrong type,
+over-length password) is 400 `invalid_login`, not a failed guess.
+
+GET `/api/v1/me` returns `{id, username, active, admin, is_guest,
+auth_enabled, can_edit, site, permissions}`; a Guest is id 0, username
+`Guest`. The token-login and session-login `user` members use the same shape.
+Admins use GET/POST `/api/v1/users` (`{users:[{id, username, active,
+admin}]}`; POST `{username, password, admin?}` answers 201) and PATCH/DELETE
+`/api/v1/users/<id>` (`{username?, password?, active?, admin?}`; DELETE
+deactivates). Unknown fields and non-boolean flags are 400. Every account
+change revokes that account's prior authorization revision. Deactivating or
+demoting the last active Admin is 409 `last_admin`; concurrent attempts are
+serialized by SQLite IMMEDIATE transactions. A wrong method answers 405 with
+an `Allow` header naming the route's methods.
 
 Personal token GET/POST `/api/v1/tokens`, DELETE `/api/v1/tokens/<uuid>` expose
 metadata only except the raw token's one issuance response. Tokens expire in
 1–90 days, store a digest, and are checked against the current active user and
-authorization revision. Token logout revokes that token. SSE checks the user,
-session/token existence, expiry and revision before each event and on a bounded
-quiet-stream heartbeat; cancellation closes the upstream iterator.
+authorization revision. Token logout revokes that token. The list omits
+revoked tokens and those that expired over a week ago. SSE checks the user,
+session/token existence, expiry and revision when it opens, at most once per
+second while events flow, and at every quiet-stream heartbeat; cancellation
+closes the upstream iterator. Topic queries are deduplicated and limited to 64
+patterns and 1000 matched topics; exact topics need no scan. Each peer bucket
+may hold four streams and the gateway 32; more answer 429
+`too_many_streams` with `Retry-After`.
+
+Security events are audited with the principal kind (`guest`, `session`,
+`token`, `password`, `local` or `anonymous`) and a keyed digest of the peer's
+address bucket, never the address. Ordinary room commands and All Off are not
+security events and are not audited. Denied sign-ins keep their own
+1000-record cap so they cannot evict the 5000 other records. The worker prunes
+daily: boundary receipts older than three days (the worker looks back two),
+expired sessions, revoked tokens, tokens expired over a week, and expired
+throttle rows.
 Commands and admin mutations revalidate the originating session/PAT after lock
 or transaction waits, so a queued request cannot outlive credential revocation.
 
@@ -94,14 +150,26 @@ accepted lengths the login endpoint rejected; both now enforce the same
 1024-character maximum. Native-listener isolation remains a deployment
 requirement, not something a database toggle can establish.
 
-GET/PUT `/api/v1/rooms/<id>/policy` uses `{revision,config}`. Guests may read
-policy status while authentication is enabled. PUT is Admin-only,
-CAS protected and delegates validation to the policy engine. Room, timezone
-and new revision are supplied by the server. Missing engine with a saved
-enabled policy denies control; it never silently unlocks. The separate worker
-uses `policy_store.Store` for revision-fenced durable boundary claims and
-canonical reconcile status. Claims happen before external effects; uncertain
-dispatch is not replayed as a new boundary action.
+GET/PUT `/api/v1/rooms/<id>/policy` uses `{revision,config}`. Room IDs are
+inventory snake_case (`[a-z][a-z0-9_]{0,99}`), enforced by the URL converter,
+the runtime contract and the terminal client. Guests may read policy status
+while authentication is enabled; `can_edit` and `can_lock` are true for an
+Admin. PUT is Admin-only (a Guest gets 401 `login_required`, a Member 403),
+CAS protected and delegates validation to the policy engine; a refusal is
+`{"error":"invalid_policy","reason":code,"field":path}` with the engine's fixed
+code and field path when it has them. Room, timezone and new revision are
+supplied by the server; a room's first row continues after any revision its
+pruned predecessor left in receipts or status. Missing engine with a saved
+active policy denies control; it never silently unlocks. A policy is active
+when it is enabled or holds a manual lock (`oh_room_policy.active`); a
+disabled schedule without a hold is inert everywhere, even if it no longer
+validates. A stored hold naming a source the house no longer offers is
+released by a schedule edit. Policies for rooms no longer in the compiled
+house are ignored by the worker; `thermite access prune --config …` deletes
+them. The separate worker uses `policy_store.Store`
+for revision-fenced durable boundary claims and canonical reconcile status.
+Claims happen before external effects; uncertain dispatch is not replayed as a
+new boundary action.
 
 PUT `/api/v1/rooms/<id>/lock` uses `{revision,locked}` and requires an
 authenticated Admin. Enabling captures the server's current reported room
@@ -112,16 +180,22 @@ readback is rejected. The persisted `manual_lock` contains `desired` and
 scheduled actions, and remains active when the schedule's `enabled` flag is
 false. Schedule edits preserve the manual lock. Disabling authentication
 suspends both manual and scheduled enforcement without deleting them.
-Unlocking releases only the manual hold, leaves the current source in place
+Unlocking always succeeds and releases only the manual hold: a remaining
+schedule that no longer validates (for example, it names a retired source) is
+kept but disabled for review. Unlocking leaves the current source in place
 unless a current schedule applies, and does not replay past daily-off actions.
+A lock window already active when a revision takes effect (unlocking into it,
+re-enabling authentication, any edit mid-window, a timezone rebase) gets one
+catch-up start; the worker sends nothing when the room's Source Item already
+equals the target, so a current source's lifecycle actions are not replayed.
 Manual locks use the same configured route enforcement and physical-device
 limitations as scheduled locks; they do not snapshot arbitrary playback or
 volume settings. All ordinary commands, including Admin commands, obey locks.
 
 POST `/api/v1/rooms/<id>/commands` takes `{action,value}`. The immutable server
 contract resolves the action to a known Item and validates enum/range/step.
-Every affected room, not just the caller's room, is checked against grants and
-locks. A fresh principal/revision is checked immediately before transport.
+Every affected room, not just the caller's room, is checked against its lock.
+A fresh principal/revision is checked immediately before transport.
 POST `/api/v1/all-off` with `{}` affects only unlocked authorized rooms and
 returns accepted/skipped IDs. It cannot create an override. No public API
 allows arbitrary Item names, state PUT, runtime settings/scripts or upstream
@@ -139,7 +213,10 @@ all filesystem assets are exact basenames under a configured asset root.
 Pairing metadata comes only from the compiled `pairings` map; its command
 Item state is always NULL and is never fetched. Status/result reads are
 projected. Only Admin can submit REQUEST/AGAIN/CANCEL or a metadata-validated
-code through that finite map. No response/audit echoes the code. Camera
+code through that finite map; authorization and validation happen before any
+room lock is taken (a Guest gets 401, a Member 403). No response/audit echoes
+the code. First activation likewise checks the setup code before taking room
+locks, and again inside them. Camera
 status uses a compiled Group/member allowlist and one bounded Group GET.
 Media uses exact compiled native paths with snapshot/SDP kinds; unknown paths,
 query strings, outbound media offers and upstream response headers are denied.
@@ -165,9 +242,10 @@ the same lock authority as the worker; wrap raw IDs as `room:<id>`. Dispatch
 rechecks user and lock state after acquiring it, and policy PUT acquires the
 room lock before its DB transaction. The default no-op is for isolated tests
 and uncomposed development only; production composition must supply it.
-When a site timezone changes, call `policy_store.rebase_timezone()` under the
-settings mutation lock; it revises/retimestamps policies so the worker fences
-old occurrences and does not replay prior boundaries.
+When the configured site timezone changes, `serve` and `worker` each call
+`policy_store.rebase_timezone()` under every room lock before evaluating a
+schedule; it revises/retimestamps policies so the worker fences old
+occurrences and does not replay prior boundaries.
 
 Native SSE suffix compaction uses exact public Item wildcards only when all
 three verbs are approved, never pairing credential families. Complete exact

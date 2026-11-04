@@ -81,6 +81,14 @@ def transition(state, enabled, actor):
     return state
 
 
+def setup_code_valid(state, data):
+    """The owner-issued one-use code, unexpired, for a first enable only."""
+    code = data.get("setup_code")
+    return bool(data["enabled"] and isinstance(code, str) and 1 <= len(code) <= 200 and state.setup_digest
+                and state.setup_expires_at and state.setup_expires_at > timezone.now()
+                and hmac.compare_digest(state.setup_digest, hashlib.sha256(code.encode()).hexdigest()))
+
+
 def change_security(request, data):
     from .auth import login_user, principal, revalidate
     from .runtime import get_adapter
@@ -95,6 +103,9 @@ def change_security(request, data):
         raise Problem("revision_conflict", 409)
     first = not User.objects.exists()
     actor = None
+    if first and not setup_code_valid(state, data):
+        # Checked before taking every room lock, and again inside them.
+        raise Problem("invalid_setup_code", 403)
     if not first:
         # Password login has bounded account/peer throttles. A valid session may
         # supply the username, but never substitutes for the current password.
@@ -121,14 +132,13 @@ def change_security(request, data):
         if first:
             if User.objects.exists():
                 raise Problem("already_initialized", 409)
-            code = data.get("setup_code")
-            if not data["enabled"] or not isinstance(code, str) or not 1 <= len(code) <= 200 or not state.setup_digest or not state.setup_expires_at or state.setup_expires_at <= timezone.now() or not hmac.compare_digest(state.setup_digest, hashlib.sha256(code.encode()).hexdigest()):
+            if not setup_code_valid(state, data):
                 raise Problem("invalid_setup_code", 403)
             actor = bootstrap(data.get("username"), data.get("password"))
             state = get_state()
         else:
             revalidate(actor)
-            fresh = User.objects.select_related("role").filter(pk=actor.pk, is_active=True).first()
+            fresh = User.objects.filter(pk=actor.pk, is_active=True).first()
             if not fresh or fresh.auth_revision != actor.auth_revision or not is_admin(fresh):
                 raise Problem("authorization_changed", 401)
             state = transition(state, data["enabled"], fresh)

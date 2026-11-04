@@ -30,7 +30,8 @@ EXAMPLES = (("thermite access login --url https://thermite.example:13600 --user 
             ("thermite access bootstrap --config /srv/thermite/config.json --user admin", "initialize one site's first admin locally"),
             ("thermite access verify --config /srv/thermite-access/releases/current/config.json", "check service ownership and configuration as thermite before activation"),
             ("thermite access serve --config /srv/thermite/config.json", "serve the compiled site over verified TLS"),
-            ("thermite access worker --config /srv/thermite/config.json", "run the single supervised room-policy worker"))
+            ("thermite access worker --config /srv/thermite/config.json", "run the single supervised room-policy worker"),
+            ("thermite access prune --config /srv/thermite/config.json", "delete saved policies for rooms the house no longer has"))
 
 
 def hidden_password(prompt="Password: ", *, confirm=False):
@@ -65,26 +66,23 @@ def print_stage(result, args):
 
 def _site_ports():
     """A selected site's host overrides participate in separate access staging."""
+    import oh_deploy
     path = oh_cli.AREA / "instance/host.yaml"
-    import yaml
     try:
-        host = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(host, dict):
-            raise ValueError()
-        return oh_ports.effective(host)
+        return oh_ports.effective(oh_deploy.load_host(path))
     except FileNotFoundError:
         if not path.is_symlink():
             return None
         raise AccessError("Cannot validate staged listeners against the selected site's instance/host.yaml") from None
-    except (OSError, ValueError, TypeError, yaml.YAMLError):
-        raise AccessError("Cannot validate staged listeners against the selected site's instance/host.yaml") from None
+    except (OSError, ValueError) as exc:
+        raise AccessError(f"Cannot validate staged listeners against the selected site's host file: {exc}") from None
 
 
 def main(argv=None):
     parser = oh_cli.command("access", DESCRIPTION, EXAMPLES)
     commands = oh_cli.actions(parser)
-    for name in ("bootstrap", "setup", "migrate", "serve", "worker", "verify"):
-        sub = oh_cli.action(commands, name, {"bootstrap": "initialize the first admin locally", "setup": "issue a one-use code for first admin setup on the Security page", "migrate": "upgrade identity schema after backing up state and stopping access services", "serve": "serve one HTTPS site", "worker": "run the single room-policy worker", "verify": "verify service custody without initializing state"}[name], examples=[example for example in EXAMPLES if " " + name + " " in example[0]])
+    for name in ("bootstrap", "setup", "migrate", "serve", "worker", "verify", "prune"):
+        sub = oh_cli.action(commands, name, {"bootstrap": "initialize the first admin locally", "setup": "issue a one-use code for first admin setup on the Security page", "migrate": "upgrade identity schema after backing up state and stopping access services", "serve": "serve one HTTPS site", "worker": "run the single room-policy worker", "verify": "verify service custody without initializing state", "prune": "delete saved policies for rooms the compiled house no longer has"}[name], examples=[example for example in EXAMPLES if " " + name + " " in example[0]])
         sub.add_argument("--config", required=True, type=Path, help="private site service configuration")
         if name == "bootstrap":
             sub.add_argument("--user", required=True, help="first admin's username")
@@ -143,6 +141,9 @@ def main(argv=None):
         elif args.command == "migrate":
             from oh_access.service import migrate
             result = migrate(args.config)
+        elif args.command == "prune":
+            from oh_access.service import prune_policies
+            result = prune_policies(args.config)
         elif args.command == "bootstrap":
             from oh_access.files import require_service_account
             require_service_account()

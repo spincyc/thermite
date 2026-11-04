@@ -7,8 +7,8 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const origin = "https://site.example:13600", csrfValue = "C".repeat(32), csrfName = "thermite_0123456789abcdef_csrf";
 const confirmation = "F".repeat(16);
 const mode = (enabled, revision = 1) => ({ enabled, revision, bootstrap_required: !enabled, setup_available: false, csrf: csrfValue });
-const guest = { id: 0, role: 0, username: "Guest", rooms: null, can_edit: false, is_guest: true, auth_enabled: false, permissions: ["site.read", "room.control"] };
-const admin = { ...guest, id: 1, role: 1, username: "Admin", can_edit: true, is_guest: false, auth_enabled: true, permissions: [...guest.permissions, "settings.manage", "users.manage", "roles.manage", "pairing.manage"] };
+const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, auth_enabled: false, permissions: ["site.read", "room.control", "camera.view"] };
+const admin = { ...guest, id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, auth_enabled: true, permissions: [...guest.permissions, "settings.manage", "users.manage", "pairing.manage"] };
 const response = (value, status = 200, cookies = []) => ({ ok: status >= 200 && status < 300, status, json: async () => value, headers: { getSetCookie: () => cookies } });
 const house = { rooms: [{ id: "den", label: "Den", sources: [] }], sources: {} };
 function textOf(node) { return [node.textContent || "", ...(node.children || []).map(textOf)].join(" "); }
@@ -73,7 +73,7 @@ async function browser(page, client) {
     assert.equal(init.headers.get("Authorization"), null);
     if (route === "/api/v1/security") return response(mode(true));
     if (route === "/api/v1/session") return response({ csrf: csrfValue });
-    if (route === "/api/v1/me") return response({ ...guest, auth_enabled: true });
+    if (route === "/api/v1/me") return response({ ...guest, auth_enabled: true, permissions: ["site.read", "room.control"] });
     if (route.endsWith("/policy")) return response({ room: "den", revision: 0, manual_lock: null, can_lock: false,
       effective: { allowed: true, locked: false } });
     if (route.endsWith("/commands")) { assert.equal(init.headers.get("X-CSRFToken"), csrfValue); return response({ ok: true }); }
@@ -156,8 +156,8 @@ async function browser(page, client) {
   const reenableForm = reenable.host.children.find(child => child.tag === "form");
   assert(reenableForm.elements.username); assert(!reenableForm.elements.setup_code); assert(!reenableForm.elements.confirm_password);
   assert.equal(reenableForm.elements.password.autocomplete, "current-password");
-  const viewer = await browser("security", { native: false, loadSecurity: async () => mode(true), ready: async () => ({ ...admin, can_edit: false }), canEdit: () => false, current: () => ({ username: "Viewer" }) });
-  assert(!viewer.host.children.some(child => child.tag === "form")); assert(textOf(viewer.host).includes("Switch to an administrator account"));
+  const member = await browser("security", { native: false, loadSecurity: async () => mode(true), ready: async () => ({ ...admin, admin: false, can_edit: false }), canEdit: () => false, current: () => ({ username: "Member", is_guest: false }) });
+  assert(!member.host.children.some(child => child.tag === "form")); assert(textOf(member.host).includes("Switch to an administrator account"));
   const settings = await browser("settings", off); assert(settings.status.textContent.includes("Enable authentication")); assert(settings.hidden.hidden);
   const native = await browser("security", { native: true }); assert(native.status.textContent.includes("Configure and open the thermite gateway"));
   const guestAccount = await browser("access", unsigned);

@@ -44,7 +44,7 @@ const TUI_SHORTCUTS = [
   [["F5"], "Site"],
   [["F6", "Ctrl-P"], "Pair devices (Remotes)"],
   [["F7"], "Room settings"],
-  [["F8"], "Users & roles"],
+  [["F8"], "Users"],
   [["F9"], "Account"],
   [["F10"], "System"],
   [["?"], "Help"],
@@ -232,7 +232,7 @@ function header(frame, ctx, width) {
   const tabs = Navigation.pages.filter(page => page.top && Navigation.allowed(page, ctx.access)
     && !(page.system && remotes && width < 100)).map(page => [page.screen, page.key, page.label]);
   if (width < 48) {
-    const label = ctx.ui.screen === "pairing" ? "Remotes / Pair devices" : tabs.find(tab => tab[0] === ctx.ui.screen)?.[2] || ({ settings: "Room settings", users: "Users & roles", account: "Account" })[ctx.ui.screen] || "Home";
+    const label = ctx.ui.screen === "pairing" ? "Remotes / Pair devices" : tabs.find(tab => tab[0] === ctx.ui.screen)?.[2] || ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen] || "Home";
     at = g.put(1, 0, fit("thermite · " + label, width - 2), "header.title");
   } else tabs.forEach((tab) => {
     const current = ctx.ui.screen === tab[0] || tab[0] === "remote" && remotes;
@@ -248,7 +248,7 @@ function header(frame, ctx, width) {
       : { kind: "screen", screen: tab[0], key, focus: true, label: tab[2] + " page (" + tab[1] + ")" };
     g.hit(at - size, 0, size, 1, hit);
   });
-  if (["settings", "users", "account"].includes(ctx.ui.screen)) at = g.put(at + 1, 0, fit("› " + ({ settings: "Room settings", users: "Users & roles", account: "Account" })[ctx.ui.screen], Math.max(0, width - at - 2)), "tab.current");
+  if (["settings", "users", "account"].includes(ctx.ui.screen)) at = g.put(at + 1, 0, fit("› " + ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen], Math.max(0, width - at - 2)), "tab.current");
   if (remotes && width - at >= 23 && Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) at = g.put(at + 1, 0, ctx.ui.screen === "pairing" ? " › Pair devices " : " F6 Pair devices ",
     focused(ctx, "remotes:pairing") ? "key.focus" : "tab", { kind: "screen", screen: "pairing", key: "remotes:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
   if (ctx.ui.screen === "remote" && frame.layout.sheets) {
@@ -375,7 +375,7 @@ function pageScreen(frame, ctx, rect) {
     cameras: ["Cameras", Cameras.content],
     topology: ["Site topology", Topology.content],
     settings: ["Room settings", (g, w, ctx) => ctx.access.content(g, w, ctx)],
-    users: ["Users & roles", (g, w, ctx) => ctx.access.content(g, w, ctx)],
+    users: ["Users", (g, w, ctx) => ctx.access.content(g, w, ctx)],
     account: ["Account", (g, w, ctx) => ctx.access.content(g, w, ctx)]
   };
   const [title, content] = pages[ctx.ui.screen] || pages.home;
@@ -476,7 +476,7 @@ function roomsContent(g, w, ctx) {
   y += 1;
   const armed = session.allOffArmed();
   const text = armed ? "Press again to confirm" : "All off";
-  const style = ctx.session.access && !ctx.session.access.has("room.control") ? "dim" : focused(ctx, "all-off") ? "key.focus" : armed ? "danger.armed" : "danger";
+  const style = focused(ctx, "all-off") ? "key.focus" : armed ? "danger.armed" : "danger";
   rounded(g, 1, y, text, Math.min(w - 2, length(text) + 4), style,
     { kind: "all-off", key: "all-off", focus: true, label: armed ? "Press again: turn off every room and device" : "All off: every room and every device thermite powers" });
   return y + 3;

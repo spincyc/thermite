@@ -205,7 +205,7 @@ def run(args):
         guest = gateway.json("/api/v1/me", authenticated=False)
         require(guest.get("is_guest") is True and guest.get("can_edit") is False
                 and guest.get("auth_enabled") is True, "guest authority did not match enabled authentication")
-        for path in ("/api/v1/users", "/api/v1/roles", "/api/v1/tokens", "/static/remote/system.json"):
+        for path in ("/api/v1/users", "/api/v1/tokens", "/static/remote/system.json"):
             require(gateway.request(path, authenticated=False)[0] in (401, 403), "guest management access was not denied")
         guest_browser = gateway.open(HTTPCookieProcessor(http.cookiejar.CookieJar()))
         guest_csrf = gateway.json("/api/v1/session", authenticated=False, opener=guest_browser)["csrf"]

@@ -1,6 +1,7 @@
 """Short serialized mutations. Network I/O must stay outside these transactions."""
 
 import hashlib
+import hmac
 import secrets
 from datetime import timedelta
 
@@ -9,31 +10,60 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Audit, CATALOG, RESERVED, PersonalToken, Role, User
+from .models import ADMIN, GUEST, MEMBER, Audit, PersonalToken, User
 
 
 class Problem(Exception):
-    def __init__(self, code, status=400):
+    """A fixed client error. detail holds only server-chosen codes/paths."""
+
+    def __init__(self, code, status=400, *, retry_after=None, allow=None, detail=None):
         self.code, self.status = code, status
+        self.retry_after, self.allow, self.detail = retry_after, allow, detail or {}
 
 
-def audit(actor, action, target="", outcome="ok"):
-    Audit.objects.create(actor_id=getattr(actor, "pk", None), action=action, target=str(target)[:100], outcome=outcome)
+# Security events only; ordinary room commands are not audited. Denied logins
+# are attacker-driven, so they have their own smaller cap and cannot evict
+# account, policy or security-switch records.
+AUDIT_CAP = 5000
+DENIED_CAP = 1000
+
+
+def peer_digest(request):
+    """A keyed, non-reversible label for the direct peer's address bucket."""
+    from django.conf import settings
+    from .addresses import peer_bucket
+    bucket = peer_bucket(request.META.get("REMOTE_ADDR"))
+    return hmac.new(settings.SECRET_KEY.encode(), ("audit-peer\0" + bucket).encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def audit(actor, action, target="", outcome="ok", *, request=None, kind=None):
+    context = getattr(actor, "_identity_context", None) or {}
+    if kind is None:
+        kind = ("guest" if context.get("guest") else "token" if context.get("token") else
+                "session" if context.get("session") else "local" if actor is not None else "anonymous")
+    peer = context.get("peer") or (peer_digest(request) if request is not None else "")
+    Audit.objects.create(actor_id=getattr(actor, "pk", None) or None, action=action, target=str(target)[:100],
+                         outcome=outcome, principal=kind, peer=peer)
     # Fixed schema and bounded retention; no arbitrary payload field.
-    cutoff = Audit.objects.order_by("-id").values_list("id", flat=True)[4999:5000]
-    value = next(iter(cutoff), None)
+    denied = outcome == "denied"
+    rows = Audit.objects.filter(outcome="denied") if denied else Audit.objects.exclude(outcome="denied")
+    cap = DENIED_CAP if denied else AUDIT_CAP
+    value = next(iter(rows.order_by("-id").values_list("id", flat=True)[cap - 1:cap]), None)
     if value:
-        Audit.objects.filter(id__lt=value).delete()
+        rows.filter(id__lt=value).delete()
 
 
 def permissions(user):
+    """The canonical permission list for /api/v1/me and every check."""
     if getattr(user, "is_guest", False):
-        return {"site.read", "room.control"}
-    return set(user.role.permissions) & set(CATALOG) if user.is_active and user.role_id else set()
+        return set(GUEST) if user.auth_enabled else {*GUEST, "camera.view"}
+    if not user.is_active:
+        return set()
+    return set(ADMIN if user.admin else MEMBER)
 
 
 def is_admin(user):
-    return bool(user.is_active and user.role_id and user.role.name == "Admin" and user.role.reserved)
+    return bool(not getattr(user, "is_guest", False) and user.is_active and user.admin)
 
 
 def admin_actor(actor):
@@ -41,7 +71,7 @@ def admin_actor(actor):
     from .auth import revalidate
     require_enabled()
     revalidate(actor)
-    fresh = User.objects.select_related("role").filter(pk=actor.pk).first()
+    fresh = User.objects.filter(pk=actor.pk).first()
     if not fresh or fresh.auth_revision != actor.auth_revision or not is_admin(fresh):
         raise Problem("forbidden", 403)
     return fresh
@@ -64,9 +94,7 @@ def bootstrap(username, secret):
         raise Problem("already_initialized", 409)
     if not isinstance(username, str) or not username or len(username) > 150:
         raise Problem("invalid_user")
-    for name, grants in RESERVED.items():
-        Role.objects.update_or_create(name=name, defaults={"reserved": True, "permissions": list(grants)})
-    user = User(username=username, role=Role.objects.get(name="Admin"))
+    user = User(username=username, admin=True)
     try:
         user.full_clean(exclude=["password"])
     except ValidationError:
@@ -82,88 +110,39 @@ def bootstrap(username, secret):
     return user
 
 
-def role_for(value):
-    if type(value) is not int or value < 1:
-        raise Problem("unknown_role")
-    try:
-        return Role.objects.get(pk=value)
-    except (Role.DoesNotExist, ValueError, TypeError):
-        raise Problem("unknown_role") from None
-
-
-def grants(value):
-    from .runtime import get_adapter
-    if value is None:
-        return None
-    if not isinstance(value, list) or any(not isinstance(x, str) or x not in get_adapter().contract.rooms for x in value):
-        raise Problem("invalid_rooms")
-    return sorted(set(value))
-
-
 @transaction.atomic
 def save_user(actor, data, ident=None):
+    """Create or update an account: {username, password, active, admin}."""
     admin_actor(actor)
     user = User.objects.get(pk=ident) if ident else User()
-    if set(data) - {"username", "role", "rooms", "active", "password"}:
+    if set(data) - {"username", "active", "admin", "password"}:
         raise Problem("unknown_field")
+    if not ident and not {"username", "password"} <= set(data):
+        raise Problem("missing_field")
     was_admin = is_admin(user)
     if "username" in data:
+        if not isinstance(data["username"], str):
+            raise Problem("invalid_user")
         user.username = data["username"]
-    if "role" in data:
-        user.role = role_for(data["role"])
-    if "rooms" in data:
-        user.rooms = grants(data["rooms"])
-    if "active" in data:
-        if not isinstance(data["active"], bool):
-            raise Problem("invalid_active")
-        user.is_active = data["active"]
+    for field, attribute in (("active", "is_active"), ("admin", "admin")):
+        if field in data:
+            if not isinstance(data[field], bool):
+                raise Problem("invalid_" + field)
+            setattr(user, attribute, data[field])
     if "password" in data:
         password(user, data["password"])
-    if not ident and (not user.role_id or "password" not in data):
-        raise Problem("missing_field")
-    if was_admin and not is_admin(user) and not User.objects.filter(is_active=True, role__name="Admin", role__reserved=True).exclude(pk=user.pk).exists():
+    if was_admin and not is_admin(user) and not User.objects.filter(is_active=True, admin=True).exclude(pk=user.pk).exists():
         raise Problem("last_admin", 409)
     try:
         user.full_clean()
     except ValidationError:
         raise Problem("invalid_user") from None
     if ident:
+        # Any account change ends that account's sessions and tokens.
         user.auth_revision += 1
     user.save()
     audit(actor, "user.update" if ident else "user.create", user.pk)
     return user
-
-
-@transaction.atomic
-def save_role(actor, data, ident=None, delete=False):
-    admin_actor(actor)
-    role = Role.objects.get(pk=ident) if ident else Role()
-    if role.reserved:
-        raise Problem("reserved_role", 409)
-    if delete:
-        if role.user_set.exists():
-            raise Problem("role_in_use", 409)
-        audit(actor, "role.delete", role.pk)
-        role.delete()
-        return None
-    if set(data) - {"name", "permissions"}:
-        raise Problem("unknown_field")
-    name = data.get("name", role.name)
-    values = data.get("permissions", role.permissions)
-    if not isinstance(name, str) or not name.strip() or any(ord(c) < 32 or 127 <= ord(c) < 160 for c in name) or name.strip().casefold() in {x.casefold() for x in RESERVED} or not isinstance(values, list) or any(
-            not isinstance(x, str) or x not in {"site.read", "room.control"} for x in values):
-        raise Problem("invalid_role")
-    role.name, role.permissions = name.strip(), sorted(set(values))
-    try:
-        role.full_clean()
-    except ValidationError:
-        raise Problem("invalid_role") from None
-    role.save()
-    # A role edit immediately invalidates cached sessions and issued tokens.
-    from django.db.models import F
-    role.user_set.update(auth_revision=F("auth_revision") + 1)
-    audit(actor, "role.update", role.pk)
-    return role
 
 
 def issue_token(user, name, days=30):

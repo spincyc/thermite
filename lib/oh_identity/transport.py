@@ -7,11 +7,13 @@ import stat
 import threading
 import weakref
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import httpx
 
 from oh_ports import NATIVE_URL
+
+from .addresses import loopback_origin
 
 
 def native_batches(topics, base=NATIVE_URL):
@@ -49,19 +51,13 @@ def native_batches(topics, base=NATIVE_URL):
     return queries
 
 
-def native_topics(topics):
-    batches = native_batches(topics)
-    if len(batches) != 1:
-        raise ValueError("More than one native topic batch required")
-    return batches[0]
-
-
 class LoopbackTransport:
     projects_events = True
     def __init__(self, base, token_file, timeout=5):
-        address = urlsplit(base)
-        if address.scheme != "http" or address.hostname not in {"127.0.0.1", "::1"} or address.username or address.password or address.path not in {"", "/"} or address.query or address.fragment:
-            raise ValueError("Runtime URL must be an explicit loopback HTTP origin")
+        try:
+            loopback_origin(base)
+        except ValueError:
+            raise ValueError("Runtime URL must be an explicit loopback HTTP origin") from None
         path = Path(token_file)
         info = path.lstat()
         if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:

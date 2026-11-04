@@ -4,7 +4,7 @@ const { fit, wrap } = require("./grid");
 const clean = (value) => String(value == null ? "" : value).replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").slice(0, 240);
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 function create(client, house, changed) {
-  const state = { kind: "account", room: null, loading: false, error: "", users: [], roles: [], policy: null, form: null };
+  const state = { kind: "account", room: null, loading: false, error: "", users: [], policy: null, form: null };
   let generation = 0, ruleSerial = 0;
   function ruleId(prefix) { const ids = [...state.form.data.daily_off, ...state.form.data.locks].map((rule) => rule.id); let id; do { id = prefix + "-" + (++ruleSerial); } while (ids.includes(id)); return id; }
   const canEdit = () => client && client.canEdit();
@@ -18,13 +18,12 @@ function create(client, house, changed) {
       if (!client.authEnabled()) return;
       if (kind === "settings") { const value = await client.loadPolicy(state.room); if (turn === generation) state.policy = value; }
       else if (kind === "users" && canEdit()) {
-        const [users, roles] = await Promise.all([client.json("/api/v1/users"), client.json("/api/v1/roles")]);
-        if (turn === generation) { state.users = users.users; state.roles = roles.roles; }
+        const users = await client.json("/api/v1/users");
+        if (turn === generation) state.users = users.users;
       }
     } catch (error) { if (turn === generation) state.error = error.message; }
     finally { if (turn === generation) { state.loading = false; changed(); } }
   }
-  const roleLabel = (id) => state.roles.find((role) => role.id === id)?.name || "No role";
   function content(g, width, ctx) {
     let y = 0;
     const line = (text, style = "dim") => wrap(clean(text), Math.max(4, width - 2)).forEach((part) => g.put(1, y++, part, style));
@@ -51,7 +50,7 @@ function create(client, house, changed) {
       } else line("Changing authentication requires an administrator's password. When enabled, sign in as that administrator in the browser first.");
       line("Changing authentication signs out every browser and terminal."); y++;
       line("To elevate terminal access, quit and run thermite access login --url " + client.origin + " --user ADMIN, then reopen the remote.");
-      line("An administrator can promote a user through Users & roles; the user must sign in again.");
+      line("An administrator can make an account an administrator in Users (F8); that user must sign in again.");
       return y;
     }
     if (!client.security()) { line("Authentication status unavailable. Reopen the remote after the access service is ready."); return y; }
@@ -63,16 +62,16 @@ function create(client, house, changed) {
       const user = client.current(); line(user?.is_guest ? "Guest · no sign-in required" : user ? "Signed in as " + user.username : "Not signed in", "strong");
       if (user?.is_guest) {
         line("Use the remotes in unlocked rooms. Locked rooms remain visible.");
-        line("To manage room locks, sign in as an administrator:");
+        line("To lock rooms or manage the site, sign in as an administrator:");
         line("thermite access login --url " + client.origin + " --user ADMIN");
         line("Then reopen the remote."); return y;
       }
       if (!user) { line("Run thermite access login for this address, then reopen the remote."); return y; }
-      line(user?.can_edit ? "Administrator" : client.has("room.control") ? "Control of granted, unlocked rooms" : "Read-only access");
+      line(user.can_edit ? "Administrator" : "Account · unlocked rooms and camera media");
       line("To switch or elevate access, quit and run thermite access login --url " + client.origin + " --user ADMIN, then reopen the remote.");
-      line("An administrator can change your role in Users & roles; then sign in again.");
+      if (!user.can_edit) line("An administrator can make your account an administrator in Users; then sign in again.");
       y++;
-      item("Room settings · F7", "settings"); if (canEdit()) item("Users & roles · F8", "users");
+      item("Room settings · F7", "settings"); if (canEdit()) item("Users · F8", "users");
       item("Sign out this terminal", "logout"); return y;
     }
     if (state.kind === "settings") {
@@ -93,14 +92,11 @@ function create(client, house, changed) {
       y++; item("Edit schedule", "edit-policy", null, !canEdit()); item("Reload schedule", "settings");
       y++; line("Choose a room", "strong"); house.rooms.forEach((room) => item(room.label, "room", room.id)); return y;
     }
-    if (!canEdit()) { line("Only administrators can manage users and roles."); return y; }
-    g.put(1, y++, fit("Username", Math.min(24, Math.floor(width / 3))) + "  " + fit("Role", 13) + " Status", "strong");
-    state.users.forEach((user) => item(fit(clean(user.username), Math.min(24, Math.floor(width / 3))) + "  " + fit(roleLabel(user.role), 13) + " " + (user.active ? "Active" : "Disabled"), "edit-user", user.id));
-    item("+ Add user", "new-user"); y++; line("Roles", "strong");
-    state.roles.forEach((role) => {
-      item(role.name + (role.reserved ? " · built-in" : ""), "edit-role", role.id, role.reserved);
-      line(role.permissions.map((id) => ({ "site.read": "View site", "room.control": "Control rooms", "settings.manage": "Settings", "users.manage": "Users", "roles.manage": "Roles", "pairing.manage": "Pairing" })[id] || "").filter(Boolean).join(" · "));
-    }); item("+ Add role", "new-role"); return y;
+    if (!canEdit()) { line("Only administrators can manage users."); return y; }
+    line("Anyone can use unlocked rooms. Accounts also view camera media; administrators manage the site.");
+    g.put(1, y++, fit("Username", Math.min(24, Math.floor(width / 3))) + "  " + fit("Access", 13) + " Status", "strong");
+    state.users.forEach((user) => item(fit(clean(user.username), Math.min(24, Math.floor(width / 3))) + "  " + fit(user.admin ? "Administrator" : "Account", 13) + " " + (user.active ? "Active" : "Disabled"), "edit-user", user.id));
+    item("+ Add user", "new-user"); return y;
   }
   function sourceLabel(id) { return id === "off" ? "Off" : house.sources[id]?.label || id; }
   const field = (key, label, object, property, type = "text", options) => ({ key, label, type, options, get: () => object[property], set: (value) => { object[property] = value; } });
@@ -109,10 +105,8 @@ function create(client, house, changed) {
     const data = form.data, rows = [];
     if (form.kind === "user") {
       rows.push(field("username", "Username", data, "username"), field("password", form.id ? "New password (blank keeps it)" : "Password", data, "password", "password"),
-        field("role", "Role", data, "role", "choice", state.roles.map((role) => [role.id, role.name])), field("active", "Active", data, "active", "boolean"), field("all", "All rooms", data, "all", "boolean"));
-      if (!data.all) house.rooms.forEach((room) => rows.push({ key: "room:" + room.id, label: room.label, type: "boolean", get: () => data.rooms.includes(room.id), set: (value) => { data.rooms = data.rooms.filter((id) => id !== room.id); if (value) data.rooms.push(room.id); } }));
-    } else if (form.kind === "role") rows.push(field("name", "Role name", data, "name"), ...["site.read", "room.control"].map((id) => ({ key: id, label: id === "site.read" ? "View site" : "Control granted rooms", type: "boolean", get: () => data.permissions.includes(id), set: (value) => { data.permissions = data.permissions.filter((entry) => entry !== id); if (value) data.permissions.push(id); } })));
-    else {
+        field("admin", "Administrator", data, "admin", "boolean"), field("active", "Active", data, "active", "boolean"));
+    } else {
       rows.push(field("enabled", "Schedule enabled", data, "enabled", "boolean"));
       const room = house.rooms.find((room) => room.id === state.room), sources = [["off", "Off"], ...room.sources.map((id) => [id, sourceLabel(id)])];
       for (const kind of ["daily_off", "locks"]) data[kind].forEach((rule, index) => {
@@ -129,7 +123,7 @@ function create(client, house, changed) {
     let y = 0; const form = state.form; if (!form) return y;
     const line = (text, style) => wrap(clean(text), width - 2).forEach((part) => g.put(1, y++, part, style || "dim"));
     line(form.kind === "policy" ? "Times use the site timezone. ↑↓ fields, ←→ choices; type to edit." : "↑↓ fields, ←→ choices; type to edit.");
-    if (form.kind === "user") line("Choose Admin to elevate access. Role changes sign the user out everywhere; they must sign in again.");
+    if (form.kind === "user") line("Changing administration signs the user out everywhere; they must sign in again.");
     fields().forEach((entry) => {
       const key = "access-field:" + entry.key, active = ctx.ui.focus === key && ctx.ui.focusVisible;
       let value = entry.get();
@@ -141,28 +135,25 @@ function create(client, house, changed) {
     });
     if (state.error) line(state.error, "alert");
     const action = (label, id) => { const key = "access:" + id; g.put(1, y++, label, ctx.ui.focus === key ? "row.focus" : "link", { kind: "access-action", action: id, key, focus: true, label }); };
-    if (form.kind === "role" && form.id) action("Delete role", "delete-role");
     if (form.kind === "policy") { action("+ Add daily off", "add-off"); action("+ Add lock window", "add-lock"); }
     action(state.loading ? "Saving…" : "Save", "save"); action("Cancel", "cancel"); return y;
   }
   function edit(kind, existing) {
     if (!canEdit()) return;
     state.error = "";
-    const data = kind === "user" ? { username: "", password: "", role: state.roles.find((role) => role.name === "User")?.id, active: true, rooms: house.rooms.map((room) => room.id), all: true, ...existing, password: "" }
-      : kind === "role" ? { name: "", permissions: ["site.read"], ...existing }
+    const data = kind === "user" ? { username: "", password: "", admin: false, active: true, ...existing, password: "" }
       : { version: 1, enabled: false, daily_off: [], locks: [], ...state.policy?.config };
-    if (kind === "user" && existing) { data.all = existing.rooms === null; data.rooms = existing.rooms || house.rooms.map((room) => room.id); }
     state.form = { kind, id: existing?.id, data: JSON.parse(JSON.stringify(data)) }; changed();
   }
   async function save() {
     if (!state.form || state.loading || !canEdit()) return;
     const form = state.form, value = JSON.parse(JSON.stringify(form.data)), turn = generation;
-    delete value.id; delete value.reserved;
-    if (form.kind === "user") { value.rooms = value.all ? null : value.rooms; delete value.all; if (!value.password) delete value.password; form.data.password = ""; }
+    delete value.id;
+    if (form.kind === "user") { if (!value.password) delete value.password; form.data.password = ""; }
     state.loading = true; changed();
     try {
       if (form.kind === "policy") await client.savePolicy(state.room, state.policy.revision, value);
-      else await client.json("/api/v1/" + (form.kind === "user" ? "users" : "roles") + (form.id ? "/" + form.id : ""), form.id ? "PATCH" : "POST", value);
+      else await client.json("/api/v1/users" + (form.id ? "/" + form.id : ""), form.id ? "PATCH" : "POST", value);
       if (turn !== generation) return;
       state.form = null; await open(state.kind, state.room);
     } catch (error) { if (turn === generation) state.error = error.message; }
@@ -181,17 +172,7 @@ function create(client, house, changed) {
       case "users": return open("users");
       case "edit-user": return edit("user", state.users.find((user) => user.id === hit.id));
       case "new-user": return edit("user");
-      case "edit-role": { const role = state.roles.find((role) => role.id === hit.id); if (role && !role.reserved) return edit("role", role); break; }
-      case "new-role": return edit("role");
       case "edit-policy": return edit("policy");
-      case "delete-role": {
-        if (!canEdit() || !state.form || state.form.kind !== "role" || !state.form.id || state.loading) return;
-        const form = state.form, turn = generation; state.loading = true; changed();
-        return client.json("/api/v1/roles/" + form.id, "DELETE").then(() => {
-          if (turn === generation) { state.form = null; return open("users"); }
-        }).catch((error) => { if (turn === generation) state.error = error.message; })
-          .finally(() => { if (turn === generation) { state.loading = false; changed(); } });
-      }
       case "save": return save();
       case "cancel": state.form = null; changed(); break;
       case "add-off": state.form.data.daily_off.push({ id: ruleId("daily"), time: "22:00", days: [0, 1, 2, 3, 4, 5, 6] }); changed(); break;

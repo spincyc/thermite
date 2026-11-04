@@ -209,7 +209,7 @@ function create(options) {
       pairing.codes = {}; pairing.notes = {}; if (pairing.backend) pairing.backend.stop(); pairing.backend = null; pairing.loaded = false;
       if (cameras.backend) cameras.backend.stop();
       system.backend?.close(); system.expanded = false; system.link = null;
-      access.cancel(); access.state.users = []; access.state.roles = []; access.state.policy = null;
+      access.cancel(); access.state.users = []; access.state.policy = null;
       access.state.kind = "account"; access.state.error = ui.error; ui.screen = "account"; ui.overlay = null; ui.pane = "account"; ui.focus = null;
     }
     if (event.type === "activity") {
@@ -660,7 +660,6 @@ function create(options) {
         if (ui.overlay && ui.overlay.kind === "rooms") closeSheet();
         break;
       case "all-off":
-        if (options.access && !options.access.has("room.control")) return toast("Read-only", "Your account cannot control rooms");
         if (session.allOff() && ui.overlay) closeSheet();
         break;
       case "screen":

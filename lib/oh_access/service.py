@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import re
 import ssl
-from urllib.parse import urlsplit
 
 import oh_ports
 
@@ -21,12 +20,8 @@ CONFIG_FIELDS = {"version", "state", "contract_file", "runtime_url", "runtime_to
 
 
 def _native_port(runtime_url):
-    if not isinstance(runtime_url, str):
-        raise ValueError("native runtime must be a loopback HTTP origin")
-    native = urlsplit(runtime_url)
-    if native.scheme != "http" or native.hostname not in {"127.0.0.1", "::1"} or native.username or native.password or native.path not in ("", "/") or native.query or native.fragment:
-        raise ValueError("native runtime must be a loopback HTTP origin")
-    return oh_ports.checked("native HTTP", native.port or 80)
+    from oh_identity.addresses import loopback_origin
+    return oh_ports.checked("native HTTP", loopback_origin(runtime_url).port or 80)
 
 
 def validate_listeners(runtime_url, port, *, callback_port=None, host_ports=None):
@@ -136,6 +131,23 @@ def bootstrap(config_path, username, secret):
     return {"initialized": True, "username": user.username, "state": config["state"]}
 
 
+def rebase_timezone(adapter, zone):
+    """Move stored policies to the configured site timezone, under every room
+    lock, before either service evaluates a schedule."""
+    from oh_identity.policy_store import rebase_timezone as rebase
+    with adapter.command_lock(tuple(sorted(adapter.contract.rooms)), ()):
+        return rebase(zone)
+
+
+def prune_policies(config_path):
+    """Owner operation: delete policies for rooms the compiled house no longer has."""
+    require_service_account()
+    _, adapter, _ = configured(config_path, tls=False)
+    check_schema()
+    from oh_identity.policy_store import prune_unknown_rooms
+    return {"pruned": prune_unknown_rooms(tuple(adapter.contract.rooms))}
+
+
 def migrate(config_path):
     """Explicit owner operation, after backing up state and stopping access services."""
     require_service_account()
@@ -225,8 +237,9 @@ def serve(config_path):
         check_schema()
         from oh_identity.models import User
         from oh_identity.security import get_state
-        if get_state().enabled and not User.objects.filter(is_active=True, role__reserved=True, role__name="Admin").exists():
+        if get_state().enabled and not User.objects.filter(is_active=True, admin=True).exists():
             raise AccessError("An authenticated site requires an active administrator")
+        rebase_timezone(adapter, config["timezone"])
         from oh_identity.asgi import application
         # Direct TLS only. Proxy headers and forwarded client/origin claims are ignored.
         _run_server(application, on_shutdown=cleanup,

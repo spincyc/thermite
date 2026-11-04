@@ -14,6 +14,54 @@ class PolicyError(ValueError):
         super().__init__(f"{path}: {code}")
 
 
+# Every code PolicyError may carry. Clients may receive these and a validated
+# field path; nothing else from an exception reaches a response.
+CODES = frozenset({
+    "aware_datetime_required", "duplicate_rule_id", "duplicate_weekday", "expected_object", "invalid_desired_source",
+    "invalid_enabled", "invalid_local_time", "invalid_lock_start", "invalid_revision", "invalid_room_source",
+    "invalid_rule_id", "invalid_rule_list", "invalid_timezone", "invalid_unlock_action", "invalid_weekdays",
+    "overlapping_windows", "physical_contract_required", "room_mismatch", "unknown_controller_field", "unknown_field",
+    "unknown_room", "unresolvable_local_time", "unsafe_shared_source_sleep", "unsupported_version"})
+FIELD = re.compile(r"[a-z_]{1,16}(?:\.[a-z0-9_-]{1,64}){0,3}")
+
+
+def public_error(error: Exception) -> dict:
+    """Fixed reason and field members for a client; empty for anything else."""
+    if not isinstance(error, PolicyError) or error.code not in CODES:
+        return {}
+    detail = {"reason": error.code}
+    if isinstance(error.path, str) and FIELD.fullmatch(error.path):
+        detail["field"] = error.path
+    return detail
+
+
+def active(config: object) -> bool:
+    """The one predicate for whether a stored policy can lock its room.
+
+    A disabled schedule without a manual hold is inert: gateway, status and
+    worker neither validate nor enforce it.
+    """
+    return isinstance(config, dict) and (config.get("enabled") is not False or config.get("manual_lock") is not None)
+
+
+def empty(room: str, zone: str, revision: int) -> dict:
+    """A disabled policy with no rules, for a room that has none yet."""
+    return {"version": 1, "room": room, "timezone": zone, "revision": revision, "enabled": False,
+            "daily_off": [], "locks": []}
+
+
+def manual_hold(config: object) -> dict | None:
+    return config.get("manual_lock") if isinstance(config, dict) else None
+
+
+def with_manual_hold(config: dict, hold: dict | None) -> dict:
+    """A copy carrying exactly this hold (None releases it)."""
+    result = {key: value for key, value in config.items() if key != "manual_lock"}
+    if hold is not None:
+        result["manual_lock"] = hold
+    return result
+
+
 def minutes(value: object, path: str) -> int:
     if not isinstance(value, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
         raise PolicyError("invalid_local_time", path)

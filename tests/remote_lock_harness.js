@@ -9,9 +9,9 @@ const origin = "https://site.example:13600", csrf = "C".repeat(32);
 const json = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value, text: async () => JSON.stringify(value),
   clone() { return json(value, status); }, headers: { get: () => "application/json", getSetCookie: () => [] } });
 const text = value => ({ ok: true, status: 200, text: async () => value, json: async () => { throw new SyntaxError("text"); }, headers: { get: () => "text/plain", getSetCookie: () => [] } });
-const admin = { id: 1, username: "Admin", role: 1, rooms: null, can_edit: true, is_guest: false, auth_enabled: true,
-  permissions: ["site.read", "room.control", "settings.manage", "users.manage", "roles.manage", "pairing.manage"] };
-const guest = { id: 0, username: "Guest", role: 0, rooms: null, can_edit: false, is_guest: true, auth_enabled: true, permissions: ["site.read", "room.control"] };
+const admin = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, auth_enabled: true,
+  permissions: ["site.read", "room.control", "camera.view", "settings.manage", "users.manage", "pairing.manage"] };
+const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, auth_enabled: true, permissions: ["site.read", "room.control"] };
 
 function gateway(options) {
   const site = { principal: options.principal, policies: {}, calls: [], commands: [], failPolicy: false };

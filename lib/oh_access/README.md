@@ -123,9 +123,12 @@ sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/the
 ```
 
 Take the backup after stopping services and before the migration command.
-Then activate the new release using its reviewed plan. `serve` refuses pending
-migrations; it never silently upgrades existing authority. This release's
-security-state migration preserves existing accounts as authentication enabled.
+Then activate the new release using its reviewed plan. `serve` and `worker`
+refuse pending migrations; they never silently upgrade existing authority.
+The security-state migration preserves existing accounts as authentication
+enabled. The principals migration replaces roles and room grants with one
+`admin` flag: accounts holding the reserved Admin role become admins and all
+others become Members; custom roles, Viewer and room grants are dropped.
 For rollback across a schema change, stop both services and restore the whole
 matching backup before activating the prior release. Do not mix an older
 database with newer signing keys or a different site identity.
@@ -145,17 +148,31 @@ or command acknowledgements. Apple TV power additionally requires its
 provider's acquisition timestamp before the paired power update. A missing,
 stale or invalid timestamp stays Unknown; native drift can trigger only the
 engine's bounded mismatch repairs. Source boundary commands remain durably
-claimed once, with uncertain outcomes preserved after transport failure.
+claimed once, with uncertain outcomes preserved after transport failure. A
+catch-up start reads the room's Source Item first and sends nothing when it
+already equals the target; that read is never an observation. Stream failures
+are logged at WARNING at most every five minutes, naming only the exception
+class and how many failures were not logged.
+
+A policy row for a room absent from the compiled house is ignored; remove such
+rows with `thermite access prune --config …` as the service account. A
+present room's policy that no longer validates (for example, a retired
+source) stops enforcement only in rooms that share a device with that room;
+unrelated rooms stay enforced. The worker also prunes expired identity
+records once a day.
 
 Terminal clients need no login for ordinary Guest controls. To elevate, use
-`access login --url https://… --user …`. The personal
+`access login --url https://… --user …`. `access status` reports the
+`/api/v1/me` principal (`id`, `username`, `active`, `admin`, `is_guest`,
+`auth_enabled`, `can_edit`, `site`, `permissions`). The personal
 token is stored atomically in an owned mode-0600 regular file under
 `${XDG_CONFIG_HOME:-~/.config}/thermite/sites/<sha256-origin>.json`. Its five
 fields are `version`, `origin`, `token`, `id`, and `expires_at`. A private CA
 path, when supplied, lives separately in the matching `.ca.json`; the remote
 launcher gives Node that trust path before startup. Tokens and passwords are
 never command arguments, environment values or normal output. `logout`
-revokes first and removes only the unchanged credential file.
+revokes first and removes only the unchanged credential file; a credential the
+site already rejects (401) is removed as already signed out.
 
 ## Optional device callbacks
 

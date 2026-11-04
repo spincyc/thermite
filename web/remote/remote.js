@@ -110,7 +110,6 @@
     syncSignal();
     updateRoomLock();
     const lock = session.roomLock(), blocked = session.controlBlock();
-    all('[data-action="all-off"]').forEach((button) => { button.disabled = Boolean(backend.access && !backend.access.has("room.control")); });
     all('[data-button], [data-choose], [data-action="control"], [data-action="input"]').forEach((button) => {
       if (blocked && !button.hasAttribute("data-policy-disabled")) { button.dataset.policyDisabled = String(button.disabled); button.disabled = true; }
       else if (!blocked && button.hasAttribute("data-policy-disabled")) { button.disabled = button.dataset.policyDisabled === "true"; delete button.dataset.policyDisabled; }

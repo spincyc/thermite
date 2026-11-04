@@ -3,41 +3,123 @@
 import asyncio
 import fnmatch
 import json
+import threading
+import time
+import weakref
 
 from asgiref.sync import sync_to_async
 from django.contrib.sessions.models import Session
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 
-from .auth import failure, principal
+from .addresses import peer_bucket
+from .auth import not_allowed, principal, problem_response
 from .models import PersonalToken, User
 from .runtime import get_adapter, project
-from .services import Problem, permissions
+from .services import Problem
 
 HEARTBEAT = 5
+# A busy stream rechecks its credential at most this often; a quiet one at
+# every heartbeat.
+REVALIDATE = 1.0
+clock = time.monotonic
+MAX_PATTERNS = 64
+MAX_TOPICS = 1000
+# Streams are unauthenticated for Guests and each holds upstream connections.
+# One web remote opens up to three (web/remote/backend.js EVENT_STREAMS), so a
+# client with a few pages and a terminal fits; the total leaves most of the
+# service's 100 connections (oh_access/service.py) for ordinary requests.
+PEER_STREAMS = 12
+TOTAL_STREAMS = 64
 TYPES = {"stateupdated": "ItemStateUpdatedEvent", "statechanged": "ItemStateChangedEvent", "command": "ItemCommandEvent"}
+_TOPICS = weakref.WeakKeyDictionary()
+
+
+def available(contract):
+    """Every public topic of this contract, computed once per contract."""
+    topics = _TOPICS.get(contract)
+    if topics is None:
+        topics = _TOPICS[contract] = frozenset(
+            "openhab/items/" + item + "/" + verb for item, spec in contract.states.items() for verb in TYPES
+            if verb != "command" or spec.get("commands") is True and "_pairing" not in item)
+    return topics
 
 
 def topics_for(contract, query):
     if not isinstance(query, str) or len(query) > 12000:
         raise Problem("invalid_topics")
-    available = {"openhab/items/" + item + "/" + verb for item, spec in contract.states.items() for verb in TYPES
-                 if verb != "command" or spec.get("commands") is True and "_pairing" not in item}
+    patterns = set(query.split(","))
+    if len(patterns) > MAX_PATTERNS:
+        raise Problem("invalid_topics")
+    public = available(contract)
     out = set()
-    for pattern in query.split(","):
+    for pattern in sorted(patterns):
         parts = pattern.split("/")
         if len(parts) != 4 or parts[:2] != ["openhab", "items"] or parts[3] not in {*TYPES, "*"}:
             raise Problem("invalid_topics")
         # A credential command family is forbidden before wildcard expansion.
         if "_pairing" in parts[2] and not parts[2].endswith(("_pairing_status", "_pairing_result")):
             raise Problem("invalid_topics")
-        found = {topic for topic in available if fnmatch.fnmatchcase(topic, pattern)}
+        if not any(mark in pattern for mark in "*?["):
+            found = {pattern} & public
+        else:
+            found = {topic for topic in public if fnmatch.fnmatchcase(topic, pattern)}
         if not found:
             raise Problem("invalid_topics")
-        out.update(found)
-    if not out or len(out) > 1000:
+        out |= found
+        if len(out) > MAX_TOPICS:
+            raise Problem("invalid_topics")
+    if not out:
         raise Problem("invalid_topics")
     return sorted(out)
+
+
+class Slots:
+    """Concurrent stream admission per peer bucket and in total."""
+
+    def __init__(self, per_peer=PEER_STREAMS, total=TOTAL_STREAMS):
+        self.per_peer, self.total = per_peer, total
+        self._guard = threading.Lock()
+        self._peers = {}
+
+    def acquire(self, peer):
+        with self._guard:
+            if sum(self._peers.values()) >= self.total or self._peers.get(peer, 0) >= self.per_peer:
+                return None
+            self._peers[peer] = self._peers.get(peer, 0) + 1
+        released = False
+
+        def release():
+            nonlocal released
+            with self._guard:
+                if released:
+                    return
+                released = True
+                self._peers[peer] -= 1
+                if not self._peers[peer]:
+                    del self._peers[peer]
+        return release
+
+    def count(self):
+        with self._guard:
+            return sum(self._peers.values())
+
+
+slots = Slots()
+
+
+class EventStream(StreamingHttpResponse):
+    """Releases its admission slot however the response ends."""
+
+    def __init__(self, content, release, **options):
+        super().__init__(content, **options)
+        self._release = release
+
+    def close(self):
+        try:
+            super().close()
+        finally:
+            self._release()
 
 
 def frame(contract, allowed, event):
@@ -71,15 +153,14 @@ def valid(snapshot):
         return True
     if not state.enabled:
         return False
-    user = User.objects.select_related("role").filter(pk=snapshot["user"], is_active=True, auth_revision=snapshot["revision"]).first()
-    if not user or "site.read" not in permissions(user):
+    if not User.objects.filter(pk=snapshot["user"], is_active=True, auth_revision=snapshot["revision"]).exists():
         return False
     if snapshot.get("token"):
-        return PersonalToken.objects.filter(pk=snapshot["token"], revoked=False, expires_at__gt=timezone.now(), auth_revision=user.auth_revision).exists()
+        return PersonalToken.objects.filter(pk=snapshot["token"], revoked=False, expires_at__gt=timezone.now(), auth_revision=snapshot["revision"]).exists()
     return Session.objects.filter(session_key=snapshot.get("session"), expire_date__gt=timezone.now()).exists()
 
 
-async def stream(adapter, topics, snapshot):
+async def stream(adapter, topics, snapshot, release=None):
     projected = getattr(adapter.transport, "projects_events", False)
     iterable = adapter.transport.events(topics, project=lambda event: frame(adapter.contract, topics, event)) if projected else adapter.transport.events(topics)
     iterator = iterable.__aiter__()
@@ -87,15 +168,17 @@ async def stream(adapter, topics, snapshot):
     try:
         if not await sync_to_async(valid)(snapshot):
             return
+        checked = clock()
         while True:
             if pending is None:
                 pending = asyncio.create_task(anext(iterator))
             done, _ = await asyncio.wait([pending], timeout=HEARTBEAT)
-            # One check after every wait fences both frames and heartbeats.
-            # Repeating it before the next wait doubles DB traffic without
-            # shortening the quiet-stream revocation bound (HEARTBEAT).
-            if not await sync_to_async(valid)(snapshot):
-                return
+            # Every heartbeat is checked, bounding a quiet stream's revocation
+            # by HEARTBEAT; a busy stream is checked at most once per REVALIDATE.
+            if not done or clock() - checked >= REVALIDATE:
+                if not await sync_to_async(valid)(snapshot):
+                    return
+                checked = clock()
             if not done:
                 yield b": heartbeat\n\n"
                 continue
@@ -119,15 +202,15 @@ async def stream(adapter, topics, snapshot):
         close = getattr(iterator, "aclose", None)
         if close:
             await close()
+        if release:
+            release()
 
 
 def events(request):
     if request.method != "GET":
-        return failure("method_not_allowed", 405)
+        return not_allowed("GET")
     try:
         user = principal(request)
-        if "site.read" not in permissions(user):
-            raise Problem("forbidden", 403)
         adapter = get_adapter()
         topics = topics_for(adapter.contract, request.GET.get("topics", ""))
         token = getattr(request, "identity_token", None)
@@ -135,9 +218,15 @@ def events(request):
                     "session": request.session.session_key if not token else None,
                     "security_revision": user._identity_context["security_revision"],
                     "guest": getattr(user, "is_guest", False)}
-        response = StreamingHttpResponse(stream(adapter, topics, snapshot), content_type="text/event-stream")
+        release = slots.acquire(peer_bucket(request.META.get("REMOTE_ADDR")))
+        if release is None:
+            raise Problem("too_many_streams", 429, retry_after=HEARTBEAT)
+        content = stream(adapter, topics, snapshot, release)
+        # A generator that never starts never runs its finally block.
+        weakref.finalize(content, release)
+        response = EventStream(content, release, content_type="text/event-stream")
         response["Cache-Control"] = "no-store"
         response["X-Accel-Buffering"] = "no"
         return response
     except Problem as exc:
-        return failure(exc.code, exc.status)
+        return problem_response(exc)

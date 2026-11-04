@@ -11,12 +11,14 @@ from django.db import close_old_connections, connection, connections, transactio
 from django.utils import timezone
 
 from oh_features.remote_system import ADMIN_ASSETS
+from oh_room_policy import STALE_AFTER, active, empty, manual_hold, with_manual_hold
 from oh_routes import ASSET_ROUTES
 
-from .auth import api, failure, login_user
-from .models import CATALOG, PersonalToken, ReconcileState, Role, RoomPolicy, User
-from .runtime import get_adapter
-from .services import Problem, admin_actor, audit, issue_token, is_admin, permissions, save_role, save_user
+from .auth import api, failure, login_user, not_allowed, problem_response, require_admin
+from .models import PersonalToken, ReconcileState, RoomPolicy, User
+from .policy_store import TOKEN_RETENTION, next_revision
+from .runtime import get_adapter, policy_problem
+from .services import Problem, admin_actor, audit, issue_token, is_admin, permissions, save_user
 
 
 def body(request):
@@ -32,19 +34,15 @@ def body(request):
 
 
 def user_data(user):
-    return {"id": user.pk, "username": user.username, "active": user.is_active, "role": user.role_id, "rooms": user.rooms}
+    return {"id": user.pk, "username": user.username, "active": user.is_active, "admin": is_admin(user)}
 
 
-def role_data(role):
-    return {"id": role.pk, "name": role.name, "permissions": role.permissions, "reserved": role.reserved}
-
-
-def me_data(user):
+def me_data(user, state=None):
+    """The current principal: a Guest (id 0), a Member or an Admin."""
     from .security import get_state
-    enabled = get_state().enabled
-    return {**user_data(user), "site": settings.SITE_ID, "permissions": sorted(permissions(user)),
-            "can_edit": enabled and is_admin(user), "auth_enabled": enabled,
-            "is_guest": bool(getattr(user, "is_guest", False))}
+    enabled = (state or get_state()).enabled
+    return {**user_data(user), "is_guest": bool(getattr(user, "is_guest", False)), "auth_enabled": enabled,
+            "can_edit": enabled and is_admin(user), "site": settings.SITE_ID, "permissions": sorted(permissions(user))}
 
 
 def security(request):
@@ -56,12 +54,12 @@ def security(request):
             data = change_security(request, body(request))
             logout(request)
         else:
-            raise Problem("method_not_allowed", 405)
+            raise Problem("method_not_allowed", 405, allow=("GET", "POST"))
         response = JsonResponse({**data, "csrf": get_token(request)})
         response["Cache-Control"] = "no-store"
         return response
     except Problem as exc:
-        return failure(exc.code, exc.status)
+        return problem_response(exc)
 
 
 def enforcement_data(reconciled, state, now):
@@ -75,7 +73,7 @@ def enforcement_data(reconciled, state, now):
     if not reconciled:
         return unknown
     age = (now - reconciled.updated_at).total_seconds()
-    if not 0 <= age <= 15:
+    if not 0 <= age <= STALE_AFTER:
         return {**unknown, "reason": "stale_worker"}
     start = state.get("start")
     if start is None or reconciled.updated_at < start:
@@ -91,37 +89,37 @@ def session(request):
         response["Cache-Control"] = "no-store"
         return response
     if request.method != "POST":
-        return failure("method_not_allowed", 405)
+        return not_allowed("GET", "POST")
     try:
         from .security import require_enabled
         require_enabled()
         data = body(request)
         if set(data) != {"username", "password"}:
-            raise Problem("invalid_login", 401)
+            raise Problem("invalid_login", 400)
         user = login_user(request, data)
         response = JsonResponse({"user": me_data(user), "csrf": get_token(request)})
         response["Cache-Control"] = "no-store"
         return response
     except Problem as exc:
-        return failure(exc.code, exc.status)
+        return problem_response(exc)
 
 
 def token_login(request):
     if request.method != "POST":
-        return failure("method_not_allowed", 405)
+        return not_allowed("POST")
     try:
         from .security import require_enabled
         require_enabled()
         data = body(request)
         if set(data) - {"username", "password", "name", "days"}:
-            raise Problem("invalid_login", 401)
+            raise Problem("invalid_login", 400)
         user = login_user(request, data, create_session=False)
         token, raw = issue_token(user, data.get("name", "TUI"), data.get("days", 30))
         response = JsonResponse({"token": raw, "id": token.pk, "expires_at": token.expires_at, "user": me_data(user)}, status=201)
         response["Cache-Control"] = "no-store"
         return response
     except Problem as exc:
-        return failure(exc.code, exc.status)
+        return problem_response(exc)
 
 
 token_login.token_login = True
@@ -129,15 +127,17 @@ token_login.token_login = True
 
 def signout(request):
     if request.method != "POST":
-        return failure("method_not_allowed", 405)
+        return not_allowed("POST")
     # CSRF still protects this browser operation. Clearing an expired cookie is
     # safe and required before an explicitly anonymous Guest request can resume.
+    # An invalid terminal credential signs out as an idempotent no-op.
     from .auth import principal
     try:
         actor = principal(request)
     except Problem:
         actor = None
-    audit(actor, "logout")
+    if actor is not None and not getattr(actor, "is_guest", False):
+        audit(actor, "logout")
     token = getattr(request, "identity_token", None)
     if token:
         token.revoked = True
@@ -148,17 +148,21 @@ def signout(request):
     return response
 
 
-@api("site.read")
+signout.idempotent_logout = True
+
+
+@api()
 def me(request):
-    return JsonResponse(me_data(request.identity_user))
+    return JsonResponse(me_data(request.identity_user, request.identity_state))
 
 
-@api(methods=("GET", "POST", "DELETE"), authentication=True)
+@api(methods=("GET", "POST"), item_methods=("DELETE",), account=True)
 def tokens(request, ident=None):
     user = request.identity_user
     if request.method == "GET":
+        live = PersonalToken.objects.filter(user=user, revoked=False, expires_at__gt=timezone.now() - TOKEN_RETENTION)
         return JsonResponse({"tokens": [{"id": token.pk, "name": token.name, "expires_at": token.expires_at, "revoked": token.revoked}
-                                        for token in PersonalToken.objects.filter(user=user)]})
+                                        for token in live.order_by("expires_at")]})
     if request.method == "DELETE":
         token = PersonalToken.objects.get(pk=ident, user=user)
         token.revoked = True
@@ -174,10 +178,8 @@ def tokens(request, ident=None):
     return JsonResponse({"id": token.pk, "token": raw, "expires_at": token.expires_at}, status=201)
 
 
-@api("users.manage", methods=("GET", "POST", "PATCH", "DELETE"))
+@api(methods=("GET", "POST"), item_methods=("PATCH", "DELETE"), admin=True)
 def users(request, ident=None):
-    if ident is None and request.method in {"PATCH", "DELETE"} or ident is not None and request.method == "POST":
-        raise Problem("method_not_allowed", 405)
     if request.method == "GET":
         return JsonResponse({"users": [user_data(user) for user in User.objects.order_by("id")]})
     if request.method == "DELETE":
@@ -187,27 +189,16 @@ def users(request, ident=None):
     return JsonResponse(user_data(user), status=200 if ident else 201)
 
 
-@api("roles.manage", methods=("GET", "POST", "PATCH", "DELETE"))
-def roles(request, ident=None):
-    if ident is None and request.method in {"PATCH", "DELETE"} or ident is not None and request.method == "POST":
-        raise Problem("method_not_allowed", 405)
-    if request.method == "GET":
-        return JsonResponse({"roles": [role_data(role) for role in Role.objects.order_by("id")], "catalog": list(CATALOG)})
-    role = save_role(request.identity_user, {} if request.method == "DELETE" else body(request), ident,
-                     delete=request.method == "DELETE")
-    return JsonResponse(role_data(role) if role else {"ok": True}, status=200 if ident else 201)
-
-
 def policy_data(adapter, room, user, saved):
     now = timezone.now()
     effective = {"locked": False, "desired": None, "allowed": True, "reason": "unlocked", "until": None,
                  "evaluated_at": now}
     state, manual = {"locked": False}, None
-    if saved and (saved.config.get("enabled") is not False or saved.config.get("manual_lock") is not None):
+    if saved and active(saved.config):
         try:
             config = adapter.policy.validate(saved.config, room, adapter.contract.policy_contract())
             authorization = adapter.policy.authorize(config, now)
-            state = adapter.policy.effective(config, now) if hasattr(adapter.policy, "effective") else None
+            state = adapter.policy.desired_at(now, config)
             manual = config.get("manual_lock")
             effective.update(locked=not authorization["allowed"], desired=authorization.get("desired"),
                              allowed=authorization["allowed"], reason=authorization.get("reason"),
@@ -215,15 +206,28 @@ def policy_data(adapter, room, user, saved):
         except Exception:
             effective.update(locked=True, allowed=False, reason="policy_unavailable")
             state = None
-    if "room.control" not in permissions(user) or user.rooms is not None and room not in user.rooms:
-        effective.update(allowed=False, reason="room_read_only")
     reconciled = ReconcileState.objects.filter(room_id=room, revision=saved.revision).first() if saved else None
     return {"room": room, "revision": saved.revision if saved else 0,
             "config": saved.config if saved else None, "can_edit": is_admin(user), "can_lock": is_admin(user),
             "manual_lock": manual, "effective": effective, "enforcement": enforcement_data(reconciled, state, now)}
 
 
-@api("site.read", methods=("GET", "PUT"))
+def _validated(adapter, config, room):
+    try:
+        return adapter.policy.validate(config, room, adapter.contract.policy_contract())
+    except Exception as error:
+        raise policy_problem(error) from None
+
+
+def _hold_valid(adapter, room, revision, hold):
+    try:
+        _validated(adapter, with_manual_hold(empty(room, settings.TIME_ZONE, revision), hold), room)
+        return True
+    except Problem:
+        return False
+
+
+@api(methods=("GET", "PUT"))
 def room_policy(request, room):
     from .security import require_enabled
     require_enabled()
@@ -232,8 +236,8 @@ def room_policy(request, room):
         raise Problem("unknown_room", 404)
     if request.method == "GET":
         return JsonResponse(policy_data(adapter, room, request.identity_user, RoomPolicy.objects.filter(room_id=room).first()))
-    if not is_admin(request.identity_user):
-        raise Problem("forbidden", 403)
+    # Same answers as every other Admin mutation: a Guest signs in, a Member is refused.
+    require_admin(request, request.identity_user)
     if not adapter.policy:
         raise Problem("policy_unavailable", 503)
     data = body(request)
@@ -245,27 +249,32 @@ def room_policy(request, room):
         current = saved.revision if saved else 0
         if current != data["revision"]:
             raise Problem("revision_conflict", 409)
-        config = {**data["config"], "room": room, "timezone": settings.TIME_ZONE, "revision": current + 1}
+        revision = next_revision(room, current)
+        config = {**data["config"], "room": room, "timezone": settings.TIME_ZONE, "revision": revision}
         # Schedule editing cannot invent, replace or erase a captured hold.
-        manual = saved.config.get("manual_lock") if saved else None
+        manual = manual_hold(saved.config) if saved else None
         if "manual_lock" in config and config["manual_lock"] != manual:
             raise Problem("invalid_policy")
-        config.pop("manual_lock", None)
-        if manual is not None:
-            config["manual_lock"] = manual
+        outcome = "ok"
         try:
-            config = adapter.policy.validate(config, room, adapter.contract.policy_contract())
-        except Exception:
-            raise Problem("invalid_policy") from None
-        saved, _ = RoomPolicy.objects.update_or_create(room_id=room, defaults={"config": config, "revision": current + 1,
+            config = _validated(adapter, with_manual_hold(config, manual), room)
+        except Problem:
+            if manual is None or _hold_valid(adapter, room, revision, manual):
+                raise
+            # The stored hold names a source this house no longer offers. It
+            # cannot be kept, so a schedule edit releases it.
+            config = _validated(adapter, with_manual_hold(config, None), room)
+            outcome = "hold_released"
+        saved, _ = RoomPolicy.objects.update_or_create(room_id=room, defaults={"config": config, "revision": revision,
                                                                              "updated_by": request.identity_user})
-        audit(request.identity_user, "policy.update", room)
+        audit(request.identity_user, "policy.update", room, outcome)
     return JsonResponse({"room": room, "revision": saved.revision, "config": saved.config})
 
 
-@transaction.non_atomic_requests
-@api("settings.manage", methods=("PUT",), authentication=True)
+@api(methods=("PUT",), admin=True)
 def room_lock(request, room):
+    # ATOMIC_REQUESTS is off (tests assert it): no request-wide transaction
+    # can span the native read below.
     adapter = get_adapter()
     if room not in adapter.contract.rooms:
         raise Problem("unknown_room", 404)
@@ -282,7 +291,7 @@ def room_lock(request, room):
         current = saved.revision if saved else 0
         if current != data["revision"]:
             raise Problem("revision_conflict", 409)
-        manual = saved.config.get("manual_lock") if saved else None
+        manual = manual_hold(saved.config) if saved else None
         if (manual is not None) == data["locked"]:
             return JsonResponse(policy_data(adapter, room, request.identity_user, saved))
         captured = None
@@ -297,32 +306,37 @@ def room_lock(request, room):
             saved = RoomPolicy.objects.filter(room_id=room).first()
             if (saved.revision if saved else 0) != current:
                 raise Problem("revision_conflict", 409)
-            config = dict(saved.config) if saved else {"version": 1, "enabled": False, "daily_off": [], "locks": []}
-            config.update(room=room, timezone=settings.TIME_ZONE, revision=current + 1)
-            config.pop("manual_lock", None)
-            if captured is not None:
-                config["manual_lock"] = captured
+            revision = next_revision(room, current)
+            stored = saved.config if saved and isinstance(saved.config, dict) else empty(room, settings.TIME_ZONE, revision)
+            config = with_manual_hold({**stored, "room": room, "timezone": settings.TIME_ZONE, "revision": revision}, captured)
+            outcome = "ok"
             try:
-                config = adapter.policy.validate(config, room, adapter.contract.policy_contract())
-            except Exception:
-                raise Problem("invalid_policy") from None
-            saved, _ = RoomPolicy.objects.update_or_create(room_id=room, defaults={"config": config, "revision": current + 1,
+                config = _validated(adapter, config, room)
+            except Problem:
+                if captured is not None:
+                    raise
+                # Unlock always succeeds. A remaining schedule that names
+                # something the house no longer offers is kept for review but
+                # disabled, so it can neither lock the room nor block it.
+                config = {**config, "enabled": False}
+                outcome = "schedule_disabled"
+            saved, _ = RoomPolicy.objects.update_or_create(room_id=room, defaults={"config": config, "revision": revision,
                                                                                  "updated_by": actor})
-            audit(actor, "room.lock" if captured else "room.unlock", room)
+            audit(actor, "room.lock" if captured else "room.unlock", room, outcome)
         return JsonResponse(policy_data(adapter, room, request.identity_user, saved))
 
 
-@api("room.control", methods=("POST",))
+@api(methods=("POST",))
 def command(request, room):
     data = body(request)
     if set(data) != {"action", "value"} or not isinstance(data.get("action"), str):
         raise Problem("invalid_command")
+    # Ordinary controls are not security events and are not audited.
     answer = get_adapter().dispatch(request.identity_user, room, data["action"], data["value"])
-    audit(request.identity_user, "room.command", room)
     return JsonResponse(answer, status=202)
 
 
-@api("site.read")
+@api()
 def item_state(request, item):
     return HttpResponse(get_adapter().read(item), content_type="text/plain")
 
@@ -330,18 +344,14 @@ def item_state(request, item):
 def home(request):
     """Serve the normal Home asset at the clean root with identical authorization."""
     if request.method not in ("GET", "HEAD"):
-        response = failure("method_not_allowed", 405)
-        response["Allow"] = "GET, HEAD"
-        return response
+        return not_allowed("GET", "HEAD")
     return asset(request, "home.html")
 
 
 def page_alias(request, target):
     """Finite aliases never reflect query parameters into their redirect."""
     if request.method not in ("GET", "HEAD"):
-        response = failure("method_not_allowed", 405)
-        response["Allow"] = "GET, HEAD"
-        return response
+        return not_allowed("GET", "HEAD")
     response = HttpResponseRedirect(target)
     response["Cache-Control"] = "no-store"
     return response
@@ -358,31 +368,26 @@ def asset(request, name):
     try:
         adapter = get_adapter()
     except Problem as exc:
-        return failure(exc.code, exc.status)
+        return problem_response(exc)
     spec = adapter.contract.assets.get(name)
-    if spec is None or not adapter.contract.asset_root or request.method not in ("GET", "HEAD"):
+    if spec is None or not adapter.contract.asset_root:
         return failure("not_found", 404)
+    if request.method not in ("GET", "HEAD"):
+        return not_allowed("GET", "HEAD")
     admin_only = bool(spec.get("admin")) or name in ADMIN_ASSETS
     if spec.get("private") or admin_only or name == "house.js" or name.endswith(".json"):
         from .auth import principal
         try:
             user = principal(request)
             if admin_only:
-                from .security import require_enabled
-                require_enabled()
-                if getattr(user, "is_guest", False):
-                    raise Problem("login_required", 401)
-            if "site.read" not in permissions(user):
-                raise Problem("forbidden", 403)
-            if admin_only and not is_admin(user):
-                raise Problem("forbidden", 403)
+                require_admin(request, user)
         except Problem as exc:
             if exc.status == 401 and name.endswith(".html") and "access.html" in adapter.contract.assets:
                 next_path = ASSET_ROUTES.get(name, "/static/remote/" + name)
                 response = HttpResponseRedirect("/account/?" + urlencode({"next": next_path}))
                 response["Cache-Control"] = "no-store"
                 return response
-            return failure(exc.code, exc.status)
+            return problem_response(exc)
     target = (adapter.contract.asset_root / name).resolve()
     if target.parent != adapter.contract.asset_root or not target.is_file():
         return failure("not_found", 404)
@@ -395,8 +400,7 @@ def asset(request, name):
     return response
 
 
-@transaction.non_atomic_requests
-@api("room.control", methods=("POST",))
+@api(methods=("POST",))
 def all_off(request):
     if body(request):
         raise Problem("unknown_field")
@@ -425,11 +429,10 @@ def all_off(request):
             skipped.append({"room": room, "reason": result.code})
         else:
             accepted.append(room)
-    audit(user, "all_off")
     return JsonResponse({"accepted": accepted, "skipped": skipped}, status=202)
 
 
-@api("pairing.manage")
+@api(admin=True)
 def pairing_items(request):
     if request.GET.get("metadata") != "pairing" or set(request.GET) - {"metadata", "fields"}:
         raise Problem("not_found", 404)
@@ -439,31 +442,27 @@ def pairing_items(request):
 @api(methods=("GET", "POST"))
 def item_resource(request, item):
     if request.method == "GET":
-        if "site.read" not in permissions(request.identity_user):
-            raise Problem("forbidden", 403)
         if set(request.GET) - {"fields"}:
             raise Problem("not_found", 404)
         return JsonResponse(get_adapter().group(item))
-    from .security import require_enabled
-    require_enabled()
+    # Authorize and validate before taking every room lock.
+    user = request.identity_user
+    require_admin(request, user)
+    adapter = get_adapter()
     if request.content_type != "text/plain" or len(request.body) > 64:
         raise Problem("invalid_pairing_command")
     try:
         value = request.body.decode("ascii")
     except UnicodeError:
         raise Problem("invalid_pairing_command") from None
-    answer = get_adapter().pair(request.identity_user, item, value)
+    answer = adapter.pair(user, item, value)
     audit(request.identity_user, "pairing.command", item)
     return JsonResponse(answer, status=202)
 
 
-@api("site.read", methods=("GET", "POST"))
+@api("camera.view", methods=("GET", "POST"))
 def media(request, resource):
-    from .security import get_state
-    # Remotes are open to Guests; camera images and video need an account
-    # whenever authentication is on.
-    if getattr(request.identity_user, "is_guest", False) and get_state().enabled:
-        raise Problem("login_required", 401)
+    # Guests see cameras only while authentication is off.
     if request.GET:
         raise Problem("not_found", 404)
     if request.method == "POST" and request.content_type != "application/sdp":

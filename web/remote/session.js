@@ -205,7 +205,7 @@
       if (lock.locked) return lock.manual ? "This room is locked until an administrator unlocks it." : "This room is locked by its schedule.";
       if (lock.status === "checking") return "Checking whether this room is locked…";
       if (lock.status === "unavailable") return "Room lock status is unavailable, so controls are paused.";
-      return "Your account cannot control this room.";
+      return "Room control is unavailable.";
     }
 
     // True, after saying why, when ordinary controls must not send.

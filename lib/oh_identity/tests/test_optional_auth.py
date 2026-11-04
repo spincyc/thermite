@@ -17,8 +17,8 @@ from django.test import Client, TestCase, TransactionTestCase
 from django.utils import timezone
 
 from oh_identity.auth import Guest, revalidate
-from oh_identity.models import Audit, BoundaryReceipt, PersonalToken, ReconcileState, Role, RoomPolicy, SecurityState, User
-from oh_identity.policy_store import Store, load_policies
+from oh_identity.models import Audit, BoundaryReceipt, PersonalToken, ReconcileState, RoomPolicy, SecurityState, User
+from oh_identity.policy_store import Store
 from oh_identity.runtime import install_adapter
 from oh_identity.security import arm_setup, get_state, transition
 from oh_identity.services import Problem, bootstrap, issue_token, password
@@ -52,15 +52,14 @@ class OptionalAuthentication(SecurityClient, TestCase):
         self.assertEqual({key: state[key] for key in ("enabled", "revision", "bootstrap_required", "setup_available")},
                          {"enabled": False, "revision": 1, "bootstrap_required": True, "setup_available": False})
         me = self.call("get", "/api/v1/me").json()
-        for key, value in {"id": 0, "role": 0, "username": "Guest", "rooms": None, "can_edit": False,
-                           "auth_enabled": False, "permissions": ["room.control", "site.read"]}.items():
+        for key, value in {"id": 0, "admin": False, "username": "Guest", "can_edit": False, "is_guest": True,
+                           "auth_enabled": False, "permissions": ["camera.view", "room.control", "site.read"]}.items():
             self.assertEqual(me[key], value)
         self.assertEqual(self.call("get", "/rest/items/loc_den_source/state").content, b"player")
         self.assertEqual(self.call("post", "/api/v1/rooms/den/commands", {"action": "source", "value": "off"}).status_code, 202)
         self.assertEqual(self.call("get", "/rest/items/unrelated_secret/state").status_code, 404)
         self.assertEqual(self.call("post", "/api/v1/rooms/den/commands", {"action": "volume", "value": 99}).status_code, 400)
         self.assertFalse(User.objects.exists())
-        self.assertFalse(Role.objects.exists())
 
     def test_invalid_credentials_never_fall_back_to_guest(self):
         client = Client(enforce_csrf_checks=True)
@@ -112,7 +111,7 @@ class OptionalAuthentication(SecurityClient, TestCase):
         self.assertTrue(response.json()["enabled"])
         self.assertFalse(response.json()["bootstrap_required"])
         self.assertFalse(response.json()["setup_available"])
-        self.assertEqual(User.objects.get().role.name, "Admin")
+        self.assertTrue(User.objects.get().admin)
         self.assertTrue(self.call("get", "/api/v1/me").json()["is_guest"])
         self.assertFalse(Session.objects.exists())
         self.assertEqual(get_state().setup_digest, "")
@@ -127,7 +126,6 @@ class OptionalAuthentication(SecurityClient, TestCase):
         self.assertEqual(self.toggle(True, setup_code=old).status_code, 403)
         self.assertEqual(self.toggle(True, setup_code=code, password=PASSPHRASE[:5]).status_code, 400)
         self.assertFalse(User.objects.exists())
-        self.assertFalse(Role.objects.exists())
         self.assertEqual(get_state().revision, 1)
         self.assertTrue(get_state().setup_digest)
         SecurityState.objects.update(setup_expires_at=timezone.now() - timedelta(seconds=1))
@@ -139,7 +137,7 @@ class OptionalAuthentication(SecurityClient, TestCase):
 
     def test_toggle_requires_active_admin_password_and_current_revision(self):
         owner = bootstrap("owner", PASSPHRASE)
-        operator = User.objects.create_user("operator", password=PASSPHRASE, role=Role.objects.get(name="User"))
+        operator = User.objects.create_user("operator", password=PASSPHRASE)
         self.assertEqual(self.toggle(False, password=PASSPHRASE[::-1]).status_code, 401)
         self.assertEqual(self.toggle(False, username=operator.username).status_code, 403)
         self.assertEqual(self.toggle(False, revision=get_state().revision - 1).status_code, 409)
@@ -169,7 +167,6 @@ class OptionalAuthentication(SecurityClient, TestCase):
         self.assertFalse(ReconcileState.objects.exists())
         self.assertEqual(row.config, {"locked": True, "revision": 5})
         self.assertEqual(User.objects.count(), 1)
-        self.assertEqual(Role.objects.count(), 3)
         self.assertEqual(Client().get("/api/v1/me", secure=True, HTTP_AUTHORIZATION="Bearer " + raw).status_code, 401)
         stale = Client()
         stale.cookies[settings.SESSION_COOKIE_NAME] = old_session
@@ -182,10 +179,10 @@ class OptionalAuthentication(SecurityClient, TestCase):
         self.assertFalse(Session.objects.exists())
 
     def test_sensitive_features_and_token_login_are_closed_while_off(self):
-        for path in ("/api/v1/users", "/api/v1/roles", "/api/v1/tokens", "/api/v1/rooms/den/policy", "/rest/items?metadata=pairing"):
+        for path in ("/api/v1/users", "/api/v1/tokens", "/api/v1/rooms/den/policy", "/rest/items?metadata=pairing"):
             with self.subTest(path=path):
                 self.assertEqual(self.call("get", path).json()["error"], "authentication_disabled")
-        for path, data in (("/api/v1/tokens", {}), ("/api/v1/users", {}), ("/api/v1/roles", {}),
+        for path, data in (("/api/v1/tokens", {}), ("/api/v1/users", {}),
                            ("/api/v1/session", {"username": "owner", "password": PASSPHRASE})):
             self.assertEqual(self.call("post", path, data).status_code, 403)
         self.assertEqual(self.call("put", "/api/v1/rooms/den/policy", {}).status_code, 403)
@@ -212,7 +209,6 @@ class OptionalAuthentication(SecurityClient, TestCase):
         self.assertTrue(store.claim_boundary("den", 4, "before", timezone.now()))
         self.assertEqual(self.toggle(False).status_code, 200)
         self.assertEqual(store.policies(), [])
-        self.assertEqual(load_policies(), [])
         self.assertIsNone(store.current_revision("den"))
         self.assertEqual(store.current_revisions(("den", "desk")), {"den": None, "desk": None})
         self.assertFalse(store.claim_boundary("den", 4, "late", timezone.now()))
@@ -226,7 +222,7 @@ class OptionalAuthentication(SecurityClient, TestCase):
         self.assertTrue(BoundaryReceipt.objects.filter(key="before").exists())
 
     def test_queued_guest_and_stream_snapshot_cannot_cross_security_transition(self):
-        guest = Guest(get_state().revision)
+        guest = Guest(get_state().revision, False)
         snapshot = {"guest": True, "security_revision": get_state().revision}
         self.assertTrue(valid(snapshot))
         @contextmanager
@@ -251,7 +247,8 @@ class OptionalAuthentication(SecurityClient, TestCase):
             password(owner, value + "x")
         self.assertEqual(caught.exception.code, "invalid_password")
         self.assertEqual(self.call("post", "/api/v1/session", {"username": "owner", "password": value}).status_code, 200)
-        self.assertEqual(self.call("post", "/api/v1/session", {"username": "owner", "password": value + "x"}).status_code, 401)
+        # Longer than any password can be: a malformed request, not a guess.
+        self.assertEqual(self.call("post", "/api/v1/session", {"username": "owner", "password": value + "x"}).status_code, 400)
 
     def test_queued_admin_transition_rechecks_original_session_after_lock_wait(self):
         bootstrap("owner", PASSPHRASE)
@@ -353,6 +350,7 @@ class SecurityConcurrency(SecurityClient, TransactionTestCase):
         self.assertTrue(get_state().enabled)
         self.assertFalse(get_state().setup_digest)
 
+    @patch("oh_identity.streams.REVALIDATE", 0)
     def test_live_guest_stream_closes_after_bootstrap(self):
         topics = topics_for(self.adapter.contract, "openhab/items/loc_den_source/stateupdated")
         snapshot = {"guest": True, "security_revision": get_state().revision}
@@ -372,24 +370,51 @@ class SecurityConcurrency(SecurityClient, TransactionTestCase):
         async_to_sync(check)()
 
 
-class SecurityMigration(TransactionTestCase):
-    def test_data_migration_preserves_existing_accounts_and_defaults_empty_sites_off(self):
-        from django.contrib.auth.hashers import make_password
+class Migrations(TransactionTestCase):
+    LEAF = [("oh_identity", "0003_principals_and_audit")]
+
+    def migrate(self, target):
         from django.db.migrations.executor import MigrationExecutor
         executor = MigrationExecutor(connection)
-        try:
-            executor.migrate([("oh_identity", "0001_initial")])
-            historical = executor.loader.project_state([("oh_identity", "0001_initial")]).apps
-            historical.get_model("oh_identity", "User").objects.create(username="existing-owner", password=make_password(None))
-            executor = MigrationExecutor(connection)
-            executor.migrate([("oh_identity", "0002_security_state")])
-            self.assertTrue(get_state().enabled)
-            self.assertEqual(get_state().revision, 1)
-            executor = MigrationExecutor(connection)
-            executor.migrate([("oh_identity", "0001_initial")])
-            historical.get_model("oh_identity", "User").objects.all().delete()
-            executor = MigrationExecutor(connection)
-            executor.migrate([("oh_identity", "0002_security_state")])
-            self.assertFalse(get_state().enabled)
-        finally:
-            MigrationExecutor(connection).migrate([("oh_identity", "0002_security_state")])
+        executor.migrate([("oh_identity", target)])
+        return executor.loader.project_state([("oh_identity", target)]).apps
+
+    def tearDown(self):
+        from django.db.migrations.executor import MigrationExecutor
+        MigrationExecutor(connection).migrate(self.LEAF)
+
+    def test_security_state_preserves_existing_accounts_and_defaults_empty_sites_off(self):
+        from django.contrib.auth.hashers import make_password
+        historical = self.migrate("0001_initial")
+        historical.get_model("oh_identity", "User").objects.create(username="existing-owner", password=make_password(None))
+        self.migrate("0002_security_state")
+        self.assertTrue(get_state().enabled)
+        self.assertEqual(get_state().revision, 1)
+        historical = self.migrate("0001_initial")
+        historical.get_model("oh_identity", "User").objects.all().delete()
+        self.migrate("0002_security_state")
+        self.assertFalse(get_state().enabled)
+
+    def test_released_roles_become_one_admin_flag_and_audit_gains_labels(self):
+        from django.contrib.auth.hashers import make_password
+        # The schema the previous release created: reserved roles, a custom
+        # role carrying every permission, room grants and a role-less account.
+        historical = self.migrate("0002_security_state")
+        roles, users = historical.get_model("oh_identity", "Role"), historical.get_model("oh_identity", "User")
+        everything = ["site.read", "room.control", "settings.manage", "users.manage", "roles.manage", "pairing.manage"]
+        reserved = {name: roles.objects.create(name=name, reserved=True, permissions=grants) for name, grants in
+                    (("Admin", everything), ("User", everything[:2]), ("Viewer", everything[:1]))}
+        custom = roles.objects.create(name="Everything but reserved", permissions=everything)
+        for name, role, rooms in (("owner", reserved["Admin"], None), ("operator", reserved["User"], ["den"]),
+                                  ("viewer", reserved["Viewer"], []), ("imposter", custom, None), ("orphan", None, None)):
+            users.objects.create(username=name, password=make_password(None), role=role, rooms=rooms, auth_revision=4)
+        historical.get_model("oh_identity", "Audit").objects.create(action="bootstrap", outcome="ok")
+        self.migrate("0003_principals_and_audit")
+        self.assertEqual(dict(User.objects.values_list("username", "admin")),
+                         {"owner": True, "operator": False, "viewer": False, "imposter": False, "orphan": False})
+        self.assertEqual(set(User.objects.values_list("auth_revision", flat=True)), {4})
+        self.assertEqual(list(Audit.objects.values_list("principal", "peer")), [("", "")])
+        self.assertNotIn("oh_identity_role", connection.introspection.table_names())
+        columns = {column.name for column in connection.introspection.get_table_description(connection.cursor(), "oh_identity_user")}
+        self.assertTrue({"admin", "auth_revision"} <= columns)
+        self.assertFalse({"role_id", "rooms"} & columns)

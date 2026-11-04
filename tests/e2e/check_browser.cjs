@@ -182,18 +182,15 @@ async function run(args, state) {
   await choose("off");
   await choose(args.source);
 
-  state.phase = "administrator Users and roles page";
+  state.phase = "administrator Users page";
   await page.locator('.thermite-navigation [data-view="users"]').click();
   await page.locator('body[data-thermite-page="users"]').waitFor();
-  await page.getByRole("heading", { name: "Users & roles", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Users", exact: true }).waitFor();
   await page.locator("[data-users] tbody tr").first().waitFor();
-  await page.locator("[data-roles] tbody tr").first().waitFor();
   check(await page.evaluate((admin) => {
     const users = [...document.querySelectorAll("[data-users] tbody tr")].map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent));
-    const roles = [...document.querySelectorAll("[data-roles] tbody tr")].map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent));
-    return users.some((row) => row[0] === admin && row[1] === "Admin" && row[3] === "Active")
-      && roles.some((row) => row[0] === "Admin" && row[1].includes("Manage users") && row[1].includes("Manage roles"));
-  }, args.admin), "administrator Users and roles data was unavailable");
+    return users.some((row) => row[0] === admin && row[1] === "Administrator" && row[2] === "Active");
+  }, args.admin), "administrator Users data was unavailable");
   await page.getByRole("button", { name: "Add user", exact: true }).waitFor();
 
   state.phase = "remote screenshot navigation";

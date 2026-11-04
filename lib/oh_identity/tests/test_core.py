@@ -7,7 +7,7 @@ from django.conf import settings
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
-from oh_identity.models import Audit, PersonalToken, Role, RoomPolicy, User
+from oh_identity.models import Audit, PersonalToken, RoomPolicy, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter, project
 from oh_identity.services import Problem, bootstrap, issue_token, save_user
 
@@ -36,6 +36,9 @@ class Policy:
     def authorize(self, config, now):
         return {"allowed": not config.get("locked", False)}
 
+    def desired_at(self, now, config):
+        return {"locked": config.get("locked", False)}
+
 
 def adapter():
     contract = RuntimeContract({
@@ -45,7 +48,8 @@ def adapter():
         "desk": {"source_item": "loc_desk_source", "sources": ["player"]}},
         states={"loc_den_source": {"kind": "enum", "values": ["player", "off"]},
                 "amp_volume": {"kind": "number", "max": 98},
-                "tv_pairing": {"kind": "enum"}, "unrelated_secret": {"kind": "enum"}})
+                "tv_pairing": {"kind": "enum"}, "unrelated_secret": {"kind": "enum"}},
+        pairings={"tv_pairing": {"value": "sony_ip_control", "config": {"length": 4, "chars": "digits"}}})
     return RuntimeAdapter(contract, FakeRuntime(), Policy())
 
 
@@ -54,8 +58,7 @@ class Core(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.admin = bootstrap("owner", PASSPHRASE)
-        cls.operator = User.objects.create_user("operator", password=PASSPHRASE, role=Role.objects.get(name="User"))
-        cls.viewer = User.objects.create_user("viewer", password=PASSPHRASE, role=Role.objects.get(name="Viewer"))
+        cls.operator = User.objects.create_user("operator", password=PASSPHRASE)
 
     def setUp(self):
         self.adapter = adapter()
@@ -81,22 +84,34 @@ class Core(TestCase):
             bootstrap("intruder", PASSPHRASE)
         self.assertEqual(caught.exception.code, "already_initialized")
 
-    def test_guest_can_read_but_viewer_cannot_command(self):
-        self.assertTrue(self.request("get", "/api/v1/me").json()["is_guest"])
-        self.signin("viewer")
-        self.assertEqual(self.request("post", "/api/v1/rooms/den/commands", {"action": "source", "value": "player"}).status_code, 403)
-        self.assertEqual(self.adapter.transport.commands, [])
+    def test_three_principals_have_canonical_shapes_and_permissions(self):
+        me = self.request("get", "/api/v1/me").json()
+        self.assertEqual(set(me), {"id", "username", "active", "admin", "is_guest", "auth_enabled", "can_edit", "site", "permissions"})
+        self.assertEqual((me["id"], me["username"], me["admin"], me["is_guest"], me["can_edit"]), (0, "Guest", False, True, False))
+        self.assertEqual(me["permissions"], ["room.control", "site.read"])
+        self.signin("operator")
+        member = self.request("get", "/api/v1/me").json()
+        self.assertEqual((member["admin"], member["is_guest"], member["can_edit"]), (False, False, False))
+        self.assertEqual(member["permissions"], ["camera.view", "room.control", "site.read"])
+        self.signin("owner")
+        admin = self.request("get", "/api/v1/me").json()
+        self.assertEqual((admin["admin"], admin["can_edit"]), (True, True))
+        self.assertEqual(admin["permissions"], ["camera.view", "pairing.manage", "room.control", "settings.manage",
+                                                "site.read", "users.manage"])
 
-    def test_operator_controls_unlocked_but_cannot_edit_users_roles_policy(self):
+    def test_member_controls_unlocked_but_cannot_administer(self):
         self.signin("operator")
         response = self.request("post", "/api/v1/rooms/den/commands", {"action": "volume", "value": 56.5})
         self.assertEqual(response.status_code, 202)
         self.assertEqual(self.adapter.transport.commands, [("amp_volume", "56.5")])
-        self.assertEqual(self.request("get", "/api/v1/rooms/den/policy").json()["can_edit"], False)
-        for path, data in [("/api/v1/users", {"username": "bad"}), ("/api/v1/roles", {"name": "bad"}),
-                           ("/api/v1/rooms/den/policy", {"revision": 0, "config": {}})]:
-            response = self.request("put" if path.endswith("policy") else "post", path, data)
-            self.assertEqual(response.status_code, 403)
+        policy = self.request("get", "/api/v1/rooms/den/policy").json()
+        self.assertEqual((policy["can_edit"], policy["can_lock"]), (False, False))
+        for method, path, data in [("post", "/api/v1/users", {"username": "bad"}), ("get", "/api/v1/users", None),
+                                   ("put", "/api/v1/rooms/den/policy", {"revision": 0, "config": {}}),
+                                   ("put", "/api/v1/rooms/den/lock", {"revision": 0, "locked": True})]:
+            self.assertEqual(self.request(method, path, data).status_code, 403)
+        for path in ("/api/v1/roles", "/api/v1/roles/1"):
+            self.assertEqual(self.request("get", path).status_code, 404)
 
     def test_csrf_origin_required_even_login(self):
         self.request("get", "/api/v1/session")
@@ -128,11 +143,8 @@ class Core(TestCase):
         self.assertEqual(self.request("post", "/api/v1/rooms/den/commands", {"action": "shared_power", "value": "OFF"}).status_code, 423)
         self.assertEqual(self.adapter.transport.commands, [])
 
-    def test_room_grants_and_missing_policy_engine_deny(self):
-        self.operator.rooms = ["den"]
-        self.operator.save()
+    def test_missing_policy_engine_denies(self):
         self.signin("operator")
-        self.assertEqual(self.request("post", "/api/v1/rooms/desk/commands", {"action": "source", "value": "off"}).status_code, 403)
         RoomPolicy.objects.create(room_id="den", config={"enabled": True})
         self.adapter.policy = None
         self.assertEqual(self.request("post", "/api/v1/rooms/den/commands", {"action": "source", "value": "off"}).status_code, 503)
@@ -150,15 +162,37 @@ class Core(TestCase):
         token.save()
         self.assertEqual(client.get("/api/v1/me", secure=True, HTTP_AUTHORIZATION="Bearer " + raw).status_code, 401)
 
-    def test_session_role_change_and_logout_token_revocation(self):
+    def test_session_revision_change_rejects_once_and_logout_token_revocation(self):
         self.signin("operator")
         self.operator.auth_revision += 1
         self.operator.save()
         self.assertEqual(self.request("get", "/api/v1/me").status_code, 401)
+        # The stale session was flushed with that answer, like a deleted one.
+        self.assertTrue(self.request("get", "/api/v1/me").json()["is_guest"])
         token, raw = issue_token(self.operator, "logout")
         client = Client(enforce_csrf_checks=True)
         self.assertEqual(client.post("/api/v1/logout", secure=True, HTTP_AUTHORIZATION="Bearer " + raw).status_code, 200)
         self.assertEqual(client.get("/api/v1/me", secure=True, HTTP_AUTHORIZATION="Bearer " + raw).status_code, 401)
+
+    def test_users_api_manages_the_admin_flag_and_keeps_an_admin(self):
+        self.signin()
+        created = self.request("post", "/api/v1/users", {"username": "second", "password": PASSPHRASE, "admin": True})
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json(), {"id": created.json()["id"], "username": "second", "active": True, "admin": True})
+        ident = created.json()["id"]
+        listing = self.request("get", "/api/v1/users").json()["users"]
+        self.assertEqual({user["username"]: user["admin"] for user in listing}, {"owner": True, "operator": False, "second": True})
+        self.assertTrue(all(set(user) == {"id", "username", "active", "admin"} for user in listing))
+        for bad in ({"admin": "yes"}, {"active": 1}, {"role": 1}, {"rooms": ["den"]}, {"username": 5}):
+            self.assertEqual(self.request("patch", f"/api/v1/users/{ident}", bad).status_code, 400)
+        self.assertEqual(self.request("post", "/api/v1/users", {"username": "nopassword"}).json()["error"], "missing_field")
+        self.assertFalse(self.request("patch", f"/api/v1/users/{ident}", {"admin": False}).json()["admin"])
+        response = self.request("delete", f"/api/v1/users/{self.admin.pk}")
+        self.assertEqual((response.status_code, response.json()["error"]), (409, "last_admin"))
+        for method, path in (("put", "/api/v1/users"), ("patch", "/api/v1/users"), ("post", f"/api/v1/users/{ident}")):
+            response = self.request(method, path, {})
+            self.assertEqual(response.status_code, 405)
+            self.assertEqual(response["Allow"], "PATCH, DELETE" if path.endswith(str(ident)) else "GET, POST")
 
     def test_last_admin_and_stale_mutation_actor(self):
         with self.assertRaises(Problem) as caught:

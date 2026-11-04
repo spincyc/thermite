@@ -47,9 +47,9 @@
       const user = await client.ready();
       if (user && !user.is_guest) {
         $(".access-login h1").textContent = "Your account"; form.replaceChildren();
-        form.append(node("p", "Signed in as " + user.username), node("p", "To elevate access, switch to an administrator account. An administrator can change your role in Users & roles; then sign in again."),
+        form.append(node("p", "Signed in as " + user.username), node("p", "To elevate access, switch to an administrator account. An administrator can make your account an administrator in Users; then sign in again."),
           button("Switch account", signOut), button("Sign out", signOut));
-        status(user.can_edit ? "Administrator" : client.has("room.control") ? "Room controls available" : "Read-only access"); return;
+        status(user.can_edit ? "Administrator" : "Account · unlocked rooms and camera media"); return;
       }
     } catch (error) {
       if (error.status === 401) form.appendChild(button("Clear expired sign-in", signOut));
@@ -63,7 +63,7 @@
       } catch (error) { status(error.message, true); form.elements.password.focus(); }
       finally { submit.disabled = false; }
     });
-    status(client.current?.()?.is_guest ? "Guest access is available for unlocked rooms. Sign in for additional permissions." : "");
+    status(client.current?.()?.is_guest ? "Unlocked rooms work without signing in. Sign in to view cameras or, as an administrator, to manage the site." : "");
   }
   async function security() {
     const host = $("[data-security]");
@@ -72,13 +72,13 @@
     status("");
     host.replaceChildren();
     host.append(node("h2", "Authentication is " + (mode.enabled ? "on" : "off")), node("p", mode.enabled
-      ? "Unlocked rooms work without signing in. Accounts grant permission to manage locks, schedules and the site."
+      ? "Unlocked rooms work without signing in. Accounts can view camera media; administrators manage locks, schedules, users, pairing and the system."
       : "Basic remote controls are available without signing in. Accounts, device pairing, locks and room schedules require authentication."));
     host.appendChild(node("p", "Changing this setting signs out every browser and terminal. Existing credentials cannot be reused after a change.", { class: "access-note" }));
     if (client.mock) { host.appendChild(node("p", "Demo authentication cannot be changed.")); return; }
     if (mode.enabled && !client.canEdit()) {
       const account = global.ThermiteNavigation.href("access", location.search);
-      host.append(node("p", "Sign in as an administrator to change authentication. To elevate an existing account, ask an administrator to change its role in Users & roles, then sign in again."),
+      host.append(node("p", "Sign in as an administrator to change authentication. To elevate an existing account, ask an administrator to make it an administrator in Users, then sign in again."),
         node("a", client.current() && !client.current().is_guest ? "Switch to an administrator account" : "Sign in as an administrator", { href: account + (account.includes("?") ? "&" : "?") + "next=%2Fsecurity%2F" }));
       return;
     }
@@ -193,58 +193,35 @@
     });
   }
   async function users() {
-    if (!client.canEdit()) { status("Only administrators can manage users and roles. Switch to an administrator account to elevate access.", true); return; }
-    let userList = [], roles = [];
-    async function reload() {
-      const [a, b] = await Promise.all([client.json("/api/v1/users"), client.json("/api/v1/roles")]); userList = a.users; roles = b.roles; draw(); status("");
-    }
-    const roleLabel = (id) => roles.find((role) => role.id === id)?.name || "No role";
+    if (!client.canEdit()) { status("Only administrators can manage users. Switch to an administrator account.", true); return; }
+    let userList = [];
+    async function reload() { userList = (await client.json("/api/v1/users")).users; draw(); status(""); }
     function draw() {
-      const section = $("[data-users]"), roleSection = $("[data-roles]"); section.replaceChildren(); roleSection.replaceChildren();
+      const section = $("[data-users]"); section.replaceChildren();
       const bar = node("div", null, { class: "access-toolbar" }); bar.append(node("h2", "Users"), button("Add user", () => editUser())); section.appendChild(bar);
+      section.appendChild(node("p", "Anyone can use unlocked rooms without an account. Accounts can also view camera media; administrators manage locks, schedules, users, pairing and the system.", { class: "access-note" }));
       const table = node("table", null, { class: "access-table" }), head = node("thead"), titles = node("tr"), body = node("tbody");
-      ["Username", "Role", "Rooms", "Status", "Actions"].forEach((title) => titles.appendChild(node("th", title, { scope: "col" }))); head.appendChild(titles); table.append(head, body);
+      ["Username", "Access", "Status", "Actions"].forEach((title) => titles.appendChild(node("th", title, { scope: "col" }))); head.appendChild(titles); table.append(head, body);
       userList.forEach((user) => { const row = node("tr");
-        [user.username, roleLabel(user.role), user.rooms === null ? "All rooms" : user.rooms.map((id) => house.rooms.find((room) => room.id === id)?.label || id).join(", ") || "None", user.active ? "Active" : "Disabled"].forEach((value) => row.appendChild(node("td", value)));
+        [user.username, user.admin ? "Administrator" : "Account", user.active ? "Active" : "Disabled"].forEach((value) => row.appendChild(node("td", value)));
         const actions = node("td"); actions.appendChild(button("Edit", () => editUser(user))); row.appendChild(actions); body.appendChild(row);
       }); const scroll = node("div", null, { class: "access-table-wrap" }); scroll.appendChild(table); section.appendChild(scroll);
-      const roleBar = node("div", null, { class: "access-toolbar" }); roleBar.append(node("h2", "Roles"), button("Add role", () => editRole())); roleSection.appendChild(roleBar);
-      const list = node("table", null, { class: "access-table", "aria-label": "Roles and permissions" }), roleBody = node("tbody"), roleHead = node("thead"), roleTitles = node("tr");
-      ["Role", "Permissions", "Actions"].forEach((title) => roleTitles.appendChild(node("th", title, { scope: "col" }))); roleHead.appendChild(roleTitles); list.append(roleHead, roleBody);
-      roles.forEach((role) => { const row = node("tr"); row.append(node("td", role.name), node("td", role.permissions.map((permission) => ({ "site.read": "View site", "room.control": "Control rooms", "settings.manage": "Manage settings", "users.manage": "Manage users", "roles.manage": "Manage roles", "pairing.manage": "Pair devices" })[permission] || "").filter(Boolean).join(" · ")));
-        const cell = node("td"); if (role.reserved) cell.appendChild(node("span", "Built-in", { class: "access-note" })); else cell.appendChild(button("Edit", () => editRole(role))); row.appendChild(cell); roleBody.appendChild(row); });
-      const roleScroll = node("div", null, { class: "access-table-wrap" }); roleScroll.appendChild(list); roleSection.appendChild(roleScroll);
     }
     function editUser(user) {
-      const existing = user || { username: "", role: roles.find((role) => role.name === "User")?.id, rooms: null, active: true };
+      const existing = user || { username: "", admin: false, active: true };
       dialog(user ? "Edit user" : "Add user", (form, modal) => {
         const username = input("Username", "username", "text", existing.username); username.firstElementChild.required = true; username.firstElementChild.maxLength = 150; username.firstElementChild.autocomplete = "off";
         const secret = input(user ? "New password (leave blank to keep)" : "Password", "password", "password"); secret.firstElementChild.autocomplete = "new-password"; secret.firstElementChild.maxLength = 1024; secret.firstElementChild.required = !user;  // lint: allow — password field labels and input type
-        form.append(username, secret, select("Role", "role", roles.map((role) => [role.id, role.name]), existing.role),
-          node("p", "Choose Admin to grant administration. Role changes sign this user out on every browser and terminal; they must sign in again.", { class: "access-note" }));
-        const all = input("Grant all rooms", "all", "checkbox", existing.rooms === null); all.className = "access-check";
-        const grants = node("fieldset", null, { class: "access-room-grants" }); grants.appendChild(node("legend", "Room controls"));
-        house.rooms.forEach((room) => { const label = input(room.label, "room", "checkbox", existing.rooms === null || existing.rooms.includes(room.id)); label.className = "access-check"; label.firstElementChild.value = room.id; grants.appendChild(label); });
-        const update = () => { grants.disabled = all.firstElementChild.checked; }; all.firstElementChild.addEventListener("change", update); update();
-        const active = input("Active account", "active", "checkbox", existing.active); active.className = "access-check"; form.append(all, grants, active);
-        form.addEventListener("submit", async (event) => { event.preventDefault(); const value = { username: form.elements.username.value, role: Number(form.elements.role.value), active: form.elements.active.checked,
-          rooms: form.elements.all.checked ? null : Array.from(grants.querySelectorAll("input:checked"), (field) => field.value) };
+        const admin = input("Administrator", "admin", "checkbox", existing.admin); admin.className = "access-check";
+        const active = input("Active account", "active", "checkbox", existing.active); active.className = "access-check";
+        form.append(username, secret, admin, node("p", "Changing administration signs this user out on every browser and terminal; they must sign in again.", { class: "access-note" }), active);
+        form.addEventListener("submit", async (event) => { event.preventDefault();
+          const value = { username: form.elements.username.value, admin: form.elements.admin.checked, active: form.elements.active.checked };
           if (form.elements.password.value) value.password = form.elements.password.value; form.elements.password.value = "";  // lint: allow — copies entered data, then clears the field
           const save = form.querySelector('[type="submit"]'); save.disabled = true;
           try { await client.json("/api/v1/users" + (user ? "/" + user.id : ""), user ? "PATCH" : "POST", value); modal.close(); await reload(); }
           catch (error) { formError(form, error.message); }
           finally { save.disabled = false; }
-        });
-      });
-    }
-    function editRole(role) {
-      dialog(role ? "Edit role" : "Add role", (form, modal) => {
-        const name = input("Role name", "name", "text", role?.name); name.firstElementChild.maxLength = 64; name.firstElementChild.required = true; form.appendChild(name);
-        for (const [id, label] of [["site.read", "View site"], ["room.control", "Control granted rooms"]]) { const box = input(label, id, "checkbox", !role || role.permissions.includes(id)); box.className = "access-check"; form.appendChild(box); }
-        if (role) form.appendChild(button("Delete role", async () => { try { await client.json("/api/v1/roles/" + role.id, "DELETE"); modal.close(); await reload(); } catch (error) { formError(form, error.message); } }));
-        form.addEventListener("submit", async (event) => { event.preventDefault();
-          try { await client.json("/api/v1/roles" + (role ? "/" + role.id : ""), role ? "PATCH" : "POST", { name: form.elements.name.value, permissions: ["site.read", "room.control"].filter((id) => form.elements.namedItem(id).checked) }); modal.close(); await reload(); }
-          catch (error) { formError(form, error.message); }
         });
       });
     }

@@ -3,11 +3,18 @@
 import asyncio
 from datetime import datetime, timezone
 import json
+import logging
 import signal
 import threading
+import time
 from urllib.parse import unquote
 
 from . import AccessError
+
+LOG = logging.getLogger(__name__)
+# At most one reconnect warning per interval; suppressed ones are counted.
+WARN_EVERY = 300
+PRUNE_EVERY = 24 * 60 * 60
 
 
 class NativeCache:
@@ -107,15 +114,22 @@ class NativeCache:
 
 
 class PolicyIO:
-    def __init__(self, adapter, store, cache):
+    def __init__(self, adapter, store, cache, house):
+        """house is the contract's plain (mutable) house mapping."""
         self.adapter, self.store, self.cache = adapter, store, cache
         from oh_room_policy import expected_plan
-        from oh_identity.runtime import plain
-        self.plans = {room: {choice: expected_plan(plain(adapter.contract.house), room, choice)
+        self.plans = {room: {choice: expected_plan(house, room, choice)
                              for choice in ("off", *spec["sources"])} for room, spec in adapter.contract.rooms.items()}
 
     def read(self, items):
         return self.cache.read(items)
+
+    def source(self, room, item):
+        """The room's current Source Item state, only to avoid re-sending a
+        source that is already current. It is never an observation."""
+        if not any(plan.source_item == item for plan in self.plans.get(room, {}).values()):
+            raise AccessError("Not a compiled room Source Item")
+        return str(self.adapter.transport.read(item)).strip()
 
     def write(self, room, item, value, revision):
         if self.store.current_revision(room) != revision:
@@ -131,8 +145,26 @@ class PolicyIO:
         self.adapter.transport.command(item, value)
 
 
-async def observe(transport, cache, stop):
+class Warnings:
+    """Rate-limited reconnect warnings naming only the exception class."""
+
+    def __init__(self, every=WARN_EVERY, clock=time.monotonic):
+        self.every, self.clock = every, clock
+        self.last, self.suppressed = None, 0
+
+    def failed(self, error):
+        now = self.clock()
+        if self.last is not None and now - self.last < self.every:
+            self.suppressed += 1
+            return
+        LOG.warning("Native observation stream failed (%s); reconnecting. %d earlier failure(s) not logged.",
+                    type(error).__name__, self.suppressed)
+        self.last, self.suppressed = now, 0
+
+
+async def observe(transport, cache, stop, warnings=None):
     """Consume native events; the supervisor cancels to interrupt a quiet feed."""
+    warnings = warnings or Warnings()
     delay = 1
     while not stop.is_set():
         iterator = transport.events(cache.topics, project=cache.project).__aiter__()
@@ -144,9 +176,10 @@ async def observe(transport, cache, stop):
                 delay = 1
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
             if stop.is_set():
                 return
+            warnings.failed(error)
         finally:
             cache.clear()
             await iterator.aclose()
@@ -163,6 +196,9 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
     # This is a fresh service process: configure Django before importing any
     # model-backed store or runtime adapter, even when another process bootstrapped.
     config, adapter, locks = configured(config_path, tls=False)
+    from .service import check_schema, rebase_timezone
+    check_schema()
+    rebase_timezone(adapter, config["timezone"])
     from oh_identity.policy_store import Store
     from oh_identity.runtime import plain
     from oh_room_policy import Worker, expected_plan
@@ -180,7 +216,7 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
                 native_power[descriptor["item"]] = descriptor["reported_at"]
     cache = NativeCache(fields, native_power=native_power, clock=wall_clock)
     validate_batches(cache, adapter.transport.base)
-    io = PolicyIO(adapter, store, cache)
+    io = PolicyIO(adapter, store, cache, house)
     worker = Worker(house, store, io, locks=locks, wall_clock=wall_clock)
     rooms_by_item = {}
     for room, choices in io.plans.items():
@@ -220,7 +256,11 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
         with locks.hold(["room-policy-worker"], blocking=False):
             if not shutdown_requested:
                 thread.start()
+            pruned = None
             while not shutdown_requested and not stop.is_set():
+                if pruned is None or time.monotonic() - pruned >= PRUNE_EVERY:
+                    pruned = time.monotonic()
+                    maintain(store)
                 worker.step()
                 if not shutdown_requested and not stop.is_set():
                     worker.wait(min(5, interval))
@@ -245,6 +285,14 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
         close = getattr(adapter.transport, "close", None)
         if close:
             close()
+
+
+def maintain(store):
+    """Daily housekeeping never stops enforcement."""
+    try:
+        store.prune(datetime.now(timezone.utc))
+    except Exception as error:
+        LOG.warning("Identity housekeeping failed (%s); retrying tomorrow.", type(error).__name__)
 
 
 def cache_items(fields):

@@ -11,10 +11,22 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPSHandler, HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+from oh_identity.addresses import ROOM_ID
+
 from . import AccessError
 from .files import json_private, private_directory, read_private
 
 TOKEN = re.compile(r"thm_[A-Za-z0-9_-]{32,200}\Z")
+# The /api/v1/me members a terminal reports.
+PRINCIPAL = ("id", "username", "active", "admin", "is_guest", "auth_enabled", "can_edit", "site", "permissions")
+
+
+class Refused(AccessError):
+    """The site answered with an HTTP error status."""
+
+    def __init__(self, status):
+        super().__init__("Site request refused (HTTP " + str(status) + ")")
+        self.status = status
 
 
 def deployment(site):
@@ -103,7 +115,8 @@ class NoRedirect(HTTPRedirectHandler):
 
 def request(url, path, *, method="GET", data=None, token=None, ca_file=None, timeout=10):
     canonical = origin(url)
-    if path != "/api/v1/me" and path not in {"/api/v1/token-login", "/api/v1/logout"} and not re.fullmatch(r"/api/v1/rooms/[a-z][a-z0-9_]*/policy", path):
+    room = re.fullmatch(r"/api/v1/rooms/([^/]+)/policy", path)
+    if path not in {"/api/v1/me", "/api/v1/token-login", "/api/v1/logout"} and not (room and ROOM_ID.fullmatch(room.group(1))):
         raise AccessError("Unknown access API path")
     context = ssl.create_default_context(cafile=ca_file)
     opener = build_opener(ProxyHandler({}), HTTPSHandler(context=context), NoRedirect())
@@ -119,7 +132,7 @@ def request(url, path, *, method="GET", data=None, token=None, ca_file=None, tim
         response = opener.open(message, timeout=timeout)
     except HTTPError as exc:
         exc.close()
-        raise AccessError("Site request refused (HTTP " + str(exc.code) + ")") from None
+        raise Refused(exc.code) from None
     except (URLError, OSError, ssl.SSLError):
         raise AccessError("Could not securely reach the site") from None
     with response:
@@ -164,7 +177,12 @@ def logout(url, *, config_home=None, http=request):
     path, value = load(url, config_home)
     before = read_private(path, 4096)
     identity = path.stat()
-    http(value["origin"], "/api/v1/logout", method="POST", data={}, token=value["token"], ca_file=saved_ca(path))
+    try:
+        http(value["origin"], "/api/v1/logout", method="POST", data={}, token=value["token"], ca_file=saved_ca(path))
+    except Refused as exc:
+        # The site no longer accepts this credential; it is already signed out.
+        if exc.status != 401:
+            raise
     # Another login could have replaced the file while the request was in flight.
     current = path.lstat()
     if (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino) and read_private(path, 4096) == before:
@@ -177,10 +195,9 @@ def status(url, *, config_home=None, http=request, rooms=()):
     path, value = load(url, config_home)
     arguments = {"token": value["token"], "ca_file": saved_ca(path)}
     me = http(value["origin"], "/api/v1/me", **arguments)
-    allowed = {"id", "username", "role", "rooms", "permissions", "can_edit", "site", "active"}
-    result = {"origin": value["origin"], "user": {key: val for key, val in me.items() if key in allowed}, "policies": {}}
+    result = {"origin": value["origin"], "user": {key: val for key, val in me.items() if key in PRINCIPAL}, "policies": {}}
     for room in rooms:
-        if not re.fullmatch(r"[a-z][a-z0-9_]*", room):
+        if not isinstance(room, str) or not ROOM_ID.fullmatch(room):
             raise AccessError("Invalid room ID")
         result["policies"][room] = http(value["origin"], "/api/v1/rooms/" + room + "/policy", **arguments)
     return result

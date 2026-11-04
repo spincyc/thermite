@@ -75,23 +75,11 @@ def desired_at(now_utc: datetime, policy: dict) -> dict:
             "rule": None, "start": None, "end": None, "key": None, "kind": None}
 
 
-def effective(config: dict, aware_now: datetime) -> dict:
-    return desired_at(aware_now, config)
-
-
 def authorize(config: dict, aware_now: datetime) -> dict:
-    """Ordinary actuation only. Identity roles, reads and grants live above it."""
-    state = effective(config, aware_now)
+    """Ordinary actuation only; principals and reads live in the gateway."""
+    state = desired_at(aware_now, config)
     return {"allowed": not state["locked"], "reason": "manual_lock" if state["kind"] == "manual" else "room_locked" if state["locked"] else "unlocked",
             "desired": state["desired"], "revision": state["revision"]}
-
-
-def all_off(configs: dict[str, dict], rooms: list[str], aware_now: datetime) -> dict:
-    """Split ordinary All Off without creating or bypassing an override."""
-    allowed, skipped = [], []
-    for room in rooms:
-        (skipped if room in configs and effective(configs[room], aware_now)["locked"] else allowed).append(room)
-    return {"rooms": allowed, "skipped": skipped}
 
 
 @dataclass(frozen=True)
@@ -103,6 +91,9 @@ class Boundary:
     kind: str
     target: str | None
     outcome: str = "due"
+    # A start for an occurrence that began before this revision. Its source
+    # may already be current; the worker then sends nothing.
+    catch_up: bool = False
 
 
 def due_boundaries(now_utc: datetime, policy: dict, receipts=(), *, not_before: datetime | None = None,
@@ -113,6 +104,12 @@ def due_boundaries(now_utc: datetime, policy: dict, receipts=(), *, not_before: 
     edit does not replay an older boundary. Receipts include revision and
     local occurrence date, suppressing duplicate folds and backward clocks.
     A currently active lock supersedes older unlock/daily-off actions.
+
+    A lock that was already active when this revision took effect (an
+    unlock into a window, re-enabled authentication, any edit mid-window)
+    gets one catch-up start at not_before. Its key carries the revision, so
+    each revision catches up at most once. Older daily-off and unlock
+    actions are never replayed.
     """
     now = utc(now_utc)
     if policy.get("manual_lock") is not None or not policy.get("enabled", True):
@@ -126,13 +123,16 @@ def due_boundaries(now_utc: datetime, policy: dict, receipts=(), *, not_before: 
         day = today + timedelta(days=offset)
         for rule in policy["daily_off"]:
             if day.weekday() in rule["days"]:
-                candidates.append((rule["id"], day, "daily_off", local_instant(day, rule["time"], policy["timezone"]), "off"))
+                candidates.append((rule["id"], day, "daily_off", local_instant(day, rule["time"], policy["timezone"]), "off", False))
     for rule, day, start, end in _windows(policy, now):
         if start <= now < end:
-            candidates.append((rule["id"], day, "start", start, rule["desired"]))
-        candidates.append((rule["id"], day, "unlock", end, None if rule["unlock"] == "leave" else rule["unlock"]))
+            # Before this revision, the occurrence's real start was not ours to
+            # send; its catch-up happens at the revision's own start instead.
+            catch_up = start < lower
+            candidates.append((rule["id"], day, "start", lower if catch_up else start, rule["desired"], catch_up))
+        candidates.append((rule["id"], day, "unlock", end, None if rule["unlock"] == "leave" else rule["unlock"], False))
     result = []
-    for rule, day, kind, at, target in candidates:
+    for rule, day, kind, at, target, catch_up in candidates:
         key = boundary_key(policy, rule, day, kind)
         if key in seen or not lower <= at <= now:
             continue
@@ -143,5 +143,5 @@ def due_boundaries(now_utc: datetime, policy: dict, receipts=(), *, not_before: 
             outcome = "coalesced_active_lock"
         elif target is None:
             outcome = "leave"
-        result.append(Boundary(key, policy["room"], policy["revision"], at, kind, target, outcome))
+        result.append(Boundary(key, policy["room"], policy["revision"], at, kind, target, outcome, catch_up))
     return sorted(result, key=lambda event: (event.at, 0 if event.kind == "start" else 1, event.key))

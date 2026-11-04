@@ -10,13 +10,18 @@ from pathlib import Path
 from types import MappingProxyType
 from contextlib import nullcontext
 
-from .services import Problem, permissions
+from .addresses import ROOM_ID
+from .services import Problem
 
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-SECRET = re.compile(r"(?:^|_)(?:password|passwd|secret|token|psk|credential|authorization|auth)(?:_|$)", re.I)
+# One list of credential words. Item-name segments and text words also
+# refuse the short "auth" and "pin", which are only safe as whole words;
+# JSON keys match any listed word as a substring (accessToken, pincode).
+SENSITIVE_WORDS = ("authorization", "bearer", "cookie", "credential", "passwd", "password", "pincode", "psk", "secret", "token")
+SECRET = re.compile(r"(?:^|_)(?:" + "|".join((*SENSITIVE_WORDS, "auth")) + r")(?:_|$)", re.I)
 PAIR_STATES = {"unpaired", "paired", "checking", "code_shown", "repairing", "failed", "unavailable", "closed", "unreachable"}
 UUID = re.compile(r"^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
-SENSITIVE_TEXT = re.compile(r"\b(?:authorization|bearer|cookie|password|pin|secret|token)\b", re.I)
+SENSITIVE_TEXT = re.compile(r"\b(?:" + "|".join((*SENSITIVE_WORDS, "pin")) + r")\b", re.I)
 _adapter = None
 
 
@@ -49,7 +54,7 @@ def json_value(raw, schema, depth=0):
     if kind == "object" and isinstance(raw, dict):
         result = {}
         for key, child in schema.get("fields", {}).items():
-            if not isinstance(key, str) or any(word in key.lower() for word in ("password", "authorization", "credential", "cookie", "secret", "token", "pincode")) or key not in raw:
+            if not isinstance(key, str) or any(word in key.lower() for word in SENSITIVE_WORDS) or key not in raw:
                 continue
             if raw[key] is None and child.get("nullable") is True:
                 result[key] = None
@@ -84,7 +89,7 @@ class RuntimeContract:
         data = copy.deepcopy(dict(rooms))
         reads = copy.deepcopy(states or {})
         for ident, room in data.items():
-            if not NAME.fullmatch(ident) or not NAME.fullmatch(room["source_item"]):
+            if not isinstance(ident, str) or not ROOM_ID.fullmatch(ident) or not NAME.fullmatch(room["source_item"]):
                 raise ValueError("Invalid runtime room contract")
             source_action = room.setdefault("actions", {}).setdefault("source", {})
             source_action.update(item=room["source_item"], kind="enum", values=["off", *room["sources"]])
@@ -202,21 +207,21 @@ class RuntimeAdapter:
         # Root composition supplies the same room/resource lock authority as the worker.
         self.command_lock = command_lock or (lambda rooms, resources: nullcontext())
 
-    def allowed(self, user, room_id):
+    def allowed(self, room_id):
+        """Every principal controls unlocked rooms; only a room's policy refuses."""
         if room_id not in self.contract.rooms:
             raise Problem("unknown_room", 404)
-        if "room.control" not in permissions(user) or user.rooms is not None and room_id not in user.rooms:
-            raise Problem("forbidden", 403)
         self.check_policy(room_id)
 
     def check_policy(self, room_id):
-        from .security import get_state
-        from .models import RoomPolicy
         from django.utils import timezone
+        from oh_room_policy import active
+        from .models import RoomPolicy
+        from .security import get_state
         if not get_state().enabled:
             return
         saved = RoomPolicy.objects.filter(room_id=room_id).first()
-        if not saved or saved.config.get("enabled") is False and saved.config.get("manual_lock") is None:
+        if not saved or not active(saved.config):
             return
         # A persisted enabled policy cannot silently become unenforced if engine missing.
         if not self.policy:
@@ -237,16 +242,11 @@ class RuntimeAdapter:
             return self._dispatch(user, room_id, action, item, command, affected)
 
     def _dispatch(self, user, room_id, action, item, command, affected):
-        from .models import User
         from .auth import revalidate
-        # Re-read after validation and before I/O: a queued stale principal is insufficient.
+        # After the lock wait and before I/O: a queued stale principal is insufficient.
         revalidate(user)
-        fresh = user if getattr(user, "is_guest", False) else User.objects.select_related("role").get(pk=user.pk)
-        if fresh.auth_revision != user.auth_revision:
-            raise Problem("authorization_changed", 401)
-        self.allowed(fresh, room_id)
-        for ident in affected:
-            self.allowed(fresh, ident)
+        for ident in dict.fromkeys((room_id, *affected)):
+            self.allowed(ident)
         try:
             self.transport.command(item, command)
         except Exception:
@@ -276,9 +276,23 @@ class RuntimeAdapter:
                     result.append({"name": name, "state": self.read(name)})
         return result
 
+    def pairing_command(self, item, value):
+        """REQUEST/AGAIN/CANCEL or a code matching the Item's pairing metadata."""
+        spec = self.contract.pairings.get(item)
+        if not spec or not isinstance(value, str):
+            raise Problem("not_found", 404)
+        config = spec.get("config", {})
+        length, chars = config.get("length"), config.get("chars")
+        character_class = {"digits": "0-9", "hex": "0-9A-Fa-f"}.get(chars)
+        code = type(length) is int and 1 <= length <= 16 and character_class and re.fullmatch("[" + character_class + "]{" + str(length) + "}", value)
+        if value not in {"REQUEST", "AGAIN", "CANCEL"} and not code:
+            raise Problem("invalid_pairing_command")
+
     def pair(self, user, item, value):
         # Pairing has effects outside ordinary room commands. Share the switch's
         # room locks so a queued pairing request cannot cross a disable.
+        # Callers validate first; nothing unauthorized waits on every room lock.
+        self.pairing_command(item, value)
         with self.command_lock(tuple(sorted(self.contract.rooms)), ()):
             return self._pair(user, item, value)
 
@@ -289,18 +303,9 @@ class RuntimeAdapter:
         from .auth import revalidate
         require_enabled()
         revalidate(user)
-        fresh = User.objects.select_related("role").get(pk=user.pk)
-        if fresh.auth_revision != user.auth_revision or not is_admin(fresh):
+        fresh = User.objects.filter(pk=user.pk).first()
+        if fresh is None or fresh.auth_revision != user.auth_revision or not is_admin(fresh):
             raise Problem("forbidden", 403)
-        spec = self.contract.pairings.get(item)
-        if not spec or not isinstance(value, str):
-            raise Problem("not_found", 404)
-        config = spec.get("config", {})
-        length, chars = config.get("length"), config.get("chars")
-        character_class = {"digits": "0-9", "hex": "0-9A-Fa-f"}.get(chars)
-        code = type(length) is int and 1 <= length <= 16 and character_class and re.fullmatch("[" + character_class + "]{" + str(length) + "}", value)
-        if value not in {"REQUEST", "AGAIN", "CANCEL"} and not code:
-            raise Problem("invalid_pairing_command")
         try:
             self.transport.command(item, value)
         except Exception:
@@ -348,6 +353,12 @@ class RuntimeAdapter:
         if content_type not in expected or not isinstance(data, bytes) or len(data) > maximum:
             raise Problem("media_unavailable", 502)
         return content_type, data
+
+
+def policy_problem(error):
+    """invalid_policy, plus the engine's fixed reason and field path, if any."""
+    from oh_room_policy import public_error
+    return Problem("invalid_policy", detail=public_error(error))
 
 
 def install_adapter(adapter):

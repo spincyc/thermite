@@ -62,11 +62,11 @@ def _peer(value):
 
 
 def _loopback(value):
+    from oh_identity.addresses import loopback_origin
     try:
-        parsed = urlsplit(value)
-        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "::1"} or parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment or not parsed.port:
+        if not loopback_origin(value).port:
             raise ValueError()
-    except (TypeError, ValueError):
+    except ValueError:
         raise AccessError("Callback upstream must be a fixed explicit loopback HTTP origin") from None
     return value.rstrip("/")
 

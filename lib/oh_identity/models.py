@@ -5,8 +5,12 @@ import uuid
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
-CATALOG = ("site.read", "room.control", "settings.manage", "users.manage", "roles.manage", "pairing.manage")
-RESERVED = {"Admin": CATALOG, "User": ("site.read", "room.control"), "Viewer": ("site.read",)}
+# Three principals. A Guest (no credential) reads the site and controls
+# unlocked rooms in either mode, and sees cameras only while authentication
+# is off. A signed-in Member adds cameras; an Admin adds administration.
+GUEST = ("site.read", "room.control")
+MEMBER = (*GUEST, "camera.view")
+ADMIN = (*MEMBER, "settings.manage", "users.manage", "pairing.manage")
 
 
 class SecurityState(models.Model):
@@ -21,17 +25,9 @@ class SecurityState(models.Model):
         constraints = [models.CheckConstraint(condition=models.Q(id=1), name="security_singleton")]
 
 
-class Role(models.Model):
-    name = models.CharField(max_length=64, unique=True)
-    permissions = models.JSONField(default=list, blank=True)
-    reserved = models.BooleanField(default=False)
-
-
 class User(AbstractUser):
-    role = models.ForeignKey(Role, null=True, on_delete=models.PROTECT)
+    admin = models.BooleanField(default=False)
     auth_revision = models.PositiveIntegerField(default=1)
-    # None means all configured rooms; [] explicitly grants no room controls.
-    rooms = models.JSONField(default=None, null=True, blank=True)
 
 
 class PersonalToken(models.Model):
@@ -70,11 +66,16 @@ class ReconcileState(models.Model):
 
 
 class Audit(models.Model):
+    """Security events. principal is guest/session/token/password/local/
+    anonymous; peer is a keyed digest of the peer's address bucket, never
+    the address itself."""
     at = models.DateTimeField(auto_now_add=True)
     actor_id = models.PositiveBigIntegerField(null=True)
     action = models.CharField(max_length=40)
     target = models.CharField(max_length=100, blank=True)
     outcome = models.CharField(max_length=32)
+    principal = models.CharField(max_length=16, blank=True, default="")
+    peer = models.CharField(max_length=32, blank=True, default="")
 
 
 class LoginThrottle(models.Model):

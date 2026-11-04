@@ -5,7 +5,7 @@ from unittest.mock import patch
 from django.test import Client, TestCase
 
 import oh_room_policy
-from oh_identity.models import ReconcileState, Role, RoomPolicy, User
+from oh_identity.models import ReconcileState, RoomPolicy, User
 from oh_identity.runtime import install_adapter
 from oh_identity.services import bootstrap, issue_token
 from oh_identity.tests.test_core import PASSPHRASE, adapter
@@ -15,8 +15,7 @@ class PolicyStatus(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.owner = bootstrap("owner", PASSPHRASE)
-        cls.operator = User.objects.create_user("operator", password=PASSPHRASE, role=Role.objects.get(name="User"))
-        cls.viewer = User.objects.create_user("viewer", password=PASSPHRASE, role=Role.objects.get(name="Viewer"))
+        cls.operator = User.objects.create_user("operator", password=PASSPHRASE)
 
     def setUp(self):
         self.now = datetime(2026, 11, 2, 10, 30, tzinfo=timezone.utc)  # Monday
@@ -141,12 +140,3 @@ class PolicyStatus(TestCase):
         report = self.report()
         self.adapter.policy = None
         self.assertFalse(self.unknown("policy_unavailable", report)["effective"]["allowed"])
-
-    def test_viewer_permissions_do_not_change_physical_enforcement_projection(self):
-        self.policy()
-        self.report()
-        _, token = issue_token(self.viewer, "read only status")
-        dto = self.get(token)
-        self.assertFalse(dto["effective"]["allowed"])
-        self.assertEqual(dto["effective"]["reason"], "room_read_only")
-        self.assertEqual(dto["enforcement"]["state"], "verified")

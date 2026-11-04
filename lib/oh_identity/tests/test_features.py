@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from django.conf import settings
 from django.test import Client, TestCase
 
-from oh_identity.models import Audit, BoundaryReceipt, PersonalToken, Role, RoomPolicy, User
+from oh_identity.models import Audit, BoundaryReceipt, PersonalToken, RoomPolicy, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter, project
 from oh_identity.policy_store import Store, rebase_timezone
 from oh_identity.security import get_state, transition
@@ -38,7 +38,7 @@ class Features(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.owner = bootstrap("owner", PASSPHRASE)
-        cls.user = User.objects.create_user("user", password=PASSPHRASE, role=Role.objects.get(name="User"))
+        cls.user = User.objects.create_user("user", password=PASSPHRASE)
 
     def setUp(self):
         pair = {"value": "sony_ip_control", "config": {"device": "tv", "label": "TV", "room": "Den", "length": 4,
@@ -75,6 +75,26 @@ class Features(TestCase):
         self.assertNotIn("1234", str(list(Audit.objects.values())))
         self.assertEqual(self.call("post", "/rest/items/tv_pairing", "bad-private-code", owner=True, content_type="text/plain").status_code, 400)
 
+    def test_unauthorized_or_invalid_pairing_never_waits_on_room_locks(self):
+        held = []
+
+        @contextmanager
+        def lock(rooms, resources):
+            held.append(rooms)
+            yield
+        self.adapter.command_lock = lock
+        guest = Client(enforce_csrf_checks=True)
+        guest.get("/api/v1/session", secure=True)
+        response = guest.post("/rest/items/tv_pairing", "REQUEST", content_type="text/plain", secure=True,
+                              HTTP_ORIGIN="https://testserver", HTTP_X_CSRFTOKEN=guest.cookies[settings.CSRF_COOKIE_NAME].value)
+        self.assertEqual((response.status_code, response.json()["error"]), (401, "login_required"))
+        self.assertEqual(self.call("post", "/rest/items/tv_pairing", "REQUEST", content_type="text/plain").status_code, 403)
+        self.assertEqual(self.call("post", "/rest/items/unknown_pairing", "REQUEST", owner=True, content_type="text/plain").status_code, 404)
+        self.assertEqual(self.call("post", "/rest/items/tv_pairing", "12", owner=True, content_type="text/plain").status_code, 400)
+        self.assertEqual(held, [])
+        self.assertEqual(self.call("post", "/rest/items/tv_pairing", "REQUEST", owner=True, content_type="text/plain").status_code, 202)
+        self.assertEqual(held, [("den", "desk")])
+
     def test_camera_group_excludes_unrelated_items(self):
         response = self.call("get", "/rest/items/camera_status?fields=members(name,state)")
         self.assertEqual(response.status_code, 200)
@@ -103,12 +123,15 @@ class Features(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.adapter.transport.media_calls, [("/unifi/media/image/camera", "GET")])
 
-    def test_reserved_roles_and_privilege_escalation_protected(self):
-        role = Role.objects.get(name="Admin")
-        self.assertEqual(self.call("patch", "/api/v1/roles/" + str(role.pk), {"name": "weakened"}, owner=True).status_code, 409)
-        self.assertEqual(self.call("post", "/api/v1/roles", {"name": "operator_admin", "permissions": ["users.manage"]}, owner=True).status_code, 400)
-        response = self.call("post", "/api/v1/roles", {"name": "Room operator", "permissions": ["site.read", "room.control"]}, owner=True)
-        self.assertEqual(response.status_code, 201)
+    def test_members_cannot_grant_themselves_administration(self):
+        ident = str(self.user.pk)
+        self.assertEqual(self.call("patch", "/api/v1/users/" + ident, {"admin": True}).status_code, 403)
+        self.assertEqual(self.call("post", "/api/v1/users", {"username": "x", "password": PASSPHRASE, "admin": True}).status_code, 403)
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.admin)
+        self.assertEqual(self.call("patch", "/api/v1/users/" + ident, {"admin": True}, owner=True).status_code, 200)
+        # The change revokes the member's old credentials.
+        self.assertEqual(self.call("get", "/api/v1/me").status_code, 401)
 
     def test_transport_rejects_external_origins_and_unsafe_credential_files(self):
         with tempfile.TemporaryDirectory(dir=settings.STATE) as temporary:

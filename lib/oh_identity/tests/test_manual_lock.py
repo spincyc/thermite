@@ -12,7 +12,7 @@ from django.utils import timezone
 
 import oh_room_policy
 from oh_identity.auth import Guest
-from oh_identity.models import Audit, PersonalToken, Role, RoomPolicy, User
+from oh_identity.models import Audit, PersonalToken, RoomPolicy, User
 from oh_identity.policy_store import Store
 from oh_identity.runtime import install_adapter
 from oh_identity.security import get_state, transition
@@ -48,7 +48,7 @@ class ManualLocks(Requests, TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.owner = bootstrap("owner", PASSPHRASE)
-        cls.operator = User.objects.create_user("operator", password=PASSPHRASE, role=Role.objects.get(name="User"))
+        cls.operator = User.objects.create_user("operator", password=PASSPHRASE)
 
     def setUp(self):
         self.prepare()
@@ -73,7 +73,7 @@ class ManualLocks(Requests, TestCase):
         replacement = adapter()
         replacement.policy = oh_room_policy
         with self.assertRaises(Problem) as denied:
-            replacement.dispatch(Guest(get_state().revision), "den", "source", "off")
+            replacement.dispatch(Guest(get_state().revision, True), "den", "source", "off")
         self.assertEqual(denied.exception.code, "room_locked")
         self.assertEqual(self.adapter.transport.commands, [])
         self.assertEqual(Audit.objects.filter(action="room.lock").count(), 2)
@@ -113,14 +113,14 @@ class ManualLocks(Requests, TestCase):
         self.assertEqual(self.command(action="shared_power", value="OFF", token=False).status_code, 423)
         self.assertEqual(self.adapter.transport.commands, [])
 
-    def test_only_reserved_admin_may_lock_or_unlock(self):
+    def test_only_admin_may_lock_unlock_or_edit_schedules(self):
         _, operator = issue_token(self.operator, "ordinary user")
-        role = Role.objects.create(name="Custom admin-like role", permissions=list(self.owner.role.permissions))
-        user = User.objects.create_user("custom", password=PASSPHRASE, role=role)
-        _, custom = issue_token(user, "custom role")
+        schedule = {"revision": 0, "config": {"version": 1, "enabled": False, "daily_off": [], "locks": []}}
         with patch.object(self.adapter.transport, "read", side_effect=AssertionError("unauthorized native read")):
-            for token, status in ((False, 401), (operator, 403), (custom, 403)):
+            for token, status in ((False, 401), (operator, 403)):
                 self.assertEqual(self.lock(token=token).status_code, status)
+                # Guests are asked to sign in for every Admin mutation alike.
+                self.assertEqual(self.request("put", "/api/v1/rooms/den/policy", schedule, token=token).status_code, status)
         self.assertFalse(RoomPolicy.objects.exists())
         self.assertEqual(self.lock().status_code, 200)
         self.assertEqual(self.lock(False, revision=1, token=False).status_code, 401)
@@ -174,7 +174,7 @@ class ManualLocks(Requests, TestCase):
 
     def test_authentication_off_suspends_hold_and_on_resumes_it_for_new_guests(self):
         first = self.lock().json()["manual_lock"]
-        old_guest = Guest(get_state().revision)
+        old_guest = Guest(get_state().revision, True)
         transition(get_state(), False, self.owner)
         with self.assertRaises(Problem):
             self.adapter.dispatch(old_guest, "den", "source", "off")
