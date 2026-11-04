@@ -1,36 +1,45 @@
 
 Thermite is installed; configure this machine as its owner.
 
-No private house, service accounts, credentials or runtime services were created. Log in as
-the owner account you chose in the OS installer. Connect to the Internet
-for runtime packages, images and integrity-pinned downloads, then run:
+No private house, service account, credentials or runtime services exist yet.
+Log in as the owner account you chose in the OS installer and connect to the
+Internet: installation downloads host packages, container images and
+integrity-pinned runtime files.
+
+On the Ubuntu image, first make sure the prerequisites are present (nothing
+changes when they already are):
+
+  sudo apt-get update && sudo apt-get install python3-venv git
+
+Create your private site:
 
   thermite init "$HOME/thermite-site"
   cd "$HOME/thermite-site"
 
-Edit instance/devices.yaml and instance/host.yaml for your installation.
-The generated example is fictional; remove it before controlling hardware.
-Then run:
+Edit instance/devices.yaml and instance/host.yaml for your equipment, time
+zone and state directory. The generated inventory is fictional; replace it
+before commissioning real equipment. Then validate and commit the site:
 
   thermite check --config "$HOME/thermite-site"
   git init --initial-branch=main
   git add .
   git commit -m 'Initialize private Thermite site'
+
+Deploy the complete site with one approval. Install creates the non-login
+thermite service account (UID/GID 9001), starts the native services and the
+HTTPS gateway, and provisions internal runtime access itself:
+
   thermite install --config "$HOME/thermite-site" --dry-run
   thermite install --config "$HOME/thermite-site"
 
-Install asks before root commands and for the native runtime API token.
-The Arch ISO includes Git. On the optional Ubuntu image, first install Git
-with sudo apt-get update && sudo apt-get install git if it is unavailable.
-Runtime startup may download several container images. Keep this Git
-repository private. Configure Git's author identity if commit requests it.
-Install creates the non-login thermite user and group (UID/GID 9001) for
-application services and deployed data. Keep using your own account for the
-CLI and private Git; log out and back in for new group membership to apply.
+Keep ~/.local/bin on your PATH, and log out and back in after installation
+adds you to the thermite group. Installation prints the HTTPS URL and the
+certificate authority file each browser or terminal client must trust once.
+Inspect the result with:
 
-Before sharing the remote, complete authentication and HTTPS commissioning:
-  thermite access --help
+  thermite status --config "$HOME/thermite-site"
+  thermite health --config "$HOME/thermite-site" --production
 
-The installed application contains docs/installation.md under
+Update later with thermite upgrade --config "$HOME/thermite-site". Keep the
+site repository private. The full guide is docs/installation.md under
 /opt/thermite/venv/lib/python*/site-packages/thermite_app/runtime/.
-Use thermite status and thermite health --production to inspect the result.

@@ -286,17 +286,20 @@ class Reports(Scratch):
             self.assertEqual(json.loads(out.getvalue())["problems"], ["runtime http://127.0.0.1:1: not answering"])
 
     def test_discover_refuses_a_wide_sweep_and_saves_only_when_asked(self):
-        self.assertIsNone(oh_discover.sweep_refusal(ipaddress.IPv4Network("10.0.0.0/22"), False))
-        self.assertIn("--network", oh_discover.sweep_refusal(ipaddress.IPv4Network("10.0.0.0/16"), False))
-        self.assertIsNone(oh_discover.sweep_refusal(ipaddress.IPv4Network("10.0.0.0/16"), True))
+        # Documentation networks only (RFC 5737): a /22 and the /16 around it.
+        narrow = ipaddress.IPv4Network("198.51.100.0/22")
+        wide = narrow.supernet(new_prefix=16)
+        self.assertIsNone(oh_discover.sweep_refusal(narrow, False))
+        self.assertIn("--network", oh_discover.sweep_refusal(wide, False))
+        self.assertIsNone(oh_discover.sweep_refusal(wide, True))
         house = self.house(EXAMPLE)
-        quiet = {"neighbours": {"192.0.2.10": "02:00:00:00:00:0a"}, "load_oui": {}, "probe_ports": {},
+        quiet = {"neighbours": {"192.0.2.10": EXAMPLE["devices"][0]["mac"]}, "load_oui": {}, "probe_ports": {},
                  "ssdp_search": {}, "sddp_search": {}, "ddp_search": {}, "avahi_browse": [], "parse_avahi": {}}
         with contextlib.ExitStack() as stack:
             for name, value in quiet.items():
                 stack.enter_context(mock.patch.object(discover.discover, name, return_value=value))
             stack.enter_context(mock.patch.object(discover.discover, "local_interface",
-                                                  return_value=("192.0.2.2", ipaddress.IPv4Network("10.0.0.0/16"))))
+                                                  return_value=("192.0.2.2", wide)))
             sweep = stack.enter_context(mock.patch.object(discover.discover, "ping_sweep"))
             stack.enter_context(mock.patch.object(discover, "AREA", self.root))
             code, _, err = run("discover", "--house", str(house))

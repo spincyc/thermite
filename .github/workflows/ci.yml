@@ -1,0 +1,46 @@
+name: Check
+
+# Every push and pull request runs the full suite on each supported Python.
+# Publishing the docs (pages.yml) waits for this workflow to pass on main.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      # The JavaScript harnesses use the runner image's Node.js.
+      - run: node --version
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install --require-hashes -r lib/requirements-site.txt
+      - run: make check PYTHON=python
+      - run: mkdir -p .scratch && mkdir -m 0700 .scratch/identity-check
+      - run: make check-identity PYTHON=python
+        env:
+          THERMITE_IDENTITY_STATE: ${{ github.workspace }}/.scratch/identity-check
+      - run: python bin/thermite package --out .scratch/wheel
+      - if: matrix.python == '3.12'
+        uses: actions/upload-artifact@v5
+        with:
+          name: thermite-wheel
+          path: .scratch/wheel/*.whl
+          if-no-files-found: error

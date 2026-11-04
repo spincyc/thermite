@@ -105,7 +105,7 @@ class Allocation(unittest.TestCase):
             self.assertEqual(oh_ports.main([str(userdata), "--http-port", "14040"]), 0)
         self.assertEqual([call.args[0][1] for call in connect.call_args_list],
                          [14040, oh_ports.KARAF_PORT, oh_ports.SHUTDOWN_PORT])
-        configure.assert_called_once_with(userdata)
+        configure.assert_called_once_with(userdata, anchored=True)
 
     def test_exact_userdata_record_lock_blocks_running_legacy_instance_but_not_foreign_instance(self):
         script = """

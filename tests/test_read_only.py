@@ -13,9 +13,13 @@ import oh_integrations as integrations  # noqa: E402
 import oh_render as render  # noqa: E402
 from oh_conf import RULE_SENDS, RULE_SILENT, is_guarded, linked  # noqa: E402
 
+#: Demo MAC addresses come from the example house; the package guard keeps
+#: every other MAC out of published files.
+MACS = [device["mac"] for device in yaml.safe_load((AREA / "instance/devices.yaml").read_text())["devices"]
+        if device.get("mac")]
 #: Devices other than the one under test that an integration needs.
 MATRIX = {"id": "den_matrix", "room": "den", "kind": "hdmi_matrix", "make": "BZBGEAR", "model": "BK-808",
-          "ip": "192.0.2.20", "mac": "02:00:00:00:00:20", "controls": {"control": ["bk808_http"]}}
+          "ip": "192.0.2.20", "mac": MACS[1], "controls": {"control": ["bk808_http"]}}
 #: Per integration: the device fields it needs beyond id, room and address.
 DEVICE = {
     "network_ping": {"kind": "computer", "model": "Computer"},
@@ -24,7 +28,8 @@ DEVICE = {
     "cast": {"kind": "streamer", "make": "Google", "model": "Chromecast"},
     "androidtv_googletv": {"kind": "tv", "make": "Sony", "model": "XR-TEST"},
     "pyatv_http": {"kind": "streamer", "make": "Apple", "model": "AppleTV14,1"},
-    "sonos": {"kind": "soundbar", "make": "Sonos", "model": "Arc", "sonos_udn": "RINCON_02000000001001400"},
+    # A Sonos UDN is RINCON_, its MAC's hex digits and the port (oh_inventory checks it).
+    "sonos": {"kind": "soundbar", "make": "Sonos", "model": "Arc", "sonos_udn": "RINCON_" + MACS[0].replace(":", "").upper() + "01400"},
     "denonmarantz_http": {"kind": "avr", "make": "Denon", "model": "AVR-X3800H"},
     "heos": {"kind": "avr", "make": "Denon", "model": "AVR-X3800H", "heos_pid": 12345},
     "wiim_http": {"kind": "streamer", "make": "WiiM", "model": "Pro"},
@@ -61,7 +66,7 @@ def house(name: str, phase: str) -> dict:
     if name == "heos":
         controls["control"] = ["denonmarantz_http", "heos"]
         controls["observe"] = ["denonmarantz_http"]
-    device = {"id": "den_device", "room": "den", "ip": "192.0.2.10", "mac": "02:00:00:00:00:10",
+    device = {"id": "den_device", "room": "den", "ip": "192.0.2.10", "mac": MACS[0],
               **copy.deepcopy(DEVICE[name]), "controls": controls}
     data = {"version": 1, "rooms": {"den": {"label": "Den", "tag": "Room"}}, "devices": [device]}
     if name == "unifi_protect":

@@ -13,14 +13,12 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
 import socket
 import stat
-import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from oh_ports import HTTP_PORT
+from oh_ports import HTTP_PORT, native_etc, open_directory, read_regular, replace_regular
 
 RELATIVE = Path("etc/log4j2.xml")
 SELECTOR = Path("etc/org.ops4j.pax.logging.cfg")
@@ -52,11 +50,10 @@ def selected_default(data: bytes) -> bool:
     return len(lines) == 1 and values == ["${karaf.etc}/log4j2.xml"]
 
 
-def configuration(userdata: Path) -> Path:
-    if not selected_default((userdata / SELECTOR).read_bytes()):
-        raise ValueError(f"{userdata / SELECTOR} selects an unsupported native logging configuration; "
+def _selected(etc: int, userdata: Path) -> None:
+    if not selected_default(read_regular(etc, SELECTOR.name)[0]):
+        raise ValueError(f"{Path(userdata) / SELECTOR} selects an unsupported native logging configuration; "
                          "expected org.ops4j.pax.logging.log4j2.config.file=${karaf.etc}/log4j2.xml")
-    return userdata / RELATIVE
 
 
 def document(data: bytes) -> ET.Element:
@@ -136,57 +133,116 @@ def guarded(data: bytes) -> bytes:
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def install(userdata: Path) -> bool:
-    """Atomically protect an initialized, stopped instance, preserving ownership/mode."""
-    path = configuration(userdata)
-    before = path.read_bytes()
+def _install_at(etc: int, userdata: Path) -> bool:
+    _selected(etc, userdata)
+    before, info = read_regular(etc, RELATIVE.name)
     after = guarded(before)
     if before == after:
         return False
-    original = path.stat()
-    fd, temporary = tempfile.mkstemp(prefix=".pairing-logging-", dir=path.parent)
-    temp = Path(temporary)
-    try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(after)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temp, stat.S_IMODE(original.st_mode))
-        current = temp.stat()
-        if (current.st_uid, current.st_gid) != (original.st_uid, original.st_gid):
-            os.chown(temp, original.st_uid, original.st_gid)
-        os.replace(temp, path)
-    finally:
-        temp.unlink(missing_ok=True)
+    replace_regular(etc, RELATIVE.name, after, info)
     return True
+
+
+def install(userdata: Path, *, anchored: bool = False) -> bool:
+    """Atomically protect an initialized, stopped instance, preserving ownership/mode.
+
+    No symbolic link below userdata is followed and hard-linked files are
+    refused. The root helper also anchors userdata itself (anchored=True).
+    """
+    with native_etc(userdata, anchored=anchored) as etc:
+        return _install_at(etc, userdata)
 
 
 def ready(userdata: Path) -> bool:
     try:
-        return protected(configuration(userdata).read_bytes())
+        with native_etc(userdata, anchored=False) as etc:
+            _selected(etc, userdata)
+            return protected(read_regular(etc, RELATIVE.name)[0])
     except (OSError, ValueError):
         return False
 
 
-def initialize(userdata: Path, template: Path, uid: int, gid: int) -> bool:
+def _seed(source: Path, directory: int, uid: int, gid: int) -> None:
+    """Copy the trusted template's entries into a new, anchored directory.
+
+    Every inode is created exclusively through its parent's descriptor and
+    owned by descriptor, so a concurrently planted link is never followed.
+    """
+    with os.scandir(source) as entries:
+        for entry in sorted(entries, key=lambda item: item.name):
+            info = entry.stat(follow_symlinks=False)
+            mode = stat.S_IMODE(info.st_mode) & 0o777
+            if entry.is_symlink():
+                os.symlink(os.readlink(entry.path), entry.name, dir_fd=directory)
+                os.chown(entry.name, uid, gid, dir_fd=directory, follow_symlinks=False)
+            elif stat.S_ISDIR(info.st_mode):
+                os.mkdir(entry.name, 0o700, dir_fd=directory)
+                child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                try:
+                    os.fchown(child, uid, gid)
+                    _seed(Path(entry.path), child, uid, gid)
+                    os.fchmod(child, mode)
+                    os.utime(child, ns=(info.st_atime_ns, info.st_mtime_ns))
+                finally:
+                    os.close(child)
+            elif stat.S_ISREG(info.st_mode):
+                data = Path(entry.path).read_bytes()
+                child = os.open(entry.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+                                dir_fd=directory)
+                try:
+                    view = memoryview(data)
+                    while view:
+                        view = view[os.write(child, view):]
+                    os.fchown(child, uid, gid)
+                    os.fchmod(child, mode)
+                    os.utime(child, ns=(info.st_atime_ns, info.st_mtime_ns))
+                finally:
+                    os.close(child)
+            else:
+                raise ValueError(f"{entry.path} is not a regular file, directory or symbolic link")
+
+
+def initialize(userdata: Path, template: Path, uid: int, gid: int, *, anchored: bool = False) -> bool:
     """Seed the complete pinned userdata only into a truly empty first install.
 
     Seeding just etc/log4j2.xml could make the container skip its remaining
     initialization. Existing registrations, caches and configuration are
-    never copied over or re-owned.
+    never copied over or re-owned. Nothing below userdata is followed.
     """
-    if (userdata / RELATIVE).exists():
-        return False
-    if userdata.exists() and any(userdata.iterdir()):
-        raise ValueError(f"{userdata} is not empty; refusing to seed userdata over existing state")
-    if not (template / RELATIVE).is_file() or not selected_default((template / SELECTOR).read_bytes()):
-        raise ValueError(f"{template} is not a complete openHAB userdata template")
-    mode = stat.S_IMODE(userdata.stat().st_mode) if userdata.exists() else 0o755
-    shutil.copytree(template, userdata, symlinks=True, dirs_exist_ok=True)
-    os.chmod(userdata, mode)
-    install(userdata)
-    for path in [*userdata.rglob("*"), userdata]:
-        os.chown(path, uid, gid, follow_symlinks=False)
+    userdata, template = Path(userdata), Path(template)
+    try:
+        directory = open_directory(userdata, anchored=anchored)
+        mode = None
+    except FileNotFoundError:
+        parent = open_directory(userdata.parent, anchored=anchored)
+        try:
+            os.mkdir(userdata.name, 0o700, dir_fd=parent)
+            directory = os.open(userdata.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        finally:
+            os.close(parent)
+        mode = 0o755
+    try:
+        names = os.listdir(directory)
+        if names:
+            try:
+                os.stat(str(RELATIVE), dir_fd=directory, follow_symlinks=False)
+                return False
+            except (FileNotFoundError, NotADirectoryError):
+                raise ValueError(f"{userdata} is not empty; refusing to seed userdata over existing state") from None
+        if not (template / RELATIVE).is_file() or not selected_default((template / SELECTOR).read_bytes()):
+            raise ValueError(f"{template} is not a complete openHAB userdata template")
+        if mode is None:
+            mode = stat.S_IMODE(os.fstat(directory).st_mode)
+        _seed(template, directory, uid, gid)
+        etc = os.open(RELATIVE.parent.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+        try:
+            _install_at(etc, userdata)
+        finally:
+            os.close(etc)
+        os.fchown(directory, uid, gid)
+        os.fchmod(directory, mode)
+    finally:
+        os.close(directory)
     return True
 
 
@@ -206,8 +262,10 @@ def main(argv: list[str] | None = None) -> int:
     except OSError:
         pass
     try:
-        created = initialize(args.userdata, args.template, args.uid, args.gid) if args.template else False
-        changed = install(args.userdata) or created
+        # Root runs this inside service-writable state: never follow a link.
+        created = (initialize(args.userdata, args.template, args.uid, args.gid, anchored=True)
+                   if args.template else False)
+        changed = install(args.userdata, anchored=True) or created
     except (OSError, ValueError, ET.ParseError) as exc:
         parser.exit(2, f"could not protect {args.userdata / RELATIVE}: {exc}\n")
     print("pairing credentials are filtered; start openHAB to load the filter" if changed

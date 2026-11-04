@@ -24,6 +24,40 @@ class _UnitAuthorityError(AccessError):
     """An unknown unit override must not be overwritten as a routine repair."""
 
 
+#: Apple platforms reject TLS server certificates valid for longer than this,
+#: or without serverAuth usage, even when their issuer is trusted.
+LEAF_DAYS = 825
+AUTHORITY_DAYS = 3650
+#: Reissue the served certificate once less than this validity remains.
+RENEW_SECONDS = 90 * 86400
+_CERTIFICATE = re.compile(rb"-----BEGIN CERTIFICATE-----\r?\n.+?\r?\n-----END CERTIFICATE-----", re.S)
+_HOST = re.compile(r"[A-Za-z0-9.:-]+")
+
+
+def certificates(data: bytes) -> list[bytes]:
+    """The PEM certificates of a chain, normalized for comparison."""
+    return [block.replace(b"\r\n", b"\n") + b"\n" for block in _CERTIFICATE.findall(data)]
+
+
+def openssl_config(hosts) -> str:
+    """Extension profiles: a signing-only private authority and its server leaf."""
+    names = []
+    for host in hosts:
+        if not _HOST.fullmatch(host):
+            raise AccessError("gateway TLS requires literal hostname/address inputs")
+        try:
+            ipaddress.ip_address(host)
+            names.append("IP:" + host)
+        except ValueError:
+            names.append("DNS:" + host)
+    server = ("[server]\nbasicConstraints = critical, CA:FALSE\nkeyUsage = critical, digitalSignature\n"
+              "extendedKeyUsage = serverAuth\nsubjectAltName = " + ",".join(names) + "\n"
+              "subjectKeyIdentifier = hash\nauthorityKeyIdentifier = keyid:always\n") if names else ""
+    return ("[req]\ndistinguished_name = subject\nprompt = no\n[subject]\nCN = Thermite\n"
+            "[authority]\nbasicConstraints = critical, CA:TRUE, pathlen:0\n"
+            "keyUsage = critical, keyCertSign, cRLSign\nsubjectKeyIdentifier = hash\n" + server)
+
+
 @contextmanager
 def site_inputs(root):
     """Bind legacy renderer modules to the same immutable input snapshot."""
@@ -182,25 +216,122 @@ class Gateway(Step):
             if any(not re.fullmatch(r"[A-Za-z0-9.:-]+", host) for host in hosts):
                 raise AccessError("gateway TLS requires literal hostname/address inputs")
             certificate, key = inputs / "tls-cert.pem", inputs / "tls-key.pem"
+            authority = self._authority(system, hosts[0])
             if not certificate.exists() or not key.exists():
-                names = []
-                for host in hosts:
-                    try:
-                        ipaddress.ip_address(host)
-                        kind = "IP"
-                    except ValueError:
-                        kind = "DNS"
-                    names.append(kind + ":" + host)
-                self._run(system, "openssl", "req", "-x509", "-newkey", "rsa:3072", "-sha256", "-nodes",
-                          "-days", "3650", "-subj", "/CN=" + self.context.hostname,
-                          "-addext", "subjectAltName=" + ",".join(names), "-keyout", key, "-out", certificate)
-                key.chmod(0o600)
-                certificate.chmod(0o600)
+                self._issue(system, inputs, hosts, authority)
             metadata = {"state": str(self.root / "state"), "allowed_hosts": hosts,
                         "bind_host": "0.0.0.0", "port": oh_ports.ACCESS_PORT,
                         "timezone": self.context.host["timezone"], "tls_cert": str(certificate),
-                        "tls_key": str(key), "callbacks": False, "callback_file": None}
+                        "tls_key": str(key), "tls_ca": str(authority[0]), "callbacks": False, "callback_file": None}
         self._save(journal, metadata=metadata, phase="inputs")
+        return metadata
+
+    def _authority(self, system, name):
+        """The site's private signing authority, created once in owner custody.
+
+        Its key signs only this gateway's server certificates and never leaves
+        the private site's var/. Clients trust its certificate, not a leaf.
+        """
+        directory = self.context.var / "gateway" / "authority"
+        certificate, key = directory / "ca-cert.pem", directory / "ca-key.pem"
+        if directory.exists() or directory.is_symlink():
+            private_directory(directory)
+            read_private(key, 65536)
+            if not certificates(read_private(certificate, 65536)):
+                raise AccessError("gateway certificate authority is incomplete; move " + str(directory)
+                                  + " aside to create a new one, then trust that on every client")
+            return certificate, key
+        if not _HOST.fullmatch(name):
+            raise AccessError("gateway TLS requires literal hostname/address inputs")
+        work = private_directory(self.context.var / "gateway" / ("authority-" + secrets.token_hex(6)))
+        config = work / "openssl.cnf"
+        atomic_private(config, openssl_config(()).encode())
+        self._run(system, "openssl", "req", "-x509", "-config", config, "-extensions", "authority",
+                  "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-sha256", "-nodes",
+                  "-days", AUTHORITY_DAYS, "-subj", "/CN=Thermite gateway authority " + name,
+                  "-keyout", work / key.name, "-out", work / certificate.name)
+        config.unlink()
+        for path in (work / key.name, work / certificate.name):
+            path.chmod(0o600)
+        # Publish complete: a partial authority is never adopted.
+        os.rename(work, directory)
+        return certificate, key
+
+    def _issue(self, system, directory, hosts, authority, days=LEAF_DAYS):
+        """Write directory/tls-cert.pem (leaf, then authority) and tls-key.pem."""
+        directory = private_directory(directory)
+        config, request, leaf = directory / "openssl.cnf", directory / "tls-request.pem", directory / "tls-leaf.pem"
+        certificate, key = directory / "tls-cert.pem", directory / "tls-key.pem"
+        atomic_private(config, openssl_config(hosts).encode())
+        self._run(system, "openssl", "req", "-new", "-config", config, "-newkey", "ec",
+                  "-pkeyopt", "ec_paramgen_curve:prime256v1", "-sha256", "-nodes", "-subj", "/CN=" + hosts[0],
+                  "-keyout", key, "-out", request)
+        key.chmod(0o600)
+        self._run(system, "openssl", "x509", "-req", "-in", request, "-CA", authority[0], "-CAkey", authority[1],
+                  "-set_serial", "0x" + secrets.token_hex(16), "-days", days, "-sha256",
+                  "-extfile", config, "-extensions", "server", "-out", leaf)
+        leaf.chmod(0o600)
+        chain = certificates(read_private(leaf, 65536)) + certificates(read_private(authority[0], 65536))
+        if len(chain) != 2:
+            raise AccessError("openssl did not produce the gateway certificate chain")
+        atomic_private(certificate, b"".join(chain))
+        for path in (config, request, leaf):
+            path.unlink()
+        return certificate, key
+
+    def _served(self, system, metadata, authority):
+        """None if the served certificate is current; else 'renew' or 'replace'.
+
+        Renewal keeps the authority clients already trust; replacement (the
+        former self-signed profile, or a lost authority) needs new client trust.
+        """
+        try:
+            served = certificates(Path(metadata["tls_cert"]).read_bytes())
+        except FileNotFoundError:
+            return "replace"
+        if len(served) != 2 or served[1] != certificates(read_private(authority[0], 65536))[0]:
+            return "replace"
+        verified, _ = system.capture(("openssl", "verify", "-CAfile", str(authority[0]), "-purpose", "sslserver",
+                                      metadata["tls_cert"]))
+        remaining, _ = system.capture(("openssl", "x509", "-noout", "-checkend", str(RENEW_SECONDS),
+                                       "-in", metadata["tls_cert"]))
+        return None if verified == 0 and remaining == 0 else "renew"
+
+    def _certificate(self, system, journal, metadata):
+        """Serve only a current leaf of the private authority, reissuing when due.
+
+        A staging attempt already under way keeps the certificate it copied;
+        the next run reissues. A completed deployment is restaged, retaining
+        its rollback data, exactly like a rotated runtime credential.
+        """
+        if (journal.get("plan") or journal.get("stage")) and journal.get("phase") != "complete":
+            return metadata
+        authority = self._authority(system, metadata["allowed_hosts"][0])
+        reason = self._served(system, metadata, authority)
+        if reason is None:
+            if metadata.get("tls_ca") != str(authority[0]):
+                metadata = {**metadata, "tls_ca": str(authority[0])}
+                self._save(journal, metadata=metadata)
+            return metadata
+        certificate, key = self._issue(system, self.directory / ("tls-" + secrets.token_hex(6)),
+                                       metadata["allowed_hosts"], authority)
+        metadata = {**metadata, "tls_cert": str(certificate), "tls_key": str(key), "tls_ca": str(authority[0])}
+        trust = self.root / "tls-cert.pem"
+        if reason == "renew":
+            system.say(f"   Gateway TLS certificate renewed by its private authority; clients trusting {trust} need no change")
+        else:
+            system.say(f"   Gateway TLS now uses a new private certificate authority: trust {trust} once on every "
+                       "browser and terminal client")
+        if journal.get("stage"):
+            json_private(self.directory / ("history-" + secrets.token_hex(8) + ".json"), journal)
+            current = installed_release(system)
+            previous = str(current) if current else journal.get("previous_release")
+            kept = {name: journal[name] for name in ("runtime_credential_sha256", "runtime_token_file") if name in journal}
+            journal.clear()
+            self._save(journal, version=1, versions=self.versions, previous_release=previous, metadata=metadata,
+                       phase="inputs", backup_suffix="-" + secrets.token_hex(6), **kept)
+        else:
+            self._save(journal, metadata=metadata)
         return metadata
 
     def _stage(self, system, journal, metadata):
@@ -343,7 +474,7 @@ class Gateway(Step):
         host = metadata["allowed_hosts"][0].strip("[]")
         shown_host = "[" + host + "]" if ":" in host else host
         url = "https://" + shown_host + ":" + str(metadata["port"])
-        context = ssl.create_default_context(cafile=metadata["tls_cert"])
+        context = ssl.create_default_context(cafile=metadata["tls_ca"])
         address = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(metadata["bind_host"], metadata["bind_host"])
         connection = http.client.HTTPSConnection(host, metadata["port"], context=context, timeout=5)
         try:
@@ -403,12 +534,13 @@ class Gateway(Step):
                 journal = {"version": 1, "versions": self.versions, "previous_release": str(old) if old else None}
                 self._save(journal, phase="planned")
             self._credentials(system, journal)
-            metadata = self._metadata(system, journal)
+            metadata = self._certificate(system, journal, self._metadata(system, journal))
             self._boundary(system, journal, metadata)
             self._verify_boundary(system)
             receipt = self._stage(system, journal, metadata)
             public_cert = self.root / "tls-cert.pem"
-            self._run(system, "sudo", "install", "-o", "root", "-g", "root", "-m", "0644", metadata["tls_cert"], public_cert)
+            # Clients trust the private authority, never an individual leaf.
+            self._run(system, "sudo", "install", "-o", "root", "-g", "root", "-m", "0644", metadata["tls_ca"], public_cert)
             if journal.get("phase") == "complete":
                 try:
                     self._upstream(system, journal, receipt)

@@ -84,13 +84,6 @@ SERVICES = (oh_units.RUNTIME, oh_units.ATV, oh_units.ATV_RESTART_PATH, *metrics.
 ATV_APP = ("bin/thermite", "lib/oh_cli/__init__.py", "lib/oh_cli/apple_tv.py", "lib/oh_atv.py",
            "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py", "lib/oh_ports.py", "lib/oh_service.py",
            "lib/oh_units.py")
-#: The helper's verb module in commits from before it was apple_tv.py: a
-#: deploy of such a commit (a rollback) installs it, or that commit's
-#: bin/thermite could not run the helper.
-ATV_APP_BEFORE = ("lib/oh_cli/atv.py",)
-#: Where a helper quadlet installed before bin/thermite runs the helper from;
-#: a deploy keeps a copy of bin/thermite there while that quadlet is installed.
-LEGACY_ATV_PROGRAM = "bin/openhab-atv"
 #: Inside the helper's container.
 ATV_VENV = "/venv/pyatv"
 DIR_MODE = oh_service.SHARED_DIR
@@ -114,17 +107,92 @@ class DeployError(Exception):
     """A deploy that must not go ahead, with the reason for the owner."""
 
 
-def load(area: Path) -> tuple[dict, dict]:
+class HostError(DeployError, ValueError):
+    """instance/host.yaml is unusable; generated units are never written from it."""
+
+
+HOST_REQUIRED = ("state_root", "timezone", "http_port", "https_port", "uid", "gid")
+HOST_KEYS = frozenset((*HOST_REQUIRED, "metrics"))
+METRICS_KEYS = frozenset(("units", "retention", "retention_size", "yoke_targets",
+                          *(name + "_port" for name in oh_ports.METRICS)))
+#: Host values are pasted into unit files, container arguments and shell
+#: words: no whitespace, quotes, systemd specifiers or volume separators.
+_STATE_ROOT = re.compile(r"/[A-Za-z0-9._@+-]+(?:/[A-Za-z0-9._@+-]+)*")
+_TIMEZONE = re.compile(r"[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*")
+_UNIT = re.compile(r"[A-Za-z0-9:_.@\\-]+")
+_DURATION = re.compile(r"0|(?=\d)(?:\d+y)?(?:\d+w)?(?:\d+d)?(?:\d+h)?(?:\d+m)?(?:\d+s)?(?:\d+ms)?")
+_SIZE = re.compile(r"\d+(?:B|KB|MB|GB|TB|PB|EB)")
+
+
+def validate_host(host: object, where: str = "instance/host.yaml") -> dict:
+    """The site's host facts, checked completely before anything uses them."""
+    def fail(problem: str):
+        raise HostError(f"{where}: {problem}")
+
+    if not isinstance(host, dict):
+        fail("must be a mapping")
+    missing = [key for key in HOST_REQUIRED if key not in host]
+    unknown = sorted(str(key) for key in host if key not in HOST_KEYS)
+    if missing:
+        fail("missing " + ", ".join(missing))
+    if unknown:
+        fail("unknown setting " + ", ".join(unknown) + " (allowed: " + ", ".join(sorted(HOST_KEYS)) + ")")
+    root = host["state_root"]
+    if (not isinstance(root, str) or not _STATE_ROOT.fullmatch(root) or os.path.normpath(root) != root):
+        fail("state_root must be a normalized absolute path below / of letters, digits and ._@+-")
+    zone = host["timezone"]
+    if not isinstance(zone, str) or not _TIMEZONE.fullmatch(zone) or ".." in zone.split("/"):
+        fail("timezone must be an IANA time zone name such as Etc/UTC")
+    import zoneinfo
+    try:
+        zoneinfo.ZoneInfo(zone)
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        fail(f"timezone {zone!r} is not a known IANA time zone")
+    overrides = host.get("metrics")
+    if overrides is not None:
+        if not isinstance(overrides, dict):
+            fail("metrics must be a mapping")
+        unknown = sorted(str(key) for key in overrides if key not in METRICS_KEYS)
+        if unknown:
+            fail("unknown metrics setting " + ", ".join(unknown))
+        units = overrides.get("units", [])
+        if not isinstance(units, list) or not all(isinstance(unit, str) and _UNIT.fullmatch(unit) for unit in units):
+            fail("metrics.units must be a list of systemd unit names")
+        if "retention" in overrides and not (isinstance(overrides["retention"], str)
+                                             and _DURATION.fullmatch(overrides["retention"])):
+            fail("metrics.retention must be a Prometheus duration such as 395d")
+        if "retention_size" in overrides and not (isinstance(overrides["retention_size"], str)
+                                                  and _SIZE.fullmatch(overrides["retention_size"])):
+            fail("metrics.retention_size must be a Prometheus size such as 12GB")
+    try:
+        oh_service.validate_identity(host["uid"], host["gid"])
+        oh_ports.effective(host)
+        metrics.yoke_targets(host)
+    except ValueError as exc:
+        fail(str(exc))
+    return host
+
+
+def load_host(source: Path | bytes, where: str | None = None) -> dict:
+    """Parse and validate host facts from a file or committed bytes."""
     # Here, not at the top: the install imports this module before it has
     # installed PyYAML.
     import yaml
 
+    if isinstance(source, bytes):
+        where, data = where or "instance/host.yaml", source
+    else:
+        where, data = where or str(source), Path(source).read_bytes()
+    try:
+        host = yaml.safe_load(data)
+    except yaml.YAMLError as exc:
+        raise HostError(f"{where}: not valid YAML ({str(exc).splitlines()[0]})") from None
+    return validate_host(host, where)
+
+
+def load(area: Path) -> tuple[dict, dict]:
     versions = json.loads((Path(area) / "versions.json").read_text(encoding="utf-8"))
-    host = yaml.safe_load((Path(area) / "instance/host.yaml").read_text(encoding="utf-8"))
-    oh_service.validate_identity(host["uid"], host["gid"])
-    oh_ports.effective(host)
-    metrics.yoke_targets(host)
-    return versions, host
+    return versions, load_host(Path(area) / "instance/host.yaml")
 
 
 def image(versions: dict, name: str = "openhab") -> str:
@@ -188,6 +256,13 @@ class State:
     @property
     def record(self) -> Path:
         return self.records / "deployed.json"
+
+    @property
+    def pending(self) -> Path:
+        """Every path a deploy may have written, saved before its first write
+        and removed once deployed.json records the result; an interrupted
+        deploy's files stay tracked for the next deploy or rollback."""
+        return self.records / "deployed.pending.json"
 
     @property
     def history(self) -> Path:
@@ -292,6 +367,11 @@ NATIVE_PRIME_WAIT = 180
 NATIVE_PRIME_REQUEST_WAIT = 30
 NATIVE_PRIME_STOP_WAIT = 60
 NATIVE_PRIME_POLL = 1
+#: The runtime's restart pacing. Installer starts are minutes apart, far
+#: below the burst; only a runtime that fails within seconds reaches it.
+RUNTIME_RESTART_SECONDS = 15
+RUNTIME_START_INTERVAL = 300
+RUNTIME_START_BURST = 10
 
 
 def _openhab_initialize(*, track_fresh: bool = False) -> str:
@@ -500,6 +580,11 @@ def render_quadlet(versions: dict, host: dict) -> str:
         "After=network-online.target",
         "Requires=thermite-native-boundary.service",
         "After=thermite-native-boundary.service",
+        f"# A runtime failing within seconds stops after {RUNTIME_START_BURST} starts in "
+        f"{RUNTIME_START_INTERVAL // 60} minutes;",
+        "# a slower crash keeps restarting. systemctl reset-failed clears the limit.",
+        f"StartLimitIntervalSec={RUNTIME_START_INTERVAL}",
+        f"StartLimitBurst={RUNTIME_START_BURST}",
         "",
         "[Container]",
         f"ContainerName={oh_units.CONTAINERS[oh_units.RUNTIME]}",
@@ -545,6 +630,8 @@ def render_quadlet(versions: dict, host: dict) -> str:
         f"Slice={oh_units.SLICE}",
         "UMask=0077",
         "Restart=always",
+        "# Not systemd's 100 ms: a crashing JVM must not thrash userdata.",
+        f"RestartSec={RUNTIME_RESTART_SECONDS}",
         "TimeoutStartSec=300",
         "TimeoutStopSec=90",
         "",
@@ -829,6 +916,8 @@ def render_container_dropin() -> str:
 
 def render_units(versions: dict, host: dict) -> dict[str, str]:
     """{area path: text} of every unit and service drop-in the owner installs."""
+    # Every host value below lands in unit text; never render unchecked facts.
+    validate_host(host)
     units = {
         QUADLET: render_quadlet(versions, host),
         ATV_QUADLET: render_atv_quadlet(versions, host),
@@ -1092,20 +1181,31 @@ def _safe_parents(root: Path, directory: Path) -> None:
             os.close(descriptor)
 
 
+def _fsync_directory(directory: Path) -> None:
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _replace(target: Path, data: bytes, mode: int) -> None:
     """Write target by renaming a new file over it: needs only the right to
-    write its directory, whoever owns the old file."""
+    write its directory, whoever owns the old file. Both the contents and the
+    rename are durable before this returns."""
     handle, temp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".deploy", dir=target.parent)
     try:
         with os.fdopen(handle, "wb") as out:
             out.write(data)
             out.flush()
             os.fchmod(out.fileno(), mode)
+            os.fsync(out.fileno())
         os.replace(temp, target)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(temp)
         raise
+    _fsync_directory(target.parent)
 
 
 def _shared_write(target: Path, data: str, *, append: bool = False) -> None:
@@ -1198,11 +1298,57 @@ def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
 
 
+#: The record's per-tree file maps ({path: sha256}), in deployment order.
+RECORDED_TREES = ("conf", "atv_app", "metrics", "exporter_app")
+
+
+def _damaged(path: Path, problem: str) -> DeployError:
+    return DeployError(f"{path} {problem}; no deployment files were changed. Inspect it, then restore it from a "
+                       "backup or move it aside: without it the next deploy cannot remove files an earlier "
+                       "deploy installed")
+
+
 def read_record(layout: State) -> dict:
     try:
-        return json.loads(layout.record.read_text(encoding="utf-8"))
+        record = json.loads(layout.record.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
+    except (UnicodeError, ValueError):
+        raise _damaged(layout.record, "is not valid JSON") from None
+    if not isinstance(record, dict) or any(not isinstance(record.get(key, {}), dict) for key in RECORDED_TREES):
+        raise _damaged(layout.record, "is not a deployment record")
+    return record
+
+
+def read_pending(layout: State) -> dict[str, list[str]]:
+    """Paths an interrupted deploy may have written, by tree; {} when none."""
+    try:
+        value = json.loads(layout.pending.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (UnicodeError, ValueError):
+        raise _damaged(layout.pending, "is not valid JSON") from None
+    trees = value.get("trees") if isinstance(value, dict) and value.get("version") == 1 else None
+    if (not isinstance(trees, dict) or not set(trees) <= set(RECORDED_TREES)
+            or any(not isinstance(paths, list) or not all(isinstance(path, str) for path in paths)
+                   for paths in trees.values())):
+        raise _damaged(layout.pending, "is not a pending deployment record")
+    return trees
+
+
+def _write_pending(layout: State, commit: str, trees: dict[str, Iterable[str]]) -> None:
+    value = {"version": 1, "commit": commit, "trees": {key: sorted(set(paths)) for key, paths in trees.items()}}
+    _replace(layout.pending, (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8"), FILE_MODE)
+
+
+def _settle_pending(layout: State, commit: str, remaining: dict[str, list[str]]) -> None:
+    """Keep only what this deploy did not resolve, durably."""
+    if remaining:
+        _write_pending(layout, commit, remaining)
+        return
+    with contextlib.suppress(FileNotFoundError):
+        layout.pending.unlink()
+        _fsync_directory(layout.records)
 
 
 def preflight(layout: State) -> None:
@@ -1305,7 +1451,6 @@ class Deployed:
     atv_app: Changes
     record: dict
     dry_run: bool
-    legacy_atv: bool = False
     #: Whether the state has the metrics directories (thermite upgrade makes them).
     with_metrics: bool = False
     metrics: Changes = dataclasses.field(default_factory=Changes)
@@ -1345,7 +1490,7 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
         if locked is not None and _site_requirement(locked.data)["version"] == 2:
             host = committed_inputs(area, commit)[1]
     return install(files, commit, subject(area, commit), layout, var, force=force, dry_run=dry_run,
-                   legacy_atv=legacy_atv(), how=how, host=host, application=application,
+                   how=how, host=host, application=application,
                    ownership_approved=ownership_approved)
 
 
@@ -1368,20 +1513,16 @@ def _site_requirement(data: bytes) -> dict:
 def committed_inputs(area: Path, commit: str) -> tuple[dict, dict, dict | None]:
     """Native pins, host facts and application requirement from Git, never cache."""
     from oh_paths import SITE_FILE
-    import yaml
     files = export(area, commit, ("versions.json", "instance/host.yaml", SITE_FILE))
     try:
         versions = json.loads(files["versions.json"].data)
-        host = yaml.safe_load(files["instance/host.yaml"].data)
-        if not isinstance(versions, dict) or not isinstance(host, dict):
+        data = files["instance/host.yaml"].data
+        if not isinstance(versions, dict):
             raise ValueError("invalid committed site inputs")
-        oh_service.validate_identity(host["uid"], host["gid"])
-        oh_ports.effective(host)
-        metrics.yoke_targets(host)
         requirement = _site_requirement(files[SITE_FILE].data) if SITE_FILE in files else None
-    except (KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
+    except (KeyError, TypeError, ValueError) as exc:
         raise DeployError("the committed site has invalid host, version or application inputs") from exc
-    return versions, host, requirement
+    return versions, load_host(data, f"instance/host.yaml at {commit[:12]}"), requirement
 
 
 def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
@@ -1394,8 +1535,8 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
     """
     from oh_paths import SITE_FILE
     import oh_release
-    files = export(area, commit, ("conf", "metrics", "deploy", "instance", "versions.json", SITE_FILE, *ATV_APP, *ATV_APP_BEFORE,
-                                  LEGACY_ATV_PROGRAM, *metrics.EXPORTER_APP))
+    files = export(area, commit, ("conf", "metrics", "deploy", "instance", "versions.json", SITE_FILE, *ATV_APP,
+                                  *metrics.EXPORTER_APP))
     locked = files.pop(SITE_FILE, None)
     if locked is None:
         return {name: blob for name, blob in files.items() if not name.startswith("instance/") and name != "versions.json"}, None
@@ -1439,30 +1580,13 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
     return files, {"version": release["application"], "digest": release["digest"]}
 
 
-def legacy_atv(installed: Path = INSTALLED[ATV_QUADLET]) -> bool:
-    """Whether the installed helper quadlet still runs LEGACY_ATV_PROGRAM;
-    one that cannot be read is assumed to."""
-    try:
-        return f"/app/{LEGACY_ATV_PROGRAM} " in Path(installed).read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return True
-
-
 def install(files: dict[str, Blob], commit: str, title: str, layout: State, var: Path, *,
-            force: bool = False, dry_run: bool = False, legacy_atv: bool = False, how: str = "deploy",
+            force: bool = False, dry_run: bool = False, how: str = "deploy",
             host: dict | None = None, post=None, application: dict | None = None,
             ownership_approved: bool = False) -> Deployed:
-    """deploy() once the commit's files ({area path: Blob}) are exported.
-    With legacy_atv the helper also gets bin/thermite as LEGACY_ATV_PROGRAM;
-    a commit from before bin/thermite brings its own LEGACY_ATV_PROGRAM,
-    which is what its helper quadlet runs."""
+    """deploy() once the commit's files ({area path: Blob}) are exported."""
     conf = {path[len("conf/"):]: blob for path, blob in files.items() if path.startswith("conf/")}
-    app = {path: files[path] for path in (*ATV_APP, *ATV_APP_BEFORE, LEGACY_ATV_PROGRAM) if path in files}
-    copied = legacy_atv and "bin/thermite" in app and LEGACY_ATV_PROGRAM not in app
-    if copied:
-        app[LEGACY_ATV_PROGRAM] = app["bin/thermite"]
+    app = {path: files[path] for path in ATV_APP if path in files}
     if not conf:
         raise DeployError(f"{commit[:12]} has no automation/openhab/conf/")
     digest = tree_digest(conf)
@@ -1474,8 +1598,7 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
     preflight(layout)
     with ownership_handoff(layout, host, dry_run, bool(oh_logging.pairing_conf(conf)), approved=ownership_approved):
         previous = read_record(layout)
-        conf_changes = sync(conf, layout.conf, previous.get("conf", {}), dry_run)
-        app_changes = sync(app, layout.atv_app, previous.get("atv_app", {}), dry_run)
+        pending = read_pending(layout)
         tree = {path[len("metrics/"):]: blob for path, blob in files.items() if path.startswith("metrics/")}
         exporter = {path: files[path] for path in metrics.EXPORTER_APP if path in files}
         with_metrics = layout.with_metrics()
@@ -1488,8 +1611,18 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
                                  and "ntfy/server.yml" in tree and metrics.EXPORTER_APP[1] in exporter)
         kept = with_metrics and (not (tree and metrics.EXPORTER_APP[0] in exporter) or (notifications_installed and not notifications_present))
         synced = with_metrics and not kept
-        metrics_changes = sync(tree, layout.metrics, previous.get("metrics", {}), dry_run) if synced else Changes()
-        exporter_changes = (sync(exporter, layout.exporter_app, previous.get("exporter_app", {}), dry_run)
+        wanted = {"conf": conf, "atv_app": app, **({"metrics": tree, "exporter_app": exporter} if synced else {})}
+        # What an earlier deploy recorded, or an interrupted one may have
+        # written, is this deploy's to remove if the commit no longer has it.
+        installed = {key: {*previous.get(key, {}), *pending.get(key, ())} for key in RECORDED_TREES}
+        if not dry_run:
+            # Durable before the first write: an interruption leaves every
+            # possibly written path known to the next deploy or rollback.
+            _write_pending(layout, commit, {**pending, **{key: installed[key] | set(wanted[key]) for key in wanted}})
+        conf_changes = sync(conf, layout.conf, installed["conf"], dry_run)
+        app_changes = sync(app, layout.atv_app, installed["atv_app"], dry_run)
+        metrics_changes = sync(tree, layout.metrics, installed["metrics"], dry_run) if synced else Changes()
+        exporter_changes = (sync(exporter, layout.exporter_app, installed["exporter_app"], dry_run)
                             if synced else Changes())
         record = {
             "commit": commit,
@@ -1511,7 +1644,8 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
         reloads: list[str] = []
         if not dry_run:
             _replace(layout.record, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"), FILE_MODE)
-            entry = {key: record[key] for key in ("deployed_at", "commit", "by", "boot_checked")}
+            _settle_pending(layout, commit, {key: paths for key, paths in pending.items() if key not in wanted})
+            entry ={key: record[key] for key in ("deployed_at", "commit", "by", "boot_checked")}
             if application is not None:
                 entry["application"] = application
             _shared_write(layout.history, json.dumps({**entry, "how": how, "subject": record["subject"]}) + "\n", append=True)
@@ -1520,7 +1654,7 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
                 _shared_write(layout.atv_restart, f"{record['deployed_at']} {commit}\n")
             if synced:
                 reloads = apply_metrics(layout, host or {}, metrics_changes, exporter_changes, record, post or http_post)
-        return Deployed(commit, record["subject"], conf_changes, app_changes, record, dry_run, copied, with_metrics,
+        return Deployed(commit, record["subject"], conf_changes, app_changes, record, dry_run, with_metrics,
                         metrics_changes, exporter_changes, reloads, kept)
 
 

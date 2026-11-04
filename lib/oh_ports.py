@@ -175,20 +175,130 @@ def shutdown_properties(text: str, port: int) -> str:
     return prefix + f"karaf.shutdown.port = {port}\nkaraf.shutdown.host = 127.0.0.1\n"
 
 
-def configure_shutdown(userdata: Path, port: int) -> None:
-    path = Path(userdata) / CUSTOM_PROPERTIES
-    path.write_bytes(shutdown_properties(path.read_bytes().decode("utf-8"), port).encode("utf-8"))
+#: Native configuration files are small; anything larger is refused unread.
+MAXIMUM_CONFIG = 1024 * 1024
+_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
-def configure_native(userdata: Path) -> None:
-    """Pin native console/shutdown sockets without changing other Karaf settings."""
-    path = Path(userdata) / SHELL_CFG
-    text = path.read_text(encoding="utf-8")
-    custom = Path(userdata) / CUSTOM_PROPERTIES
-    shutdown = shutdown_properties(custom.read_bytes().decode("utf-8"), SHUTDOWN_PORT)
-    lines = [line for line in text.splitlines() if not re.match(r"\s*(sshPort|sshHost)\s*=", line)]
-    path.write_text("\n".join([*lines, f"sshPort = {KARAF_PORT}", "sshHost = 127.0.0.1", ""]), encoding="utf-8")
-    custom.write_bytes(shutdown.encode("utf-8"))
+def open_directory(path: Path, *, anchored: bool = True) -> int:
+    """Open a directory without following a symbolic link.
+
+    Anchored opening walks every component from the filesystem root, as root
+    helpers must: the service account can rename or replace entries below its
+    state. Unanchored opening trusts the caller's own ancestors (a developer
+    sandbox may live below a symlinked home) and refuses only a final link.
+    """
+    path = Path(os.path.abspath(path))
+    if not anchored:
+        return os.open(path, _DIRECTORY)
+    descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for part in path.parts[1:]:
+            child = os.open(part, _DIRECTORY, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+@contextmanager
+def native_etc(userdata: Path, *, anchored: bool = True):
+    """A descriptor for userdata/etc, never reached through a symbolic link."""
+    parent = open_directory(userdata, anchored=anchored)
+    try:
+        directory = os.open(SHELL_CFG.parent.name, _DIRECTORY, dir_fd=parent)
+    finally:
+        os.close(parent)
+    try:
+        yield directory
+    finally:
+        os.close(directory)
+
+
+def read_regular(directory: int, name: str, limit: int = MAXIMUM_CONFIG) -> tuple[bytes, os.stat_result]:
+    """Read one single-link regular file of an anchored directory.
+
+    O_NOFOLLOW refuses a planted symbolic link; the link count refuses a hard
+    link to another file, such as one outside this service's state.
+    """
+    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError(f"{name} must be a single-link regular file")
+        chunks, size = [], 0
+        while chunk := os.read(descriptor, 65536):
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > limit:
+                raise ValueError(f"{name} exceeds {limit} bytes")
+        return b"".join(chunks), info
+    finally:
+        os.close(descriptor)
+
+
+def replace_regular(directory: int, name: str, data: bytes, previous: os.stat_result, *,
+                    uid: int | None = None, gid: int | None = None) -> None:
+    """Atomically replace a file read by read_regular() in the same directory.
+
+    The new inode is created exclusively beside it and renamed over the name,
+    so no link planted there is written through. Ownership is applied to that
+    inode by descriptor: the previous owner unless uid/gid are given. Its
+    permission bits are kept, without set-ID bits.
+    """
+    if not os.path.samestat(previous, os.stat(name, dir_fd=directory, follow_symlinks=False)):
+        raise ValueError(f"{name} changed while it was being configured")
+    temporary = f".{name}.{os.urandom(8).hex()}.tmp"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         0o600, dir_fd=directory)
+    try:
+        try:
+            owner = (previous.st_uid if uid is None else uid, previous.st_gid if gid is None else gid)
+            created = os.fstat(descriptor)
+            if (created.st_uid, created.st_gid) != owner:
+                os.fchown(descriptor, *owner)
+            os.fchmod(descriptor, stat.S_IMODE(previous.st_mode) & 0o777)
+            view = memoryview(data)
+            while view:
+                view = view[os.write(descriptor, view):]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+    except BaseException:
+        try:
+            os.unlink(temporary, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+        raise
+    os.fsync(directory)
+
+
+def configure_shutdown(userdata: Path, port: int, *, anchored: bool = False) -> None:
+    with native_etc(userdata, anchored=anchored) as etc:
+        data, info = read_regular(etc, CUSTOM_PROPERTIES.name)
+        replace_regular(etc, CUSTOM_PROPERTIES.name,
+                        shutdown_properties(data.decode("utf-8"), port).encode("utf-8"), info)
+
+
+def configure_native(userdata: Path, *, anchored: bool = False, uid: int | None = None,
+                     gid: int | None = None) -> None:
+    """Pin native console/shutdown sockets without changing other Karaf settings.
+
+    Both files are read and validated before either is replaced. Root callers
+    pass anchored=True and the service identity that should own both files.
+    """
+    with native_etc(userdata, anchored=anchored) as etc:
+        console, console_info = read_regular(etc, SHELL_CFG.name)
+        custom, custom_info = read_regular(etc, CUSTOM_PROPERTIES.name)
+        shutdown = shutdown_properties(custom.decode("utf-8"), SHUTDOWN_PORT)
+        lines = [line for line in console.decode("utf-8").splitlines()
+                 if not re.match(r"\s*(sshPort|sshHost)\s*=", line)]
+        text = "\n".join([*lines, f"sshPort = {KARAF_PORT}", "sshHost = 127.0.0.1", ""])
+        replace_regular(etc, SHELL_CFG.name, text.encode("utf-8"), console_info, uid=uid, gid=gid)
+        replace_regular(etc, CUSTOM_PROPERTIES.name, shutdown.encode("utf-8"), custom_info, uid=uid, gid=gid)
 
 
 @contextmanager
@@ -200,14 +310,9 @@ def _native_stopped(userdata: Path):
     Missing first-install lock paths are not created here; the caller still
     stops the instance's service and checks its destination listeners.
     """
-    directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    directory = open_directory(userdata)
     descriptor = None
     try:
-        for part in Path(os.path.abspath(userdata)).parts[1:]:
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                            dir_fd=directory)
-            os.close(directory)
-            directory = child
         try:
             temporary = os.open("tmp", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
                                 dir_fd=directory)
@@ -254,12 +359,11 @@ def main(argv=None):
                 parser.error(f"stop native Thermite openHAB before changing listener configuration (port {port} answers)")
         except OSError:
             pass
+    owner = {"uid": args.uid, "gid": args.gid} if args.uid is not None and args.gid is not None else {}
     try:
+        # Root runs this inside service-writable state: never follow a link.
         with _native_stopped(args.userdata):
-            configure_native(args.userdata)
-            if args.uid is not None and args.gid is not None:
-                for relative in (SHELL_CFG, CUSTOM_PROPERTIES):
-                    os.chown(args.userdata / relative, args.uid, args.gid)
+            configure_native(args.userdata, anchored=True, **owner)
     except (OSError, ValueError) as exc:
         parser.exit(2, f"could not configure the initialized native listeners: {exc}\n")
     return 0

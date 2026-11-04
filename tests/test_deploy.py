@@ -24,7 +24,6 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy as deploy  # noqa: E402
 import oh_logging  # noqa: E402
-import oh_docs  # noqa: E402
 import oh_units  # noqa: E402
 import oh_sandbox as sandbox_lib  # noqa: E402
 from oh_cli import sandbox as sandbox_cli  # noqa: E402
@@ -352,7 +351,10 @@ class GrafanaConditions(unittest.TestCase):
                                       "--no-new-privs", "/usr/bin/sh", "-ec",
                                       'credential=$(/usr/bin/cat -- "$1") && test -n "$credential"',
                                       "thermite-grafana", str(self.secret)])
-        for name, text in deploy.render_units(VERSIONS, self.host).items():
+        # Quoting is defense in depth: the host boundary refuses such a root.
+        with self.assertRaisesRegex(deploy.HostError, "state_root"):
+            deploy.render_units(VERSIONS, self.host)
+        for name, text in deploy.render_units(VERSIONS, {**self.host, "state_root": "/srv/thermite"}).items():
             if not name.endswith("thermite-grafana.container"):
                 with self.subTest(unit=name):
                     self.assertNotIn("ExecCondition=", text)
@@ -1004,58 +1006,12 @@ class Install(unittest.TestCase):
         self.assertFalse((self.layout.conf / "html").exists())
         self.assertFalse(deploy.read_record(self.layout)["boot_checked"])
 
-    def test_keeps_the_legacy_helper_program_while_the_old_quadlet_runs_it(self):
-        result = self.install(legacy_atv=True)
-        legacy = self.layout.atv_app / deploy.LEGACY_ATV_PROGRAM
-        self.assertTrue(result.legacy_atv)
-        self.assertEqual(legacy.read_bytes(), (self.layout.atv_app / "bin/thermite").read_bytes())
-        self.assertTrue(os.access(legacy, os.X_OK))
-        result = self.install()
-        self.assertFalse(result.legacy_atv)
-        self.assertEqual(result.atv_app.removed, [deploy.LEGACY_ATV_PROGRAM])
-        self.assertFalse(legacy.exists())
-        self.assertTrue((self.layout.atv_app / "bin/thermite").exists())
-
-    def test_a_commit_from_before_bin_thermite_keeps_its_own_helper_program(self):
-        old = {p: b for p, b in self.FILES.items() if p not in ("bin/thermite", "lib/oh_cli/apple_tv.py")}
-        old.update({deploy.LEGACY_ATV_PROGRAM: blob("#!/usr/bin/env python3\n# old\n", True),
-                    "lib/oh_cli/atv.py": blob("z = 1\n")})
-        self.install()
-        result = self.install(old, legacy_atv=True)
-        legacy = self.layout.atv_app / deploy.LEGACY_ATV_PROGRAM
-        self.assertFalse(result.legacy_atv)
-        self.assertIn(deploy.LEGACY_ATV_PROGRAM, result.atv_app.added)
-        self.assertEqual(legacy.read_text(), "#!/usr/bin/env python3\n# old\n")
-        self.assertTrue(os.access(legacy, os.X_OK))
-        self.assertFalse((self.layout.atv_app / "bin/thermite").exists())
-
-    def test_legacy_atv_reads_the_installed_quadlet(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            quadlet = Path(tmp) / "thermite-atv.container"
-            self.assertFalse(deploy.legacy_atv(quadlet))
-            quadlet.write_text("Exec=python3 /app/bin/openhab-atv serve --setup --secrets /secrets\n")
-            self.assertTrue(deploy.legacy_atv(quadlet))
-            quadlet.write_text(deploy.render_atv_quadlet(VERSIONS, HOST))
-            self.assertFalse(deploy.legacy_atv(quadlet))
-            with mock.patch.object(Path, "read_text", side_effect=PermissionError(13, "denied")):
-                self.assertTrue(deploy.legacy_atv(quadlet))
-
     def test_needs_a_boot_check_of_that_conf(self):
         files = dict(self.FILES, **{"conf/yaml/a.yaml": blob("untested\n")})
         with self.assertRaisesRegex(deploy.DeployError, "thermite test boot. has not passed"):
             self.install(files)
         self.assertEqual(list(self.layout.conf.iterdir()), [])
         self.install(files, force=True)
-
-    def test_a_commit_from_before_apple_tv_keeps_its_own_helper_module(self):
-        self.install()
-        older = {("lib/oh_cli/atv.py" if p == "lib/oh_cli/apple_tv.py" else p): b for p, b in self.FILES.items()}
-        result = self.install(older)
-        self.assertEqual((result.atv_app.added, result.atv_app.removed),
-                         (["lib/oh_cli/atv.py"], ["lib/oh_cli/apple_tv.py"]))
-        self.assertTrue((self.layout.atv_app / "lib/oh_cli/atv.py").exists())
-        self.install()
-        self.assertEqual(sorted(deploy.read_tree(self.layout.atv_app)), sorted(deploy.ATV_APP))
 
     def test_dry_run_writes_nothing(self):
         result = self.install(dry_run=True)
@@ -1222,6 +1178,153 @@ class MetricsDeploy(Install):
 
 
 @unittest.skipUnless(shutil.which("git"), "Git is required")
+class HostFacts(unittest.TestCase):
+    """instance/host.yaml is validated once, completely, before unit text uses it."""
+
+    def refused(self, pattern, **changes):
+        host = {**HOST, "metrics": {"units": []}, **changes}
+        for key, value in list(host.items()):
+            if value is None:
+                del host[key]
+        with self.assertRaisesRegex(deploy.HostError, pattern):
+            deploy.validate_host(host)
+        with self.assertRaises(deploy.HostError):
+            deploy.render_units(VERSIONS, host)
+
+    def test_valid_hosts_pass_unchanged(self):
+        import oh_public
+        for host in (HOST, oh_public.demo_host(), {**HOST, "metrics": {
+                "units": ["podman.service", "user@1000.service"], "retention": "30d12h", "retention_size": "8GB",
+                "grafana_port": 13700, "yoke_targets": ["127.0.0.1:9754"]}}):
+            with self.subTest(host=host):
+                self.assertIs(deploy.validate_host(host), host)
+
+    def test_missing_and_unknown_settings_are_named(self):
+        self.refused("missing timezone", timezone=None)
+        self.refused("unknown setting timezon ", timezon="Etc/UTC")
+        with self.assertRaisesRegex(deploy.HostError, "must be a mapping"):
+            deploy.validate_host(["state_root"])
+        self.refused("unknown metrics setting retension", metrics={"retension": "30d"})
+
+    def test_values_cannot_inject_unit_directives(self):
+        for zone in ("Etc/UTC\nExecStartPre=/bin/true", "Etc/UTC ", "../etc/passwd", "Etc/%n", 'Etc/"UTC"', 5):
+            with self.subTest(zone=zone):
+                self.refused("timezone", timezone=zone)
+        self.refused("not a known IANA time zone", timezone="Mars/Olympus_Mons")
+        for root in ("srv/thermite", "/", "/srv/my thermite", "/srv/thermite\n[Service]", "/srv/a:b", "/srv/%h",
+                     "/srv/../etc", "/srv/thermite/", "//srv"):
+            with self.subTest(root=root):
+                self.refused("state_root", state_root=root)
+        self.refused("metrics.units", metrics={"units": ["x.service\nExecStart=/bin/sh"]})
+        self.refused("metrics.retention ", metrics={"retention": 30})
+        self.refused("metrics.retention_size", metrics={"retention_size": "12 GB"})
+        self.refused("listener port", http_port="13601")
+        self.refused("uid and gid", uid=0)
+        self.refused("metrics.yoke_targets", metrics={"yoke_targets": ["observer.example"]})
+
+    def test_load_reports_yaml_and_host_problems_with_the_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            area = Path(temporary)
+            (area / "instance").mkdir()
+            (area / "versions.json").write_text(json.dumps(VERSIONS))
+            path = area / "instance/host.yaml"
+            for text, pattern in (("state_root: [", "not valid YAML"), ("{}", "missing state_root"),
+                                  (json.dumps({**HOST, "timezone": "Etc/UTC\nX=1"}), "timezone")):
+                with self.subTest(text=text):
+                    path.write_text(text)
+                    with self.assertRaisesRegex(deploy.HostError, re.escape(str(path)) + ": " + pattern):
+                        deploy.load(area)
+            path.write_text(json.dumps(HOST))
+            self.assertEqual(deploy.load(area), (VERSIONS, HOST))
+
+    def test_runtime_restarts_are_paced_and_rate_limited(self):
+        text = deploy.render_quadlet(VERSIONS, HOST)
+        sections, current = {}, None
+        for line in text.splitlines():
+            if line.startswith("["):
+                current = sections.setdefault(line, [])
+            elif current is not None and line and not line.startswith("#"):
+                current.append(line)
+        self.assertIn("StartLimitIntervalSec=300", sections["[Unit]"])
+        self.assertIn("StartLimitBurst=10", sections["[Unit]"])
+        self.assertIn("Restart=always", sections["[Service]"])
+        self.assertIn("RestartSec=15", sections["[Service]"])
+        self.assertEqual(text, deploy.render_quadlet(VERSIONS, HOST), "generated units are deterministic")
+
+
+class PendingRecord(unittest.TestCase):
+    """An interrupted deploy's files stay tracked; damaged records fail clearly."""
+
+    FILES = Install.FILES
+    setUp, tearDown, install = Install.setUp, Install.tearDown, Install.install
+
+    def interrupted(self, files):
+        real = deploy.sync
+
+        def sync(tree, target, previous=(), dry_run=False):
+            if Path(target) == self.layout.atv_app:
+                raise OSError("interrupted after the configuration was written")
+            return real(tree, target, previous, dry_run)
+
+        with mock.patch.object(deploy, "sync", side_effect=sync), \
+                self.assertRaisesRegex(OSError, "interrupted"):
+            self.install(files, force=True)
+
+    def test_interrupted_deploy_files_are_removed_by_the_next_deploy_or_rollback(self):
+        self.install()
+        renamed = {**self.FILES, "conf/automation/js/split_rules.js": blob("// new rules\n"),
+                   "conf/yaml/b.yaml": blob("b: 1\n")}
+        self.interrupted(renamed)
+        self.assertTrue((self.layout.conf / "automation/js/split_rules.js").is_file())
+        self.assertNotIn("yaml/b.yaml", deploy.read_record(self.layout)["conf"])
+        pending = deploy.read_pending(self.layout)
+        self.assertIn("automation/js/split_rules.js", pending["conf"])
+        self.assertIn("yaml/a.yaml", pending["conf"])
+        preview = self.install(force=True, dry_run=True)
+        self.assertEqual(preview.conf.removed, ["automation/js/split_rules.js", "yaml/b.yaml"])
+        self.assertTrue(self.layout.pending.exists())
+        result = self.install(force=True, how="rollback")
+        self.assertEqual(result.conf.removed, ["automation/js/split_rules.js", "yaml/b.yaml"])
+        self.assertEqual(sorted(deploy.read_tree(self.layout.conf)), ["html/remote/index.html", "yaml/a.yaml"])
+        self.assertFalse(self.layout.pending.exists())
+
+    def test_pending_union_is_durable_before_the_first_write(self):
+        self.install()
+        real, seen = deploy.sync, []
+
+        def sync(tree, target, previous=(), dry_run=False):
+            seen.append(json.loads(self.layout.pending.read_text())["trees"])
+            return real(tree, target, previous, dry_run)
+
+        files = {**self.FILES, "conf/yaml/b.yaml": blob("b: 1\n")}
+        with mock.patch.object(deploy, "sync", side_effect=sync), \
+                mock.patch.object(deploy.os, "fsync", wraps=os.fsync) as fsync:
+            self.install(files, force=True)
+        self.assertEqual(seen[0]["conf"], ["html/remote/index.html", "yaml/a.yaml", "yaml/b.yaml"])
+        self.assertEqual(set(seen[0]), {"conf", "atv_app"})
+        self.assertGreaterEqual(fsync.call_count, 4, "record and pending contents and their directory are synced")
+        self.assertFalse(self.layout.pending.exists())
+
+    def test_unsynced_metrics_paths_remain_pending(self):
+        deploy._write_pending(self.layout, "b" * 40, {"metrics": ["prometheus/old.yml"]})
+        self.install()
+        self.assertEqual(deploy.read_pending(self.layout), {"metrics": ["prometheus/old.yml"]})
+
+    def test_damaged_records_fail_clearly_before_any_write(self):
+        for path, content in ((self.layout.record, b"{not json"), (self.layout.record, b"[]"),
+                              (self.layout.record, b'{"conf": []}'), (self.layout.record, b"\xff"),
+                              (self.layout.pending, b"{not json"), (self.layout.pending, b'{"version": 1}'),
+                              (self.layout.pending, b'{"version": 1, "trees": {"conf": [1]}}')):
+            with self.subTest(path=path.name, content=content):
+                for stale in (self.layout.record, self.layout.pending):
+                    stale.unlink(missing_ok=True)
+                path.write_bytes(content)
+                with self.assertRaisesRegex(deploy.DeployError, f"{path.name} is not .*no deployment files were changed"):
+                    self.install()
+                self.assertEqual(list(self.layout.conf.iterdir()), [])
+                self.assertEqual(path.read_bytes(), content)
+
+
 class Export(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -1360,7 +1463,7 @@ class Production(unittest.TestCase):
                         self.assertEqual((args.url, args.token_file), ("http://127.0.0.1:8080", token))
                     else:
                         with self.assertRaisesRegex(sandbox_lib.SandboxError, "var/other/api-token: "
-                                                    "bin/thermite install saves"):
+                                                    "(bin/)?thermite install saves"):
                             health_cli.production(args)
 
 
@@ -1393,19 +1496,6 @@ class CliApproval(unittest.TestCase):
             self.assertEqual(apply.call_args.kwargs["ownership_approved"], approved)
             self.assertEqual(apply.call_args.kwargs["dry_run"], dry_run)
             self.assertFalse(apply.call_args.kwargs["force"])
-
-
-class DocTargets(unittest.TestCase):
-    def test_stale_target(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            makefile = Path(tmp, "Makefile")
-            makefile.write_text("check:\n\ttrue\nopenhab-health:\n\ttrue\nopenhab-sandbox-start:\n\ttrue\n")
-            doc = Path(tmp, "README.md")
-            doc.write_text("make openhab-health\nmake openhab-sandbox-*\nmake openhab-nothing\nbin/openhab-other\n"
-                           "openhab-unit.path and openhab-unit.service\n")
-            problems = oh_docs.stale_targets(makefile, [doc])
-        self.assertEqual(len(problems), 1)
-        self.assertIn("openhab-nothing", problems[0])
 
 
 if __name__ == "__main__":

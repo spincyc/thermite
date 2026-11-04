@@ -36,7 +36,8 @@ CODE_WORDS = {"control4", "sddp", "bk-808", "wattbox", "shield", "fire tv", "ala
 #: public resolver.
 ALLOWED_ADDRESSES = {"lib/oh_discover.py": frozenset({".".join(["1"] * 4)})}
 #: Installation fixtures, which use separate guest-loopback devices.
-LOOPBACK_FILES = frozenset({"tests/e2e/fixture.py", "tests/e2e/dummy-tv.py", "tests/e2e/check_access.py"})
+LOOPBACK_FILES = frozenset({"tests/e2e/fixture.py", "tests/e2e/dummy-tv.py", "tests/e2e/check_access.py",
+                            "tests/test_house_config.py"})
 #: Integrations whose remote_of() returns a remote layout's id
 #: (web/remote/remotes.js), which may also be a private word.
 LAYOUT_RETURN_FILES = frozenset({"lib/oh_integrations/globalcache_ir.py", "lib/oh_integrations/denonmarantz_http.py",
@@ -322,7 +323,7 @@ def _target(root: Path, name: str) -> Path:
     if path.is_absolute() or ".." in path.parts or not path.parts:
         raise PublicError("unsafe managed export path")
     allowed = {MANIFEST, "AGENTS.md", "README.md", "FAQ.md", "Makefile", "requirements.txt", "versions.json", ".gitignore", "pyproject.toml", "CHANGELOG.md",
-               ".github/workflows/pages.yml"}
+               ".github/workflows/pages.yml", ".github/workflows/ci.yml"}
     if name not in allowed and path.parts[0] not in {"docs", "bin", "lib", "site", "web", "tui", "tests", "instance", "iso"}:
         raise PublicError("path is outside the managed public source trees")
     target = root / name

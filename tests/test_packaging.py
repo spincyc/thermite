@@ -222,8 +222,6 @@ class Packaging(unittest.TestCase):
         first = oh_init.initialize(site, program=self.program)
         (site / "instance/devices.yaml").write_text("owner configuration\n")
         (site / "var/owner-state").write_text("keep state\n")
-        (site / "bin").mkdir()
-        (site / "bin/thermite").write_text("#!" + sys.executable + "\n" + oh_init.WRAPPER)
         (site / "Makefile").write_text("# Owner's custom tooling\n")
         second_program = self.root / "program-next"
         shutil.copytree(self.program, second_program)
@@ -236,13 +234,12 @@ class Packaging(unittest.TestCase):
         self.assertNotEqual(first["release"], second["release"])
         self.assertEqual((site / "instance/devices.yaml").read_text(), "owner configuration\n")
         self.assertEqual((site / "var/owner-state").read_text(), "keep state\n")
-        self.assertFalse((site / "bin").exists())
         self.assertEqual((site / "Makefile").read_text(), "# Owner's custom tooling\n")
         for identity in (first["release"], second["release"]):
             self.assertEqual(oh_release.manifest(site / "var/application-releases" / identity)["digest"], identity)
         self.assertEqual((site / oh_paths.SITE_FILE).stat().st_mode & 0o777, 0o600)
 
-    def test_init_refuses_existing_files_symlinks_program_overlap_and_custom_launcher(self):
+    def test_init_refuses_existing_files_symlinks_and_program_overlap(self):
         target = self.root / "not-empty"; target.mkdir(); (target / "keep").write_text("owner")
         before = hashes(target)
         with self.assertRaises(ValueError): oh_init.initialize(target, program=self.program)
@@ -250,24 +247,13 @@ class Packaging(unittest.TestCase):
         link = self.root / "site-link"; link.symlink_to(target, target_is_directory=True)
         with self.assertRaises(ValueError): oh_init.initialize(link, program=self.program)
         with self.assertRaises(ValueError): oh_init.initialize(self.program, program=self.program)
-        site = self.root / "customized"; oh_init.initialize(site, program=self.program)
-        (site / "bin").mkdir()
-        (site / "bin/thermite").write_text("owner customization")
-        before = hashes(site)
-        with self.assertRaises(ValueError): oh_init.initialize(site, program=self.program, upgrade=True)
-        self.assertEqual(hashes(site), before)
 
     def test_upgrade_and_cache_refuse_internal_symlinks_before_any_write(self):
-        for component in ("var", "bin"):
+        for component in ("var",):
             with self.subTest(component=component):
                 site = self.root / ("linked-" + component)
                 oh_init.initialize(site, program=self.program)
-                if component == "var":
-                    outside = self.program
-                else:
-                    outside = self.root / "other-private-bin"
-                    outside.mkdir()
-                    (outside / "thermite").write_text("#!" + sys.executable + "\n" + oh_init.WRAPPER)
+                outside = self.program
                 if (site / component).exists(): shutil.rmtree(site / component)
                 (site / component).symlink_to(outside, target_is_directory=True)
                 program_before, outside_before, site_before = hashes(self.program), hashes(outside), hashes(site)
@@ -360,13 +346,12 @@ class Packaging(unittest.TestCase):
         layout = oh_deploy.State(self.root / "synthetic-state")
         for _, directories in layout.directories():
             for path in directories: path.mkdir(parents=True, exist_ok=True)
-        with patch.object(oh_deploy, "legacy_atv", return_value=False):
-            with self.assertRaises(oh_deploy.DeployError):
-                oh_deploy.deploy(site, layout, var, second_commit)  # Boot gate remains mandatory.
-            oh_deploy.deploy(site, layout, var, second_commit, force=True)
-            self.assertEqual((layout.atv_app / changed).read_bytes(), new_files[changed].data)
-            oh_deploy.deploy(site, layout, var, first_commit, force=True, how="rollback")
-            self.assertEqual((layout.atv_app / changed).read_bytes(), old_files[changed].data)
+        with self.assertRaises(oh_deploy.DeployError):
+            oh_deploy.deploy(site, layout, var, second_commit)  # Boot gate remains mandatory.
+        oh_deploy.deploy(site, layout, var, second_commit, force=True)
+        self.assertEqual((layout.atv_app / changed).read_bytes(), new_files[changed].data)
+        oh_deploy.deploy(site, layout, var, first_commit, force=True, how="rollback")
+        self.assertEqual((layout.atv_app / changed).read_bytes(), old_files[changed].data)
         self.assertEqual(oh_deploy.read_record(layout)["application"], old_app)
         cache_file = var / "application-releases" / old["release"] / changed
         cache_file.chmod(0o600); cache_file.write_text("tampered")

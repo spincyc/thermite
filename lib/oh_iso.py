@@ -78,6 +78,16 @@ def fetch(cache: Path, *, base: str = "arch") -> dict:
     return result
 
 
+#: The first `thermite install` prepares its application environment with
+#: `python3 -m venv`, which needs Ubuntu's ensurepip (python3-venv) before the
+#: installer's own package step runs. Install it with the OS when the media or
+#: mirror provides it; an offline image that lacks it still installs, and
+#: FIRST-BOOT.txt gives the one apt command to run first.
+UBUNTU_PREREQUISITES = ("DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv git || "
+                        "echo 'Thermite: python3-venv or git is unavailable offline; "
+                        "see /opt/thermite/FIRST-BOOT.txt before thermite install' >&2")
+
+
 def configuration() -> bytes:
     """All ordinary screens remain interactive, especially storage/identity.
 
@@ -93,6 +103,7 @@ def configuration() -> bytes:
         "late-commands": [
             ["mkdir", "-p", "/target/opt/thermite-media"],
             ["cp", "-a", "/cdrom/thermite/.", "/target/opt/thermite-media/"],
+            ["curtin", "in-target", "--target=/target", "--", "sh", "-c", UBUNTU_PREREQUISITES],
             ["curtin", "in-target", "--target=/target", "--", "python3", "/opt/thermite-media/bootstrap.py"],
         ],
     }}

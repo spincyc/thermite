@@ -87,9 +87,6 @@ def apply(args, host: dict) -> int:
         print(f"helper  changed: thermite-atv-restart.path restarts thermite-atv.service ({layout.atv_restart})")
     if not result.record["boot_checked"]:
         print("note    installed without passing thermite test boot (--force)")
-    if result.legacy_atv:
-        print(f"note    kept {deploy.LEGACY_ATV_PROGRAM} in the helper: the installed quadlet still runs it "
-              "until the owner installs the new one (make openhab-upgrade)")
     if not deploy.pushed(AREA, result.commit):
         print(f"note    {short} is not on a remote branch; back up this configuration in your private repository")
     stale = [name for name, _, how in deploy.installed_units(AREA, rev=result.commit) if how == "differs"]

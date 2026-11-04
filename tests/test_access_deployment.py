@@ -5,6 +5,8 @@ import hashlib
 from contextlib import closing
 import os
 from pathlib import Path
+import shutil
+import ssl
 import sqlite3
 import subprocess
 import sys
@@ -19,8 +21,31 @@ sys.path.insert(0, str(AREA / "lib"))
 
 from oh_access import AccessError, deployment, staging
 from oh_access.files import json_private, private_directory, atomic_private
-from oh_install.access import Gateway, installed_release, site_inputs
+from oh_install.access import Gateway, installed_release, openssl_config, site_inputs
 from oh_install.system import UnitFile, UnitOrigin
+
+
+def handshake(chain, key, authority, name):
+    """An in-memory TLS handshake: a client trusting only the authority."""
+    server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server.load_cert_chain(chain, key)
+    client = ssl.create_default_context(cafile=str(authority))
+    buffers = [ssl.MemoryBIO() for _ in range(4)]
+    talking = client.wrap_bio(buffers[0], buffers[1], server_hostname=name)
+    listening = server.wrap_bio(buffers[2], buffers[3], server_side=True)
+    for _ in range(10):
+        done = 0
+        for side, incoming, outgoing in ((talking, buffers[0], buffers[1]), (listening, buffers[2], buffers[3])):
+            try:
+                side.do_handshake()
+                done += 1
+            except ssl.SSLWantReadError:
+                pass
+        buffers[2].write(buffers[1].read())
+        buffers[0].write(buffers[3].read())
+        if done == 2:
+            return talking.getpeercert()
+    raise AssertionError("TLS handshake did not complete")
 
 
 class PrivateFixture(unittest.TestCase):
@@ -283,6 +308,26 @@ class Host:
         pass
 
 
+def real_openssl(system):
+    """Run real openssl commands for a fake host; record and fake the rest."""
+    run, capture = system.run, system.capture
+
+    def run_openssl(argv, cwd):
+        if argv[0] != "openssl":
+            return run(argv, cwd)
+        system.commands.append(tuple(argv))
+        return subprocess.run(list(argv), capture_output=True, check=False).returncode
+
+    def capture_openssl(argv, *, diagnostics=False):
+        if argv[0] != "openssl":
+            return capture(argv, diagnostics=diagnostics)
+        result = subprocess.run(list(argv), capture_output=True, text=True, check=False)
+        return result.returncode, result.stdout
+
+    system.run, system.capture = run_openssl, capture_openssl
+    return system
+
+
 class Lifecycle(PrivateFixture):
     def test_partial_unit_set_is_never_treated_as_a_new_identity(self):
         for name in staging.ACCESS_UNITS[1:]:
@@ -322,9 +367,12 @@ class Lifecycle(PrivateFixture):
         atomic_private(context.area / context.token_file, token)
         snapshot = gateway.directory / "test-runtime-token"
         atomic_private(snapshot, token)
-        metadata = {"state": str(self.root / "state"), "tls_cert": str(self.root / "cert"), "tls_key": str(self.root / "key"),
-                    "allowed_hosts": ["house.example.test"], "bind_host": "0.0.0.0", "port": 13600,
-                    "timezone": "UTC", "callback_file": None, "callbacks": False}
+        system = real_openssl(Host())
+        authority = gateway._authority(system, "house.example.test")
+        cert, key = gateway._issue(system, self.root / "tls", ["house.example.test"], authority)
+        metadata = {"state": str(self.root / "state"), "tls_cert": str(cert), "tls_key": str(key),
+                    "tls_ca": str(authority[0]), "allowed_hosts": ["house.example.test"], "bind_host": "0.0.0.0",
+                    "port": 13600, "timezone": "UTC", "callback_file": None, "callbacks": False}
         release = str(self.root / "release")
         command = ["sudo", "-u", "thermite", "-g", "thermite", release + "/env/bin/python", release + "/program/bin/thermite", "access"]
         receipt = {"destination": release, "persistent_state": metadata["state"], "config": release + "/config.json",
@@ -499,14 +547,9 @@ class Lifecycle(PrivateFixture):
         self.assertFalse((gateway.context.var / "gateway/current.json").exists())
 
     def test_fresh_install_prepares_tls_and_release_without_manual_staging(self):
-        gateway, system = self.gateway(), Host()
+        gateway, system = self.gateway(), real_openssl(Host())
         gateway.journal_path.unlink()
-        original_run = system.run
-        def command(argv, cwd):
-            if argv[0] == "openssl":
-                Path(argv[argv.index("-keyout") + 1]).write_bytes(b"private key")
-                Path(argv[argv.index("-out") + 1]).write_bytes(b"public certificate")
-            return original_run(argv, cwd)
+        shutil.rmtree(gateway.context.var / "gateway/authority")
         def stage(release, **kwargs):
             self.assertEqual(kwargs["state"], str(gateway.root / "state"))
             self.assertEqual(kwargs["house"], gateway.context.configuration / "instance/devices.yaml")
@@ -519,12 +562,18 @@ class Lifecycle(PrivateFixture):
                     "units": ["thermite-access.service", "thermite-access-worker.service"],
                     "ownership_commands": [], "verification_command": [*command, "verify", "--config", str(release / "config.json")],
                     "unit_install_commands": self.unit_commands(gateway, release)}
-        with patch.object(system, "run", side_effect=command), patch.object(staging, "stage", side_effect=stage) as staged, \
+        with patch.object(staging, "stage", side_effect=stage) as staged, \
                 patch.object(gateway, "_assets", return_value=self.root / "managed-assets"), \
                 patch.object(gateway, "_https", return_value="https://house.example.test:13600"):
             self.assertEqual(gateway.perform(system), 0, system.messages)
             staged.assert_called_once()
         self.assertTrue(any(command[0] == "openssl" for command in system.commands))
+        metadata = json.loads(gateway.journal_path.read_bytes())["metadata"]
+        authority = gateway.context.var / "gateway/authority/ca-cert.pem"
+        self.assertEqual(metadata["tls_ca"], str(authority))
+        self.assertIn(("sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(authority),
+                       str(gateway.root / "tls-cert.pem")), system.commands)
+        handshake(Path(metadata["tls_cert"]), Path(metadata["tls_key"]), authority, "house.example.test")
         self.assertTrue(any("migrate" in command for command in system.commands))
         self.assertTrue(any("--now" in command for command in system.commands))
         self.assertEqual(json.loads(gateway.journal_path.read_bytes())["phase"], "complete")
@@ -558,6 +607,119 @@ class Lifecycle(PrivateFixture):
             self.assertEqual(oh_paths.SITE, before)
             self.assertEqual(remote.INSTANCE, dirty / "instance")
             self.assertEqual(globalcache_ir.INSTANCE, dirty / "instance")
+
+
+class CertificateProfile(PrivateFixture):
+    """New private authority + leaf; renewal; replacing the former self-signed profile."""
+
+    gateway, unit_commands = Lifecycle.gateway, Lifecycle.unit_commands
+
+    def setUp(self):
+        super().setUp()
+        from oh_install.runner import _TASK_APPROVAL
+        token = _TASK_APPROVAL.set(True)
+        self.addCleanup(_TASK_APPROVAL.reset, token)
+
+    def text(self, path):
+        return subprocess.run(["openssl", "x509", "-noout", "-text", "-in", str(path)], capture_output=True,
+                              text=True, check=True).stdout
+
+    def days(self, path):
+        dates = subprocess.run(["openssl", "x509", "-noout", "-startdate", "-enddate", "-in", str(path)],
+                               capture_output=True, text=True, check=True).stdout
+        values = dict(line.split("=", 1) for line in dates.splitlines())
+        return (ssl.cert_time_to_seconds(values["notAfter"]) - ssl.cert_time_to_seconds(values["notBefore"])) / 86400
+
+    def adopted(self, gateway, system, **changes):
+        """A completed journal whose metadata came from an existing gateway."""
+        journal = json.loads(gateway.journal_path.read_bytes())
+        journal["metadata"].update(changes)
+        journal.update(phase="complete", plan=str(gateway.directory / "plan-old"))
+        json_private(gateway.journal_path, journal)
+        system.installed = Path(journal["stage"]["destination"])
+        return journal
+
+    def test_authority_signs_only_a_short_lived_server_leaf(self):
+        gateway, system = self.gateway(), real_openssl(Host())
+        metadata = json.loads(gateway.journal_path.read_bytes())["metadata"]
+        authority = Path(metadata["tls_ca"])
+        self.assertEqual(oct(authority.parent.stat().st_mode & 0o777), oct(0o700))
+        self.assertEqual(oct((authority.parent / "ca-key.pem").stat().st_mode & 0o777), oct(0o600))
+        ca = self.text(authority)
+        self.assertIn("CA:TRUE, pathlen:0", ca)
+        self.assertIn("Certificate Sign, CRL Sign", ca)
+        leaf = self.text(metadata["tls_cert"])
+        for expected in ("CA:FALSE", "TLS Web Server Authentication", "Digital Signature", "DNS:house.example.test",
+                         "Issuer: CN=Thermite gateway authority house.example.test"):
+            self.assertIn(expected, leaf)
+        self.assertLessEqual(self.days(metadata["tls_cert"]), 825)
+        self.assertEqual(len(Path(metadata["tls_cert"]).read_bytes().split(b"BEGIN CERTIFICATE")), 3)
+        handshake(Path(metadata["tls_cert"]), Path(metadata["tls_key"]), authority, "house.example.test")
+        cert, key = gateway._issue(system, self.root / "multi", ["house.example.test", "192.0.2.10", "127.0.0.1"],
+                                   (authority, authority.parent / "ca-key.pem"))
+        self.assertIn("IP Address:192.0.2.10", self.text(cert))
+        handshake(cert, key, authority, "127.0.0.1")
+        self.assertEqual(sorted(path.name for path in cert.parent.iterdir()), ["tls-cert.pem", "tls-key.pem"])
+
+    def test_former_self_signed_profile_is_replaced_once_with_a_trust_notice(self):
+        gateway, system = self.gateway(), real_openssl(Host())
+        legacy = private_directory(self.root / "adopted")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                        "-sha256", "-nodes", "-days", "3650", "-subj", "/CN=house.example.test",
+                        "-addext", "subjectAltName=DNS:house.example.test",
+                        "-keyout", str(legacy / "tls-key.pem"), "-out", str(legacy / "tls-cert.pem")],
+                       check=True, capture_output=True)
+        journal = self.adopted(gateway, system, tls_cert=str(legacy / "tls-cert.pem"),
+                               tls_key=str(legacy / "tls-key.pem"))
+        journal["metadata"].pop("tls_ca")
+        metadata = gateway._certificate(system, journal, journal["metadata"])
+        self.assertNotEqual(metadata["tls_cert"], str(legacy / "tls-cert.pem"))
+        authority = gateway.context.var / "gateway/authority/ca-cert.pem"
+        self.assertEqual(metadata["tls_ca"], str(authority))
+        handshake(Path(metadata["tls_cert"]), Path(metadata["tls_key"]), authority, "house.example.test")
+        notices = [message for message in system.messages if "Gateway TLS" in message]
+        self.assertEqual(notices, ["   Gateway TLS now uses a new private certificate authority: trust "
+                                   + str(gateway.root / "tls-cert.pem") + " once on every browser and terminal client"])
+        # A completed deployment restages with its rollback data retained.
+        saved = json.loads(gateway.journal_path.read_bytes())
+        self.assertEqual((saved["phase"], saved["metadata"]), ("inputs", metadata))
+        self.assertNotIn("stage", saved)
+        self.assertEqual(saved["previous_release"], str(system.installed))
+        self.assertEqual(saved["runtime_token_file"], journal["runtime_token_file"])
+        self.assertTrue(list(gateway.directory.glob("history-*.json")))
+        system.messages.clear()
+        self.assertEqual(gateway._certificate(system, saved, saved["metadata"]), metadata)
+        self.assertEqual(system.messages, [])
+
+    def test_leaf_near_expiry_is_renewed_by_the_same_authority(self):
+        gateway, system = self.gateway(), real_openssl(Host())
+        journal = json.loads(gateway.journal_path.read_bytes())
+        authority = Path(journal["metadata"]["tls_ca"])
+        cert, key = gateway._issue(system, self.root / "short", ["house.example.test"],
+                                   (authority, authority.parent / "ca-key.pem"), days=30)
+        journal = self.adopted(gateway, system, tls_cert=str(cert), tls_key=str(key))
+        before = authority.read_bytes()
+        metadata = gateway._certificate(system, journal, journal["metadata"])
+        self.assertNotEqual(metadata["tls_cert"], str(cert))
+        self.assertEqual(authority.read_bytes(), before)
+        self.assertGreater(self.days(metadata["tls_cert"]), 800)
+        self.assertTrue(any("renewed by its private authority" in message and "need no change" in message
+                            for message in system.messages))
+
+    def test_staging_under_way_keeps_its_certificate_until_the_next_run(self):
+        gateway, system = self.gateway(), real_openssl(Host())
+        journal = json.loads(gateway.journal_path.read_bytes())
+        journal["metadata"]["tls_cert"] = str(self.root / "missing.pem")
+        before = dict(journal["metadata"])
+        self.assertEqual(gateway._certificate(system, journal, journal["metadata"]), before)
+        self.assertFalse(any(command[0] == "openssl" for command in system.commands))
+
+    def test_names_cannot_inject_openssl_configuration(self):
+        for host in ("house.example.test\nbasicConstraints = CA:TRUE", "house example", "house/x", ""):
+            with self.subTest(host=host), self.assertRaisesRegex(AccessError, "literal hostname"):
+                openssl_config([host])
+        self.assertIn("subjectAltName = DNS:house.example.test,IP:192.0.2.10\n",
+                      openssl_config(["house.example.test", "192.0.2.10"]))
 
 
 if __name__ == "__main__":

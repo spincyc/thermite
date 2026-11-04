@@ -46,6 +46,14 @@ class InstallerISO(unittest.TestCase):
         commands = config["late-commands"]
         self.assertEqual(commands[-1], ["curtin", "in-target", "--target=/target", "--", "python3",
                                        "/opt/thermite-media/bootstrap.py"])
+        # The first install's `python3 -m venv` needs Ubuntu's ensurepip.
+        prerequisites = commands[-2]
+        self.assertEqual(prerequisites[:6], ["curtin", "in-target", "--target=/target", "--", "sh", "-c"])
+        self.assertIn("apt-get install -y python3-venv git ||", prerequisites[6])
+        guide = (AREA / "iso/first-boot.txt").read_text()
+        self.assertIn("sudo apt-get install python3-venv git", guide)
+        self.assertIn('thermite install --config "$HOME/thermite-site"', guide)
+        self.assertNotIn("thermite access", guide)
         self.assertFalse(any("wipefs" in str(item) or "mkfs" in str(item) for item in commands))
 
     def test_boot_seed_patch_preserves_args_and_explicit_confirmation(self):
