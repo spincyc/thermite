@@ -3,6 +3,7 @@ handler as the gateway serves them, and the listener's sockets in the
 gateway's hypercorn server."""
 
 import asyncio
+import gzip
 import json
 import re
 import socket
@@ -10,10 +11,12 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
-from django.test import AsyncClient, Client, SimpleTestCase, TestCase, TransactionTestCase
+from django.test import AsyncClient, Client, RequestFactory, SimpleTestCase, TestCase, TransactionTestCase
+from django.urls import resolve
 
 from oh_access import service
 from oh_access.guest import SCOPE, Listener
@@ -26,6 +29,7 @@ from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter
 from oh_identity.services import bootstrap, issue_token
 from oh_identity.tests.test_core import PASSPHRASE, FakeRuntime, Policy, adapter
 from oh_identity.urls import urlpatterns
+from oh_routes import asset_version
 
 LISTENER = Listener(frozenset({"http://192.0.2.10:13626", "http://[2001:db8::10]:13626",
                                "http://remote.guest.example:13626"}), "https://house.example.test:13600")
@@ -39,6 +43,8 @@ REFUSED_FILES = ("security.html", "access.html", "access-ui.js", "access.css", "
                  "system.html", "system.js", "system.json", "pair.html", "pair.js", "pair.css", "cameras.html",
                  "cameras.js", "cameras.css", "cameras.json", "topology.html", "topology.js", "topology.css",
                  "topology.json", "README.md", "../secrets")
+#: The files a page's markup loads.
+LOADS = r'<(?:script|link|img)\b[^>]*?\b(?:src|href)="([^"#]+)"'
 
 
 class GuestClient(AsyncClient):
@@ -121,6 +127,35 @@ class Listening(TestCase):
                     self.assertEqual(response["Allow"], allow)
         self.assertEqual(self.adapter.transport.commands, [])
         self.assertEqual(self.https().get("/security/", secure=True).status_code, 200)
+
+    def test_versioned_files_load_and_cache_as_on_https(self):
+        root = self.adapter.contract.asset_root
+        for name in sorted(guest.ASSETS):
+            data = (root / name).read_bytes()
+            version, gated = asset_version(data), name in ("house.js", "access-config.js") or name.endswith((".html", ".json"))
+            with self.subTest(name=name):
+                response = call("get", f"/static/remote/{name}?v={version}", **{"Accept-Encoding": "gzip"})
+                self.assertEqual(response.status_code, 200)
+                self.assertFalse(response.cookies)
+                stale = call("get", f"/static/remote/{name}?v=0123456789abcdef")
+                if gated:
+                    self.assertEqual((response["Cache-Control"], stale["Cache-Control"]), ("no-store", "no-store"))
+                    self.assertFalse(response.has_header("ETag") or response.has_header("Content-Encoding"))
+                    continue
+                self.assertEqual(response["Cache-Control"], "public, max-age=31536000, immutable")
+                self.assertEqual(stale["Cache-Control"], "no-cache")
+                text = not name.endswith(".png")
+                self.assertEqual(response.content, gzip.compress(data, mtime=0) if text else data)
+                tag = response["ETag"]
+                self.assertEqual(tag, f'"{version}-gzip"' if text else f'"{version}"')
+                again = call("get", f"/static/remote/{name}?v={version}", **{"Accept-Encoding": "gzip", "If-None-Match": tag})
+                self.assertEqual((again.status_code, again.content), (304, b""))
+        # A valid hash opens nothing the listener refuses.
+        for name in ("cameras.js", "access.html", "system.json"):
+            with self.subTest(name=name):
+                version = asset_version((root / name).read_bytes())
+                response = call("get", f"/static/remote/{name}?v={version}")
+                self.assertEqual((response.status_code, body(response)["error"]), (404, "not_found"))
 
     def test_reads_and_events_reach_their_views(self):
         self.assertEqual(call("get", "/rest/items/loc_den_source/state").content, b"player")
@@ -288,15 +323,40 @@ class Allowlist(SimpleTestCase):
         self.assertLessEqual(set(guest.ROUTES), routes)
         self.assertLessEqual(guest.ASSETS, set(FILES))
         self.assertFalse(guest.ASSETS & (ADMIN_ASSETS | set(REFUSED_FILES)))
-        loaded = set()
+        marked = set()
         for page in ("home.html", "index.html"):
-            html = (WEB / page).read_text()
-            loaded |= set(re.findall(r'<(?:script|link|img)\b[^>]*?\b(?:src|href)="([^"#]+)"', html))
+            marked |= set(re.findall(LOADS, (WEB / page).read_text()))
+        loaded = set(marked)
         for sheet in ("theme.css", "shell.css", "remote.css", "home.css"):
             loaded |= set(re.findall(r'url\("([^"#]+)"\)', (WEB / sheet).read_text()))
         # Scripts fetch these themselves.
         loaded |= {"activity.json", "diagnostics.json", "mark.svg"}
         self.assertEqual(loaded | {"home.html", "index.html"}, set(guest.ASSETS))
+        # Generated pages, and the manifest they link, load each file as
+        # /static/remote/<name>?v=<hash of its bytes>. The query never reaches
+        # the allowlist: the route's bare name does, and the listener admits it.
+        import oh_render
+        files = oh_render.render({"version": 1, "rooms": {}, "devices": []},
+                                 system_metadata={"version": 1, "runtime": {"version": "test"}, "tools": []})
+
+        def content(name):
+            value = files["html/remote/" + name]
+            return value.encode() if isinstance(value, str) else value
+        served = set()
+        for page in ("home.html", "index.html"):
+            urls = re.findall(LOADS, content(page).decode())
+            manifest = next(url for url in urls if urlsplit(url).path.endswith("/manifest.webmanifest"))
+            urls += [urljoin(manifest, icon["src"]) for icon in json.loads(content("manifest.webmanifest"))["icons"]]
+            for url in urls:
+                with self.subTest(page=page, url=url):
+                    target = urlsplit(url)
+                    match = resolve(target.path)
+                    self.assertEqual(match.route, "static/remote/<str:name>")
+                    self.assertIn(match.kwargs["name"], guest.ASSETS)
+                    self.assertEqual(parse_qs(target.query), {"v": [asset_version(content(match.kwargs["name"]))]})
+                    self.assertIsNone(guest.refusal(RequestFactory().get(url, HTTP_HOST=HOST), LISTENER))
+                    served.add(match.kwargs["name"])
+        self.assertEqual(served, marked)
 
 
 class Serving:
