@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 import h2.config
 import h2.connection
@@ -27,7 +28,7 @@ import httpx
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
 
 from oh_access import service
-from oh_identity import streams
+from oh_identity import streams, trail
 from oh_identity.asgi import application
 from oh_identity.models import SecurityState
 from oh_identity.runtime import RuntimeAdapter, install_adapter
@@ -174,10 +175,29 @@ class Http2Gateway(TransactionTestCase):
                     "X-Forwarded-For": "198.51.100.7", "Forwarded": "for=198.51.100.7", "X-Real-IP": "198.51.100.7"})
                 elapsed = time.monotonic() - started
                 self.assertEqual(streams.slots.count(), 8)
-                return alpn, read, elapsed
+                return alpn, read, elapsed, [each.headers["x-request-id"] for each in opened]
 
-        with Running(service.Admission(seen), self.cert, self.key) as server:
-            alpn, read, elapsed = asyncio.run(exercise(server.port))
+        with self.assertLogs("oh_identity.trail", "INFO") as logs, \
+                Running(service.Admission(seen), self.cert, self.key) as server:
+            alpn, read, elapsed, ids = asyncio.run(exercise(server.port))
+            for _ in range(100):
+                if streams.slots.count() == 0:
+                    break
+                time.sleep(0.02)
+        # Every response carries its request ID; each stream logs its
+        # opening and its end under that ID, with the stream counts, and no
+        # address, forwarded or not.
+        self.assertRegex(read.headers["x-request-id"], "^[0-9a-f]{8}$")
+        messages = [record.getMessage() for record in logs.records]
+        opened = [message for message in messages if message.startswith("stream open ")]
+        closed = [message for message in messages if message.startswith("stream close ")]
+        self.assertEqual(sorted(message.split(" ")[2] for message in opened), sorted("id=" + each for each in ids))
+        self.assertIn("streams_peer=8 streams_total=8", opened[-1])
+        self.assertEqual(len(closed), 8)
+        self.assertIn("streams_peer=0 streams_total=0", closed[-1])
+        self.assertFalse([message for message in messages if message.startswith("req ")], "successful reads are not logged")
+        self.assertNotIn("198.51.100.7", "\n".join(messages))
+        self.assertNotIn(HOST, "\n".join(messages))
         self.assertEqual(alpn, "h2")
         self.assertEqual((read.status_code, read.http_version), (200, "HTTP/2"))
         self.assertIn("effective", read.json())
@@ -207,9 +227,13 @@ class Http2Gateway(TransactionTestCase):
             async with self.http2(port) as client:
                 return refused, await client.get("/api/v1/rooms/den/policy")
 
-        with Running(admission, self.cert, self.key) as server:
+        # A fresh limiter: an earlier test's refusal must not suppress this one.
+        with patch.object(trail, "warnings", trail.Limited()), self.assertLogs("oh_identity.trail", "WARNING") as logs, \
+                Running(admission, self.cert, self.key) as server:
             refused, admitted = asyncio.run(exercise(server.port))
         self.assertEqual((refused.status_code, refused.http_version, refused.text), (503, "HTTP/2", "Service Unavailable"))
+        self.assertEqual([record.getMessage() for record in logs.records],
+                         ["gateway_busy status=503 active=2 limit=2 suppressed=0"])
         self.assertEqual(refused.headers["content-type"], "text/plain; charset=utf-8")
         self.assertEqual(admitted.status_code, 200)
         self.assertEqual(admission.active, 0)

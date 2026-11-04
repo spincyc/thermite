@@ -10,6 +10,7 @@ from pathlib import Path
 from types import MappingProxyType
 from contextlib import nullcontext
 
+from . import trail
 from .addresses import ROOM_ID
 from .services import Problem
 
@@ -249,26 +250,42 @@ class RuntimeAdapter:
             return
         # A persisted enabled policy cannot silently become unenforced if engine missing.
         if not self.policy:
+            trail.policy_unavailable("command", room_id, None)
             raise Problem("policy_unavailable", 503)
         try:
             config = self.policy.validate(saved.config, room_id, self.contract.policy_contract())
             answer = self.policy.authorize(config, timezone.now())
-        except Exception:
+        except Exception as error:
+            trail.policy_unavailable("command", room_id, error)
             raise Problem("policy_unavailable", 503) from None
         if not answer.get("allowed"):
             if command is None:
-                raise Problem("room_locked", 423)
-            if self._disturbs(command, room_id, answer.get("desired")):
-                raise Problem("device_locked", 423)
+                refusal = Problem("room_locked", 423)
+            elif self._disturbs(command, room_id, answer.get("desired")):
+                refusal = Problem("device_locked", 423)
+            else:
+                return
+            # For the command's trail only; the response is unchanged.
+            refusal.lock = ("manual" if answer.get("reason") == "manual_lock" else "schedule", room_id)
+            raise refusal
 
-    def dispatch(self, user, room_id, action, value):
+    def dispatch(self, user, room_id, action, value, *, origin=None):
+        """origin (trail.Origin) says where the command came from; a valid
+        command gets one journal line however it ends."""
         item, command, affected = self.contract.command(room_id, action, value)
         spec = self.contract.rooms[room_id]["actions"][action]
         resources = tuple(spec.get("resources", (item,)))
-        with self.command_lock(tuple(sorted(set((room_id, *affected)))), resources):
-            return self._dispatch(user, room_id, action, item, command, affected)
+        record = trail.Command(origin, user, room=room_id, action=action, item=item, value=command)
+        try:
+            with self.command_lock(tuple(sorted(set((room_id, *affected)))), resources):
+                result = self._dispatch(user, room_id, action, item, command, affected, record)
+        except BaseException as error:
+            record.finish(error)
+            raise
+        record.finish()
+        return result
 
-    def _dispatch(self, user, room_id, action, item, command, affected):
+    def _dispatch(self, user, room_id, action, item, command, affected, record):
         from .auth import revalidate
         # After the lock wait and before I/O: a queued stale principal is insufficient.
         revalidate(user)
@@ -277,8 +294,9 @@ class RuntimeAdapter:
             if ident != room_id:
                 self.allowed(ident, (room_id, action, command))
         try:
-            self.transport.command(item, command)
-        except Exception:
+            self.transport.command(item, command, source=record.source)
+        except Exception as error:
+            record.cause = trail.cause(error)
             raise Problem("runtime_unavailable", 502) from None
         return {"accepted": True, "room": room_id, "action": action}
 
@@ -317,15 +335,23 @@ class RuntimeAdapter:
         if value not in {"REQUEST", "AGAIN", "CANCEL"} and not code:
             raise Problem("invalid_pairing_command")
 
-    def pair(self, user, item, value):
+    def pair(self, user, item, value, *, origin=None):
         # Pairing has effects outside ordinary room commands. Share the switch's
         # room locks so a queued pairing request cannot cross a disable.
         # Callers validate first; nothing unauthorized waits on every room lock.
         self.pairing_command(item, value)
-        with self.command_lock(tuple(sorted(self.contract.rooms)), ()):
-            return self._pair(user, item, value)
+        # The trail never names the value: it may be a pairing code.
+        record = trail.Command(origin, user, room=None, action="pair", item=item, value=value, private=True)
+        try:
+            with self.command_lock(tuple(sorted(self.contract.rooms)), ()):
+                result = self._pair(user, item, value, record)
+        except BaseException as error:
+            record.finish(error)
+            raise
+        record.finish()
+        return result
 
-    def _pair(self, user, item, value):
+    def _pair(self, user, item, value, record):
         from .security import require_enabled
         from .models import User
         from .services import is_admin
@@ -336,8 +362,9 @@ class RuntimeAdapter:
         if fresh is None or fresh.auth_revision != user.auth_revision or not is_admin(fresh):
             raise Problem("forbidden", 403)
         try:
-            self.transport.command(item, value)
-        except Exception:
+            self.transport.command(item, value, source=record.source)
+        except Exception as error:
+            record.cause = trail.cause(error)
             raise Problem("runtime_unavailable", 502) from None
         # Neither acknowledgement nor audit echoes the submitted code.
         return {"accepted": True}

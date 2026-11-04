@@ -286,7 +286,7 @@ class SharedDevices(TestCase):
         data = json.loads((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
         data["routing"]["rooms"]["example_east"]["sources"].append("example_player")
         self.commands = []
-        transport = type("Transport", (), {"command": lambda _, item, value: self.commands.append((item, value)),
+        transport = type("Transport", (), {"command": lambda _, item, value, source=None: self.commands.append((item, value)),
                                             "read": lambda _, item: "off"})()
         self.adapter = RuntimeAdapter(RuntimeContract(**oh_site_contract.compile(House(data), oh_render.build(data))),
                                       transport, policy=oh_room_policy)

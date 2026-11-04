@@ -229,6 +229,10 @@ class Admission:
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
             if self.active >= self.limit:
+                # One rate-limited warning; the request never reaches the
+                # trail's request line.
+                from oh_identity.trail import warnings
+                warnings.warning(("gateway_busy",), "gateway_busy", status=503, active=self.active, limit=self.limit)
                 await send({"type": "http.response.start", "status": 503, "headers": [
                     (b"content-type", b"text/plain; charset=utf-8"),
                     (b"content-length", b"%d" % len(self.UNAVAILABLE)), (b"connection", b"close")]})

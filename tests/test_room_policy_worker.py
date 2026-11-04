@@ -92,18 +92,22 @@ class Devices:
         self.observed = dict(observed or {})
         self.sources = dict(sources or {})
         self.native_power = {"example_player_power"}
-        self.writes, self.fail = [], False
+        self.writes, self.fail, self.origins = [], False, []
 
     def read(self, items):
         return {item: Observation(self.observed[item], self.clock(),
                                   "native_power" if item in self.native_power else "native")
                 for item in items if item in self.observed}
 
-    def write(self, room, item, value, revision):
+    def write(self, room, item, value, revision, origin="repair"):
         self.log.append(("write", room, item, value))
+        self.origins.append(origin)
         if self.fail:
-            raise TimeoutError("transport may have sent it")
+            error = TimeoutError("transport may have sent it")
+            error.trail_id = "0badc0de"
+            raise error
         self.writes.append((room, item, value))
+        return "c0ffee00"
 
     def source(self, room, item):
         return self.sources[room]
@@ -199,6 +203,73 @@ class PlanCompilation(Harness, unittest.TestCase):
             self.advance(6)
         self.assertEqual(self.store.saved[WEST][1]["phase"], "verified")
         self.assertEqual(calls, [])
+
+
+def trail(logs):
+    return [record.getMessage() for record in logs.records]
+
+
+class Trail(Harness, unittest.TestCase):
+    """One INFO line per boundary outcome, repair write and phase transition;
+    nothing on the status heartbeat."""
+
+    def test_repairs_and_phase_transitions_are_logged_once_each(self):
+        self.make((policy(WEST, revision=4, hold=PLAYER, enabled=False), at(8)),
+                  observed={**PLAYER_ROUTE, "example_tv_power": "OFF"})
+        with self.assertLogs("oh_room_policy.worker", "INFO") as logs:
+            self.step()
+        self.assertEqual(trail(logs), [
+            "repair room=example_west item=example_tv_power value=ON revision=4 cmd=c0ffee00 outcome=dispatched attempt=1",
+            "phase room=example_west revision=4 previous=- phase=enforcing state=degraded reason=- desired=example_player"])
+        self.assertEqual(self.devices.origins, ["repair"])
+        self.devices.observed["example_tv_power"] = "ON"
+        self.advance(2)
+        with self.assertLogs("oh_room_policy.worker", "INFO") as logs:
+            self.step()
+        self.assertEqual(trail(logs), ["phase room=example_west revision=4 previous=enforcing phase=verified "
+                                       "state=verified reason=- desired=example_player"])
+        # The 10 s heartbeat republishes the same status without a line.
+        with self.assertNoLogs("oh_room_policy.worker", "INFO"):
+            for _ in range(4):
+                self.advance(6)
+                self.step()
+        self.assertEqual(self.store.saved[WEST][1]["phase"], "verified")
+
+    def test_boundary_outcomes_name_their_key_status_reason_and_command(self):
+        config = policy(WEST, locks=[window("10:00", "11:00", COMPUTER)])
+        self.make((config, at(9)), now=at(10, 0, 30))
+        self.devices.fail = True
+        with self.assertLogs("oh_room_policy.worker", "INFO") as logs:
+            self.step()
+        key = f"{WEST}:1:window:2026-11-02:start"
+        self.assertEqual(trail(logs)[0], f"boundary key={key} room=example_west revision=1 event=start "
+                                         "target=example_computer status=uncertain reason=dispatch_unconfirmed cmd=0badc0de")
+        self.assertEqual(self.devices.origins, ["schedule"])
+        self.make((config, at(9)), now=at(12))
+        with self.assertLogs("oh_room_policy.worker", "INFO") as logs:
+            self.step()
+        self.assertIn("status=skipped reason=missed cmd=-", trail(logs)[0])
+
+    def test_policy_io_writes_carry_their_trail_id_to_openhab(self):
+        adapter = Adapter()
+        io = PolicyIO(adapter, Revisions(3), None, HOUSE)
+        with self.assertLogs("oh_identity.trail", "INFO") as logs:
+            repair = io.write(WEST, "example_tv_power", "ON", 3)
+            scheduled = io.write(WEST, "loc_example_west_source", COMPUTER, 3, origin="schedule")
+        self.assertEqual(adapter.transport.sources, ["thermite.repair:" + repair, "thermite.schedule:" + scheduled])
+        self.assertEqual(trail(logs)[0].split(" ms=")[0],
+                         f"cmd id={repair} origin=repair client=- user=- principal=worker token=- peer=- req=- "
+                         "room=example_west action=field item=example_tv_power value=ON outcome=accepted")
+        self.assertIn(" action=source item=loc_example_west_source value=example_computer outcome=accepted", trail(logs)[1])
+
+        class Refused(Exception):
+            status = 503
+        adapter.transport.command = lambda item, value, source=None: (_ for _ in ()).throw(Refused("private body"))
+        with self.assertLogs("oh_identity.trail", "INFO") as logs, self.assertRaises(Refused) as raised:
+            io.write(WEST, "example_tv_power", "ON", 3)
+        self.assertIn(f"id={raised.exception.trail_id} origin=repair", trail(logs)[0])
+        self.assertIn("outcome=runtime_unavailable(http=503)", trail(logs)[0])
+        self.assertNotIn("private body", trail(logs)[0])
 
 
 class Boundaries(Harness, unittest.TestCase):
@@ -474,10 +545,11 @@ class Cache(unittest.TestCase):
 
 class Transport:
     def __init__(self):
-        self.commands, self.reads = [], {"loc_example_west_source": " example_player\n"}
+        self.commands, self.sources, self.reads = [], [], {"loc_example_west_source": " example_player\n"}
 
-    def command(self, item, value):
+    def command(self, item, value, source=None):
         self.commands.append((item, value))
+        self.sources.append(source)
 
     def read(self, item):
         return self.reads[item]

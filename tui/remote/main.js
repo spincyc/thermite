@@ -86,6 +86,13 @@ function memoryStore() {
  * THERMITE_REMOTE_STILL) and the timers (now, setTimeout, clearTimeout,
  * setInterval, clearInterval), for the session and the controller alike.
  */
+/* The gateway's command trail names this terminal tui/<host>: the host's
+ * first DNS label, or tui/terminal when it has none usable. */
+function clientLabel(hostname) {
+  const host = String(hostname || "").split(".")[0].toLowerCase();
+  return "tui/" + (/^[a-z0-9][a-z0-9-]{0,62}$/.test(host) ? host : "terminal");
+}
+
 function assemble(args, env) {
   const options = env || {};
   const shared = options.shared || Shared.load();
@@ -93,7 +100,8 @@ function assemble(args, env) {
   const Source = options.EventSource || EventSource;
   const environ = options.environ || process.env;
   const access = args.mock ? shared.Access.create({ mock: true, base: "http://127.0.0.1" }) : options.access || shared.Access.create({ base: args.url, fetch: options.fetch || globalThis.fetch,
-    getToken: () => Credentials.read(environ.THERMITE_REMOTE_TOKEN_FILE, args.url)?.token || null, native: args.native === true });  // lint: allow — read private credential only after authoritative discovery
+    getToken: () => Credentials.read(environ.THERMITE_REMOTE_TOKEN_FILE, args.url)?.token || null, native: args.native === true,  // lint: allow — read private credential only after authoritative discovery
+    client: clientLabel(options.hostname || require("os").hostname()) });
   const request = access && !access.native ? access.fetch : options.fetch;
   const Events = access && !access.native ? access.eventSource(Source) : Source;
   const timers = {};
@@ -196,4 +204,4 @@ if (require.main === module) {
   if (status !== null) process.exitCode = status;
 }
 
-module.exports = { parse, assemble, main, STILL };
+module.exports = { parse, assemble, main, clientLabel, STILL };

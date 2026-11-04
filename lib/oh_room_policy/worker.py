@@ -13,8 +13,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
+import logging
 import os
 from pathlib import Path
+import re
 import threading
 import time
 from typing import Protocol
@@ -24,11 +26,24 @@ from .model import PolicyError, active, validate
 from .plan import Observation, Plan, conflicts, expected_plan, repair_plan, verify
 from .schedule import GRACE, Boundary, desired_at, due_boundaries, local_instant, utc
 
+LOG = logging.getLogger(__name__)
 BACKOFF = (2, 5, 15, 30, 60)
 # Active enforcement republishes unchanged status at this interval, so a
 # status older than STALE_AFTER means the worker is not currently enforcing.
 RECONCILE_HEARTBEAT = 10.0
 STALE_AFTER = RECONCILE_HEARTBEAT + 5.0
+
+
+_PLAIN = re.compile(r"[A-Za-z0-9_.:/@+<>()=,-]{1,160}")
+
+
+def _line(kind, **fields):
+    """One key=value journal line. Every value is a room, Item, compiled
+    value, revision or fixed reason; anything else is quoted."""
+    def text(value):
+        value = "-" if value is None or value == "" else str(value)
+        return value if _PLAIN.fullmatch(value) else repr(value[:160])
+    return kind + "".join(" " + key + "=" + text(value) for key, value in fields.items())
 
 
 @dataclass(frozen=True)
@@ -48,9 +63,11 @@ class Store(Protocol):
 class IO(Protocol):
     """Device reads/writes. An IO may also offer source(room, item) -> str,
     the room's current Source Item state, so a catch-up start whose source
-    is already current sends nothing; without it, the catch-up is sent."""
+    is already current sends nothing; without it, the catch-up is sent.
+    write's origin is schedule (a boundary) or repair; it may return the
+    command's trail ID, and a failure may carry it as trail_id."""
     def read(self, items: tuple[str, ...]) -> dict[str, Observation]: ...
-    def write(self, room: str, item: str, value: str, revision: int) -> None: ...
+    def write(self, room: str, item: str, value: str, revision: int, origin: str = "repair") -> str | None: ...
 
 
 class ResourceLocks:
@@ -108,6 +125,9 @@ class Worker:
         self._plans = {}
         self._runtime = {}
         self._persisted = {}
+        # Room -> (revision, phase) last logged: a line per transition only,
+        # never per heartbeat.
+        self._phases = {}
         self._policies = ()
         self._reconcile_ready = False
         self._notifications = set()
@@ -179,6 +199,12 @@ class Worker:
         if not self.store.save_reconcile(room, revision, state):
             return False
         self._persisted[room] = (revision, copy.deepcopy(state), now, occurrence)
+        before = self._phases.get(room)
+        if before != (revision, state.get("phase")):
+            self._phases[room] = (revision, state.get("phase"))
+            LOG.info(_line("phase", room=room, revision=revision, previous=before[1] if before else None,
+                           phase=state.get("phase"), state=state.get("state"), reason=state.get("reason"),
+                           desired=state.get("desired")))
         return True
 
     def _scheduled(self, policies, states):
@@ -199,6 +225,7 @@ class Worker:
             return False
         outcome = event.outcome
         attempted = False
+        command = None
         if outcome == "due" and event.target is not None:
             try:
                 plan = self._plan(event.room, event.target)
@@ -231,13 +258,17 @@ class Worker:
                     else:
                         attempted = True
                         try:
-                            self.io.write(event.room, plan.source_item, event.target, event.revision)
+                            command = self.io.write(event.room, plan.source_item, event.target, event.revision,
+                                                    origin="schedule")
                             outcome = "dispatched"
-                        except Exception:
+                        except Exception as error:
                             # The transport may have sent it before failing.
+                            command = getattr(error, "trail_id", None)
                             outcome = "dispatch_unconfirmed"
         status = "applied" if outcome == "dispatched" else "uncertain" if outcome == "dispatch_unconfirmed" else "skipped"
         self.store.finish_boundary(event.room, event.revision, event.key, {"status": status, "reason": outcome})
+        LOG.info(_line("boundary", key=event.key, room=event.room, revision=event.revision, event=event.kind,
+                       target=event.target, status=status, reason=outcome, cmd=command))
         return attempted
 
     def _source_is(self, room, item, target):
@@ -361,6 +392,7 @@ class Worker:
         for room in tuple(self._persisted):
             if revisions.get(room) is None:
                 self._persisted.pop(room, None)
+                self._phases.pop(room, None)
         self._policies = tuple(policy for policy, _ in valid if policy["room"] not in blocked)
         for room, revision in inert:
             result[room] = {"phase": "unlocked", "desired": None}
@@ -423,10 +455,13 @@ class Worker:
                     if repair and mono >= runtime["write_due"] and self._current(revisions) and self._scheduled(policies, states):
                         item, value = repair[0]
                         try:
-                            self.io.write(room, item, value, revision)
+                            command, outcome = self.io.write(room, item, value, revision, origin="repair"), "dispatched"
                             status["repair"] = item
-                        except Exception:
+                        except Exception as error:
+                            command, outcome = getattr(error, "trail_id", None), "dispatch_unconfirmed"
                             status["reason"] = "dispatch_unconfirmed"
+                        LOG.info(_line("repair", room=room, item=item, value=value, revision=revision, cmd=command,
+                                       outcome=outcome, attempt=runtime["attempt"] + 1))
                         mono = self.monotonic()
                     if verification["state"] == "verified" and not status.get("reason"):
                         status["phase"] = "verified"

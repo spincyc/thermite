@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import ssl
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -145,6 +146,14 @@ def request(url, path, *, method="GET", data=None, token=None, ca_file=None, tim
             raise AccessError("Invalid site response") from None
 
 
+def token_name(hostname=None):
+    """A terminal credential is named after its computer, so the Account
+    page, the audit (token.create) and the command trail's token= tell
+    terminals apart: the host's first DNS label, else "thermite CLI"."""
+    host = (socket.gethostname() if hostname is None else hostname).split(".")[0].lower()
+    return host if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", host) else "thermite CLI"
+
+
 def login(url, username, password, *, ca_file=None, config_home=None, http=request):
     canonical = origin(url)
     path = credential_path(canonical, config_home)
@@ -155,7 +164,7 @@ def login(url, username, password, *, ca_file=None, config_home=None, http=reque
         ca_file = str(Path(ca_file).expanduser().resolve(strict=True))
         ssl.create_default_context(cafile=ca_file)
     result = http(canonical, "/api/v1/token-login", method="POST",
-                  data={"username": username, "password": password, "name": "thermite CLI", "days": 30}, ca_file=ca_file)
+                  data={"username": username, "password": password, "name": token_name(), "days": 30}, ca_file=ca_file)
     try:
         value = {"version": 1, "origin": canonical, **{key: result[key] for key in ("token", "id", "expires_at")}}
         if not TOKEN.fullmatch(value["token"]) or not isinstance(value["id"], str):

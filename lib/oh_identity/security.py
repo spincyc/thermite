@@ -54,8 +54,10 @@ def arm_setup(ttl_minutes=15):
     return raw
 
 
-def transition(state, enabled, actor):
-    """Caller owns the SQLite write transaction and all runtime room locks."""
+def transition(state, enabled, actor, *, request=None):
+    """Caller owns the SQLite write transaction and all runtime room locks.
+    request attributes the audit row to its peer; an actor without a request
+    credential proved the switch with its password."""
     if state.enabled == enabled:
         return state
     state.enabled = enabled
@@ -75,7 +77,9 @@ def transition(state, enabled, actor):
         row.updated_at = now
         row.save(update_fields=["revision", "config", "updated_at"])
     ReconcileState.objects.all().delete()
-    audit(actor, "security.enable" if enabled else "security.disable")
+    password = request is not None and not getattr(actor, "_identity_context", None)
+    audit(actor, "security.enable" if enabled else "security.disable", request=request,
+          kind="password" if password else None)
     if actor is not None:
         actor.refresh_from_db()
     return state
@@ -141,5 +145,7 @@ def change_security(request, data):
             fresh = User.objects.filter(pk=actor.pk, is_active=True).first()
             if not fresh or fresh.auth_revision != actor.auth_revision or not is_admin(fresh):
                 raise Problem("authorization_changed", 401)
-            state = transition(state, data["enabled"], fresh)
+            if getattr(actor, "_identity_context", None):
+                fresh._identity_context = actor._identity_context
+            state = transition(state, data["enabled"], fresh, request=request)
         return status(state)

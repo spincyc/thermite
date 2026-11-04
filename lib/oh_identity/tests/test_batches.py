@@ -212,10 +212,10 @@ class AllOff(TransactionTestCase):
         barrier = threading.Barrier(4)
         outer = self
         class Transport(FakeRuntime):
-            def command(self, item, value):
+            def command(self, item, value, source=None):
                 outer.assertFalse(connections["default"].in_atomic_block)
                 barrier.wait(timeout=3)
-                super().command(item, value)
+                super().command(item, value, source)
         adapter = self.adapter(4, transport=Transport())
         closed = []
         original = connections.close_all
@@ -248,8 +248,8 @@ class AllOff(TransactionTestCase):
     def test_revoked_credential_after_first_command_cannot_dispatch_queued_room(self):
         token = self.token
         class Transport(FakeRuntime):
-            def command(self, item, value):
-                super().command(item, value)
+            def command(self, item, value, source=None):
+                super().command(item, value, source)
                 PersonalToken.objects.filter(pk=token.pk).update(revoked=True)
         adapter = self.adapter(3, transport=Transport())
         batch = CommandBatches(workers=1, capacity=4)
@@ -273,7 +273,7 @@ class AllOff(TransactionTestCase):
             with locks.hold([*("room:" + room for room in rooms), *resources]):
                 yield
         class Transport(FakeRuntime):
-            def command(self, item, value):
+            def command(self, item, value, source=None):
                 nonlocal active, peak
                 with guard:
                     active += 1
@@ -281,7 +281,7 @@ class AllOff(TransactionTestCase):
                 try:
                     if not both_attempted.wait(3):
                         raise AssertionError("independent room did not attempt its lock")
-                    super().command(item, value)
+                    super().command(item, value, source)
                 finally:
                     with guard:
                         active -= 1

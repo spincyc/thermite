@@ -48,7 +48,7 @@ class SharedZoneSource(TestCase):
         data = two_zone_house()
         self.assertEqual(oh_render.validate(data), [])
         self.commands = []
-        transport = type("Transport", (), {"command": lambda _, item, value: self.commands.append((item, value)),
+        transport = type("Transport", (), {"command": lambda _, item, value, source=None: self.commands.append((item, value)),
                                             "read": lambda _, item: "off"})()
         self.adapter = RuntimeAdapter(RuntimeContract(**oh_site_contract.compile(House(data), oh_render.build(data))),
                                       transport, policy=oh_room_policy)

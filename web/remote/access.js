@@ -57,8 +57,26 @@
       can_edit: value.can_edit === true, is_guest: value.is_guest === true, auth_enabled: value.auth_enabled !== false, site: typeof value.site === "string" ? value.site : null,
       permissions: value.permissions.filter((permission) => PERMISSIONS.includes(permission)) };
   }
+  // This client's label for the gateway's command trail (X-Thermite-Client):
+  // web/<tab id>, kept for the tab's session, or the terminal's own
+  // tui/<host>. The gateway logs it as a claim, never as authority.
+  const CLIENT = /^(web|tui)\/[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+  function clientLabel(value) {
+    if (typeof value === "string" && CLIENT.test(value)) return value;
+    let id = null;
+    try { id = global.sessionStorage.getItem("thermite.tab"); } catch (_) { /* no storage: one ID per page */ }
+    if (typeof id !== "string" || !/^[0-9a-f]{8}$/.test(id)) {
+      const bytes = new Uint8Array(4);
+      if (global.crypto?.getRandomValues) global.crypto.getRandomValues(bytes);
+      else bytes.forEach((_, index) => { bytes[index] = Math.floor(Math.random() * 256); });
+      id = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      try { global.sessionStorage.setItem("thermite.tab", id); } catch (_) { /* no storage */ }
+    }
+    return "web/" + id;
+  }
   function create(options) {
     const config = options || {}, rawFetch = config.fetch || global.fetch.bind(global);
+    const label = clientLabel(config.client);
     const base = (config.base || "").replace(/\/$/, ""), origin = new URL(base || global.location.href).origin;
     const legacy = config.native === true, mock = config.mock === true;
     // The plain-HTTP Guest listener: a Guest only, signing in on the HTTPS site.
@@ -130,6 +148,7 @@
       if (target.origin !== origin || target.username || target.password) throw problem("origin_mismatch");
       const request = { ...(init || {}), credentials: token && !publicRequest ? "omit" : "same-origin", redirect: "error", cache: "no-store" };
       const headers = new Headers(request.headers || {});
+      headers.set("X-Thermite-Client", label);
       if (token && !publicRequest) headers.set("Authorization", "Bearer " + token);
       const bearerRequest = token && !publicRequest;
       if (!bearerRequest && !["GET", "HEAD"].includes((request.method || "GET").toUpperCase()) && csrf) headers.set("X-CSRFToken", csrf);

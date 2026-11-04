@@ -90,7 +90,11 @@ async function browser(page, client) {
   assert(!guestCalls.some(route => route.endsWith("/lock")), "guest cannot send a lock mutation");
 
   const personal = "thm_" + "T".repeat(32);
-  const bearer = Access.create({ base: origin, token: personal, fetch: async (url, init) => {
+  // Every request names its client for the gateway's command trail: a
+  // browser tab's web/<id>, or the terminal's own tui/<host>.
+  const labels = [];
+  const bearer = Access.create({ base: origin, token: personal, client: "tui/laptop", fetch: async (url, init) => {
+    labels.push(init.headers.get("X-Thermite-Client"));
     if (new URL(url).pathname === "/api/v1/security") { assert.equal(init.headers.get("Authorization"), null); return response(mode(true)); }
     assert.equal(init.headers.get("Authorization"), "Bearer " + personal);
     assert.equal(init.headers.get("Cookie"), null); assert.equal(init.headers.get("X-CSRFToken"), null);
@@ -98,6 +102,15 @@ async function browser(page, client) {
     return response(admin);
   } });
   await bearer.ready(); assert(bearer.canEdit());
+  assert.deepEqual([...new Set(labels)], ["tui/laptop"]);
+  const tabLabels = [];
+  for (const client of [undefined, "web/../x", "tui/a b"]) {
+    const tab = Access.create({ base: origin, client, fetch: async (url, init) => { tabLabels.push(init.headers.get("X-Thermite-Client")); return response(mode(false)); } });
+    await tab.loadSecurity();
+  }
+  assert(tabLabels.every(label => /^web\/[0-9a-f]{8}$/.test(label)), tabLabels.join());
+  const Main = require("../tui/remote/main");
+  assert.deepEqual(["laptop.home.example", "LAPTOP", "", "bad_host!"].map(Main.clientLabel), ["tui/laptop", "tui/laptop", "tui/terminal", "tui/terminal"]);
   const invalid = Access.create({ base: origin, token: personal, fetch: async (url, init) => {
     if (new URL(url).pathname === "/api/v1/security") { assert.equal(init.headers.get("Authorization"), null); return response(mode(false)); }
     assert.equal(init.headers.get("Authorization"), "Bearer " + personal); return response({ error: "invalid_token" }, 401);

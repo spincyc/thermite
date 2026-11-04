@@ -22,7 +22,7 @@ from .guest import access_config, listener
 from .models import PersonalToken, ReconcileState, RoomPolicy, User
 from .policy_store import TOKEN_RETENTION, next_revision
 from .runtime import get_adapter, policy_problem
-from .services import Problem, admin_actor, audit, issue_token, is_admin, permissions, save_user
+from .services import Problem, admin_actor, audit, issue_token, is_admin, permissions, save_user, token_label
 
 
 def body(request):
@@ -119,7 +119,8 @@ def token_login(request):
         if set(data) - {"username", "password", "name", "days"}:
             raise Problem("invalid_login", 400)
         user = login_user(request, data, create_session=False)
-        token, raw = issue_token(user, data.get("name", "TUI"), data.get("days", 30))
+        # The password, not a session, minted this token, from this peer.
+        token, raw = issue_token(user, data.get("name", "TUI"), data.get("days", 30), request=request, kind="password")
         response = JsonResponse({"token": raw, "id": token.pk, "expires_at": token.expires_at, "user": me_data(user)}, status=201)
         response["Cache-Control"] = "no-store"
         return response
@@ -172,7 +173,7 @@ def tokens(request, ident=None):
         token = PersonalToken.objects.get(pk=ident, user=user)
         token.revoked = True
         token.save(update_fields=["revoked"])
-        audit(user, "token.revoke", token.pk)
+        audit(user, "token.revoke", token_label(token))
         return JsonResponse({"ok": True})
     if getattr(request, "identity_token", None):
         raise Problem("session_required", 403)
@@ -209,7 +210,9 @@ def effective_lock(adapter, room, saved, now):
             effective.update(locked=not authorization["allowed"], desired=authorization.get("desired"),
                              allowed=authorization["allowed"], reason=authorization.get("reason"),
                              until=state.get("end") if state else None)
-        except Exception:
+        except Exception as error:
+            from .trail import policy_unavailable
+            policy_unavailable("status", room, error)
             effective.update(locked=True, allowed=False, reason="policy_unavailable")
             state = None
     return effective, state, manual
@@ -369,8 +372,10 @@ def command(request, room):
     data = body(request)
     if set(data) != {"action", "value"} or not isinstance(data.get("action"), str):
         raise Problem("invalid_command")
-    # Ordinary controls are not security events and are not audited.
-    answer = get_adapter().dispatch(request.identity_user, room, data["action"], data["value"])
+    # Ordinary controls are not security events and are not audited; their
+    # trail is one journal line each (oh_identity.trail).
+    from .trail import origin
+    answer = get_adapter().dispatch(request.identity_user, room, data["action"], data["value"], origin=origin(request))
     return JsonResponse(answer, status=202)
 
 
@@ -502,26 +507,40 @@ def all_off(request):
         # threads acquire room/resource locks and make transport calls.
         raise Problem("runtime_busy", 503)
     from .batches import Busy, commands
+    from .trail import Batch, Command, origin
     adapter = get_adapter()
     user = request.identity_user
+    # One line for the batch; each room's command is its child, with its own
+    # ID, origin all_off and this batch's ID.
+    batch = Batch(origin(request), user)
     def dispatch(room):
         try:
             close_old_connections()
             # Original credential context is immutable and is revalidated by
             # dispatch after acquiring the same room/resource locks as usual.
-            return adapter.dispatch(user, room, "source", "off")
+            return adapter.dispatch(user, room, "source", "off", origin=batch.child)
         finally:
             connections.close_all()
-    results = commands.run(adapter.contract.rooms, dispatch,
-                           fatal=lambda error: not isinstance(error, Problem) or error.status == 401)
-    accepted, skipped = [], []
-    for room, result in results:
-        if isinstance(result, Busy):
-            skipped.append({"room": room, "reason": "runtime_busy"})
-        elif isinstance(result, Problem):
-            skipped.append({"room": room, "reason": result.code})
-        else:
-            accepted.append(room)
+    accepted, skipped, outcome = [], [], "error"
+    try:
+        results = commands.run(adapter.contract.rooms, dispatch,
+                               fatal=lambda error: not isinstance(error, Problem) or error.status == 401)
+        for room, result in results:
+            if isinstance(result, Busy):
+                skipped.append({"room": room, "reason": "runtime_busy"})
+                # Never admitted, so dispatch logged nothing for it.
+                Command(batch.child, user, room=room, action="source", value="off",
+                        item=adapter.contract.rooms[room]["source_item"]).finish(result)
+            elif isinstance(result, Problem):
+                skipped.append({"room": room, "reason": result.code})
+            else:
+                accepted.append(room)
+        outcome = "accepted"
+    except Problem as error:
+        outcome = error.code
+        raise
+    finally:
+        batch.finish(rooms=len(adapter.contract.rooms), accepted=len(accepted), skipped=len(skipped), outcome=outcome)
     return JsonResponse({"accepted": accepted, "skipped": skipped}, status=202)
 
 
@@ -548,7 +567,8 @@ def item_resource(request, item):
         value = request.body.decode("ascii")
     except UnicodeError:
         raise Problem("invalid_pairing_command") from None
-    answer = adapter.pair(user, item, value)
+    from .trail import origin
+    answer = adapter.pair(user, item, value, origin=origin(request))
     audit(request.identity_user, "pairing.command", item)
     return JsonResponse(answer, status=202)
 

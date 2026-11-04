@@ -280,7 +280,10 @@ def login_user(request, data, create_session=True):
     finally:
         HASHING.release()
     if user is None:
-        audit(None, "login", outcome="denied", request=request)
+        # The account tried, by ID, when it exists; never the attempted name,
+        # which may be a mistyped password.
+        account = User.objects.filter(username=username).values_list("pk", flat=True).first()
+        audit(None, "login", account or "", outcome="denied", request=request)
         raise Problem("invalid_login", 401)
     if create_session:
         # Password verification runs outside the write transaction. The switch

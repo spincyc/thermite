@@ -52,8 +52,10 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 65536
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Server errors and package warnings reach stderr (the journal) with paths,
 # frames and exception classes only: no request objects, headers, bodies,
-# query strings, tokens, upstream bodies or exception messages. Client 4xx
-# and CSRF refusals are attacker-controlled noise and are not logged.
+# query strings, tokens, upstream bodies or exception messages. Django's
+# own client 4xx and CSRF refusals are not logged; the trail's request line
+# (oh_identity.trail.RequestLog) names a refused request's method, path,
+# status and keyed peer digest only.
 _JOURNAL = {"handlers": ["journal"], "level": "WARNING", "propagate": False}
 LOGGING = {"version": 1, "disable_existing_loggers": False,
            "filters": {"private": {"()": "oh_identity.hardening.PrivateRecord"}},
@@ -65,6 +67,11 @@ LOGGING = {"version": 1, "disable_existing_loggers": False,
            "loggers": {"django.request": {**_JOURNAL, "level": "ERROR"},
                        "django.security.csrf": {"handlers": ["null"], "propagate": False},
                        "oh_identity": _JOURNAL, "oh_access": _JOURNAL, "oh_room_policy": _JOURNAL,
+                       # The command trail (oh_identity.trail) and the policy worker's
+                       # boundary, repair and phase lines: key=value at INFO, with
+                       # no credential, pairing code, body or address.
+                       "oh_identity.trail": {**_JOURNAL, "level": "INFO"},
+                       "oh_room_policy.worker": {**_JOURNAL, "level": "INFO"},
                        # Hypercorn configures no logging of its own (oh_access/service.py
                        # listener); its errors and unretrieved task exceptions use the
                        # same private handler.

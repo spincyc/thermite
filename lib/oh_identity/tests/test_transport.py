@@ -17,7 +17,7 @@ from django.conf import settings
 from django.test import SimpleTestCase, override_settings
 
 from oh_identity.runtime import project
-from oh_identity.transport import LoopbackTransport, native_batches
+from oh_identity.transport import CommandRefused, LoopbackTransport, native_batches
 
 
 class HTTPStream:
@@ -115,6 +115,31 @@ class NativeTransport(SimpleTestCase):
             self.assertTrue(all(instance.is_closed for instance in clients))
             with self.assertRaises(RuntimeError):
                 transport.command("power", "ON")
+
+    def test_commands_name_their_trail_source_and_keep_only_a_refusal_status(self):
+        sent = []
+        original = httpx.Client
+
+        def reply(request):
+            sent.append(request)
+            return httpx.Response(202 if request.content == b"ON" else 404, text="private upstream body")
+
+        with patch("oh_identity.transport.httpx.Client",
+                   side_effect=lambda **options: original(transport=httpx.MockTransport(reply), **options)):
+            transport = self.transport()
+            self.addCleanup(transport.close)
+            transport.command("power", "ON", source="thermite.web:1a2b3c4d")
+            transport.command("power", "ON")
+            for source in ("thermite.web:1A2B3C4D", "thermite.web:1a2b3c4d=>x", "other:1a2b3c4d", 7):
+                with self.assertRaises(ValueError):
+                    transport.command("power", "ON", source=source)
+            with self.assertRaises(CommandRefused) as refused:
+                transport.command("power", "OFF", source="thermite.repair:0a1b2c3d")
+        self.assertEqual(refused.exception.status, 404)
+        self.assertNotIn("private", str(refused.exception))
+        self.assertEqual([request.headers.get("X-OpenHAB-Source") for request in sent],
+                         ["thermite.web:1a2b3c4d", None, "thermite.repair:0a1b2c3d"])
+        self.assertEqual({request.headers["Content-Type"] for request in sent}, {"text/plain"})
 
     def test_a_slow_snapshot_does_not_hold_command_pool_or_client_creation_lock(self):
         entered, release = threading.Event(), threading.Event()

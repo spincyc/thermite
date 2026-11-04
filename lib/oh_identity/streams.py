@@ -114,6 +114,11 @@ class Slots:
         with self._guard:
             return sum(self._peers.values())
 
+    def counts(self, peer):
+        """(this peer's streams, all streams), for the stream trail."""
+        with self._guard:
+            return self._peers.get(peer, 0), sum(self._peers.values())
+
 
 slots = Slots()
 
@@ -228,9 +233,15 @@ def events(request):
                     "session": request.session.session_key if not token else None,
                     "security_revision": user._identity_context["security_revision"],
                     "guest": getattr(user, "is_guest", False)}
-        release = slots.acquire(peer_bucket(request.META.get("REMOTE_ADDR")))
+        bucket = peer_bucket(request.META.get("REMOTE_ADDR"))
+        release = slots.acquire(bucket)
         if release is None:
             raise Problem("too_many_streams", 429, retry_after=HEARTBEAT)
+        # One journal line when the stream opens and one when it ends, with
+        # its duration and the peer's and gateway's stream counts. The
+        # wrapped release runs once however the response ends.
+        from .trail import stream_opened
+        release = stream_opened(release, request, user, topics=len(topics), counts=lambda: slots.counts(bucket))
         content = stream(adapter, topics, snapshot, release)
         # A generator that never starts never runs its finally block.
         weakref.finalize(content, release)

@@ -17,11 +17,12 @@ PASSPHRASE = " ".join(("A disconnected", "identity test", "phrase 902!"))
 
 class FakeRuntime:
     def __init__(self):
-        self.commands = []
+        self.commands, self.sources = [], []
         self.states = {"loc_den_source": "player", "loc_desk_source": "off", "amp_volume": "56.5"}
 
-    def command(self, item, value):
+    def command(self, item, value, source=None):
         self.commands.append((item, value))
+        self.sources.append(source)
 
     def read(self, item):
         return self.states[item]

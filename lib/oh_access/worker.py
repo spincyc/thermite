@@ -131,7 +131,10 @@ class PolicyIO:
             raise AccessError("Not a compiled room Source Item")
         return str(self.adapter.transport.read(item)).strip()
 
-    def write(self, room, item, value, revision):
+    def write(self, room, item, value, revision, origin="repair"):
+        """Send one compiled route command; return its trail ID. origin is
+        schedule (a boundary) or repair. A failure carries the ID as
+        trail_id, so the worker's own line can name it."""
         if self.store.current_revision(room) != revision:
             raise AccessError("Policy revision changed")
         plans = self.plans.get(room, {})
@@ -140,9 +143,19 @@ class PolicyIO:
                       for plan in plans.values())
         if not allowed:
             raise AccessError("Worker command is not a compiled route field")
+        from oh_identity.trail import Command, Origin
+        action = "source" if any(item == plan.source_item for plan in plans.values()) else "field"
+        record = Command(Origin(origin), None, room=room, action=action, item=item, value=value)
         # Worker holds the shared room/resource file locks and rechecks schedule
         # occurrence immediately before this call. No database txn spans HTTP.
-        self.adapter.transport.command(item, value)
+        try:
+            self.adapter.transport.command(item, value, source=record.source)
+        except Exception as error:
+            record.failed(error)
+            error.trail_id = record.id
+            raise
+        record.finish()
+        return record.id
 
 
 class Warnings:

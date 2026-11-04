@@ -1,7 +1,6 @@
 """Short serialized mutations. Network I/O must stay outside these transactions."""
 
 import hashlib
-import hmac
 import secrets
 from datetime import timedelta
 
@@ -30,10 +29,14 @@ DENIED_CAP = 1000
 
 def peer_digest(request):
     """A keyed, non-reversible label for the direct peer's address bucket."""
-    from django.conf import settings
-    from .addresses import peer_bucket
-    bucket = peer_bucket(request.META.get("REMOTE_ADDR"))
-    return hmac.new(settings.SECRET_KEY.encode(), ("audit-peer\0" + bucket).encode(), hashlib.sha256).hexdigest()[:32]
+    from .trail import peer_digest as digest
+    return digest(request.META.get("REMOTE_ADDR"))
+
+
+def token_label(token):
+    """A token's audit target: its ID's first 8 characters (the command
+    trail's token=) and its name, which outlive the pruned token row."""
+    return (str(token.pk)[:8] + " " + token.name)[:100]
 
 
 def audit(actor, action, target="", outcome="ok", *, request=None, kind=None):
@@ -42,8 +45,12 @@ def audit(actor, action, target="", outcome="ok", *, request=None, kind=None):
         kind = ("guest" if context.get("guest") else "token" if context.get("token") else
                 "session" if context.get("session") else "local" if actor is not None else "anonymous")
     peer = context.get("peer") or (peer_digest(request) if request is not None else "")
-    Audit.objects.create(actor_id=getattr(actor, "pk", None) or None, action=action, target=str(target)[:100],
-                         outcome=outcome, principal=kind, peer=peer)
+    row = Audit.objects.create(actor_id=getattr(actor, "pk", None) or None, action=action, target=str(target)[:100],
+                               outcome=outcome, principal=kind, peer=peer)
+    # The journal mirrors each row once it is committed (oh_identity.trail);
+    # `thermite access audit` reads the table itself.
+    from .trail import audit as mirror
+    transaction.on_commit(lambda: mirror(row, actor))
     # Fixed schema and bounded retention; no arbitrary payload field.
     denied = outcome == "denied"
     rows = Audit.objects.filter(outcome="denied") if denied else Audit.objects.exclude(outcome="denied")
@@ -74,6 +81,10 @@ def admin_actor(actor):
     fresh = User.objects.filter(pk=actor.pk).first()
     if not fresh or fresh.auth_revision != actor.auth_revision or not is_admin(fresh):
         raise Problem("forbidden", 403)
+    # The fresh row acts with the request's credential: its audit rows name
+    # the session or token and the peer, not a trusted local call.
+    if getattr(actor, "_identity_context", None):
+        fresh._identity_context = actor._identity_context
     return fresh
 
 
@@ -145,7 +156,9 @@ def save_user(actor, data, ident=None):
     return user
 
 
-def issue_token(user, name, days=30):
+def issue_token(user, name, days=30, *, request=None, kind=None):
+    """request and kind attribute the audit row when user carries no request
+    credential: token login authenticates by password, not a session."""
     from .security import require_enabled
     from .auth import revalidate
     require_enabled()
@@ -155,5 +168,5 @@ def issue_token(user, name, days=30):
     raw = "thm_" + secrets.token_urlsafe(40)
     token = PersonalToken.objects.create(user=user, name=name.strip(), digest=hashlib.sha256(raw.encode()).hexdigest(),
                                          auth_revision=user.auth_revision, expires_at=timezone.now() + timedelta(days=days))
-    audit(user, "token.create", token.pk)
+    audit(user, "token.create", token_label(token), request=request, kind=kind)
     return token, raw

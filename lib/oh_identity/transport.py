@@ -14,6 +14,16 @@ import httpx
 from oh_ports import NATIVE_URL
 
 from .addresses import loopback_origin
+from .trail import SOURCE
+
+
+class CommandRefused(ValueError):
+    """openHAB answered a command with another status than 200 or 202. Only
+    the status is kept: the command's trail names it, never the body."""
+
+    def __init__(self, status):
+        super().__init__("Runtime command failed")
+        self.status = status
 
 
 def native_batches(topics, base=NATIVE_URL):
@@ -103,11 +113,23 @@ class LoopbackTransport:
             raise ValueError("Oversize runtime state")
         return response.text.strip()
 
-    def command(self, item, value):
+    def command(self, item, value, source=None):
+        """source (thermite.<origin>:<id>, the command's trail ID) becomes
+        the event source openHAB 5.2.3 records for the command: its REST
+        ItemResource takes X-OpenHAB-Source and prefixes it to its own
+        ("<source>=>org.openhab.core.io.rest$<user>"), which events.log and
+        the routing rule's trigger event both show. Every write shares one
+        service token, so this is how openHAB tells them apart. It is a
+        label, never authority."""
+        headers = {**self.headers, "Content-Type": "text/plain"}
+        if source is not None:
+            if not isinstance(source, str) or not SOURCE.fullmatch(source):
+                raise ValueError("Invalid command source")
+            headers["X-OpenHAB-Source"] = source
         response = self._client("command").post(self.base + "/rest/items/" + quote(item, safe=""), content=value,
-                                               headers={**self.headers, "Content-Type": "text/plain"})
+                                               headers=headers)
         if response.status_code not in {200, 202}:
-            raise ValueError("Runtime command failed")
+            raise CommandRefused(response.status_code)
 
     def group(self, item):
         response = self._client("read").get(self.base + "/rest/items/" + quote(item, safe=""), params={"fields": "members(name,state)"}, headers=self.headers)

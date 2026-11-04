@@ -161,6 +161,21 @@ already equals the target; that read is never an observation. Stream failures
 are logged at WARNING at most every five minutes, naming only the exception
 class and how many failures were not logged.
 
+Every command the worker sends has a `cmd` line in the command trail
+(`origin=schedule` or `origin=repair`; see `oh_identity`). The worker also
+logs, at INFO, one `boundary` line per boundary outcome (key, room, revision,
+event, target, status, reason, command ID), one `repair` line per repair write
+(room, item, value, revision, command ID, outcome, attempt) and one `phase`
+line when a room's phase or policy revision changes. The 10-second heartbeat
+logs nothing.
+
+`thermite access audit --config FILE [--since 7d|2026-11-04T18:00]
+[--action login] [--json]`, run as the service account like `prune`, prints
+the security audit oldest first: time, action, outcome, principal, actor,
+target and the first 8 characters of the peer digest, as the journal's
+`audit` lines do. `--action token` selects `token.create` and `token.revoke`.
+It reads only.
+
 A policy row for a room absent from the compiled house is ignored; remove such
 rows with `thermite access prune --config …` as the service account. A
 present room's policy that no longer validates (for example, a retired

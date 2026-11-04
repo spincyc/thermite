@@ -76,8 +76,28 @@ writes; the `-wal`/`-shm` side files are private like the database.
 Server errors (`django.request` 5xx) and `oh_identity`, `oh_access` and
 `oh_room_policy` warnings go to stderr, which the units send to the journal.
 Records carry the path, traceback frames and exception class only: never
-request objects, headers, bodies, query strings or exception messages. Client
-4xx answers and CSRF refusals are not logged. Every response carries
+request objects, headers, bodies, query strings or exception messages.
+
+The command trail (`oh_identity.trail`, INFO) adds one key=value line per
+command, All off batch, security event, event stream and gateway request.
+Every command gets an 8-character ID: its `cmd` line names the origin (`web`,
+`tui`, `guest`, `api` for a client that names none, `all_off`, `schedule`,
+`repair`), the client's own `X-Thermite-Client` label (`web/<tab>` or
+`tui/<host>`, a label and never authority), the account, its credential kind,
+a token's first 8 ID characters, the request ID, room, action, item, value,
+outcome and milliseconds. A refusal names its lock (`lock=manual` or
+`lock=schedule`, and `lock_room`); an openHAB failure its HTTP status or
+exception class. openHAB receives the ID as the command's event source,
+`X-OpenHAB-Source: thermite.<origin>:<id>`. Pairing values are `<private>`;
+addresses appear only as `peer=`, the first 8 characters of the audit's keyed
+peer digest. Every audit row is mirrored as an `audit` line once committed.
+Each response carries `X-Request-Id`; requests that are not GET or HEAD, and
+responses that are not 2xx, get a `req` line, so successful polls and assets
+are not logged. Event streams log `stream open` and `stream close` with their
+duration and the peer's and gateway's stream counts. A saved policy that
+cannot be evaluated logs `policy_unavailable` at WARNING, at most every five
+minutes per room. Nothing of the trail is stored beyond the journal. Every
+response carries
 `Content-Security-Policy: default-src 'self'; img-src 'self' blob:;
 object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action
 'self'` (camera snapshots display through `blob:` URLs; WebRTC is not governed
@@ -150,7 +170,12 @@ Each peer bucket may hold 12 streams and the gateway 64; more answer 429
 Security events are audited with the principal kind (`guest`, `session`,
 `token`, `password`, `local` or `anonymous`) and a keyed digest of the peer's
 address bucket, never the address. Ordinary room commands and All Off are not
-security events and are not audited. Denied sign-ins keep their own
+security events and are not audited (their trail is the journal's `cmd`
+lines). A denied sign-in records the account's ID when the name exists and
+never the attempted name; a token's audit target is its ID's first 8
+characters and its name, and a terminal names its token after its host.
+`thermite access audit --config FILE [--since 7d] [--action login]`, run as
+the service account, reads the table. Denied sign-ins keep their own
 1000-record cap so they cannot evict the 5000 other records. The worker prunes
 daily: boundary receipts older than three days (the worker looks back two),
 expired sessions, revoked tokens, tokens expired over a week, and expired
