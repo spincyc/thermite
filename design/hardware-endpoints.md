@@ -1,5 +1,21 @@
 # Radxa ZERO 3E endpoint code design
 
+> **Superseded in part, 2026-11-04.** Yoke implemented its endpoints
+> differently from this proposal. Where they differ, Yoke's decisions
+> govern ([design](https://github.com/spincyc/yoke/blob/main/doc/design/USB-DATAPATH.md),
+> [review dispositions](https://github.com/spincyc/yoke/blob/main/doc/research/REVIEW-2026-11-04.md)).
+>
+> | Topic | This proposal | Decided instead |
+> |---|---|---|
+> | IR | LIRC on the Radxa, optional Mega | A standalone ESP32 PoE endpoint with RMT output and an opt-in Global Caché iTach subset on TCP 4998 (Yoke ADRs 0025/0026). Rockchip `pwm-ir-tx` uses an inaccurate sleep path, and ADK's Mega code is NEC-only at 38 kHz |
+> | Computer-side USB output | vhci import, then libusb, then GadgetFS | A userspace USB/IP client feeding Raw Gadget in a separate worker, with no vhci import (ADRs 0021/0022) |
+> | Computer-side power | PoE | Powered by the computer through the OTG port, with no HAT |
+> | Data-plane admission | — | Producers admit USB/IP sessions only from authenticated paired consumers (ADR 0024) |
+>
+> For Thermite, its Global Caché integration accepts only a genuine iTach
+> IP2IR, so it needs a model allowance before it can drive a Yoke IR
+> endpoint.
+
 Proposal, 2026-11-02. Build the standalone hardware runtime in **Yoke**;
 Thermite supplies an optional integration. Each ZERO 3E can run IR and USB
 services together. Pairing survives power loss and network outages, and
