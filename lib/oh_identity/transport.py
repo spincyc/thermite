@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import stat
 import threading
 import weakref
@@ -24,6 +25,31 @@ class CommandRefused(ValueError):
     def __init__(self, status):
         super().__init__("Runtime command failed")
         self.status = status
+
+#: An upstream topic filter: one verb of one exact Item, or of every Item.
+FILTER = re.compile(r"openhab/items/(\*|[A-Za-z_][A-Za-z0-9_]*)/(stateupdated|statechanged|command)")
+#: Bytes of one upstream request line, below Jetty's limit.
+URL_BYTES = 6000
+#: Bytes of one read of every Item's state.
+STATES_BYTES = 8 * 1024 * 1024
+
+
+def native_query(filters, base=NATIVE_URL):
+    """The topics query of one upstream subscription. A filter is an exact
+    public topic, never a pairing command, or one verb of every Item; a
+    wildcard reaches private Items too, so its consumer's projection must
+    discard every topic it does not allow before reading a payload."""
+    from .runtime import safe_item
+    if not filters:
+        raise ValueError("No runtime topics")
+    for topic in filters:
+        match = FILTER.fullmatch(topic) if isinstance(topic, str) else None
+        if not match or match[1] != "*" and (not safe_item(match[1]) or match[2] == "command" and "_pairing" in match[1]):
+            raise ValueError("Invalid native topic")
+    query = quote(",".join(filters), safe="/,*")
+    if len((base + "/rest/events?topics=" + query).encode()) > URL_BYTES:
+        raise ValueError("Runtime topics exceed the native URL budget")
+    return query
 
 
 def native_batches(topics, base=NATIVE_URL):
@@ -62,7 +88,6 @@ def native_batches(topics, base=NATIVE_URL):
 
 
 class LoopbackTransport:
-    projects_events = True
     def __init__(self, base, token_file, timeout=5):
         try:
             loopback_origin(base)
@@ -131,6 +156,22 @@ class LoopbackTransport:
         if response.status_code not in {200, 202}:
             raise CommandRefused(response.status_code)
 
+    def states(self, names):
+        """The raw states of these Items, read together in one request. openHAB
+        lists every Item; only the named ones are kept, the rest never leave
+        this method."""
+        wanted = set(names)
+        response = self._client("read").get(self.base + "/rest/items", params={"fields": "name,state"},
+                                            headers=self.headers, timeout=15)
+        response.raise_for_status()
+        if len(response.content) > STATES_BYTES:
+            raise ValueError("Oversize runtime states")
+        rows = response.json()
+        if not isinstance(rows, list):
+            raise ValueError("Invalid runtime states")
+        return {row["name"]: row["state"] for row in rows
+                if isinstance(row, dict) and row.get("name") in wanted and isinstance(row.get("state"), str)}
+
     def group(self, item):
         response = self._client("read").get(self.base + "/rest/items/" + quote(item, safe=""), params={"fields": "members(name,state)"}, headers=self.headers)
         response.raise_for_status()
@@ -149,11 +190,13 @@ class LoopbackTransport:
                 data.extend(chunk)
             return response.headers.get("content-type", "").split(";")[0], bytes(data)
 
-    async def _events(self, client, query):
+    async def _events(self, client, query, opened=None):
         async with client.stream("GET", self.base + "/rest/events?topics=" + query, headers=self.headers) as response:
             response.raise_for_status()
             if response.headers.get("content-type", "").split(";")[0] != "text/event-stream":
                 raise ValueError("Not an event stream")
+            if opened:
+                opened()
             data, buffer, size = [], bytearray(), 0
             # Yield small updates as they arrive. A fixed chunk size makes
             # httpx wait for that many bytes before exposing a quiet SSE frame.
@@ -174,6 +217,20 @@ class LoopbackTransport:
                         data.append(line[5:].lstrip(" "))
                 if len(buffer) + size > 65536:
                     raise ValueError("Oversize runtime event")
+
+    async def subscribe(self, filters, *, project, opened=None):
+        """One upstream SSE connection for these topic filters (native_query).
+        Yields project(event) for each event it keeps (not None), projected
+        before anything is buffered. `opened` is called once openHAB has
+        answered with an event stream: its subscription is then registered,
+        so a state read after it cannot miss a later event."""
+        query = native_query(filters, self.base)
+        async with httpx.AsyncClient(trust_env=False, follow_redirects=False,
+                                     timeout=httpx.Timeout(15, read=None)) as client:
+            async for raw in self._events(client, query, opened):
+                value = project(raw)
+                if value is not None:
+                    yield value
 
     async def events(self, topics, *, project):
         queries = native_batches(topics, self.base)

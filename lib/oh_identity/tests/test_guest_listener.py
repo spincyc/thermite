@@ -160,9 +160,12 @@ class Listening(TestCase):
     def test_reads_and_events_reach_their_views(self):
         self.assertEqual(call("get", "/rest/items/loc_den_source/state").content, b"player")
         self.assertEqual(call("get", "/rest/items/unrelated_secret/state").status_code, 404)
-        response = call("get", "/rest/events", {"topics": "openhab/items/loc_den_source/stateupdated"})
-        self.assertEqual((response.status_code, response["Content-Type"]), (200, "text/event-stream"))
-        self.assertEqual(call("get", "/rest/events", {"topics": "openhab/items/tv_pairing/command"}).status_code, 400)
+        # The Home and Remotes streams; Pairing's stays on the HTTPS site.
+        for view in ("remote", "home"):
+            response = call("get", "/api/v1/events/" + view)
+            self.assertEqual((response.status_code, response["Content-Type"]), (200, "text/event-stream"))
+        self.assertEqual(call("get", "/api/v1/events/pair").status_code, 404)
+        self.assertEqual(call("get", "/rest/events", {"topics": "openhab/items/loc_den_source/stateupdated"}).status_code, 404)
         SecurityState.objects.filter(pk=1).update(enabled=True)
         policy = body(call("get", "/api/v1/rooms/den/policy"))
         self.assertEqual((policy["room"], policy["can_lock"], policy["effective"]["allowed"]), ("den", False, True))

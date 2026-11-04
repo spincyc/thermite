@@ -246,7 +246,8 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict
     groups = {cameras["statusGroup"]: sorted(camera_items)} if cameras["cameras"] else {}
     # Subscription approval is not write authority. Derived controller commands
     # remain observable while only the typed room action catalogue can write.
-    for name, description in remote_activity.manifest(house, conf)["items"].items():
+    activity = remote_activity.manifest(house, conf)["items"]
+    for name, description in activity.items():
         if not readable(name):
             continue
         if name not in states:
@@ -258,7 +259,36 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict
                     or name.endswith(".html") and name != "access.html",
                     **({"admin": True} if name in remote_system.ADMIN_ASSETS else {})} for name in remote.FILES}
     return {"rooms": rooms, "states": states, "routing": table, "house": copy.deepcopy(house.data), "assets": assets,
-            "asset_root": str(Path(asset_root).resolve()) if asset_root else None, "pairings": pairings, "groups": groups, "media": media}
+            "asset_root": str(Path(asset_root).resolve()) if asset_root else None, "pairings": pairings, "groups": groups, "media": media,
+            "views": views(house, rooms, activity, pairings)}
+
+
+def views(house: House, rooms: dict, activity: dict, pairings: dict) -> dict:
+    """The Items each client event stream view carries, by verb (oh_identity
+    topics.VIEWS). The remote takes its rooms' Sources as stateupdated, since
+    a choice ends at the next read-back even when it repeats the value, and
+    every other Item it reads (house.js controls, problems and route problems)
+    and the activity feed's Items as statechanged, with the feed's commands.
+    Home and Topology take only the rooms' Sources; Pairing its status and
+    result Items, whose repeated updates answer a code. The gateway keeps only
+    public topics of these."""
+    model = remote_model.build(house)
+    sources = sorted(room["source_item"] for room in rooms.values())
+    read = {room["routeProblem"] for room in model["rooms"]}
+    for device in model["devices"].values():
+        control = device.get("control") or {}
+        read.update(control[field] for field in ("power", "mute") if isinstance(control.get(field), str))
+        read.update(control[field]["item"] for field in ("volume", "input", "playback") if isinstance(control.get(field), dict))
+        read.add(((control.get("volume") or {}).get("displayMode") or {}).get("item"))
+        read.add(device.get("problem"))
+    read.update(name for name, description in activity.items() if description.get("states"))
+    read.discard(None)
+    status = {config[field] for spec in pairings.values() for config in (spec["config"],)
+              for field in ("status", "result") if isinstance(config.get(field), str)}
+    return {"remote": {"stateupdated": sources, "statechanged": sorted(read - set(sources)),
+                       "command": sorted(name for name, description in activity.items() if description.get("commands"))},
+            "home": {"statechanged": sources},
+            "pair": {"stateupdated": sorted(status)}}
 
 
 def factory(house: House, conf: Conf, **kwargs):

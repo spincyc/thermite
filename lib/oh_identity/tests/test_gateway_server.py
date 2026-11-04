@@ -37,6 +37,7 @@ from oh_identity.tests.test_core import FakeRuntime, Policy, adapter
 OPENSSL = shutil.which("openssl")
 HOST = "127.0.0.1"
 TOPIC = "openhab/items/loc_den_source/stateupdated"
+EVENTS = "/api/v1/events/remote"
 LIB = Path(__file__).resolve().parents[2]
 
 
@@ -82,12 +83,15 @@ class Seen:
 
 
 class EventRuntime(FakeRuntime):
-    """The fake runtime with native events: one update, then quiet until the
-    client goes away."""
+    """The fake runtime with native events: one upstream subscription that
+    reports one update, then stays quiet until the gateway closes it."""
 
-    async def events(self, topics):
-        yield {"topic": topics[0], "type": "ItemStateUpdatedEvent",
-               "payload": json.dumps({"type": "String", "value": "player"})}
+    async def subscribe(self, filters, *, project, opened=None):
+        opened()
+        value = project({"topic": TOPIC, "type": "ItemStateUpdatedEvent",
+                         "payload": json.dumps({"type": "String", "value": "player"})})
+        if value:
+            yield value
         await asyncio.Event().wait()
 
 
@@ -161,11 +165,12 @@ class Http2Gateway(TransactionTestCase):
         async def exercise(port):
             async with self.http2(port) as client, AsyncExitStack() as stack:
                 opened = await asyncio.gather(*(stack.enter_async_context(
-                    client.stream("GET", "/rest/events", params={"topics": TOPIC})) for _ in range(8)))
+                    client.stream("GET", EVENTS)) for _ in range(8)))
                 self.assertEqual([(each.status_code, each.http_version) for each in opened], [(200, "HTTP/2")] * 8)
                 alpn = opened[0].extensions["network_stream"].get_extra_info("ssl_object").selected_alpn_protocol()
                 events = await asyncio.gather(*(first_event(each) for each in opened))
-                self.assertEqual({json.loads(each["payload"])["value"] for each in events}, {"player"})
+                # Each stream's first frame is the one upstream's snapshot.
+                self.assertEqual({(each["type"], each["states"]["loc_den_source"]) for each in events}, {("snapshot", "player")})
                 self.assertEqual(streams.slots.count(), 8)
                 # Under HTTP/1.1 a browser's six connections would all be held
                 # by now and this read would queue behind them.
@@ -214,7 +219,7 @@ class Http2Gateway(TransactionTestCase):
         async def exercise(port):
             # Two streams of one connection fill the budget; a third is refused.
             async with self.http2(port) as client, AsyncExitStack() as stack:
-                held = [await stack.enter_async_context(client.stream("GET", "/rest/events", params={"topics": TOPIC}))
+                held = [await stack.enter_async_context(client.stream("GET", EVENTS))
                         for _ in range(2)]
                 await asyncio.gather(*(first_event(each) for each in held))
                 self.assertEqual(admission.active, 2)
@@ -251,7 +256,7 @@ class Http2Gateway(TransactionTestCase):
         async def exercise():
             async with httpx.AsyncClient(http2=http2, verify=trusting(self.cert), trust_env=False, timeout=10,
                                          base_url=f"https://{HOST}:{server.port}") as client, \
-                    client.stream("GET", "/rest/events", params={"topics": TOPIC}) as held:
+                    client.stream("GET", EVENTS) as held:
                 lines = held.aiter_lines()
                 while not (await anext(lines)).startswith("data:"):
                     pass
@@ -282,13 +287,13 @@ class Http2Gateway(TransactionTestCase):
                 self.assertNoLogs("hypercorn.error", logging.ERROR), self.assertNoLogs("django.request", logging.ERROR):
             with trusting(self.cert, ["http/1.1"]).wrap_socket(socket.create_connection((HOST, server.port)),
                                                                server_hostname=HOST) as tls:
-                tls.sendall(f"GET /rest/events HTTP/1.1\r\nHost: {HOST}:{server.port}\r\nUpgrade: websocket\r\n"
+                tls.sendall(f"GET /api/v1/events/remote HTTP/1.1\r\nHost: {HOST}:{server.port}\r\nUpgrade: websocket\r\n"
                             "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
                             "Sec-WebSocket-Version: 13\r\n\r\n".encode())
                 self.assertTrue(tls.recv(4096).startswith(b"HTTP/1.1 403 "))
             # RFC 8441 extended CONNECT, which hypercorn advertises over HTTP/2.
             headers = [(":method", "CONNECT"), (":protocol", "websocket"), (":scheme", "https"),
-                       (":path", "/rest/events"), (":authority", f"{HOST}:{server.port}"), ("sec-websocket-version", "13")]
+                       (":path", EVENTS), (":authority", f"{HOST}:{server.port}"), ("sec-websocket-version", "13")]
             with H2(self.cert, server.port) as connection:
                 connection.send(1, headers, end_stream=False)
                 self.assertEqual(connection.status(1), b"403")

@@ -16,7 +16,7 @@ from django.test import Client, SimpleTestCase, TestCase, TransactionTestCase
 
 import oh_room_policy
 from oh_access import audit as audit_reader
-from oh_identity import streams, trail
+from oh_identity import streams, topics, trail
 from oh_identity.batches import commands
 from oh_identity.models import Audit, PersonalToken, RoomPolicy, SecurityState, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter
@@ -372,10 +372,13 @@ class Auditing(Requests, TestCase):
 class Streams(TransactionTestCase):
     def setUp(self):
         bootstrap("owner", PASSPHRASE)
-        install_adapter(adapter())
+        self.adapter = adapter()
+        install_adapter(self.adapter)
 
     def test_a_stream_logs_its_opening_and_its_end_once_with_counts(self):
-        path = "/rest/events?topics=openhab/items/loc_den_source/stateupdated"
+        path = "/api/v1/events/remote"
+        # topics= is the number of topics the stream's view carries.
+        carried = str(len(topics.views(self.adapter.contract)["remote"]))
         with patch("oh_identity.streams.slots", streams.Slots()), self.assertLogs("oh_identity.trail", "INFO") as logs:
             first = Client(REMOTE_ADDR="192.0.2.20").get(path, secure=True)
             second = Client(REMOTE_ADDR="192.0.2.20").get(path, secure=True)
@@ -384,7 +387,7 @@ class Streams(TransactionTestCase):
             second.close()
         opened, closed = lines(logs, "stream open"), lines(logs, "stream close")
         self.assertEqual([(line["streams_peer"], line["streams_total"], line["principal"], line["topics"]) for line in opened],
-                         [("1", "1", "guest", "1"), ("2", "2", "guest", "1")])
+                         [("1", "1", "guest", carried), ("2", "2", "guest", carried)])
         self.assertEqual([(line["streams_peer"], line["streams_total"]) for line in closed], [("1", "1"), ("0", "0")])
         self.assertTrue(all(re.fullmatch(r"\d+", line["ms"]) for line in closed))
         self.assertNotIn("192.0.2.20", "\n".join(logs.output))

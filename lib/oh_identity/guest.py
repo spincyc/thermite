@@ -35,7 +35,7 @@ ROUTES = {
     "static/remote/": READ, "static/remote/<str:name>": READ,
     # Who the client is, whether accounts are on, and what rooms report.
     "api/v1/me": GET, "api/v1/security": GET,
-    "rest/events": GET, "rest/items/<slug:item>/state": GET,
+    "api/v1/events/remote": GET, "api/v1/events/home": GET, "rest/items/<slug:item>/state": GET,
     "api/v1/locks": GET, "api/v1/rooms/<room:room>/policy": GET,
     # Controls, with every room check (locks included) of the HTTPS site.
     "api/v1/rooms/<room:room>/commands": POST, "api/v1/all-off": POST,

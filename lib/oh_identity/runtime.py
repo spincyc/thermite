@@ -82,11 +82,13 @@ class RuntimeContract:
 
     rooms: id -> {sources, source_item, actions: action -> typed Item spec}.
     states: Item -> {kind, values/fields}; assets: basename -> {private}.
+    views: client stream view -> {verb: [Item, ...]}; topics.views() keeps
+    only public topics, and derives views for a contract without them.
     Source action is derived from source_item; other actions are explicit.
     """
 
     def __init__(self, rooms, states=None, routing=None, house=None, assets=None, asset_root=None,
-                 pairings=None, groups=None, media=None):
+                 pairings=None, groups=None, media=None, views=None):
         data = copy.deepcopy(dict(rooms))
         reads = copy.deepcopy(states or {})
         for ident, room in data.items():
@@ -105,6 +107,12 @@ class RuntimeContract:
         self.pairings = frozen(copy.deepcopy(pairings or {}))
         self.groups = frozen(copy.deepcopy(groups or {}))
         self.media = frozen(copy.deepcopy(media or {}))
+        views = copy.deepcopy(views or {})
+        if not isinstance(views, dict) or any(not isinstance(spec, dict) or any(
+                not isinstance(items, list) or not all(isinstance(item, str) for item in items) for items in spec.values())
+                for spec in views.values()):
+            raise ValueError("Invalid runtime view contract")
+        self.views = frozen(views)
 
     def policy_contract(self):
         return {"rooms": {key: {"sources": list(value["sources"])} for key, value in self.rooms.items()},

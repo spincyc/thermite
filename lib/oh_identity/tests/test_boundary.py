@@ -7,8 +7,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode
 
+import httpx
 from asgiref.sync import async_to_sync, sync_to_async
 from django.conf import settings
 from django.db import close_old_connections
@@ -19,27 +20,13 @@ from oh_identity.models import PersonalToken, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter
 from oh_identity.services import Problem, bootstrap, issue_token, save_user
 from oh_identity.security import get_state
-from oh_identity.streams import frame, stream, topics_for
-from oh_identity.tests.test_core import FakeRuntime, PASSPHRASE, adapter
-from oh_identity.tests.test_transport import HTTPClient, many_topics
+from oh_identity import hub as hubs
+from oh_identity.streams import stream
+from oh_identity.tests.test_core import PASSPHRASE, adapter
+from oh_identity.tests.test_event_hub import Upstream, event as native_event
+from oh_identity.tests.test_transport import HTTPClient
+from oh_identity.topics import available, frame
 from oh_identity.transport import LoopbackTransport
-
-
-class StreamTransport(FakeRuntime):
-    def __init__(self):
-        super().__init__()
-        self.queue = asyncio.Queue()
-        self.closed = False
-
-    async def events(self, topics):
-        try:
-            while True:
-                event = await self.queue.get()
-                if event is None:
-                    return
-                yield event
-        finally:
-            self.closed = True
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -256,14 +243,12 @@ class Boundary(TransactionTestCase):
         self.assertEqual(client.get("/static/remote/system.json", secure=True, HTTP_AUTHORIZATION="Bearer " + admin_raw).status_code, 401)
 
     def test_private_topic_rejected_before_payload_parse_and_native_type_exact(self):
-        contract = RuntimeContract({}, states={"tv_pairing": {"kind": "enum"},
+        contract = RuntimeContract({}, states={"tv_pairing": {"kind": "enum", "commands": True},
                                   "tv_pairing_result": {"kind": "pairing_result"},
                                   "public_volume": {"kind": "number", "max": 100, "commands": True}})
-        allowed = topics_for(contract, "openhab/items/public_volume/*")
-        self.assertEqual(len(allowed), 3)
-        self.assertFalse(any("pairing" in item for item in allowed))
-        with self.assertRaises(Problem):
-            topics_for(contract, "openhab/items/tv_pairing/command")
+        allowed = available(contract)
+        self.assertEqual(len([topic for topic in allowed if "public_volume" in topic]), 3)
+        self.assertFalse(any("/tv_pairing/" in topic or topic.endswith("pairing_result/command") for topic in allowed))
         sentinel = "synthetic-private-sentinel"
         event = {"topic": "openhab/items/public_volume/command", "type": "ItemCommandEvent",
                  "payload": json.dumps({"type": "Decimal", "value": "47", "cookie": sentinel})}
@@ -276,56 +261,83 @@ class Boundary(TransactionTestCase):
         token, _ = issue_token(self.admin, "stream")
         snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token.pk), "security_revision": get_state().revision}
         contract = self.adapter.contract
-        topics = topics_for(contract, "openhab/items/loc_den_source/stateupdated")
 
         async def check():
-            transport = StreamTransport()
-            live = RuntimeAdapter(contract, transport)
-            frames = stream(live, topics, snapshot)
-            await transport.queue.put({"topic": topics[0], "type": "ItemStateUpdatedEvent",
-                                       "payload": json.dumps({"type": "String", "value": "player"})})
-            first = await anext(frames)
-            self.assertIn(b"player", first)
+            upstream = Upstream()
+            live = RuntimeAdapter(contract, upstream)
+            released = []
+            frames = stream(live, "remote", snapshot, release=lambda: released.append(True))
+            self.assertIn(b'"loc_den_source":"player"', await anext(frames))
+            upstream.send(native_event("loc_den_source", "off"))
+            self.assertIn(b'"value\\":\\"off', await anext(frames))
             await sync_to_async(PersonalToken.objects.filter(pk=token.pk).update)(revoked=True)
-            await transport.queue.put({"topic": topics[0], "type": "ItemStateUpdatedEvent",
-                                       "payload": json.dumps({"type": "String", "value": "off"})})
+            upstream.send(native_event("loc_den_source", "player"))
             with self.assertRaises(StopAsyncIteration):
                 await anext(frames)
-            self.assertTrue(transport.closed)
+            self.assertEqual(released, [True])
             token.revoked = False
             await sync_to_async(token.save)(update_fields=["revoked"])
-            transport = StreamTransport()
-            frames = stream(RuntimeAdapter(contract, transport), topics, snapshot)
+            hub = hubs.hub_for(live)
+            frames = stream(live, "remote", snapshot, release=lambda: released.append(True))
+            await anext(frames)
             pending = asyncio.create_task(anext(frames))
             await asyncio.sleep(.03)
+            self.assertEqual(hub.status()["streams"]["remote"], 1)
             pending.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await pending
-            self.assertTrue(transport.closed)
+            # A cancelled client leaves the hub; the shared upstream stays for others.
+            self.assertEqual((hub.status()["streams"]["remote"], released), (0, [True, True]))
+            self.assertEqual(len(upstream.connections), 1)
         async_to_sync(check)()
 
-    def test_revocation_closes_all_real_batched_transport_contexts(self):
+    @patch("oh_identity.streams.REVALIDATE", 0)
+    @patch("oh_identity.hub.LINGER", 0)
+    def test_one_real_wildcard_upstream_is_read_once_and_closed_with_its_last_stream(self):
         token, _ = issue_token(self.admin, "multi-stream")
         snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token.pk), "security_revision": get_state().revision}
-        topics = many_topics()
-        states = {topic.split("/")[2]: {"kind": "number", "max": 100, "commands": True} for topic in topics}
-        contract = RuntimeContract({}, states=states)
+        contract = RuntimeContract({"den": {"source_item": "loc_den_source", "sources": ["player"]}},
+                                   states={"public_volume": {"kind": "number", "max": 100, "commands": True}})
+        reads = []
+
+        def reply(request):
+            reads.append(str(request.url))
+            return httpx.Response(200, json=[{"name": "loc_den_source", "state": "player"}, {"name": "public_volume", "state": "47"},
+                                             {"name": "private_token", "state": "synthetic-private-sentinel"}])
+        original = httpx.Client
 
         async def check(path):
             client = HTTPClient()
-            with patch("oh_identity.transport.httpx.AsyncClient", return_value=client):
+            with patch("oh_identity.transport.httpx.AsyncClient", return_value=client), \
+                    patch("oh_identity.transport.httpx.Client", side_effect=lambda **options: original(transport=httpx.MockTransport(reply), **options)):
                 transport = LoopbackTransport("http://127.0.0.1:8080", path)
-                frames = stream(RuntimeAdapter(contract, transport), topics, snapshot)
-                event = {"topic": topics[0], "type": "ItemStateUpdatedEvent", "payload": json.dumps({"type": "Percent", "value": "47"})}
-                await client.queue.put(("data: " + json.dumps(event) + "\n\n").encode())
-                first = await anext(frames)
-                self.assertIn(b"47", first)
-                self.assertGreater(len(client.opened), 1)
+                live = RuntimeAdapter(contract, transport)
+                first, second = stream(live, "remote", snapshot), stream(live, "home", snapshot)
+                opening = [await anext(first), await anext(second)]
+                self.assertIn(b'"public_volume":"47"', opening[0])
+                self.assertEqual(opening[1], b'data: {"type":"snapshot","view":"home","states":{"loc_den_source":"player"}}\n\n')
+                self.assertNotIn(b"sentinel", b"".join(opening))
+                self.assertEqual(reads, ["http://127.0.0.1:8080/rest/items?fields=name%2Cstate"])
+                self.assertEqual([unquote(url.split("?topics=")[1]) for url in client.opened],
+                                 ["openhab/items/*/stateupdated,openhab/items/*/statechanged,openhab/items/*/command"])
+                for item, value in (("private_token", "synthetic-private-sentinel"), ("public_volume", "48")):
+                    event = native_event(item, value, "statechanged", old="47")
+                    await client.queue.put(("data: " + json.dumps(event) + "\n\n").encode())
+                self.assertIn(b"48", await anext(first))
                 await sync_to_async(PersonalToken.objects.filter(pk=token.pk).update)(revoked=True)
+                await client.queue.put(("data: " + json.dumps(native_event("public_volume", "49", "statechanged", old="48")) + "\n\n").encode())
                 with self.assertRaises(StopAsyncIteration):
-                    await anext(frames)
+                    await anext(first)
+                self.assertEqual(client.closed, [])
+                with patch("oh_identity.streams.HEARTBEAT", .01), self.assertRaises(StopAsyncIteration):
+                    await anext(second)
+                for _ in range(100):
+                    if client.exited:
+                        break
+                    await asyncio.sleep(.01)
                 self.assertCountEqual(client.closed, client.opened)
                 self.assertTrue(client.exited)
+                transport.close()
         with tempfile.TemporaryDirectory(dir=settings.STATE) as temporary:
             path = Path(temporary) / "upstream-bearer"
             path.write_text("synthetic-not-used")
@@ -333,30 +345,27 @@ class Boundary(TransactionTestCase):
             async_to_sync(check)(path)
 
     def test_busy_stream_checks_at_most_once_per_interval_and_fences_quiet_heartbeats(self):
-        topics = topics_for(self.adapter.contract, "openhab/items/loc_den_source/stateupdated")
-        event = {"topic": topics[0], "type": "ItemStateUpdatedEvent",
-                 "payload": json.dumps({"type": "String", "value": "player"})}
-
         async def check():
-            transport = StreamTransport()
-            frames = stream(RuntimeAdapter(self.adapter.contract, transport), topics, {})
+            upstream = Upstream()
+            live = RuntimeAdapter(self.adapter.contract, upstream)
+            frames = stream(live, "remote", {})
             clock = [1000.0]
             with patch("oh_identity.streams.valid", return_value=True) as valid, \
                     patch("oh_identity.streams.clock", side_effect=lambda: clock[0]):
+                await anext(frames)
                 for index in range(100):
                     clock[0] = 1000.0 + index * .05
-                    await transport.queue.put(event)
+                    upstream.send(native_event("loc_den_source", "player"))
                     self.assertIn(b"player", await anext(frames))
                 # One opening check, then one per elapsed second of frames.
                 self.assertEqual(valid.call_count, 1 + 4)
                 await frames.aclose()
-            self.assertTrue(transport.closed)
 
-            transport = StreamTransport()
-            frames = stream(RuntimeAdapter(self.adapter.contract, transport), topics, {})
+            frames = stream(live, "remote", {})
             with patch("oh_identity.streams.HEARTBEAT", .01), patch("oh_identity.streams.valid", side_effect=[True, False]) as valid:
+                await anext(frames)
                 with self.assertRaises(StopAsyncIteration):
                     await asyncio.wait_for(anext(frames), .5)
                 self.assertEqual(valid.call_count, 2)
-            self.assertTrue(transport.closed)
+            self.assertEqual(hubs.hub_for(live).status()["streams"]["remote"], 0)
         async_to_sync(check)()

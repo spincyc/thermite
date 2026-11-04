@@ -285,8 +285,8 @@ def listener(host, port, tls=None, clients=None):
     # connection between its pages, each polling policy every 5 s.
     config.keep_alive_max_requests = sys.maxsize
     config.h11_max_incomplete_size = 16 * 1024
-    # One browser holds at most 12 event streams (oh_identity/streams.py
-    # PEER_STREAMS), which leaves 20 streams for reads, commands and assets;
+    # One browser holds at most 8 event streams (oh_identity/streams.py
+    # PEER_STREAMS), which leaves 24 streams for reads, commands and assets;
     # a browser queues the rest. Header lists are bounded as HTTP/1.1 heads
     # are, and inbound frames to the protocol's minimum size.
     config.h2_max_concurrent_streams = 32

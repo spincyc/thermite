@@ -19,11 +19,11 @@ from django.utils import timezone
 from oh_identity.auth import Guest, revalidate
 from oh_identity.models import Audit, BoundaryReceipt, PersonalToken, ReconcileState, RoomPolicy, SecurityState, User
 from oh_identity.policy_store import Store
-from oh_identity.runtime import install_adapter
+from oh_identity.runtime import RuntimeAdapter, install_adapter
 from oh_identity.security import arm_setup, get_state, transition
 from oh_identity.services import Problem, bootstrap, issue_token, password
-from oh_identity.streams import stream, topics_for, valid
-from oh_identity.tests.test_boundary import StreamTransport
+from oh_identity.streams import stream, valid
+from oh_identity.tests.test_event_hub import Upstream, event
 from oh_identity.tests.test_core import PASSPHRASE, adapter
 
 
@@ -352,21 +352,18 @@ class SecurityConcurrency(SecurityClient, TransactionTestCase):
 
     @patch("oh_identity.streams.REVALIDATE", 0)
     def test_live_guest_stream_closes_after_bootstrap(self):
-        topics = topics_for(self.adapter.contract, "openhab/items/loc_den_source/stateupdated")
         snapshot = {"guest": True, "security_revision": get_state().revision}
+
         async def check():
-            transport = StreamTransport()
-            self.adapter.transport = transport
-            frames = stream(self.adapter, topics, snapshot)
-            event = {"topic": topics[0], "type": "ItemStateUpdatedEvent",
-                     "payload": json.dumps({"type": "String", "value": "player"})}
-            await transport.queue.put(event)
+            upstream = Upstream()
+            frames = stream(RuntimeAdapter(self.adapter.contract, upstream), "remote", snapshot)
+            self.assertIn(b"snapshot", await anext(frames))
+            upstream.send(event("loc_den_source", "player"))
             self.assertIn(b"player", await anext(frames))
             await sync_to_async(bootstrap)("owner", PASSPHRASE)
-            await transport.queue.put(event)
+            upstream.send(event("loc_den_source", "off"))
             with self.assertRaises(StopAsyncIteration):
                 await anext(frames)
-            self.assertTrue(transport.closed)
         async_to_sync(check)()
 
 

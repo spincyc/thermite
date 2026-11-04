@@ -5,6 +5,7 @@ from oh_routes import ALIASES, ROUTES
 from . import views
 from .addresses import RoomConverter
 from .streams import events
+from .topics import VIEWS
 
 register_converter(RoomConverter, "room")
 
@@ -23,7 +24,9 @@ urlpatterns = [
     path("api/v1/rooms/<room:room>/lock", views.room_lock),
     path("api/v1/rooms/<room:room>/commands", views.command),
     path("rest/items", views.pairing_items), path("rest/items/<slug:item>", views.item_resource),
-    path("rest/items/<slug:item>/state", views.item_state), path("rest/events", events),
+    path("rest/items/<slug:item>/state", views.item_state),
+    # One snapshot-first event stream per page, by view (topics.py VIEWS).
+    *[path("api/v1/events/" + view, events, {"view": view}) for view in VIEWS],
     path("unifi/media/<path:resource>", views.media),
     path("static/remote/", views.asset, {"name": "index.html"}),
     path("static/remote/<str:name>", views.asset),

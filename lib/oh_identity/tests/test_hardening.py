@@ -17,7 +17,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 import oh_room_policy
-from oh_identity import streams
+from oh_identity import hub, topics, transport
 from oh_identity.hardening import CONTENT_SECURITY_POLICY, PrivateFormatter, PrivateRecord
 from oh_identity.models import Audit, BoundaryReceipt, LoginThrottle, PersonalToken, ReconcileState, RoomPolicy, User
 from oh_identity.policy_store import next_revision, prune_history, prune_unknown_rooms
@@ -175,44 +175,18 @@ class Streams(TransactionTestCase):
         states = {f"item_{index:04d}": {"kind": "enum", "values": ["ON"], "commands": True} for index in range(400)}
         self.contract = RuntimeContract({"den": {"source_item": "loc_den_source", "sources": ["player"]}}, states=states)
 
-    def test_topic_queries_are_deduplicated_capped_and_exact_topics_need_no_scan(self):
-        pattern = "openhab/items/item_000*/*"
-        self.assertEqual(len(streams.topics_for(self.contract, ",".join([pattern] * 300))), 30)
-        # The shape a web remote sends for a large house: about 130 exact
-        # topics and item/* suffixes per stream, resolved without any scan.
-        packed = ",".join(f"openhab/items/item_{index:04d}/" + ("*" if index % 2 else "stateupdated") for index in range(140))
-        with patch("oh_identity.streams.fnmatch.fnmatchcase", side_effect=AssertionError("scanned")):
-            self.assertEqual(len(streams.topics_for(self.contract, packed)), 70 * 3 + 70)
-            self.assertEqual(streams.topics_for(self.contract, "openhab/items/item_0001/command"), ["openhab/items/item_0001/command"])
-        globs = ",".join(f"openhab/items/item_{index:03d}?/stateupdated" for index in range(streams.MAX_GLOBS + 1))
-        with self.assertRaises(streams.Problem):
-            streams.topics_for(self.contract, globs)
-        with patch.object(streams, "MAX_PATTERNS", 10):
-            streams.topics_for(self.contract, ",".join(f"openhab/items/item_{index:04d}/stateupdated" for index in range(10)))
-            with self.assertRaises(streams.Problem):
-                streams.topics_for(self.contract, ",".join(f"openhab/items/item_{index:04d}/stateupdated" for index in range(11)))
-        with self.assertRaises(streams.Problem):
-            streams.topics_for(self.contract, "openhab/items/item_*/*")  # 1200 topics
-
-    def test_streams_are_admitted_per_peer_and_in_total(self):
-        install_adapter(adapter())
-        path = "/rest/events?topics=openhab/items/loc_den_source/stateupdated"
-        with patch("oh_identity.streams.slots", streams.Slots(per_peer=2, total=3)) as slots:
-            first = [Client(REMOTE_ADDR="192.0.2.20").get(path, secure=True) for _ in range(2)]
-            self.assertEqual([response.status_code for response in first], [200, 200])
-            refused = Client(REMOTE_ADDR="192.0.2.20").get(path, secure=True)
-            self.assertEqual((refused.status_code, refused.json()["error"]), (429, "too_many_streams"))
-            self.assertIn("Retry-After", refused)
-            other = Client(REMOTE_ADDR="2001:db8::1").get(path, secure=True)
-            self.assertEqual(other.status_code, 200)
-            self.assertEqual(Client(REMOTE_ADDR="2001:db8:1::1").get(path, secure=True).status_code, 429)
-            for response in (*first, other):
-                response.close()
-            self.assertEqual(slots.count(), 0)
-            release = slots.acquire("peer")
-            release()
-            release()
-            self.assertEqual(slots.count(), 0)
+    def test_the_upstream_needs_one_filter_per_verb_however_large_the_house(self):
+        views = topics.views(self.contract)
+        self.assertEqual(len(views["remote"]), 400 * 2 + 1)
+        self.assertEqual(hub.upstream_filters(frozenset().union(*views.values())),
+                         ["openhab/items/*/stateupdated", "openhab/items/*/statechanged", "openhab/items/*/command"])
+        self.assertEqual(transport.native_query(["openhab/items/*/statechanged", "openhab/items/loc_den_source/stateupdated"]),
+                         "openhab/items/*/statechanged,openhab/items/loc_den_source/stateupdated")
+        for refused in ([], ["openhab/items/tv_pairing/command"], ["openhab/items/amp_token/statechanged"],
+                        ["openhab/items/item_*/command"], ["openhab/things/*/status"], ["openhab/items/*/*"],
+                        [f"openhab/items/item_{index:04d}_with_a_long_label/statechanged" for index in range(200)]):
+            with self.subTest(refused=refused[:1]), self.assertRaises(ValueError):
+                transport.native_query(refused)
 
 
 class HttpSemantics(Requests, TestCase):
@@ -234,7 +208,7 @@ class HttpSemantics(Requests, TestCase):
         client = Client()
         for method, path, allow in (("delete", "/api/v1/me", "GET"), ("put", "/api/v1/session", "GET, POST"),
                                     ("get", "/api/v1/logout", "POST"), ("get", "/api/v1/token-login", "POST"),
-                                    ("delete", "/api/v1/security", "GET, POST"), ("post", "/rest/events", "GET"),
+                                    ("delete", "/api/v1/security", "GET, POST"), ("post", "/api/v1/events/remote", "GET"),
                                     ("delete", "/api/v1/tokens", "GET, POST")):
             response = getattr(client, method)(path, secure=True)
             self.assertEqual((response.status_code, response["Allow"], response.json()["error"]), (405, allow, "method_not_allowed"))

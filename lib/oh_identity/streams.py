@@ -1,8 +1,7 @@
-"""Credential-free SSE projection and bounded authorization revalidation."""
+"""Client event streams: admission, the snapshot-first view stream and
+bounded authorization revalidation. hub.py holds the one upstream."""
 
 import asyncio
-import fnmatch
-import json
 import threading
 import time
 import weakref
@@ -13,75 +12,30 @@ from django.http import StreamingHttpResponse
 from django.utils import timezone
 
 from .addresses import peer_bucket
-from .auth import not_allowed, principal, problem_response
+from .auth import not_allowed, principal, problem_response, require_admin
+from .guest import listener as guest_listener
+from .hub import hub_for, notify
 from .models import PersonalToken, User
-from .runtime import get_adapter, project
+from .runtime import get_adapter
 from .services import Problem
+from .topics import VIEWS, views as view_topics
 
 HEARTBEAT = 5
 # A busy stream rechecks its credential at most this often; a quiet one at
 # every heartbeat.
 REVALIDATE = 1.0
 clock = time.monotonic
-# One web remote stream packs up to 6000 bytes of exact topics and `item/*`
-# suffixes (web/remote/backend.js EVENT_URL_BYTES), about 130 patterns; those
-# resolve without a scan. Only item-name globs scan every public topic.
-MAX_PATTERNS = 512
-MAX_GLOBS = 8
-MAX_TOPICS = 1000
-# Streams are unauthenticated for Guests and each holds upstream connections.
-# One web remote opens up to three (web/remote/backend.js EVENT_STREAMS), so a
-# client with a few pages and a terminal fits. Over HTTP/2 one browser carries
-# them all on one connection; HTTP/1.1 clients still spend a connection each.
-# The total leaves most of the gateway's 100 in-flight requests
-# (oh_access/service.py MAX_REQUESTS) for ordinary requests.
-PEER_STREAMS = 12
-TOTAL_STREAMS = 64
-TYPES = {"stateupdated": "ItemStateUpdatedEvent", "statechanged": "ItemStateChangedEvent", "command": "ItemCommandEvent"}
-_TOPICS = weakref.WeakKeyDictionary()
-
-
-def available(contract):
-    """Every public topic of this contract, computed once per contract."""
-    topics = _TOPICS.get(contract)
-    if topics is None:
-        topics = _TOPICS[contract] = frozenset(
-            "openhab/items/" + item + "/" + verb for item, spec in contract.states.items() for verb in TYPES
-            if verb != "command" or spec.get("commands") is True and "_pairing" not in item)
-    return topics
-
-
-def topics_for(contract, query):
-    if not isinstance(query, str) or len(query) > 12000:
-        raise Problem("invalid_topics")
-    patterns = set(query.split(","))
-    if len(patterns) > MAX_PATTERNS:
-        raise Problem("invalid_topics")
-    public = available(contract)
-    out, globs = set(), 0
-    for pattern in sorted(patterns):
-        parts = pattern.split("/")
-        if len(parts) != 4 or parts[:2] != ["openhab", "items"] or parts[3] not in {*TYPES, "*"}:
-            raise Problem("invalid_topics")
-        item, verb = parts[2], parts[3]
-        # A credential command family is forbidden before wildcard expansion.
-        if "_pairing" in item and not item.endswith(("_pairing_status", "_pairing_result")):
-            raise Problem("invalid_topics")
-        if any(mark in item for mark in "*?["):
-            globs += 1
-            if globs > MAX_GLOBS:
-                raise Problem("invalid_topics")
-            found = {topic for topic in public if fnmatch.fnmatchcase(topic, pattern)}
-        else:
-            found = {f"openhab/items/{item}/{each}" for each in (TYPES if verb == "*" else (verb,))} & public
-        if not found:
-            raise Problem("invalid_topics")
-        out |= found
-        if len(out) > MAX_TOPICS:
-            raise Problem("invalid_topics")
-    if not out:
-        raise Problem("invalid_topics")
-    return sorted(out)
+# Streams are unauthenticated for Guests. A page holds one, a terminal remote
+# one more while it pairs, and a stream lingers up to one heartbeat after its
+# client goes; so a browser with a few visible pages and a terminal fits. A
+# stream costs a queue in the gateway, not an upstream connection, but holds
+# one of the gateway's 100 in-flight requests (oh_access/service.py
+# MAX_REQUESTS); the total leaves over half of them for ordinary requests.
+# Over plain HTTP (the Guest listener) a browser allows six connections per
+# origin across its tabs, so one stream per page leaves room for requests.
+PEER_STREAMS = 8
+TOTAL_STREAMS = 48
+ERROR = b'data: {"type":"unavailable","error":"runtime_unavailable"}\n\n'
 
 
 class Slots:
@@ -137,28 +91,6 @@ class EventStream(StreamingHttpResponse):
             self._release()
 
 
-def frame(contract, allowed, event):
-    if not isinstance(event, dict) or event.get("topic") not in allowed:
-        return None
-    _, _, item, verb = event["topic"].split("/")
-    if verb == "command" and (not contract.states[item].get("commands") or "_pairing" in item):
-        return None
-    if event.get("type") != TYPES[verb]:
-        return None
-    raw = event.get("payload")
-    try:
-        payload = json.loads(raw) if isinstance(raw, str) else None
-    except ValueError:
-        return None
-    if not isinstance(payload, dict) or not isinstance(payload.get("value"), str):
-        return None
-    clean = {"type": payload.get("type") if payload.get("type") in {"String", "OnOff", "Decimal", "Percent", "UnDef"} else "String",
-             "value": project(item, payload["value"], contract.states[item])}
-    if verb == "statechanged" and isinstance(payload.get("oldValue"), str):
-        clean["oldValue"] = project(item, payload["oldValue"], contract.states[item])
-    return {"topic": event["topic"], "type": TYPES[verb], "payload": json.dumps(clean, separators=(",", ":"))}
-
-
 def valid(snapshot):
     from .security import get_state
     state = get_state()
@@ -175,74 +107,96 @@ def valid(snapshot):
     return Session.objects.filter(session_key=snapshot.get("session"), expire_date__gt=timezone.now()).exists()
 
 
-async def stream(adapter, topics, snapshot, release=None):
-    projected = getattr(adapter.transport, "projects_events", False)
-    iterable = adapter.transport.events(topics, project=lambda event: frame(adapter.contract, topics, event)) if projected else adapter.transport.events(topics)
-    iterator = iterable.__aiter__()
-    pending = None
+def opened(meta):
+    """A client stream has started. meta: its view; origin, "guest" for the
+    plain-HTTP Guest listener, else "https"; principal, "guest", "session" or
+    "token"; the request's HTTP version; and the peer's keyed digest, never
+    its address."""
+    notify("stream_open", meta)
+
+
+def closed(meta, seconds, reason):
+    """A client stream has ended after `seconds`; reason is "client" (it went
+    away or the gateway stopped), "revoked" (its credential ended) or "error"."""
+    notify("stream_close", {**meta, "seconds": round(seconds, 3), "reason": reason})
+
+
+async def stream(adapter, view, snapshot, release=None, meta=None):
+    """One client stream of a view: the hub's snapshot, then the view's events,
+    with heartbeats while quiet. Ends when the credential is revoked."""
+    meta = meta or {"view": view}
+    hub = subscriber = None
+    started, reason = clock(), "client"
     try:
         if not await sync_to_async(valid)(snapshot):
+            reason = "revoked"
             return
+        opened(meta)
+        hub = hub_for(adapter)
+        subscriber = hub.join(view, meta)
         checked = clock()
         while True:
-            if pending is None:
-                pending = asyncio.create_task(anext(iterator))
-            done, _ = await asyncio.wait([pending], timeout=HEARTBEAT)
+            data = await subscriber.next(HEARTBEAT)
             # Every heartbeat is checked, bounding a quiet stream's revocation
-            # by HEARTBEAT; a busy stream is checked at most once per REVALIDATE.
-            if not done or clock() - checked >= REVALIDATE:
+            # by HEARTBEAT; a busy stream is checked at most once per REVALIDATE,
+            # always before the next frame is sent.
+            if data is None or clock() - checked >= REVALIDATE:
                 if not await sync_to_async(valid)(snapshot):
+                    reason = "revoked"
                     return
                 checked = clock()
-            if not done:
-                yield b": heartbeat\n\n"
-                continue
-            try:
-                event = pending.result()
-            except StopAsyncIteration:
-                return
-            pending = None
-            value = event if projected else frame(adapter.contract, topics, event)
-            if value:
-                yield ("data: " + json.dumps(value, separators=(",", ":")) + "\n\n").encode()
+            yield b": heartbeat\n\n" if data is None else data
     except asyncio.CancelledError:
         raise
     except Exception:
         # No exception details, credentials, raw body or upstream URL in output.
-        yield b"event: unavailable\ndata: {\"error\":\"runtime_unavailable\"}\n\n"
+        reason = "error"
+        yield ERROR
     finally:
-        if pending:
-            pending.cancel()
-            await asyncio.gather(pending, return_exceptions=True)
-        close = getattr(iterator, "aclose", None)
-        if close:
-            await close()
+        if subscriber:
+            hub.leave(subscriber)
+            closed(meta, clock() - started, reason)
         if release:
             release()
 
 
-def events(request):
+def events(request, view):
     if request.method != "GET":
         return not_allowed("GET")
     try:
+        if view not in VIEWS or request.GET:
+            raise Problem("not_found", 404)
         user = principal(request)
+        if view == "pair":
+            # Pairing is an Admin's page, as its device list is (views.pairing_items).
+            require_admin(request, user)
         adapter = get_adapter()
-        topics = topics_for(adapter.contract, request.GET.get("topics", ""))
         token = getattr(request, "identity_token", None)
         snapshot = {"user": user.pk, "revision": user.auth_revision, "token": str(token.pk) if token else None,
                     "session": request.session.session_key if not token else None,
                     "security_revision": user._identity_context["security_revision"],
                     "guest": getattr(user, "is_guest", False)}
+        scope = getattr(request, "scope", None)
+        # Lifecycle fields for observers (metrics); the journal lines are
+        # trail.stream_opened's. A Guest-listener request carries no
+        # credential: its principal is a Guest.
+        meta = {"view": view, "origin": "guest" if guest_listener(request) else "https",
+                "principal": "guest" if snapshot["guest"] else "token" if token else "session",
+                "http_version": scope.get("http_version") if isinstance(scope, dict) else None,
+                "peer": user._identity_context.get("peer")}
         bucket = peer_bucket(request.META.get("REMOTE_ADDR"))
         release = slots.acquire(bucket)
         if release is None:
+            notify("stream_refused", meta)
             raise Problem("too_many_streams", 429, retry_after=HEARTBEAT)
         # One journal line when the stream opens and one when it ends, with
-        # its duration and the peer's and gateway's stream counts. The
-        # wrapped release runs once however the response ends.
+        # its duration, the number of topics its view carries and the peer's
+        # and gateway's stream counts. The wrapped release runs once however
+        # the response ends.
         from .trail import stream_opened
-        release = stream_opened(release, request, user, topics=len(topics), counts=lambda: slots.counts(bucket))
-        content = stream(adapter, topics, snapshot, release)
+        release = stream_opened(release, request, user, topics=len(view_topics(adapter.contract)[view]),
+                                counts=lambda: slots.counts(bucket))
+        content = stream(adapter, view, snapshot, release, meta)
         # A generator that never starts never runs its finally block.
         weakref.finalize(content, release)
         response = EventStream(content, release, content_type="text/event-stream")
