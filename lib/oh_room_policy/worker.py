@@ -105,6 +105,7 @@ class Worker:
         self._step_lock = threading.Lock()
         self._seen = {}
         self._resources = {}
+        self._plans = {}
         self._runtime = {}
         self._persisted = {}
         self._policies = ()
@@ -200,7 +201,7 @@ class Worker:
         attempted = False
         if outcome == "due" and event.target is not None:
             try:
-                plan = expected_plan(self.house, event.room, event.target)
+                plan = self._plan(event.room, event.target)
             except PolicyError:
                 plan = None
                 outcome = "invalid_policy"
@@ -248,13 +249,28 @@ class Worker:
         except Exception:
             return False  # Unknown: send the catch-up rather than skip it.
 
+    def _plan(self, room, choice):
+        """The route for (room, choice), compiled once. The house is fixed for
+        the worker's lifetime, and compiling a route costs milliseconds of CPU,
+        too much for every held room on every step. An IO that has already
+        compiled every route (PolicyIO.plans) lends its plans."""
+        key = (room, choice)
+        plan = self._plans.get(key)
+        if plan is None:
+            compiled = getattr(self.io, "plans", None)
+            plan = compiled.get(room, {}).get(choice) if isinstance(compiled, dict) else None
+            if plan is None:
+                plan = expected_plan(self.house, room, choice)
+            self._plans[key] = plan
+        return plan
+
     def _room_resources(self, room):
         """Every device any of the room's routes can touch; None if unknown."""
         if room not in self._resources:
             try:
                 choices = ("off", *self.contract["rooms"][room]["sources"])
                 self._resources[room] = frozenset().union(
-                    *(expected_plan(self.house, room, choice).resources for choice in choices))
+                    *(self._plan(room, choice).resources for choice in choices))
             except (PolicyError, KeyError, TypeError, ValueError):
                 self._resources[room] = None
         return self._resources[room]
@@ -331,7 +347,7 @@ class Worker:
                 changed_at = utc(record.changed_at)
                 state = desired_at(now, policy)
                 if state["locked"]:
-                    plans[room] = expected_plan(self.house, room, state["desired"])
+                    plans[room] = self._plan(room, state["desired"])
                 states[room] = state
                 valid.append((policy, changed_at))
             except (PolicyError, KeyError, TypeError, ValueError):

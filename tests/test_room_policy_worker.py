@@ -159,6 +159,48 @@ class ManualHolds(Harness, unittest.TestCase):
         self.assertEqual(self.store.claims, {}, "the schedule's start is not sent under a hold")
 
 
+class PlanCompilation(Harness, unittest.TestCase):
+    """Compiling a route costs milliseconds; the worker does it once per route."""
+
+    def counting(self):
+        calls = []
+
+        def compile_once(house, room, choice):
+            calls.append((room, choice))
+            return expected_plan(house, room, choice)
+        patcher = patch("oh_room_policy.worker.expected_plan", compile_once)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return calls
+
+    def test_each_route_is_compiled_once_across_steps_and_boundaries(self):
+        calls = self.counting()
+        self.make((policy(WEST, hold=PLAYER, enabled=False), at(8)),
+                  (policy(EAST, locks=[window("10:00", "11:00", COMPUTER)]), at(9)),
+                  now=at(10, 0, 30), observed=PLAYER_ROUTE)
+        for _ in range(5):
+            self.step()
+            self.advance(6)
+        self.assertIn((EAST, "loc_example_east_source", COMPUTER), self.devices.writes, "the boundary was sent")
+        self.assertEqual(self.store.saved[WEST][1]["phase"], "verified")
+        self.assertIn((WEST, PLAYER), calls)
+        self.assertIn((EAST, COMPUTER), calls)
+        self.assertEqual(len(calls), len(set(calls)), calls)
+
+    def test_an_io_with_compiled_plans_lends_them(self):
+        calls = self.counting()
+        self.make((policy(WEST, hold=PLAYER, enabled=False), at(8)), observed=PLAYER_ROUTE)
+        self.devices.plans = {room: {choice: expected_plan(HOUSE, room, choice)
+                                     for choice in ("off", *spec["sources"])}
+                              for room, spec in HOUSE["routing"]["rooms"].items()}
+        calls.clear()
+        for _ in range(3):
+            self.step()
+            self.advance(6)
+        self.assertEqual(self.store.saved[WEST][1]["phase"], "verified")
+        self.assertEqual(calls, [])
+
+
 class Boundaries(Harness, unittest.TestCase):
     def test_unlock_never_replays_an_earlier_daily_off(self):
         daily = [{"id": "night", "time": "10:00", "days": [0]}]
