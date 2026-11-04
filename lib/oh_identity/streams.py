@@ -23,7 +23,11 @@ HEARTBEAT = 5
 # every heartbeat.
 REVALIDATE = 1.0
 clock = time.monotonic
-MAX_PATTERNS = 64
+# One web remote stream packs up to 6000 bytes of exact topics and `item/*`
+# suffixes (web/remote/backend.js EVENT_URL_BYTES), about 130 patterns; those
+# resolve without a scan. Only item-name globs scan every public topic.
+MAX_PATTERNS = 512
+MAX_GLOBS = 8
 MAX_TOPICS = 1000
 # Streams are unauthenticated for Guests and each holds upstream connections.
 # One web remote opens up to three (web/remote/backend.js EVENT_STREAMS), so a
@@ -52,18 +56,22 @@ def topics_for(contract, query):
     if len(patterns) > MAX_PATTERNS:
         raise Problem("invalid_topics")
     public = available(contract)
-    out = set()
+    out, globs = set(), 0
     for pattern in sorted(patterns):
         parts = pattern.split("/")
         if len(parts) != 4 or parts[:2] != ["openhab", "items"] or parts[3] not in {*TYPES, "*"}:
             raise Problem("invalid_topics")
+        item, verb = parts[2], parts[3]
         # A credential command family is forbidden before wildcard expansion.
-        if "_pairing" in parts[2] and not parts[2].endswith(("_pairing_status", "_pairing_result")):
+        if "_pairing" in item and not item.endswith(("_pairing_status", "_pairing_result")):
             raise Problem("invalid_topics")
-        if not any(mark in pattern for mark in "*?["):
-            found = {pattern} & public
-        else:
+        if any(mark in item for mark in "*?["):
+            globs += 1
+            if globs > MAX_GLOBS:
+                raise Problem("invalid_topics")
             found = {topic for topic in public if fnmatch.fnmatchcase(topic, pattern)}
+        else:
+            found = {f"openhab/items/{item}/{each}" for each in (TYPES if verb == "*" else (verb,))} & public
         if not found:
             raise Problem("invalid_topics")
         out |= found

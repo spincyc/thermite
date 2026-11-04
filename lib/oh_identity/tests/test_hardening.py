@@ -178,13 +178,21 @@ class Streams(TransactionTestCase):
     def test_topic_queries_are_deduplicated_capped_and_exact_topics_need_no_scan(self):
         pattern = "openhab/items/item_000*/*"
         self.assertEqual(len(streams.topics_for(self.contract, ",".join([pattern] * 300))), 30)
-        distinct = ",".join(f"openhab/items/item_{index:04d}/stateupdated" for index in range(65))
+        # The shape a web remote sends for a large house: about 130 exact
+        # topics and item/* suffixes per stream, resolved without any scan.
+        packed = ",".join(f"openhab/items/item_{index:04d}/" + ("*" if index % 2 else "stateupdated") for index in range(140))
+        with patch("oh_identity.streams.fnmatch.fnmatchcase", side_effect=AssertionError("scanned")):
+            self.assertEqual(len(streams.topics_for(self.contract, packed)), 70 * 3 + 70)
+            self.assertEqual(streams.topics_for(self.contract, "openhab/items/item_0001/command"), ["openhab/items/item_0001/command"])
+        globs = ",".join(f"openhab/items/item_{index:03d}?/stateupdated" for index in range(streams.MAX_GLOBS + 1))
         with self.assertRaises(streams.Problem):
-            streams.topics_for(self.contract, distinct)
+            streams.topics_for(self.contract, globs)
+        with patch.object(streams, "MAX_PATTERNS", 10):
+            streams.topics_for(self.contract, ",".join(f"openhab/items/item_{index:04d}/stateupdated" for index in range(10)))
+            with self.assertRaises(streams.Problem):
+                streams.topics_for(self.contract, ",".join(f"openhab/items/item_{index:04d}/stateupdated" for index in range(11)))
         with self.assertRaises(streams.Problem):
             streams.topics_for(self.contract, "openhab/items/item_*/*")  # 1200 topics
-        with patch("oh_identity.streams.fnmatch.fnmatchcase", side_effect=AssertionError("scanned")):
-            self.assertEqual(streams.topics_for(self.contract, "openhab/items/item_0001/command"), ["openhab/items/item_0001/command"])
 
     def test_streams_are_admitted_per_peer_and_in_total(self):
         install_adapter(adapter())
