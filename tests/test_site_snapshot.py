@@ -125,7 +125,7 @@ for name, value in outputs.items():
         commit = self.revision(release, "config")
         (cache / "bin/thermite").write_text("tampered application")
         with mock.patch.object(oh_site_snapshot, "render") as render:
-            with self.assertRaisesRegex(deploy.DeployError, "exact cached application"):
+            with self.assertRaisesRegex(deploy.DeployError, "exact application release"):
                 deploy.prepared_files(self.site, commit, self.var)
             render.assert_not_called()
 

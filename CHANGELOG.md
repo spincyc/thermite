@@ -5,7 +5,16 @@
 The portable application remains a development build. Its version and verified
 file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
-rollback. Existing complete Git checkouts retain their deployment behavior.
+rollback. The unified deployment workflow uses a separate committed private site.
+
+- `thermite install --config DIR` deploys the complete stack and `thermite
+  upgrade --config DIR` updates the application, native services, monitoring,
+  HTTPS gateway and identity schema in one approved run. The stable command
+  switches only after readiness; failed runs retain their candidate and backups.
+- Gateway deployment adopts existing authority and TLS, backs up stopped identity
+  state before migrations, verifies callback routes and seals native ingress.
+  Local terminal clients discover the verified HTTPS endpoint and certificate;
+  installation grants no household role. New sites start with Security off.
 
 - Thermite is the canonical application repository. New private sites track only
   configuration and an exact release pin; deployment derives runtime files from

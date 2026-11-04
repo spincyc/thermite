@@ -43,7 +43,7 @@
 <h2 id="test">Test on a test runtime, never production</h2>
 <table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
-<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>upgrade thermite and the Apple TV helper here to the pinned versions</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>install a commit&#x27;s conf/ and Apple TV helper here</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>update the application, native services and HTTPS gateway together</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>compatibility alias for the complete install workflow</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
 <table class="verbs"><tbody><tr><td><a href="#dhcp-reservations"><code>thermite dhcp-reservations</code></a></td><td>list the UniFi DHCP reservations the house file needs</td></tr><tr><td><a href="#matrix-settings"><code>thermite matrix-settings</code></a></td><td>show matrix settings that differ from the house file; --apply sets them</td></tr><tr><td><a href="#control4"><code>thermite control4</code></a></td><td>export the Control4 project read-only and compare it</td></tr><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
@@ -70,9 +70,9 @@ test on a test runtime, never production:
 
 production runtime on this host:
   install              install thermite on this host, with one approval for the whole run
-  upgrade              upgrade thermite and the Apple TV helper here to the pinned versions
+  upgrade              update the application, native services and HTTPS gateway together
   uninstall            stop thermite here and remove its units; --purge deletes its state
-  deploy               install a commit&#x27;s conf/ and Apple TV helper here
+  deploy               compatibility alias for the complete install workflow
   rollback             deploy the commit deployed before the current one, or another
   status               what is deployed and running here, against this checkout
   history              this host&#x27;s deploys, numbered, the latest last
@@ -734,41 +734,33 @@ examples:
 </pre></details>
 </section>
 <section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, with one approval for the whole run.</p><pre class="help">usage: thermite install [-h] [--config DIR] [-n] [--clean] [--restart-runtime]
-                        [--runtime-token-file RUNTIME_TOKEN_FILE]
+                        [--runtime-token-file RUNTIME_TOKEN_FILE] [--source SOURCE]
+                        [--revision REVISION]
 
-Install thermite on this host, the one you run it on. Run
-it as your user with --config DIR to select committed private configuration
-from any working directory. A complete source checkout also works:
-it is safe to run again at any time. It finds this host&#x27;s name and address
-and your user as it runs; instance/host.yaml holds only what is the same on
-any host (the state root, ports, service UID and GID, and time zone).
+Deploy the complete Thermite installation using committed private configuration.
+Run as your ordinary owner with --config DIR. The current application release
+is prepared in a private environment; --source DIR and --revision REV select
+a clean application checkout instead. The application validates the site and
+commits its release requirement before applying the host workflow.
 
-Before changing this host, the installer checks that every change is committed.
-Config-only sites render the committed inputs with their pinned application;
-complete checkouts also require current generated files. Each later step checks
-whether it is done and skips it if so:
-preconditions, packages, the thermite user and group with you in it, the
-state directories, the boot check, the systemd units, stopped native-state
-preparation and ownership repair, the deploy of HEAD, services, private runtime access, and a
-read-only check at the end. One y/n question approves this entire run,
-including its sudo commands and deployment ownership handoff. Compact
-status shows each stage; -v/--verbose shows details and commands. Interactive
-commands keep the terminal, with the spinner paused. After a no, a failure
-or Ctrl-C, run it again and it goes on from there, asking once for the new run.
+One approval covers application setup, packages, the service account, native
+runtime and helpers, monitoring, HTTPS gateway, policy worker, verified device
+callbacks, private-state backups, schema migrations and readiness checks.
+The native ports are restricted to this host. An existing gateway keeps its
+identity, accounts, certificates and callback routes; a fresh gateway creates
+its TLS certificate and starts with Security off. Enable Security on its page
+to bootstrap the first administrator with owner proof.
 
---clean first removes the installed units and deletes the native state root,
-including users, pairings, tokens, history, monitoring stores and backups.
-It also clears this host&#x27;s local runtime and monitoring credentials before reinstalling.
-The deletion still requires typing the exact state path. Source/site
-configuration and separately staged access identity/TLS state are retained.
+The command in ~/.local/bin is switched only after every check passes. Keep
+that directory on PATH. Rerun after a failure to resume; prior environments,
+releases and backups are retained. Application setup never changes OS Python.
 
---restart-runtime requests one fresh runtime start after deployment, within
-the same approval and followed by the normal readiness checks. Use it when
-updating shared script libraries; it deletes no runtime state.
-
---dry-run leaves the site and host unchanged: transient configuration planning
-is cleaned up, and it reports each step and what it would run. An
-agent uses only that: agents never run sudo.
+--clean deletes the native state and local runtime/monitoring credentials;
+it requires typing the exact state path. Gateway identity/TLS state is retained.
+--restart-runtime requests one fresh native start and its readiness checks.
+--dry-run reports the whole workflow without fetching, committing or changing
+the host. The exact host plan is resolved after an approved application fetch.
+Use -v for details. Agents only use --dry-run; they never run sudo.
 
 options:
   -h, --help                    show this help message and exit
@@ -781,6 +773,8 @@ options:
   --runtime-token-file RUNTIME_TOKEN_FILE
                                 advanced: import an existing internal runtime API token
                                 from your private file
+  --source SOURCE               use a clean application checkout for this deployment
+  --revision REVISION           application Git revision to deploy from --source
 
 switches every verb takes:
   -q, --quiet                   print only errors
@@ -799,44 +793,30 @@ examples:
                                     review a complete native-state reset and fresh installation
 </pre>
 </section>
-<section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Upgrade thermite and the Apple TV helper here to the pinned versions.</p><pre class="help">usage: thermite upgrade [-h] [--config DIR] [-n]
-                        [--runtime-token-file RUNTIME_TOKEN_FILE]
+<section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Update the application, native services and HTTPS gateway together.</p><pre class="help">usage: thermite upgrade [-h] [--config DIR] [-n]
+                        [--runtime-token-file RUNTIME_TOKEN_FILE] [--source SOURCE]
+                        [--revision REVISION]
 
-Move runtime, the Apple TV helper and the metrics services (Prometheus,
-node_exporter, blackbox_exporter, the runtime exporter, Grafana,
-Alertmanager, the local notification adapter and ntfy) on this
-host to the versions versions.json pins and the units deploy/ holds, as of
-HEAD. thermite install must have run here first. Run it as your user, from
-the clone install ran from; it is safe to run again at any time. A host
-installed before the metrics existed gets them here.
+Upgrade the complete Thermite installation from the official GitHub main branch.
+Select your committed private site with --config DIR. Use --revision REV to
+choose a reviewed branch, tag or commit, or --source DIR for a clean local
+application checkout. Native component versions still come from the site&#x27;s
+versions.json; commit desired changes there before running this command.
 
-Each step first checks whether it is done and skips it if so:
-preconditions (deploy/ is what thermite generate writes, and this area is
-committed); what changes: each installed unit against deploy/, and the
-runtime image the installed unit runs against the pinned one (when nothing
-differs on a host without AppArmor it says so and stops); enabled AppArmor
-requires approved root enforcement verification even when disk state is current; the boot test of HEAD&#x27;s conf/; when
-runtime&#x27;s units or service ownership need preparation, a backup, with runtime stopped, of the state&#x27;s
-conf, userdata and Grafana&#x27;s data into
-&lt;state&gt;/backups/&lt;UTC time&gt;-openhab-&lt;installed version&gt;.tar.gz (without
-userdata/cache and userdata/tmp, which runtime rebuilds, and without
-Prometheus&#x27; samples); the thermite account and group, preserving existing
-numeric IDs; state directories; changed units and systemctl daemon-reload;
-stopped native-state preparation and ownership repair; the deploy of HEAD;
-the services started on their installed units; runtime answering; the API
-token and Grafana&#x27;s admin password installed for the metrics services,
-which are then (re)started; Prometheus with every target up and Grafana
-answering; and a read-only check (thermite health --production and
-thermite status).
+One approval covers fetching and validating the application, preparing its
+private Python environment, validating and committing the site release pin,
+then updating native runtime and helper services, monitoring, the HTTPS gateway,
+policy worker, verified callbacks and identity schema. No pip, manual pin commit,
+access staging or separate migration command is needed. Existing authority,
+accounts, credentials and TLS certificates are preserved. Gateway and worker
+are stopped before the complete identity backup and any schema migration.
 
-Before any changes, one y/n question approves the whole upgrade run,
-including its sudo commands. Compact status shows each stage; -v/--verbose
-shows details and commands. Interactive commands keep the terminal, with
-the spinner paused.
-After a no, a failure or Ctrl-C, run it again and it goes on from there,
-asking once again. --dry-run leaves the site and host unchanged: transient
-configuration planning is cleaned up, and it reports each step and what it
-would run. An agent uses only that: agents never run sudo.
+The previous owner command remains selected until every readiness check passes.
+An interrupted run retains its candidate, site commit, prior release and backup;
+rerun the same command to resume. Previous releases do not automatically undo
+schema changes. --dry-run changes nothing and does not fetch: the remote
+revision and exact host differences remain unknown until an approved run.
+Run as your ordinary user. Use -v for details. Agents only use --dry-run.
 
 options:
   -h, --help                    show this help message and exit
@@ -845,6 +825,9 @@ options:
   --runtime-token-file RUNTIME_TOKEN_FILE
                                 advanced: import an existing internal runtime API token
                                 from your private file
+  --source SOURCE               upgrade from a clean application checkout instead of the
+                                official repository
+  --revision REVISION           application Git revision (default: official main)
 
 switches every verb takes:
   -q, --quiet                   print only errors
@@ -852,17 +835,10 @@ switches every verb takes:
                                 runs
   --no-color                    no color in what it prints (as NO_COLOR=1 does)
 
-going back:
-  It prints where the backup is and the commands that restore it. To go
-  back to the commit deployed before, restore the backup (runtime stays
-  stopped), then run thermite upgrade from that commit, which installs its
-  units and starts runtime on them (thermite install, in a commit from
-  before thermite upgrade).
-
 exit status:
-  0  upgraded, or nothing differs
-  1  a step failed, the owner said no, or a precondition does not hold
-  2  runtime is not installed here yet (thermite install), or run as root
+  0  complete and verified
+  1  declined or a step failed
+  2  invalid inputs, missing installation, or run as root
 
 examples:
   thermite upgrade -n               what upgrading would do here; runs nothing
@@ -913,46 +889,13 @@ examples:
   thermite uninstall -n --purge     what deleting the state too would do
 </pre>
 </section>
-<section class="verb" id="deploy"><h3><code>thermite deploy</code></h3><p>Install a commit&#x27;s conf/ and Apple TV helper here.</p><pre class="help">usage: thermite deploy [-h] [--config DIR] [-n] [--yes] [--force] [--state DIR] [REV]
+<section class="verb" id="deploy"><h3><code>thermite deploy</code></h3><p>Compatibility alias for the complete install workflow.</p><pre class="help">usage: thermite deploy [-h] [--config DIR] [-n] [--yes] [--force] [--state DIR] [REV]
 
-Production runtime runs on the host thermite install ran on, from its state
-directory (the host file&#x27;s state_root). Run this there. It installs one
-commit into the state from your operator account:
-
-  - the commit&#x27;s conf/ into &lt;state&gt;/conf. Runtime reloads regular configuration;
-    shared script-library updates need a controlled runtime restart so every
-    script context loads the new library;
-  - the Apple TV helper&#x27;s files (bin/thermite and the code and pins
-    its apple-tv verb runs) into &lt;state&gt;/atv/app; when they change it writes
-    &lt;state&gt;/deploy/atv-restart, and thermite-atv-restart.path restarts
-    thermite-atv.service;
-  - the commit&#x27;s metrics/ into &lt;state&gt;/metrics and the metrics exporter&#x27;s
-    code into &lt;state&gt;/exporter/app, once thermite install or upgrade has
-    made them. Prometheus and blackbox_exporter reload a changed
-    configuration (POST /-/reload; one not running yet reads it when it
-    starts), Grafana rereads its dashboards by itself, and a change to the
-    exporter&#x27;s code or Grafana&#x27;s settings writes &lt;state&gt;/deploy/metrics-restart,
-    and thermite-metrics-restart.path restarts those two. A commit from
-    before the metrics (no metrics/ or no exporter) leaves both as the last
-    deploy installed them;
-  - a record in &lt;state&gt;/deploy/deployed.json and a line in
-    &lt;state&gt;/deploy/history (thermite history lists them).
-
-It installs the commit as Git has it, not the working tree. HEAD needs a
-clean working tree, and the commit&#x27;s conf/ must have passed thermite test
-boot on this host. It writes only what differs, deletes only files
-an earlier deploy installed, and leaves alone anything else in the state.
-
-You need to be in the thermite group. Before writing, it asks you to approve
-the exact privileged command that gives deployed files to thermite:thermite.
-Install and upgrade pass their run approval with --yes; an explicit --yes
-also acknowledges this handoff for a standalone deployment. It does not
-bypass boot checks, pairing-log protection or sudo authentication.
-New files inherit the service group and shared directories keep setgid.
-Changing the units themselves (a runtime upgrade or new image) needs root,
-so thermite upgrade does it:
-thermite status says when an installed unit differs from deploy/. To put
-back the commit deployed before, use thermite rollback.
+Compatibility alias for thermite install. Deployments apply the complete
+application, native services and HTTPS gateway workflow. Use --config DIR
+to select committed private configuration. Use thermite upgrade for a newer
+application release. The old partial-conf deployment switches are reserved
+for the installer&#x27;s internal phase and are not a separate deployment path.
 
 positional arguments:
   REV                   the commit (default: HEAD)
@@ -972,9 +915,10 @@ switches every verb takes:
   --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite deploy                   install HEAD, once thermite test boot has passed on it
-  thermite deploy --dry-run         what that would change; writes nothing
-  thermite deploy 3d22e36           install an older commit; thermite rollback does it for one deployed here
+  thermite install --config /path/to/private-site
+                                    deploy everything with one approval
+  thermite upgrade --config /path/to/private-site
+                                    update the application and every service
 </pre>
 </section>
 <section class="verb" id="rollback"><h3><code>thermite rollback</code></h3><p>Deploy the commit deployed before the current one, or another.</p><pre class="help">usage: thermite rollback [-h] [--config DIR] [-n] [--force] [--state DIR] [COMMIT]
@@ -1786,14 +1730,17 @@ examples:
 </section>
 <section class="verb" id="access"><h3><code>thermite access</code></h3><p>Site login, local identity bootstrap, HTTPS service and room policies.</p><pre class="help">usage: thermite access [-h] [--config DIR] ACTION ...
 
-Run a site&#x27;s authenticated HTTPS boundary and room-policy worker, or log
-this terminal into a site. Bootstrap is local and prompts privately for the first
-admin password. Staging prepares persistent code, private authority, a pinned
+Run a site&#x27;s HTTPS boundary and room-policy worker, or log
+this terminal into a site. The Security page controls authentication. Local
+setup issues a one-use code to create the first admin there; bootstrap instead
+prompts privately and enables authentication immediately. Staging prepares
+persistent code, private authority, a pinned
 environment, and owner-installable units; it starts no service.
 
-The gateway is not an effective authorization boundary until every bypassing
-native listener is sealed and device callbacks are preserved. Staging reports
-that owner activation checklist explicitly.
+Normal deployment uses thermite install and updates use thermite upgrade.
+Those commands stage and migrate the gateway, preserve callbacks and verify
+the native network boundary. Stage, migrate, verify, serve and worker here
+are service and recovery primitives, not a separate deployment sequence.
 
 options:
   -h, --help            show this help message and exit
@@ -1802,6 +1749,9 @@ options:
 actions:
   ACTION
     bootstrap           initialize the first admin locally
+    setup               issue a one-use code for first admin setup on the Security page
+    migrate             upgrade identity schema after backing up state and stopping
+                        access services
     serve               serve one HTTPS site
     worker              run the single room-policy worker
     verify              verify service custody without initializing state
@@ -1819,6 +1769,10 @@ switches every verb takes:
 examples:
   thermite access login --url https://thermite.example:13600 --user operator
                                     save this site&#x27;s personal credential privately
+  thermite access setup --config /srv/thermite/config.json
+                                    arm first admin setup on the HTTPS Security page
+  thermite access migrate --config /srv/thermite/config.json
+                                    upgrade identity schema after stopping services and backing up state
   thermite access bootstrap --config /srv/thermite/config.json --user admin
                                     initialize one site&#x27;s first admin locally
   thermite access verify --config /srv/thermite-access/releases/current/config.json
@@ -1845,6 +1799,40 @@ switches every verb takes:
 examples:
   thermite access bootstrap --config /srv/thermite/config.json --user admin
                                     initialize one site&#x27;s first admin locally
+</pre></details>
+<details id="access-setup"><summary><code>thermite access setup</code></summary><pre class="help">usage: thermite access setup [-h] --config CONFIG
+
+Issue a one-use code for first admin setup on the Security page.
+
+options:
+  -h, --help       show this help message and exit
+  --config CONFIG  private site service configuration
+
+switches every verb takes:
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access setup --config /srv/thermite/config.json
+                                    arm first admin setup on the HTTPS Security page
+</pre></details>
+<details id="access-migrate"><summary><code>thermite access migrate</code></summary><pre class="help">usage: thermite access migrate [-h] --config CONFIG
+
+Upgrade identity schema after backing up state and stopping access services.
+
+options:
+  -h, --help       show this help message and exit
+  --config CONFIG  private site service configuration
+
+switches every verb takes:
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access migrate --config /srv/thermite/config.json
+                                    upgrade identity schema after stopping services and backing up state
 </pre></details>
 <details id="access-serve"><summary><code>thermite access serve</code></summary><pre class="help">usage: thermite access serve [-h] --config CONFIG
 
@@ -1914,13 +1902,13 @@ examples:
   thermite access callbacks --config /srv/thermite/release/callbacks.json
                                     run only verified callback paths and peers
 </pre></details>
-<details id="access-login"><summary><code>thermite access login</code></summary><pre class="help">usage: thermite access login [-h] --url URL --user USER [--ca-file CA_FILE] [--json]
+<details id="access-login"><summary><code>thermite access login</code></summary><pre class="help">usage: thermite access login [-h] [--url URL] --user USER [--ca-file CA_FILE] [--json]
 
 Log this terminal into a site.
 
 options:
   -h, --help         show this help message and exit
-  --url URL          site&#x27;s HTTPS origin
+  --url URL          site&#x27;s HTTPS origin (default: this site&#x27;s verified installation)
   --user USER        site username
   --ca-file CA_FILE  trusted private CA certificate file
   --json             print the report as JSON
@@ -1934,13 +1922,13 @@ examples:
   thermite access login --url https://thermite.example:13600 --user operator
                                     use this site&#x27;s private terminal credential
 </pre></details>
-<details id="access-logout"><summary><code>thermite access logout</code></summary><pre class="help">usage: thermite access logout [-h] --url URL [--json]
+<details id="access-logout"><summary><code>thermite access logout</code></summary><pre class="help">usage: thermite access logout [-h] [--url URL] [--json]
 
 Revoke this terminal&#x27;s site credential.
 
 options:
   -h, --help     show this help message and exit
-  --url URL      site&#x27;s HTTPS origin
+  --url URL      site&#x27;s HTTPS origin (default: this site&#x27;s verified installation)
   --json         print the report as JSON
 
 switches every verb takes:
@@ -1952,13 +1940,13 @@ examples:
   thermite access logout --url https://thermite.example:13600
                                     use this site&#x27;s private terminal credential
 </pre></details>
-<details id="access-status"><summary><code>thermite access status</code></summary><pre class="help">usage: thermite access status [-h] --url URL [--room ROOM] [--json]
+<details id="access-status"><summary><code>thermite access status</code></summary><pre class="help">usage: thermite access status [-h] [--url URL] [--room ROOM] [--json]
 
 Read this terminal&#x27;s current site identity and policies.
 
 options:
   -h, --help     show this help message and exit
-  --url URL      site&#x27;s HTTPS origin
+  --url URL      site&#x27;s HTTPS origin (default: this site&#x27;s verified installation)
   --room ROOM    also read this room&#x27;s policy (repeatable)
   --json         print the report as JSON
 

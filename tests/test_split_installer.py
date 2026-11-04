@@ -22,6 +22,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy as deploy  # noqa: E402
 import oh_paths  # noqa: E402
+import oh_release  # noqa: E402
 from oh_cli import deploy as deploy_cli, install as install_cli, rollback as rollback_cli, health, status  # noqa: E402
 from oh_install import runner, steps  # noqa: E402
 from oh_testing import boot  # noqa: E402
@@ -35,7 +36,18 @@ class SplitInstaller(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.site = Path(self.temporary.name) / "private site"
         self.site.mkdir(mode=0o700)
-        self.requirement = {"version": 2, "application": "0.1.0.dev0", "release": "a" * 64}
+        self.program = Path(self.temporary.name) / "installed application"
+        files = {"bin/thermite": b"# synthetic application fixture\n"}
+        release = oh_release.create(files)
+        for name, data in files.items():
+            path = self.program / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        (self.program / oh_release.FILE).write_text(json.dumps(release))
+        selected_program = patch.object(oh_paths, "PROGRAM", self.program)
+        selected_program.start()
+        self.addCleanup(selected_program.stop)
+        self.requirement = {"version": 2, "application": release["application"], "release": release["digest"]}
         (self.site / oh_paths.SITE_FILE).write_text(json.dumps(self.requirement))
         self.versions = {"openhab": {"version": "5.2.3"}, "java": {"version": "21"}}
         self.host = {"uid": 9001, "gid": 9001, "state_root": str(self.site / "native-state"), "http_port": 13601}
@@ -101,6 +113,7 @@ class SplitInstaller(unittest.TestCase):
         self.assertEqual(deploy.read_tree(root), self.context.generated())
         self.assertEqual(json.loads((root / "versions.json").read_bytes()), self.versions)
         self.assertTrue(steps.DerivedConfiguration(self.context).check(self.system).done)
+        self.assertEqual(oh_release.manifest(self.context.program)["digest"], self.application["digest"])
         self.assertEqual(self.prepare(), 0)
         for name in ("conf", "metrics", "deploy", "lib"):
             self.assertFalse((self.site / name).exists())
@@ -110,13 +123,34 @@ class SplitInstaller(unittest.TestCase):
     def test_dry_run_and_declined_install_do_not_materialize_the_build(self):
         runner.run([steps.DerivedConfiguration(self.context)], self.system, self.site, dry_run=True)
         self.assertFalse(self.context.configuration.parent.exists())
+        self.assertFalse((self.site / "var").exists())
         with patch.object(install_cli, "AREA", self.site), \
                 patch.object(steps, "committed_context", return_value=self.context), \
                 patch.object(steps, "install_preflight", return_value=[]), \
                 patch.object(runner, "confirm_run", return_value=False) as approval:
             self.assertEqual(install_cli.install(self.system, False), 1)
         approval.assert_called_once()
-        self.assertFalse(self.context.configuration.parent.exists())
+        self.assertFalse((self.site / "var").exists())
+
+    def test_existing_build_with_missing_release_is_repaired_after_approval(self):
+        self.prepare()
+        import shutil
+        shutil.rmtree(self.context.program)
+        step = steps.DerivedConfiguration(self.context)
+        self.assertTrue(step.matches())
+        self.assertFalse(step.check(self.system).done)
+        self.assertEqual(self.prepare(), 0)
+        self.assertTrue(step.check(self.system).done)
+
+    def test_damaged_release_is_not_overwritten_during_preparation(self):
+        self.prepare()
+        program = self.context.program / "bin/thermite"
+        program.chmod(0o600)
+        program.write_bytes(b"changed application")
+        self.assertIn("differs", steps.DerivedConfiguration(self.context).check(self.system).problem)
+        with self.assertRaises(oh_release.ReleaseError):
+            self.prepare()
+        self.assertEqual(program.read_bytes(), b"changed application")
 
     def test_changed_commit_or_uncommitted_inputs_cannot_replace_the_reviewed_plan(self):
         for head, dirty in (("c" * 40, []), (self.context.head, [" M instance/devices.yaml"])):
@@ -163,7 +197,7 @@ class SplitInstaller(unittest.TestCase):
                          {str(root / name) for name in deploy.INSTALLED})
         deploy_actions = steps.Deploy(self.context).actions(self.system)
         self.assertEqual(len(deploy_actions), 1)
-        self.assertEqual(deploy_actions[0].argv, (*prefix, "deploy", self.context.head, "--state", self.host["state_root"]))
+        self.assertEqual(deploy_actions[0].argv, (*prefix, "deploy", self.context.head, "--state", self.host["state_root"], "--_configuration-phase"))
         self.assertIn("--yes", deploy_actions[0].approved_argv)
         self.assertTrue(deploy_actions[0].terminal)
         verification = steps.Verify(self.context).actions(self.system)[0]
@@ -275,8 +309,8 @@ class SplitInstaller(unittest.TestCase):
 
     def test_symbolic_deploy_and_rollback_targets_are_pinned_before_the_body(self):
         with patch.object(deploy_cli, "deployment_selection", return_value=(self.context.head, self.host, self.requirement)), \
-                patch.object(deploy_cli, "apply", return_value=0) as apply:
-            self.assertEqual(deploy_cli.main(["HEAD", "--dry-run"]), 0)
+                patch.object(deploy_cli, "apply", return_value=0) as apply, patch.object(oh_paths, "require_compatible"):
+            self.assertEqual(deploy_cli.main(["HEAD", "--dry-run", "--_configuration-phase"]), 0)
             self.assertEqual(apply.call_args.args[0].rev, self.context.head)
         with patch.object(rollback_cli, "deployment_selection", return_value=(self.context.head, self.host, self.requirement)), \
                 patch.object(rollback_cli, "roll_back", return_value=0) as apply:
@@ -327,8 +361,8 @@ class SplitInstaller(unittest.TestCase):
         self.assertLess(location(steps.Services), location(steps.NativeReady))
         self.assertLess(location(steps.Services), location(steps.Verify))
         with patch.object(install_cli.os, "geteuid", return_value=1000), \
-                patch.object(install_cli, "install", return_value=0) as run:
-            self.assertEqual(install_cli.main(["--restart-runtime", "--dry-run"]), 0)
+                patch.object(install_cli, "install", return_value=0) as run, patch.object(oh_paths, "require_compatible"):
+            self.assertEqual(install_cli.main(["--restart-runtime", "--dry-run", "--_host-phase"]), 0)
             self.assertTrue(run.call_args.kwargs["restart_runtime"])
 
 

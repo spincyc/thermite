@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import sys
+import argparse
 from pathlib import Path
 
 import oh_cli
@@ -15,50 +16,16 @@ from oh_cli import AREA
 VAR = AREA / "var"
 
 DESCRIPTION = """\
-Production runtime runs on the host thermite install ran on, from its state
-directory (the host file's state_root). Run this there. It installs one
-commit into the state from your operator account:
-
-  - the commit's conf/ into <state>/conf. Runtime reloads regular configuration;
-    shared script-library updates need a controlled runtime restart so every
-    script context loads the new library;
-  - the Apple TV helper's files (bin/thermite and the code and pins
-    its apple-tv verb runs) into <state>/atv/app; when they change it writes
-    <state>/deploy/atv-restart, and thermite-atv-restart.path restarts
-    thermite-atv.service;
-  - the commit's metrics/ into <state>/metrics and the metrics exporter's
-    code into <state>/exporter/app, once thermite install or upgrade has
-    made them. Prometheus and blackbox_exporter reload a changed
-    configuration (POST /-/reload; one not running yet reads it when it
-    starts), Grafana rereads its dashboards by itself, and a change to the
-    exporter's code or Grafana's settings writes <state>/deploy/metrics-restart,
-    and thermite-metrics-restart.path restarts those two. A commit from
-    before the metrics (no metrics/ or no exporter) leaves both as the last
-    deploy installed them;
-  - a record in <state>/deploy/deployed.json and a line in
-    <state>/deploy/history (thermite history lists them).
-
-It installs the commit as Git has it, not the working tree. HEAD needs a
-clean working tree, and the commit's conf/ must have passed thermite test
-boot on this host. It writes only what differs, deletes only files
-an earlier deploy installed, and leaves alone anything else in the state.
-
-You need to be in the thermite group. Before writing, it asks you to approve
-the exact privileged command that gives deployed files to thermite:thermite.
-Install and upgrade pass their run approval with --yes; an explicit --yes
-also acknowledges this handoff for a standalone deployment. It does not
-bypass boot checks, pairing-log protection or sudo authentication.
-New files inherit the service group and shared directories keep setgid.
-Changing the units themselves (a runtime upgrade or new image) needs root,
-so thermite upgrade does it:
-thermite status says when an installed unit differs from deploy/. To put
-back the commit deployed before, use thermite rollback.
+Compatibility alias for thermite install. Deployments apply the complete
+application, native services and HTTPS gateway workflow. Use --config DIR
+to select committed private configuration. Use thermite upgrade for a newer
+application release. The old partial-conf deployment switches are reserved
+for the installer's internal phase and are not a separate deployment path.
 """
 
 EXAMPLES = (
-    ("thermite deploy", "install HEAD, once thermite test boot has passed on it"),
-    ("thermite deploy --dry-run", "what that would change; writes nothing"),
-    ("thermite deploy 3d22e36", "install an older commit; thermite rollback does it for one deployed here"),
+    ("thermite install --config /path/to/private-site", "deploy everything with one approval"),
+    ("thermite upgrade --config /path/to/private-site", "update the application and every service"),
 )
 
 
@@ -142,8 +109,17 @@ def main(argv: list[str] | None = None) -> int:
                         help="install a conf thermite test boot has not passed on here")
     parser.add_argument("--state", type=Path, metavar="DIR",
                         help="the state root (default: instance/host.yaml state_root)")
+    parser.add_argument("--_configuration-phase", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
+        if not args._configuration_phase:
+            if args.rev != "HEAD" or args.force or args.state or args.yes:
+                raise deploy.DeployError("deployment now uses the complete install workflow; select a committed private site "
+                                         "with --config DIR and run thermite install (or thermite upgrade for a new application)")
+            from oh_cli.install import main as install
+            return install(["--dry-run"] if args.dry_run else [])
+        import oh_paths
+        oh_paths.require_compatible()
         args.rev, host, _ = deployment_selection(args.rev)
         return apply(args, host)
     except deploy.DeployError as exc:

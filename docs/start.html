@@ -80,12 +80,11 @@ thermite validate
 thermite test boot</code></pre>
 <p>The boot check loads the generated configuration in an isolated openHAB runtime and reports what loads. Follow the <a href="installation.html">server installation guide</a> to prepare the host, commit your private site and deploy it. <code>thermite install --dry-run</code> shows the planned installation steps. <code>thermite status</code> reports the running services and their addresses.</p>
 <h2 id="connect-and-use-it">Connect and use it</h2>
-<p>The installation guide covers site access and the first account. After commissioning authenticated access, open your site's web address and sign in. In a terminal:</p>
-<pre><code class="language-sh">thermite access login --url https://thermite.example:13600 --user admin
-thermite remote --url https://thermite.example:13600</code></pre>
-<p>Use <code>--ca-file</code> at login for a private certificate authority. Choose a room and source in Remotes; use Pair devices for equipment that needs an on-screen code. Cameras and Site show cameras and connections. Security remains Not connected until an alarm integration is configured.</p>
+<p>Installation prints your HTTPS address and trust certificate. Ordinary controls work with Security off. Use the Security page to enable authentication and create the first administrator with owner proof. The local terminal uses the installed site's verified endpoint and certificate automatically:</p>
+<pre><code class="language-sh">thermite remote --config /path/to/private-site</code></pre>
+<p>With authentication enabled, first run <code>thermite access login --config /path/to/private-site --user admin</code>. Other computers use <code>--url</code> and, for a private certificate authority, <code>--ca-file</code> at login. Choose a room and source in Remotes; use Pair devices for equipment that needs an on-screen code. Cameras and Site show cameras and connections. Alarm-device status requires an alarm integration.</p>
 <h2 id="keep-it-running">Keep it running</h2>
-<ul><li><code>thermite health --production</code> reports device health.</li><li><code>thermite history</code> lists deployments; <code>thermite rollback</code> restores the previous one.</li><li><code>thermite version</code> shows application and runtime versions.</li><li><a href="packaging.html">Application releases and private sites</a> explains application upgrades and cached releases for rollback.</li><li><code>thermite help &lt;command&gt;</code> explains any command, with examples.</li></ul>
+<ul><li><code>thermite upgrade --config DIR</code> updates the application and all managed services.</li><li><code>thermite health --production</code> reports device health.</li><li><code>thermite history</code> lists deployments; <code>thermite rollback</code> restores the previous one.</li><li><code>thermite version</code> shows application and runtime versions.</li><li><a href="packaging.html">Application releases and private sites</a> explains application upgrades and cached releases for rollback.</li><li><code>thermite help &lt;command&gt;</code> explains any command, with examples.</li></ul>
 
   </main>
   <footer class="foot">

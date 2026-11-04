@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+import fcntl
 import json
 import os
 from pathlib import Path
 import stat
 import sys
+import time
 
 NAMES = ("openhab-token", "grafana-admin-password")
 MAXIMUM = 65536
@@ -187,6 +189,86 @@ def install(state_root, *, name, source=None, uid, gid, preserve_existing=False,
         return {"installed": True, "name": name, "changed": changed, "preserved": preserved}
 
 
+def _validate_runtime_token(url, content):
+    """Verify a service credential with one bounded, read-only loopback request."""
+    # Both modules are stdlib-only and ship together in every pinned release;
+    # the administrative helper also runs directly, without package imports.
+    if __package__:
+        from . import native_auth
+    else:
+        # Release validation accepts installer-produced bytecode as inert.
+        # Match the application's launcher: never execute adjacent .pyc files
+        # when this finite helper runs with administrative privileges.
+        sys.dont_write_bytecode = True
+        sys.pycache_prefix = str(Path(__file__).resolve().parent / (".uncached-" + os.urandom(16).hex()))
+        import native_auth
+    try:
+        origin = native_auth._origin(url)
+        token = content.decode("ascii").strip()
+        if not token or any(ord(c) < 33 or ord(c) > 126 for c in token):
+            raise ValueError("invalid token")
+        client = native_auth._Client(origin, time.monotonic() + 10, time.monotonic)
+        native_auth._metadata(client, token)
+    except (OSError, ValueError, RecursionError, native_auth.NativeAuthError):
+        raise SecretError("installed runtime credential could not be verified") from None
+
+
+def recover_runtime_token(state_root, *, destination, uid, gid, url):
+    """Restore only a missing operator token from the installed service copy.
+
+    No account or service secret is changed. Existing local credentials and
+    managed journals require explicit recovery and are never replaced here.
+    """
+    if type(uid) is not int or type(gid) is not int or uid <= 0 or gid <= 0:
+        raise SecretError("choose a non-root service identity")
+    root, destination = _path(state_root), _path(destination)
+    if root == Path("/") or destination.name != "api-token":
+        raise SecretError("choose the installed state root and operator api-token path")
+    try:
+        owner = int(os.environ.get("SUDO_UID", str(os.getuid())))
+        group = int(os.environ.get("SUDO_GID", str(os.getgid())))
+    except ValueError:
+        raise SecretError("invalid invoking operator identity") from None
+    if owner < 0 or group < 0 or os.geteuid() != 0 and (owner, group) != (os.getuid(), os.getgid()):
+        raise SecretError("invalid invoking operator identity")
+    with ExitStack() as stack:
+        root_fd = _directory(root, stack)
+        monitoring = _child(root_fd, "monitoring", stack)
+        private = _child(monitoring, "secrets", stack) if monitoring is not None else None
+        if private is None:
+            raise SecretError("the installation has no saved runtime credential")
+        directory = os.fstat(private)
+        if (directory.st_uid, directory.st_gid, stat.S_IMODE(directory.st_mode)) != (uid, gid, 0o700):
+            raise SecretError("installed credential directory has unsafe custody")
+        credential = _keep(stack, os.open("openhab-token", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=private))
+        info = _regular(credential, source_uid=uid)
+        if info.st_gid != gid:
+            raise SecretError("installed credential has the wrong group")
+        content = _read(credential)
+        parent = _directory(destination.parent, stack)
+        directory = os.fstat(parent)
+        if directory.st_uid != owner or stat.S_IMODE(directory.st_mode) != 0o700:
+            raise SecretError("operator credential directory must be private and owned")
+        lock = _keep(stack, os.open(".runtime-access.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                   0o600, dir_fd=parent))
+        lock_info = os.fstat(lock)
+        if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_nlink != 1
+                or stat.S_IMODE(lock_info.st_mode) != 0o600 or lock_info.st_uid not in {owner, os.geteuid()}):
+            raise SecretError("runtime access lock has unsafe custody")
+        os.fchown(lock, owner, group)
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        for name in (destination.name, "runtime-credentials.json"):
+            try:
+                os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            raise SecretError("existing operator credentials require explicit recovery")
+        _validate_runtime_token(url, content)
+        _unchanged(private, "openhab-token", info)
+        _owner_copy(parent, destination.name, content, owner, group)
+    return {"recovered": True, "name": "openhab-token"}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("state_root", type=Path)
@@ -196,9 +278,21 @@ def main(argv=None):
     parser.add_argument("--gid", required=True, type=int)
     parser.add_argument("--preserve-existing", action="store_true")
     parser.add_argument("--generate-if-missing", action="store_true", help="generate only a genuinely missing Grafana password and save the invoking administrator's private copy")
+    parser.add_argument("--recover-runtime-token", action="store_true", help="restore a missing operator token from the installed service credential")
+    parser.add_argument("--runtime-url", help="literal loopback runtime origin for credential recovery")
     args = parser.parse_args(argv)
     try:
-        result = install(**vars(args))
+        if args.recover_runtime_token:
+            if args.name != "openhab-token" or args.source is None or args.preserve_existing or args.generate_if_missing:
+                raise SecretError("invalid runtime recovery arguments")
+            result = recover_runtime_token(args.state_root, destination=args.source, uid=args.uid, gid=args.gid, url=args.runtime_url)
+        else:
+            if args.runtime_url is not None:
+                raise SecretError("runtime origin is only used for credential recovery")
+            values = vars(args).copy()
+            values.pop("recover_runtime_token")
+            values.pop("runtime_url")
+            result = install(**values)
     except (OSError, SecretError):
         print("thermite credential: operation refused; check finite paths, file custody and service identity", file=sys.stderr)
         return 2

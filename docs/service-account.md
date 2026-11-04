@@ -40,6 +40,14 @@ setup resume without asking users to manage the runtime's own account pages;
 it is separate from household sign-in. Packages, application environments and installed systemd unit files
 retain their normal administrator ownership.
 
+When a fresh configuration clone lacks both operator credentials, the installer
+can restore `var/<host>/api-token` from this installation's private monitoring
+token. The approved administrative helper validates it using a read-only
+loopback request before writing an operator-owned mode-0600 copy. It never
+replaces existing operator credentials, changes accounts, or rewrites the
+service token. Keep the original managed credential record in private backups;
+the helper cannot reconstruct it from an API token.
+
 More restrictive existing configuration modes are retained. Native userdata
 is private as a whole because it also contains identities and pairing keys.
 The recognized, versioned Graal attach executable may retain its producer's
@@ -67,18 +75,16 @@ Privileged host service management remains the administrator's responsibility.
 
 Existing Thermite installations can migrate their old `openhab*` unit and
 container names while preserving the service account and data. From your
-private site or complete source checkout, as its owner:
+private site, as its owner:
 
 ```sh
-thermite upgrade --dry-run
-thermite upgrade
+thermite upgrade --config /path/to/private-site --dry-run
+thermite upgrade --config /path/to/private-site
 ```
 
-For a source checkout without the installed command, use
-`python3 bin/thermite upgrade --dry-run` and
-`python3 bin/thermite upgrade`. Review the plan and keep a current backup
-before applying it. The owner approves the privileged commands shown by
-the workflow.
+The same command updates the application environment, native services and
+HTTPS gateway. Review the plan and keep a current backup before applying it.
+One approval covers the complete workflow.
 
 The migration verifies generated unit contents, their state bindings and
 the effective systemd registration before stopping or removing them. New
@@ -115,13 +121,10 @@ thermite health --production
 ```
 
 The account and group entries should show 9001, your new login should include
-group `thermite`, and status should show the expected services. The HTTPS
-gateway has a separate release handoff described in
-[server installation](installation.md#set-up-https-and-accounts). The main
-installer cannot rewrite separately staged access releases without their
-owner's configuration. Restage older access units for `thermite` before
-starting them; keep their existing persistent state and do not bootstrap
-it again.
+group `thermite`, and status should show the expected services. The unified
+installer adopts recognized gateway units, preserving their existing private
+state, TLS and callback settings. Unknown ownership or unsafe overrides stop
+for review; an existing identity is never bootstrapped again.
 
 ## Service registration
 
@@ -141,9 +144,9 @@ sudo systemctl stop thermite.target
 
 Installation still starts components in stages and checks their readiness
 before enabling the target. An active target does not replace those health
-checks. The separately commissioned access gateway, worker and callback
-relay join the same target and slice when their staged units are enabled;
-generating the core units does not activate them.
+checks. The gateway, worker and verified callback relay are commissioned by
+the same workflow and join the same target and slice. Generating files alone
+starts no service.
 
 Default TCP listeners use Thermite's [13600–13625 range](ports.md).
 Persistent files remain below the selected Thermite state root; upstream
@@ -152,25 +155,24 @@ not the host's independent application directories. Discovery protocols keep
 their standard multicast ports; running two controllers against the same
 physical devices is still subject to those devices' protocol limits.
 
-## Stage native access services
+## Gateway service ownership
 
-Use a persistent directory outside a private home, such as
-`/srv/thermite-access`, outside the native runtime's `state_root`. A service
-cannot traverse an operator's mode-0700
-home directory. Stage a release as the operator, then follow its receipt to
-hand the release and state to `thermite:thermite` before bootstrap or service
-startup. Do not make your home directory public or run the whole CLI as root.
+`thermite install --config DIR` and `thermite upgrade --config DIR` manage the
+HTTPS gateway, policy worker and verified callback relay together with the
+native services. Their releases and identity state live outside the native
+state root, by default at the same path with `-access` appended. Release
+parents belong to the operator; private release files and persistent identity
+belong to `thermite:thermite`. Root owns the installed unit copies and backups.
 
-The first administrator is created by an explicit command run as `thermite`;
-the service account still has no interactive login. Later releases reuse the
-same private state. See the complete commands in
-[server installation](installation.md#set-up-https-and-accounts).
-Access staging parents are operator-owned `2750`, so the service can traverse
-them but cannot replace an in-progress release. Tighten older `2770` access
-parents before staging. The protected plan's separate `activate.sh` handles
-both first installation and upgrade cutover, including stopping old processes
-and verifying the running release; see
-[access upgrades and recovery](installation.md#update-the-access-release).
+The workflow retains existing identity and TLS state, stops gateway writers,
+backs up the complete private state, migrates the schema, starts the new
+services and verifies their live release and HTTPS response. It also seals
+native ports and preserves verified callback routes. No separate staging or
+activation script is needed. See [installation and recovery](installation.md#update-or-remove).
+
+On a new site, ordinary controls work with authentication off. The Security
+page enables it through an owner-issued setup code and first administrator
+account. The service account still has no interactive login.
 
 ### Move existing access state
 

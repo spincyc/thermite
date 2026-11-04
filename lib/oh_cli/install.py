@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import dataclasses
+import argparse
 import os
 import sys
+import subprocess
 from pathlib import Path
 
 import oh_cli
@@ -17,39 +19,30 @@ from oh_install import runner, steps
 from oh_install.system import System
 
 DESCRIPTION = """\
-Install thermite on this host, the one you run it on. Run
-it as your user with --config DIR to select committed private configuration
-from any working directory. A complete source checkout also works:
-it is safe to run again at any time. It finds this host's name and address
-and your user as it runs; instance/host.yaml holds only what is the same on
-any host (the state root, ports, service UID and GID, and time zone).
+Deploy the complete Thermite installation using committed private configuration.
+Run as your ordinary owner with --config DIR. The current application release
+is prepared in a private environment; --source DIR and --revision REV select
+a clean application checkout instead. The application validates the site and
+commits its release requirement before applying the host workflow.
 
-Before changing this host, the installer checks that every change is committed.
-Config-only sites render the committed inputs with their pinned application;
-complete checkouts also require current generated files. Each later step checks
-whether it is done and skips it if so:
-preconditions, packages, the thermite user and group with you in it, the
-state directories, the boot check, the systemd units, stopped native-state
-preparation and ownership repair, the deploy of HEAD, services, private runtime access, and a
-read-only check at the end. One y/n question approves this entire run,
-including its sudo commands and deployment ownership handoff. Compact
-status shows each stage; -v/--verbose shows details and commands. Interactive
-commands keep the terminal, with the spinner paused. After a no, a failure
-or Ctrl-C, run it again and it goes on from there, asking once for the new run.
+One approval covers application setup, packages, the service account, native
+runtime and helpers, monitoring, HTTPS gateway, policy worker, verified device
+callbacks, private-state backups, schema migrations and readiness checks.
+The native ports are restricted to this host. An existing gateway keeps its
+identity, accounts, certificates and callback routes; a fresh gateway creates
+its TLS certificate and starts with Security off. Enable Security on its page
+to bootstrap the first administrator with owner proof.
 
---clean first removes the installed units and deletes the native state root,
-including users, pairings, tokens, history, monitoring stores and backups.
-It also clears this host's local runtime and monitoring credentials before reinstalling.
-The deletion still requires typing the exact state path. Source/site
-configuration and separately staged access identity/TLS state are retained.
+The command in ~/.local/bin is switched only after every check passes. Keep
+that directory on PATH. Rerun after a failure to resume; prior environments,
+releases and backups are retained. Application setup never changes OS Python.
 
---restart-runtime requests one fresh runtime start after deployment, within
-the same approval and followed by the normal readiness checks. Use it when
-updating shared script libraries; it deletes no runtime state.
-
---dry-run leaves the site and host unchanged: transient configuration planning
-is cleaned up, and it reports each step and what it would run. An
-agent uses only that: agents never run sudo.
+--clean deletes the native state and local runtime/monitoring credentials;
+it requires typing the exact state path. Gateway identity/TLS state is retained.
+--restart-runtime requests one fresh native start and its readiness checks.
+--dry-run reports the whole workflow without fetching, committing or changing
+the host. The exact host plan is resolved after an approved application fetch.
+Use -v for details. Agents only use --dry-run; they never run sudo.
 """
 
 EXAMPLES = (
@@ -70,14 +63,34 @@ def main(argv: list[str] | None = None) -> int:
                         help="restart runtime once after deployment, then run normal readiness checks")
     parser.add_argument("--runtime-token-file", type=Path,
                         help="advanced: import an existing internal runtime API token from your private file")
+    parser.add_argument("--source", type=Path, help="use a clean application checkout for this deployment")
+    parser.add_argument("--revision", help="application Git revision to deploy from --source")
+    parser.add_argument("--_host-phase", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--_run-approved", action="store_true", help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
     if os.geteuid() == 0:
         print("thermite install: run it as your user; it asks once before applying the installation", file=sys.stderr)
         return 2
     system = System()
     try:
+        if not arguments._host_phase:
+            if arguments._run_approved:
+                raise ValueError("run approval is only valid inside the application workflow")
+            import oh_application_update
+            return oh_application_update.install(
+                AREA, source=arguments.source, revision=arguments.revision,
+                dry_run=arguments.dry_run, approve=lambda: runner.confirm_run(system, "install"),
+                runtime_token_file=arguments.runtime_token_file,
+                host_args=(["--clean"] if arguments.clean else []) +
+                          (["--restart-runtime"] if arguments.restart_runtime else []) +
+                          (["--verbose"] if oh_cli.switches.verbose else []), say=system.say)
+        import oh_paths
+        oh_paths.require_compatible()
         return install(system, arguments.dry_run, clean=arguments.clean, runtime_token_file=arguments.runtime_token_file,
-                       restart_runtime=arguments.restart_runtime)
+                       restart_runtime=arguments.restart_runtime, run_approved=arguments._run_approved)
+    except subprocess.CalledProcessError as exc:
+        print("thermite install: a deployment step failed; rerun the same command to resume", file=sys.stderr)
+        return exc.returncode if exc.returncode > 0 else 1
     except (deploy.DeployError, ValueError, OSError) as exc:
         print(f"thermite install: {exc}", file=sys.stderr)
         return 2
@@ -104,7 +117,7 @@ def approve(system: System, context: steps.Context, clean: bool) -> bool:
 
 
 def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token_file: Path | None = None,
-            restart_runtime: bool = False) -> int:
+            restart_runtime: bool = False, run_approved: bool = False) -> int:
     if clean and runtime_token_file is not None:
         system.say("A clean installation creates new runtime credentials; an existing token cannot be imported into it.")
         return 2
@@ -130,7 +143,7 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
         return code
     approved = False
     if not dry_run:
-        if not approve(system, context, clean):
+        if not run_approved and not approve(system, context, clean):
             return 1
         approved = True
     reset = steps.clean_install(context) if clean else []
@@ -156,16 +169,5 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
 
 
 def completion(context: steps.Context, system: System) -> None:
-    """Distinguish native runtime readiness from the separately staged frontend."""
-    import oh_access_mode
-    import oh_inventory
-
-    if oh_cli.switches.verbose:
-        system.say(f"Advanced runtime administration on {context.hostname}: {context.lan_url}/settings/")
-    house = oh_inventory.load(context.area / "instance/devices.yaml") or {}
-    if oh_access_mode.mode(house) == "native":
-        system.say(f"Thermite: {context.lan_url}/ ; pairing: "
-                   f"{context.lan_url}/pairing/ ; advanced tools: System.")
-    else:
-        system.say("Set up HTTPS and accounts before using the authenticated web and terminal remotes. "
-                   "Follow docs/installation.md (Set up HTTPS and accounts); thermite access --help lists the commands.")
+    system.say("Thermite's HTTPS gateway is installed. Use the verified gateway URL and trust certificate "
+               "printed above. Security can be enabled from its Security page; ordinary controls work while it is off.")

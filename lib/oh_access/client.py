@@ -17,6 +17,30 @@ from .files import json_private, private_directory, read_private
 TOKEN = re.compile(r"thm_[A-Za-z0-9_-]{32,200}\Z")
 
 
+def deployment(site):
+    """Local installer's verified endpoint and public trust certificate.
+
+    This is connection metadata, never a login or permission grant. A damaged
+    profile fails closed instead of sending the terminal to native HTTP.
+    """
+    try:
+        content = read_private(Path(site) / "var/gateway/current.json", 16384)
+    except FileNotFoundError:
+        return None
+    try:
+        value = json.loads(content)
+        if not isinstance(value, dict) or set(value) != {"version", "url", "ca_file", "release", "state", "versions", "journal"} or value["version"] != 1:
+            raise ValueError()
+        url = origin(value["url"])
+        ca = Path(value["ca_file"])
+        if not ca.is_absolute():
+            raise ValueError()
+        ssl.create_default_context(cafile=str(ca))
+        return {"url": url, "ca_file": str(ca)}
+    except (ValueError, KeyError, TypeError, OSError, ssl.SSLError):
+        raise AccessError("The installed gateway profile is invalid; rerun thermite install to verify it") from None
+
+
 def origin(value):
     try:
         parsed = urlsplit(value)

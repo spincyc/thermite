@@ -2,7 +2,8 @@
 
 Install the application separately from your private site's configuration and
 state. Each site pins an exact application release. These development builds
-are currently `0.1.0.dev0`; complete source checkouts are also supported.
+are currently `0.1.0.dev0`. Deployment uses an explicit private site;
+application source checkouts remain available for development and packaging.
 For a first installation, use the [server guide](installation.md) or
 [standalone ISO](iso.md).
 
@@ -16,7 +17,8 @@ state. The public source also supports `python -m pip install .`.
 
 Use a dedicated virtual environment outside the private site. PyYAML is the
 application's configuration dependency. Node.js, the locked terminal package,
-native runtime downloads and service dependencies have separate setup steps.
+native runtime downloads and service dependencies are prepared by the
+installation workflow.
 The server guide provides the distribution-specific prerequisite commands;
 do not install the application into the OS-managed Python environment.
 For an offline wheel installation, supply PyYAML first, then run
@@ -45,8 +47,9 @@ command comes from its installed environment, outside the private repository.
 New sites contain no launcher or Makefile. Keep the application environment
 outside disposable source workspaces.
 Help, themes, documentation, packaging and ISO builds work without a site;
-commands that create configuration or state require one. Complete source
-checkouts retain their original behavior.
+commands that create configuration or state require one. Install and upgrade
+require a site manifest even when launched from an application source checkout;
+they do not convert a mixed source/configuration tree automatically.
 
 The application supplies integrations, templates, web assets, terminal source,
 themes and dependency locks. The private site owns its `instance/` data
@@ -57,9 +60,29 @@ trees are ignored local build output, alongside `var/` and `build/`.
 Application JavaScript changes therefore require no generated-code commit in
 the private repository.
 
+### Use a fresh clone on an existing host
+
+Run the same `thermite install --config /path/to/private-site` command.
+Install selects its current application release, prepares its private owner
+environment, and reconciles the site's application requirement under the one
+approval. When the release already matches, it makes no duplicate pin commit.
+It recreates a missing application cache from the verified release, reconnects
+the native services and adopts the installed gateway's identity and TLS state.
+To retain a specific historical application, launch that exact verified release;
+to move the whole installation to current official source, use
+`thermite upgrade --config /path/to/private-site`.
+
+Git does not copy private `var/` state. If this host already runs the site and
+the clone lacks its runtime token, installation can reconnect using the
+service's saved monitoring token. Under the normal install approval, it
+validates that token against the loopback runtime and saves a private operator
+copy. It does not replace an existing local token or managed credential record.
+Keep private backups of `var/` for other state and historical releases.
+
 New sites use manifest schema 2. Deployment exports the selected Git revision's
 inputs and renders them with that revision's exact verified application from
-`var/application-releases/`. It uses a temporary private directory and an
+`var/application-releases/`, or the matching installed release when the cache
+is absent. It uses a temporary private directory and an
 isolated Python subprocess; it never imports site `lib/` or uses working-tree
 inventory, generated files or environment overrides as deployment authority.
 Application source directories in a schema-2 site are refused. Planning may
@@ -76,75 +99,96 @@ The installer sets up trusted operator group access; see
 
 ## Update and roll back
 
-A site's manifest pins an application version and the exact release digest.
-The release manifest lists program files and SHA256 values. Changed, missing,
-extra or symlinked program files fail validation. The installed application
-is not a writable configuration directory.
-
-Activate the application's Python environment and install the reviewed wheel.
-Development builds may share a version number while their release digests
-differ; force replacement so pip does not keep an older build of that version:
+The normal commands are:
 
 ```sh
-python -m pip install --force-reinstall /path/to/thermite_app-0.1.0.dev0-py3-none-any.whl
+thermite install --config /path/to/private-site
+thermite upgrade --config /path/to/private-site --dry-run
+thermite upgrade --config /path/to/private-site
 ```
 
-An ISO installation starts with an administrator-owned environment in
-`/opt/thermite/venv` without pip. For later application updates, create an
-owner-managed environment instead. On Arch, install `python-pip` first;
-on Ubuntu, install `python3-venv`. Then run as your owner:
+Install deploys the current application release. Upgrade fetches the official
+`https://github.com/spincyc/thermite.git` repository's `main` branch after the
+owner approves the run. To select a reviewed local checkout or another Git
+revision explicitly:
 
 ```sh
-python3 -m venv "$HOME/.local/share/thermite/venv"
-. "$HOME/.local/share/thermite/venv/bin/activate"
-python -m pip install /path/to/thermite_app-0.1.0.dev0-py3-none-any.whl
+thermite upgrade --config /path/to/private-site --source /path/to/thermite
+thermite upgrade --config /path/to/private-site --revision REVIEWED_COMMIT
 ```
 
-Keep that environment active for the site upgrade below. Use the same procedure with a
-new environment after an Arch system update changes Python's minor version.
-Retain the previous application and private-site backups until the update
-has been verified.
+With `--source`, the default revision is that clean checkout's HEAD; combine
+it with `--revision` to select one of its other commits or tags. Source
+`make upgrade CONFIG=/path/to/private-site` is only an alias for the same public
+upgrade command, with the same official-source default. It maintains no
+separate lifecycle. No application checkout is required for ordinary upgrades.
 
-### Update the private site
+### What the one command does
 
-With the new application environment active:
+Before mutation, the workflow requires a clean private repository and any
+explicit source checkout, verifies the owner command can be replaced safely,
+and asks once to approve the entire run. It fetches the selected source when
+needed, prepares or reuses a private application environment under
+`~/.local/share/thermite/application/`, and verifies every installed release
+file. Python package installation happens inside that environment, never in
+the OS-managed interpreter. A dry run performs no fetch, environment creation,
+site update or service change; the remote revision remains unknown until the
+approved fetch.
 
-```sh
-thermite init --upgrade /path/to/private-site
-thermite check --config /path/to/private-site
-```
+The candidate validates the private site before committing its exact
+application version and release digest in `thermite-site.json`. The same
+bounded transaction may update ignore rules and remove recognized generated
+legacy launchers or an unchanged generated Makefile. Customized launchers
+require review; custom Makefiles, inventory, runtime pins and unrelated Git
+files remain untouched. Nothing is pushed to the site's remote repository.
 
-This selects schema 2 and updates the application requirement and ignore rules
-while preserving inventory, runtime pins, credentials and state. It removes
-recognized generated launchers and an unchanged generated Makefile. Customized
-launchers are refused for review; custom Makefiles are preserved. If the site previously
-tracked generated output, remove that tracking before committing the new site
-revision:
+The candidate then runs the complete native and access workflow: boot checks,
+native backups when required, deployment and service readiness, gateway
+staging, a complete stopped-state identity backup, schema migration, activation,
+native authentication and callback configuration, and live HTTPS verification.
+Existing identity, security settings, certificates and callback routes are
+adopted. A fresh gateway has authentication off until owner-authorized first
+administrator setup on Security; it prints its HTTPS URL and self-signed trust
+certificate path. Each client must trust that certificate independently.
 
-```sh
-git rm -r --cached --ignore-unmatch conf metrics deploy
-```
+Only a successful complete run selects the candidate through
+`~/.local/bin/thermite`. Keep that directory on PATH. A recognized standard
+pip-installed owner entry point is backed up before adoption; a custom command
+is not overwritten. The one-time application bootstrap in the
+[server guide](installation.md) is the only normal pip/environment setup.
+Upgrades need no manual pip, `init --upgrade`, site-pin commit or access-release
+commands.
 
-This leaves the local files in place. Generated files are rebuilt from the
-committed inputs when required. Review the normal runtime upgrade/deploy plan
-after committing the inputs and application pin.
+Application-only changes also deploy and restart the runtime when its shared
+script libraries need reloading. Native component versions still come from the
+private site's committed `versions.json`; fetching newer application code does
+not silently change them.
 
-### Preserve rollback releases
+### Resume or recover
 
-Verified application releases are cached under
-`var/application-releases/`. Retain that cache and the original release
-artifacts for rollback. Deployment resolves inputs and the application
-requirement from the selected private Git revision, renders its configuration
-and units with that cached release, and copies the finite helper/exporter
-program files from the same release. Rollback uses that older release. A
-missing or modified artifact fails before deployment writes; deployment never
-downloads a substitute automatically. A previous-deployment boot waiver must
-match the actual derived configuration digest as well as its Git revision.
+Validation or commit failures restore only the upgrade's bounded site edits
+when those files have not changed concurrently. Concurrent edits are preserved
+for review. If a host phase fails, the committed candidate pin and candidate
+environment remain available, while the previous owner command stays selected.
+Rerun the printed install or upgrade command: it revalidates and reuses the
+candidate and resumes completed stages without a duplicate pin commit. A
+changed or damaged retained release is refused.
 
-When an application update changes shared script libraries, use
-`thermite install --restart-runtime` after committing the new site pin. The
-normal installer preserves state and performs one controlled runtime restart
-after deployment, followed by readiness checks, under the same run approval.
+Retaining the previous launcher is not an automatic rollback of services,
+native data or identity schemas. The native backup and complete identity
+backup have different recovery purposes. A failed cutover can leave services
+stopped; follow its recorded failure and backup paths. Before selecting an
+older gateway, establish that it supports the current schema, or restore the
+matching stopped-state identity backup as part of deliberate recovery. Do not
+bootstrap a new authority, reset accounts or replace credentials to retry.
+
+Verified application releases are also cached under
+`var/application-releases/`. Keep that cache, previous application environments,
+gateway releases and original artifacts. A historical deployment resolves the
+private Git revision's exact application requirement, renders configuration
+with that release and copies its finite helper files. A missing cache can use
+the exact installed release; unavailable or modified artifacts fail before
+deployment writes. Rollback does not download a substitute automatically.
 
 ### Legacy sites
 
@@ -153,15 +197,15 @@ exact cached helper application. Historical complete-checkout revisions retain
 their committed source and generated configuration. Their rollback format is
 not silently reinterpreted as schema 2.
 
-Existing complete Git checkouts continue deploying their own committed program
-and configuration until explicitly reduced to a config-only site. Init still
-refuses to overwrite a nonempty legacy checkout; conversion requires reviewed
-private Git changes after the application has been installed separately.
-Preserve the site's existing directory and ignored `var/`, and retain host
-state paths, ports, service identity and separately staged account/TLS state.
-Packaging does not relocate production data or service units. Program
-integrity assumes a trusted Python interpreter and installed
-bootstrap; it does not protect against an administrator changing them.
+The unified install and upgrade commands require a private site manifest.
+They refuse a nonempty mixed source/configuration checkout without converting
+or overwriting it. Converting such a checkout requires reviewed private Git
+changes after the application has been bootstrapped separately. Preserve its
+ignored `var/`, existing native state paths, ports, service identity and access
+identity/TLS state. Init accepts only a new or empty directory; it is not an
+in-place conversion command. Packaging does not relocate production data or
+service units. Program integrity assumes a trusted Python interpreter and
+installed bootstrap; it does not protect against an administrator changing them.
 
 ## Offline verification
 

@@ -79,6 +79,12 @@ def _signature(raw: bytes) -> tuple[str, ...] | None:
     for line in text.splitlines():
         if not line or line.startswith("#") or line == "PodmanArgs=--runtime=runc":
             continue
+        # Earlier managed runtimes had no gateway ingress boundary. These
+        # exact tightening directives are installed during the same upgrade.
+        if line in {"Environment=OPENHAB_HTTP_ADDRESS=127.0.0.1",
+                    "ExecStartPre=/usr/bin/env nft -f /etc/thermite-native.nft",
+                    "Requires=thermite-native-boundary.service", "After=thermite-native-boundary.service"}:
+            continue
         # Versions may change on the upgrade that performs the migration.
         if line.startswith("Image="):
             line = re.sub(r"@sha256:[0-9a-f]{64}$", "@sha256:PIN", line)

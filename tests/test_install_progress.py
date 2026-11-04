@@ -73,6 +73,63 @@ class Presentation(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(out, "[ OK ] 1. Service ready\n")
 
+    def test_pending_stage_explains_work_before_starting_and_reports_elapsed_time(self):
+        stream = io.StringIO()
+        detail = "First run downloads the runtime and prepares its cache"
+
+        with mock.patch.object(progress, "monotonic", return_value=100) as clock:
+            def work(system):
+                self.assertIn(detail, stream.getvalue())
+                clock.return_value = 223
+                return 0
+
+            stage = Stage([Check(False, detail), Check(True, "verified")], [Task("prepare", work)])
+            result, out = self.run_stage(stage, stream)
+        self.assertEqual(result, 0)
+        self.assertEqual(out.count(detail), 1)
+        self.assertIn("[ .. ] 1. Service ready: " + detail, out)
+        self.assertIn("[ OK ] 1. Service ready (2m 03s)", out)
+        self.assertNotIn("\r", out)
+        self.assertNotIn("\x1b", out)
+
+    def test_spinner_keeps_elapsed_time_visible_when_title_is_truncated(self):
+        stream = Terminal()
+        with contextlib.redirect_stdout(stream), \
+                mock.patch.object(progress, "monotonic", return_value=100) as clock, \
+                mock.patch.object(progress.threading, "Thread"), \
+                mock.patch.object(progress.shutil, "get_terminal_size", return_value=os.terminal_size((36, 24))):
+            with progress.Progress(System(), "6. Configuration boot check") as display:
+                clock.return_value = 223
+                display._paint()
+                frame = stream.getvalue().split("\r\x1b[2K")[-1]
+                self.assertTrue(frame.startswith("[ / ] 6. Configuration"), frame)
+                self.assertTrue(frame.endswith(" (2m 03s)"), frame)
+                self.assertLessEqual(len(frame), 35)
+                display.passed("verified")
+        self.assertIn("Configuration boot check (2m 03s)", stream.getvalue())
+
+    def test_tiny_terminal_does_not_wrap_progress_frames(self):
+        stream = Terminal()
+        with contextlib.redirect_stdout(stream), \
+                mock.patch.object(progress.threading, "Thread"), \
+                mock.patch.object(progress.shutil, "get_terminal_size", return_value=os.terminal_size((5, 24))):
+            with progress.Progress(System(), "Configuration boot check") as display:
+                frame = stream.getvalue().split("\r\x1b[2K")[-1]
+                self.assertLessEqual(len(frame), 4)
+                display.passed("verified")
+
+    def test_quiet_success_does_not_print_work_details_or_duration(self):
+        oh_cli.switches.quiet = True
+        with mock.patch.object(progress, "monotonic", return_value=100) as clock:
+            def work(system):
+                clock.return_value = 223
+                return 0
+
+            result, out = self.run_stage(Stage([Check(False, "prepare runtime"), Check(True, "verified")],
+                                              [Task("prepare", work)]))
+        self.assertEqual(result, 0)
+        self.assertEqual(out, "")
+
     def test_spins_during_check_then_green_pass_only_after_it_finishes(self):
         stream = Terminal()
 

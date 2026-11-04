@@ -9,6 +9,7 @@ import sys
 import threading
 from collections import deque
 from contextvars import ContextVar
+from time import monotonic
 
 import oh_cli
 
@@ -41,8 +42,10 @@ class Progress:
         self.frame = 0
         self.notes = deque(maxlen=20)
         self.announced = False
+        self.started = None
 
     def __enter__(self):
+        self.started = monotonic()
         self.token = current.set(self)
         if self.animate:
             self._paint()
@@ -73,9 +76,13 @@ class Progress:
             width = shutil.get_terminal_size((80, 24)).columns
             symbol = "|/-\\"[self.frame % 4]
             text = f"[ {symbol} ] {self.label}"
+            duration = f" ({self.elapsed()})"
             # A single physical line is essential: clearing a wrapped frame
-            # would leave fragments behind. Stage titles are plain text.
-            text = text[:max(0, width - 1)]
+            # would leave fragments behind. Retain elapsed time when a long
+            # stage title needs truncating; stage titles are plain text.
+            available = max(0, width - 1)
+            text = (text[:available - len(duration)] + duration if available > len(duration)
+                    else (text + duration)[:available])
             self.stream.write("\r\x1b[2K" + text)
             self.stream.flush()
             self.drawn = True
@@ -104,13 +111,17 @@ class Progress:
             elif not self.quiet:
                 self.system.say(text)
 
-    def detail(self, text: str):
-        if self.verbose:
-            self.message("   " + text)
+    def elapsed_seconds(self) -> int:
+        return max(0, int(monotonic() - self.started)) if self.started is not None else 0
 
-    def working(self):
+    def elapsed(self) -> str:
+        seconds = self.elapsed_seconds()
+        minutes, seconds = divmod(seconds, 60)
+        return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
+
+    def working(self, detail: str = ""):
         if not self.announced:
-            self.message(f"[ .. ] {self.label}")
+            self.message(f"[ .. ] {self.label}" + (f": {detail}" if detail else ""))
             self.announced = True
 
     def finish(self, mark: str, detail: str = ""):
@@ -124,7 +135,8 @@ class Progress:
         shown = "✓" if success and self.terminal and self.unicode else mark
         if self.color:
             shown = f"\x1b[1;{'32' if success else '31'}m{shown}\x1b[0m"
-        self.message(f"[ {shown} ] {self.label}" + (f": {detail}" if detail else ""), error=not success)
+        duration = f" ({self.elapsed()})" if self.elapsed_seconds() else ""
+        self.message(f"[ {shown} ] {self.label}" + duration + (f": {detail}" if detail else ""), error=not success)
 
     def passed(self, detail: str):
         self.finish("OK", detail if self.verbose else "")

@@ -78,17 +78,25 @@ The boot check loads the generated configuration in an isolated openHAB runtime 
 
 ## Connect and use it
 
-The installation guide covers site access and the first account. After commissioning authenticated access, open your site's web address and sign in. In a terminal:
+Installation prints your HTTPS address and trust certificate. Ordinary controls
+work with Security off. Use the Security page to enable authentication and
+create the first administrator with owner proof. The local terminal uses the
+installed site's verified endpoint and certificate automatically:
 
 ```sh
-thermite access login --url https://thermite.example:13600 --user admin
-thermite remote --url https://thermite.example:13600
+thermite remote --config /path/to/private-site
 ```
 
-Use `--ca-file` at login for a private certificate authority. Choose a room and source in Remotes; use Pair devices for equipment that needs an on-screen code. Cameras and Site show cameras and connections. Security remains Not connected until an alarm integration is configured.
+With authentication enabled, first run `thermite access login --config
+/path/to/private-site --user admin`. Other computers use `--url` and, for a
+private certificate authority, `--ca-file` at login. Choose a room and source
+in Remotes; use Pair devices for equipment that needs an on-screen code.
+Cameras and Site show cameras and connections. Alarm-device status requires
+an alarm integration.
 
 ## Keep it running
 
+- `thermite upgrade --config DIR` updates the application and all managed services.
 - `thermite health --production` reports device health.
 - `thermite history` lists deployments; `thermite rollback` restores the previous one.
 - `thermite version` shows application and runtime versions.

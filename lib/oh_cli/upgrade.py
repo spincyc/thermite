@@ -7,9 +7,11 @@ HEAD pins, or show what that would do.
 from __future__ import annotations
 
 import datetime
+import argparse
 import json
 import os
 import sys
+import subprocess
 from pathlib import Path
 
 import oh_cli
@@ -24,55 +26,33 @@ from oh_install.system import System
 RERUN = "Run thermite upgrade again to go on from here."
 
 DESCRIPTION = """\
-Move runtime, the Apple TV helper and the metrics services (Prometheus,
-node_exporter, blackbox_exporter, the runtime exporter, Grafana,
-Alertmanager, the local notification adapter and ntfy) on this
-host to the versions versions.json pins and the units deploy/ holds, as of
-HEAD. thermite install must have run here first. Run it as your user, from
-the clone install ran from; it is safe to run again at any time. A host
-installed before the metrics existed gets them here.
+Upgrade the complete Thermite installation from the official GitHub main branch.
+Select your committed private site with --config DIR. Use --revision REV to
+choose a reviewed branch, tag or commit, or --source DIR for a clean local
+application checkout. Native component versions still come from the site's
+versions.json; commit desired changes there before running this command.
 
-Each step first checks whether it is done and skips it if so:
-preconditions (deploy/ is what thermite generate writes, and this area is
-committed); what changes: each installed unit against deploy/, and the
-runtime image the installed unit runs against the pinned one (when nothing
-differs on a host without AppArmor it says so and stops); enabled AppArmor
-requires approved root enforcement verification even when disk state is current; the boot test of HEAD's conf/; when
-runtime's units or service ownership need preparation, a backup, with runtime stopped, of the state's
-conf, userdata and Grafana's data into
-<state>/backups/<UTC time>-openhab-<installed version>.tar.gz (without
-userdata/cache and userdata/tmp, which runtime rebuilds, and without
-Prometheus' samples); the thermite account and group, preserving existing
-numeric IDs; state directories; changed units and systemctl daemon-reload;
-stopped native-state preparation and ownership repair; the deploy of HEAD;
-the services started on their installed units; runtime answering; the API
-token and Grafana's admin password installed for the metrics services,
-which are then (re)started; Prometheus with every target up and Grafana
-answering; and a read-only check (thermite health --production and
-thermite status).
+One approval covers fetching and validating the application, preparing its
+private Python environment, validating and committing the site release pin,
+then updating native runtime and helper services, monitoring, the HTTPS gateway,
+policy worker, verified callbacks and identity schema. No pip, manual pin commit,
+access staging or separate migration command is needed. Existing authority,
+accounts, credentials and TLS certificates are preserved. Gateway and worker
+are stopped before the complete identity backup and any schema migration.
 
-Before any changes, one y/n question approves the whole upgrade run,
-including its sudo commands. Compact status shows each stage; -v/--verbose
-shows details and commands. Interactive commands keep the terminal, with
-the spinner paused.
-After a no, a failure or Ctrl-C, run it again and it goes on from there,
-asking once again. --dry-run leaves the site and host unchanged: transient
-configuration planning is cleaned up, and it reports each step and what it
-would run. An agent uses only that: agents never run sudo.
+The previous owner command remains selected until every readiness check passes.
+An interrupted run retains its candidate, site commit, prior release and backup;
+rerun the same command to resume. Previous releases do not automatically undo
+schema changes. --dry-run changes nothing and does not fetch: the remote
+revision and exact host differences remain unknown until an approved run.
+Run as your ordinary user. Use -v for details. Agents only use --dry-run.
 """
 
 NOTES = """\
-going back:
-  It prints where the backup is and the commands that restore it. To go
-  back to the commit deployed before, restore the backup (runtime stays
-  stopped), then run thermite upgrade from that commit, which installs its
-  units and starts runtime on them (thermite install, in a commit from
-  before thermite upgrade).
-
 exit status:
-  0  upgraded, or nothing differs
-  1  a step failed, the owner said no, or a precondition does not hold
-  2  runtime is not installed here yet (thermite install), or run as root
+  0  complete and verified
+  1  declined or a step failed
+  2  invalid inputs, missing installation, or run as root
 """
 
 EXAMPLES = (
@@ -114,7 +94,8 @@ def going_back(system: System, context: steps.Context, backup: steps.Backup, bef
                    "starts runtime on them (thermite install in a commit from before thermite upgrade)")
 
 
-def upgrade(system: System, dry_run: bool, when: str | None = None, *, runtime_token_file: Path | None = None) -> int:
+def upgrade(system: System, dry_run: bool, when: str | None = None, *, runtime_token_file: Path | None = None,
+            run_approved: bool = False) -> int:
     when = when or stamp()
     context = steps.committed_context(AREA, system, runtime_token_file)
     problems = ownership.inspect(context, system).problems
@@ -133,15 +114,11 @@ def upgrade(system: System, dry_run: bool, when: str | None = None, *, runtime_t
     if code and not dry_run:
         return code
     plan = steps.plan(context, system)
-    if plan.current:
-        system.say(f"Up to date: runtime {plan.pinned_version}, the Apple TV helper and the metrics services run on "
-                   "the units deploy/ holds. thermite deploy installs a newer conf/ and metrics/.")
-        return code
     rest = steps.upgrade(context, plan, when)
     if not dry_run:
         system.say(f"Upgrade: {plan.describe()}. This run includes the boot test, any needed backup, "
                    "sudo commands, service restarts, deployment and health checks.")
-        if not runner.confirm_run(system, "upgrade", RERUN):
+        if not run_approved and not runner.confirm_run(system, "upgrade", RERUN):
             return 1
     status = runner.run(rest, system, AREA, dry_run=dry_run, first=3, rerun=RERUN,
                         root_confirmed=not dry_run)
@@ -161,6 +138,10 @@ def main(argv: list[str] | None = None) -> int:
     oh_cli.add_dry_run(parser)
     parser.add_argument("--runtime-token-file", type=Path,
                         help="advanced: import an existing internal runtime API token from your private file")
+    parser.add_argument("--source", type=Path, help="upgrade from a clean application checkout instead of the official repository")
+    parser.add_argument("--revision", help="application Git revision (default: official main)")
+    parser.add_argument("--_host-phase", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--_run-approved", action="store_true", help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
     if os.geteuid() == 0:
         print("thermite upgrade: run it as your user; it asks once before applying the upgrade",
@@ -168,7 +149,22 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     system = System()
     try:
-        return upgrade(system, arguments.dry_run, runtime_token_file=arguments.runtime_token_file)
+        if not arguments._host_phase:
+            if arguments._run_approved:
+                raise ValueError("run approval is only valid inside the application workflow")
+            import oh_application_update
+            return oh_application_update.upgrade(
+                AREA, source=arguments.source, revision=arguments.revision,
+                dry_run=arguments.dry_run, approve=lambda: runner.confirm_run(system, "upgrade", RERUN),
+                runtime_token_file=arguments.runtime_token_file,
+                host_args=["--verbose"] if oh_cli.switches.verbose else [], say=system.say)
+        import oh_paths
+        oh_paths.require_compatible()
+        return upgrade(system, arguments.dry_run, runtime_token_file=arguments.runtime_token_file,
+                       run_approved=arguments._run_approved)
+    except subprocess.CalledProcessError as exc:
+        print("thermite upgrade: an upgrade step failed; rerun the same command to resume", file=sys.stderr)
+        return exc.returncode if exc.returncode > 0 else 1
     except (deploy.DeployError, ValueError, OSError) as exc:
         print(f"thermite upgrade: {exc}", file=sys.stderr)
         return 2

@@ -14,6 +14,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_paths
 import oh_cli
 from oh_install import steps
+from oh_install.native_auth import NativeAuthError
 
 
 class InstalledInstall(unittest.TestCase):
@@ -45,14 +46,69 @@ class InstalledInstall(unittest.TestCase):
             "http://127.0.0.1:13601", self.site / "var/server/runtime-credentials.json",
             self.site / "var/server/api-token", 10 + steps.WAIT)
 
+    def test_existing_runtime_recovers_only_a_missing_operator_copy(self):
+        self.context.host.update(http_port=13601, uid=9001, state_root=str(self.site / "runtime"))
+        self.host.clock.return_value = 10
+        self.host.read_private.side_effect = [FileNotFoundError(), FileNotFoundError(), "synthetic-recovered-token\n"]
+        self.host.configure_runtime_access.side_effect = NativeAuthError("existing_users")
+        self.host.native_probe.return_value = Mock(status=200, problem=None, value=[])
+        with patch.object(oh_paths, "PROGRAM", self.program), patch("oh_install.runner.perform", return_value=0) as perform:
+            token = steps.Token(self.context)
+            self.assertEqual(token.save(self.host), 0)
+        action, host, area = perform.call_args.args
+        self.assertTrue(action.root)
+        self.assertEqual(action.argv, ("python3", str(self.program / "lib/oh_install/secrets.py"),
+                         str(self.site / "runtime"), "--name", "openhab-token", "--source",
+                         str(self.site / "var/server/api-token"), "--uid", "9001", "--gid", "9001",
+                         "--recover-runtime-token", "--runtime-url", "http://127.0.0.1:13601"))
+        self.assertIs(host, self.host)
+        self.assertEqual(area, self.site)
+        self.assertEqual(token.validated, "synthetic-recovered-token")
+        self.assertNotIn("synthetic-recovered-token", str(self.host.say.call_args_list))
+
+    def test_existing_or_rejected_managed_credentials_never_trigger_service_recovery(self):
+        self.context.host["http_port"] = 13601
+        self.host.clock.return_value = 10
+        for code, saved in (("existing_users", "keep-existing-token"), ("credentials", ""),
+                            ("retired", ""), ("identity", "")):
+            with self.subTest(code=code), patch("oh_install.runner.perform") as perform:
+                self.host.read_private.side_effect = None
+                self.host.read_private.return_value = saved
+                self.host.configure_runtime_access.side_effect = NativeAuthError(code)
+                self.assertEqual(steps.Token(self.context).save(self.host), 1)
+                perform.assert_not_called()
+
+    def test_runtime_requiring_authentication_for_uuid_can_recover_without_local_credentials(self):
+        self.context.host.update(http_port=13601, uid=9001, state_root=str(self.site / "runtime"))
+        self.host.clock.return_value = 10
+        self.host.read_private.side_effect = [FileNotFoundError(), FileNotFoundError(), "synthetic-recovered-token\n"]
+        self.host.configure_runtime_access.side_effect = NativeAuthError("credentials")
+        self.host.native_probe.return_value = Mock(status=200, problem=None, value=[])
+        with patch.object(oh_paths, "PROGRAM", self.program), patch("oh_install.runner.perform", return_value=0) as perform:
+            self.assertEqual(steps.Token(self.context).save(self.host), 0)
+        perform.assert_called_once()
+
+    def test_declined_or_failed_service_recovery_does_not_validate_a_token(self):
+        self.context.host.update(http_port=13601, uid=9001, state_root=str(self.site / "runtime"))
+        self.host.clock.return_value = 10
+        self.host.read_private.side_effect = FileNotFoundError
+        self.host.configure_runtime_access.side_effect = NativeAuthError("existing_users")
+        for code in (None, 2):
+            with self.subTest(code=code), patch.object(oh_paths, "PROGRAM", self.program), \
+                    patch("oh_install.runner.perform", return_value=code):
+                token = steps.Token(self.context)
+                self.assertNotEqual(token.save(self.host), 0)
+                self.assertIsNone(token.validated)
+        self.host.native_probe.assert_not_called()
+
     def test_boot_deploy_and_verification_use_application_interpreter_and_explicit_site(self):
         with patch.object(oh_paths, "PROGRAM", self.program):
             self.assertEqual(steps.BootTest(self.context).actions(self.host)[0].argv, self.command("test", "boot"))
             actions = steps.Deploy(self.context).actions(self.host)
             commands = [action.argv for action in actions]
             self.assertEqual(commands, [self.command("generate", "--check"), self.command("validate"),
-                                        self.command("lint"), self.command("deploy")])
-            self.assertEqual(actions[-1].approved_argv, self.command("deploy", "--yes", "--quiet"))
+                                        self.command("lint"), self.command("deploy", "--_configuration-phase")])
+            self.assertEqual(actions[-1].approved_argv, self.command("deploy", "--_configuration-phase", "--yes", "--quiet"))
             self.assertTrue(all(action.approved_argv is None for action in actions[:-1]))
             self.assertEqual([action.terminal for action in actions], [False, False, False, True])
             self.assertEqual([action.argv for action in steps.Verify(self.context).actions(self.host)],
@@ -68,21 +124,21 @@ class InstalledInstall(unittest.TestCase):
         with patch.object(oh_paths, "PROGRAM", self.program):
             command = steps.Deploy(self.context).actions(self.host)[-1]
             self.assertEqual(command.argv[:3], ("sg", "thermite", "-c"))
-            self.assertEqual(tuple(shlex.split(command.argv[-1])), self.command("deploy"))
+            self.assertEqual(tuple(shlex.split(command.argv[-1])), self.command("deploy", "--_configuration-phase"))
             status = steps.Verify(self.context).actions(self.host)[-1]
             self.assertEqual(status.argv[:3], ("sg", "thermite", "-c"))
             self.assertEqual(tuple(shlex.split(status.argv[-1])), self.command("status"))
             self.assertEqual(command.approved_argv[:3], command.argv[:3])
-            self.assertEqual(tuple(shlex.split(command.approved_argv[-1])), self.command("deploy", "--yes", "--quiet"))
+            self.assertEqual(tuple(shlex.split(command.approved_argv[-1])), self.command("deploy", "--_configuration-phase", "--yes", "--quiet"))
             self.assertTrue(command.terminal)
             self.host.which.return_value = None
             fallback = steps.Deploy(self.context).actions(self.host)[-1]
             self.assertTrue(fallback.root)
-            self.assertEqual(fallback.argv, ("-u", "owner", *self.command("deploy")))
+            self.assertEqual(fallback.argv, ("-u", "owner", *self.command("deploy", "--_configuration-phase")))
             status = steps.Verify(self.context).actions(self.host)[-1]
             self.assertTrue(status.root)
             self.assertEqual(status.argv, ("-u", "owner", *self.command("status")))
-            self.assertEqual(fallback.approved_argv, ("-u", "owner", *self.command("deploy", "--yes", "--quiet")))
+            self.assertEqual(fallback.approved_argv, ("-u", "owner", *self.command("deploy", "--_configuration-phase", "--yes", "--quiet")))
             self.assertTrue(fallback.terminal)
 
     def test_source_checkout_uses_the_same_configuration_checks_as_an_installed_site(self):
@@ -97,8 +153,8 @@ class InstalledInstall(unittest.TestCase):
                                                           ("bin/thermite", "validate"), ("bin/thermite", "lint")])
         self.assertEqual([check.argv[1:] for check in checks], installed_checks)
         self.assertTrue(all(check.approved_argv is None and not check.terminal for check in checks))
-        self.assertEqual(action.argv, ("bin/thermite", "deploy"))
-        self.assertEqual(action.approved_argv, ("bin/thermite", "deploy", "--yes", "--quiet"))
+        self.assertEqual(action.argv, ("bin/thermite", "deploy", "--_configuration-phase"))
+        self.assertEqual(action.approved_argv, ("bin/thermite", "deploy", "--_configuration-phase", "--yes", "--quiet"))
         self.assertTrue(action.terminal)
 
     def test_verbose_source_and_installed_deployment_keep_child_output(self):
@@ -108,7 +164,7 @@ class InstalledInstall(unittest.TestCase):
                     if not installed:
                         (self.site / oh_paths.SITE_FILE).unlink()
                     action = steps.Deploy(self.context).actions(self.host)[-1]
-                    expected = self.command("deploy") if installed else ("bin/thermite", "deploy")
+                    expected = self.command("deploy", "--_configuration-phase") if installed else ("bin/thermite", "deploy", "--_configuration-phase")
                     self.assertEqual(action.argv, expected)
                     self.assertEqual(action.approved_argv, (*expected, "--yes"))
                     self.assertTrue(action.terminal)

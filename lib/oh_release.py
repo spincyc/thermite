@@ -7,6 +7,7 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import stat
 import sys
 import tempfile
 
@@ -91,6 +92,36 @@ def manifest(root: Path, expected: str | None = None) -> dict:
     return data
 
 
+def resolve(store: Path, expected: str, application: str, *, program: Path | None = None) -> Path:
+    """Select an exact verified release without creating or repairing a cache.
+
+    A fresh checkout may use the already installed release. An existing cache
+    remains authoritative: damage must never silently select another copy.
+    """
+    if not isinstance(expected, str) or not HEX.fullmatch(expected):
+        raise ReleaseError("invalid required application release")
+    store = Path(store).expanduser().absolute()
+    for parent in reversed((store, *store.parents)):
+        try:
+            info = parent.lstat()
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISDIR(info.st_mode):
+            raise ReleaseError("application cache ancestors must be directories without symlinks")
+    root = store / expected
+    try:
+        root.lstat()
+    except FileNotFoundError:
+        if program is None:
+            from oh_paths import PROGRAM
+            program = PROGRAM
+        root = Path(program)
+    release = manifest(root, expected)
+    if release["application"] != application:
+        raise ReleaseError("application release version differs from the site requirement")
+    return root
+
+
 def cache(program: Path, store: Path) -> Path:
     """Copy a complete verified release once; never overwrite a prior release."""
     data = manifest(program)
@@ -103,7 +134,7 @@ def cache(program: Path, store: Path) -> Path:
         raise ReleaseError("application cache and installed program must be separate")
     store.mkdir(parents=True, mode=0o700, exist_ok=True)
     target = store / data["digest"]
-    if target.exists():
+    if target.exists() or target.is_symlink():
         manifest(target, data["digest"])
         return target
     with tempfile.TemporaryDirectory(prefix=".release-", dir=store) as folder:

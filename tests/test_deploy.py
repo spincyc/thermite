@@ -176,6 +176,8 @@ class Units(unittest.TestCase):
                     target = generated / Path(name).relative_to("deploy")
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(text)
+            from oh_install.ingress import UNIT, unit_text
+            (generated / UNIT).write_text(unit_text())
             built = subprocess.run(["/usr/lib/systemd/system-generators/podman-system-generator", str(generated)],
                                    env={**os.environ, "QUADLET_UNIT_DIRS": str(source)},
                                    capture_output=True, text=True)
@@ -245,7 +247,11 @@ class Units(unittest.TestCase):
                 else:
                     self.assertEqual(parsed["Unit"]["PartOf"], "thermite.target")
                     self.assertNotIn("After=thermite.target", text)
-                    self.assertNotIn("Requires=", text)
+                    if name == deploy.QUADLET:
+                        self.assertIn("Requires=thermite-native-boundary.service", text)
+                        self.assertIn("ExecStartPre=/usr/bin/env nft -f /etc/thermite-native.nft", text)
+                    else:
+                        self.assertNotIn("Requires=", text)
                     self.assertNotIn("BindsTo=", text)
                     if name.endswith((".container", ".path")):
                         self.assertEqual(parsed["Install"]["WantedBy"], "thermite.target")
@@ -1383,7 +1389,7 @@ class CliApproval(unittest.TestCase):
                     mock.patch.object(deploy_cli.deploy, "load", return_value=(VERSIONS, HOST)), \
                     mock.patch.object(deploy_cli.deploy, "deploy", side_effect=deploy.DeployError("fixture stop")) as apply, \
                     contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(deploy_cli.main(arguments), 2)
+                self.assertEqual(deploy_cli.main([*arguments, "--_configuration-phase"]), 2)
             self.assertEqual(apply.call_args.kwargs["ownership_approved"], approved)
             self.assertEqual(apply.call_args.kwargs["dry_run"], dry_run)
             self.assertFalse(apply.call_args.kwargs["force"])

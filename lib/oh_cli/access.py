@@ -18,9 +18,10 @@ prompts privately and enables authentication immediately. Staging prepares
 persistent code, private authority, a pinned
 environment, and owner-installable units; it starts no service.
 
-The gateway is not an effective authorization boundary until every bypassing
-native listener is sealed and device callbacks are preserved. Staging reports
-that owner activation checklist explicitly.
+Normal deployment uses thermite install and updates use thermite upgrade.
+Those commands stage and migrate the gateway, preserve callbacks and verify
+the native network boundary. Stage, migrate, verify, serve and worker here
+are service and recovery primitives, not a separate deployment sequence.
 """
 
 EXAMPLES = (("thermite access login --url https://thermite.example:13600 --user operator", "save this site's personal credential privately"),
@@ -91,7 +92,7 @@ def main(argv=None):
     sub.add_argument("--config", required=True, type=Path, help="private mode0600 callback-only configuration")
     for name in ("login", "logout", "status"):
         sub = oh_cli.action(commands, name, {"login": "log this terminal into a site", "logout": "revoke this terminal's site credential", "status": "read this terminal's current site identity and policies"}[name], examples=[("thermite access " + name + " --url https://thermite.example:13600" + (" --user operator" if name == "login" else ""), "use this site's private terminal credential")])
-        sub.add_argument("--url", required=True, metavar="URL", help="site's HTTPS origin")
+        sub.add_argument("--url", metavar="URL", help="site's HTTPS origin (default: this site's verified installation)")
         if name == "login":
             sub.add_argument("--user", required=True, help="site username")
             sub.add_argument("--ca-file", type=Path, help="trusted private CA certificate file")
@@ -120,8 +121,13 @@ def main(argv=None):
     try:
         if args.command in {"login", "logout", "status"}:
             from oh_access import client
+            profile = client.deployment(oh_cli.AREA)
+            args.url = args.url or (profile["url"] if profile else None)
+            if args.url is None:
+                raise AccessError("Select the installed private site with --config DIR, or supply --url")
             if args.command == "login":
-                result = client.login(args.url, args.user, hidden_password(), ca_file=args.ca_file)
+                ca = args.ca_file or (profile["ca_file"] if profile and profile["url"] == client.origin(args.url) else None)
+                result = client.login(args.url, args.user, hidden_password(), ca_file=ca)
             elif args.command == "logout":
                 result = client.logout(args.url)
             else:

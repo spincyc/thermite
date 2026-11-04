@@ -91,9 +91,7 @@ def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = Fa
             if found.done and not step.always:
                 display.passed(found.detail)
                 continue
-            if not display.animate:
-                display.working()
-            display.detail(found.detail)
+            display.working(found.detail)
             failed = 0
             for action in step.actions(system):
                 code = perform(action, system, area, rerun, root_confirmed=root_confirmed)

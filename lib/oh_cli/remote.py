@@ -136,6 +136,9 @@ def native_mode(arguments: argparse.Namespace) -> bool:
         return True
     if arguments.url or os.environ.get("THERMITE_SITE_URL"):
         return False
+    from oh_access import client
+    if client.deployment(AREA) is not None:
+        return False
     import oh_access_mode
     import oh_inventory
 
@@ -151,7 +154,11 @@ def target(arguments: argparse.Namespace) -> list[str]:
     if arguments.sandbox:
         return ["--url", oh_cli.SANDBOX_URL]
     if not native_mode(arguments):
-        return ["--url", os.environ.get("THERMITE_SITE_URL", f"https://localhost:{oh_ports.ACCESS_PORT}")]
+        if os.environ.get("THERMITE_SITE_URL"):
+            return ["--url", os.environ["THERMITE_SITE_URL"]]
+        from oh_access import client
+        profile = client.deployment(AREA)
+        return ["--url", profile["url"] if profile else f"https://localhost:{oh_ports.ACCESS_PORT}"]
     import oh_deploy as deploy
 
     return ["--url", deploy.production_url(deploy.load(AREA)[1])]
@@ -290,7 +297,8 @@ def launch_environment(arguments, chosen):
     # shared client discover that state; a missing credential is never native mode.
     if path.exists() or path.is_symlink():
         environment["THERMITE_REMOTE_TOKEN_FILE"] = str(path)
-    ca = client.saved_ca(path)
+    profile = client.deployment(AREA)
+    ca = profile["ca_file"] if profile and profile["url"] == client.origin(url) else client.saved_ca(path)
     if ca:
         environment["NODE_EXTRA_CA_CERTS"] = ca
     return environment

@@ -91,6 +91,101 @@ class Packaging(unittest.TestCase):
         for name in derived:
             self.assertNotIn(name, status)
 
+    def test_fresh_clone_renders_with_exact_installed_release_without_creating_var(self):
+        source = self.root / "fresh-clone-source"
+        oh_init.initialize(source, program=self.program)
+        def git(directory, *args):
+            return subprocess.run(["git", "-C", str(directory), *args], check=True,
+                                  capture_output=True, text=True).stdout.strip()
+        git(source, "init", "--initial-branch=fixture")
+        git(source, "config", "user.name", "Fixture")
+        git(source, "config", "user.email", "fixture@example.invalid")
+        git(source, "config", "commit.gpgsign", "false")
+        git(source, "add", ".")
+        git(source, "commit", "-m", "private site")
+        clone = self.root / "fresh-clone"
+        subprocess.run(["git", "clone", "--no-local", str(source), str(clone)],
+                       check=True, capture_output=True)
+        self.assertFalse((clone / "var").exists())
+        descriptor = (clone / oh_paths.SITE_FILE).read_bytes()
+        program_before = hashes(self.program)
+        with patch.object(oh_paths, "PROGRAM", self.program):
+            files, application = oh_deploy.prepared_files(clone, "HEAD", clone / "var")
+        self.assertIn("conf/services/addons.cfg", files)
+        self.assertIn("deploy/thermite-openhab.container", files)
+        self.assertEqual(application, {"version": self.release["application"], "digest": self.release["digest"]})
+        self.assertFalse((clone / "var").exists(), "planning must not materialize release or build caches")
+        self.assertFalse(any(clone.glob(".site-render-*")))
+        self.assertEqual((clone / oh_paths.SITE_FILE).read_bytes(), descriptor)
+        self.assertEqual(git(clone, "status", "--porcelain"), "")
+        self.assertEqual(hashes(self.program), program_before)
+
+    def test_release_resolution_requires_exact_installed_identity(self):
+        store = self.root / "not-created-release-store"
+        selected = oh_release.resolve(store, self.release["digest"], self.release["application"],
+                                      program=self.program)
+        self.assertEqual(selected, self.program)
+        for digest, version in (("0" * 64, self.release["application"]),
+                                (self.release["digest"], "another-version"),
+                                ("../outside", self.release["application"])):
+            with self.subTest(digest=digest, version=version), self.assertRaises(oh_release.ReleaseError):
+                oh_release.resolve(store, digest, version, program=self.program)
+        self.assertFalse(store.exists())
+        damaged = self.root / "damaged-installed-program"
+        damaged.mkdir()
+        source = damaged / "reviewed.py"
+        source.write_text("reviewed\n")
+        release = oh_release.create({source.name: source.read_bytes()})
+        (damaged / oh_release.FILE).write_bytes(oh_release.encoded(release))
+        source.write_text("changed\n")
+        with self.assertRaises(oh_release.ReleaseError):
+            oh_release.resolve(store, release["digest"], release["application"], program=damaged)
+        self.assertFalse(store.exists())
+
+    def test_existing_release_cache_is_authoritative_even_when_installed_release_matches(self):
+        store = self.root / "authoritative-release-store"
+        cached = oh_release.cache(self.program, store)
+        # An unavailable installed application does not prevent exact rollback.
+        self.assertEqual(oh_release.resolve(store, self.release["digest"], self.release["application"],
+                                            program=self.root / "uninstalled"), cached)
+        changed = cached / "lib/oh_atv.py"
+        changed.chmod(0o600)
+        changed.write_text("damaged cache\n")
+        with self.assertRaises(oh_release.ReleaseError):
+            oh_release.resolve(store, self.release["digest"], self.release["application"], program=self.program)
+        self.assertEqual(changed.read_text(), "damaged cache\n")
+        shutil.rmtree(cached)
+        cached.mkdir()
+        with self.assertRaises(oh_release.ReleaseError):
+            oh_release.resolve(store, self.release["digest"], self.release["application"], program=self.program)
+        self.assertEqual(list(cached.iterdir()), [])
+        cached.rmdir()
+        for target in (self.program, self.root / "missing-release"):
+            with self.subTest(target=target):
+                cached.symlink_to(target, target_is_directory=True)
+                with self.assertRaises(oh_release.ReleaseError):
+                    oh_release.resolve(store, self.release["digest"], self.release["application"], program=self.program)
+                with self.assertRaises(oh_release.ReleaseError):
+                    oh_release.cache(self.program, store)
+                self.assertTrue(cached.is_symlink())
+                cached.unlink()
+        store.rmdir()
+        store.symlink_to(self.root / "missing-store", target_is_directory=True)
+        with self.assertRaises(oh_release.ReleaseError):
+            oh_release.resolve(store, self.release["digest"], self.release["application"], program=self.program)
+        store.unlink()
+        store.write_text("not a directory\n")
+        with self.assertRaises(oh_release.ReleaseError):
+            oh_release.resolve(store, self.release["digest"], self.release["application"], program=self.program)
+        if os.geteuid() != 0:
+            store.unlink()
+            store.mkdir(mode=0o000)
+            try:
+                with self.assertRaises(PermissionError):
+                    oh_release.resolve(store, self.release["digest"], self.release["application"], program=self.program)
+            finally:
+                store.chmod(0o700)
+
     def test_wheel_is_repeatable_explicit_public_payload_and_real_metadata(self):
         other, release = oh_package.wheel(self.public, self.root / "repeat")
         self.assertEqual(self.wheel.read_bytes(), other.read_bytes())

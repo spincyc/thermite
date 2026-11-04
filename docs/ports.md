@@ -5,19 +5,18 @@ HTTPS application on **13600**. `lib/oh_ports.py` owns the allocation.
 `instance/host.yaml` keeps the site's native HTTP/HTTPS choices and optional
 `metrics: <service>_port` overrides. Generation rejects invalid values and
 collisions, including collisions with the sandbox, boot test and docs preview.
-Explicit overrides may leave the default run; update clients and firewall
-rules together when using them. Access staging checks gateway and callback
-listeners against the selected site's complete allocation and the explicit
-native upstream. Restage access configuration after changing that allocation;
-running services keep the endpoints from their staged release.
+Explicit overrides may leave the default range. Commit changes and run
+`thermite install --config DIR` or `thermite upgrade --config DIR`; the same
+workflow updates the native boundary and gateway together. Gateway and callback
+listeners are checked against the complete allocation and native upstream.
 
 | Port | Listener | Binding / use |
 | --- | --- | --- |
-| 13600 | Authenticated application HTTPS | Configured address; TLS required |
-| 13601 | Native runtime HTTP | Existing native address policy; production callbacks may need LAN access |
-| 13602 | Native runtime HTTPS | Existing native address policy |
+| 13600 | Application HTTPS with toggleable authentication | Configured address; TLS required |
+| 13601 | Native runtime HTTP | 127.0.0.1 only; verified device callbacks use the relay |
+| 13602 | Native runtime HTTPS | 127.0.0.1 only |
 | 13603 | Native Karaf console | 127.0.0.1 only |
-| 13604 | Native language server | Native runtime address policy; openHAB has no bind-address setting |
+| 13604 | Native language server | Non-loopback access blocked by the managed native firewall |
 | 13605 | Apple TV helper HTTP | 127.0.0.1 only |
 | 13606 | Prometheus HTTP | 127.0.0.1 only |
 | 13607 | node_exporter HTTP | 127.0.0.1 only |
@@ -40,11 +39,15 @@ running services keep the endpoints from their staged release.
 | 13624 | Sandbox Karaf shutdown control | 127.0.0.1 only |
 | 13625 | Boot-check Karaf shutdown control | 127.0.0.1 only |
 
-Authenticated access is the application entry point. Choosing a new port does
-not seal native listeners or activate the optional callback ingress. Follow
-[installation.md](installation.md) before treating that service as the security boundary.
-The callback map must explicitly choose its listener port and exact advertised
-Host; 13614 is the allocated value, not an implicit activation default.
+HTTPS is the application entry point whether authentication is on or off.
+Installation restricts native HTTP/HTTPS to loopback and blocks non-loopback
+traffic to native HTTP, HTTPS, Karaf, LSP and shutdown ports in the dedicated
+`inet thermite_native` nftables table. It leaves other firewall tables intact,
+verifies the active policy and reapplies it before every native runtime start.
+An unknown existing table or modified policy requires review before replacement.
+For Sonos, the workflow derives exact callback routes from committed identities
+and live device descriptions; existing verified routes and ports are retained.
+The relay accepts only the verified NOTIFY traffic, never general native API access.
 
 The installer and upgrade configure the stopped native console in
 `userdata/etc/org.apache.karaf.shell.cfg`, preserving other settings and fixing
@@ -70,8 +73,7 @@ Grafana from 3000, Alertmanager from 9093, ntfy from 2586, notifications from
 9481, authenticated access from 9443, sandbox HTTP/HTTPS/console from
 18080/18443/18101, boot-check HTTP/HTTPS/console from 18081/18444/18102,
 and the docs preview from 8000. Regenerate the private site, review generated
-units, install/upgrade them, and update staged access/callback configurations,
-bookmarks and firewall rules. Existing runtime state is not rewritten by
+units, run the unified install/upgrade, and update bookmarks as needed. Existing runtime state is not rewritten by
 `generate` alone.
 
 ## Why this range

@@ -498,6 +498,8 @@ def render_quadlet(versions: dict, host: dict) -> str:
         f"PartOf={oh_units.TARGET}",
         "Wants=network-online.target",
         "After=network-online.target",
+        "Requires=thermite-native-boundary.service",
+        "After=thermite-native-boundary.service",
         "",
         "[Container]",
         f"ContainerName={oh_units.CONTAINERS[oh_units.RUNTIME]}",
@@ -533,9 +535,13 @@ def render_quadlet(versions: dict, host: dict) -> str:
         f'Environment="EXTRA_JAVA_OPTS=-Duser.timezone={host["timezone"]} -Duser.home=/openhab/userdata"',
         f"Environment=OPENHAB_HTTP_PORT={host['http_port']}",
         f"Environment=OPENHAB_HTTPS_PORT={host['https_port']}",
+        "# The HTTPS gateway is the only browser/API ingress.",
+        "Environment=OPENHAB_HTTP_ADDRESS=127.0.0.1",
         "Exec=-ec " + exec_word(openhab_start()),
         "",
         "[Service]",
+        "# Reapply the native boundary before every runtime start, including after firewall reloads.",
+        "ExecStartPre=/usr/bin/env nft -f /etc/thermite-native.nft",
         f"Slice={oh_units.SLICE}",
         "UMask=0077",
         "Restart=always",
@@ -1381,8 +1387,9 @@ def committed_inputs(area: Path, commit: str) -> tuple[dict, dict, dict | None]:
 def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
     """Resolve all generated trees and helper code for one immutable site revision.
 
-    Schema 2 renders only committed data with its exact cached release. Schema
-    1 and full source checkouts retain their committed generated-tree behavior.
+    Schema 2 renders only committed data with its exact verified release. A
+    missing cache may use the same installed release without writing a cache.
+    Schema 1 and full source checkouts retain their committed-tree behavior.
     Rendering uses a cleaned temporary workspace, including during dry-run.
     """
     from oh_paths import SITE_FILE
@@ -1394,15 +1401,15 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
         return {name: blob for name, blob in files.items() if not name.startswith("instance/") and name != "versions.json"}, None
     try:
         requirement = _site_requirement(locked.data)
-        root = Path(var) / "application-releases" / requirement["release"]
+        root = oh_release.resolve(Path(var) / "application-releases", requirement["release"],
+                                  requirement["application"])
         release = oh_release.manifest(root, requirement["release"])
-        if release["application"] != requirement["application"]:
-            raise ValueError("cached release version differs from the site requirement")
         names = tuple(dict.fromkeys((*ATV_APP, *metrics.EXPORTER_APP)))
         application = oh_release.blobs(root, names, requirement["release"])
     except (OSError, ValueError) as exc:
-        raise DeployError("the committed site requires its exact cached application release; "
-                          "install the reviewed wheel and run thermite init --upgrade before deployment") from exc
+        raise DeployError("the committed site's exact application release is unavailable or failed verification; "
+                          "restore that release cache or install its exact reviewed wheel; "
+                          "a different release requires an explicit site upgrade") from exc
     if requirement["version"] == 2:
         import oh_site_snapshot
         # A config-only site's launcher is inert scaffolding. Application
@@ -1412,10 +1419,19 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
         inputs = {name: blob.data for name, blob in files.items() if name.startswith("instance/") or name == "versions.json"}
         inputs[SITE_FILE] = locked.data
         try:
-            rendered = oh_site_snapshot.render(inputs, root, Path(var), requirement["release"])
+            # A fresh clone has no ignored var/. Use the existing private site
+            # for the temporary render rather than creating persistent state
+            # during planning. Existing unsafe var paths remain errors.
+            work = Path(var)
+            if not work.exists() and not work.is_symlink():
+                work = Path(area)
+            rendered = oh_site_snapshot.render(inputs, root, work, requirement["release"])
         except (OSError, ValueError) as exc:
             raise DeployError("could not derive committed site configuration from its pinned application") from exc
         files = {name: Blob(data) for name, data in rendered.items()}
+        # The gateway compiles its own contract from the very same committed
+        # inventory, including provider data. Never consult the working tree.
+        files.update({name: Blob(data) for name, data in inputs.items() if name.startswith("instance/")})
     else:
         # Never take a schema-1 site's arbitrary lib/ as application authority.
         files = {name: blob for name, blob in files.items() if name.startswith(("conf/", "metrics/", "deploy/"))}

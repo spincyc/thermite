@@ -20,6 +20,8 @@ import oh_units
 import oh_ports
 import oh_metrics as metrics
 from oh_install import backup, ownership
+from oh_install.access import Gateway
+from oh_install.ingress import NativeIngress
 from oh_install.model import Action, Check, Command, Step, Task
 from oh_install.system import System
 
@@ -27,8 +29,8 @@ from oh_install.system import System
 #: runs this area's tools; Node.js and npm support the terminal remote; util-linux
 #: supplies setpriv for Grafana's credential readiness checks.
 PACKAGES = {
-    "pacman": ("podman", "runc", "util-linux", "git", "make", "python", "python-yaml", "nodejs", "npm"),
-    "apt-get": ("podman", "runc", "util-linux", "git", "make", "python3", "python3-yaml", "python3-venv", "nodejs", "npm"),
+    "pacman": ("podman", "runc", "util-linux", "git", "make", "python", "python-yaml", "nodejs", "npm", "openssl", "nftables"),
+    "apt-get": ("podman", "runc", "util-linux", "git", "make", "python3", "python3-yaml", "python3-venv", "nodejs", "npm", "openssl", "nftables"),
 }
 #: Quadlets and the additive node-exporter confinement override need Podman 4.5.
 PODMAN = (4, 5)
@@ -100,7 +102,7 @@ class Context:
         if self.prepared is None:
             return {}
         files = {name: blob for name, blob in self.prepared.items()
-                 if name.startswith(("conf/", "metrics/", "deploy/"))}
+                 if name.startswith(("conf/", "metrics/", "deploy/", "instance/"))}
         files["versions.json"] = deploy.Blob((json.dumps(self.versions, sort_keys=True) + "\n").encode())
         return files
 
@@ -210,9 +212,14 @@ class DerivedConfiguration(Step):
         return True
 
     def check(self, system: System) -> Check:
+        import oh_release
         try:
+            store = self.context.var / "application-releases"
+            program = oh_release.resolve(store, self.context.application["digest"], self.context.application["version"])
+            if program != self.context.program:
+                return Check(False, "save the exact installed application and prepare the committed configuration")
             done = self.matches()
-        except (OSError, deploy.DeployError) as exc:
+        except (OSError, ValueError, deploy.DeployError) as exc:
             return Check(False, "", str(exc))
         return Check(done, f"committed build {self.context.head[:12]} verified" if done else
                      "prepare the committed configuration in the private build cache")
@@ -225,6 +232,10 @@ class DerivedConfiguration(Step):
         # Approval does not allow a new commit or edits to replace the plan.
         if deploy.resolve(self.context.area, "HEAD") != self.context.head or deploy.uncommitted(self.context.area):
             raise deploy.DeployError("the site changed after planning; rerun installation from the intended clean commit")
+        store = self.context.var / "application-releases"
+        program = oh_release.resolve(store, self.context.application["digest"], self.context.application["version"])
+        if program != store / self.context.application["digest"]:
+            oh_release.cache(program, store)
         if self.matches():
             return 0
         root = self.context.configuration
@@ -588,7 +599,7 @@ class BootTest(Step):
         if system.stat(deploy.passed_dir(self.context.var) / digest):
             return Check(True, f"conf/ {digest[:12]} passed on this host")
         return Check(False, f"conf/ {digest[:12]} has not passed here; the first run fetches the pinned runtime, "
-                            "about 180 MB")
+                            "about 180 MB, and warms its test cache. Allow a few minutes; unchanged configuration skips this check next time")
 
     def actions(self, system: System) -> list[Action]:
         from oh_paths import SITE_FILE
@@ -692,6 +703,8 @@ class Deploy(Step):
             record = json.loads(system.read_bytes(layout.record) or b"{}")
         except ValueError:
             record = {}
+        if not isinstance(record, dict):
+            record = {}
         commit = record.get("commit")
         # A deploy made before the metrics directories existed installed no metrics/.
         directories = all((found := system.stat(path)) is not None and found.is_dir
@@ -699,14 +712,18 @@ class Deploy(Step):
         if commit == head and directories and "metrics" not in record:
             return Check(False, f"{head[:12]} is deployed, but without metrics/: the metrics directories are new")
         if commit == head:
+            if self.context.application is not None and record.get("application") != self.context.application:
+                return Check(False, f"{head[:12]} needs its pinned application deployed")
+            if record.get("conf_digest") != self.context.conf_digest:
+                return Check(False, f"{head[:12]} needs its generated configuration deployed")
             return Check(True, f"{head[:12]} is deployed")
         return Check(False, f"deployed: {commit[:12] if commit else 'nothing yet'}; HEAD is {head[:12]}")
 
     def actions(self, system: System) -> list[Action]:
         self.applied = True
         revision = (self.context.head, "--state", str(self.context.layout.root)) if self.context.prepared is not None else ()
-        argv = application(self.context, "deploy", *revision)
-        approved = application(self.context, "deploy", *revision, "--yes", *(("--quiet",) if not oh_cli.switches.verbose else ()))
+        argv = application(self.context, "deploy", *revision, "--_configuration-phase")
+        approved = application(self.context, "deploy", *revision, "--_configuration-phase", "--yes", *(("--quiet",) if not oh_cli.switches.verbose else ()))
         # Installation checks the selected configuration just as the packaged
         # application does. The full unit suite is a developer/release gate;
         # repeating it here delays deployment and can expire sudo credentials.
@@ -1179,7 +1196,7 @@ class Token(Step):
         if saved != self.validated:
             self.validated = None
         if not saved:
-            return Check(False, "configure private access to the internal runtime")
+            return Check(False, "reuse this installation's private runtime access, or set it up for a new runtime")
         # Only the exact token validated by this one step can bypass runner's
         # immediate post-action query. NativeReady performs fresh full reads.
         status = 200 if self.validated == saved else self.status(system, saved, system.clock() + POLL)
@@ -1270,6 +1287,13 @@ class Token(Step):
                 return 0
             except NativeAuthError as exc:
                 if not exc.retryable:
+                    if exc.code in ("existing_users", "credentials") and not self.saved(system):
+                        try:
+                            system.read_private(self.context.area / self.context.runtime_credentials_file)
+                        except FileNotFoundError:
+                            return self.recover_installed(system, deadline)
+                        except (OSError, ValueError):
+                            pass  # An unreadable managed record is not permission to replace it.
                     system.say(f"   {exc}")
                     if exc.code in ("existing_users", "credentials", "retired"):
                         system.say("   Advanced recovery: rerun with --runtime-token-file PATH to import an existing private runtime credential.")
@@ -1282,6 +1306,27 @@ class Token(Step):
                 system.sleep(min(POLL, remaining))
         system.say("   runtime access did not become ready within the startup allowance; rerun to resume setup")
         return 1
+
+    def recover_installed(self, system: System, deadline: float) -> int:
+        """Reuse the finite installed credential under this run's approval."""
+        from oh_install import runner
+        system.say("   Reconnecting this configuration directory to the existing runtime account.")
+        action = Command(("python3", str(self.context.program / "lib/oh_install/secrets.py"),
+                          str(self.context.layout.root), "--name", metrics.OPENHAB_TOKEN,
+                          "--source", str(self.context.area / self.context.token_file),
+                          "--uid", str(self.context.host["uid"]), "--gid", str(self.context.host["gid"]),
+                          "--recover-runtime-token", "--runtime-url", self.context.url), root=True)
+        code = runner.perform(action, system, self.context.area)
+        if code != 0:
+            system.say("   Could not recover usable access from this installation. Restore the site's private var/ backup, "
+                       "or rerun with --runtime-token-file PATH to import an existing runtime credential.")
+            return code or 1
+        token = self.saved(system)
+        problem = self.problem(system, token, deadline=deadline)
+        if problem is not None:
+            system.say(f"   {problem}; the recovered credential was kept for inspection")
+            return 1
+        return 0
 
     def problem(self, system: System, token: str, *, deadline: float | None = None) -> str | None:
         """Why token will not do, or None when runtime accepts it."""
@@ -1459,18 +1504,28 @@ class Verify(Step):
     title = "Read-only check"
     always = True
 
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, *, materialized: bool = True):
         self.context = context
+        self.materialized = materialized
+        self.stop_on_failure = not materialized
 
     def check(self, system: System) -> Check:
         return Check(False, "installation readiness, device warnings, and what is deployed against this checkout")
 
     def actions(self, system: System) -> list[Action]:
         addons = (("--addons", str(self.context.configuration / "conf/services/addons.cfg"))
-                  if self.context.prepared is not None else ())
+                  if self.materialized and self.context.prepared is not None else ())
         revision = ("--revision", self.context.head) if self.context.prepared is not None else ()
-        return [Command(application(self.context, "health", "--production", "--installation", *addons, *revision), show_output=True),
-                operator_command(self.context, system, application(self.context, "status", *revision))]
+        prefix = application(self.context)
+        if not self.materialized and self.context.application is not None:
+            import oh_release
+            # An already-current deployment needs no local build or cache write.
+            # Health can derive its add-on requirements from the committed inputs.
+            program = oh_release.resolve(self.context.var / "application-releases",
+                                         self.context.application["digest"], self.context.application["version"])
+            prefix = (sys.executable, str(program / "bin/thermite"), "--site", str(self.context.area))
+        return [Command((*prefix, "health", "--production", "--installation", *addons, *revision), show_output=True),
+                operator_command(self.context, system, (*prefix, "status", *revision))]
 
 
 # --------------------------------------------------------------------------
@@ -1527,10 +1582,12 @@ class Plan:
     pinned_image: str
     services: tuple[str, ...]
     migration: tuple[str, ...] = ()
+    deployment: str | None = None
+    restart_runtime: bool = False
 
     @property
     def current(self) -> bool:
-        return not self.units and not self.services and not self.migration
+        return not self.units and not self.services and not self.migration and not self.deployment and not self.restart_runtime
 
     def describe(self) -> str:
         parts = []
@@ -1545,6 +1602,10 @@ class Plan:
             parts.append("not running on its installed unit: " + ", ".join(self.services))
         if self.migration:
             parts.append("to commission: " + ", ".join(self.migration))
+        if self.deployment:
+            parts.append("to deploy: " + self.deployment)
+        if self.restart_runtime:
+            parts.append("restart runtime on the deployed application and configuration")
         return "; ".join(parts)
 
 
@@ -1586,8 +1647,16 @@ def plan(context: Context, system: System) -> Plan:
         migration.append("thermite account and group")
     if not NativePreparation(context).check(system).done:
         migration.append("service ownership and offline native preparation")
+    deployment = Deploy(context).check(system)
+    record = system.stat(context.layout.record)
+    active = system.unit(oh_units.RUNTIME)
+    # Deploy precedes restart. If a previous run stopped between those steps,
+    # the current commit alone must not hide the unfinished runtime restart.
+    restart_runtime = (not deployment.done or record is not None
+                       and (active.since is None or record.mtime > active.since))
     return Plan(tuple(Units(context).stale(system)), deploy.unit_version(text), context.versions["openhab"]["version"],
-                deploy.unit_image(text), deploy.image(context.versions), tuple(services), tuple(migration))
+                deploy.unit_image(text), deploy.image(context.versions), tuple(services), tuple(migration),
+                None if deployment.done else deployment.detail, restart_runtime)
 
 
 class WhatChanges(Step):
@@ -1743,7 +1812,8 @@ def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     openHAB runs without the metrics gets them here."""
     return [WhatChanges(plan_), Preconditions(context), *configuration_steps(context), Packages(), NodeConfinement(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
             Units(context), LegacyMigration(context), Account(context), StateDirectories(context), MetricsDirectories(context),
-            NativePreparation(context), Deploy(context), Restart(context), Answers(context), Token(context), NativeReady(context),
+            NativePreparation(context), NativeIngress(context), Deploy(context), Restart(context, restart_runtime=plan_.restart_runtime),
+            Answers(context), Token(context), NativeReady(context), Gateway(context),
             *metrics_steps(context, restart=True), Target(context), Verify(context)]
 
 
@@ -1938,5 +2008,5 @@ def install(context: Context, *, preflight: bool = True) -> list[Step]:
     """Every step, in order."""
     return [*(install_preflight(context) if preflight else []), *configuration_steps(context), Packages(), NodeConfinement(context), BootTest(context),
             Units(context), LegacyMigration(context), Account(context), StateDirectories(context),
-            MetricsDirectories(context), NativePreparation(context), Deploy(context), Services(context, restart_runtime=context.restart_runtime),
-            Answers(context), Token(context), NativeReady(context), *metrics_steps(context), Target(context), Verify(context)]
+            MetricsDirectories(context), NativePreparation(context), NativeIngress(context), Deploy(context), Services(context, restart_runtime=context.restart_runtime),
+            Answers(context), Token(context), NativeReady(context), Gateway(context), *metrics_steps(context), Target(context), Verify(context)]

@@ -32,7 +32,7 @@ def select_args(argv: list[str]) -> list[str]:
         # descriptor. Preserve that option; --site still selects their site.
         leading = [value for value in out if value not in {"-q", "--quiet", "-v", "--verbose", "--no-color"}]
         service_config = (len(leading) >= 2 and leading[0] == "access"
-                          and leading[1] in {"bootstrap", "serve", "worker", "verify", "callbacks"})
+                          and leading[1] in {"bootstrap", "setup", "migrate", "serve", "worker", "verify", "callbacks"})
         if service_config and (word == "--config" or word.startswith("--config=")):
             out.append(word)
             index += 1
