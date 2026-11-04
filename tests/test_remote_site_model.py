@@ -105,10 +105,12 @@ class SiteModel(unittest.TestCase):
 
     def test_native_and_authenticated_launches_both_use_the_committed_model(self):
         self.schema_two()
+        credential = self.root / "personal-access.json"
+        credential.write_text("credential validation belongs to the shared client")
         for native in (True, False):
             with self.subTest(native=native), mock.patch.object(remote, "native_mode", return_value=native), \
                     mock.patch.object(remote, "target", return_value=["--url", "https://site.example.invalid"]), \
-                    mock.patch("oh_access.client.load", return_value=(self.root / "personal-access.json", {})), \
+                    mock.patch("oh_access.client.credential_path", return_value=credential), \
                     mock.patch("oh_access.client.saved_ca", return_value=None):
                 environment = remote.launch_environment(self.arguments, oh_brand.load())
             self.assertEqual(Path(environment["THERMITE_REMOTE_HOUSE_FILE"]).read_bytes(), CONTENT)

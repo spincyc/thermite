@@ -92,9 +92,8 @@ function assemble(args, env) {
   const store = options.store || (args.state ? fileStore(args.state) : memoryStore());
   const Source = options.EventSource || EventSource;
   const environ = options.environ || process.env;
-  const credential = args.mock || args.native ? null : Credentials.read(environ.THERMITE_REMOTE_TOKEN_FILE, args.url);
   const access = args.mock ? shared.Access.create({ mock: true, base: "http://127.0.0.1" }) : options.access || shared.Access.create({ base: args.url, fetch: options.fetch || globalThis.fetch,
-    token: credential && credential.token, native: args.native === true });  // lint: allow — credential read from the private token file
+    getToken: () => Credentials.read(environ.THERMITE_REMOTE_TOKEN_FILE, args.url)?.token || null, native: args.native === true });  // lint: allow — read private credential only after authoritative discovery
   const request = access && !access.native ? access.fetch : options.fetch;
   const Events = access && !access.native ? access.eventSource(Source) : Source;
   const timers = {};

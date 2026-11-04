@@ -9,6 +9,18 @@ CATALOG = ("site.read", "room.control", "settings.manage", "users.manage", "role
 RESERVED = {"Admin": CATALOG, "User": ("site.read", "room.control"), "Viewer": ("site.read",)}
 
 
+class SecurityState(models.Model):
+    """One durable site switch; setup capabilities are never stored in plaintext."""
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    enabled = models.BooleanField(default=False)
+    revision = models.PositiveIntegerField(default=1)
+    setup_digest = models.CharField(max_length=64, blank=True)
+    setup_expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(id=1), name="security_singleton")]
+
+
 class Role(models.Model):
     name = models.CharField(max_length=64, unique=True)
     permissions = models.JSONField(default=list, blank=True)

@@ -66,13 +66,7 @@ function content(g, width, ctx, height) {
   return used;
 }
 
-function security(g, width) {
-  let y = 2;
-  const line = (value, style = "dim") => wrap(value, Math.max(4, width - 4)).forEach(part => g.put(2, y++, part, style));
-  line("Not connected", "section"); y += 1;
-  line("Security status and zones are unavailable until a system is connected.");
-  return y;
-}
+function security(g, width, ctx) { return ctx.access.content(g, width, ctx); }
 
 function system(g, width, ctx) {
   let y = 1;

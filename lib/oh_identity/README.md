@@ -5,13 +5,44 @@ runtime listener is sealed. It contains no production account or credential.
 Python 3.11 or newer is required. Install `lib/requirements-site.txt` with
 `pip --require-hashes` in the service's isolated environment.
 
-The owner CLI calls `composition.initialize(state_directory, username,
-password, allowed_hosts)` once, supplying the password from a hidden terminal
-prompt. It creates/migrates the database and atomically creates the first
-Admin. There is no public bootstrap endpoint. Further starts call
+The Security page controls a persistent authentication property. New identity
+databases start with authentication off; existing databases with accounts
+migrate with authentication on. The gateway stays in place in both modes.
+With authentication off, an anonymous Guest can read the site and use ordinary
+room controls. Account administration, pairing, room locks and schedules are
+disabled by the backend; the worker cannot dispatch saved schedules. Saved
+accounts and policies remain in private storage. Native testing mode is a
+separate direct-runtime path, not this property or an authentication fallback.
+
+For first activation, the owner runs `thermite access setup --config …` on
+the service host. It prints a one-use code to an interactive terminal only.
+The database stores its digest and 15-minute expiry. Enter the code and a new
+administrator username/password on the HTTPS Security page. Account creation,
+code consumption and enabling authentication commit atomically. An unarmed,
+expired, repeated or competing bootstrap cannot claim ownership. Alternatively,
+the local CLI calls `composition.initialize(state_directory, username,
+password, allowed_hosts)`, supplying the password from a hidden terminal
+prompt, to create the first Admin and enable authentication immediately.
+Further starts call
 `composition.setup(...)`, install a `runtime.RuntimeAdapter` through
 `install_adapter()`, then run `oh_identity.asgi:application` with a production
 ASGI server. No default state path, account, password or upstream token exists.
+
+GET `/api/v1/security` exposes only mode, revision, setup availability and CSRF
+data. POST uses `{enabled,revision,password}`; first activation additionally
+requires `username` and `setup_code`. Re-enabling an existing site requires
+an active Admin's `username` and current password. Disabling requires the
+current Admin's password. Both browser writes and terminal bearer writes retain
+their existing CSRF/channel protections. Mode changes revoke prior sessions
+and tokens, fence queued commands and streams, and revise retained schedules
+so old worker receipts cannot execute after a transition. The browser signs in
+again after enabling; terminal users run `thermite access login` again.
+
+Privilege elevation is an account operation: sign out and sign in as an Admin,
+or have an Admin assign the required role on Users. Role changes revoke old
+authorization; a new sign-in is required. Custom roles can grant ordinary
+reading/control only. Admins still obey active room policies and receive no
+operating-system privileges, shell execution or arbitrary native REST access.
 
 The service-owned state directory is 0700; database, site UUID and secret key
 are 0600, with umask 077 also protecting SQLite side files. An immutable site
@@ -48,6 +79,13 @@ session/token existence, expiry and revision before each event and on a bounded
 quiet-stream heartbeat; cancellation closes the upstream iterator.
 Commands and admin mutations revalidate the originating session/PAT after lock
 or transaction waits, so a queued request cannot outlive credential revocation.
+
+The cold review for optional authentication identified the old client-only mode,
+unfenced worker effects, first-visitor ownership and stale credential elevation
+as the transition risks addressed above. It also found that password creation
+accepted lengths the login endpoint rejected; both now enforce the same
+1024-character maximum. Native-listener isolation remains a deployment
+requirement, not something a database toggle can establish.
 
 GET/PUT `/api/v1/rooms/<id>/policy` uses `{revision,config}`. PUT is Admin-only,
 CAS protected and delegates validation to the policy engine. Room, timezone

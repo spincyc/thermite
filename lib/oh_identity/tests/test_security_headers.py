@@ -6,10 +6,14 @@ from django.conf import settings
 from django.test import Client, TransactionTestCase
 
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter
+from oh_identity.models import SecurityState
 from oh_identity.tests.test_core import FakeRuntime
 
 
 class SecurityHeaders(TransactionTestCase):
+    def setUp(self):
+        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
+
     def test_private_html_redirects_to_public_login_without_exposing_house(self):
         with tempfile.TemporaryDirectory(dir=settings.STATE) as temporary:
             root = Path(temporary)

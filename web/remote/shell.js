@@ -63,13 +63,13 @@
   main.before(shell, content); content.appendChild(main);
   body.classList.add("thermite-app");
   const access = global.ThermiteAccess && global.ThermiteAccess.client;
-  if (access) access.ready().then(() => {
+  const updateAccess = () => {
     shell.querySelectorAll("[data-view]").forEach((link) => {
       const entry = pages.find(page => page.id === link.dataset.view);
       link.hidden = !navigation.allowed(entry, access);
     });
-    shell.querySelectorAll('[data-view="pairing"]').forEach((link) => { link.hidden = !access.has("pairing.manage"); });
-  }).catch(() => {});
+  };
+  if (access) { access.subscribe(updateAccess); access.ready().then(updateAccess).catch(() => {}); }
   document.querySelectorAll("a[href]").forEach(a => {
     const entry = pages.find(page => a.getAttribute("href") === page.href || a.getAttribute("href") === page.path);
     if (entry) a.href = href(entry.id, location.search);

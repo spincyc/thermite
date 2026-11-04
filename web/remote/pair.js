@@ -886,7 +886,20 @@
     svg.firstChild.setAttribute("href", "#i-" + name);
   }
 
-  function startPage() {
+  async function startPage() {
+    const access = global.ThermiteAccess?.client;
+    if (access && !access.native) {
+      let message = "";
+      try {
+        await access.ready();
+        if (!access.authEnabled()) message = "Enable authentication in Security to pair devices.";
+        else if (!access.has("pairing.manage")) message = "Sign in as an administrator from Account to pair devices.";
+      } catch (error) { message = error.message; }
+      if (message) {
+        document.getElementById("rooms").replaceChildren(); document.getElementById("rooms").removeAttribute("aria-busy");
+        document.getElementById("alert").hidden = false; document.getElementById("alert-text").textContent = message; return;
+      }
+    }
     const params = new URLSearchParams(location.search);
     const chosen = params.get("backend");
     const backend = create({ backend: chosen === "mock" || chosen === "openhab" ? chosen : undefined,

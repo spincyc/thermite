@@ -79,12 +79,53 @@ sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/the
 ```
 
 Both password prompts are hidden and require a terminal;
-there is no default password or remote bootstrap. Existing identities cannot
+there is no default password. Existing identities cannot
 be replaced by running bootstrap again. The state directory is mode 0700;
 the database, secret, identity, runtime bearer and configuration are mode 0600.
 Bootstrap, service and worker CLI operations require the thermite account and
 effective primary group. Personal terminal login/logout credentials remain
 operator-owned.
+
+To create the first administrator on the web Security page instead, replace
+the bootstrap command with:
+
+```sh
+sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access setup --config "$RELEASE/config.json"
+```
+
+This initializes a fresh schema with authentication off and prints a one-use
+code to the interactive terminal. After completing the activation boundary
+checks below and starting the gateway, open `/security/`, enable authentication,
+and enter the code plus the first administrator's username and password. The
+code expires after 15 minutes; run setup again for a replacement. It cannot
+replace existing accounts. Keep the code out of logs, URLs and shared messages.
+
+The Security toggle changes private identity state; it does not regenerate
+inventory, restart services, or switch clients to native REST. Off allows
+ordinary room controls through the gateway. Users, pairing, locks and schedules
+require authentication. Accounts and policies survive toggles, but every prior
+browser session and terminal token is revoked. Subsequent toggles require an
+active administrator's current password. Use the Account page to switch to an
+Admin, or have an Admin change your role in Users and sign in again. Terminal
+elevation uses `thermite access login --url https://… --user …` and reopening
+the remote. No application role grants host sudo privileges.
+
+Before upgrading an existing identity schema, stop both access services, make
+a private backup of the entire persistent state directory, and use the new
+release's interpreter and program:
+
+```sh
+sudo systemctl stop thermite-access.service thermite-access-worker.service
+sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access migrate --config "$RELEASE/config.json"
+```
+
+Take the backup after stopping services and before the migration command.
+Then activate the new release using its reviewed plan. `serve` refuses pending
+migrations; it never silently upgrades existing authority. This release's
+security-state migration preserves existing accounts as authentication enabled.
+For rollback across a schema change, stop both services and restore the whole
+matching backup before activating the prior release. Do not mix an older
+database with newer signing keys or a different site identity.
 
 `serve --config …` loads a private compiled contract and explicit host list,
 validates the TLS certificate/key, and runs one direct-TLS ASGI process. It

@@ -12,6 +12,13 @@
     invalid_password: "Choose a stronger password.", invalid_policy: "Check the schedule times, days and sources.",
     invalid_user: "Check the username, role and room grants.", invalid_role: "Check the role name and permissions.",
     csrf_failed: "The sign-in form expired. Reload and try again.", access_unavailable: "Access service unavailable.",
+    auth_disabled: "Enable authentication in Security to use accounts, pairing, locks and schedules.",
+    authentication_disabled: "Enable authentication in Security to use accounts, pairing, locks and schedules.",
+    security_unavailable: "Authentication settings are unavailable. Try again when the access service is ready.",
+    authorization_changed: "Your account permissions changed. Sign in again.",
+    invalid_security: "Check the authentication settings and try again.",
+    setup_required: "Generate a setup code on the thermite host before creating the first administrator.",
+    invalid_setup_code: "The setup code was not accepted or has expired. Generate a new code on the thermite host.",
     access_not_configured: "Access is not configured at this address.", invalid_response: "The access service could not answer.",
     origin_mismatch: "The terminal credential belongs to a different address.", secure_connection_required: "Use your site’s HTTPS address to sign in.", connection_failed: "Could not reach thermite."
   };
@@ -39,14 +46,16 @@
         || !Array.isArray(value.permissions) || value.rooms !== null && (!Array.isArray(value.rooms)
           || value.rooms.some((id) => typeof id !== "string" || !/^[a-z][a-z0-9_]{0,99}$/.test(id)))) throw problem("invalid_response");
     return { id: value.id, username: value.username, role: value.role, rooms: value.rooms,
-      can_edit: value.can_edit === true, site: typeof value.site === "string" ? value.site : null,
+      can_edit: value.can_edit === true, auth_enabled: value.auth_enabled !== false, site: typeof value.site === "string" ? value.site : null,
       permissions: value.permissions.filter((permission) => ["site.read", "room.control", "settings.manage", "users.manage", "roles.manage", "pairing.manage"].includes(permission)) };
   }
   function create(options) {
     const config = options || {}, rawFetch = config.fetch || global.fetch.bind(global);
     const base = (config.base || "").replace(/\/$/, ""), origin = new URL(base || global.location.href).origin;
     const legacy = config.native === true, mock = config.mock === true;
-    const token = config.token || null, listeners = [], policies = Object.create(null);  // lint: allow — credential supplied by the caller
+    let token = config.token || null;  // lint: allow — credential supplied by the caller
+    const listeners = [], policies = Object.create(null);
+    let security = null, discovering = null, csrfCookie = null;
     let user = null, csrf = null, loading = null, ended = false, policyRoom = null, policyTimer = null, policyGeneration = 0, authRevision = 0;
     let active = typeof document === "undefined" || document.visibilityState !== "hidden";
     const demo = { users: [{ id: 1, username: "Demo", role: 1, rooms: null, active: true }],
@@ -74,30 +83,48 @@
       if (path === "/api/v1/logout") return Promise.resolve({ ok: true });
       throw problem("access_not_configured", 404);
     }
-    const notify = (type) => listeners.slice().forEach((fn) => fn({ type, user }));
+    const notify = (type) => listeners.slice().forEach((fn) => fn({ type, user, security }));
     function lost(code) {
       user = null; csrf = null; ended = true; authRevision++; clearTimeout(policyTimer);
       Object.keys(policies).forEach((id) => delete policies[id]);
       notify("unauthorized");
       if (config.onUnauthorized) config.onUnauthorized(code);
     }
-    async function raw(path, init) {
+    async function raw(path, init, publicRequest) {
       const target = new URL(path, origin + "/");
       if (target.origin !== origin || target.username || target.password) throw problem("origin_mismatch");
-      const request = { ...(init || {}), credentials: token ? "omit" : "same-origin", redirect: "error", cache: "no-store" };
+      const request = { ...(init || {}), credentials: token && !publicRequest ? "omit" : "same-origin", redirect: "error", cache: "no-store" };
       const headers = new Headers(request.headers || {});
-      if (token) headers.set("Authorization", "Bearer " + token);
-      if (!token && !["GET", "HEAD"].includes((request.method || "GET").toUpperCase()) && csrf) headers.set("X-CSRFToken", csrf);
+      if (token && !publicRequest) headers.set("Authorization", "Bearer " + token);
+      const bearerRequest = token && !publicRequest;
+      if (!bearerRequest && !["GET", "HEAD"].includes((request.method || "GET").toUpperCase()) && csrf) headers.set("X-CSRFToken", csrf);
+      // Node fetch has no cookie jar. Retain only the gateway's CSRF cookie,
+      // in memory, for anonymous same-origin controls; never browser sessions.
+      if (!global.location) {
+        headers.delete("Cookie");
+        if (!bearerRequest && csrfCookie) headers.set("Cookie", csrfCookie);
+        if (!bearerRequest && !["GET", "HEAD"].includes((request.method || "GET").toUpperCase())) headers.set("Referer", origin + "/");
+      }
       request.headers = headers;
-      try { return await rawFetch(target.href, request); } catch (_) { throw problem("connection_failed"); }
+      let response;
+      try { response = await rawFetch(target.href, request); } catch (_) { throw problem("connection_failed"); }
+      if (!global.location && ["/api/v1/security", "/api/v1/session"].includes(target.pathname)) {
+        const cookies = response.headers?.getSetCookie?.() || [];
+        for (const cookie of cookies.slice(0, 8)) {
+          if (typeof cookie !== "string" || cookie.length > 1024) continue;
+          const match = /^(thermite_[a-f0-9]{16}_csrf=[A-Za-z0-9]{32}(?:[A-Za-z0-9]{32})?)(?:;|$)/.exec(cookie);
+          if (match) csrfCookie = match[1];
+        }
+      }
+      return response;
     }
     function stale(revision) {
       if (revision === authRevision) return;
       const error = problem("session_expired", 401); error.stale = true; throw error;
     }
-    async function data(path, init, check) {
+    async function data(path, init, check, publicRequest) {
       const revision = authRevision;
-      const response = await raw(path, init);
+      const response = await raw(path, init, publicRequest);
       if (check) stale(revision);
       let value;
       if (check && response.status === 401) lost("session_expired");
@@ -105,22 +132,45 @@
       if (check && response.status !== 401) stale(revision);
       if (!response.ok) {
         if (check && response.status === 401 && !ended) lost(value && value.error);
-        throw problem(response.status === 404 && path === "/api/v1/session" ? "access_not_configured" : value && value.error, response.status);
+        throw problem(response.status === 404 && ["/api/v1/session", "/api/v1/security"].includes(path) ? "access_not_configured" : value && value.error, response.status);
       }
       return value;
     }
+    function securityStatus(value) {
+      if (!value || typeof value.enabled !== "boolean" || !Number.isInteger(value.revision) || value.revision < 0
+          || typeof value.bootstrap_required !== "boolean" || typeof value.setup_available !== "boolean") throw problem("invalid_response");
+      return { enabled: value.enabled, revision: value.revision, bootstrap_required: value.bootstrap_required,
+        setup_available: value.setup_available };
+    }
+    async function loadSecurity() {
+      if (legacy) return null;
+      if (mock) return security || (security = { enabled: true, revision: 0, bootstrap_required: false, setup_available: false });
+      if (!discovering) discovering = (async () => {
+        const revision = authRevision, answer = await data("/api/v1/security", null, false, true); stale(revision);
+        const next = securityStatus(answer), changed = security && security.revision !== next.revision;
+        security = next;
+        if (changed) lost("session_expired");
+        if (!next.enabled) ended = false;
+        csrf = answer.csrf || null; notify("security"); return security;
+      })().finally(() => { discovering = null; });
+      return discovering;
+    }
     async function ready() {
       if (legacy) return null;
-      if (mock) { user = { id: 1, username: "Demo", role: 1, rooms: null, can_edit: true,
+      if (mock) { await loadSecurity(); user = { id: 1, username: "Demo", role: 1, rooms: null, can_edit: true, auth_enabled: true,
         permissions: ["site.read", "room.control", "settings.manage", "users.manage", "roles.manage", "pairing.manage"] }; return user; }
       if (ended) throw problem("login_required", 401);
       if (user) return user;
       if (!loading) loading = (async () => {
-        if (!token) {
+        const mode = security || await loadSecurity(), revision = authRevision;
+        if (mode.enabled && !token && config.getToken) token = config.getToken();
+        if (mode.enabled && !token) {
           if (!global.location && !config.allowSession) throw problem("login_required", 401);
           const answer = await data("/api/v1/session"); csrf = answer.csrf;
         }
-        user = principal(await data("/api/v1/me", null, true)); notify("change"); return user;
+        const answer = principal(await data("/api/v1/me", null, true)); stale(revision);
+        if (answer.auth_enabled !== mode.enabled) { lost("session_expired"); throw problem("session_expired", 401); }
+        user = answer; notify("change"); return user;
       })().catch((error) => { if (error.status === 401 && !ended && !error.stale) lost(error.code); throw error; })
         .finally(() => { loading = null; });
       return loading;
@@ -140,23 +190,26 @@
     async function json(path, method, value) {
       await ready();
       if (legacy) throw problem("access_not_configured", 404);
+      if (!client.authEnabled() && (/^\/api\/v1\/(users|roles|tokens)(\/|$)/.test(path) || /\/policy$/.test(path))) throw problem("auth_disabled", 403);
       if (mock) return (config.mockRequest || demoRequest)(path, method || "GET", value);
       const init = { method: method || "GET", headers: { Accept: "application/json" } };
       if (value !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(value); }
       return data(path, init, true);
     }
     const client = {
-      native: legacy, mock, base, origin, ready, fetch: fetchAuth, json,
+      native: legacy, mock, base, origin, ready, fetch: fetchAuth, json, loadSecurity,
+      security: () => security,
+      authEnabled: () => mock || Boolean(security && security.enabled),
       current: () => user,
       subscribe(fn) { listeners.push(fn); return () => { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); }; },
       has(permission) { return legacy || Boolean(user && user.permissions && user.permissions.includes(permission)); },
-      canEdit() { return Boolean(user && user.can_edit); },
+      canEdit() { return client.authEnabled() && Boolean(user && user.can_edit); },
       canControl(room) {
         if (legacy || mock) return true;
         if (!client.has("room.control") || user.rooms !== null && !user.rooms.includes(room)) return false;
         return !(policies[room] && policies[room].effective && policies[room].effective.allowed === false);
       },
-      policy(room) { return policies[room] || null; },
+      policy(room) { return client.authEnabled() ? policies[room] || null : null; },
       async loadPolicy(room) { const value = await json("/api/v1/rooms/" + encodeURIComponent(room) + "/policy"); policies[room] = value; notify("policy"); return value; },
       async savePolicy(room, revision, value) {
         const saved = await json("/api/v1/rooms/" + encodeURIComponent(room) + "/policy", "PUT", { revision, config: value });
@@ -171,7 +224,7 @@
       },
       watchRoom(room) {
         policyRoom = room; clearTimeout(policyTimer); const generation = ++policyGeneration;
-        if (legacy || mock || !room || !active || ended) return Promise.resolve(null);
+        if (legacy || mock || !client.authEnabled() || !room || !active || ended) return Promise.resolve(null);
         const refresh = () => {
           if (!active || ended || !policyRoom || generation !== policyGeneration) return;
           return client.loadPolicy(policyRoom).catch(() => null).finally(() => {
@@ -186,12 +239,28 @@
       async login(username, password) {
         const address = new URL(origin);
         if (address.protocol !== "https:" && !["127.0.0.1", "localhost", "[::1]"].includes(address.hostname)) throw problem("secure_connection_required");
+        if (!(await loadSecurity()).enabled) throw problem("auth_disabled", 403);
         ended = false; user = null; authRevision++; const revision = authRevision;
         const session = await data("/api/v1/session"); csrf = session.csrf;
         const answer = await data("/api/v1/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
         stale(revision); user = principal(answer.user); csrf = answer.csrf; notify("change"); return user;
       },
-      async logout() { try { await json("/api/v1/logout", "POST", {}); } finally { lost("login_required"); } },
+      async logout() {
+        try {
+          if (legacy) throw problem("access_not_configured", 404);
+          if (mock) return await demoRequest("/api/v1/logout");
+          if (!token) { const session = await data("/api/v1/session"); csrf = session.csrf; }
+          return await data("/api/v1/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }, true);
+        } finally { token = null; lost("login_required"); }
+      },
+      async setSecurity(value) {
+        if (legacy || mock) throw problem("access_not_configured", 404);
+        await loadSecurity();
+        const answer = await data("/api/v1/security", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) }, true);
+        security = securityStatus(answer); token = null; lost("session_expired");
+        csrf = answer.csrf || null; if (!security.enabled) ended = false;
+        notify("security"); return security;
+      },
       clear: lost,
       eventSource(Source) {
         return class AuthorizedEvents {
@@ -230,7 +299,7 @@
   const siteNative = site && site.version === 1 && site.mode === "native";
   const client = exported.client = create({ fetch: nativeFetch, native: params.get("backend") !== "mock" && (params.get("backend") === "native" || siteNative), mock: params.get("backend") === "mock",
     onUnauthorized() {
-      if (document.body && document.body.dataset.thermitePage === "access") return;
+      if (document.body && ["access", "security"].includes(document.body.dataset.thermitePage)) return;
       document.querySelectorAll("main,.app").forEach((main) => { const message = document.createElement("p"); message.textContent = "Sign in to thermite to continue."; main.replaceChildren(message); });
       if (document.body && document.body.dataset.thermitePage !== "access") location.replace("/account/?next=" + encodeURIComponent(returnTo(location.href, location.origin)));
     } });

@@ -13,7 +13,9 @@ function create(client, house, changed) {
     state.loading = true; state.error = ""; const turn = ++generation; changed();
     try {
       if (!client || client.native) return;
+      if (kind === "security") { await client.loadSecurity(); return; }
       await client.ready();
+      if (!client.authEnabled()) return;
       if (kind === "settings") { const value = await client.loadPolicy(state.room); if (turn === generation) state.policy = value; }
       else if (kind === "users" && canEdit()) {
         const [users, roles] = await Promise.all([client.json("/api/v1/users"), client.json("/api/v1/roles")]);
@@ -35,11 +37,34 @@ function create(client, house, changed) {
     };
     if (state.error) { line(state.error, "alert"); y++; }
     if (state.loading) { line("Reading access settings…"); return y; }
-    if (!client || client.native) { line("Accounts and room schedules are paused in native testing mode."); return y; }
+    if (!client || client.native) { line("Authentication cannot be changed in native testing mode. Configure and open the thermite gateway, then use Security to enable accounts, pairing, locks and schedules."); return y; }
+    if (state.kind === "security") {
+      const mode = client.security();
+      line(mode ? "Authentication is " + (mode.enabled ? "on" : "off") : "Authentication status unavailable", "strong");
+      line("Change authentication in your browser:"); line(client.origin + "/security/", "link"); y++;
+      if (mode?.bootstrap_required) {
+        line("Complete the HTTPS gateway setup and restrict direct runtime access before relying on accounts or room locks.");
+        line("For first setup, generate a short-lived code on the thermite host:");
+        line("thermite access setup --config /path/to/access/config.json");
+        line("Run the staged release as the thermite service account, using its access configuration.");
+        line("Enter that code and create an administrator on the Security page.");
+      } else line("Changing authentication requires an administrator's password. When enabled, sign in as that administrator in the browser first.");
+      line("Changing authentication signs out every browser and terminal."); y++;
+      line("To elevate terminal access, quit and run thermite access login --url " + client.origin + " --user ADMIN, then reopen the remote.");
+      line("An administrator can promote a user through Users & roles; the user must sign in again.");
+      return y;
+    }
+    if (!client.security()) { line("Authentication status unavailable. Reopen the remote after the access service is ready."); return y; }
+    if (!client.authEnabled()) {
+      line("Authentication is off", "strong");
+      line("Basic remote controls are available without signing in. Enable authentication in Security (F3) for accounts, device pairing, locks and room schedules."); return y;
+    }
     if (state.kind === "account") {
       const user = client.current(); line(user ? "Signed in as " + user.username : "Not signed in", "strong");
       if (!user) { line("Run thermite access login for this address, then reopen the remote."); return y; }
       line(user?.can_edit ? "Administrator" : client.has("room.control") ? "Control of granted, unlocked rooms" : "Read-only access");
+      line("To switch or elevate access, quit and run thermite access login --url " + client.origin + " --user ADMIN, then reopen the remote.");
+      line("An administrator can change your role in Users & roles; then sign in again.");
       y++;
       item("Room settings · F7", "settings"); if (canEdit()) item("Users & roles · F8", "users");
       item("Sign out this terminal", "logout"); return y;
@@ -98,6 +123,7 @@ function create(client, house, changed) {
     let y = 0; const form = state.form; if (!form) return y;
     const line = (text, style) => wrap(clean(text), width - 2).forEach((part) => g.put(1, y++, part, style || "dim"));
     line(form.kind === "policy" ? "Times use the site timezone. ↑↓ fields, ←→ choices; type to edit." : "↑↓ fields, ←→ choices; type to edit.");
+    if (form.kind === "user") line("Choose Admin to elevate access. Role changes sign the user out everywhere; they must sign in again.");
     fields().forEach((entry) => {
       const key = "access-field:" + entry.key, active = ctx.ui.focus === key && ctx.ui.focusVisible;
       let value = entry.get();
@@ -181,6 +207,6 @@ function create(client, house, changed) {
     }
     return false;
   }
-  return { native: !client || client.native, state, open, content, formContent, activate, key, cancel: () => { generation++; state.loading = false; if (state.form?.data) state.form.data.password = ""; state.form = null; }, canEdit };
+  return { native: !client || client.native, authEnabled: () => Boolean(client?.authEnabled()), has: (permission) => Boolean(client?.has(permission)), state, open, content, formContent, activate, key, cancel: () => { generation++; state.loading = false; if (state.form?.data) state.form.data.password = ""; state.form = null; }, canEdit };
 }
 module.exports = { create };

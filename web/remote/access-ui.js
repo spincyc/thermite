@@ -33,14 +33,27 @@
   }
   async function login() {
     const form = $("[data-login]");
+    const mode = await client.loadSecurity();
+    const signOut = () => client.logout().then(() => location.reload()).catch((error) => status(error.message, true));
+    if (!mode.enabled) {
+      $(".access-login h1").textContent = "Authentication is off"; form.replaceChildren();
+      form.append(node("p", "Basic remote controls are available without signing in. Enable authentication for accounts, device pairing, locks and room schedules."),
+        node("a", "Set up authentication in Security", { href: global.ThermiteNavigation.href("security", location.search) }));
+      try { await client.ready(); status(""); }
+      catch (error) { status(error.message, true); if (error.status === 401) form.appendChild(button("Clear expired sign-in", signOut)); }
+      return;
+    }
     try {
       const user = await client.ready();
       if (user) {
         $(".access-login h1").textContent = "Your account"; form.replaceChildren();
-        form.append(node("p", "Signed in as " + user.username), button("Sign out", () => client.logout().then(() => location.reload())));
+        form.append(node("p", "Signed in as " + user.username), node("p", "To elevate access, switch to an administrator account. An administrator can change your role in Users & roles; then sign in again."),
+          button("Switch account", signOut), button("Sign out", signOut));
         status(user.can_edit ? "Administrator" : client.has("room.control") ? "Room controls available" : "Read-only access"); return;
       }
-    } catch (_) { /* A sign-in page deliberately starts without a session. */ }
+    } catch (error) {
+      if (error.status === 401) form.appendChild(button("Clear expired sign-in", signOut));
+    }
     form.addEventListener("submit", async (event) => {
       event.preventDefault(); const username = form.elements.username.value, password = form.elements.password.value;  // lint: allow — reads the password field; no embedded credential
       form.elements.password.value = ""; const submit = form.querySelector("button"); submit.disabled = true; status("Signing in…");
@@ -51,6 +64,66 @@
       finally { submit.disabled = false; }
     });
     status("");
+  }
+  async function security() {
+    const host = $("[data-security]");
+    const mode = await client.loadSecurity();
+    if (mode.enabled) { try { await client.ready(); } catch (_) { /* The public Security page also offers sign-in. */ } }
+    status("");
+    host.replaceChildren();
+    host.append(node("h2", "Authentication is " + (mode.enabled ? "on" : "off")), node("p", mode.enabled
+      ? "Accounts protect access to thermite. Locks and schedules follow account permissions."
+      : "Basic remote controls are available without signing in. Accounts, device pairing, locks and room schedules require authentication."));
+    host.appendChild(node("p", "Changing this setting signs out every browser and terminal. Existing credentials cannot be reused after a change.", { class: "access-note" }));
+    if (client.mock) { host.appendChild(node("p", "Demo authentication cannot be changed.")); return; }
+    if (mode.enabled && !client.canEdit()) {
+      const account = global.ThermiteNavigation.href("access", location.search);
+      host.append(node("p", "Sign in as an administrator to change authentication. To elevate an existing account, ask an administrator to change its role in Users & roles, then sign in again."),
+        node("a", client.current() ? "Switch to an administrator account" : "Sign in as an administrator", { href: account + (account.includes("?") ? "&" : "?") + "next=%2Fsecurity%2F" }));
+      return;
+    }
+    if (mode.bootstrap_required) {
+      host.append(node("p", "Complete the HTTPS gateway setup and restrict direct runtime access before relying on accounts or room locks."),
+        node("p", "Create your first administrator here. On the thermite host, generate a short-lived setup code for this site:"),
+        node("code", "thermite access setup --config /path/to/access/config.json"),
+        node("p", "Run the staged thermite release as the thermite service account, using its access configuration.", { class: "access-note" }),
+        node("p", mode.setup_available ? "A setup code is ready. Enter it below." : "No setup code is ready. Run the command, then enter the code below.", { class: "access-note" }));
+    }
+    const form = node("form", null, { class: "access-form" });
+    if (!mode.enabled) {
+      const username = input(mode.bootstrap_required ? "New administrator username" : "Administrator username", "username");
+      Object.assign(username.firstElementChild, { required: true, maxLength: 150, autocomplete: "username" }); form.appendChild(username);
+    }
+    const password = input(mode.bootstrap_required ? "New administrator password" : "Administrator password", "password", "password");  // lint: allow — credential field label and type
+    Object.assign(password.firstElementChild, { required: true, maxLength: 1024, autocomplete: mode.bootstrap_required ? "new-password" : "current-password" }); form.appendChild(password);
+    if (mode.bootstrap_required) {
+      password.firstElementChild.minLength = 12;
+      const confirm = input("Confirm new administrator password", "confirm_password", "password");
+      Object.assign(confirm.firstElementChild, { required: true, minLength: 12, maxLength: 1024, autocomplete: "new-password" }); form.appendChild(confirm);
+      const setup = input("Host setup code", "setup_code", "password");
+      Object.assign(setup.firstElementChild, { required: true, maxLength: 200, autocomplete: "off" }); form.appendChild(setup);
+    }
+    const save = node("button", mode.enabled ? "Disable authentication" : "Enable authentication", { type: "submit" });
+    form.appendChild(save); host.appendChild(form);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (mode.bootstrap_required && form.elements.password.value !== form.elements.confirm_password.value) {
+        status("The new passwords do not match.", true); form.elements.confirm_password.focus(); return;
+      }
+      save.disabled = true;
+      const value = { enabled: !mode.enabled, revision: mode.revision, password: form.elements.password.value };  // lint: allow — entered password only
+      if (!mode.enabled) value.username = form.elements.username.value;
+      if (mode.bootstrap_required) value.setup_code = form.elements.setup_code.value;
+      form.querySelectorAll('input[type="password"]').forEach((field) => { field.value = ""; }); status("Changing authentication…");
+      try {
+        const saved = await client.setSecurity(value);
+        if (saved.enabled) location.replace("/account/?next=%2Fsecurity%2F");
+        else location.reload();
+      } catch (error) {
+        if (error.code === "revision_conflict") await security();
+        status(error.code === "revision_conflict" ? "Authentication changed elsewhere. Review the current setting before trying again." : error.message, true);
+      } finally { save.disabled = false; }
+    });
   }
   const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   function days(values) {
@@ -120,7 +193,7 @@
     });
   }
   async function users() {
-    if (!client.canEdit()) { status("Only administrators can manage users and roles.", true); return; }
+    if (!client.canEdit()) { status("Only administrators can manage users and roles. Switch to an administrator account to elevate access.", true); return; }
     let userList = [], roles = [];
     async function reload() {
       const [a, b] = await Promise.all([client.json("/api/v1/users"), client.json("/api/v1/roles")]); userList = a.users; roles = b.roles; draw(); status("");
@@ -147,7 +220,8 @@
       dialog(user ? "Edit user" : "Add user", (form, modal) => {
         const username = input("Username", "username", "text", existing.username); username.firstElementChild.required = true; username.firstElementChild.maxLength = 150; username.firstElementChild.autocomplete = "off";
         const secret = input(user ? "New password (leave blank to keep)" : "Password", "password", "password"); secret.firstElementChild.autocomplete = "new-password"; secret.firstElementChild.maxLength = 1024; secret.firstElementChild.required = !user;  // lint: allow — password field labels and input type
-        form.append(username, secret, select("Role", "role", roles.map((role) => [role.id, role.name]), existing.role));
+        form.append(username, secret, select("Role", "role", roles.map((role) => [role.id, role.name]), existing.role),
+          node("p", "Choose Admin to grant administration. Role changes sign this user out on every browser and terminal; they must sign in again.", { class: "access-note" }));
         const all = input("Grant all rooms", "all", "checkbox", existing.rooms === null); all.className = "access-check";
         const grants = node("fieldset", null, { class: "access-room-grants" }); grants.appendChild(node("legend", "Room controls"));
         house.rooms.forEach((room) => { const label = input(room.label, "room", "checkbox", existing.rooms === null || existing.rooms.includes(room.id)); label.className = "access-check"; label.firstElementChild.value = room.id; grants.appendChild(label); });
@@ -179,9 +253,16 @@
   if (client.native) {
     document.querySelectorAll("form, [data-policy-room], [data-policy-reload], .access-toolbar").forEach((item) => { item.hidden = true; });
     document.querySelectorAll(".access-login > p:not([data-access-status])").forEach((item) => { item.hidden = true; });
-    status("Accounts and room schedules are paused in native testing mode.");
+    status("Authentication cannot be changed in native testing mode. Configure and open the thermite gateway, then use Security to enable accounts, pairing, locks and schedules.");
     return;
   }
   if (page === "access") login().catch((error) => status(error.message, true));
-  else client.ready().then(() => page === "users" ? users() : policy()).catch((error) => status(error.message, true));
+  else if (page === "security") security().catch((error) => status(error.message, true));
+  else client.ready().then(() => {
+    if (!client.authEnabled()) {
+      document.querySelectorAll("form, [data-policy-room], [data-policy-reload], .access-toolbar").forEach((item) => { item.hidden = true; });
+      status("Enable authentication in Security to use accounts, locks and room schedules."); return;
+    }
+    return page === "users" ? users() : policy();
+  }).catch((error) => status(error.message, true));
 })(globalThis);

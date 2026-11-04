@@ -11,9 +11,11 @@ import oh_cli
 import oh_ports
 from oh_access import AccessError
 
-DESCRIPTION = """Run a site's authenticated HTTPS boundary and room-policy worker, or log
-this terminal into a site. Bootstrap is local and prompts privately for the first
-admin password. Staging prepares persistent code, private authority, a pinned
+DESCRIPTION = """Run a site's HTTPS boundary and room-policy worker, or log
+this terminal into a site. The Security page controls authentication. Local
+setup issues a one-use code to create the first admin there; bootstrap instead
+prompts privately and enables authentication immediately. Staging prepares
+persistent code, private authority, a pinned
 environment, and owner-installable units; it starts no service.
 
 The gateway is not an effective authorization boundary until every bypassing
@@ -22,6 +24,8 @@ that owner activation checklist explicitly.
 """
 
 EXAMPLES = (("thermite access login --url https://thermite.example:13600 --user operator", "save this site's personal credential privately"),
+            ("thermite access setup --config /srv/thermite/config.json", "arm first admin setup on the HTTPS Security page"),
+            ("thermite access migrate --config /srv/thermite/config.json", "upgrade identity schema after stopping services and backing up state"),
             ("thermite access bootstrap --config /srv/thermite/config.json --user admin", "initialize one site's first admin locally"),
             ("thermite access verify --config /srv/thermite-access/releases/current/config.json", "check service ownership and configuration as thermite before activation"),
             ("thermite access serve --config /srv/thermite/config.json", "serve the compiled site over verified TLS"),
@@ -78,8 +82,8 @@ def _site_ports():
 def main(argv=None):
     parser = oh_cli.command("access", DESCRIPTION, EXAMPLES)
     commands = oh_cli.actions(parser)
-    for name in ("bootstrap", "serve", "worker", "verify"):
-        sub = oh_cli.action(commands, name, {"bootstrap": "initialize the first admin locally", "serve": "serve one HTTPS site", "worker": "run the single room-policy worker", "verify": "verify service custody without initializing state"}[name], examples=[example for example in EXAMPLES if " " + name + " " in example[0]])
+    for name in ("bootstrap", "setup", "migrate", "serve", "worker", "verify"):
+        sub = oh_cli.action(commands, name, {"bootstrap": "initialize the first admin locally", "setup": "issue a one-use code for first admin setup on the Security page", "migrate": "upgrade identity schema after backing up state and stopping access services", "serve": "serve one HTTPS site", "worker": "run the single room-policy worker", "verify": "verify service custody without initializing state"}[name], examples=[example for example in EXAMPLES if " " + name + " " in example[0]])
         sub.add_argument("--config", required=True, type=Path, help="private site service configuration")
         if name == "bootstrap":
             sub.add_argument("--user", required=True, help="first admin's username")
@@ -122,6 +126,17 @@ def main(argv=None):
                 result = client.logout(args.url)
             else:
                 result = client.status(args.url, rooms=args.room)
+        elif args.command == "setup":
+            if not sys.stdout.isatty() or not sys.stdin.isatty():
+                raise AccessError("Setup codes require an interactive terminal; do not redirect them to logs")
+            from oh_access.service import prepare_setup
+            code = prepare_setup(args.config)
+            print("Open the site's HTTPS Security page and enable authentication.")
+            print("One-use setup code (expires in 15 minutes): " + code)
+            return 0
+        elif args.command == "migrate":
+            from oh_access.service import migrate
+            result = migrate(args.config)
         elif args.command == "bootstrap":
             from oh_access.files import require_service_account
             require_service_account()

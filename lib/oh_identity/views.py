@@ -40,7 +40,27 @@ def role_data(role):
 
 
 def me_data(user):
-    return {**user_data(user), "site": settings.SITE_ID, "permissions": sorted(permissions(user)), "can_edit": is_admin(user)}
+    from .security import get_state
+    enabled = get_state().enabled
+    return {**user_data(user), "site": settings.SITE_ID, "permissions": sorted(permissions(user)),
+            "can_edit": enabled and is_admin(user), "auth_enabled": enabled}
+
+
+def security(request):
+    from .security import change_security, status
+    try:
+        if request.method == "GET":
+            data = status()
+        elif request.method == "POST":
+            data = change_security(request, body(request))
+            logout(request)
+        else:
+            raise Problem("method_not_allowed", 405)
+        response = JsonResponse({**data, "csrf": get_token(request)})
+        response["Cache-Control"] = "no-store"
+        return response
+    except Problem as exc:
+        return failure(exc.code, exc.status)
 
 
 def enforcement_data(reconciled, state, now):
@@ -72,6 +92,8 @@ def session(request):
     if request.method != "POST":
         return failure("method_not_allowed", 405)
     try:
+        from .security import require_enabled
+        require_enabled()
         data = body(request)
         if set(data) != {"username", "password"}:
             raise Problem("invalid_login", 401)
@@ -87,6 +109,8 @@ def token_login(request):
     if request.method != "POST":
         return failure("method_not_allowed", 405)
     try:
+        from .security import require_enabled
+        require_enabled()
         data = body(request)
         if set(data) - {"username", "password", "name", "days"}:
             raise Problem("invalid_login", 401)
@@ -102,15 +126,25 @@ def token_login(request):
 token_login.token_login = True
 
 
-@api(methods=("POST",))
 def signout(request):
-    audit(request.identity_user, "logout")
+    if request.method != "POST":
+        return failure("method_not_allowed", 405)
+    # CSRF still protects this browser operation. Clearing an expired cookie is
+    # safe and required before an explicitly anonymous Guest request can resume.
+    from .auth import principal
+    try:
+        actor = principal(request)
+    except Problem:
+        actor = None
+    audit(actor, "logout")
     token = getattr(request, "identity_token", None)
     if token:
         token.revoked = True
         token.save(update_fields=["revoked"])
     logout(request)
-    return JsonResponse({"ok": True})
+    response = JsonResponse({"ok": True})
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 @api("site.read")
@@ -118,7 +152,7 @@ def me(request):
     return JsonResponse(me_data(request.identity_user))
 
 
-@api(methods=("GET", "POST", "DELETE"))
+@api(methods=("GET", "POST", "DELETE"), authentication=True)
 def tokens(request, ident=None):
     user = request.identity_user
     if request.method == "GET":
@@ -163,7 +197,7 @@ def roles(request, ident=None):
     return JsonResponse(role_data(role) if role else {"ok": True}, status=200 if ident else 201)
 
 
-@api("site.read", methods=("GET", "PUT"))
+@api("site.read", methods=("GET", "PUT"), authentication=True)
 def room_policy(request, room):
     adapter = get_adapter()
     if room not in adapter.contract.rooms:
@@ -253,6 +287,13 @@ def page_alias(request, target):
 
 
 def asset(request, name):
+    if name == "access-config.js" and request.method in ("GET", "HEAD"):
+        # A deployed native-mode asset must never bypass the bounded gateway.
+        response = HttpResponse("" if request.method == "HEAD" else
+            'globalThis.THERMITE_ACCESS_CONFIG = Object.freeze({"version":1,"mode":"authenticated"});\n',
+            content_type="application/javascript")
+        response["Cache-Control"] = "no-store"
+        return response
     try:
         adapter = get_adapter()
     except Problem as exc:
@@ -265,6 +306,9 @@ def asset(request, name):
         from .auth import principal
         try:
             user = principal(request)
+            if admin_only:
+                from .security import require_enabled
+                require_enabled()
             if "site.read" not in permissions(user):
                 raise Problem("forbidden", 403)
             if admin_only and not is_admin(user):
@@ -337,6 +381,8 @@ def item_resource(request, item):
         if set(request.GET) - {"fields"}:
             raise Problem("not_found", 404)
         return JsonResponse(get_adapter().group(item))
+    from .security import require_enabled
+    require_enabled()
     if request.content_type != "text/plain" or len(request.body) > 64:
         raise Problem("invalid_pairing_command")
     try:

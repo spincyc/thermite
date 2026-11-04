@@ -27,6 +27,8 @@ def audit(actor, action, target="", outcome="ok"):
 
 
 def permissions(user):
+    if getattr(user, "is_guest", False):
+        return {"site.read", "room.control"}
     return set(user.role.permissions) & set(CATALOG) if user.is_active and user.role_id else set()
 
 
@@ -35,7 +37,9 @@ def is_admin(user):
 
 
 def admin_actor(actor):
+    from .security import require_enabled
     from .auth import revalidate
+    require_enabled()
     revalidate(actor)
     fresh = User.objects.select_related("role").filter(pk=actor.pk).first()
     if not fresh or fresh.auth_revision != actor.auth_revision or not is_admin(fresh):
@@ -44,7 +48,7 @@ def admin_actor(actor):
 
 
 def password(user, value):
-    if not isinstance(value, str):
+    if not isinstance(value, str) or len(value) > 1024:
         raise Problem("invalid_password")
     try:
         validate_password(value, user)
@@ -55,15 +59,25 @@ def password(user, value):
 
 @transaction.atomic
 def bootstrap(username, secret):
-    """Trusted-local first admin only; caller owns terminal prompting."""
+    """First admin after local ownership or a validated owner-issued setup code."""
     if User.objects.exists():
         raise Problem("already_initialized", 409)
+    if not isinstance(username, str) or not username or len(username) > 150:
+        raise Problem("invalid_user")
     for name, grants in RESERVED.items():
         Role.objects.update_or_create(name=name, defaults={"reserved": True, "permissions": list(grants)})
     user = User(username=username, role=Role.objects.get(name="Admin"))
-    user.full_clean(exclude=["password"])
+    try:
+        user.full_clean(exclude=["password"])
+    except ValidationError:
+        raise Problem("invalid_user") from None
     password(user, secret)
     user.save()
+    # Trusted local bootstrap retains its explicit enable-authentication meaning.
+    from .security import transition
+    from .models import SecurityState
+    state, _ = SecurityState.objects.get_or_create(pk=1)
+    transition(state, True, user)
     audit(user, "bootstrap", user.pk)
     return user
 
@@ -153,7 +167,9 @@ def save_role(actor, data, ident=None, delete=False):
 
 
 def issue_token(user, name, days=30):
+    from .security import require_enabled
     from .auth import revalidate
+    require_enabled()
     revalidate(user)
     if not isinstance(name, str) or not name.strip() or len(name) > 80 or any(ord(c) < 32 or 127 <= ord(c) < 160 for c in name) or isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 90:
         raise Problem("invalid_token")

@@ -249,7 +249,7 @@ function header(frame, ctx, width) {
     g.hit(at - size, 0, size, 1, hit);
   });
   if (["settings", "users", "account"].includes(ctx.ui.screen)) at = g.put(at + 1, 0, fit("› " + ({ settings: "Room settings", users: "Users & roles", account: "Account" })[ctx.ui.screen], Math.max(0, width - at - 2)), "tab.current");
-  if (remotes && width - at >= 23) at = g.put(at + 1, 0, ctx.ui.screen === "pairing" ? " › Pair devices " : " F6 Pair devices ",
+  if (remotes && width - at >= 23 && Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) at = g.put(at + 1, 0, ctx.ui.screen === "pairing" ? " › Pair devices " : " F6 Pair devices ",
     focused(ctx, "remotes:pairing") ? "key.focus" : "tab", { kind: "screen", screen: "pairing", key: "remotes:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
   if (ctx.ui.screen === "remote" && frame.layout.sheets) {
     frame.layout.sheets.forEach((entry) => {
@@ -995,7 +995,8 @@ function sheet(frame, ctx, width, height) {
     "remotes-menu": (inner, iw) => {
       inner.put(1, 0, "Remotes", "strong");
       button(inner, ctx, 1, 2, "Rooms & remotes", "menu:remote", { kind: "screen", screen: "remote", key: "menu:remote", focus: true, label: "Rooms and remotes" });
-      button(inner, ctx, 1, 6, "Pair devices · F6", "menu:pairing", { kind: "screen", screen: "pairing", key: "menu:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
+      if (Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) button(inner, ctx, 1, 6, "Pair devices · F6", "menu:pairing", { kind: "screen", screen: "pairing", key: "menu:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
+      else paragraph(inner, 1, 6, iw - 2, ctx.access.authEnabled() ? "Sign in as an administrator to pair devices." : "Enable authentication in Security (F3) to pair devices.", "dim");
     },
     cameras: (inner, iw) => Cameras.content(inner, iw, ctx),
     topology: (inner, iw) => Topology.content(inner, iw, ctx)

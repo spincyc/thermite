@@ -284,8 +284,12 @@ def launch_environment(arguments, chosen):
         return environment
     from oh_access import client
     url = target(arguments)[1]
-    path, _ = client.load(url)
-    environment["THERMITE_REMOTE_TOKEN_FILE"] = str(path)
+    path = client.credential_path(url)
+    environment.pop("THERMITE_REMOTE_TOKEN_FILE", None)
+    # The gateway may explicitly allow anonymous ordinary controls. Let the
+    # shared client discover that state; a missing credential is never native mode.
+    if path.exists() or path.is_symlink():
+        environment["THERMITE_REMOTE_TOKEN_FILE"] = str(path)
     ca = client.saved_ca(path)
     if ca:
         environment["NODE_EXTRA_CA_CERTS"] = ca

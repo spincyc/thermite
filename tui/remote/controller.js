@@ -141,7 +141,7 @@ function create(options) {
         if (ui.screen === "cameras") openCameras();
         if (ui.screen === "topology") openTopology();
         if (ui.screen === "system") system.backend?.open().then(changed);
-        if (["settings", "users", "account"].includes(ui.screen)) access.open(ui.screen, session.current()?.id);
+        if (["security", "settings", "users", "account"].includes(ui.screen)) access.open(ui.screen, session.current()?.id);
         changed();
         if (chosen) session.choose(chosen);
       })
@@ -263,8 +263,11 @@ function create(options) {
   }
 
   function openPairing() {
+    if (options.access && !options.access.native && !options.access.authEnabled()) {
+      pairing.alert = "Enable authentication in Security (F3) to pair devices."; pairing.loaded = true; changed(); return;
+    }
     if (options.access && !options.access.native && options.access.current() && !options.access.has("pairing.manage")) {
-      pairing.alert = "Only administrators can pair devices."; pairing.loaded = true; changed(); return;
+      pairing.alert = "Sign in as an administrator with thermite access login to pair devices."; pairing.loaded = true; changed(); return;
     }
     if (pairing.backend) {
       pairing.backend.refresh().catch(() => null);
@@ -583,7 +586,7 @@ function create(options) {
     if (name === "cameras") openCameras();
     if (name === "topology") openTopology();
     if (name === "system") system.backend?.open().then(changed);
-    if (["settings", "users", "account"].includes(name)) access.open(name, session.current()?.id);
+    if (["security", "settings", "users", "account"].includes(name)) access.open(name, session.current()?.id);
     render(size.width, size.height);
     changed();
   }

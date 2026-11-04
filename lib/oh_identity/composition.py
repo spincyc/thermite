@@ -1,4 +1,4 @@
-"""Trusted service/CLI hooks. No public bootstrap or runtime reconfiguration API."""
+"""Trusted service/CLI composition; runtime configuration stays owner-local."""
 
 import os
 from pathlib import Path

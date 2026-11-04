@@ -1,11 +1,12 @@
 """Durable worker hooks. Claims precede I/O; outcomes describe uncertainty honestly."""
 
 from django.db import transaction
+from django.db.models import Exists
 
 from dataclasses import dataclass
 from datetime import datetime
 
-from .models import BoundaryReceipt, ReconcileState, RoomPolicy
+from .models import BoundaryReceipt, ReconcileState, RoomPolicy, SecurityState
 
 REASONS = {"", "missed", "coalesced", "leave", "shared_conflict", "stale_revision", "applied", "dispatch_failed",
            "unknown", "unavailable", "mismatch", "policy_invalid", "runtime_unavailable", "source_unknown",
@@ -13,13 +14,19 @@ REASONS = {"", "missed", "coalesced", "leave", "shared_conflict", "stale_revisio
            "coalesced_active_lock", "shared_resource_conflict", "invalid_policy", "native_read_unavailable", "stale_schedule"}
 
 
+def active_policies():
+    # Keep the worker's single-query revision snapshot while fencing all policy
+    # effects on the durable switch, including a missing/damaged singleton.
+    return RoomPolicy.objects.filter(Exists(SecurityState.objects.filter(pk=1, enabled=True)))
+
+
 def load_policies():
-    return list(RoomPolicy.objects.values("room_id", "config", "revision"))
+    return list(active_policies().values("room_id", "config", "revision"))
 
 
 @transaction.atomic
 def claim_boundary(key, room, revision):
-    if not RoomPolicy.objects.filter(room_id=room, revision=revision).exists():
+    if not active_policies().filter(room_id=room, revision=revision).exists():
         return False
     _, created = BoundaryReceipt.objects.get_or_create(key=key, defaults={"room_id": room, "revision": revision})
     return created
@@ -40,7 +47,7 @@ def finish_boundary(key, status, room=None, revision=None):
 
 @transaction.atomic
 def save_reconcile(room, revision, state):
-    if not RoomPolicy.objects.filter(room_id=room, revision=revision).exists():
+    if not active_policies().filter(room_id=room, revision=revision).exists():
         return False
     # Caller supplies canonical worker status, never raw device replies.
     from .runtime import get_adapter, safe_item
@@ -98,16 +105,16 @@ class Store:
     """The pure worker's persistent-store protocol."""
 
     def policies(self):
-        return [PolicyRecord(row.config, row.updated_at) for row in RoomPolicy.objects.all()]
+        return [PolicyRecord(row.config, row.updated_at) for row in active_policies()]
 
     def current_revision(self, room):
-        return RoomPolicy.objects.filter(room_id=room).values_list("revision", flat=True).first()
+        return active_policies().filter(room_id=room).values_list("revision", flat=True).first()
 
     def current_revisions(self, rooms):
         # Include missing rows: creation of a neighboring policy must invalidate
         # the same conflict snapshot as changing an existing revision.
         revisions = dict.fromkeys(rooms)
-        revisions.update(RoomPolicy.objects.filter(room_id__in=revisions).values_list("room_id", "revision"))
+        revisions.update(active_policies().filter(room_id__in=revisions).values_list("room_id", "revision"))
         return revisions
 
     def claim_boundary(self, room, revision, key, at):

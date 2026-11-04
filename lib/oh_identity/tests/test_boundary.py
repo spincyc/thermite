@@ -19,6 +19,7 @@ from oh_routes import ALIASES, PAGES
 from oh_identity.models import CATALOG, PersonalToken, Role, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter
 from oh_identity.services import Problem, bootstrap, issue_token, save_user
+from oh_identity.security import get_state
 from oh_identity.streams import frame, stream, topics_for
 from oh_identity.tests.test_core import FakeRuntime, PASSPHRASE, adapter
 from oh_identity.tests.test_transport import HTTPClient, many_topics
@@ -277,7 +278,7 @@ class Boundary(TransactionTestCase):
 
     def test_stream_revocation_and_disconnect_cleanup(self):
         token, _ = issue_token(self.admin, "stream")
-        snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token.pk)}
+        snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token.pk), "security_revision": get_state().revision}
         contract = self.adapter.contract
         topics = topics_for(contract, "openhab/items/loc_den_source/stateupdated")
 
@@ -309,7 +310,7 @@ class Boundary(TransactionTestCase):
 
     def test_revocation_closes_all_real_batched_transport_contexts(self):
         token, _ = issue_token(self.admin, "multi-stream")
-        snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token.pk)}
+        snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token.pk), "security_revision": get_state().revision}
         topics = many_topics()
         states = {topic.split("/")[2]: {"kind": "number", "max": 100, "commands": True} for topic in topics}
         contract = RuntimeContract({}, states=states)

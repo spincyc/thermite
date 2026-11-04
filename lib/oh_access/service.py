@@ -130,9 +130,43 @@ def bootstrap(config_path, username, secret):
     config = load_config(config_path, tls=False)
     os.environ["THERMITE_TIME_ZONE"] = config["timezone"]
     from oh_identity import composition
-    setup(config)
-    user = composition.initialize(config["state"], username, secret, config["allowed_hosts"])
+    adapter, _ = setup(config)
+    with adapter.command_lock(tuple(sorted(adapter.contract.rooms)), ()):
+        user = composition.initialize(config["state"], username, secret, config["allowed_hosts"])
     return {"initialized": True, "username": user.username, "state": config["state"]}
+
+
+def migrate(config_path):
+    """Explicit owner operation, after backing up state and stopping access services."""
+    require_service_account()
+    config, _, _ = configured(config_path, tls=False)
+    from django.core.management import call_command
+    call_command("migrate", interactive=False, verbosity=0)
+    return {"migrated": True, "state": config["state"]}
+
+
+def check_schema():
+    from django.db import connection
+    from django.db.migrations.executor import MigrationExecutor
+    executor = MigrationExecutor(connection)
+    if executor.migration_plan(executor.loader.graph.leaf_nodes()):
+        raise AccessError("Back up identity state and run thermite access migrate before serving this site")
+
+
+def prepare_setup(config_path):
+    """Arm the first web administrator setup; the caller owns terminal-only output."""
+    require_service_account()
+    config = load_config(config_path, tls=False)
+    # A fresh site needs its schema before the gateway can serve the setup page.
+    # Existing databases are upgraded only by the explicit migrate command.
+    fresh = not (Path(config["state"]) / "identity.sqlite3").exists()
+    configured(config_path, tls=False)
+    if fresh:
+        from django.core.management import call_command
+        call_command("migrate", interactive=False, verbosity=0)
+    check_schema()
+    from oh_identity.security import arm_setup
+    return arm_setup()
 
 
 def _run_server(application, *, on_shutdown=None, **options):
@@ -188,9 +222,11 @@ def serve(config_path):
             close()
 
     try:
+        check_schema()
         from oh_identity.models import User
-        if not User.objects.filter(is_active=True, role__reserved=True, role__name="Admin").exists():
-            raise AccessError("Bootstrap a local admin before serving this site")
+        from oh_identity.security import get_state
+        if get_state().enabled and not User.objects.filter(is_active=True, role__reserved=True, role__name="Admin").exists():
+            raise AccessError("An authenticated site requires an active administrator")
         from oh_identity.asgi import application
         # Direct TLS only. Proxy headers and forwarded client/origin claims are ignored.
         _run_server(application, on_shutdown=cleanup,

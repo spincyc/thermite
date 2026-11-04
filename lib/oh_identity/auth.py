@@ -17,6 +17,20 @@ from .models import LoginThrottle, PersonalToken, Role, RoomPolicy, User
 from .services import Problem, audit, is_admin, permissions
 
 
+class Guest:
+    """An in-memory, finite remote principal, never a stored account or role."""
+    pk = 0
+    username = "Guest"
+    role_id = 0
+    rooms = None
+    is_active = True
+    is_guest = True
+    auth_revision = 0
+
+    def __init__(self, revision):
+        self._identity_context = {"guest": True, "security_revision": revision}
+
+
 def failure(code, status=403):
     response = JsonResponse({"error": code}, status=status)
     response["Cache-Control"] = "no-store"
@@ -59,16 +73,25 @@ class IdentityCSRF(CsrfViewMiddleware):
 
 
 def principal(request):
+    from .security import get_state
+    state = get_state()
     token = getattr(request, "identity_token", None)
     if token:
-        token.user._identity_context = {"token": token.pk}
+        token.user._identity_context = {"token": token.pk, "security_revision": state.revision}
+        revalidate(token.user)
         return token.user
     if not request.user.is_authenticated:
+        if request.headers.get("Authorization") or request.COOKIES.get(settings.SESSION_COOKIE_NAME):
+            raise Problem("session_expired", 401)
+        if not state.enabled:
+            return Guest(state.revision)
         raise Problem("login_required", 401)
+    if not state.enabled:
+        raise Problem("authentication_disabled", 403)
     user = User.objects.select_related("role").filter(pk=request.user.pk, is_active=True).first()
     if not user or request.session.get("identity_revision") != user.auth_revision:
         raise Problem("session_expired", 401)
-    user._identity_context = {"session": request.session.session_key}
+    user._identity_context = {"session": request.session.session_key, "security_revision": state.revision}
     return user
 
 
@@ -77,6 +100,16 @@ def revalidate(user):
     context = getattr(user, "_identity_context", None)
     if context is None:
         return  # Explicit trusted-local service calls have no HTTP credential.
+    from .security import get_state
+    state = get_state()
+    if context.get("security_revision") != state.revision:
+        raise Problem("authorization_changed", 401)
+    if context.get("guest"):
+        if state.enabled:
+            raise Problem("authorization_changed", 401)
+        return
+    if not state.enabled:
+        raise Problem("authentication_disabled", 403)
     if not User.objects.filter(pk=user.pk, is_active=True, auth_revision=user.auth_revision).exists():
         raise Problem("authorization_changed", 401)
     if context.get("token"):
@@ -88,7 +121,7 @@ def revalidate(user):
         raise Problem("credential_expired", 401)
 
 
-def api(permission=None, methods=("GET",)):
+def api(permission=None, methods=("GET",), authentication=False):
     def decorate(view):
         @wraps(view)
         def call(request, *args, **kwargs):
@@ -96,6 +129,11 @@ def api(permission=None, methods=("GET",)):
                 if request.method not in methods:
                     raise Problem("method_not_allowed", 405)
                 user = principal(request)
+                if authentication or permission and permission.endswith(".manage"):
+                    from .security import require_enabled
+                    require_enabled()
+                    if getattr(user, "is_guest", False):
+                        raise Problem("authorization_changed", 401)
                 if permission and permission not in permissions(user):
                     raise Problem("forbidden", 403)
                 if permission and permission.endswith(".manage") and not is_admin(user):
@@ -116,6 +154,9 @@ def login_user(request, data, create_session=True):
     username, secret = data.get("username"), data.get("password")
     if not isinstance(username, str) or not isinstance(secret, str) or len(username) > 150 or len(secret) > 1024:
         raise Problem("invalid_login", 401)
+    if create_session:
+        from .security import require_enabled
+        security_revision = require_enabled().revision
     now = timezone.now()
     # Account and direct peer are independently bounded; forwarded headers ignored.
     keys = [hmac.new(settings.SECRET_KEY.encode(), value.encode(), hashlib.sha256).hexdigest()
@@ -137,8 +178,16 @@ def login_user(request, data, create_session=True):
         audit(None, "login", outcome="denied")
         raise Problem("invalid_login", 401)
     if create_session:
-        login(request, user)
-        request.session["identity_revision"] = user.auth_revision
+        # Password verification runs outside the write transaction. The switch
+        # and account revisions must still match before minting a session; an
+        # off/on cycle cannot grant a login that began under an earlier switch.
+        with transaction.atomic():
+            state = require_enabled()
+            if state.revision != security_revision or not User.objects.filter(
+                    pk=user.pk, is_active=True, auth_revision=user.auth_revision).exists():
+                raise Problem("authorization_changed", 401)
+            login(request, user)
+            request.session["identity_revision"] = user.auth_revision
     # Reset only the account bucket; a valid user cannot clear peer attack limits.
     LoginThrottle.objects.filter(key=keys[0]).delete()
     audit(user, "login")

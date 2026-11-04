@@ -210,8 +210,11 @@ class RuntimeAdapter:
         self.check_policy(room_id)
 
     def check_policy(self, room_id):
+        from .security import get_state
         from .models import RoomPolicy
         from django.utils import timezone
+        if not get_state().enabled:
+            return
         saved = RoomPolicy.objects.filter(room_id=room_id).first()
         if not saved or saved.config.get("enabled") is False:
             return
@@ -233,10 +236,10 @@ class RuntimeAdapter:
         from .models import User
         from .auth import revalidate
         # Re-read after validation and before I/O: a queued stale principal is insufficient.
-        fresh = User.objects.select_related("role").get(pk=user.pk)
+        revalidate(user)
+        fresh = user if getattr(user, "is_guest", False) else User.objects.select_related("role").get(pk=user.pk)
         if fresh.auth_revision != user.auth_revision:
             raise Problem("authorization_changed", 401)
-        revalidate(user)
         self.allowed(fresh, room_id)
         for ident in affected:
             self.allowed(fresh, ident)
@@ -270,9 +273,17 @@ class RuntimeAdapter:
         return result
 
     def pair(self, user, item, value):
+        # Pairing has effects outside ordinary room commands. Share the switch's
+        # room locks so a queued pairing request cannot cross a disable.
+        with self.command_lock(tuple(sorted(self.contract.rooms)), ()):
+            return self._pair(user, item, value)
+
+    def _pair(self, user, item, value):
+        from .security import require_enabled
         from .models import User
         from .services import is_admin
         from .auth import revalidate
+        require_enabled()
         revalidate(user)
         fresh = User.objects.select_related("role").get(pk=user.pk)
         if fresh.auth_revision != user.auth_revision or not is_admin(fresh):

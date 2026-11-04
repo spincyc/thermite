@@ -63,6 +63,14 @@ def frame(contract, allowed, event):
 
 
 def valid(snapshot):
+    from .security import get_state
+    state = get_state()
+    if snapshot.get("security_revision") != state.revision:
+        return False
+    if snapshot.get("guest"):
+        return not state.enabled
+    if not state.enabled:
+        return False
     user = User.objects.select_related("role").filter(pk=snapshot["user"], is_active=True, auth_revision=snapshot["revision"]).first()
     if not user or "site.read" not in permissions(user):
         return False
@@ -124,7 +132,9 @@ def events(request):
         topics = topics_for(adapter.contract, request.GET.get("topics", ""))
         token = getattr(request, "identity_token", None)
         snapshot = {"user": user.pk, "revision": user.auth_revision, "token": str(token.pk) if token else None,
-                    "session": request.session.session_key if not token else None}
+                    "session": request.session.session_key if not token else None,
+                    "security_revision": user._identity_context["security_revision"],
+                    "guest": getattr(user, "is_guest", False)}
         response = StreamingHttpResponse(stream(adapter, topics, snapshot), content_type="text/event-stream")
         response["Cache-Control"] = "no-store"
         response["X-Accel-Buffering"] = "no"
