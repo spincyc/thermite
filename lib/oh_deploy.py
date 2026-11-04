@@ -415,6 +415,12 @@ NATIVE_PRIME_POLL = 1
 RUNTIME_RESTART_SECONDS = 15
 RUNTIME_START_INTERVAL = 300
 RUNTIME_START_BURST = 10
+#: The runtime JVM's heap bound. Without -Xmx the JVM may take a quarter of
+#: the host's memory (3.97 GB on the reference host); two days of a live site
+#: peaked at 684 MB used and 964 MB committed, with 294 MB live. A heap that
+#: is still exhausted exits, so systemd restarts openHAB rather than leaving
+#: it half-working after an OutOfMemoryError. The sandbox uses the same bound.
+JAVA_HEAP_OPTS = "-Xmx1536m -XX:+ExitOnOutOfMemoryError"
 
 
 def _openhab_initialize(*, track_fresh: bool = False) -> str:
@@ -660,7 +666,7 @@ def render_quadlet(versions: dict, host: dict) -> str:
         "Environment=HOME=/openhab/userdata",
         "Environment=CRYPTO_POLICY=unlimited",
         f"Environment=TZ={host['timezone']}",
-        f'Environment="EXTRA_JAVA_OPTS=-Duser.timezone={host["timezone"]} -Duser.home=/openhab/userdata"',
+        f'Environment="EXTRA_JAVA_OPTS=-Duser.timezone={host["timezone"]} -Duser.home=/openhab/userdata {JAVA_HEAP_OPTS}"',
         f"Environment=OPENHAB_HTTP_PORT={host['http_port']}",
         f"Environment=OPENHAB_HTTPS_PORT={host['https_port']}",
         "# The HTTPS gateway is the only browser/API ingress.",

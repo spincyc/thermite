@@ -27,6 +27,10 @@ dashboards, camera streams and other applications can require more.
 Observe CPU, available RAM, storage growth and response times during your
 actual use before relying on a final allocation.
 
+openHAB's Java heap is capped at 1.5 GiB (`-Xmx1536m`); a live site peaked at
+about 0.7 GiB used. A heap that still runs out exits, and systemd restarts
+openHAB instead of leaving it half-working.
+
 A dedicated GPU is not required for the core automation stack. Camera
 streaming and transcoding need separate sizing. A monitor and keyboard are
 useful for installation; routine administration can use SSH and a browser.

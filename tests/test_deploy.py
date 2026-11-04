@@ -263,6 +263,18 @@ class Units(unittest.TestCase):
                         containers.add(parsed["Container"]["ContainerName"])
         self.assertEqual(containers, set(oh_units.CONTAINERS.values()))
 
+    def test_runtime_heap_is_bounded_alike_in_the_unit_and_the_sandbox(self):
+        self.assertEqual(deploy.JAVA_HEAP_OPTS.split(), ["-Xmx1536m", "-XX:+ExitOnOutOfMemoryError"])
+        unit = next(line for line in deploy.render_quadlet(VERSIONS, HOST).splitlines()
+                    if line.startswith('Environment="EXTRA_JAVA_OPTS='))
+        root = Path("/fictional/sandbox")
+        instance = mock.Mock(conf=root / "conf", userdata=root / "userdata", state=root, http_address="127.0.0.1",
+                             http_port=18080, https_port=18443)
+        env = sandbox_lib.instance_env(mock.Mock(java_home=root / "jdk"), instance)
+        for option in deploy.JAVA_HEAP_OPTS.split():
+            self.assertIn(option, unit.removesuffix('"').split())
+            self.assertIn(option, env["EXTRA_JAVA_OPTS"].split())
+
     def test_no_host_is_named(self):
         _, host = deploy.load(AREA)
         self.assertEqual(set(host) & {"host", "address"}, set())

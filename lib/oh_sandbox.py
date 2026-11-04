@@ -35,6 +35,7 @@ import oh_http
 import oh_logging
 import oh_ports
 
+from oh_deploy import JAVA_HEAP_OPTS
 from oh_paths import SITE as AREA
 VAR = AREA / "var"
 #: Keys a test instance's rules read, as $OPENHAB_SECRETS (production's are
@@ -851,7 +852,7 @@ STOP_TIMEOUT = 10
 
 def instance_env(rt: Runtime, inst: Instance, conf: Path | None = None, logdir: Path | None = None) -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith(("OPENHAB_", "KARAF_", "JAVA_", "EXTRA_JAVA"))}
-    env["EXTRA_JAVA_OPTS"] = f"-Declipse.stateSaveDelayInterval={SAVE_DELAY_MS}"
+    env["EXTRA_JAVA_OPTS"] = f"-Declipse.stateSaveDelayInterval={SAVE_DELAY_MS} {JAVA_HEAP_OPTS}"
     env.update(
         JAVA_HOME=str(rt.java_home),
         OPENHAB_CONF=str(conf or inst.conf),
