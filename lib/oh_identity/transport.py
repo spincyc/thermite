@@ -1,6 +1,5 @@
 """Authenticated loopback transport. Responses never become public error text."""
 
-import asyncio
 import json
 import os
 import re
@@ -50,41 +49,6 @@ def native_query(filters, base=NATIVE_URL):
     if len((base + "/rest/events?topics=" + query).encode()) > URL_BYTES:
         raise ValueError("Runtime topics exceed the native URL budget")
     return query
-
-
-def native_batches(topics, base=NATIVE_URL):
-    from .runtime import safe_item
-    grouped = {}
-    for topic in topics:
-        parts = topic.split("/")
-        if len(parts) != 4 or parts[:2] != ["openhab", "items"] or not safe_item(parts[2]) or parts[3] not in {"stateupdated", "statechanged", "command"} or parts[3] == "command" and "_pairing" in parts[2]:
-            raise ValueError("Invalid native topic")
-        prefix, verb = topic.rsplit("/", 1)
-        grouped.setdefault(prefix, set()).add(verb)
-    compact = []
-    for prefix, verbs in sorted(grouped.items()):
-        if verbs == {"stateupdated", "statechanged", "command"} and "_pairing" not in prefix:
-            compact.append(prefix + "/*")
-        else:
-            compact.extend(prefix + "/" + verb for verb in sorted(verbs))
-    prefix = base + "/rest/events?topics="
-    queries, current = [], []
-    for topic in compact:
-        candidate = quote(",".join([*current, topic]), safe="/,*")
-        if len((prefix + candidate).encode()) > 6000:
-            if not current:
-                raise ValueError("Runtime topic exceeds the native URL budget")
-            queries.append(quote(",".join(current), safe="/,*"))
-            current = [topic]
-            if len((prefix + quote(topic, safe="/,*")).encode()) > 6000:
-                raise ValueError("Runtime topic exceeds the native URL budget")
-        else:
-            current.append(topic)
-    if current:
-        queries.append(quote(",".join(current), safe="/,*"))
-    if len(queries) > 4:
-        raise ValueError("Runtime topic batch count exceeds four")
-    return queries
 
 
 class LoopbackTransport:
@@ -231,43 +195,3 @@ class LoopbackTransport:
                 value = project(raw)
                 if value is not None:
                     yield value
-
-    async def events(self, topics, *, project):
-        queries = native_batches(topics, self.base)
-        queue = asyncio.Queue(maxsize=64)
-        pending = None
-        tasks = []
-        # Project before buffering: no raw private body enters the fan-in queue.
-        async with httpx.AsyncClient(trust_env=False, follow_redirects=False,
-                                     timeout=httpx.Timeout(15, read=None)) as client:
-            stopping = False
-
-            async def pump(query):
-                async for raw in self._events(client, query):
-                    value = project(raw)
-                    if value is not None:
-                        await queue.put(value)
-            tasks = [asyncio.create_task(pump(query)) for query in queries]
-
-            def ended(finished):
-                if not stopping:
-                    for other in tasks:
-                        if other is not finished:
-                            other.cancel()
-            for task in tasks:
-                task.add_done_callback(ended)
-            try:
-                while tasks:
-                    pending = asyncio.create_task(queue.get())
-                    done, _ = await asyncio.wait([pending, *tasks], return_when=asyncio.FIRST_COMPLETED)
-                    if any(task in done for task in tasks):
-                        # A failed or closed shard makes the whole subscription
-                        # unavailable; never silently serve a partial feed.
-                        raise ValueError("Runtime event stream ended")
-                    yield pending.result()
-                    pending = None
-            finally:
-                stopping = True
-                for task in [*tasks, *([pending] if pending else [])]:
-                    task.cancel()
-                await asyncio.gather(*tasks, *([pending] if pending else []), return_exceptions=True)

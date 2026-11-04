@@ -23,7 +23,7 @@ from oh_room_policy import (Field, Observation, Plan, PolicyError, conflicts, de
                             expected_plan, local_instant, repair_plan, verify)
 from oh_room_policy.worker import PolicyRecord, Worker  # noqa: E402
 from oh_access import AccessError  # noqa: E402
-from oh_access.worker import NativeCache, PolicyIO, Warnings, observe, validate_batches  # noqa: E402
+from oh_access.worker import OBSERVED, NativeCache, PolicyIO, Warnings, observe  # noqa: E402
 
 HOUSE = json.loads((AREA / "instance/devices.yaml").read_text())
 WEST, EAST = "example_west", "example_east"
@@ -590,9 +590,10 @@ class Feed:
     """Two connections: the first fails after one frame, the second ends."""
 
     def __init__(self, stop):
-        self.stop, self.connections = stop, 0
+        self.stop, self.connections, self.filters = stop, 0, []
 
-    def events(self, topics, *, project):
+    def subscribe(self, filters, *, project, opened=None):
+        self.filters.append(filters)
         self.connections += 1
         connection = self.connections
 
@@ -615,9 +616,12 @@ class Observer(unittest.TestCase):
 
         async def sleep(delay):
             delays.append(delay)
+        feed = Feed(stop)
         with patch("oh_access.worker.asyncio.sleep", sleep), self.assertLogs("oh_access.worker", logging.WARNING) as logs:
-            asyncio.run(observe(Feed(stop), cache, stop))
+            asyncio.run(observe(feed, cache, stop))
         self.assertEqual(delays, [1])
+        # One wildcard subscription per connection, whatever the house observes.
+        self.assertEqual(feed.filters, [OBSERVED, OBSERVED])
         self.assertEqual(changed, ["example_tv_power", "example_tv_power", "example_tv_power", "example_tv_power"])
         self.assertEqual(cache.read(("example_tv_power",)), {})
         self.assertEqual(len(logs.output), 1)
@@ -635,12 +639,14 @@ class Observer(unittest.TestCase):
         self.assertIn("2 earlier failure(s)", logs.output[1])
 
 
-class Batches(unittest.TestCase):
-    def test_power_and_timestamp_must_share_one_ordered_stream(self):
+class Wildcard(unittest.TestCase):
+    def test_only_observed_topics_are_kept_before_their_payload_is_read(self):
         cache = NativeCache([Field("tv_power", "ON", "device:tv", ("ON", "OFF"), True)], native_power={"tv_power": "tv_reported_at"})
-        validate_batches(cache, "http://127.0.0.1:8080", pack=lambda topics, base: [",".join(topics)])
-        with self.assertRaises(AccessError):
-            validate_batches(cache, "http://127.0.0.1:8080", pack=lambda topics, base: list(topics))
+        self.assertEqual(OBSERVED, ["openhab/items/*/stateupdated"])
+        self.assertIsNone(cache.project({"topic": "openhab/items/private_token/stateupdated", "type": "ItemStateUpdatedEvent",
+                                         "payload": "not json"}))
+        self.assertEqual(cache.project({"topic": "openhab/items/tv_power/stateupdated", "type": "ItemStateUpdatedEvent",
+                                        "payload": json.dumps({"value": "ON"})}), ("tv_power", "ON"))
 
 
 if __name__ == "__main__":

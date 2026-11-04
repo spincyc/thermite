@@ -1,7 +1,6 @@
 """Real parser/fan-in with fake HTTP streams, never sockets or a native JVM."""
 
 import asyncio
-import fnmatch
 import json
 import tempfile
 import threading
@@ -17,7 +16,7 @@ from django.conf import settings
 from django.test import SimpleTestCase, override_settings
 
 from oh_identity.runtime import project
-from oh_identity.transport import CommandRefused, LoopbackTransport, native_batches
+from oh_identity.transport import CommandRefused, LoopbackTransport, native_query
 
 
 class HTTPStream:
@@ -61,9 +60,7 @@ class HTTPClient:
         return HTTPStream(self, url)
 
 
-def many_topics(count=140):
-    return ["openhab/items/public_" + str(number).zfill(4) + "_long_label_volume/" + verb
-            for number in range(count) for verb in ("stateupdated", "statechanged", "command")]
+WILDCARDS = ["openhab/items/*/stateupdated", "openhab/items/*/statechanged", "openhab/items/*/command"]
 
 
 class NativeTransport(SimpleTestCase):
@@ -192,22 +189,29 @@ class NativeTransport(SimpleTestCase):
             self.assertTrue(stream.closed)
         async_to_sync(check)()
 
-    def test_exact_batches_budget_union_and_no_private_expansion(self):
-        topics = many_topics()
-        topics += ["openhab/items/tv_pairing_status/stateupdated"]
-        batches = native_batches(topics)
-        self.assertGreater(len(batches), 1)
-        self.assertLessEqual(len(batches), 4)
-        patterns = [pattern for batch in batches for pattern in unquote(batch).split(",")]
-        self.assertTrue(all(len(("http://127.0.0.1:8080/rest/events?topics=" + batch).encode()) <= 6000 for batch in batches))
-        for topic in topics:
-            self.assertEqual(sum(fnmatch.fnmatchcase(topic, pattern) for pattern in patterns), 1)
-        self.assertFalse(any(fnmatch.fnmatchcase("openhab/items/private_pairing/command", pattern) for pattern in patterns))
-        self.assertFalse(any(fnmatch.fnmatchcase("openhab/items/unlisted_volume/command", pattern) for pattern in patterns))
+    def test_a_query_is_wildcards_or_exact_public_topics_within_the_url_budget(self):
+        self.assertEqual(unquote(native_query(WILDCARDS)), ",".join(WILDCARDS))
+        self.assertEqual(unquote(native_query(["openhab/items/tv_pairing_status/stateupdated", "openhab/items/public_volume/command"])),
+                         "openhab/items/tv_pairing_status/stateupdated,openhab/items/public_volume/command")
+        for refused in ([], ["openhab/items/tv_pairing/command"], ["openhab/items/*"], ["openhab/items/public_*/command"],
+                        ["openhab/things/*/status"], ["openhab/items/*/stateupdated,openhab/items/*/command"]):
+            with self.subTest(refused=refused), self.assertRaises(ValueError):
+                native_query(refused)
         with self.assertRaises(ValueError):
-            native_batches(many_topics(1000))
-        with self.assertRaises(ValueError):
-            native_batches(["openhab/items/private_pairing/command"])
+            native_query(["openhab/items/public_" + str(number).zfill(4) + "_long_label_volume/statechanged" for number in range(200)])
+
+    def test_one_bulk_state_read_keeps_only_the_named_items(self):
+        original = httpx.Client
+        requests = []
+
+        def reply(request):
+            requests.append(str(request.url))
+            return httpx.Response(200, json=[{"name": "public_power", "state": "ON"}, {"name": "private_token", "state": "private-sentinel"},
+                                             {"name": "public_volume", "state": None}, "junk"])
+        with patch("oh_identity.transport.httpx.Client", side_effect=lambda **options: original(transport=httpx.MockTransport(reply), **options)):
+            states = self.transport().states(["public_power", "public_volume"])
+        self.assertEqual(states, {"public_power": "ON"})
+        self.assertEqual(requests, ["http://127.0.0.1:8080/rest/items?fields=name%2Cstate"])
 
     def test_public_redaction_is_keyed_item_scoped_stable_and_bounded(self):
         spec = {"kind": "redacted"}
@@ -223,58 +227,31 @@ class NativeTransport(SimpleTestCase):
         self.assertEqual(json.loads(project("public_problem", '{"reported":null,"raw":"sentinel"}',
                          {"kind": "json", "fields": {"reported": {"kind": "enum", "nullable": True, "values": [None, "tv"]}}})), {"reported": None})
 
-    def test_shared_client_failure_cancels_all_streams(self):
+    def test_one_connection_reports_open_and_projects_before_yielding(self):
         async def check():
             client = HTTPClient()
+            opened = []
             with patch("oh_identity.transport.httpx.AsyncClient", return_value=client) as factory:
-                transport = self.transport()
-                iterator = transport.events(many_topics(), project=lambda event: {"safe": True})
+                iterator = self.transport().subscribe(WILDCARDS, project=lambda event: {"safe": event["value"]} if event["value"] != "drop" else None,
+                                                      opened=lambda: opened.append(True))
                 pending = asyncio.create_task(anext(iterator))
-                for _ in range(100):
-                    if len(client.opened) == len(native_batches(many_topics())):
-                        break
-                    await asyncio.sleep(.001)
-                await client.queue.put("fail")
-                with self.assertRaises(ValueError):
-                    await pending
-                self.assertEqual(factory.call_count, 1)
-                self.assertGreater(len(client.opened), 1)
-                self.assertCountEqual(client.closed, client.opened)
-                self.assertTrue(client.exited)
-        async_to_sync(check)()
-
-    def test_cancel_projects_before_bounded_queue_and_closes_every_shard(self):
-        async def check():
-            client = HTTPClient()
-            from asyncio import Queue
-            recorded = []
-
-            class SafeQueue(Queue):
-                async def put(self, value):
-                    recorded.append(value)
-                    return await super().put(value)
-            with patch("oh_identity.transport.httpx.AsyncClient", return_value=client), patch("oh_identity.transport.asyncio.Queue", SafeQueue):
-                iterator = self.transport().events(many_topics(), project=lambda event: {"safe": event["value"]})
-                pending = asyncio.create_task(anext(iterator))
+                await client.queue.put(b'data: {"value":"drop","raw":"private-sentinel"}\n\n')
                 await client.queue.put(b'data: {"value":"public","raw":"private-sentinel"}\n\n')
                 self.assertEqual(await pending, {"safe": "public"})
-                for _ in range(200):
-                    await client.queue.put(b'data: {"value":"public","raw":"private-sentinel"}\n\n')
-                await asyncio.sleep(.02)
-                # Producers block at 64 queued canonical frames, with at most
-                # one additional pending put per native shard.
-                self.assertLessEqual(len(recorded), 65 + len(client.opened))
-                self.assertNotIn("sentinel", json.dumps(recorded))
-                await iterator.aclose()
+                self.assertEqual((factory.call_count, len(client.opened), opened), (1, 1, [True]))
+                self.assertEqual(unquote(client.opened[0].split("?topics=")[1]), ",".join(WILDCARDS))
+                await client.queue.put("fail")
+                with self.assertRaises(ValueError):
+                    await anext(iterator)
                 self.assertCountEqual(client.closed, client.opened)
                 self.assertTrue(client.exited)
         async_to_sync(check)()
 
-    def test_quiet_cancel_and_oversize_frame_close_all(self):
+    def test_quiet_cancel_and_oversize_frame_close_the_connection(self):
         async def check(oversize):
             client = HTTPClient()
             with patch("oh_identity.transport.httpx.AsyncClient", return_value=client):
-                iterator = self.transport().events(many_topics(), project=lambda event: event)
+                iterator = self.transport().subscribe(WILDCARDS, project=lambda event: event)
                 pending = asyncio.create_task(anext(iterator))
                 await asyncio.sleep(.01)
                 if oversize:

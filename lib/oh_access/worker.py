@@ -7,7 +7,6 @@ import logging
 import signal
 import threading
 import time
-from urllib.parse import unquote
 
 from . import AccessError
 
@@ -175,12 +174,19 @@ class Warnings:
         self.last, self.suppressed = now, 0
 
 
+#: The worker's one native subscription. openHAB tests every filter of every
+#: subscriber against each event, so one wildcard costs it less than an exact
+#: list; NativeCache.project keeps only its own topics, before any payload is
+#: read. One stream also keeps each timestamp ahead of its power update.
+OBSERVED = ["openhab/items/*/stateupdated"]
+
+
 async def observe(transport, cache, stop, warnings=None):
     """Consume native events; the supervisor cancels to interrupt a quiet feed."""
     warnings = warnings or Warnings()
     delay = 1
     while not stop.is_set():
-        iterator = transport.events(cache.topics, project=cache.project).__aiter__()
+        iterator = transport.subscribe(OBSERVED, project=cache.project).__aiter__()
         try:
             async for frame in iterator:
                 if stop.is_set():
@@ -227,7 +233,6 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
             if descriptor and descriptor["item"] in cache_items(fields):
                 native_power[descriptor["item"]] = descriptor["reported_at"]
     cache = NativeCache(fields, native_power=native_power, clock=wall_clock)
-    validate_batches(cache, adapter.transport.base)
     io = PolicyIO(adapter, store, cache, house)
     worker = Worker(house, store, io, locks=locks, wall_clock=wall_clock)
     rooms_by_item = {}
@@ -317,15 +322,3 @@ def observed_fields(house, rooms):
     from oh_room_policy import expected_plan
     return [field for room, spec in rooms.items() for choice in ("off", *spec["sources"])
             for plan in (expected_plan(house, room, choice),) for field in (*plan.fields, *plan.conditions)]
-
-
-def validate_batches(cache, base, pack=None):
-    """A timestamp/power pair must share an ordered native stream."""
-    if pack is None:
-        from oh_identity.transport import native_batches
-        pack = native_batches
-    batches = [set(unquote(query).split(",")) for query in pack(cache.topics, base)]
-    for power, stamp in cache.native_power.items():
-        pair = {"openhab/items/" + item + "/stateupdated" for item in (power, stamp)}
-        if not any(pair <= batch for batch in batches):
-            raise AccessError("Native power provenance would cross unordered stream batches")
