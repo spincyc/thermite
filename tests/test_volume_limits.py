@@ -194,6 +194,7 @@ for data in json.load(sys.stdin):
         with tempfile.TemporaryDirectory(prefix="gateway-", dir=scratch) as temporary:
             env = {key: value for key, value in os.environ.items()
                    if key not in {"DJANGO_SETTINGS_MODULE", "THERMITE_IDENTITY_STATE", "THERMITE_ALLOWED_HOSTS"}}
+            env["PYTHONPATH"] = str(AREA / "lib")
             result = subprocess.run([sys.executable, "-B", "-c", script, temporary], input=json.dumps(cases),
                                     cwd=AREA, env=env, capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
