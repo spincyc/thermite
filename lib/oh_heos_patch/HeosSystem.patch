@@ -1,0 +1,58 @@
+--- a/HeosSystem.java
++++ b/HeosSystem.java
+@@ -95,19 +95,25 @@
+     public HeosFacade establishConnection(String connectionIP, int connectionPort, int heartbeat)
+             throws IOException, ReadException {
+         singleThreadExecutor = Executors.newSingleThreadExecutor();
+-        if (commandLine.connect(connectionIP, connectionPort)) {
+-            logger.debug("HEOS command line connected at IP {} @ port {}", connectionIP, connectionPort);
+-            send(HeosCommands.registerChangeEventOff());
++        try {
++            if (commandLine.connect(connectionIP, connectionPort)) {
++                logger.debug("HEOS command line connected at IP {} @ port {}", connectionIP, connectionPort);
++                send(HeosCommands.registerChangeEventOff());
++            }
++
++            if (eventLine.connect(connectionIP, connectionPort)) {
++                logger.debug("HEOS event line connected at IP {} @ port {}", connectionIP, connectionPort);
++                eventSendCommand.send(HeosCommands.registerChangeEventOff(), Void.class);
++            }
++
++            startHeartBeat(heartbeat);
++            startEventListener();
++        } catch (IOException | ReadException | RuntimeException e) {
++            logger.debug("Failed to establish the HEOS connection, cleaning up: {}", e.getMessage());
++            closeConnection();
++            throw e;
+         }
+ 
+-        if (eventLine.connect(connectionIP, connectionPort)) {
+-            logger.debug("HEOS event line connected at IP {} @ port {}", connectionIP, connectionPort);
+-            eventSendCommand.send(HeosCommands.registerChangeEventOff(), Void.class);
+-        }
+-
+-        startHeartBeat(heartbeat);
+-        startEventListener();
+-
+         return new HeosFacade(this, eventController);
+     }
+ 
+@@ -133,6 +139,9 @@
+ 
+         logger.debug("HEOS System Event Listener successfully started");
+         eventLine.getReadResultListener().addPropertyChangeListener(eventProcessor);
++        // The event stream was just (re)registered, so its quiet period starts now. Otherwise a system that
++        // legitimately sends no events would be reset again on every heartbeat after LAST_EVENT_THRESHOLD.
++        eventController.resetLastEventTime();
+     }
+ 
+     void closeConnection() {
+@@ -145,7 +154,7 @@
+         eventSendCommand.disconnect();
+         sendCommand.disconnect();
+         ExecutorService executor = this.singleThreadExecutor;
+-        if (executor != null && executor.isShutdown()) {
++        if (executor != null && !executor.isShutdown()) {
+             executor.shutdownNow();
+         }
+     }

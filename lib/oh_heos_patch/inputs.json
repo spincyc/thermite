@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "upstream": "5.2.3",
+  "patched": "5.2.3.thermite1",
+  "retire_when": {
+    "connection_leak": "openhab/openhab-addons#21781, merged to main on 2026-09-26; not in any 5.2.x release",
+    "quiet_event_stream": "the upstream fix for the 2-hour quiet event stream reconnect loop; not yet submitted"
+  },
+  "assets": {
+    "bundle": {
+      "url": "https://openhab.jfrog.io/artifactory/libs-release-local/org/openhab/addons/bundles/org.openhab.binding.heos/5.2.3/org.openhab.binding.heos-5.2.3.jar",
+      "sha256": "46abdfea05454be2154404634bfc2d385832bc736bde61917944af2cad45dfce",
+      "name": "org.openhab.binding.heos-5.2.3.jar"
+    },
+    "compiler": {
+      "url": "https://repo.maven.apache.org/maven2/org/eclipse/jdt/ecj/3.41.0/ecj-3.41.0.jar",
+      "sha256": "47bda183cd94a8bdb704f5b35690224f75b7d2fb563c8b8f9bbcfab987c3029b",
+      "name": "ecj-3.41.0.jar"
+    },
+    "annotations": {
+      "url": "https://repo.maven.apache.org/maven2/org/eclipse/jdt/org.eclipse.jdt.annotation/2.3.100/org.eclipse.jdt.annotation-2.3.100.jar",
+      "sha256": "899dc22cbc1da99bfac4ce2cfc58e37918a3399012f724509fa47f6776bc638a",
+      "name": "org.eclipse.jdt.annotation-2.3.100.jar"
+    },
+    "system": {
+      "url": "https://raw.githubusercontent.com/openhab/openhab-addons/5.2.3/bundles/org.openhab.binding.heos/src/main/java/org/openhab/binding/heos/internal/api/HeosSystem.java",
+      "sha256": "104e0c02b2cb7cc8e524694a60c909c71169f9cd0c8e683dca37873efa045d86",
+      "name": "HeosSystem.java"
+    },
+    "events": {
+      "url": "https://raw.githubusercontent.com/openhab/openhab-addons/5.2.3/bundles/org.openhab.binding.heos/src/main/java/org/openhab/binding/heos/internal/api/HeosEventController.java",
+      "sha256": "a971045742459a1a13127159ad0d00b7bef0a49d12f009411c367fd15b46bd06",
+      "name": "HeosEventController.java"
+    },
+    "command": {
+      "url": "https://raw.githubusercontent.com/openhab/openhab-addons/5.2.3/bundles/org.openhab.binding.heos/src/main/java/org/openhab/binding/heos/internal/resources/HeosSendCommand.java",
+      "sha256": "bf55884103841e0ad7c32542d604145ae3d1de1a35cd7dd0858246e6825e8ef0",
+      "name": "HeosSendCommand.java"
+    }
+  },
+  "runtime_system_sha256": "3d2d32986499f657f53c69f866df74b23acd5cb6e1be48ac1ff7a04af7207f6a",
+  "runtime_system_jars": 338
+}

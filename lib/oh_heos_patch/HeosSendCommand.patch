@@ -1,0 +1,11 @@
+--- a/HeosSendCommand.java
++++ b/HeosSendCommand.java
+@@ -92,7 +92,7 @@
+     }
+ 
+     public void disconnect() {
+-        if (client.isConnected()) {
++        if (!client.isConnected()) {
+             return;
+         }
+ 

@@ -387,6 +387,11 @@ rollback. The unified deployment workflow uses a separate committed private site
 - A reproducible, pinned Android TV connection lifecycle repair, with bounded
   connection opening and cancellation. Ordinary deployment does not activate
   this native binding replacement; it requires controlled owner maintenance.
+- A reproducible, pinned HEOS binding reconnect repair for openHAB 5.2.3. Each
+  reconnect closes the previous telnet sockets and their reader threads, and a
+  quiet event stream is no longer reset on every heartbeat after two hours.
+  `make check` fails when the openHAB pin moves, with instructions to retire or
+  rebase the patch. Activation is a controlled owner step, as for Android TV.
 - Explicit route ownership with optional unused-USB parking and last-consumer
   source standby. Independent device actors execute concurrently, while shared
   sources, AVR zones and manual controls retain protection. Route readiness,

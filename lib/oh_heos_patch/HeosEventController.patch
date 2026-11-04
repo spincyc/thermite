@@ -1,0 +1,23 @@
+--- a/HeosEventController.java
++++ b/HeosEventController.java
+@@ -40,7 +40,7 @@
+ 
+     private final HeosSystem system;
+ 
+-    private long lastEventTime;
++    private volatile long lastEventTime;
+ 
+     public HeosEventController(HeosSystem system) {
+         this.system = system;
+@@ -116,4 +116,11 @@
+     long getLastEventTime() {
+         return lastEventTime;
+     }
++
++    /**
++     * Restarts the quiet period of the event stream, for example after it was (re)registered.
++     */
++    void resetLastEventTime() {
++        lastEventTime = System.currentTimeMillis();
++    }
+ }
