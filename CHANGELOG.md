@@ -35,6 +35,15 @@ rollback. The unified deployment workflow uses a separate committed private site
   refused only what would change the locked room's route, such as driving a
   device it is showing. Lock and Unlock live under Info on Remotes; the remote
   itself shows only the lock state.
+- Host layout: everything Thermite keeps under `/srv` lives in one root-owned
+  installation root, `/srv/thermite`, a Btrfs subvolume where its parent is
+  Btrfs: `runtime/` holds the service's state (and is the `thermite` account's
+  home), `access/` the HTTPS gateway. `instance/host.yaml` no longer takes
+  `state_root`; an optional `root` moves the whole installation. The gateway
+  root is no longer derived by appending `-access`. `uninstall --purge` removes
+  only `runtime/`, and install and upgrade refuse an existing root holding
+  anything else. Existing installs are moved by hand before upgrading; there is
+  no automatic migration.
 - Remotes: a locked room shows a padlock on the bubble for what it shows, Off
   included, greys out every other bubble, and explains the lock (with a
   schedule's end) when the padlocked bubble is selected; the separate lock line
