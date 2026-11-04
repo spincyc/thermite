@@ -45,14 +45,14 @@ function create(options = {}) {
   return { open, close, stop: close, state: () => ({ manifest, error }) };
 }
 
-function url(base, room, source, mock) {
+function url(base, room, source, mock, native = false) {
   const target = new URL(base || "http://127.0.0.1:13601");
-  target.pathname = target.pathname.replace(/\/+$/, "") + "/static/remote/topology.html";
+  target.pathname = target.pathname.replace(/\/+$/, "") + "/site/";
   target.username = target.password = "";
   target.search = ""; target.hash = "";
   if (room) target.searchParams.set("room", room);
   if (source) target.searchParams.set("source", source);
-  if (mock) target.searchParams.set("backend", "mock");
+  if (mock || native) target.searchParams.set("backend", mock ? "mock" : "native");
   return target.href;
 }
 

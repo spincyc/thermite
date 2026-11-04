@@ -37,7 +37,9 @@ def load_config(path, *, runtime_url=None):
         address = ipaddress.ip_address(data["bind_host"])
         if not isinstance(address, ipaddress.IPv4Address) or address.is_unspecified or address.is_multicast or address.is_loopback or str(address) != data["bind_host"]:
             raise ValueError()
-        oh_ports.listener("callbacks", data["port"], upstream=urlsplit(data["upstream"]).port)
+        # The stage checks the site's complete allocation. Here only the
+        # configured listener/upstream are authoritative; defaults may be freed.
+        oh_ports.unique({"callbacks": data["port"], "native HTTP": urlsplit(data["upstream"]).port})
         if not isinstance(data["hosts"], list) or data["hosts"] != [str(address) + ":" + str(data["port"])]:
             raise ValueError()
         if not isinstance(data["upstream"], str):

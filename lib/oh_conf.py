@@ -398,7 +398,7 @@ class YamlFile:
 class Conf:
     """Everything bin/thermite generate writes, keyed by path under conf/."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, system_metadata: dict | None = None) -> None:
         self.yaml: dict[str, YamlFile] = {}
         self.files: dict[str, str | bytes] = {}
         self.addons: dict[str, dict[str, list[str]]] = {}
@@ -406,6 +406,9 @@ class Conf:
         # binding links discard them. This server-side authority is never
         # inferred from browser metadata or a transform profile alone.
         self.executor_controls: set[str] = set()
+        # Optional explicit deployment facts for the System catalogue. Public
+        # export supplies its fictional host instead of reading the active site.
+        self.system_metadata = system_metadata
 
     def yaml_file(self, path: str, header: tuple[str, ...] | list[str]) -> YamlFile:
         if path not in self.yaml:

@@ -368,7 +368,7 @@
 
   async function start() {
     try {
-      const response = await fetch("topology.json", { method: "GET", cache: "no-cache", headers: { Accept: "application/json" } });
+      const response = await fetch(global.ThermiteNavigation.asset("topology.json"), { method: "GET", cache: "no-cache", headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error("The topology map is unavailable (HTTP " + response.status + ").");
       model = catalogue(await response.json());
       room = model.rooms.some(entry => entry.id === params.get("room")) ? params.get("room") : "";

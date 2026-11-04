@@ -25,7 +25,7 @@ import tokenize
 import oh_cli
 import oh_secrets
 from oh_conf import House
-from oh_features import remote_model, remote_cameras, remote_topology, remote_diagnostics, remote_activity
+from oh_features import remote_model, remote_cameras, remote_topology, remote_diagnostics, remote_activity, remote_system
 
 MANIFEST = ".thermite-export.json"
 SOURCE_FILES = (
@@ -118,6 +118,7 @@ SOURCE_FILES = (
     'lib/oh_features/remote_cameras.py',
     'lib/oh_features/remote_diagnostics.py',
     'lib/oh_features/remote_model.py',
+    'lib/oh_features/remote_system.py',
     'lib/oh_features/remote_topology.py',
     'lib/oh_features/routing/__init__.py',
     'lib/oh_features/routing/lifecycle.py',
@@ -127,6 +128,12 @@ SOURCE_FILES = (
     'lib/oh_features/routing/routing.js',
     'lib/oh_features/threadpools.py',
     'lib/oh_features/threadpools.js',
+    'lib/oh_entry/__init__.py',
+    'lib/oh_entry/EntryFilter.java',
+    'lib/oh_entry/loader.js',
+    'lib/oh_entry/inputs.json',
+    'lib/oh_entry/filter.jar',
+    'lib/oh_entry/README.md',
     'lib/oh_googletv_sim.py',
     'lib/oh_identity/README.md',
     'lib/oh_identity/__init__.py',
@@ -150,12 +157,15 @@ SOURCE_FILES = (
     'lib/oh_install/__init__.py',
     'lib/oh_install/backup.py',
     'lib/oh_install/model.py',
+    'lib/oh_install/native_auth.py',
+    'lib/oh_install/ownership.py',
     'lib/oh_install/output.py',
     'lib/oh_install/progress.py',
     'lib/oh_install/runner.py',
     'lib/oh_install/secrets.py',
     'lib/oh_install/steps.py',
     'lib/oh_install/system.py',
+    'lib/oh_units.py',
     'lib/oh_integrations/__init__.py',
     'lib/oh_integrations/_diagnostics.py',
     'lib/oh_integrations/_instr.py',
@@ -216,6 +226,7 @@ SOURCE_FILES = (
     'lib/oh_metrics/yoke.py',
     'lib/oh_public.py',
     'lib/oh_render.py',
+    'lib/oh_routes.py',
     'lib/oh_room_policy/__init__.py',
     'lib/oh_room_policy/model.py',
     'lib/oh_room_policy/plan.py',
@@ -284,9 +295,18 @@ SOURCE_FILES = (
     'tests/test_install_output.py',
     'tests/test_install_progress.py',
     'tests/test_install_secret_files.py',
+    'tests/test_native_auth.py',
+    'tests/test_native_auth_storage.py',
     'tests/test_service_account.py',
     'tests/test_access_custody.py',
     'tests/test_boot.py',
+    'tests/test_health.py',
+    'tests/test_remote_system.py',
+    'tests/test_system_ui.py',
+    'tests/system_ui_harness.js',
+    'tests/test_entry.py',
+    'tests/test_clean_routes.py',
+    'tests/entry/EntryFilterTest.java',
     'tests/test_native_prepare.py',
     'tests/test_install_backup.py',
     'tests/test_startup_http.py',
@@ -329,12 +349,14 @@ SOURCE_FILES = (
     'web/remote/cameras.html',
     'web/remote/cameras.js',
     'web/remote/diagnostics.js',
+    'web/remote/home.css',
     'web/remote/home.html',
     'web/remote/home.js',
     'web/remote/icon.svg',
     'web/remote/index.html',
     'web/remote/log.js',
     'web/remote/manifest.webmanifest',
+    'web/remote/navigation.js',
     'web/remote/pair.css',
     'web/remote/pair.html',
     'web/remote/pair.js',
@@ -346,6 +368,8 @@ SOURCE_FILES = (
     'web/remote/settings.html',
     'web/remote/shell.css',
     'web/remote/shell.js',
+    'web/remote/system.html',
+    'web/remote/system.js',
     'web/remote/theme.css',
     'web/remote/topology.css',
     'web/remote/topology.html',
@@ -615,6 +639,17 @@ docs:
 
 def bundle(doc_files: dict[str, bytes], area: Path = oh_cli.PROGRAM_ROOT) -> dict[str, bytes]:
     """Build the complete reviewed artifact in memory. No destination writes."""
+    from oh_release import FILE as RELEASE_MANIFEST
+    if (Path(area) / MANIFEST).is_file() or (Path(area) / RELEASE_MANIFEST).is_file():
+        # Thermite owns its source now. The legacy private-tree conversion below
+        # remains available for old checkouts; never rewrite canonical code.
+        import oh_package
+        files = {**oh_package.public_files(Path(area)), **doc_files}
+        files[MANIFEST] = _data({"version": 1, "paths": sorted(files)})
+        problems = guard(files, area)
+        if problems:
+            raise PublicError("public source refused:\n" + "\n".join(problems))
+        return files
     import oh_brand
     import oh_render
     area = Path(area)
@@ -641,16 +676,19 @@ def bundle(doc_files: dict[str, bytes], area: Path = oh_cli.PROGRAM_ROOT) -> dic
     problems = oh_render.validate(data)
     if problems:
         raise PublicError("invalid public sample: " + "; ".join(problems))
-    conf = oh_render.build(data)
+    import oh_access_mode
+    system = remote_system.manifest(demo_host(), json.loads(out["versions.json"])["openhab"]["version"], mode=oh_access_mode.mode(data))
+    conf = oh_render.build(data, system_metadata=system)
     house = House(data)
     out["instance/devices.yaml"], out["instance/host.yaml"] = _data(data), _data(demo_host())
     out["web/remote/house.js"] = remote_model.script(house).encode()
     for filename, manifest in [("activity.json", remote_activity.manifest(house, conf)),
                                ("diagnostics.json", remote_diagnostics.manifest(house, conf)),
                                ("cameras.json", remote_cameras.manifest(house)),
-                               ("topology.json", remote_topology.manifest(house, conf))]:
+                               ("topology.json", remote_topology.manifest(house, conf)),
+                               ("system.json", system)]:
         out[f"web/remote/{filename}"] = _data(manifest)
-    out["web/remote/README.md"] = b"# Web remote\n\nRun `bin/thermite generate` after editing the house file. The generated page is served by the runtime under /static/remote/. Source previews use the fictional sample; `?backend=mock` sends no commands.\n"
+    out["web/remote/README.md"] = b"# Web remote\n\nRun `bin/thermite generate` after editing the house file. The generated Home is served at / and Remotes at /remotes/. Source previews use the fictional sample; `?backend=mock` sends no commands.\n"
     out["tui/remote/README.md"] = b"# Terminal remote\n\nRun `bin/thermite remote --mock` for a fictional house without device commands. Node.js and the locked blessed package are required. Run `bin/thermite generate` after editing the house file; the terminal prefers that generated house model.\n"
     # Development-only identity fixtures are deliberately outside this source
     # manifest. Keep the public instructions executable from the shipped tree.
@@ -739,6 +777,8 @@ def _screenshots(files: dict[str, bytes]) -> dict[str, str]:
 def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] | None = None) -> list[str]:
     """Scan every text file, including Python/YAML/bin/workflows/locks."""
     import oh_brand
+    import oh_entry
+    binary_artifacts = oh_entry.approved_artifacts()
     facts = _private(Path(area)) if facts is None else facts
     pattern = _pattern(facts)
     allowed_macs = {d["mac"] for d in demo()["devices"]}
@@ -762,6 +802,8 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
         try:
             text = value.decode("utf-8")
         except UnicodeDecodeError:
+            if name in binary_artifacts and hashlib.sha256(value).hexdigest() == binary_artifacts[name]:
+                continue
             if name not in screenshots and (name != "web/remote/apple-touch-icon.png" or value != oh_brand.png()):
                 problems.append(f"{name}: unapproved binary asset")
             continue
@@ -892,7 +934,7 @@ def _target(root: Path, name: str) -> Path:
     path = PurePosixPath(name)
     if path.is_absolute() or ".." in path.parts or not path.parts:
         raise PublicError("unsafe managed export path")
-    allowed = {MANIFEST, "README.md", "FAQ.md", "Makefile", "requirements.txt", "versions.json", ".gitignore", "pyproject.toml", "CHANGELOG.md",
+    allowed = {MANIFEST, "AGENTS.md", "README.md", "FAQ.md", "Makefile", "requirements.txt", "versions.json", ".gitignore", "pyproject.toml", "CHANGELOG.md",
                ".github/workflows/pages.yml"}
     if name not in allowed and path.parts[0] not in {"docs", "bin", "lib", "site", "web", "tui", "tests", "instance", "iso"}:
         raise PublicError("path is outside the managed public source trees")

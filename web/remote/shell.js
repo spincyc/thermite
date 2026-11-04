@@ -1,24 +1,9 @@
 /* One navigation hierarchy for every thermite view. Navigation sends no commands. */
 (function (global) {
   "use strict";
-  const pages = [
-    { id: "home", label: "Home", href: "home.html" },
-    { id: "remotes", label: "Remotes", href: "./" },
-    { id: "pairing", label: "Pair devices", href: "pair.html", parent: "remotes" },
-    { id: "security", label: "Security", href: "security.html" },
-    { id: "cameras", label: "Cameras", href: "cameras.html" },
-    { id: "site", label: "Site", href: "topology.html" },
-    { id: "settings", label: "Room settings", href: "settings.html" },
-    { id: "users", label: "Users & roles", href: "users.html", admin: true },
-    { id: "access", label: "Account", href: "access.html" }
-  ];
-  function href(id, search = "", room) {
-    const page = pages.find(entry => entry.id === id) || pages[0];
-    const params = new URLSearchParams();
-    if (["mock", "native"].includes(new URLSearchParams(search).get("backend"))) params.set("backend", new URLSearchParams(search).get("backend"));
-    if (["remotes", "settings"].includes(id) && typeof room === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(room)) params.set("room", room);
-    return page.href + (params.size ? "?" + params.toString() : "");
-  }
+  const navigation = global.ThermiteNavigation || (typeof require === "function" ? require("./navigation") : null);
+  if (!navigation) throw new Error("Thermite navigation is unavailable");
+  const { pages, href } = navigation;
   global.ThermiteShell = { pages, href };
   if (typeof module !== "undefined" && module.exports) module.exports = { pages, href };
   if (typeof document === "undefined") return;
@@ -37,7 +22,7 @@
   };
   const shell = node("aside", "thermite-shell"); shell.setAttribute("data-thermite-shell", "");
   const brand = link(pages[0], "thermite-brand"); brand.textContent = "";
-  const mark = node("img", "thermite-mark"); mark.src = "mark.svg"; mark.alt = ""; mark.width = 44; mark.height = 35;
+  const mark = node("img", "thermite-mark"); mark.src = navigation.asset("mark.svg"); mark.alt = ""; mark.width = 44; mark.height = 35;
   brand.append(mark, node("span", "", "thermite"));
   const menu = node("button", "thermite-menu", "Views"); menu.type = "button";
   menu.setAttribute("aria-expanded", "false"); menu.setAttribute("aria-controls", "thermite-navigation");
@@ -46,7 +31,7 @@
   pages.forEach(entry => {
     const a = link(entry, "thermite-nav-link" + (entry.parent ? " thermite-nav-child" : ""));
     a.dataset.view = entry.id;
-    if (entry.admin) { a.hidden = true; a.dataset.adminOnly = ""; }
+    if (entry.admin || entry.system) { a.hidden = true; a.dataset.adminOnly = ""; }
     if (global.ThermiteAccess?.client?.native && ["settings", "users", "access"].includes(entry.id)) { a.hidden = true; a.dataset.nativeUnavailable = ""; }
     if (entry.id === current) a.setAttribute("aria-current", "page");
     if (entry.id === page.parent) a.dataset.parentActive = "true";
@@ -79,8 +64,15 @@
   body.classList.add("thermite-app");
   const access = global.ThermiteAccess && global.ThermiteAccess.client;
   if (access) access.ready().then(() => {
-    shell.querySelectorAll("[data-admin-only]").forEach((link) => { link.hidden = access.native || !access.canEdit(); });
+    shell.querySelectorAll("[data-view]").forEach((link) => {
+      const entry = pages.find(page => page.id === link.dataset.view);
+      link.hidden = !navigation.allowed(entry, access);
+    });
     shell.querySelectorAll('[data-view="pairing"]').forEach((link) => { link.hidden = !access.has("pairing.manage"); });
   }).catch(() => {});
+  document.querySelectorAll("a[href]").forEach(a => {
+    const entry = pages.find(page => a.getAttribute("href") === page.href || a.getAttribute("href") === page.path);
+    if (entry) a.href = href(entry.id, location.search);
+  });
   document.querySelectorAll("[data-thermite-link]").forEach(a => { a.href = href(a.dataset.thermiteLink, location.search); });
 })(globalThis);

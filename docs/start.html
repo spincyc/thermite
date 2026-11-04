@@ -73,7 +73,7 @@ devices:
       observe: [sony_rest]
       control: [sony_ip_control]</code></pre>
 <p><code>observe</code> lists interfaces thermite may read. <code>control</code> lists interfaces it may command. The sample address above is reserved for documentation; use the TV's actual address in your private site.</p>
-<p>Create a private Git repository for that site. Keep real inventory, host settings and generated <code>conf/</code>, <code>metrics/</code> and <code>deploy/</code> there. Credentials and runtime state stay outside Git. The public application repository should contain only fictional examples.</p>
+<p>Create a private Git repository for that site. Commit real inventory, host settings, native version pins and <code>thermite-site.json</code>. Generated <code>conf/</code>, <code>metrics/</code> and <code>deploy/</code>, credentials and runtime state stay outside Git. The public application repository should contain only fictional examples.</p>
 <h2 id="check-and-deploy">Check and deploy</h2>
 <p>After editing the house file:</p>
 <pre><code class="language-sh">thermite generate

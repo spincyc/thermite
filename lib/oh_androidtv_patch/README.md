@@ -232,7 +232,7 @@ umask 022
 checks the entire root-owned executable ancestry and external program hash,
 and imports local code only after validation. It exposes only apply/rollback;
 no arbitrary service, shell command, URL or native API option exists. The
-service is fixed to the rootful `openhab.service`/`openhab` container. Direct
+service is fixed to the rootful `thermite-openhab.service`/`thermite-openhab` container. Direct
 `PYTHONPATH=lib ... apply` from a user-writable checkout is refused.
 
 Apply validates the running container's conf/userdata/addons mounts, rejects

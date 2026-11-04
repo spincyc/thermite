@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import os
+import json
 import re
 import select
 import signal
@@ -27,9 +28,9 @@ class InstallOutput(unittest.TestCase):
         self.root = Path(temporary.name)
         self.reports = []
 
-    def run_child(self, script, *, timeout=5):
+    def run_child(self, script, *, timeout=5, show_output=False):
         return output.run((sys.executable, "-B", "-c", script), self.root,
-                          timeout=timeout, report=self.reports.append)
+                          timeout=timeout, report=self.reports.append, show_output=show_output)
 
     def assert_descendant_stopped(self):
         found = re.search(r"descendant=(\d+)", "\n".join(self.reports))
@@ -54,6 +55,25 @@ class InstallOutput(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.reports, [])
         self.assert_no_reader_left()
+
+    def test_opted_in_success_reports_sanitized_output_without_terminal_input_or_session(self):
+        script = ("import os,sys; assert sys.stdin.read()==''; assert os.getsid(0)==os.getpid(); "
+                  "os.write(1,b'\\x1b[31mWARNING\\x1b[0m device unavailable\\n'); "
+                  "os.write(2,b'\\x1b]0;hidden-title\\x07second diagnostic\\x00\\n')")
+        self.assertEqual(self.run_child(script, show_output=True), 0)
+        self.assertEqual(self.reports, ["WARNING device unavailable\nsecond diagnostic"])
+        self.assert_no_reader_left()
+
+    def test_opted_in_success_remains_bounded_and_failure_is_reported_only_once(self):
+        self.assertEqual(self.run_child("import os; os.write(1,b'x'*200000); print('\\nFINAL WARNING')",
+                                        show_output=True), 0)
+        self.assertEqual(len(self.reports), 1)
+        self.assertLessEqual(len(self.reports[0]), output.TAIL_BYTES + 80)
+        self.assertTrue(self.reports[0].startswith("[earlier child output omitted]"))
+        self.assertTrue(self.reports[0].endswith("FINAL WARNING"))
+        self.reports.clear()
+        self.assertEqual(self.run_child("print('single failure diagnostic'); raise SystemExit(7)", show_output=True), 7)
+        self.assertEqual(self.reports, ["single failure diagnostic"])
 
     def test_large_stdout_and_stderr_are_drained_and_only_bounded_failure_tail_is_reported(self):
         code = self.run_child("""import os,sys
@@ -86,6 +106,19 @@ sys.exit(7)
         with self.assertRaises(FileNotFoundError):
             output.run((str(self.root / "missing-program"),), self.root, report=self.reports.append)
         self.assertEqual(self.reports, [])
+        self.assert_no_reader_left()
+
+    def test_terminal_preserving_capture_keeps_session_and_parent_with_its_own_group(self):
+        script = ("import json,os; print(json.dumps({'pid':os.getpid(),'ppid':os.getppid(),"
+                  "'sid':os.getsid(0),'pgid':os.getpgrp()})); raise SystemExit(7)")
+        code = output.run((sys.executable, "-B", "-c", script), self.root,
+                          report=self.reports.append, keep_terminal=True)
+        self.assertEqual(code, 7)
+        child = json.loads(self.reports[0])
+        self.assertEqual(child["ppid"], os.getpid())
+        self.assertEqual(child["sid"], os.getsid(0))
+        self.assertEqual(child["pgid"], child["pid"])
+        self.assertNotEqual(child["pgid"], os.getpgrp())
         self.assert_no_reader_left()
 
     def test_reader_start_failure_stops_the_already_created_child_and_closes_its_pipe(self):

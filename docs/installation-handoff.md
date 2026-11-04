@@ -1,5 +1,10 @@
 # Installation review and acceptance
 
+The application now lives in the Thermite repository. Historical references below
+to a canonical private checkout and public export describe earlier builds; they
+do not define the current development or deployment workflow. Private sites now
+pin an application release and keep generated files outside Git.
+
 Updated 2026-11-03 UTC. The review began on `feature/productionize`.
 Its tested history is preserved while reconciling with `main`; the original
 installation acceptance and subsequent runtime integration are distinct below.
@@ -81,7 +86,7 @@ The final documentation commit records that package identity.
 
 ## Earlier installation candidate and fresh ISO evidence
 
-The canonical implementation is `automation/openhab` in private
+For that earlier build, the implementation was `automation/openhab` in private
 `spincyc/homelab`. Fix that source, then regenerate public `spincyc/thermite`
 with `python3 bin/thermite docs export --with-code --to /path/to/thermite`.
 

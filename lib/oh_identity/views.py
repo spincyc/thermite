@@ -1,6 +1,7 @@
 """Small JSON interfaces; framework authentication owns credential handling."""
 
 import json
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import logout
@@ -8,6 +9,9 @@ from django.http import FileResponse, HttpResponse, HttpResponseRedirect, JsonRe
 from django.middleware.csrf import get_token
 from django.db import close_old_connections, connection, connections, transaction
 from django.utils import timezone
+
+from oh_features.remote_system import ADMIN_ASSETS
+from oh_routes import ASSET_ROUTES
 
 from .auth import api, failure, login_user
 from .models import CATALOG, PersonalToken, ReconcileState, Role, RoomPolicy, User
@@ -228,23 +232,47 @@ def item_state(request, item):
     return HttpResponse(get_adapter().read(item), content_type="text/plain")
 
 
+def home(request):
+    """Serve the normal Home asset at the clean root with identical authorization."""
+    if request.method not in ("GET", "HEAD"):
+        response = failure("method_not_allowed", 405)
+        response["Allow"] = "GET, HEAD"
+        return response
+    return asset(request, "home.html")
+
+
+def page_alias(request, target):
+    """Finite aliases never reflect query parameters into their redirect."""
+    if request.method not in ("GET", "HEAD"):
+        response = failure("method_not_allowed", 405)
+        response["Allow"] = "GET, HEAD"
+        return response
+    response = HttpResponseRedirect(target)
+    response["Cache-Control"] = "no-store"
+    return response
+
+
 def asset(request, name):
     try:
         adapter = get_adapter()
     except Problem as exc:
         return failure(exc.code, exc.status)
     spec = adapter.contract.assets.get(name)
-    if spec is None or not adapter.contract.asset_root or request.method != "GET":
+    if spec is None or not adapter.contract.asset_root or request.method not in ("GET", "HEAD"):
         return failure("not_found", 404)
-    if spec.get("private") or name == "house.js" or name.endswith(".json"):
+    admin_only = bool(spec.get("admin")) or name in ADMIN_ASSETS
+    if spec.get("private") or admin_only or name == "house.js" or name.endswith(".json"):
         from .auth import principal
         try:
             user = principal(request)
             if "site.read" not in permissions(user):
                 raise Problem("forbidden", 403)
+            if admin_only and not is_admin(user):
+                raise Problem("forbidden", 403)
         except Problem as exc:
             if exc.status == 401 and name.endswith(".html") and "access.html" in adapter.contract.assets:
-                response = HttpResponseRedirect("/static/remote/access.html?next=" + name)
+                next_path = ASSET_ROUTES.get(name, "/static/remote/" + name)
+                response = HttpResponseRedirect("/account/?" + urlencode({"next": next_path}))
                 response["Cache-Control"] = "no-store"
                 return response
             return failure(exc.code, exc.status)
@@ -252,7 +280,11 @@ def asset(request, name):
     if target.parent != adapter.contract.asset_root or not target.is_file():
         return failure("not_found", 404)
     response = FileResponse(target.open("rb"))
-    response["Cache-Control"] = "no-store" if spec.get("private") or name == "house.js" or name.endswith(".json") else "no-cache"
+    if request.method == "HEAD":
+        # Keep GET metadata and normal file disposal, without exposing a body
+        # even when this view is called without a server's HEAD suppression.
+        response.streaming_content = ()
+    response["Cache-Control"] = "no-store" if spec.get("private") or admin_only or name == "house.js" or name.endswith(".json") else "no-cache"
     return response
 
 

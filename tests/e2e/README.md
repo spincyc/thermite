@@ -331,8 +331,8 @@ After all running-service, client and persistence checks, test native shutdown
 through its actual generated unit:
 
 ```sh
-sudo systemctl stop openhab.service
-sudo systemctl show openhab.service \
+sudo systemctl stop thermite-openhab.service
+sudo systemctl show thermite-openhab.service \
   --property=Result --property=ExecMainCode --property=ExecMainStatus
 ```
 

@@ -69,6 +69,39 @@ class _DeadlineHTTPSHandler(_DeadlineHandler, urllib.request.HTTPSHandler):
     pass
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def headers(req, *, timeout, remaining=None):
+    """Return (status, headers), closing without reading a response body.
+
+    This direct, header-only probe never uses environment proxies or follows
+    redirects. HTTP error statuses are returned too. A remaining callback
+    applies one caller-owned absolute deadline through every header read.
+    """
+    budget = (lambda: min(timeout, remaining())) if remaining is not None else (lambda: timeout)
+    handlers = [_NoRedirect(), urllib.request.ProxyHandler({})]
+    if remaining is not None:
+        handlers += [_DeadlineHTTPHandler(budget), _DeadlineHTTPSHandler(budget)]
+    opener = urllib.request.build_opener(*handlers)
+    try:
+        try:
+            response = opener.open(req, timeout=budget())
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            result = response.status, response.headers
+    except (OSError, http.client.HTTPException):
+        if remaining is not None:
+            remaining()
+        raise
+    if remaining is not None:
+        remaining()
+    return result
+
+
 def request(req, *, timeout, remaining=None):
     """Return (status, bytes); HTTP errors keep urllib's exception semantics."""
     if remaining is None:

@@ -12,12 +12,14 @@ const path = require("path");
 const vm = require("vm");
 
 const WEB = path.join(__dirname, "..", "..", "web", "remote");
-const SCRIPTS = ["access.js", "house.js", "remotes.js", "activity.js", "diagnostics.js", "backend.js", "session.js", "pair.js"];
+const SCRIPTS = ["navigation.js", "access.js", "house.js", "remotes.js", "activity.js", "diagnostics.js", "backend.js", "session.js", "pair.js"];
 
 function load(dir) {
   const from = dir || WEB;
+  const explicit = process.env.THERMITE_REMOTE_HOUSE_FILE;
+  if (!dir && explicit && !fs.existsSync(explicit)) throw new Error("The selected site's remote model is missing. Run thermite generate or reopen the remote.");
   SCRIPTS.forEach((name) => {
-    const generated = process.env.THERMITE_REMOTE_HOUSE_FILE || path.join(__dirname, "..", "..", "conf", "html", "remote", "house.js");
+    const generated = explicit || path.join(__dirname, "..", "..", "conf", "html", "remote", "house.js");
     const file = !dir && name === "house.js" && fs.existsSync(generated) ? generated : path.join(from, name);
     vm.runInThisContext(fs.readFileSync(file, "utf8"), { filename: file });
   });

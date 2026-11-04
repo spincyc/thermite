@@ -25,6 +25,7 @@ const { fileStore } = require("./store");
 const Cameras = require("./cameras");
 const Topology = require("./topology");
 const Credentials = require("./credentials");
+const System = require("../../web/remote/system");
 const fs = require("fs");
 const { spawn } = require("child_process");
 
@@ -116,12 +117,16 @@ function assemble(args, env) {
     createCameras: () => Cameras.create({ base: args.url || "", mock: args.mock, fetch: request, ...timers }),
     createTopology: () => Topology.create({ base: args.url || "", mock: args.mock, fetch: request,
       manifest: options.topologyManifest }),
+    system: System.create({ access, mock: args.mock, base: args.url || "http://localhost", fetch: request || globalThis.fetch,
+      changed: options.onChange, ...(options.systemManifest ? { manifest: options.systemManifest } : {}),
+      ...(options.setTimeout ? { setTimeout: options.setTimeout } : {}), ...(options.clearTimeout ? { clearTimeout: options.clearTimeout } : {}) }),
+    openSystem: url => Promise.resolve((options.openURL || openBrowser)(url)).then(opened => ({ url, opened })),
     openTopology: (room, source) => {
-      const url = Topology.url(args.url, room, source, args.mock);
+      const url = Topology.url(args.url, room, source, args.mock, args.native);
       return Promise.resolve((options.openURL || openBrowser)(url)).then((opened) => ({ url, opened }));
     },
     openCamera: (ident) => {
-      const url = Cameras.url(args.url, ident, args.mock);
+      const url = Cameras.url(args.url, ident, args.mock, args.native);
       return Promise.resolve((options.openURL || openBrowser)(url)).then((opened) => ({ url, opened }));
     },
     target: args.mock ? { label: "mock", mock: true } : { label: new URL(args.url).host, mock: false },

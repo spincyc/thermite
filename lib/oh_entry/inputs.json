@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "native": "5.2.3",
+  "source_sha256": "02abfd8949ffcac7119a7f437f3657240030cd6861fcc8d5c3a03d547e18e3a9",
+  "artifact_sha256": "b797e804425f02808d1199b031eb43832e89420affe92393a99a93e042075e31",
+  "compiler": {
+    "url": "https://repo.maven.apache.org/maven2/org/eclipse/jdt/ecj/3.41.0/ecj-3.41.0.jar",
+    "sha256": "47bda183cd94a8bdb704f5b35690224f75b7d2fb563c8b8f9bbcfab987c3029b"
+  },
+  "servlet": {
+    "runtime_path": "system/javax/servlet/javax.servlet-api/3.1.0/javax.servlet-api-3.1.0.jar",
+    "sha256": "af456b2dd41c4e82cf54f3e743bc678973d9fe35bd4d3071fa05c7e5333b8482"
+  }
+}

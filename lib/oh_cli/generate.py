@@ -76,13 +76,15 @@ def main(argv: list[str] | None = None) -> int:
     if problems:
         print(f"generate: {len(problems)} problems in {arguments.house.name}; nothing generated")
         return 1
-    files = render.render(data)
     devices = len(data.get("devices") or [])
     try:
         versions, host = deploy.load(AREA)
     except ValueError as exc:
         print(f"thermite generate: {exc}; nothing generated", file=sys.stderr)
         return 1
+    from oh_features import remote_system
+    import oh_access_mode
+    files = render.render(data, system_metadata=remote_system.manifest(host, versions["openhab"]["version"], mode=oh_access_mode.mode(data)))
     units = deploy.render_units(versions, host)
     root = arguments.root
     trees = [(arguments.conf, arguments.conf.name, files,
@@ -123,11 +125,11 @@ def main(argv: list[str] | None = None) -> int:
     for path, why in stray:
         print(f"thermite generate: {path} is not generated; {why}", file=sys.stderr)
     count = len(files) + len(trees[1][2])
-    summary = f"generate: {devices} devices, {count} files, {len(units)} units"
+    summary = f"generate: {devices} devices, {count} files, {len(units)} unit files"
     if arguments.check:
         summary += (f", {len(stale)} stale, {len(missing)} missing, {len(stray)} stray, "
-                    f"{len(stale_unit_names)} stale units")
+                    f"{len(stale_unit_names)} stale unit files")
     else:
-        summary += f", {len(written)} written, {len(stray)} stray, {len(written_units)} units written"
+        summary += f", {len(written)} written, {len(stray)} stray, {len(written_units)} unit files written"
     print(summary)
     return 1 if stale or missing or stray or stale_unit_names else 0

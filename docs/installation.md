@@ -80,9 +80,9 @@ git commit -m 'Initialize private Thermite site'
 ```
 
 Configure your Git author name and email if Git requests them. Keep this
-repository private. Commit generated `conf/`, `deploy/`, `metrics/`, the site
-manifest and configuration. Credentials, caches and runtime state stay
-outside Git. Init supplies the ignore rules. It creates no Git repository or
+repository private. Commit the site manifest, instance configuration and
+`versions.json`. Generated `conf/`, `deploy/`, `metrics/`, credentials, caches
+and runtime state stay outside Git. Init supplies the ignore rules. It creates no Git repository or
 commit automatically.
 
 Use commands from inside the site, or pass `thermite --site /path/to/site`.
@@ -128,16 +128,18 @@ a readable, nonempty administrator credential as the service user, including
 after an interrupted installation and reboot. Existing administrator databases
 and passwords are preserved.
 
-Existing installations retain their numeric IDs and data paths when the old
-`openhab` account is renamed; see
+Existing installations retain their Thermite account IDs and data paths when
+legacy unit names are migrated. Independent application accounts are not
+renamed; see
 [service ownership and migration](service-account.md).
 
 The native boot test downloads its pinned runtime and JRE. Before starting
 or restarting a service, the installer downloads any missing pinned container
 image with visible progress. Downloads finish before the service startup
 timer begins. This can take several minutes. Follow the
-runtime UI link printed by the installer to create its administrative login
-and API token. The token prompt hides the paste and saves it privately.
+installer through its checks. It provisions private internal runtime access
+automatically, without a separate account page or token paste. Existing valid
+access is preserved; interrupted setup resumes from its private credential record.
 Log out and back in after the installer adds you to the service group.
 
 For newly initialized native userdata, preparation builds the OSGi cache
@@ -148,7 +150,7 @@ offline preparation does not run its managed rules or Things.
 
 After validating the API token, installation waits for the required add-ons,
 Thing handlers and authenticated native metrics. Unchanged known first-start
-handler symptoms can prompt one reviewed restart of `openhab.service` within
+handler symptoms can prompt one reviewed restart of `thermite-openhab.service` within
 the startup budget. Configuration and authentication errors require fixing
 their reported cause. A persistent failure stops installation and retains
 userdata and credentials. Failed fresh cache priming also retains its
@@ -169,8 +171,21 @@ If a system update replaced the running kernel's modules, reboot before
 commissioning so Podman can use overlayfs.
 
 Native runtime installation is followed by the HTTPS and account setup below.
-The ISO and application installation do not create credentials, provision
-TLS or start the authenticated frontend for you.
+The ISO and runtime installer do not create household accounts, provision
+TLS or start the authenticated frontend for you. Internal runtime credentials
+created during installation are separate from household identities.
+
+Open the site's root URL for Thermite Home; existing `/overview/` bookmarks
+also lead there. The web and terminal interfaces share navigation, room and
+device controls, pairing, diagnostics, camera status, topology, accounts and
+room schedules. Camera media and specialist administration open in a browser
+from an explicit terminal choice. Security remains unconnected until an
+integration supplies it. Accounts and schedules require authenticated mode.
+
+Use System (F10 in the terminal) for deliberate access to openHAB, Grafana,
+Prometheus, Alertmanager and ntfy. Local-only tools remain local and provide
+SSH forwarding instructions. System's configured version is not a health
+check; the following commands report live deployment and device health.
 
 ```sh
 thermite status
@@ -190,12 +205,24 @@ browser and terminal client. Keep its private key in an owned mode-0600 file.
 A certificate from your existing local CA or public CA works; certificate
 issuance and DNS administration depend on your network.
 
+Before staging, ensure `instance/devices.yaml` selects authenticated access:
+
+```yaml
+access: {mode: authenticated}
+```
+
+Regenerate, validate and commit the selected configuration before staging.
+Stage copies the generated assets named by `--assets`, including their access
+mode; it does not convert native-mode client assets into authenticated clients.
+When switching from native testing, keep the live native assets available until
+the coordinated cutover below. Use the existing-state procedure when resuming
+an identity, rather than creating a new administrator.
+
 The application setup above provides Python virtual environments on either
 distribution. Run these commands as the same owner who installed the private
 site, after
 logging back in for membership in group `thermite`. Adjust
-the hostname, certificate paths and native state directory to match your
-installation; `/srv/thermite` is the sample `state_root`. Enter your private
+the hostname and certificate paths to match your installation. Enter your private
 site after logging in. Its launcher selects the application's Python
 environment, including when your previous shell's activation has ended:
 
@@ -204,7 +231,6 @@ cd "$HOME/thermite-site"
 HOST_ID=$(python3 -c 'import socket; print(socket.gethostname().split(".", 1)[0])')
 ACCESS_ROOT=/srv/thermite-access
 SITE_HOST=thermite.home.arpa
-RUNTIME_STATE=/srv/thermite
 TLS_CERT="$HOME/.config/thermite/tls/fullchain.pem"
 TLS_KEY="$HOME/.config/thermite/tls/key.pem"
 PLAN_ROOT="$HOME/.thermite-access-plans"
@@ -215,7 +241,7 @@ sudo install -d -o "$(id -un)" -g thermite -m 2750 \
 bin/thermite access stage \
   --destination "$ACCESS_ROOT/releases/first" \
   --state "$ACCESS_ROOT/state" \
-  --assets "$RUNTIME_STATE/conf/html/remote" \
+  --assets "$PWD/conf/html/remote" \
   --runtime-url http://127.0.0.1:13601 \
   --runtime-token-file "$PWD/var/$HOST_ID/api-token" \
   --tls-cert "$TLS_CERT" --tls-key "$TLS_KEY" \
@@ -270,7 +296,8 @@ cause and retry with a new plan directory; the same release destination can
 be reused after its partial directory has been removed. Staging never
 overwrites an existing plan or prints diagnostic contents into the receipt.
 
-After verification, create the first administrator for a new site:
+After verification, create the first administrator only for a new
+site with no existing identity:
 
 ```sh
 sudo -u thermite -g thermite "$ACCESS_ROOT/releases/first/env/bin/python" \
@@ -322,7 +349,7 @@ bin/thermite remote --url "https://$SITE_HOST:13600"
 
 With a private CA, add `--ca-file /path/to/ca.pem` at terminal login and
 install that CA in each browser's trust store. Open
-`https://<your-hostname>:13600/static/remote/home.html` in the browser.
+`https://<your-hostname>:13600/` in the browser.
 Use its Users screen to create household accounts and room grants. Verify
 that anonymous requests fail and that each role can access only its granted
 rooms. Do not expose this service directly to the Internet; remote network
@@ -351,7 +378,7 @@ PLAN="$PLAN_ROOT/second"
 bin/thermite access stage \
   --destination "$RELEASE" --plan-directory "$PLAN" \
   --state "$ACCESS_ROOT/state" \
-  --assets "$RUNTIME_STATE/conf/html/remote" \
+  --assets "$PWD/conf/html/remote" \
   --runtime-url http://127.0.0.1:13601 \
   --runtime-token-file "$PWD/var/$HOST_ID/api-token" \
   --tls-cert "$TLS_CERT" --tls-key "$TLS_KEY" \

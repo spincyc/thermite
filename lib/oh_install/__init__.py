@@ -9,7 +9,8 @@ again, so a rerun skips what is done and resumes where the last run
 stopped. Nested deployment reuses that approval for its ownership handoff.
 Verbose mode shows commands and check details. Quiet subprocess capture is
 limited to noninteractive commands; password/package prompts retain their
-terminal. Progress painting never runs an action or probes a service.
+terminal. Noninteractive root helpers authenticate first, then run under
+sudo -n with progress active. Progress painting never probes a service.
 Nothing here needs PyYAML at import: the install starts on a host
 that may not have it yet.
 """

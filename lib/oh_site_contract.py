@@ -12,7 +12,7 @@ from pathlib import Path
 
 import oh_integrations as integrations
 from oh_conf import Conf, House, is_guarded, parse_options
-from oh_features import remote, remote_activity, remote_cameras, remote_diagnostics, routing
+from oh_features import remote, remote_activity, remote_cameras, remote_diagnostics, remote_system, routing
 
 PRIVATE = re.compile(r"(?:^|_)(?:password|passwd|secret|token|psk|credential|authorization|auth)(?:_|$)", re.I)
 TEXT = {"kind": "text", "max_length": 192, "pattern": r"[^\x00-\x1f\x7f-\x9f]{1,192}"}
@@ -267,7 +267,8 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict
         if description.get("commands") and "_pairing" not in name:
             states[name]["commands"] = True
     assets = {name: {"private": name == "house.js" or name.endswith(".json")
-                    or name.endswith(".html") and name != "access.html"} for name in remote.FILES}
+                    or name.endswith(".html") and name != "access.html",
+                    **({"admin": True} if name in remote_system.ADMIN_ASSETS else {})} for name in remote.FILES}
     return {"rooms": rooms, "states": states, "routing": table, "house": copy.deepcopy(house.data), "assets": assets,
             "asset_root": str(Path(asset_root).resolve()) if asset_root else None, "pairings": pairings, "groups": groups, "media": media}
 

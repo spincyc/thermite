@@ -21,7 +21,7 @@ def confirm_run(system: System, operation: str, rerun: str = RERUN) -> bool:
     if not system.interactive():
         system.say(f"Stopped; this {operation} needs you at a terminal. {rerun}")
         return False
-    if system.ask(f"Apply this {operation} for the whole run? [y/N] ").strip().lower() not in ("y", "yes"):
+    if system.ask(f"{operation.capitalize()}? [y/N] ").strip().lower() not in ("y", "yes"):
         system.say(f"Stopped; no changes were made. {rerun}")
         return False
     return True
@@ -49,7 +49,7 @@ def perform(action: Action, system: System, area: Path, rerun: str = RERUN, *,
     elif oh_cli.switches.verbose or progress.current.get() is None:
         system.say(f"   {'running' if isinstance(action, Command) else 'now'}: {action.shown()}")
     if isinstance(action, Command):
-        with progress.command(terminal=action.root or action.terminal):
+        with progress.command(terminal=action.terminal, show_output=action.show_output):
             return system.run(action.full, area)
     # A task may request a bounded recovery command. It inherits only this
     # invocation's approval; reset even on exceptions before another run.

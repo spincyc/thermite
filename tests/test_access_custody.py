@@ -46,7 +46,9 @@ class Custody(unittest.TestCase):
         (self.external / "bin/tool").write_text("external executable")
 
     def snapshot(self, path):
-        return path.stat(), path.read_bytes() if path.is_file() else None
+        # The fixture's own read may advance atime; record metadata afterwards.
+        content = path.read_bytes() if path.is_file() else None
+        return path.stat(), content
 
     def test_replay_is_idempotent_and_preserves_new_private_state(self):
         custody.apply(self.plan)

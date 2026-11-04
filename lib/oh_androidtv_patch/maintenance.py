@@ -22,6 +22,11 @@ from . import owner_files as files
 from .integrity import manifest_headers
 
 SCRIPT = Path("conf/automation/js/thermite_androidtv_maintenance.js")
+# This root-owned, hash-verified package cannot import the operator's app.
+# The adapter tests bind these pinned identities to the application's registry.
+NATIVE_SERVICE = "thermite-openhab.service"
+NATIVE_CONTAINER = "thermite-openhab"
+NATIVE_CGROUP = "/thermite.slice/thermite-openhab.service"
 CLASSES = {"manager_sha256": PACKAGE + "protocol/googletv/GoogleTVConnectionManager.class",
            "handler_sha256": PACKAGE + "AndroidTVHandler.class",
            "helper_sha256": PACKAGE + "protocol/googletv/GoogleTVSocketLifecycle.class"}
@@ -316,7 +321,7 @@ class SystemAdapter:
                 self.assert_stopped()
                 return
             raise files.OwnerFileError("running_native_state_required")
-        mounts = json.loads(self.command(["/usr/bin/podman", "container", "inspect", "openhab", "--format", "{{json .Mounts}}"]),)
+        mounts = json.loads(self.command(["/usr/bin/podman", "container", "inspect", NATIVE_CONTAINER, "--format", "{{json .Mounts}}"]),)
         if not isinstance(mounts, list):
             raise files.OwnerFileError("native_mounts_unavailable")
         for folder in ("conf", "userdata", "addons"):
@@ -332,7 +337,7 @@ class SystemAdapter:
         return value.stdout
 
     def status(self):
-        output = self.command(["/usr/bin/systemctl", "show", "openhab.service", "--no-pager",
+        output = self.command(["/usr/bin/systemctl", "show", NATIVE_SERVICE, "--no-pager",
                                "-p", "LoadState", "-p", "ActiveState", "-p", "MainPID", "-p", "ControlGroup"])
         values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
         if values.get("LoadState") != "loaded" or not re.fullmatch(r"[0-9]+", values.get("MainPID", "")):
@@ -342,7 +347,7 @@ class SystemAdapter:
     def cgroup_pids(self, group):
         if not group:
             return set()
-        if not group.startswith("/") or ".." in Path(group).parts or not group.endswith("/openhab.service"):
+        if group != NATIVE_CGROUP:
             raise files.OwnerFileError("unexpected_native_cgroup")
         base = Path("/sys/fs/cgroup") / group.lstrip("/")
         return {int(line) for path in base.rglob("cgroup.procs") for line in path.read_text().splitlines()}
@@ -355,7 +360,7 @@ class SystemAdapter:
                 self.old_pids[pid] = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
             except FileNotFoundError:
                 pass
-        self.command(["/usr/bin/systemctl", "stop", "openhab.service"])
+        self.command(["/usr/bin/systemctl", "stop", NATIVE_SERVICE])
         self.assert_stopped()
 
     def is_running(self):
@@ -365,7 +370,7 @@ class SystemAdapter:
         current = self.status()
         if current.get("ActiveState") not in ("inactive", "failed") or current["MainPID"] != "0":
             raise files.OwnerFileError("native_service_not_stopped")
-        if (self.cgroup_pids(getattr(self, "group", "/system.slice/openhab.service"))
+        if (self.cgroup_pids(getattr(self, "group", NATIVE_CGROUP))
                 or self.cgroup_pids(current.get("ControlGroup", ""))):
             raise files.OwnerFileError("old_native_cgroup_not_retired")
         for pid, start in self.old_pids.items():
@@ -374,19 +379,19 @@ class SystemAdapter:
                     raise files.OwnerFileError("old_native_process_not_retired")
             except FileNotFoundError:
                 pass
-        existence = subprocess.run(["/usr/bin/podman", "container", "exists", "openhab"], capture_output=True,
+        existence = subprocess.run(["/usr/bin/podman", "container", "exists", NATIVE_CONTAINER], capture_output=True,
                                    timeout=10, check=False, env={"PATH": "/usr/bin:/bin", "LANG": "C"})
         if existence.returncode == 1:
             return # Quadlet normally removes its stopped container.
         if existence.returncode != 0:
             raise files.OwnerFileError("native_container_state_unavailable")
-        status = self.command(["/usr/bin/podman", "container", "inspect", "openhab", "--format", "{{.State.Running}} {{.State.Pid}}"])
+        status = self.command(["/usr/bin/podman", "container", "inspect", NATIVE_CONTAINER, "--format", "{{.State.Running}} {{.State.Pid}}"])
         if status.strip() != "false 0":
             raise files.OwnerFileError("native_container_not_stopped")
 
     def start(self):
         self.assert_stopped()
-        self.command(["/usr/bin/systemctl", "start", "openhab.service"])
+        self.command(["/usr/bin/systemctl", "start", NATIVE_SERVICE])
 
     def assert_no_probe(self):
         if files.snapshot(self.state / SCRIPT)[0]["exists"]:

@@ -51,10 +51,10 @@ def validate(data: object) -> list[str]:
     return problems
 
 
-def build(data: dict) -> Conf:
+def build(data: dict, *, system_metadata: dict | None = None) -> Conf:
     """The whole conf/ of a validated inventory."""
     house = House(data)
-    conf = Conf()
+    conf = Conf(system_metadata=system_metadata)
     for module in integrations.REGISTRY:
         devices = [d for d in house.devices if uses(d, module.PHASE, module.NAME)]
         if not devices:
@@ -80,10 +80,10 @@ def build(data: dict) -> Conf:
     return conf
 
 
-def render(data: dict) -> dict[str, str | bytes]:
+def render(data: dict, *, system_metadata: dict | None = None) -> dict[str, str | bytes]:
     """Path under conf/ -> content, for every file conf/ must hold (bytes for
     a file copied byte for byte)."""
-    return build(data).render()
+    return build(data, system_metadata=system_metadata).render()
 
 
 READ_ONLY_HEADER = (

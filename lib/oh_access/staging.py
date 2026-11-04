@@ -9,9 +9,7 @@ import shutil
 import stat
 import subprocess
 import venv
-from urllib.parse import urlsplit
-
-import oh_ports
+import oh_units
 from oh_service import ACCOUNT, GROUP
 
 from . import AccessError
@@ -58,14 +56,14 @@ def units(destination, user=ACCOUNT, *, state, callbacks=False):
         writable = "" if name == "callbacks" else "\nReadWritePaths=" + systemd(state)
         result["thermite-access" + suffix + ".service"] = (
             "[Unit]\nDescription=thermite " + {"worker": "room policy worker", "serve": "authenticated site", "callbacks": "verified UPnP callback ingress"}[name] +
-            "\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=" + user +
-            "\nGroup=" + GROUP + "\nUMask=0077\nWorkingDirectory=" + _working_directory(root) +
+            f"\nAfter=network-online.target\nWants=network-online.target\nPartOf={oh_units.TARGET}\n\n[Service]\nType=simple\nUser=" + user +
+            "\nGroup=" + GROUP + f"\nSlice={oh_units.SLICE}\nUMask=0077\nWorkingDirectory=" + _working_directory(root) +
             # env directly execs the staged interpreter; systemd restricts the
             # executable token itself from containing quotes/backslashes. ':'
             # disables its environment substitution so every '$' stays literal.
             "\nExecStart=:/usr/bin/env -- " + " ".join(systemd(x) for x in [*command, name, "--config", root / config_name]) +
             "\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only" + writable +
-            "\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy=multi-user.target\n")
+            f"\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy={oh_units.TARGET}\n")
     return result
 
 
@@ -426,13 +424,13 @@ def _export_plan(descriptor, receipt, custody, unit_sources=None):
 
 def stage(destination, *, state, house, assets, runtime_url, runtime_token_file, tls_cert, tls_key,
           allowed_hosts, bind_host, port, timezone, user=None, wheelhouse=None, area=None,
-          install_environment=True, callbacks=None, plan_directory=None):
+          install_environment=True, callbacks=None, plan_directory=None, host_ports=None):
     """A new release with explicit reusable site state. No database is migrated.
 
     Owner installs the units only AFTER resolving the activation checklist. The
     program and assets are copied, so no service points into a disposable checkout.
     """
-    from .service import compile_contract, load_config
+    from .service import compile_contract, load_config, validate_listeners
     from oh_paths import PROGRAM, SITE, SITE_FILE
     if plan_directory is None:
         raise AccessError("An operator-owned --plan-directory is required for a safe, replayable custody handoff")
@@ -462,12 +460,12 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
     if callbacks is not None:
         from .callback_service import load_config as load_callbacks
         callback_config = load_callbacks(callbacks, runtime_url=runtime_url)
-    if callback_config is not None:
-        try:
-            oh_ports.unique({"access": port, "callbacks": callback_config["port"],
-                             "native HTTP": urlsplit(runtime_url).port or 80})
-        except ValueError as exc:
-            raise AccessError(str(exc)) from None
+    try:
+        validate_listeners(runtime_url, port,
+                           callback_port=callback_config["port"] if callback_config is not None else None,
+                           host_ports=host_ports)
+    except (ValueError, TypeError) as exc:
+        raise AccessError(str(exc)) from None
     generated_units = units(target, user, state=state, callbacks=callback_config is not None)
     # Validate/create only the owned directory. Staging never initializes keys,
     # changes site identity, opens SQLite, migrates schemas or takes worker locks.

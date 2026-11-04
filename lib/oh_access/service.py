@@ -20,6 +20,23 @@ CONFIG_FIELDS = {"version", "state", "contract_file", "runtime_url", "runtime_to
                  "bind_host", "port", "tls_cert", "tls_key", "timezone"}
 
 
+def _native_port(runtime_url):
+    if not isinstance(runtime_url, str):
+        raise ValueError("native runtime must be a loopback HTTP origin")
+    native = urlsplit(runtime_url)
+    if native.scheme != "http" or native.hostname not in {"127.0.0.1", "::1"} or native.username or native.password or native.path not in ("", "/") or native.query or native.fragment:
+        raise ValueError("native runtime must be a loopback HTTP origin")
+    return oh_ports.checked("native HTTP", native.port or 80)
+
+
+def validate_listeners(runtime_url, port, *, callback_port=None, host_ports=None):
+    """Stage against the site's allocation; runtime loaders check actual endpoints."""
+    selected = {"access": port}
+    if callback_port is not None:
+        selected["callbacks"] = callback_port
+    return oh_ports.listeners(selected, upstream=_native_port(runtime_url), allocated=host_ports)
+
+
 def load_config(path, *, tls=True):
     try:
         data = json.loads(read_private(path, 65536))
@@ -32,10 +49,9 @@ def load_config(path, *, tls=True):
         if not isinstance(hosts, list) or not hosts or any(not isinstance(x, str) or not re.fullmatch(r"[A-Za-z0-9.:[\]-]+", x) or x.startswith(".") or "*" in x for x in hosts):
             raise ValueError()
         ipaddress.ip_address(data["bind_host"])
-        native = urlsplit(data["runtime_url"])
-        if native.scheme != "http" or native.hostname not in {"127.0.0.1", "::1"} or native.username or native.password or native.path not in ("", "/") or native.query or native.fragment:
-            raise ValueError()
-        oh_ports.listener("access", data["port"], upstream=native.port or 80)
+        # Staging checks the full site allocation. This runtime configuration
+        # names actual endpoints; defaults cannot describe relocated services.
+        oh_ports.unique({"access": data["port"], "native HTTP": _native_port(data["runtime_url"])})
         from zoneinfo import ZoneInfo
         ZoneInfo(data["timezone"])
         private_directory(data["state"])

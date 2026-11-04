@@ -68,6 +68,9 @@ VERBS = {
     "status": ("production", "what is deployed and running here, against this checkout"),
     "history": ("production", "this host's deploys, numbered, the latest last"),
     "health": ("production", "read-only: every Thing ONLINE in the runtime"),
+    "dhcp-reservations": ("devices", "list the UniFi DHCP reservations the house file needs"),
+    "matrix-settings": ("devices", "show matrix settings that differ from the house file; --apply sets them"),
+    "control4": ("devices", "export the Control4 project read-only and compare it"),
     "discover": ("devices", "scan the LAN read-only and compare it with the house file"),
     "pair": ("devices", "pair a TV with runtime, or check the Sony TVs' pairing"),
     "cameras": ("devices", "read camera status, or configure native Protect bridges privately"),
@@ -85,11 +88,11 @@ VERBS = {
 
 #: Verbs for one house's own tools and migration (its old controller, its
 #: network, its matrices' settings); the public docs leave them out.
-HOUSE_ONLY = frozenset({"dhcp-reservations", "matrix-settings", "control4"})
+HOUSE_ONLY = frozenset()
 
 #: Old names that still run a verb, listed nowhere. The installed helper
 #: unit from before apple-tv runs `bin/thermite atv serve`; this goes once
-#: the owner installs the regenerated deploy/openhab-atv.container.
+#: the owner installs the regenerated deploy/thermite-atv.container.
 ALIASES = {"atv": "apple-tv"}
 
 #: A quadlet installed before bin/thermite runs the Apple TV helper as

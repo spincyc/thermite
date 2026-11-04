@@ -63,7 +63,7 @@ thermite validate
 git init --initial-branch=main
 git add .
 git commit -m 'Initialize private Thermite site'</code></pre>
-<p>Configure your Git author name and email if Git requests them. Keep this repository private. Commit generated <code>conf/</code>, <code>deploy/</code>, <code>metrics/</code>, the site manifest and configuration. Credentials, caches and runtime state stay outside Git. Init supplies the ignore rules. It creates no Git repository or commit automatically.</p>
+<p>Configure your Git author name and email if Git requests them. Keep this repository private. Commit the site manifest, instance configuration and <code>versions.json</code>. Generated <code>conf/</code>, <code>deploy/</code>, <code>metrics/</code>, credentials, caches and runtime state stay outside Git. Init supplies the ignore rules. It creates no Git repository or commit automatically.</p>
 <p>Use commands from inside the site, or pass <code>thermite --site /path/to/site</code>. The private site's <code>bin/thermite</code> also selects its application environment. The installed application remains separate from mutable site files.</p>
 <h2 id="commission-the-runtime">Commission the runtime</h2>
 <p>Use a terminal on the server, as the owner account, with Internet access:</p>
@@ -72,27 +72,31 @@ thermite install</code></pre>
 <p>Install, upgrade and uninstall show compact stage status, with checkmarks and a spinner on a terminal. Use <code>thermite -v install</code> (or <code>upgrade</code> or <code>uninstall</code>) for stage details and commands. Failed checks print their diagnostics. Package transactions, sudo and other interactive commands keep the terminal while the spinner pauses; <code>--dry-run</code> lists the planned commands without running them.</p>
 <p>Read the plan first. The installer checks architecture, kernel support, ports and IDs; installs prerequisites; creates the service account and state directories; boots the configuration on a test runtime; deploys the committed site; installs systemd Quadlets; starts services; and requests the runtime API token. It asks once to approve the whole run, including root commands and the deployment ownership handoff. It can be rerun after a failure or a declined step. Do not run the whole CLI as root.</p>
 <p>Application services run as the non-login user and group <code>thermite</code>, UID/GID 9001, and deployed files belong to that account. Your login keeps ownership of the private site, launcher and Git repository. The host's systemd manager and Podman backend remain root-managed. The installer requires runc and selects it explicitly for container payloads. This preserves AppArmor confinement on Ubuntu 24.04, where crun can stack profiles under no-new-privileges and deny application signals. Native shutdown gets a 60-second grace period. On AppArmor hosts, node_exporter receives a separate policy for read-only systemd D-Bus queries. Its container configuration applies only to that service; other containers retain their default profiles. The installer presents policy loading and enables AppArmor's boot-time loading when needed. Grafana startup waits for a readable, nonempty administrator credential as the service user, including after an interrupted installation and reboot. Existing administrator databases and passwords are preserved.</p>
-<p>Existing installations retain their numeric IDs and data paths when the old <code>openhab</code> account is renamed; see <a href="service-account.html">service ownership and migration</a>.</p>
-<p>The native boot test downloads its pinned runtime and JRE. Before starting or restarting a service, the installer downloads any missing pinned container image with visible progress. Downloads finish before the service startup timer begins. This can take several minutes. Follow the runtime UI link printed by the installer to create its administrative login and API token. The token prompt hides the paste and saves it privately. Log out and back in after the installer adds you to the service group.</p>
+<p>Existing installations retain their Thermite account IDs and data paths when legacy unit names are migrated. Independent application accounts are not renamed; see <a href="service-account.html">service ownership and migration</a>.</p>
+<p>The native boot test downloads its pinned runtime and JRE. Before starting or restarting a service, the installer downloads any missing pinned container image with visible progress. Downloads finish before the service startup timer begins. This can take several minutes. Follow the installer through its checks. It provisions private internal runtime access automatically, without a separate account page or token paste. Existing valid access is preserved; interrupted setup resumes from its private credential record. Log out and back in after the installer adds you to the service group.</p>
 <p>For newly initialized native userdata, preparation builds the OSGi cache with empty add-on configuration and waits for that temporary JVM to exit before starting the real runtime. This avoids the upstream first-start cache race. Existing userdata without a cache uses normal startup, so offline preparation does not run its managed rules or Things.</p>
-<p>After validating the API token, installation waits for the required add-ons, Thing handlers and authenticated native metrics. Unchanged known first-start handler symptoms can prompt one reviewed restart of <code>openhab.service</code> within the startup budget. Configuration and authentication errors require fixing their reported cause. A persistent failure stops installation and retains userdata and credentials. Failed fresh cache priming also retains its <code>.thermite-prime-incomplete</code> marker and logs; inspect them before explicit recovery. Preparation and normal startup refuse that incomplete cache.</p>
+<p>After validating the API token, installation waits for the required add-ons, Thing handlers and authenticated native metrics. Unchanged known first-start handler symptoms can prompt one reviewed restart of <code>thermite-openhab.service</code> within the startup budget. Configuration and authentication errors require fixing their reported cause. A persistent failure stops installation and retains userdata and credentials. Failed fresh cache priming also retains its <code>.thermite-prime-incomplete</code> marker and logs; inspect them before explicit recovery. Preparation and normal startup refuse that incomplete cache.</p>
 <p>On a slow machine or under software CPU emulation, give the boot check a longer startup budget, then rerun the installer:</p>
 <pre><code class="language-sh">thermite test boot --timeout 1800
 thermite install</code></pre>
 <p>A failed check does not approve a deployment. The longer check must pass against the same committed configuration before installation continues. If a system update replaced the running kernel's modules, reboot before commissioning so Podman can use overlayfs.</p>
-<p>Native runtime installation is followed by the HTTPS and account setup below. The ISO and application installation do not create credentials, provision TLS or start the authenticated frontend for you.</p>
+<p>Native runtime installation is followed by the HTTPS and account setup below. The ISO and runtime installer do not create household accounts, provision TLS or start the authenticated frontend for you. Internal runtime credentials created during installation are separate from household identities.</p>
+<p>Open the site's root URL for Thermite Home; existing <code>/overview/</code> bookmarks also lead there. The web and terminal interfaces share navigation, room and device controls, pairing, diagnostics, camera status, topology, accounts and room schedules. Camera media and specialist administration open in a browser from an explicit terminal choice. Security remains unconnected until an integration supplies it. Accounts and schedules require authenticated mode.</p>
+<p>Use System (F10 in the terminal) for deliberate access to openHAB, Grafana, Prometheus, Alertmanager and ntfy. Local-only tools remain local and provide SSH forwarding instructions. System's configured version is not a health check; the following commands report live deployment and device health.</p>
 <pre><code class="language-sh">thermite status
 thermite health --production
 thermite access --help</code></pre>
 <p>Health reports real device availability; fictional example addresses will not establish a healthy house. Pair and verify equipment before relying on automation; <code>thermite pair --help</code> lists supported pairing steps.</p>
 <h2 id="set-up-https-and-accounts">Set up HTTPS and accounts</h2>
 <p>Choose a hostname that your clients resolve to this server and provide a TLS certificate valid for that name. The certificate must be trusted by every browser and terminal client. Keep its private key in an owned mode-0600 file. A certificate from your existing local CA or public CA works; certificate issuance and DNS administration depend on your network.</p>
-<p>The application setup above provides Python virtual environments on either distribution. Run these commands as the same owner who installed the private site, after logging back in for membership in group <code>thermite</code>. Adjust the hostname, certificate paths and native state directory to match your installation; <code>/srv/thermite</code> is the sample <code>state_root</code>. Enter your private site after logging in. Its launcher selects the application's Python environment, including when your previous shell's activation has ended:</p>
+<p>Before staging, ensure <code>instance/devices.yaml</code> selects authenticated access:</p>
+<pre><code class="language-yaml">access: {mode: authenticated}</code></pre>
+<p>Regenerate, validate and commit the selected configuration before staging. Stage copies the generated assets named by <code>--assets</code>, including their access mode; it does not convert native-mode client assets into authenticated clients. When switching from native testing, keep the live native assets available until the coordinated cutover below. Use the existing-state procedure when resuming an identity, rather than creating a new administrator.</p>
+<p>The application setup above provides Python virtual environments on either distribution. Run these commands as the same owner who installed the private site, after logging back in for membership in group <code>thermite</code>. Adjust the hostname and certificate paths to match your installation. Enter your private site after logging in. Its launcher selects the application's Python environment, including when your previous shell's activation has ended:</p>
 <pre><code class="language-sh">cd "$HOME/thermite-site"
 HOST_ID=$(python3 -c 'import socket; print(socket.gethostname().split(".", 1)[0])')
 ACCESS_ROOT=/srv/thermite-access
 SITE_HOST=thermite.home.arpa
-RUNTIME_STATE=/srv/thermite
 TLS_CERT="$HOME/.config/thermite/tls/fullchain.pem"
 TLS_KEY="$HOME/.config/thermite/tls/key.pem"
 PLAN_ROOT="$HOME/.thermite-access-plans"
@@ -103,7 +107,7 @@ sudo install -d -o "$(id -un)" -g thermite -m 2750 \
 bin/thermite access stage \
   --destination "$ACCESS_ROOT/releases/first" \
   --state "$ACCESS_ROOT/state" \
-  --assets "$RUNTIME_STATE/conf/html/remote" \
+  --assets "$PWD/conf/html/remote" \
   --runtime-url http://127.0.0.1:13601 \
   --runtime-token-file "$PWD/var/$HOST_ID/api-token" \
   --tls-cert "$TLS_CERT" --tls-key "$TLS_KEY" \
@@ -116,7 +120,7 @@ bin/thermite access stage \
 sh "$PLAN/handoff.sh"</code></pre>
 <p>Only its explicit administrative commands use sudo. The helper validates the finite manifest without following symlinks and changes opened files through their descriptors, so replay cannot follow a replaced path outside the release. The script gives the listed release and new-state files to <code>thermite:thermite</code>, with directories and executables at 0700 and other files at 0600, then verifies custody as the service user. It stops on failure; fix the reported cause and rerun the same script. Your copy remains readable after ownership changes. It does not bootstrap accounts or activate services. Use <code>--json</code> when a tool needs the full stage receipt.</p>
 <p>Environment setup writes its diagnostics to the operator-owned mode-0600 <code>$PLAN/environment-install.log</code>. If Python environment creation or pinned dependency installation fails, staging removes the partial release and keeps only that protected diagnostic plan. Review the log locally; it can contain private package-index details. Existing site state is unchanged. Correct the cause and retry with a new plan directory; the same release destination can be reused after its partial directory has been removed. Staging never overwrites an existing plan or prints diagnostic contents into the receipt.</p>
-<p>After verification, create the first administrator for a new site:</p>
+<p>After verification, create the first administrator only for a new site with no existing identity:</p>
 <pre><code class="language-sh">sudo -u thermite -g thermite "$ACCESS_ROOT/releases/first/env/bin/python" \
   "$ACCESS_ROOT/releases/first/program/bin/thermite" access bootstrap \
   --config "$ACCESS_ROOT/releases/first/config.json" --user admin</code></pre>
@@ -128,7 +132,7 @@ sh "$PLAN/handoff.sh"</code></pre>
 sh "$PLAN/activate.sh"
 bin/thermite access login --url "https://$SITE_HOST:13600" --user admin
 bin/thermite remote --url "https://$SITE_HOST:13600"</code></pre>
-<p>With a private CA, add <code>--ca-file /path/to/ca.pem</code> at terminal login and install that CA in each browser's trust store. Open <code>https://&lt;your-hostname&gt;:13600/static/remote/home.html</code> in the browser. Use its Users screen to create household accounts and room grants. Verify that anonymous requests fail and that each role can access only its granted rooms. Do not expose this service directly to the Internet; remote network access can use your existing VPN.</p>
+<p>With a private CA, add <code>--ca-file /path/to/ca.pem</code> at terminal login and install that CA in each browser's trust store. Open <code>https://&lt;your-hostname&gt;:13600/</code> in the browser. Use its Users screen to create household accounts and room grants. Verify that anonymous requests fail and that each role can access only its granted rooms. Do not expose this service directly to the Internet; remote network access can use your existing VPN.</p>
 <h2 id="update-or-remove">Update or remove</h2>
 <p>Keep the private site's verified application release cache under <code>var/application-releases/</code> for rollback. Application updates and runtime updates are separate: install a new reviewed application artifact, run <code>thermite init --upgrade /path/to/site</code>, generate, validate and commit the site, then review <code>thermite upgrade --dry-run</code>. See <a href="packaging.html">packaging</a>.</p>
 <h3 id="update-the-access-release">Update the access release</h3>
@@ -138,7 +142,7 @@ PLAN="$PLAN_ROOT/second"
 bin/thermite access stage \
   --destination "$RELEASE" --plan-directory "$PLAN" \
   --state "$ACCESS_ROOT/state" \
-  --assets "$RUNTIME_STATE/conf/html/remote" \
+  --assets "$PWD/conf/html/remote" \
   --runtime-url http://127.0.0.1:13601 \
   --runtime-token-file "$PWD/var/$HOST_ID/api-token" \
   --tls-cert "$TLS_CERT" --tls-key "$TLS_KEY" \

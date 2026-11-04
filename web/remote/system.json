@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "runtime": {
+    "version": "5.2.3"
+  },
+  "tools": [
+    {
+      "id": "openhab",
+      "label": "openHAB",
+      "description": "Advanced runtime settings and add-ons.",
+      "scheme": "http",
+      "port": 13601,
+      "path": "/settings/",
+      "localOnly": true
+    },
+    {
+      "id": "grafana",
+      "label": "Grafana",
+      "description": "Dashboards and history.",
+      "scheme": "http",
+      "port": 13610,
+      "path": "/",
+      "localOnly": false
+    },
+    {
+      "id": "prometheus",
+      "label": "Prometheus",
+      "description": "Metrics queries.",
+      "scheme": "http",
+      "port": 13606,
+      "path": "/query",
+      "localOnly": true
+    },
+    {
+      "id": "alertmanager",
+      "label": "Alertmanager",
+      "description": "Alert routing and silences.",
+      "scheme": "http",
+      "port": 13611,
+      "path": "/",
+      "localOnly": true
+    },
+    {
+      "id": "ntfy",
+      "label": "ntfy",
+      "description": "Local notification history.",
+      "scheme": "http",
+      "port": 13612,
+      "path": "/",
+      "localOnly": true
+    }
+  ]
+}

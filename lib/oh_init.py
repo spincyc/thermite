@@ -11,7 +11,7 @@ import tempfile
 import oh_paths
 import oh_release
 
-WRAPPER = '''
+LEGACY_WRAPPER = '''
 """This private site's installed thermite application."""
 import os
 import sys
@@ -21,12 +21,29 @@ os.environ["THERMITE_SITE"] = str(Path(__file__).resolve().parents[1])
 from thermite_app import main
 raise SystemExit(main())
 '''
+WRAPPER = '''
+"""This private site's pinned thermite application environment."""
+import os
+import sys
+from pathlib import Path
+sys.dont_write_bytecode = True
+launcher = Path(__file__).resolve()
+with launcher.open(encoding="utf-8") as stream:
+    interpreter = stream.readline().strip()[2:]
+# Keep the venv path: resolving its symlink can mistake OS Python for the
+# pinned environment even though their installed application differs.
+if os.path.abspath(sys.executable) != os.path.abspath(interpreter):
+    os.execv(interpreter, [interpreter, "-B", str(launcher), *sys.argv[1:]])
+os.environ["THERMITE_SITE"] = str(launcher.parents[1])
+from thermite_app import main
+raise SystemExit(main())
+'''
 MAKEFILE = '''PYTHON ?= python3
 .PHONY: help check openhab-generate openhab-test openhab-deploy
 help:
 \t@bin/thermite --help
 check:
-\t@bin/thermite generate --check
+\t@bin/thermite generate
 \t@bin/thermite validate
 openhab-generate:
 \t@bin/thermite generate
@@ -35,6 +52,7 @@ openhab-test:
 openhab-deploy:
 \t@bin/thermite deploy
 '''
+IGNORED = ("/var/", "/build/", "/.scratch/", "/.venv/", "__pycache__/", "*.pyc", "/conf/", "/metrics/", "/deploy/")
 
 
 def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool = False) -> dict:
@@ -47,7 +65,7 @@ def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool 
     # Check every mutable destination before caching or creating anything. An
     # owned site's internal var/bin symlink must not redirect an upgrade into
     # the immutable application or another site's launcher.
-    for relative in ("bin/thermite", "var/application-releases", oh_paths.SITE_FILE):
+    for relative in ("bin/thermite", "var/application-releases", oh_paths.SITE_FILE, ".gitignore"):
         path = target / relative
         for parent in (path, *path.parents):
             if parent == target: break
@@ -62,25 +80,33 @@ def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool 
         previous = oh_paths.descriptor(target)
         if previous is None: raise ValueError("--upgrade needs an existing thermite site")
         launcher = target / "bin/thermite"
-        if launcher.is_symlink() or not launcher.is_file() or launcher.read_text().partition("\n")[2] != WRAPPER:
+        if (launcher.is_symlink() or not launcher.is_file()
+                or launcher.read_text().partition("\n")[2] not in (WRAPPER, LEGACY_WRAPPER)):
             raise ValueError("site launcher was customized; review it before upgrading")
     elif existed and any(target.iterdir()):
         raise ValueError("init requires a new or empty directory; existing files are never overwritten")
     else:
         previous = None
+    ignore = target / ".gitignore"
+    if ignore.exists() and not ignore.is_file():
+        raise ValueError("site ignore rules must be a regular file")
     target.mkdir(parents=True, mode=0o700, exist_ok=True)
     if not upgrade: target.chmod(0o700)
     # Preserve exact old releases before changing the site's requirement.
     cached = oh_release.cache(program, target / "var/application-releases")
-    descriptor = {"version": 1, "application": release["application"], "release": release["digest"]}
+    descriptor = {"version": 2, "application": release["application"], "release": release["digest"]}
     if not upgrade:
         for name in ("instance/devices.yaml", "instance/host.yaml", "versions.json"):
             out = target / name; out.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(program / name, out); out.chmod(0o600)
         (target / "bin").mkdir()
         (target / "Makefile").write_text(MAKEFILE)
-        (target / ".gitignore").write_text("/var/\n/build/\n/.scratch/\n/.venv/\n__pycache__/\n*.pyc\n")
-        (target / "README.md").write_text("# Private thermite site\n\nThe initial devices are fictional. Edit instance/ before deployment. Keep this site and its generated conf/, metrics/ and deploy/ committed only in private Git. Never publish these files upstream. init starts no service; accounts and TLS require separate explicit commissioning.\n")
+        (target / "README.md").write_text("# Private thermite site\n\nThe initial devices are fictional. Edit instance/ before deployment. Commit instance/, versions.json and thermite-site.json only in private Git. conf/, metrics/ and deploy/ are ignored local build output: deployment derives them from committed inputs and the pinned application. Never publish site facts upstream. init starts no service; accounts and TLS require separate explicit commissioning.\n")
+    original = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
+    missing = [line for line in IGNORED if line not in original.splitlines()]
+    if missing:
+        ignore.write_text(original + ("\n" if original and not original.endswith("\n") else "") + "\n".join(missing) + "\n",
+                          encoding="utf-8")
     (target / "bin/thermite").write_text("#!" + sys.executable + "\n" + WRAPPER)
     (target / "bin/thermite").chmod(0o700)
     path = target / oh_paths.SITE_FILE

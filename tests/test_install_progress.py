@@ -14,6 +14,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_cli
 from oh_install import progress, runner
+from oh_install import output
 from oh_install.model import Check, Command, Step, Task
 from oh_install.system import System
 
@@ -64,6 +65,7 @@ class Presentation(unittest.TestCase):
             result = runner.run([step], System(), Path.cwd(), root_confirmed=True)
         self.assertIsNone(progress.current.get())
         self.assertFalse(progress.capture_command.get())
+        self.assertFalse(progress.show_command_output.get())
         return result, stream.getvalue()
 
     def test_already_done_is_one_compact_line_without_color_when_redirected(self):
@@ -222,6 +224,152 @@ class Presentation(unittest.TestCase):
                 self.assertEqual(result, code)
                 self.assertEqual("child diagnostic" in out, bool(code))
                 self.assertEqual("[ OK ]" in out, not code)
+
+    def test_success_warnings_show_without_pausing_the_noninteractive_command(self):
+        stream = Terminal()
+        spawn = output.subprocess.Popen
+
+        def launch(*args, **options):
+            active = progress.current.get()
+            self.assertEqual(active.paused, 0)
+            self.assertTrue(progress.capture_command.get())
+            self.assertTrue(progress.show_command_output.get())
+            self.assertFalse(progress.terminal_command.get())
+            self.assertEqual(options["stdin"], output.subprocess.DEVNULL)
+            self.assertTrue(options["start_new_session"])
+            child = spawn(*args, **options)
+            self.assertTrue(stream.rotated.wait(2), stream.getvalue())
+            return child
+
+        command = Command(("unused-command",), approved_argv=(sys.executable, "-B", "-c",
+                          "print('\\x1b[31mWARNING\\x1b[0m device unavailable')"), show_output=True)
+        with mock.patch.object(output.subprocess, "Popen", side_effect=launch):
+            result, text = self.run_stage(Stage([Check(False, "check"), Check(True, "ready")], [command]), stream)
+        self.assertEqual(result, 0)
+        self.assertEqual(text.count("WARNING device unavailable"), 1)
+        self.assertIn("✓", text)
+        self.assertFalse(any(thread.name == "thermite-progress" for thread in threading.enumerate()))
+
+    def test_quiet_opted_in_success_is_hidden_but_failure_output_remains_once(self):
+        oh_cli.switches.quiet = True
+        for code in (0, 7):
+            with self.subTest(code=code), contextlib.redirect_stderr(io.StringIO()) as error:
+                command = Command((sys.executable, "-B", "-c",
+                                   f"print('\\x1b[31mWARNING\\x1b[0m device unavailable'); raise SystemExit({code})"),
+                                  show_output=True)
+                result, text = self.run_stage(Stage([Check(False, "check"), Check(True, "ready")], [command]))
+                self.assertEqual(result, code)
+                self.assertNotIn("WARNING device unavailable", text)
+                self.assertEqual(error.getvalue().count("WARNING device unavailable"), int(bool(code)))
+
+    def test_output_opt_in_resets_after_nested_context_and_exception(self):
+        self.assertFalse(progress.show_command_output.get())
+        with self.assertRaisesRegex(RuntimeError, "cancel"):
+            with progress.command(terminal=False, show_output=True):
+                self.assertTrue(progress.show_command_output.get())
+                with progress.command(terminal=True):
+                    self.assertFalse(progress.show_command_output.get())
+                self.assertTrue(progress.show_command_output.get())
+                raise RuntimeError("cancel")
+        self.assertFalse(progress.show_command_output.get())
+        self.assertFalse(progress.capture_command.get())
+        self.assertFalse(progress.terminal_command.get())
+
+    def test_verbose_opted_in_command_keeps_inherited_streams(self):
+        oh_cli.switches.verbose = True
+        command = Command(("visible-child",), show_output=True)
+
+        def child(argv, **options):
+            self.assertFalse(progress.capture_command.get())
+            self.assertTrue(progress.show_command_output.get())
+            self.assertNotIn("stdin", options)
+            self.assertNotIn("stdout", options)
+            self.assertNotIn("stderr", options)
+            return mock.Mock(returncode=0)
+
+        with mock.patch("oh_install.system.subprocess.run", side_effect=child), \
+                mock.patch.object(output, "run") as capture:
+            result, _ = self.run_stage(Stage([Check(False, "check"), Check(True, "ready")], [command]))
+        self.assertEqual(result, 0)
+        capture.assert_not_called()
+
+    def test_root_command_resumes_animation_after_password_validation(self):
+        stream = Terminal()
+
+        def authenticate(argv, **options):
+            self.assertEqual(argv, ["sudo", "-v"])
+            self.assertGreater(progress.current.get().paused, 0)
+            self.assertNotIn("stdin", options)
+            return mock.Mock(returncode=0)
+
+        def execute(argv, cwd, **options):
+            self.assertEqual(argv, ("sudo", "-n", "systemctl", "stop", "example.service"))
+            self.assertEqual(progress.current.get().paused, 0)
+            self.assertTrue(options["keep_terminal"])
+            self.assertTrue(stream.rotated.wait(2), stream.getvalue())
+            return 0
+
+        stage = Stage([Check(False, "stopping"), Check(True, "stopped")],
+                      [Command(("systemctl", "stop", "example.service"), root=True)])
+        with mock.patch.object(System, "interactive", return_value=True), \
+                mock.patch("oh_install.system.subprocess.run", side_effect=authenticate) as validation, \
+                mock.patch("oh_install.output.run", side_effect=execute) as command:
+            result, text = self.run_stage(stage, stream)
+        self.assertEqual(result, 0)
+        self.assertIn("✓", text)
+        self.assertEqual((validation.call_count, command.call_count), (1, 1))
+
+    def test_failed_authentication_never_runs_the_root_payload(self):
+        stage = Stage([Check(False, "stopping")], [Command(("systemctl", "stop", "example.service"), root=True)])
+        with mock.patch.object(System, "interactive", return_value=True), \
+                mock.patch("oh_install.system.subprocess.run", return_value=mock.Mock(returncode=1)), \
+                mock.patch("oh_install.output.run") as command:
+            result, text = self.run_stage(stage)
+        self.assertEqual(result, 1)
+        command.assert_not_called()
+        self.assertIn("[ FAIL ]", text)
+
+    def test_root_payload_failure_is_not_retried(self):
+        stage = Stage([Check(False, "stopping")], [Command(("systemctl", "stop", "example.service"), root=True)])
+        with mock.patch.object(System, "interactive", return_value=True), \
+                mock.patch("oh_install.system.subprocess.run", return_value=mock.Mock(returncode=0)) as validation, \
+                mock.patch("oh_install.output.run", return_value=1) as command:
+            result, _ = self.run_stage(stage)
+        self.assertEqual(result, 1)
+        self.assertEqual((validation.call_count, command.call_count), (1, 1))
+
+    def test_explicit_interactive_root_command_keeps_the_terminal(self):
+        stage = Stage([Check(False, "packages"), Check(True, "installed")],
+                      [Command(("package-manager",), root=True, terminal=True)])
+        with mock.patch.object(System, "interactive", return_value=True), \
+                mock.patch("oh_install.system.subprocess.run", return_value=mock.Mock(returncode=0)) as command, \
+                mock.patch("oh_install.output.run") as capture:
+            result, _ = self.run_stage(stage)
+        self.assertEqual(result, 0)
+        self.assertEqual(command.call_args.args[0], ["sudo", "package-manager"])
+        capture.assert_not_called()
+
+    def test_root_authentication_and_command_share_one_startup_budget(self):
+        from oh_install.steps import _RestartBeforeDeadline
+
+        for elapsed, expected in ((3, 7), (10, None)):
+            with self.subTest(elapsed=elapsed):
+                system = System()
+                with contextlib.redirect_stdout(io.StringIO()) as text, \
+                        mock.patch.object(system, "clock", side_effect=[100, 100, 100 + elapsed]), \
+                        mock.patch("oh_install.system.subprocess.run", return_value=mock.Mock(returncode=0)) as validation, \
+                        mock.patch("oh_install.output.run", return_value=0) as command:
+                    with progress.Progress(system, "Native readiness") as display, progress.command(terminal=False):
+                        code = _RestartBeforeDeadline(system, 110).run(("sudo", "systemctl", "restart", "example.service"), AREA)
+                        display.finish("OK" if code == 0 else "FAIL")
+                self.assertEqual(validation.call_args.kwargs["timeout"], 10)
+                if expected is None:
+                    self.assertEqual(code, 124)
+                    command.assert_not_called()
+                    self.assertIn("no command was run", text.getvalue())
+                else:
+                    self.assertEqual(code, 0)
+                    self.assertEqual(command.call_args.kwargs["timeout"], expected)
 
 
 if __name__ == "__main__":

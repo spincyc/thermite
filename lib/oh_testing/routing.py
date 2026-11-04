@@ -756,9 +756,9 @@ class Check:
         its read-back heard on the event stream (web/remote/backend.js)."""
         anonymous = lib.Http(self.http.base, timeout=STEP, allow_write=True)
         for name in remote.FILES:
-            _, body = anonymous.request("GET", remote.URL + name)
+            _, body = anonymous.request("GET", remote.ASSET_URL + name)
             if body != self.remote_files[name]:
-                self.failures.append(f"{remote.URL}{name} differs from the generated test conf")
+                self.failures.append(f"{remote.ASSET_URL}{name} differs from the generated test conf")
         room = next(iter(self.table))
         item = self.table[room]["item"]
         _, shown = anonymous.request("GET", f"/rest/items/{item}/state", headers={"Accept": "text/plain"})

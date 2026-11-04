@@ -14,6 +14,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_service as service
+import oh_logging
 
 
 class Permissions(unittest.TestCase):
@@ -255,6 +256,43 @@ class Permissions(unittest.TestCase):
         for uid, gid in ((0, self.gid), (self.uid, 0), (-1, self.gid)):
             with self.assertRaises(service.ServiceError):
                 service.audit_state(self.root, uid, gid)
+
+    def test_logging_check_distinguishes_missing_protection_from_failure_to_read(self):
+        args = [str(self.root), "--check-pairing-logging"]
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as missing:
+            service.main(args)
+        self.assertEqual(missing.exception.code, service.PAIRING_LOGGING_UNPROTECTED)
+        with mock.patch.object(service, "_open_root", side_effect=PermissionError("cannot read")), \
+                contextlib.redirect_stderr(io.StringIO()) as output, self.assertRaises(SystemExit) as unreadable:
+            service.main(args)
+        self.assertEqual(unreadable.exception.code, 2)
+        self.assertNotIn("protection is missing", output.getvalue())
+
+    def test_logging_check_checks_both_files_without_mutating_them(self):
+        native = self.file("userdata/" + str(oh_logging.RELATIVE), 0o600)
+        selector = self.file("userdata/" + str(oh_logging.SELECTOR), 0o600)
+        native.write_bytes(oh_logging.guarded(b"<Configuration><Loggers><Root/></Loggers></Configuration>"))
+        selector.write_bytes(oh_logging.DEFAULT_SELECTOR)
+        def snapshot(path):
+            info = path.stat()
+            return path.read_bytes(), info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_mtime_ns
+        before = {path: snapshot(path) for path in (native, selector)}
+        self.assertEqual(service.main([str(self.root), "--check-pairing-logging"]), 0)
+        self.assertEqual({path: snapshot(path) for path in before}, before)
+        selector.unlink()
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as missing:
+            service.main([str(self.root), "--check-pairing-logging"])
+        self.assertEqual(missing.exception.code, service.PAIRING_LOGGING_UNPROTECTED)
+
+    def test_logging_check_does_not_treat_an_unreadable_link_as_a_completed_check(self):
+        native = self.file("userdata/" + str(oh_logging.RELATIVE), 0o600)
+        outside = self.file("untouched", 0o600)
+        native.unlink()
+        native.symlink_to(outside)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as unreadable:
+            service.main([str(self.root), "--check-pairing-logging"])
+        self.assertEqual(unreadable.exception.code, 2)
+        self.assertTrue(native.is_symlink())
 
     def test_deployment_scope_repairs_outputs_without_walking_active_private_stores(self):
         self.file("conf/site.yaml")

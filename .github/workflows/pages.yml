@@ -18,7 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: python3 -m pip install -r requirements.txt
+      - run: python3 -m pip install --require-hashes -r lib/requirements-site.txt
       - run: make check
+      - run: mkdir -p .scratch && mkdir -m 0700 .scratch/identity-check
+      - run: make check-identity
+        env:
+          THERMITE_IDENTITY_STATE: ${{ github.workspace }}/.scratch/identity-check
       - run: test -f docs/index.html && test -f docs/commands.html
       - uses: actions/upload-pages-artifact@v5
         with:

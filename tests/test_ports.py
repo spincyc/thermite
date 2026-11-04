@@ -1,7 +1,10 @@
 """The listener allocation, generated consumers and configurable collision checks."""
+import fcntl
+import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -55,6 +58,17 @@ class Allocation(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "collides"):
                 oh_ports.listener(name, 14040, upstream=14040)
 
+    def test_explicit_upstream_cannot_free_the_selected_sites_configured_http_port(self):
+        allocated = oh_ports.effective()
+        with self.assertRaisesRegex(ValueError, "collides"):
+            oh_ports.listeners({"access": oh_ports.HTTP_PORT}, upstream=14041, allocated=allocated)
+        ports = oh_ports.listeners({"access": oh_ports.ACCESS_PORT}, upstream=14041, allocated=allocated)
+        self.assertEqual(ports["http"], oh_ports.HTTP_PORT)
+        self.assertIn(14041, ports.values())
+        # Without a selected host, the explicit origin retains the direct API's
+        # established override of the native HTTP default.
+        self.assertEqual(oh_ports.listeners({"access": oh_ports.HTTP_PORT}, upstream=14041)["access"], oh_ports.HTTP_PORT)
+
     def test_stopped_console_configuration_preserves_other_settings(self):
         with tempfile.TemporaryDirectory() as temporary:
             userdata = Path(temporary)
@@ -77,6 +91,120 @@ class Allocation(unittest.TestCase):
             oh_ports.configure_native(userdata)
             self.assertEqual(path.read_bytes(), first)
             self.assertEqual(custom.read_bytes(), configured)
+
+    def test_listener_setup_ignores_independent_default_console_and_unused_http_default(self):
+        def unrelated_listener(address, **kwargs):
+            if address[1] in (8101, oh_ports.HTTP_PORT):
+                return mock.MagicMock()
+            raise ConnectionRefusedError()
+
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(oh_ports.socket, "create_connection", side_effect=unrelated_listener) as connect, \
+                mock.patch.object(oh_ports, "configure_native") as configure:
+            userdata = Path(temporary)
+            self.assertEqual(oh_ports.main([str(userdata), "--http-port", "14040"]), 0)
+        self.assertEqual([call.args[0][1] for call in connect.call_args_list],
+                         [14040, oh_ports.KARAF_PORT, oh_ports.SHUTDOWN_PORT])
+        configure.assert_called_once_with(userdata)
+
+    def test_exact_userdata_record_lock_blocks_running_legacy_instance_but_not_foreign_instance(self):
+        script = """
+import sys
+from unittest import mock
+sys.path.insert(0, sys.argv[1])
+import oh_ports
+with mock.patch.object(oh_ports.socket, 'create_connection', side_effect=ConnectionRefusedError):
+    raise SystemExit(oh_ports.main([sys.argv[2]]))
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "thermite"
+            (target / "etc").mkdir(parents=True)
+            console, custom = target / oh_ports.SHELL_CFG, target / oh_ports.CUSTOM_PROPERTIES
+            console.write_text("sshPort=8101\nsshHost=0.0.0.0\n")
+            custom.write_text("karaf.lock.dir=${karaf.data}/tmp\n")
+            before = console.read_bytes(), custom.read_bytes()
+            (target / "tmp").mkdir()
+            lock = target / "tmp/lock"
+            lock.touch()
+            foreign = root / "independent-openhab/tmp/lock"
+            foreign.parent.mkdir(parents=True)
+            foreign.touch()
+            for active, blocked in ((lock, True), (foreign, False)):
+                with self.subTest(active=active), active.open("r+b") as descriptor:
+                    fcntl.lockf(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    child = subprocess.run([sys.executable, "-c", script, str(AREA / "lib"), str(target)],
+                                           capture_output=True, text=True, timeout=5)
+                    self.assertEqual(child.returncode, 2 if blocked else 0, child.stderr)
+                    if blocked:
+                        self.assertIn("userdata lock is held", child.stderr)
+                        self.assertEqual((console.read_bytes(), custom.read_bytes()), before)
+                    else:
+                        self.assertTrue(oh_ports.native_configured_bytes(console.read_bytes()))
+
+    def test_native_guard_holds_existing_lock_through_writes_without_creating_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for path in (root, root / "tmp"):
+                path.mkdir(exist_ok=True)
+                before = list(path.iterdir())
+                with oh_ports._native_stopped(root):
+                    self.assertEqual(list(path.iterdir()), before)
+            lock = root / "tmp/lock"
+            lock.touch()
+            check = "import fcntl,sys; f=open(sys.argv[1], 'r+b'); fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB)"
+            with oh_ports._native_stopped(root):
+                child = subprocess.run([sys.executable, "-c", check, str(lock)], capture_output=True, timeout=5)
+                self.assertNotEqual(child.returncode, 0)
+            child = subprocess.run([sys.executable, "-c", check, str(lock)], capture_output=True, timeout=5)
+            self.assertEqual(child.returncode, 0, child.stderr)
+
+    def test_native_guard_rejects_symlinks_and_nonregular_or_linked_lock_files(self):
+        for invalid in ("userdata-link", "tmp-link", "lock-link", "directory", "fifo", "hardlink"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                userdata = root / "userdata"
+                userdata.mkdir()
+                outside = root / "outside"
+                outside.mkdir()
+                (outside / "lock").touch()
+                if invalid == "userdata-link":
+                    (root / "linked").symlink_to(userdata, target_is_directory=True)
+                    userdata = root / "linked"
+                elif invalid == "tmp-link":
+                    (userdata / "tmp").symlink_to(outside, target_is_directory=True)
+                else:
+                    (userdata / "tmp").mkdir()
+                    lock = userdata / "tmp/lock"
+                    if invalid == "lock-link":
+                        lock.symlink_to(outside / "lock")
+                    elif invalid == "directory":
+                        lock.mkdir()
+                    elif invalid == "fifo":
+                        os.mkfifo(lock)
+                    else:
+                        os.link(outside / "lock", lock)
+                with self.assertRaises((OSError, ValueError)):
+                    with oh_ports._native_stopped(userdata):
+                        self.fail("invalid native lock path admitted")
+
+    def test_listener_setup_refuses_each_actual_listener_before_writing(self):
+        ports = (14040, oh_ports.KARAF_PORT, oh_ports.SHUTDOWN_PORT)
+        for occupied in ports:
+            def listener(address, **kwargs):
+                if address[1] == occupied:
+                    return mock.MagicMock()
+                raise ConnectionRefusedError()
+
+            with self.subTest(port=occupied), \
+                    mock.patch.object(oh_ports.socket, "create_connection", side_effect=listener), \
+                    mock.patch.object(oh_ports, "configure_native") as configure, \
+                    mock.patch("sys.stderr", new_callable=io.StringIO) as errors:
+                with self.assertRaises(SystemExit) as stopped:
+                    oh_ports.main(["/configured/thermite/userdata", "--http-port", "14040"])
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertIn(f"port {occupied} answers", errors.getvalue())
+                configure.assert_not_called()
 
     def test_shutdown_config_requires_both_positive_fixed_port_and_loopback(self):
         for content in (None, b"", b"karaf.shutdown.port=0\nkaraf.shutdown.host=127.0.0.1\n",
@@ -200,7 +328,8 @@ class Allocation(unittest.TestCase):
         self.assertLess(sequence.index(steps.NativePreparation), sequence.index(steps.Services))
         system = mock.Mock()
         system.unit.return_value.active = "inactive"
-        commands = [action.argv for action in steps.NativePreparation(context).actions(system)]
+        with mock.patch.object(steps.ownership, "inspect", return_value=steps.ownership.Owned()):
+            commands = [action.argv for action in steps.NativePreparation(context).actions(system)]
         logging = next(i for i, argv in enumerate(commands) if any(word.endswith("/oh_logging.py") for word in argv))
         listeners = next(i for i, argv in enumerate(commands) if any(word.endswith("/oh_ports.py") for word in argv))
         receipt = next(i for i, argv in enumerate(commands) if "--receipt" in argv)

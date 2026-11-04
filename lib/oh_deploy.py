@@ -43,39 +43,47 @@ import oh_cli
 import oh_logging
 import oh_ports
 import oh_service
+import oh_units
 import oh_metrics as metrics
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
-QUADLET = "deploy/openhab.container"
-ATV_QUADLET = "deploy/openhab-atv.container"
-ATV_RESTART_PATH = "deploy/openhab-atv-restart.path"
-ATV_RESTART_SERVICE = "deploy/openhab-atv-restart.service"
+QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.RUNTIME]}.container"
+ATV_QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.ATV]}.container"
+ATV_RESTART_PATH = f"deploy/{oh_units.ATV_RESTART_PATH}"
+ATV_RESTART_SERVICE = f"deploy/{oh_units.ATV_RESTART_SERVICE}"
 #: The metrics services' quadlets (oh_metrics.services()), by unit.
 METRICS_QUADLETS = {unit: f"deploy/{unit.removesuffix('.service')}.container" for unit in metrics.SERVICE_UNITS}
-METRICS_RESTART_PATH = "deploy/openhab-metrics-restart.path"
-METRICS_RESTART_SERVICE = "deploy/openhab-metrics-restart.service"
-#: What openhab-metrics-restart.service restarts: the services a deploy
+METRICS_RESTART_PATH = f"deploy/{oh_units.METRICS_RESTART_PATH}"
+METRICS_RESTART_SERVICE = f"deploy/{oh_units.METRICS_RESTART_SERVICE}"
+TARGET = f"deploy/{oh_units.TARGET}"
+SLICE = f"deploy/{oh_units.SLICE}"
+CONTAINER_DROPINS = {unit: f"deploy/{unit}.d/50-container-lifecycle.conf" for unit in oh_units.DAEMONS}
+#: What thermite-metrics-restart.service restarts: the services a deploy
 #: cannot reload over HTTP.
-METRICS_RESTARTED = ("openhab-metrics-exporter.service", "openhab-grafana.service",
-                     "openhab-notifications.service", "openhab-ntfy.service")
+METRICS_RESTARTED = (oh_units.EXPORTER, oh_units.GRAFANA, oh_units.NOTIFICATIONS, oh_units.NTFY)
 #: Where the owner installs each generated unit on the host.
 INSTALLED = {
-    QUADLET: Path("/etc/containers/systemd/openhab.container"),
-    ATV_QUADLET: Path("/etc/containers/systemd/openhab-atv.container"),
-    ATV_RESTART_PATH: Path("/etc/systemd/system/openhab-atv-restart.path"),
-    ATV_RESTART_SERVICE: Path("/etc/systemd/system/openhab-atv-restart.service"),
+    QUADLET: Path("/etc/containers/systemd") / Path(QUADLET).name,
+    ATV_QUADLET: Path("/etc/containers/systemd") / Path(ATV_QUADLET).name,
+    ATV_RESTART_PATH: Path("/etc/systemd/system") / oh_units.ATV_RESTART_PATH,
+    ATV_RESTART_SERVICE: Path("/etc/systemd/system") / oh_units.ATV_RESTART_SERVICE,
     **{name: Path("/etc/containers/systemd") / Path(name).name for name in METRICS_QUADLETS.values()},
-    METRICS_RESTART_PATH: Path("/etc/systemd/system/openhab-metrics-restart.path"),
-    METRICS_RESTART_SERVICE: Path("/etc/systemd/system/openhab-metrics-restart.service"),
+    METRICS_RESTART_PATH: Path("/etc/systemd/system") / oh_units.METRICS_RESTART_PATH,
+    METRICS_RESTART_SERVICE: Path("/etc/systemd/system") / oh_units.METRICS_RESTART_SERVICE,
+    TARGET: Path("/etc/systemd/system") / oh_units.TARGET,
+    SLICE: Path("/etc/systemd/system") / oh_units.SLICE,
+    **{source: Path("/etc/systemd/system") / Path(source).relative_to("deploy")
+       for source in CONTAINER_DROPINS.values()},
 }
 #: The units of openHAB and its helper, and those of metrics and dashboards.
 OPENHAB_UNITS = (QUADLET, ATV_QUADLET, ATV_RESTART_PATH, ATV_RESTART_SERVICE)
 METRICS_UNITS = (*METRICS_QUADLETS.values(), METRICS_RESTART_PATH, METRICS_RESTART_SERVICE)
-SERVICES = ("openhab.service", "openhab-atv.service", "openhab-atv-restart.path", *metrics.SERVICE_UNITS,
-            "openhab-metrics-restart.path")
+SERVICES = (oh_units.RUNTIME, oh_units.ATV, oh_units.ATV_RESTART_PATH, *metrics.SERVICE_UNITS,
+            oh_units.METRICS_RESTART_PATH, oh_units.TARGET)
 #: The area's files the Apple TV helper's container runs.
 ATV_APP = ("bin/thermite", "lib/oh_cli/__init__.py", "lib/oh_cli/apple_tv.py", "lib/oh_atv.py",
-           "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py", "lib/oh_ports.py", "lib/oh_service.py")
+           "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py", "lib/oh_ports.py", "lib/oh_service.py",
+           "lib/oh_units.py")
 #: The helper's verb module in commits from before it was apple_tv.py: a
 #: deploy of such a commit (a rollback) installs it, or that commit's
 #: bin/thermite could not run the helper.
@@ -192,7 +200,7 @@ class State:
 
     @property
     def atv_restart(self) -> Path:
-        """Written by a deploy that changes the helper; openhab-atv-restart.path watches it."""
+        """Written by a deploy that changes the helper; thermite-atv-restart.path watches it."""
         return self.records / "atv-restart"
 
     @property
@@ -232,7 +240,7 @@ class State:
     @property
     def metrics_restart(self) -> Path:
         """Written by a deploy that changes the exporter's code or Grafana's
-        settings; openhab-metrics-restart.path watches it."""
+        settings; thermite-metrics-restart.path watches it."""
         return self.records / "metrics-restart"
 
     def directories(self) -> list[tuple[int, list[Path]]]:
@@ -487,11 +495,12 @@ def render_quadlet(versions: dict, host: dict) -> str:
         "# from versions.json and instance/host.yaml: change those, then generate again.",
         "[Unit]",
         f"Description=openHAB {version} home automation",
+        f"PartOf={oh_units.TARGET}",
         "Wants=network-online.target",
         "After=network-online.target",
         "",
         "[Container]",
-        "ContainerName=openhab",
+        f"ContainerName={oh_units.CONTAINERS[oh_units.RUNTIME]}",
         f"Image={image(versions)}",
         "# UPnP, mDNS and SDDP discovery and the Sonos event callbacks do not",
         "# traverse a container network.",
@@ -502,6 +511,9 @@ def render_quadlet(versions: dict, host: dict) -> str:
         "DropCapability=all",
         # Avoid crun/AppArmor profile stacking under no-new-privileges.
         "PodmanArgs=--runtime=runc",
+        # Quadlet adds --replace; this later value preserves foreign namesakes.
+        "PodmanArgs=--replace=false",
+        "PodmanArgs=--cidfile=%t/%N.cid",
         "PodmanArgs=--umask=0077",
         # Quadlet 4.9 (Ubuntu 24.04) predates the Entrypoint key.
         "PodmanArgs=--entrypoint=/bin/sh",
@@ -524,13 +536,14 @@ def render_quadlet(versions: dict, host: dict) -> str:
         "Exec=-ec " + exec_word(openhab_start()),
         "",
         "[Service]",
+        f"Slice={oh_units.SLICE}",
         "UMask=0077",
         "Restart=always",
         "TimeoutStartSec=300",
         "TimeoutStopSec=90",
         "",
         "[Install]",
-        "WantedBy=multi-user.target",
+        f"WantedBy={oh_units.TARGET}",
         "",
     ]
     return "\n".join(lines)
@@ -544,11 +557,12 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
         *HEADER,
         "[Unit]",
         "Description=Apple TV helper for openHAB",
+        f"PartOf={oh_units.TARGET}",
         "Wants=network-online.target",
         "After=network-online.target",
         "",
         "[Container]",
-        "ContainerName=openhab-atv",
+        f"ContainerName={oh_units.CONTAINERS[oh_units.ATV]}",
         f"Image={image(versions, 'atv_helper')}",
         f"# openHAB reaches it on 127.0.0.1:{HELPER_PORT}; it has no login, so it",
         "# listens there only.",
@@ -559,6 +573,8 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
         "DropCapability=all",
         # Avoid crun/AppArmor profile stacking under no-new-privileges.
         "PodmanArgs=--runtime=runc",
+        "PodmanArgs=--replace=false",
+        "PodmanArgs=--cidfile=%t/%N.cid",
         "PodmanArgs=--umask=0077",
         "# Its code, as the last deploy installed it.",
         f"Volume={layout.atv_app}:/app:ro,Z",
@@ -574,6 +590,7 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
         "Exec=python3 /app/bin/thermite apple-tv serve --setup --secrets /secrets",
         "",
         "[Service]",
+        f"Slice={oh_units.SLICE}",
         "UMask=0077",
         "Restart=always",
         "# Unhurried, so a boot without PyPI does not exhaust systemd's start limit.",
@@ -581,7 +598,7 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
         "TimeoutStartSec=300",
         "",
         "[Install]",
-        "WantedBy=multi-user.target",
+        f"WantedBy={oh_units.TARGET}",
         "",
     ]
     return "\n".join(lines)
@@ -594,13 +611,14 @@ def render_atv_restart_path(host: dict) -> str:
         *HEADER,
         "[Unit]",
         "Description=Restart the Apple TV helper after a deploy changes it",
+        f"PartOf={oh_units.TARGET}",
         "",
         "[Path]",
         f"PathChanged={state(host).atv_restart}",
-        "Unit=openhab-atv-restart.service",
+        f"Unit={oh_units.ATV_RESTART_SERVICE}",
         "",
         "[Install]",
-        "WantedBy=multi-user.target",
+        f"WantedBy={oh_units.TARGET}",
         "",
     ]
     return "\n".join(lines)
@@ -608,14 +626,16 @@ def render_atv_restart_path(host: dict) -> str:
 
 def render_atv_restart_service(host: dict) -> str:
     lines = [
-        "# Started by openhab-atv-restart.path.",
+        "# Started by thermite-atv-restart.path.",
         *HEADER,
         "[Unit]",
         "Description=Restart the Apple TV helper after a deploy changed it",
+        f"PartOf={oh_units.TARGET}",
         "",
         "[Service]",
+        f"Slice={oh_units.SLICE}",
         "Type=oneshot",
-        "ExecStart=/usr/bin/systemctl try-restart openhab-atv.service",
+        f"ExecStart=/usr/bin/systemctl try-restart {oh_units.ATV}",
         "",
     ]
     return "\n".join(lines)
@@ -672,9 +692,10 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         *HEADER,
         "[Unit]",
         f"Description={service.description}",
+        f"PartOf={oh_units.TARGET}",
         "Wants=network-online.target",
         "After=network-online.target",
-        *(["After=apparmor.service"] if service.unit == "openhab-node-exporter.service" else []),
+        *(["After=apparmor.service"] if service.unit == oh_units.NODE_EXPORTER else []),
         "",
         "[Container]",
         f"ContainerName={service.container}",
@@ -687,6 +708,8 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         "DropCapability=all",
         # Avoid crun/AppArmor profile stacking under no-new-privileges.
         "PodmanArgs=--runtime=runc",
+        "PodmanArgs=--replace=false",
+        "PodmanArgs=--cidfile=%t/%N.cid",
         "PodmanArgs=--umask=0027",
         *(f"# {note}" for note in service.notes),
         *(_volume(service, volume, root, shared) for volume in service.volumes),
@@ -700,19 +723,20 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
     lines += [
         "",
         "[Service]",
+        f"Slice={oh_units.SLICE}",
         *(["Environment=CONTAINERS_CONF_OVERRIDE=/etc/thermite/node-exporter-containers.conf"]
-          if service.unit == "openhab-node-exporter.service" else []),
+          if service.unit == oh_units.NODE_EXPORTER else []),
         "UMask=0027",
         *(_grafana_conditions(host) if service.image == "grafana" else []),
         *(["# node_exporter exits 143 after an ordinary container SIGTERM.", "SuccessExitStatus=143"]
-          if service.unit == "openhab-node-exporter.service" else []),
+          if service.unit == oh_units.NODE_EXPORTER else []),
         "Restart=always",
         "RestartSec=10",
         "# The first start pulls the image.",
         "TimeoutStartSec=300",
         "",
         "[Install]",
-        "WantedBy=multi-user.target",
+        f"WantedBy={oh_units.TARGET}",
         "",
     ]
     return "\n".join(lines)
@@ -726,13 +750,14 @@ def render_metrics_restart_path(host: dict) -> str:
         *HEADER,
         "[Unit]",
         "Description=Restart the metrics applications after a deploy changes them",
+        f"PartOf={oh_units.TARGET}",
         "",
         "[Path]",
         f"PathChanged={state(host).metrics_restart}",
         f"Unit={Path(METRICS_RESTART_SERVICE).name}",
         "",
         "[Install]",
-        "WantedBy=multi-user.target",
+        f"WantedBy={oh_units.TARGET}",
         "",
     ]
     return "\n".join(lines)
@@ -744,8 +769,10 @@ def render_metrics_restart_service(host: dict) -> str:
         *HEADER,
         "[Unit]",
         "Description=Restart the metrics applications after a deploy changed them",
+        f"PartOf={oh_units.TARGET}",
         "",
         "[Service]",
+        f"Slice={oh_units.SLICE}",
         "Type=oneshot",
         f"ExecStart=/usr/bin/systemctl try-restart {' '.join(METRICS_RESTARTED)}",
         "",
@@ -753,23 +780,67 @@ def render_metrics_restart_service(host: dict) -> str:
     return "\n".join(lines)
 
 
+def render_target() -> str:
+    """One boot entry point; members declare their own target membership."""
+    return "\n".join([
+        *HEADER,
+        "[Unit]",
+        "Description=Thermite home control and monitoring",
+        "",
+        "[Install]",
+        "WantedBy=multi-user.target",
+        "",
+    ])
+
+
+def render_slice() -> str:
+    return "\n".join([
+        *HEADER,
+        "[Unit]",
+        "Description=Thermite services",
+        "",
+        "[Slice]",
+        "CPUAccounting=yes",
+        "MemoryAccounting=yes",
+        "TasksAccounting=yes",
+        "",
+    ])
+
+
+def render_container_dropin() -> str:
+    """Override generator cleanup after generation, retaining only our CID."""
+    return "\n".join([
+        *HEADER,
+        "[Service]",
+        "ExecStartPre=/usr/bin/rm -f -- %t/%N.cid",
+        "ExecStop=",
+        "ExecStop=/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid",
+        "ExecStopPost=",
+        "ExecStopPost=-/usr/bin/podman rm -v -f -i --cidfile=%t/%N.cid",
+        "",
+    ])
+
+
 def render_units(versions: dict, host: dict) -> dict[str, str]:
-    """{area path: text} of every unit the owner installs."""
+    """{area path: text} of every unit and service drop-in the owner installs."""
     units = {
         QUADLET: render_quadlet(versions, host),
         ATV_QUADLET: render_atv_quadlet(versions, host),
         ATV_RESTART_PATH: render_atv_restart_path(host),
         ATV_RESTART_SERVICE: render_atv_restart_service(host),
+        TARGET: render_target(),
+        SLICE: render_slice(),
     }
     for service in metrics.services(host):
         units[METRICS_QUADLETS[service.unit]] = render_metrics_quadlet(versions, host, service)
     units[METRICS_RESTART_PATH] = render_metrics_restart_path(host)
     units[METRICS_RESTART_SERVICE] = render_metrics_restart_service(host)
+    units.update({source: render_container_dropin() for source in CONTAINER_DROPINS.values()})
     return units
 
 
 def unit_version(text: str | None) -> str | None:
-    """The openHAB version an openhab.container was generated for."""
+    """The openHAB version a thermite-openhab.container was generated for."""
     found = re.search(r"^Description=openHAB (\S+)", text or "", re.MULTILINE)
     return found[1] if found else None
 
@@ -783,7 +854,14 @@ def unit_image(text: str | None) -> str | None:
 def unit_differences(area: Path, commit: str, installed: dict[str, Path] | None = None) -> list[str]:
     """The units (area paths) whose installed file is not the one `commit`'s
     deploy/ holds; one that cannot be read is left out."""
-    files = export(area, commit, tuple(installed or INSTALLED))
+    from oh_paths import SITE_FILE
+    locked = export(area, commit, (SITE_FILE,)).get(SITE_FILE)
+    try:
+        derived = locked is not None and _site_requirement(locked.data)["version"] == 2
+    except (TypeError, ValueError) as exc:
+        raise DeployError("invalid committed application requirement") from exc
+    files = (prepared_files(area, commit, Path(area) / "var")[0] if derived
+             else export(area, commit, tuple(installed or INSTALLED)))
     differ = []
     for name, target in (installed or INSTALLED).items():
         try:
@@ -798,14 +876,36 @@ def unit_differences(area: Path, commit: str, installed: dict[str, Path] | None 
     return differ
 
 
-def installed_units(area: Path, installed: dict[str, Path] | None = None) -> list[tuple[str, Path, str]]:
+def installed_units(area: Path, installed: dict[str, Path] | None = None, *, rev: str = "HEAD") -> list[tuple[str, Path, str]]:
     """(area path, installed path, "current" | "differs" | "missing" |
     "unreadable") for each unit: whether the owner has installed the one
-    this checkout generates."""
+    the selected committed schema-2 site derives. Legacy checkouts retain
+    comparison with their local generated units."""
+    from oh_paths import SITE_FILE
+    files = None
+    try:
+        commit = resolve(area, rev)
+        locked = export(area, commit, (SITE_FILE,)).get(SITE_FILE)
+    except DeployError:
+        # Older callers also inspect generated directories outside Git.
+        # A private site must still have a verifiable committed requirement.
+        if (Path(area) / SITE_FILE).exists():
+            raise
+    else:
+        if locked is not None:
+            try:
+                derived = _site_requirement(locked.data)["version"] == 2
+            except (TypeError, ValueError) as exc:
+                raise DeployError("invalid committed application requirement") from exc
+            if derived:
+                files = prepared_files(area, commit, Path(area) / "var")[0]
     out = []
     for name, target in (installed or INSTALLED).items():
         try:
-            same = Path(target).read_bytes() == (Path(area) / name).read_bytes()
+            if files is not None and name not in files:
+                raise FileNotFoundError
+            want = files[name].data if files is not None else (Path(area) / name).read_bytes()
+            same = Path(target).read_bytes() == want
             out.append((name, Path(target), "current" if same else "differs"))
         except FileNotFoundError:
             out.append((name, Path(target), "missing"))
@@ -1127,7 +1227,7 @@ def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_l
     argv = ownership_argv(layout, host)
     uid, gid = int(argv[argv.index("--uid") + 1]), int(argv[argv.index("--gid") + 1])
     direct = os.geteuid() == 0 or (os.geteuid() == uid and gid in {os.getegid(), *os.getgroups()})
-    command = argv if direct else ("sudo", *argv)
+    command = argv if direct else ("sudo", "-n", *argv)
     checks = (*command, "--check-pairing-logging")
     if dry_run:
         if require_logging:
@@ -1147,15 +1247,32 @@ def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_l
         print("  " + shlex.join(command))
         if not approved and input("Approve this ownership handoff before deployment writes? [y/N] ").strip().lower() not in ("y", "yes"):
             raise DeployError("ownership handoff declined; no files were changed")
+        # Validate in this process's terminal/parent context, before writes.
+        # Parent approval is not authentication, and a preceding test or group
+        # refresh may have outlived or changed the parent's sudo timestamp.
+        validation = ("sudo", "-v") if sys.stdin.isatty() else ("sudo", "-n", "-v")
+        try:
+            oh_cli.trace_run(validation)
+            authenticated = subprocess.run(validation, check=False).returncode == 0
+        except OSError:
+            authenticated = False
+        if not authenticated:
+            raise DeployError("sudo authentication failed before deployment; no deployment files were changed. "
+                              "Rerun the install or deployment from a terminal")
     if require_logging:
         try:
             if direct:
                 protected = oh_service.pairing_logging(layout.root)
             else:
                 oh_cli.trace_run(checks)
-                protected = subprocess.run(checks, check=False).returncode == 0
-        except (OSError, ValueError):
-            protected = False
+                result = subprocess.run(checks, check=False).returncode
+                if result not in (0, oh_service.PAIRING_LOGGING_UNPROTECTED):
+                    raise DeployError("could not verify native pairing-log protection; the administrative check failed. "
+                                      "No deployment files were changed")
+                protected = result == 0
+        except (OSError, ValueError) as exc:
+            raise DeployError("could not verify native pairing-log protection; the administrative check could not read "
+                              "its configuration. No deployment files were changed") from exc
         if not protected:
             raise DeployError("pairing credentials would enter openHAB's native logs; run thermite install "
                               "to protect native logging before deploying")
@@ -1169,8 +1286,9 @@ def ownership_handoff(layout: State, host: dict | None, dry_run: bool, require_l
                 oh_cli.trace_run(command)
                 subprocess.run(command, check=True)
         except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            repair = argv if direct else ("sudo", *argv)
             raise DeployError("thermite ownership handoff failed; deployment is incomplete. Run "
-                              + shlex.join(command) + f": {exc}") from exc
+                              + shlex.join(repair) + f": {exc}") from exc
 
 
 @dataclasses.dataclass
@@ -1194,7 +1312,7 @@ class Deployed:
 
 def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bool = False,
            dry_run: bool = False, how: str = "deploy", host: dict | None = None,
-           ownership_approved: bool = False) -> Deployed:
+           ownership_approved: bool = False, expected_conf_digest: str | None = None) -> Deployed:
     """Install commit `rev`'s conf/ into the state's conf and the helper's
     files into atv/app (and, once the state has their directories, its
     metrics/ into metrics and the exporter into exporter/app), then record
@@ -1210,26 +1328,72 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
             raise DeployError("automation/openhab has changes that are not committed; a deploy installs a commit, "
                               f"and make check has tested the working tree. Commit them first:{listed}")
     files, application = deployment_files(area, commit, var)
+    if expected_conf_digest is not None:
+        conf = {name.removeprefix("conf/"): blob for name, blob in files.items() if name.startswith("conf/")}
+        if tree_digest(conf) != expected_conf_digest:
+            raise DeployError("the final configuration differs from the verified historical deployment; "
+                              "no deployment files were changed")
+    if application is not None:
+        from oh_paths import SITE_FILE
+        locked = export(area, commit, (SITE_FILE,)).get(SITE_FILE)
+        if locked is not None and _site_requirement(locked.data)["version"] == 2:
+            host = committed_inputs(area, commit)[1]
     return install(files, commit, subject(area, commit), layout, var, force=force, dry_run=dry_run,
                    legacy_atv=legacy_atv(), how=how, host=host, application=application,
                    ownership_approved=ownership_approved)
 
 
 def deployment_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
-    """Site revisions lock code separately; full checkouts retain Git source export."""
+    """Resolve a committed configuration and application, including derived sites."""
+    return prepared_files(area, commit, var)
+
+
+def _site_requirement(data: bytes) -> dict:
+    import oh_release
+    requirement = json.loads(data)
+    if (not isinstance(requirement, dict) or set(requirement) != {"version", "application", "release"}
+            or type(requirement.get("version")) is not int or requirement["version"] not in (1, 2)
+            or not isinstance(requirement["application"], str)
+            or not oh_release.HEX.fullmatch(str(requirement.get("release")))):
+        raise ValueError("invalid site application requirement")
+    return requirement
+
+
+def committed_inputs(area: Path, commit: str) -> tuple[dict, dict, dict | None]:
+    """Native pins, host facts and application requirement from Git, never cache."""
+    from oh_paths import SITE_FILE
+    import yaml
+    files = export(area, commit, ("versions.json", "instance/host.yaml", SITE_FILE))
+    try:
+        versions = json.loads(files["versions.json"].data)
+        host = yaml.safe_load(files["instance/host.yaml"].data)
+        if not isinstance(versions, dict) or not isinstance(host, dict):
+            raise ValueError("invalid committed site inputs")
+        oh_service.validate_identity(host["uid"], host["gid"])
+        oh_ports.effective(host)
+        metrics.yoke_targets(host)
+        requirement = _site_requirement(files[SITE_FILE].data) if SITE_FILE in files else None
+    except (KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
+        raise DeployError("the committed site has invalid host, version or application inputs") from exc
+    return versions, host, requirement
+
+
+def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
+    """Resolve all generated trees and helper code for one immutable site revision.
+
+    Schema 2 renders only committed data with its exact cached release. Schema
+    1 and full source checkouts retain their committed generated-tree behavior.
+    Rendering uses a cleaned temporary workspace, including during dry-run.
+    """
     from oh_paths import SITE_FILE
     import oh_release
-    files = export(area, commit, ("conf", "metrics", SITE_FILE, *ATV_APP, *ATV_APP_BEFORE,
+    files = export(area, commit, ("conf", "metrics", "deploy", "instance", "versions.json", SITE_FILE, *ATV_APP, *ATV_APP_BEFORE,
                                   LEGACY_ATV_PROGRAM, *metrics.EXPORTER_APP))
     locked = files.pop(SITE_FILE, None)
     if locked is None:
-        return files, None
+        return {name: blob for name, blob in files.items() if not name.startswith("instance/") and name != "versions.json"}, None
     try:
-        requirement = json.loads(locked.data)
-        if (not isinstance(requirement, dict) or set(requirement) != {"version", "application", "release"}
-                or requirement.get("version") != 1 or not isinstance(requirement["application"], str)
-                or not oh_release.HEX.fullmatch(str(requirement.get("release")))):
-            raise ValueError("invalid site application requirement")
+        requirement = _site_requirement(locked.data)
         root = Path(var) / "application-releases" / requirement["release"]
         release = oh_release.manifest(root, requirement["release"])
         if release["application"] != requirement["application"]:
@@ -1239,8 +1403,22 @@ def deployment_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob
     except (OSError, ValueError) as exc:
         raise DeployError("the committed site requires its exact cached application release; "
                           "install the reviewed wheel and run thermite init --upgrade before deployment") from exc
-    # Never take a site's arbitrary lib/ as application authority.
-    files = {name: blob for name, blob in files.items() if name.startswith(("conf/", "metrics/"))}
+    if requirement["version"] == 2:
+        import oh_site_snapshot
+        # A config-only site's launcher is inert scaffolding. Application
+        # directories are not inputs and cannot be used as an alternate codebase.
+        if export(area, commit, ("lib", "web", "tui", "iso", "site", "pyproject.toml")):
+            raise DeployError("a schema-2 private site must not contain application source directories")
+        inputs = {name: blob.data for name, blob in files.items() if name.startswith("instance/") or name == "versions.json"}
+        inputs[SITE_FILE] = locked.data
+        try:
+            rendered = oh_site_snapshot.render(inputs, root, Path(var), requirement["release"])
+        except (OSError, ValueError) as exc:
+            raise DeployError("could not derive committed site configuration from its pinned application") from exc
+        files = {name: Blob(data) for name, data in rendered.items()}
+    else:
+        # Never take a schema-1 site's arbitrary lib/ as application authority.
+        files = {name: blob for name, blob in files.items() if name.startswith(("conf/", "metrics/", "deploy/"))}
     files.update({name: Blob(data, name.startswith("bin/")) for name, data in application.items()})
     return files, {"version": release["application"], "digest": release["digest"]}
 
@@ -1347,13 +1525,13 @@ def apply_metrics(layout: State, host: dict, metrics_changes: Changes, exporter_
                   post) -> list[str]:
     """Make the running metrics services take a deploy's changes, without
     root: Prometheus and blackbox_exporter reload over HTTP, and the trigger
-    file has openhab-metrics-restart.path restart the exporter and Grafana."""
+    file has thermite-metrics-restart.path restart the exporter and Grafana."""
     said = []
     port = metrics.ports(host)
     touched = _touched(metrics_changes)
-    for name, prefix, unit, key in (("Prometheus", "prometheus/", "openhab-prometheus.service", "prometheus"),
-                                    ("blackbox_exporter", "blackbox/", "openhab-blackbox.service", "blackbox"),
-                                    ("Alertmanager", "alertmanager/", "openhab-alertmanager.service", "alertmanager")):
+    for name, prefix, unit, key in (("Prometheus", "prometheus/", oh_units.PROMETHEUS, "prometheus"),
+                                    ("blackbox_exporter", "blackbox/", oh_units.BLACKBOX, "blackbox"),
+                                    ("Alertmanager", "alertmanager/", oh_units.ALERTMANAGER, "alertmanager")):
         if not any(path.startswith(prefix) for path in touched):
             continue
         status = post(f"http://{metrics.LOOPBACK}:{port[key]}/-/reload")
@@ -1455,13 +1633,13 @@ def token_file(name: str) -> Path:
 
 def running_here(host: dict) -> str | None:
     """How production openHAB shows itself on this host, if it does:
-    answering on its HTTP port, or openhab.service up."""
+    answering on its HTTP port, or thermite-openhab.service up."""
     url = production_url(host)
     version = openhab_version(url)
     if version:
         return f"production openHAB {version} answers at {url}"
-    if service_states(("openhab.service",)).get("openhab.service") in ("active", "activating", "reloading"):
-        return "openhab.service, production openHAB, is up here"
+    if service_states((oh_units.RUNTIME,)).get(oh_units.RUNTIME) in ("active", "activating", "reloading"):
+        return "thermite-openhab.service, production openHAB, is up here"
     return None
 
 
@@ -1575,7 +1753,7 @@ class MetricsHealth:
                                                 "not answering" if self.grafana_status is None else
                                                 f"answers HTTP {self.grafana_status}")
         systemd = ("; node_exporter's systemd collector fails (node_scrape_collector_success{collector=\"systemd\"} "
-                   "is 0): sudo journalctl -u openhab-node-exporter.service says why" if self.systemd is False else "")
+                   "is 0): sudo journalctl -u thermite-node-exporter.service says why" if self.systemd is False else "")
         return f"{prometheus}{systemd}; {grafana}"
 
 

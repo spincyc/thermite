@@ -29,7 +29,7 @@ def rules(mapping):
         alert("ThermiteScrapeFailed", 'up{job=~"openhab|thermite|node|blackbox|alertmanager|notifications|ntfy"} == 0', "3m"),
         alert("ThermiteRuntimeUnavailable", "thermite_openhab_up == 0", "3m"),
         alert("ThermiteHostDiskLow", '(node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes < 0.10) and (node_filesystem_readonly == 0)', "10m"),
-        alert("ThermiteServiceFailed", 'node_systemd_unit_state{job="node",name=~"openhab.*\\\\.service",state="failed"} == 1', "3m"),
+        alert("ThermiteServiceFailed", 'node_systemd_unit_state{job="node",name=~"thermite-.*\\\\.service",state="failed"} == 1', "3m"),
         *([alert("ThermiteHandlerPoolSaturated", '(thermite_handler_pool_active_threads >= thermite_handler_pool_core_threads) and (thermite_handler_pool_probe_overdue_seconds > 30)', "2m"),
            alert("ThermiteHandlerTelemetryUnavailable", 'thermite_handler_pool_up == 0', "5m")]
           if mapping.get("handler_pool") else []),

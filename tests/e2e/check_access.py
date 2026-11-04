@@ -199,7 +199,7 @@ def run(args):
         for path in denied:
             require(gateway.request(path, authenticated=False)[0] == 401, "anonymous private resource was not denied")
         status, headers, _ = gateway.request("/static/remote/home.html", authenticated=False)
-        require(status == 302 and headers.get("Location") == "/static/remote/access.html?next=home.html",
+        require(status == 302 and headers.get("Location") == "/account/?next=%2F",
                 "anonymous private page did not redirect to login")
         for path in ("/static/remote/access.html", "/static/remote/access.js"):
             require(gateway.request(path, authenticated=False)[0] == 200, "public login resource was unavailable")

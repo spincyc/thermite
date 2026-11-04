@@ -18,6 +18,7 @@
 const View = require("./view");
 const Topology = require("./topology");
 const Access = require("./administration");
+const Navigation = require("../../web/remote/navigation");
 
 const TOAST_MS = 1900;
 const FLASH_MS = 140;
@@ -45,7 +46,7 @@ function create(options) {
   const hints = Session.keyHints();
 
   const ui = {
-    screen: ["home", "remote", "security", "cameras", "topology", "pairing", "settings", "users", "account"].includes(options.screen) ? options.screen : "home",
+    screen: Navigation.pages.some(page => page.screen === options.screen) ? options.screen : "home",
     overlay: null,
     focus: null,
     focusVisible: false,
@@ -74,6 +75,7 @@ function create(options) {
   const pairing = { backend: null, selected: null, codes: {}, alert: null, loaded: false, mock: Boolean(ui.target.mock), notes: {}, announce: "", sortField: "room", sortDescending: false };
   const cameras = { backend: null, selected: null, link: null };
   const topology = { backend: null, room: null, source: null, link: null };
+  const system = { backend: options.system || null, expanded: false, link: null };
   const timers = { toast: 0, flash: {}, repeat: null, tick: 0 };
   let frame = null;
   let size = { width: 80, height: 24 };
@@ -109,7 +111,7 @@ function create(options) {
     if (options.backend && "connected" in options.backend) ui.connected = options.backend.connected;
     return {
       session: session, Session: Session, Remote: options.Remote, layouts: options.layouts, house: options.house,
-      Pairing: Pairing, hints: hints, ui: ui, access, pairing: pairing, cameras: cameras, topology: topology, look: options.look || null,
+      Pairing: Pairing, hints: hints, ui: ui, access, pairing: pairing, cameras: cameras, topology: topology, system, look: options.look || null,
       now: now(), still: ui.still, animate: undefined
     };
   }
@@ -134,10 +136,11 @@ function create(options) {
         if (stopped) return;
         ui.ready = true;
         ui.pane = ui.screen === "pairing" ? "pair-list" : ui.screen === "remote" ? "rooms" : ui.screen;
-        ui.focus = ui.screen === "remote" ? "room:" + session.current().id : ui.screen === "home" ? "home:remote" : null;
+        ui.focus = ui.screen === "remote" && session.current() ? "room:" + session.current().id : ui.screen === "home" ? "home:remote" : null;
         ui.focusVisible = true;
         if (ui.screen === "cameras") openCameras();
         if (ui.screen === "topology") openTopology();
+        if (ui.screen === "system") system.backend?.open().then(changed);
         if (["settings", "users", "account"].includes(ui.screen)) access.open(ui.screen, session.current()?.id);
         changed();
         if (chosen) session.choose(chosen);
@@ -159,6 +162,7 @@ function create(options) {
     if (pairing.backend) pairing.backend.stop();
     if (cameras.backend) cameras.backend.stop();
     if (topology.backend) topology.backend.stop();
+    system.backend?.close();
     if (signalRunning && session.closeDiagnostics) session.closeDiagnostics();
     signalRunning = false;
     if (options.backend && options.backend.stop) options.backend.stop();
@@ -203,6 +207,7 @@ function create(options) {
       ui.log = []; ui.toast = null; ui.announce = ""; ui.error = "Your sign-in has ended. Run thermite access login again.";
       pairing.codes = {}; pairing.notes = {}; if (pairing.backend) pairing.backend.stop(); pairing.backend = null; pairing.loaded = false;
       if (cameras.backend) cameras.backend.stop();
+      system.backend?.close(); system.expanded = false; system.link = null;
       access.cancel(); access.state.users = []; access.state.roles = []; access.state.policy = null;
       access.state.kind = "account"; access.state.error = ui.error; ui.screen = "account"; ui.overlay = null; ui.pane = "account"; ui.focus = null;
     }
@@ -549,6 +554,8 @@ function create(options) {
   function setScreen(name) {
     access.cancel();
     if (stopped) return;
+    const page = Navigation.pages.find(page => page.screen === name);
+    if (page?.system && !Navigation.allowed(page, access)) return toast("System", "Only administrators can view System.");
     if (ui.screen === name && !ui.overlay) return;
     stopRepeat();
     if (dragging) { dragging = null; session.setDragging(false); }
@@ -562,6 +569,7 @@ function create(options) {
     }
     if (ui.screen === "cameras" && cameras.backend) cameras.backend.close();
     if (ui.screen === "topology" && topology.backend) topology.backend.close();
+    if (ui.screen === "system") { system.backend?.close(); system.expanded = false; system.link = null; }
     if (ui.overlay && ui.overlay.kind === "cameras" && cameras.backend) cameras.backend.close();
     if (ui.overlay && ui.overlay.kind === "topology" && topology.backend) topology.backend.close();
     ui.screen = name;
@@ -574,6 +582,7 @@ function create(options) {
     if (name === "pairing") openPairing();
     if (name === "cameras") openCameras();
     if (name === "topology") openTopology();
+    if (name === "system") system.backend?.open().then(changed);
     if (["settings", "users", "account"].includes(name)) access.open(name, session.current()?.id);
     render(size.width, size.height);
     changed();
@@ -649,6 +658,18 @@ function create(options) {
         break;
       case "screen":
         setScreen(hit.screen);
+        break;
+      case "system-action":
+        if (!system.backend?.canView()) break;
+        if (hit.action === "advanced") system.expanded = !system.expanded;
+        else if (hit.action === "refresh") system.backend.open().then(changed);
+        else if (hit.action === "open" && system.expanded) {
+          const tool = system.backend.state.manifest?.tools.find(tool => tool.id === hit.tool);
+          if (tool && !tool.localOnly && options.openSystem) options.openSystem(tool.url).then(result => {
+            if (ui.screen !== "system") return;
+            system.link = result.url; toast(tool.label, result.opened ? "Opened in your browser" : result.url); changed();
+          }).catch(() => toast("System", "The browser could not be opened.", "bad"));
+        }
         break;
       case "open":
         openSheet(hit.sheet);
@@ -987,14 +1008,8 @@ function create(options) {
     if (!keyEvent.ctrl && !keyEvent.meta && (ch === "l" || ch === "L")) return toggleLog();
     if (ch === "q" || ch === "Q") return quit();
     if (name === "tab") return movePane(keyEvent.shift ? -1 : 1);
-    if (name === "f1") return setScreen("home");
-    if (name === "f2") return setScreen("remote");
-    if (name === "f3") return setScreen("security");
-    if (name === "f4") return setScreen("cameras");
-    if (name === "f5") return setScreen("topology");
-    if (name === "f7") return setScreen("settings");
-    if (name === "f8") return setScreen("users");
-    if (name === "f9") return setScreen("account");
+    const page = Navigation.pages.find(page => page.key.toLowerCase() === name && page.screen !== "pairing");
+    if (page) return setScreen(page.screen);
     if ((name === "f6" || keyEvent.ctrl && name === "p") && ui.screen === "remote") return setScreen("pairing");
     if (ui.overlay) return sheetKey(ch, keyEvent);
     if (ch === "?") return openSheet("help");
@@ -1007,7 +1022,7 @@ function create(options) {
     const name = event.name;
     if (name === "escape") return setScreen("home");
     if (name === "pageup" || name === "pagedown") return pageScroll(name === "pageup" ? -1 : 1);
-    if (["settings", "users", "account"].includes(ui.screen)) {
+    if (["settings", "users", "account", "system"].includes(ui.screen)) {
       if (["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
       if (name === "enter" || name === "space") { const hit = focusedHit(); if (hit) activate(hit); }
     } else if (ui.screen === "home") {

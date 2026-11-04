@@ -14,11 +14,11 @@ function create(options = {}) {
   return Backend.create(settings);
 }
 
-function url(base, ident, mock) {
+function url(base, ident, mock, native = false) {
   const target = new URL(base || "http://127.0.0.1:13601");
-  target.pathname = target.pathname.replace(/\/+$/, "") + "/static/remote/cameras.html";
+  target.pathname = target.pathname.replace(/\/+$/, "") + "/cameras/";
   target.username = target.password = "";
-  target.search = mock ? "?backend=mock" : "";
+  target.search = mock ? "?backend=mock" : native ? "?backend=native" : "";
   target.hash = ident || "";
   return target.href;
 }

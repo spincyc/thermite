@@ -42,7 +42,7 @@ allows, choosing sources and driving those devices included; administration
 still needs the admin login. `reload` keeps the mode the sandbox was started in;
 stop and start it to change modes. It refuses to start while production runtime runs
 on this host (it answers on 127.0.0.1 at instance/host.yaml's http_port, or
-openhab.service is up): two live instances would fight over the same
+thermite-openhab.service is up): two live instances would fight over the same
 devices and pairings. It cannot see a production runtime on another host;
 make sure none runs before starting one.
 

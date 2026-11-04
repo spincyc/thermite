@@ -15,6 +15,7 @@ import oh_cli
 current = ContextVar("thermite_install_progress", default=None)
 capture_command = ContextVar("thermite_install_capture", default=False)
 terminal_command = ContextVar("thermite_install_terminal", default=False)
+show_command_output = ContextVar("thermite_install_show_output", default=False)
 
 
 class Progress:
@@ -143,15 +144,17 @@ def paused():
 
 
 @contextlib.contextmanager
-def command(*, terminal: bool):
+def command(*, terminal: bool, show_output: bool = False):
     active = current.get()
     token = capture_command.set(bool(active and not active.verbose and not terminal))
     terminal_token = terminal_command.set(terminal)
+    output_token = show_command_output.set(show_output)
     try:
         with paused() if terminal else contextlib.nullcontext():
             if terminal and active and active.animate:
                 active.working()
             yield
     finally:
+        show_command_output.reset(output_token)
         terminal_command.reset(terminal_token)
         capture_command.reset(token)

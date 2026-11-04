@@ -68,7 +68,7 @@ def render(house: House, conf: Conf) -> None:
     if remote_cameras.manifest(house)["cameras"]:
         columns.append(list_card_column(dict(COLUMN), "Cameras", [{"component": "oh-list-item", "config": {
             "title": "Open cameras", "footer": "Protect status, snapshots and live video.", "icon": "f7:camera",
-            "action": "url", "actionUrl": remote.URL + "cameras.html", "actionUrlSameWindow": True}}]))
+            "action": "url", "actionUrl": "/cameras/", "actionUrlSameWindow": True}}]))
     for room in house.rooms:
         entries = [online_item(f"{device['id']}_online", house.label(device)) for device in house.devices
                    if device["room"] == room and conf.item(f"{device['id']}_online")]

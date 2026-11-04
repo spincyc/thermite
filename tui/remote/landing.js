@@ -2,13 +2,9 @@
 "use strict";
 const { fit, wrap } = require("./grid");
 const Torch = require("./torch");
+const Navigation = require("../../web/remote/navigation");
 
-const MODULES = [
-  { id: "remote", key: "F2", label: "Remotes", detail: "Rooms, sources and device controls", note: "Pair devices from the Remotes menu" },
-  { id: "security", key: "F3", label: "Security", detail: "Security system", note: "Not connected" },
-  { id: "cameras", key: "F4", label: "Cameras", detail: "Camera status and browser viewing", note: "Open a camera when you need it" },
-  { id: "topology", key: "F5", label: "Site", detail: "Configured video and USB connections", note: "Explore without switching a source" }
-];
+const MODULES = Navigation.pages.filter(page => page.module).map(page => ({ ...page, id: page.screen }));
 
 function content(g, width, ctx, height) {
   let y = 1;
@@ -31,8 +27,7 @@ function content(g, width, ctx, height) {
       g.put(x, top + row, "│" + " ".repeat(cardWidth - 2) + "│", style);
     }
     g.put(x, top + cardHeight - 1, "╰" + "─".repeat(cardWidth - 2) + "╯", style);
-    const compact = { remote: "Rooms, devices & pairing", security: "Not connected", cameras: "Status & viewing", topology: "Configured connections", settings: "Schedules", users: "Accounts & grants", account: "Sign-in & access" };
-    g.put(x + 2, top + 1, fit(module.key + "  " + module.label + (columns === 1 ? " · " + compact[module.id] : ""), cardWidth - 4), style + "+bold");
+    g.put(x + 2, top + 1, fit(module.key + "  " + module.label + (columns === 1 ? " · " + module.compact : ""), cardWidth - 4), style + "+bold");
     if (columns > 1) {
       wrap(module.detail, Math.max(4, cardWidth - 4)).slice(0, 2).forEach((part, row) => g.put(x + 2, top + 2 + row, part, style));
       g.put(x + 2, top + 4, fit(module.note, cardWidth - 4), active ? style : "bubble");
@@ -40,7 +35,8 @@ function content(g, width, ctx, height) {
     g.hit(x, top, cardWidth, cardHeight, hit);
   });
   y += Math.ceil(modules.length / columns) * (cardHeight + 1) + 1;
-  const accessLinks = ctx.access?.native ? [] : [["settings", "F7 Settings"], ...(ctx.access?.canEdit() ? [["users", "F8 Users"]] : []), ["account", "F9 Account"]];
+  const accessLinks = Navigation.pages.filter(page => (page.account || page.system) && Navigation.allowed(page, ctx.access))
+    .map(page => [page.screen, page.key + " " + page.label]);
   let accessX = 2;
   accessLinks.forEach(([screen, label]) => {
     if (accessX + label.length > width - 2) { y++; accessX = 2; }
@@ -49,6 +45,7 @@ function content(g, width, ctx, height) {
   }); if (accessLinks.length) y += 2;
   line("Rooms · reported sources", "section");
   if (!ctx.ui.ready) { line("Reading rooms…"); return y; }
+  if (!ctx.session.rooms().length) { line("No rooms configured"); return y; }
   const nameWidth = Math.min(25, Math.max(10, Math.floor((width - 5) * .4)));
   ctx.session.rooms().forEach(room => {
     const state = ctx.session.state(room.id), shown = ctx.session.view(room, state);
@@ -87,4 +84,37 @@ function security(g, width) {
   return y;
 }
 
-module.exports = { MODULES, content, security };
+function system(g, width, ctx) {
+  let y = 1;
+  const state = ctx.system.backend?.state;
+  const line = (value, style = "dim") => wrap(value, Math.max(4, width - 4)).forEach(part => g.put(2, y++, part, style));
+  const action = (label, id, tool) => {
+    const key = "system:" + id + (tool ? ":" + tool.id : "");
+    g.put(2, y++, fit(label, width - 4), ctx.ui.focus === key ? "row.focus" : "link",
+      { kind: "system-action", action: id, tool: tool?.id, key, focus: true, label });
+  };
+  line("Thermite", "strong");
+  line("Rooms, devices, pairing and schedules stay in Thermite."); y++;
+  line("Configured runtime version: " + (state?.manifest?.runtime.version || "Not available"), "strong");
+  line("Configured information does not establish live system health.");
+  if (state?.loading) line("Reading system information…");
+  if (state?.error) line(state.error, "alert");
+  action("Refresh information", "refresh");
+  if (!state?.loaded) return y;
+  y++;
+  action((ctx.system.expanded ? "▾ " : "▸ ") + "Advanced tools", "advanced");
+  if (ctx.system.expanded) {
+    line("Open a tool deliberately for its specialist controls.");
+    for (const tool of state.manifest.tools) {
+      y++; line(tool.label, "strong"); line(tool.description);
+      if (tool.localOnly) {
+        line("On the Thermite host. Open there, or forward its port over SSH:");
+        line(tool.url); if (tool.forwarding) line(tool.forwarding);
+      } else action("Open " + tool.label + " in browser ›", "open", tool);
+    }
+  }
+  if (ctx.system.link) { y++; line(ctx.system.link, "link"); }
+  return y;
+}
+
+module.exports = { MODULES, content, security, system };

@@ -20,8 +20,12 @@ class Command:
     # Explicit child-command acknowledgement after the caller approved the
     # whole workflow. Normal invocations keep their own confirmation.
     approved_argv: tuple[str, ...] | None = None
-    # May prompt (including nested sudo): inherit the terminal, never capture.
+    # The payload may prompt (including nested sudo): inherit the terminal.
+    # Ordinary root helpers authenticate separately, then run with sudo -n.
     terminal: bool = False
+    # Keep successful diagnostics visible through bounded, noninteractive
+    # capture. Quiet mode still suppresses successful output.
+    show_output: bool = False
 
     @property
     def full(self) -> tuple[str, ...]:

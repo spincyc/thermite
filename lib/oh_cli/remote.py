@@ -27,6 +27,12 @@ STAMP = "lock.sha256"
 PINNED = ("package.json", "package-lock.json")
 #: How main.js gets its colors and the torch (tui/remote/theme.js).
 LOOK = "THERMITE_REMOTE_LOOK"
+MODEL = "conf/html/remote/house.js"
+MODEL_LIMIT = 2 * 1024 * 1024
+
+
+class RemoteModelError(ValueError):
+    """The selected site's model is unavailable; never substitute demo controls."""
 
 DESCRIPTION = """\
 The thermite terminal starts on a landing page with Remotes, Security,
@@ -227,10 +233,52 @@ def parser() -> argparse.ArgumentParser:
     return parser
 
 
+def model_file(arguments) -> Path | None:
+    """Use committed schema-two input; legacy sites keep their generated model."""
+    generated = AREA / MODEL
+    if arguments.mock:
+        return generated if generated.is_file() else None
+    from oh_paths import descriptor
+    import oh_deploy as deploy
+
+    try:
+        selected = descriptor(AREA)
+        if selected is None or selected["version"] != 2:
+            if not generated.is_file():
+                raise RemoteModelError("no generated remote model for this site; run thermite generate")
+            return generated
+        from oh_access.files import atomic_private, private_directory, read_private
+        from oh_features import remote_model
+
+        prepared, _ = deploy.prepared_files(AREA, deploy.resolve(AREA, "HEAD"), AREA / "var")
+        content = prepared[MODEL].data
+        if len(content) > MODEL_LIMIT:
+            raise ValueError("remote model exceeds its limit")
+        model = remote_model.literal(content.decode("utf-8"))
+        if (model.get("version") != 1 or not isinstance(model.get("rooms"), list)
+                or not all(isinstance(model.get(key), dict) for key in ("sources", "devices", "initial"))):
+            raise ValueError("invalid remote model")
+        directory = private_directory(AREA / "var/tui-remote/models")
+        path = directory / (hashlib.sha256(content).hexdigest() + ".js")
+        if path.exists() or path.is_symlink():
+            if read_private(path, MODEL_LIMIT) == content:
+                return path
+        atomic_private(path, content)
+        return path
+    except RemoteModelError:
+        raise
+    except (OSError, ValueError, KeyError, deploy.DeployError):
+        raise RemoteModelError("cannot prepare this site's remote model; check its committed configuration, "
+                               "pinned application and private model cache") from None
+
+
 def launch_environment(arguments, chosen):
     """Only credential/CA paths cross to Node; personal tokens stay in files."""
-    environment = {**os.environ, LOOK: look(chosen),
-                   "THERMITE_REMOTE_HOUSE_FILE": str(AREA / "conf/html/remote/house.js")}
+    environment = {**os.environ, LOOK: look(chosen)}
+    environment.pop("THERMITE_REMOTE_HOUSE_FILE", None)
+    model = model_file(arguments)
+    if model is not None:
+        environment["THERMITE_REMOTE_HOUSE_FILE"] = str(model)
     if arguments.mock or native_mode(arguments):
         environment.pop("THERMITE_REMOTE_TOKEN_FILE", None)
         return environment
@@ -275,6 +323,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         command = node_argv(arguments, node)
         environment = launch_environment(arguments, chosen)
+    except RemoteModelError as exc:
+        print(f"thermite remote: {exc}", file=sys.stderr)
+        return 2
     except ValueError:
         print("thermite remote: log in with thermite access login, or explicitly choose --native for owner/testing access", file=sys.stderr)
         return 2

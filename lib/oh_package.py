@@ -78,22 +78,39 @@ def wheel(public: dict[str, bytes], output: Path) -> tuple[Path, dict]:
 def public_files(area: Path | None = None) -> dict[str, bytes]:
     import oh_paths
     import oh_public
-    import oh_site
-    return oh_public.bundle(oh_site.repository_files(), area=area or oh_paths.PROGRAM)
+    root = Path(area or oh_paths.PROGRAM)
+    manifest = root / oh_public.MANIFEST
+    if not manifest.exists() and (root / FILE).is_file():
+        from oh_release import manifest as verify_release
+        release = verify_release(root)
+        files = {name: (root / name).read_bytes() for name in release["files"]}
+        problems = oh_public.guard(files, root)
+        if problems:
+            raise ValueError("public package privacy checks failed:\n" + "\n".join(problems))
+        return files
+    if not manifest.is_file() or manifest.is_symlink():
+        raise ValueError("package from the Thermite application repository with its reviewed file manifest")
+    data = json.loads(manifest.read_text())
+    if (not isinstance(data, dict) or set(data) != {"version", "paths"} or data["version"] != 1
+            or not isinstance(data["paths"], list) or not all(isinstance(name, str) for name in data["paths"])
+            or len(set(data["paths"])) != len(data["paths"])):
+        raise ValueError("invalid application source manifest")
+    files = {}
+    for name in data["paths"]:
+        relative = safe(name)
+        path = root / relative
+        if not path.is_file() or any(parent.is_symlink() for parent in (path, *path.parents) if parent != root.parent):
+            raise ValueError(f"application source must be a regular file: {relative}")
+        files[relative] = path.read_bytes()
+    problems = oh_public.guard(files, root)
+    if problems:
+        raise ValueError("public package privacy checks failed:\n" + "\n".join(problems))
+    return files
 
 
 def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
-    """PEP517 only accepts an existing reviewed public export manifest."""
-    import oh_paths
-    import oh_public
-    root = oh_paths.PROGRAM
-    manifest = root / oh_public.MANIFEST
-    if not manifest.is_file(): raise ValueError("build from the reviewed public export, or use thermite package")
-    data = json.loads(manifest.read_text())
-    files = {safe(name): (root / safe(name)).read_bytes() for name in data["paths"]}
-    problems = oh_public.guard(files, root)
-    if problems: raise ValueError("public package privacy checks failed")
-    return wheel(files, Path(wheel_directory))[0].name
+    """Both entry points package the exact reviewed, tested application bytes."""
+    return wheel(public_files(), Path(wheel_directory))[0].name
 
 
 def get_requires_for_build_wheel(config_settings=None):

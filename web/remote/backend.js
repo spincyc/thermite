@@ -1329,7 +1329,8 @@
   };
 
   function servedByOpenHab(location) {
-    return Boolean(location) && /^https?:$/.test(location.protocol) && location.pathname.indexOf("/static/") === 0;
+    return global.ThermiteNavigation ? global.ThermiteNavigation.hosted(location)
+      : Boolean(location) && /^https?:$/.test(location.protocol) && location.pathname.indexOf("/static/") === 0;
   }
 
   global.RemoteBackend = {

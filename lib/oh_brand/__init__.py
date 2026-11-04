@@ -150,13 +150,15 @@ def shape_problems(data: dict) -> list[str]:
     return problems
 
 
-def _resolve(spec: str | Path, base: Path, seen: tuple[str, ...]) -> tuple[dict, str]:
+def _resolve(spec: str | Path, base: Path, seen: tuple[str, ...], root: Path | None = None) -> tuple[dict, str]:
     """The merged content of a palette (name or file) and its source."""
     text = str(spec)
     if NAME.fullmatch(text) and (PALETTES / f"{text}.json").exists():
         path = PALETTES / f"{text}.json"
     else:
         path = (base / Path(text).expanduser()).resolve()
+        if root is not None and not path.is_relative_to(root.resolve()):
+            raise PaletteError(text, ["site theme files and their parents must remain under instance/"])
         if not path.exists():
             names = ", ".join(builtin())
             raise PaletteError(text, [f"no such theme or file (built-in: {names})"])
@@ -168,7 +170,7 @@ def _resolve(spec: str | Path, base: Path, seen: tuple[str, ...]) -> tuple[dict,
     if problems:
         raise PaletteError(str(path), problems)
     if "extends" in data:
-        parent, _ = _resolve(data["extends"], path.parent, (*seen, key))
+        parent, _ = _resolve(data["extends"], path.parent, (*seen, key), root)
         merged = {mode: {**parent.get(mode, {}), **data.get(mode, {})} for mode in MODES}
     else:
         merged = {mode: dict(data.get(mode, {})) for mode in MODES}
@@ -177,11 +179,11 @@ def _resolve(spec: str | Path, base: Path, seen: tuple[str, ...]) -> tuple[dict,
     return merged, str(path)
 
 
-def load(spec: str | Path | None = None) -> Palette:
+def load(spec: str | Path | None = None, *, root: Path | None = None) -> Palette:
     """A built-in palette by name, or a palette file; checked for shape and
     completeness (not contrast: see contrast_problems). Older complete
     palettes reuse flame for ember and metal-shade for rust unless given."""
-    merged, source = _resolve(spec or DEFAULT, Path.cwd(), ())
+    merged, source = _resolve(spec or DEFAULT, Path.cwd(), (), root)
     problems = []
     for mode in MODES:
         # These two roles were added after themes could be exported as full

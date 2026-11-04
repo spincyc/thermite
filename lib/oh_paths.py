@@ -61,7 +61,8 @@ def descriptor(root: Path | None = None) -> dict | None:
     if path.is_symlink() or not path.is_file(): raise SiteError("site manifest must be a regular file")
     try: data = json.loads(path.read_text())
     except (OSError, ValueError) as exc: raise SiteError("invalid site manifest") from exc
-    if not isinstance(data, dict) or data.get("version") != 1 or set(data) != {"version", "application", "release"}:
+    if (not isinstance(data, dict) or type(data.get("version")) is not int
+            or data["version"] not in {1, 2} or set(data) != {"version", "application", "release"}):
         raise SiteError("unknown site manifest; expected version, application and release")
     if not isinstance(data["application"], str) or not isinstance(data["release"], str):
         raise SiteError("invalid application requirement")

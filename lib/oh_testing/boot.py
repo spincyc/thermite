@@ -372,6 +372,9 @@ def run_check(args, rt: lib.Runtime, inst: lib.Instance, log) -> dict:
 
 def add_arguments(parser) -> None:
     oh_cli.add_conf(parser)
+    from pathlib import Path
+    import argparse
+    parser.add_argument("--versions", type=Path, help=argparse.SUPPRESS)
     oh_cli.add_timeout(parser, 300, "the whole check")
     parser.add_argument("--settle", type=float, default=5, metavar="SECONDS",
                         help="seconds Things must stay unchanged (default: 5)")
@@ -388,7 +391,8 @@ def run(args) -> int:
     log = (lambda msg: print(msg, file=sys.stderr)) if args.json else print
 
     try:
-        versions = lib.load_versions()
+        versions_file = getattr(args, "versions", None)
+        versions = lib.load_versions(versions_file) if versions_file is not None else lib.load_versions()
         conf = lib.VAR / "boot-check" / "conf"
         inst = lib.boot_check_instance(conf)
         with lib.InstanceLock(inst):

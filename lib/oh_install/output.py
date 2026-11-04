@@ -1,7 +1,7 @@
 """Bounded diagnostic capture for explicitly noninteractive install children.
 
-Call on the main thread. Interactive and privileged commands must retain
-their normal terminal streams instead. Normal completion follows the child
+Call on the main thread. Interactive commands must retain their normal
+terminal streams instead. Normal completion follows the child
 leader. On cancellation or a lingering output pipe, cleanup covers its
 isolated process group. Commands remain responsible for their deliberately
 detached services, including the sandbox runtime.
@@ -153,21 +153,26 @@ def _report(tail: _Tail, report: Callable[[str], None]) -> None:
 
 
 def run(argv: Sequence[str], cwd: Path, *, timeout: float | None = None,
-        report: Callable[[str], None]) -> int:
-    """Discard successful chatter; report a safe bounded tail on failure.
+        report: Callable[[str], None], keep_terminal: bool = False, show_output: bool = False) -> int:
+    """Report a safe bounded tail on failure, or on successful opt-in.
 
     FileNotFoundError, TimeoutExpired and KeyboardInterrupt retain their
     usual meaning. Cancellation cleans up the isolated child process group
     before reporting diagnostics and re-raising. No output is written to disk.
+    Preauthenticated sudo uses keep_terminal: its own process group retains
+    this session's controlling terminal and the validation process's parent
+    PID, so tty/ppid credential timestamps still match. Never read a password
+    here: sudo must be invoked with -n.
     """
     tail = _Tail()
     done = threading.Event()
     process = None
     reader = None
     try:
+        isolation = {"process_group": 0} if keep_terminal else {"start_new_session": True}
         process = subprocess.Popen(list(argv), cwd=cwd, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   bufsize=0, start_new_session=True)
+                                   bufsize=0, **isolation)
         reader = threading.Thread(target=_drain, args=(process.stdout, tail, done),
                                   name="thermite-child-output", daemon=True)
         reader.start()
@@ -196,6 +201,6 @@ def run(argv: Sequence[str], cwd: Path, *, timeout: float | None = None,
     reader.join()
     if tail.failed:
         report("Child output could not be read completely.")
-    if code or tail.failed:
+    if code or tail.failed or show_output:
         _report(tail, report)
     return code or int(tail.failed)

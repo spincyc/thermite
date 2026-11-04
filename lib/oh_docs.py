@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 DEFINED = re.compile(r"^([A-Za-z][\w-]*)\s*:(?!=)", re.MULTILINE)
-#: A systemd unit's name (openhab-atv-restart.path) is not a target.
+#: A systemd unit's name (thermite-atv-restart.path) is not a target.
 CITED = re.compile(r"(?<![/\w-])(openhab-[a-z0-9-]+)(?![a-z0-9-]|\.(?:service|path|container|timer)\b)")
 
 

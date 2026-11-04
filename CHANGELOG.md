@@ -7,10 +7,34 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. Existing complete Git checkouts retain their deployment behavior.
 
+- Thermite is the canonical application repository. New private sites track only
+  configuration and an exact release pin; deployment derives runtime files from
+  committed inputs using that release, including rollback.
 - Denon/Marantz routing status requests use the receiver's accepted XML wire
   format, restoring power and input probes before source changes and Off.
 - Volume controls default to each integration's full supported range. Explicit
   per-device `volume_max` limits still apply consistently to commands and clients.
+- Root and `/overview/` open Thermite Home while native sign-in callbacks and
+  deliberate runtime administration remain available. The web and terminal
+  share navigation and a System view with explicit Advanced tools access;
+  local monitoring interfaces retain their loopback bindings. System metadata
+  is administrator-only in authenticated mode and loads without polling.
+
+- Fresh installation provisions private internal runtime access automatically,
+  with durable interrupted-setup recovery and no native account/token pages.
+  Existing credentials are retained; advanced token import is explicit.
+- Installation validates configuration without rerunning the developer test
+  suite. Deployment authenticates before writing and distinguishes failed
+  administrative checks from missing pairing-log protection.
+- Installation completion reports device pairing/connectivity warnings while
+  still requiring healthy runtime handlers, configuration and monitoring.
+  Ordinary health checks continue to fail for unavailable devices.
+- Daemons and containers use the `thermite-` namespace, with a shared
+  `thermite.target` and `thermite.slice`. Legacy registrations migrate only
+  after ownership checks; independent application accounts are never renamed.
+- Installation uses concise status and confirmation output by default.
+  Noninteractive administrative commands resume progress animation after
+  authentication; `--verbose` keeps command details and routine output.
 - Access release and state parents must be protected from service-account
   replacement before staging executes or writes application files. Existing
   shared parents need the documented permission migration.
@@ -63,8 +87,9 @@ rollback. Existing complete Git checkouts retain their deployment behavior.
 - Updated documentation with screenshots of the web and terminal remotes,
   captured from the fictional example.
 - Application services run as `thermite:thermite`, including native container
-  startup. Existing installations retain their numeric IDs and data during
-  account migration; deployed files receive explicit ownership and permissions.
+  startup. Existing Thermite IDs and data are preserved; conflicting legacy
+  account names require administrator review before migration. Deployed files
+  receive explicit ownership and permissions.
 - Compact shared web navigation and improved Sony standby and command-error
   handling.
 - Ordered control and error snapshots: older reads cannot overwrite newer

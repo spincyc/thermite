@@ -13,6 +13,7 @@ const { METER } = require("./theme");
 const Cameras = require("./cameras");
 const Topology = require("./topology");
 const Landing = require("./landing");
+const Navigation = require("../../web/remote/navigation");
 
 // One column each: a key shows its icon as one of these, or its caption.
 const GLYPHS = {
@@ -45,6 +46,7 @@ const TUI_SHORTCUTS = [
   [["F7"], "Room settings"],
   [["F8"], "Users & roles"],
   [["F9"], "Account"],
+  [["F10"], "System"],
   [["?"], "Help"],
   [["q"], "Quit"]
 ];
@@ -227,7 +229,8 @@ function header(frame, ctx, width) {
   g.fill(0, 0, width, 1, "header");
   const remotes = ["remote", "pairing"].includes(ctx.ui.screen);
   let at = width >= 100 ? g.put(0, 0, " thermite ", "header.title") : 0;
-  const tabs = [["home", "F1", "Home"], ["remote", "F2", "Remotes"], ["security", "F3", "Security"], ["cameras", "F4", "Cameras"], ["topology", "F5", "Site"]];
+  const tabs = Navigation.pages.filter(page => page.top && Navigation.allowed(page, ctx.access)
+    && !(page.system && remotes && width < 100)).map(page => [page.screen, page.key, page.label]);
   if (width < 48) {
     const label = ctx.ui.screen === "pairing" ? "Remotes / Pair devices" : tabs.find(tab => tab[0] === ctx.ui.screen)?.[2] || ({ settings: "Room settings", users: "Users & roles", account: "Account" })[ctx.ui.screen] || "Home";
     at = g.put(1, 0, fit("thermite · " + label, width - 2), "header.title");
@@ -235,7 +238,7 @@ function header(frame, ctx, width) {
     const current = ctx.ui.screen === tab[0] || tab[0] === "remote" && remotes;
     const key = "tab:" + tab[0];
     const style = focused(ctx, key) ? "key.focus" : current ? "tab.current" : "tab";
-    const label = width >= 76 ? tab[2] : { home: "Home", remote: "AV", security: "Sec", cameras: "Cam", topology: "Site", settings: "Set", users: "Users", account: "Me" }[tab[0]];
+    const label = width >= 76 ? tab[2] : { home: "Home", remote: "AV", security: "Sec", cameras: "Cam", topology: "Site", system: "Sys", settings: "Set", users: "Users", account: "Me" }[tab[0]];
     const size = length(" " + tab[1] + " " + label + " ");
     if (at + size + 1 > width) return;
     at = g.put(at, 0, " ", "header");
@@ -310,6 +313,7 @@ function paneHelp(ctx) {
   switch (ctx.ui.pane) {
     case "home": return ["Home", [["↑↓←→"], "choose"], [["Enter"], "open"], [["PgUp/PgDn"], "scroll"]];
     case "security": return ["Security · Not connected", [["F1"], "Home"]];
+    case "system": return ["System", [["↑↓"], "choose"], [["Enter"], "open"], [["PgUp/PgDn"], "scroll"]];
     case "cameras": return ["Cameras", [["↑↓"], "camera"], [["Enter"], "open web"], [["F1"], "Home"]];
     case "topology": return ["Site", [["↑↓"], "room"], [["←→"], "preview source"], [["Enter"], "web map"]];
     case "rooms": return ["Rooms", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "apply source"]];
@@ -334,7 +338,7 @@ function shortcutBar(frame, ctx, width, y) {
   const g = frame.grid;
   const log = [["L"], ctx.ui.logVisible === false ? "Show log" : "Hide log"];
   const help = paneHelp(ctx);
-  const shortcuts = !["remote", "pairing"].includes(ctx.ui.screen) ? TUI_SHORTCUTS.filter(entry => ["F1", "F2", "F3", "F4", "F5", "?", "q"].includes(entry[0][0]))
+  const shortcuts = !["remote", "pairing"].includes(ctx.ui.screen) ? TUI_SHORTCUTS.filter(entry => ["F1", "F2", "F3", "F4", "F5", "F10", "?", "q"].includes(entry[0][0]))
     : ctx.ui.screen === "pairing" ? PAIR_SHORTCUTS.filter((entry) => !["\u2191", "Enter", "Tab"].includes(entry[0][0]))
     : ctx.Session.SHORTCUTS.filter((entry) => !["ArrowUp", "\u2190", "Enter", "Backspace"].includes(entry[0][0])).concat(TUI_SHORTCUTS.filter((entry) => entry[0][0] !== "Tab"));
   const list = (["remote", "pairing"].includes(ctx.ui.screen) ? [log, [["Tab"], "Pane"]] : [[["Tab"], "Pane"]]).concat(help ? help.slice(1) : [], shortcuts.filter((entry) => entry[0][0] !== "L"));
@@ -353,6 +357,7 @@ function pageScreen(frame, ctx, rect) {
   const pages = {
     home: ["thermite", Landing.content],
     security: ["Security", Landing.security],
+    system: ["System", Landing.system],
     cameras: ["Cameras", Cameras.content],
     topology: ["Site topology", Topology.content],
     settings: ["Room settings", (g, w, ctx) => ctx.access.content(g, w, ctx)],
@@ -373,7 +378,7 @@ function remoteScreen(frame, ctx, rect) {
     panel(frame, ctx, rect, {
       key: "remote", color: "remote", title: "remote",
       content: (inner, w) => {
-        inner.put(2, 1, ctx.ui.error ? "The remote could not start" : "Reading every room\u2026", ctx.ui.error ? "alert" : "dim");
+        inner.put(2, 1, ctx.ui.error ? "The remote could not start" : ctx.ui.ready ? "No rooms configured" : "Reading every room\u2026", ctx.ui.error ? "alert" : "dim");
         if (ctx.ui.error) paragraph(inner, 2, 2, w - 4, ctx.ui.error, "base");
       }
     });

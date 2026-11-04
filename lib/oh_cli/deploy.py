@@ -19,19 +19,20 @@ Production runtime runs on the host thermite install ran on, from its state
 directory (the host file's state_root). Run this there. It installs one
 commit into the state from your operator account:
 
-  - the commit's conf/ into <state>/conf, which runtime reloads by itself
-    (no restart);
+  - the commit's conf/ into <state>/conf. Runtime reloads regular configuration;
+    shared script-library updates need a controlled runtime restart so every
+    script context loads the new library;
   - the Apple TV helper's files (bin/thermite and the code and pins
     its apple-tv verb runs) into <state>/atv/app; when they change it writes
-    <state>/deploy/atv-restart, and openhab-atv-restart.path restarts
-    openhab-atv.service;
+    <state>/deploy/atv-restart, and thermite-atv-restart.path restarts
+    thermite-atv.service;
   - the commit's metrics/ into <state>/metrics and the metrics exporter's
     code into <state>/exporter/app, once thermite install or upgrade has
     made them. Prometheus and blackbox_exporter reload a changed
     configuration (POST /-/reload; one not running yet reads it when it
     starts), Grafana rereads its dashboards by itself, and a change to the
     exporter's code or Grafana's settings writes <state>/deploy/metrics-restart,
-    and openhab-metrics-restart.path restarts those two. A commit from
+    and thermite-metrics-restart.path restarts those two. A commit from
     before the metrics (no metrics/ or no exporter) leaves both as the last
     deploy installed them;
   - a record in <state>/deploy/deployed.json and a line in
@@ -84,6 +85,23 @@ def print_metrics(result: deploy.Deployed, layout: deploy.State) -> None:
         print(f"metrics {line}")
 
 
+def deployment_selection(rev: str, *, area: Path | None = None) -> tuple[str, dict, dict | None]:
+    """Resolve once, so host facts and derived output share one revision."""
+    from oh_paths import SITE_FILE
+    area = AREA if area is None else Path(area)
+    commit = deploy.resolve(area, rev)
+    if deploy.export(area, commit, (SITE_FILE,)):
+        _, host, requirement = deploy.committed_inputs(area, commit)
+        if requirement and requirement["version"] == 2:
+            return commit, host, requirement
+    return commit, deploy.load(area)[1], None
+
+
+def deployment_host(rev: str, *, area: Path | None = None) -> dict:
+    """A config-only revision chooses its destination from committed data."""
+    return deployment_selection(rev, area=area)[1]
+
+
 def apply(args, host: dict) -> int:
     layout = deploy.State(args.state) if args.state else deploy.state(host)
     result = deploy.deploy(AREA, layout, VAR, args.rev, force=args.force, dry_run=args.dry_run, host=host,
@@ -96,10 +114,10 @@ def apply(args, host: dict) -> int:
     if args.dry_run:
         return 0
     if result.conf:
-        print("runtime reloads the changed files by itself; follow it with "
+        print("runtime reloads regular configuration; shared script-library updates need a controlled runtime restart. Follow it with "
               f"bin/thermite sandbox logs -f --userdata {layout.userdata}")
     if result.atv_app:
-        print(f"helper  changed: openhab-atv-restart.path restarts openhab-atv.service ({layout.atv_restart})")
+        print(f"helper  changed: thermite-atv-restart.path restarts thermite-atv.service ({layout.atv_restart})")
     if not result.record["boot_checked"]:
         print("note    installed without passing thermite test boot (--force)")
     if result.legacy_atv:
@@ -107,7 +125,7 @@ def apply(args, host: dict) -> int:
               "until the owner installs the new one (make openhab-upgrade)")
     if not deploy.pushed(AREA, result.commit):
         print(f"note    {short} is not on a remote branch; back up this configuration in your private repository")
-    stale = [name for name, _, how in deploy.installed_units(AREA) if how == "differs"]
+    stale = [name for name, _, how in deploy.installed_units(AREA, rev=result.commit) if how == "differs"]
     if stale:
         print(f"note    the installed {', '.join(stale)} differ from this checkout's; the owner installs them "
               "(thermite status)")
@@ -126,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="the state root (default: instance/host.yaml state_root)")
     args = parser.parse_args(argv)
     try:
-        _, host = deploy.load(AREA)
+        args.rev, host, _ = deployment_selection(args.rev)
         return apply(args, host)
     except deploy.DeployError as exc:
         print(f"thermite deploy: {exc}", file=sys.stderr)

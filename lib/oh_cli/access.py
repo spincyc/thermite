@@ -58,6 +58,23 @@ def print_stage(result, args):
     print("No services started; the security boundary is not active.")
 
 
+def _site_ports():
+    """A selected site's host overrides participate in separate access staging."""
+    path = oh_cli.AREA / "instance/host.yaml"
+    import yaml
+    try:
+        host = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(host, dict):
+            raise ValueError()
+        return oh_ports.effective(host)
+    except FileNotFoundError:
+        if not path.is_symlink():
+            return None
+        raise AccessError("Cannot validate staged listeners against the selected site's instance/host.yaml") from None
+    except (OSError, ValueError, TypeError, yaml.YAMLError):
+        raise AccessError("Cannot validate staged listeners against the selected site's instance/host.yaml") from None
+
+
 def main(argv=None):
     parser = oh_cli.command("access", DESCRIPTION, EXAMPLES)
     commands = oh_cli.actions(parser)
@@ -82,7 +99,7 @@ def main(argv=None):
     sub.add_argument("--state", required=True, type=Path, help="site-owned mode0700 state directory outside releases and source checkouts; reuse on upgrades")
     sub.add_argument("--plan-directory", required=True, type=Path, help="new operator-owned plan directory under an existing mode0700 parent; saves private diagnostics, the receipt, handoff.sh and activate.sh")
     oh_cli.add_house(sub)
-    sub.add_argument("--assets", required=True, type=Path, help="complete deployed native conf/html/remote directory")
+    sub.add_argument("--assets", required=True, type=Path, help="complete generated conf/html/remote directory for the selected inventory")
     sub.add_argument("--runtime-url", required=True, help="explicit native loopback HTTP origin")
     sub.add_argument("--runtime-token-file", required=True, type=Path, help="operator-owned mode0600 native bearer input; copied for service handoff")
     sub.add_argument("--tls-cert", required=True, type=Path, help="owner-managed TLS certificate chain")
@@ -130,6 +147,7 @@ def main(argv=None):
             values = vars(args).copy()
             values.pop("command")
             values.pop("json")
+            values["host_ports"] = _site_ports()
             result = stage(**values)
         if args.command == "stage" and not args.json:
             print_stage(result, args)

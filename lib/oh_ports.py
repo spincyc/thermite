@@ -6,10 +6,14 @@ Device protocol destinations and discovery multicast ports do not belong here.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import errno
+import fcntl
 import os
 from pathlib import Path
 import re
 import socket
+import stat
 from types import MappingProxyType
 
 BASE = 13600
@@ -67,13 +71,27 @@ def effective(host: dict | None = None) -> dict[str, int]:
     return unique(result)
 
 
+def listeners(selected: dict[str, int], *, upstream: int | None = None,
+              allocated: dict[str, int] | None = None) -> dict[str, int]:
+    """Validate staged listeners against the selected site's complete allocation."""
+    if allocated is not None and set(allocated) != set(DEFAULTS):
+        raise ValueError("host listeners must contain the complete Thermite allocation")
+    ports = unique(dict(DEFAULTS if allocated is None else allocated))
+    ports.update(selected)
+    if upstream is not None:
+        upstream = checked("native HTTP", upstream)
+        if allocated is not None and upstream != ports["http"]:
+            # An explicit upstream does not relocate this site's configured
+            # native listener. Both origins must remain reserved.
+            ports["native HTTP upstream"] = upstream
+        else:
+            ports["http"] = upstream
+    return unique(ports)
+
+
 def listener(name: str, value: int, *, upstream: int | None = None) -> int:
     """Validate a separately staged listener against defaults and its actual upstream."""
-    ports = dict(DEFAULTS)
-    ports[name] = value
-    if upstream is not None:
-        ports["http"] = checked("native HTTP", upstream)
-    unique(ports)
+    listeners({name: value}, upstream=upstream)
     return value
 
 
@@ -173,6 +191,53 @@ def configure_native(userdata: Path) -> None:
     custom.write_bytes(shutdown.encode("utf-8"))
 
 
+@contextmanager
+def _native_stopped(userdata: Path):
+    """Hold this pinned Karaf instance's existing lock while changing its files.
+
+    The distribution sets karaf.lock.dir=${karaf.data}/tmp. Karaf's
+    SimpleFileLock uses a POSIX record lock on its 'lock' file on Linux.
+    Missing first-install lock paths are not created here; the caller still
+    stops the instance's service and checks its destination listeners.
+    """
+    directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    descriptor = None
+    try:
+        for part in Path(os.path.abspath(userdata)).parts[1:]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                            dir_fd=directory)
+            os.close(directory)
+            directory = child
+        try:
+            temporary = os.open("tmp", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                dir_fd=directory)
+        except FileNotFoundError:
+            yield
+            return
+        os.close(directory)
+        directory = temporary
+        try:
+            descriptor = os.open("lock", os.O_RDWR | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                 dir_fd=directory)
+        except FileNotFoundError:
+            yield
+            return
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError("native Karaf lock must be a single-link regular file")
+        try:
+            fcntl.lockf(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                raise
+            raise ValueError("stop the target native Thermite openHAB before changing listeners: its userdata lock is held") from None
+        yield
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(directory)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Set stopped native console/shutdown listeners to Thermite's loopback ports")
     parser.add_argument("userdata", type=Path)
@@ -180,19 +245,23 @@ def main(argv=None):
     parser.add_argument("--uid", type=int)
     parser.add_argument("--gid", type=int)
     args = parser.parse_args(argv)
-    for port in (args.http_port, HTTP_PORT, KARAF_PORT, SHUTDOWN_PORT, 8101):
+    # The caller stops this installation's service before reconfiguration.
+    # These are availability checks for its selected listeners: another
+    # openHAB's default console (8101) does not identify a Thermite process.
+    for port in dict.fromkeys((args.http_port, KARAF_PORT, SHUTDOWN_PORT)):
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.25):
-                parser.error(f"stop native openHAB before changing listener configuration (port {port} answers)")
+                parser.error(f"stop native Thermite openHAB before changing listener configuration (port {port} answers)")
         except OSError:
             pass
     try:
-        configure_native(args.userdata)
+        with _native_stopped(args.userdata):
+            configure_native(args.userdata)
+            if args.uid is not None and args.gid is not None:
+                for relative in (SHELL_CFG, CUSTOM_PROPERTIES):
+                    os.chown(args.userdata / relative, args.uid, args.gid)
     except (OSError, ValueError) as exc:
         parser.exit(2, f"could not configure the initialized native listeners: {exc}\n")
-    if args.uid is not None and args.gid is not None:
-        for relative in (SHELL_CFG, CUSTOM_PROPERTIES):
-            os.chown(args.userdata / relative, args.uid, args.gid)
     return 0
 
 

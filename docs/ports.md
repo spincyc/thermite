@@ -6,7 +6,10 @@ HTTPS application on **13600**. `lib/oh_ports.py` owns the allocation.
 `metrics: <service>_port` overrides. Generation rejects invalid values and
 collisions, including collisions with the sandbox, boot test and docs preview.
 Explicit overrides may leave the default run; update clients and firewall
-rules together when using them.
+rules together when using them. Access staging checks gateway and callback
+listeners against the selected site's complete allocation and the explicit
+native upstream. Restage access configuration after changing that allocation;
+running services keep the endpoints from their staged release.
 
 | Port | Listener | Binding / use |
 | --- | --- | --- |

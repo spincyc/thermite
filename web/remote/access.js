@@ -22,14 +22,16 @@
     return error;
   }
   function returnTo(raw, origin) {
-    const fallback = "/static/remote/home.html";
+    const navigation = global.ThermiteNavigation || (typeof require === "function" ? require("./navigation") : null);
+    const fallback = "/";
     let target; try { target = new URL(raw || fallback, origin + "/static/remote/"); } catch (_) { return fallback; }
+    const path = navigation?.canonical(target.pathname);
     if (target.origin !== origin || target.username || target.password
-        || !/^\/static\/remote\/(?:index\.html|home\.html|pair\.html|cameras\.html|topology\.html|security\.html|settings\.html|users\.html)?$/.test(target.pathname)) return fallback;
+        || !path || path === "/account/") return fallback;
     const safe = new URLSearchParams();
     for (const key of ["room", "source"]) { const value = target.searchParams.get(key); if (value && /^[a-z][a-z0-9_]{0,99}$/.test(value)) safe.set(key, value); }
     const theme = target.searchParams.get("theme"); if (["dark", "light"].includes(theme)) safe.set("theme", theme);
-    return target.pathname + (safe.size ? "?" + safe.toString() : "");
+    return path + (safe.size ? "?" + safe.toString() : "");
   }
   function principal(value) {
     if (!value || !Number.isInteger(value.id) || typeof value.username !== "string" || value.username.length > 150
@@ -126,11 +128,11 @@
     async function fetchAuth(url, init) {
       if (legacy || mock) return rawFetch(url, init);
       await ready();
-      const target = new URL(url, origin), method = (init && init.method || "GET").toUpperCase();
+      const target = new URL(url, config.base ? origin + "/" : global.document?.baseURI || origin + "/"), method = (init && init.method || "GET").toUpperCase();
       if (!client.has("pairing.manage") && (target.pathname === "/rest/items" && target.searchParams.get("metadata") === "pairing"
           || method === "POST" && target.pathname.startsWith("/rest/items/"))) throw problem("forbidden", 403);
       const revision = authRevision;
-      const response = await raw(url, init);
+      const response = await raw(target.href, init);
       stale(revision);
       if (response.status === 401) { lost("session_expired"); throw problem("session_expired", 401); }
       return response;
@@ -230,7 +232,7 @@
     onUnauthorized() {
       if (document.body && document.body.dataset.thermitePage === "access") return;
       document.querySelectorAll("main,.app").forEach((main) => { const message = document.createElement("p"); message.textContent = "Sign in to thermite to continue."; main.replaceChildren(message); });
-      if (document.body && document.body.dataset.thermitePage !== "access") location.replace("access.html?next=" + encodeURIComponent(returnTo(location.href, location.origin)));
+      if (document.body && document.body.dataset.thermitePage !== "access") location.replace("/account/?next=" + encodeURIComponent(returnTo(location.href, location.origin)));
     } });
   if (!client.native && !client.mock) { global.fetch = client.fetch; if (NativeEvents) global.EventSource = client.eventSource(NativeEvents); }
   document.addEventListener("visibilitychange", () => client.setActive(document.visibilityState !== "hidden"));

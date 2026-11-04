@@ -18,7 +18,7 @@ import oh_cli
 import oh_service
 from oh_cli import AREA, PROGRAM_ROOT
 
-# The helper's container sets it (deploy/openhab-atv.container).
+# The helper's container sets it (deploy/thermite-atv.container).
 VENV = Path(os.environ.get("OPENHAB_ATV_VENV") or AREA / "build/pyatv-venv")
 REQUIREMENTS = PROGRAM_ROOT / "lib/requirements-pyatv.txt"
 #: In the venv: the digest of the requirements it was built from.

@@ -32,6 +32,19 @@ class InstalledInstall(unittest.TestCase):
     def command(self, *args):
         return (sys.executable, str(self.program / "bin/thermite"), "--site", str(self.site), *args)
 
+    def test_runtime_access_credentials_belong_to_the_private_site(self):
+        self.host.read_bytes.return_value = None
+        self.host.read_private.side_effect = FileNotFoundError
+        self.host.clock.return_value = 10
+        self.host.configure_runtime_access.return_value = "oh.synthetic.123"
+        self.context.host["http_port"] = 13601
+        with patch.object(oh_paths, "PROGRAM", self.program):
+            action = steps.Token(self.context).actions(self.host)[0]
+            self.assertEqual(action.perform(self.host), 0)
+        self.host.configure_runtime_access.assert_called_once_with(
+            "http://127.0.0.1:13601", self.site / "var/server/runtime-credentials.json",
+            self.site / "var/server/api-token", 10 + steps.WAIT)
+
     def test_boot_deploy_and_verification_use_application_interpreter_and_explicit_site(self):
         with patch.object(oh_paths, "PROGRAM", self.program):
             self.assertEqual(steps.BootTest(self.context).actions(self.host)[0].argv, self.command("test", "boot"))
@@ -43,7 +56,10 @@ class InstalledInstall(unittest.TestCase):
             self.assertTrue(all(action.approved_argv is None for action in actions[:-1]))
             self.assertEqual([action.terminal for action in actions], [False, False, False, True])
             self.assertEqual([action.argv for action in steps.Verify(self.context).actions(self.host)],
-                             [self.command("health", "--production"), self.command("status")])
+                             [self.command("health", "--production", "--installation"), self.command("status")])
+            verification = steps.Verify(self.context).actions(self.host)
+            self.assertTrue(verification[0].show_output)
+            self.assertFalse(verification[0].terminal)
 
     def test_group_refresh_preserves_quoted_program_site_and_interpreter(self):
         self.host.process_groups.return_value = {1000}
@@ -69,14 +85,18 @@ class InstalledInstall(unittest.TestCase):
             self.assertEqual(fallback.approved_argv, ("-u", "owner", *self.command("deploy", "--yes", "--quiet")))
             self.assertTrue(fallback.terminal)
 
-    def test_source_checkout_checks_before_terminal_deployment(self):
+    def test_source_checkout_uses_the_same_configuration_checks_as_an_installed_site(self):
+        with patch.object(oh_paths, "PROGRAM", self.program):
+            installed = steps.Deploy(self.context).actions(self.host)
+        installed_checks = [action.argv[len(self.command()):] for action in installed[:-1]]
         (self.site / oh_paths.SITE_FILE).unlink()
         self.assertEqual(steps.BootTest(self.context).actions(self.host)[0].argv,
                          ("make", "openhab-test", "TEST=boot"))
-        checks, action = steps.Deploy(self.context).actions(self.host)
-        self.assertEqual(checks.argv, ("make", "check"))
-        self.assertIsNone(checks.approved_argv)
-        self.assertFalse(checks.terminal)
+        *checks, action = steps.Deploy(self.context).actions(self.host)
+        self.assertEqual([check.argv for check in checks], [("bin/thermite", "generate", "--check"),
+                                                          ("bin/thermite", "validate"), ("bin/thermite", "lint")])
+        self.assertEqual([check.argv[1:] for check in checks], installed_checks)
+        self.assertTrue(all(check.approved_argv is None and not check.terminal for check in checks))
         self.assertEqual(action.argv, ("bin/thermite", "deploy"))
         self.assertEqual(action.approved_argv, ("bin/thermite", "deploy", "--yes", "--quiet"))
         self.assertTrue(action.terminal)

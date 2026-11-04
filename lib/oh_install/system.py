@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import fcntl
 import getpass
 import grp
 import http.client
@@ -66,6 +67,27 @@ class Unit:
     since: float | None = None
     #: Stable systemd active-enter monotonic timestamp, in microseconds.
     generation: int | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class UnitOrigin:
+    source: str = ""
+    fragment: str = ""
+    drop_ins: str = ""
+    known: bool = True
+    load_state: str = "loaded"
+    active: str = "inactive"
+    enabled: str = ""
+    transient: bool | None = False
+
+
+@dataclasses.dataclass(frozen=True)
+class UnitFile:
+    content: bytes
+    uid: int
+    mode: int
+    ancestors_trusted: bool = True
+    gid: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -149,12 +171,130 @@ class System:
         except OSError:
             return []
 
+    def directory_entries(self, path: Path) -> list[str] | None:
+        """Unlike listdir, do not mistake an unreadable directory for empty."""
+        try:
+            return sorted(os.listdir(path))
+        except OSError:
+            return None
+
     def read_bytes(self, path: Path) -> bytes | None:
         """None when path is missing or this user cannot read it."""
         try:
             return Path(path).read_bytes()
         except (FileNotFoundError, NotADirectoryError, IsADirectoryError, PermissionError):
             return None
+
+    def lexists(self, path: Path) -> bool:
+        try:
+            os.lstat(path)
+            return True
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+        except OSError:
+            # An inaccessible lookup is never permission to overwrite it.
+            return True
+
+    def unit_file(self, path: Path) -> UnitFile | None:
+        """Read a regular unit through non-symlink ancestors, without root.
+
+        Ownership decisions must not follow a replacement symlink, including
+        one in an ancestor. The administrative install/remove follows only
+        after this conservative, read-only check.
+        """
+        path = Path(path)
+        if not path.is_absolute() or ".." in path.parts:
+            return None
+        try:
+            with contextlib.ExitStack() as stack:
+                flags = os.O_RDONLY | os.O_NOFOLLOW
+                directory_flags = os.O_PATH | os.O_NOFOLLOW | os.O_DIRECTORY
+                parent = os.open("/", directory_flags)
+                stack.callback(os.close, parent)
+                info = os.fstat(parent)
+                trusted = info.st_uid == 0 and not info.st_mode & 0o022
+                for part in path.parts[1:-1]:
+                    parent = os.open(part, directory_flags, dir_fd=parent)
+                    stack.callback(os.close, parent)
+                    info = os.fstat(parent)
+                    trusted = trusted and info.st_uid == 0 and not info.st_mode & 0o022
+                descriptor = os.open(path.name, flags | os.O_NONBLOCK, dir_fd=parent)
+                stack.callback(os.close, descriptor)
+                info = os.fstat(descriptor)
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 256 * 1024:
+                    return None
+                with os.fdopen(os.dup(descriptor), "rb") as source:
+                    content = source.read(256 * 1024 + 1)
+                return UnitFile(content, info.st_uid, stat.S_IMODE(info.st_mode), bool(trusted), info.st_gid) if len(content) <= 256 * 1024 else None
+        except OSError:
+            return None
+
+    def safe_directory(self, path: Path) -> bool:
+        """Whether an existing directory has only real directory ancestors."""
+        path = Path(path)
+        if not path.is_absolute() or ".." in path.parts or path == Path("/"):
+            return False
+        try:
+            with contextlib.ExitStack() as stack:
+                flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
+                parent = os.open("/", flags)
+                stack.callback(os.close, parent)
+                for part in path.parts[1:]:
+                    parent = os.open(part, flags, dir_fd=parent)
+                    stack.callback(os.close, parent)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+
+    def safe_unit_parent(self, path: Path) -> bool:
+        """Existing unit ancestors must be root-owned real, unwritable dirs."""
+        path = Path(path)
+        if not path.is_absolute() or ".." in path.parts:
+            return False
+        try:
+            with contextlib.ExitStack() as stack:
+                flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
+                parent = os.open("/", flags)
+                stack.callback(os.close, parent)
+                for part in (None, *path.parts[1:]):
+                    if part is not None:
+                        parent = os.open(part, flags, dir_fd=parent)
+                        stack.callback(os.close, parent)
+                    info = os.fstat(parent)
+                    if info.st_uid != 0 or info.st_mode & 0o022:
+                        return False
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+
+    def unit_origin(self, name: str) -> UnitOrigin:
+        return self.unit_origins((name,))[name]
+
+    def unit_origins(self, names: Sequence[str]) -> dict[str, UnitOrigin]:
+        """One bounded, nonsecret systemd snapshot; missing/error is not inactive."""
+        result = {name: UnitOrigin(known=False, load_state="", active="unknown") for name in names}
+        if not names:
+            return result
+        code, out = self.capture(["systemctl", "show", *names,
+                                  "--property=Id,SourcePath,FragmentPath,DropInPaths,LoadState,ActiveState,UnitFileState,Transient"], timeout=10)
+        if code:
+            return result
+        for block in out.strip().split("\n\n"):
+            values = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+            name = values.get("Id")
+            if name not in result:
+                continue
+            known = (values.get("LoadState") in ("loaded", "not-found", "masked")
+                     and values.get("ActiveState") in ("active", "inactive", "failed", "activating", "reloading", "deactivating")
+                     and values.get('Transient') in ('yes', 'no'))
+            result[name] = UnitOrigin(values.get("SourcePath", ""), values.get("FragmentPath", ""), values.get("DropInPaths", ""),
+                                      known, values.get("LoadState", ""), values.get("ActiveState", "unknown"), values.get("UnitFileState", ""),
+                                      {'yes': True, 'no': False}.get(values.get('Transient')))
+        return result
 
     def fstype(self, path: Path) -> str | None:
         """The file system type of path, or of its nearest existing parent."""
@@ -192,6 +332,8 @@ class System:
 
     def native_probe(self, url: str, token: str, path: str, deadline: float, *, json_body: bool = True) -> NativeProbe:
         """One authenticated read, bounded through headers/body by the startup deadline."""
+        if not isinstance(token, str) or any(ord(c) < 33 or ord(c) > 126 for c in token):
+            return NativeProbe(0, problem="invalid runtime credential")
         def remaining():
             value = deadline - self.clock()
             if value <= 0:
@@ -267,7 +409,25 @@ class System:
             if progress.capture_command.get():
                 from oh_install import output
                 active = progress.current.get()
-                return output.run(argv, cwd, timeout=timeout,
+                privileged = bool(argv and argv[0] == "sudo")
+                if privileged:
+                    # Authentication owns the terminal only while it may ask
+                    # for a password. The actual command cannot prompt or be
+                    # retried after a possibly partial mutation.
+                    deadline = self.clock() + timeout if timeout is not None else None
+                    with progress.command(terminal=True):
+                        code = self.run(("sudo", "-v"), cwd, timeout=timeout)
+                    if code:
+                        self.say("   sudo authentication failed; no command was run")
+                        return code
+                    if deadline is not None:
+                        timeout = deadline - self.clock()
+                        if timeout <= 0:
+                            self.say("   startup allowance expired during sudo authentication; no command was run")
+                            return 124
+                    argv = ("sudo", "-n", *argv[1:])
+                return output.run(argv, cwd, timeout=timeout, keep_terminal=privileged,
+                                  show_output=progress.show_command_output.get() and not oh_cli.switches.quiet,
                                   report=lambda text: active.message(text, error=True))
             with contextlib.ExitStack() as stack:
                 options = {}
@@ -328,14 +488,107 @@ class System:
         with self._private_directory(path):
             pass
 
+    @staticmethod
+    def _read_private_at(parent: int, name: str) -> str:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        try:
+            info = os.fstat(descriptor)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 65536):
+                raise ValueError("credential must be owned, private, bounded and regular")
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                value = stream.read(65537)
+            if len(value) > 65536:
+                raise ValueError("credential exceeds the supported size")
+            return value.decode("utf-8")
+        finally:
+            os.close(descriptor)
+
+    def read_private(self, path: Path) -> str:
+        """Read an explicit operator credential without creating or repairing paths."""
+        path = Path(path).absolute()
+        if ".." in path.parts:
+            raise ValueError("invalid private credential path")
+        with contextlib.ExitStack() as stack:
+            flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
+            parent = os.open("/", flags)
+            stack.callback(os.close, parent)
+            for part in path.parts[1:-1]:
+                parent = os.open(part, flags, dir_fd=parent)
+                stack.callback(os.close, parent)
+            return self._read_private_at(parent, path.name)
+
+    def configure_runtime_access(self, url: str, credentials: Path, token: Path, deadline: float) -> str:
+        """Serialize resumable setup; credential bytes never enter command output."""
+        from oh_install import native_auth
+        with self._runtime_access_store(credentials, token) as (load, save, publish):
+            return native_auth.provision(url, load=load, save=save, publish=publish,
+                                         deadline=deadline, clock=self.clock)
+
+    def import_runtime_access(self, credentials: Path, token: Path, value: str) -> None:
+        """An explicit import supersedes automatic recovery of a different token."""
+        with self._runtime_access_store(credentials, token) as (load, save, publish):
+            record = load()
+            if record is not None:
+                if not isinstance(record, dict):
+                    raise ValueError("invalid managed credential record")
+                if record.get("token") != value:
+                    save({**record, "phase": "retired"})
+            publish(value)
+
+    @contextlib.contextmanager
+    def _runtime_access_store(self, credentials: Path, token: Path):
+        credentials, token = Path(credentials), Path(token)
+        if credentials.parent != token.parent or credentials.name != "runtime-credentials.json" or token.name != "api-token":
+            raise ValueError("runtime credentials must use the operator's fixed private paths")
+        with self._private_directory(credentials.parent) as parent:
+            lock = os.open(".runtime-access.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                           0o600, dir_fd=parent)
+            try:
+                info = os.fstat(lock)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                        or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
+                    raise ValueError("runtime setup lock has unsafe custody")
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                def read(name):
+                    try:
+                        return self._read_private_at(parent, name)
+                    except FileNotFoundError:
+                        return None
+                before = read(token.name)
+                def load():
+                    raw = read(credentials.name)
+                    def unique(pairs):
+                        value = {}
+                        for key, item in pairs:
+                            if key in value:
+                                raise ValueError("duplicate credential record field")
+                            value[key] = item
+                        return value
+                    return json.loads(raw, object_pairs_hook=unique) if raw is not None else None
+                def save(value):
+                    self._write_private_at(parent, credentials.name, json.dumps(value, sort_keys=True) + "\n")
+                def publish(value):
+                    if read(token.name) != before:
+                        raise ValueError("runtime access changed during setup; rerun to verify it")
+                    self._write_private_at(parent, token.name, value + "\n")
+                yield load, save, publish
+            finally:
+                os.close(lock)
+
     def write_private(self, path: Path, text: str) -> None:
         path = Path(path)
         if not path.name or ".." in path.parts:
             raise ValueError("invalid private credential path")
-        with self._private_directory(path.parent) as parent, contextlib.ExitStack() as stack:
+        with self._private_directory(path.parent) as parent:
+            self._write_private_at(parent, path.name, text)
+
+    @staticmethod
+    def _write_private_at(parent: int, name: str, text: str) -> None:
+        with contextlib.ExitStack() as stack:
             previous = None
             try:
-                existing = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                existing = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
             except FileNotFoundError:
                 pass
             else:
@@ -344,7 +597,7 @@ class System:
                 if (not stat.S_ISREG(previous.st_mode) or previous.st_uid != os.geteuid()
                         or previous.st_nlink != 1 or stat.S_IMODE(previous.st_mode) != 0o600):
                     raise ValueError("existing credential must be owned, private, regular and without hard links")
-            temporary = "." + path.name + "." + os.urandom(12).hex()
+            temporary = "." + name + "." + os.urandom(12).hex()
             descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                                  0o600, dir_fd=parent)
             try:
@@ -354,12 +607,12 @@ class System:
                     handle.flush()
                     os.fsync(handle.fileno())
                 if previous is None:
-                    os.link(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+                    os.link(temporary, name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
                 else:
-                    current = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+                    current = os.stat(name, dir_fd=parent, follow_symlinks=False)
                     if not os.path.samestat(previous, current):
                         raise ValueError("credential changed during private write")
-                    os.replace(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent)
+                    os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
             finally:
                 try:
                     os.unlink(temporary, dir_fd=parent)

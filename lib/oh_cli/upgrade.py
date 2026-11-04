@@ -10,11 +10,14 @@ import datetime
 import json
 import os
 import sys
+from pathlib import Path
 
 import oh_cli
 import oh_deploy as deploy
 from oh_cli import AREA
 from oh_install import runner, steps
+from oh_install import ownership
+import oh_units
 from oh_install.model import Command
 from oh_install.system import System
 
@@ -53,7 +56,8 @@ including its sudo commands. Compact status shows each stage; -v/--verbose
 shows details and commands. Interactive commands keep the terminal, with
 the spinner paused.
 After a no, a failure or Ctrl-C, run it again and it goes on from there,
-asking once again. --dry-run only reads: it reports each step and what it
+asking once again. --dry-run leaves the site and host unchanged: transient
+configuration planning is cleaned up, and it reports each step and what it
 would run. An agent uses only that: agents never run sudo.
 """
 
@@ -83,7 +87,7 @@ def stamp() -> str:
 
 def installed(system: System, context: steps.Context) -> bool:
     return (system.stat(context.layout.root) is not None
-            and system.stat(deploy.INSTALLED[deploy.QUADLET]) is not None)
+            and ownership.inspect(context, system).runtime_bound)
 
 
 def deployed(system: System, context: steps.Context) -> str | None:
@@ -110,11 +114,13 @@ def going_back(system: System, context: steps.Context, backup: steps.Backup, bef
                    "starts runtime on them (thermite install in a commit from before thermite upgrade)")
 
 
-def upgrade(system: System, dry_run: bool, when: str | None = None) -> int:
+def upgrade(system: System, dry_run: bool, when: str | None = None, *, runtime_token_file: Path | None = None) -> int:
     when = when or stamp()
-    versions, host = deploy.load(AREA)
-    context = steps.Context(AREA, versions, host, deploy.resolve(AREA, "HEAD"),
-                            deploy.tree_digest(deploy.read_tree(AREA / "conf")), system.hostname(), system.address())
+    context = steps.committed_context(AREA, system, runtime_token_file)
+    problems = ownership.inspect(context, system).problems
+    if problems:
+        system.say("Cannot safely upgrade: " + "; ".join(problems))
+        return 1
     if not installed(system, context):
         print(f"thermite upgrade: runtime is not installed on this host yet ({context.layout.root} or "
               f"{deploy.INSTALLED[deploy.QUADLET]} is missing): thermite install", file=sys.stderr)
@@ -122,7 +128,8 @@ def upgrade(system: System, dry_run: bool, when: str | None = None) -> int:
     before = deployed(system, context)
     system.say(f"{'What upgrading' if dry_run else 'Upgrading'} thermite on this host, {context.hostname}, to what "
                f"{context.head[:12]} pins, {'would do' if dry_run else 'step by step'}:")
-    code = runner.run([steps.Committed(context)], system, AREA, dry_run=dry_run, rerun=RERUN)
+    code = runner.run([steps.Preconditions(context), steps.Committed(context)], system, AREA,
+                      dry_run=dry_run, rerun=RERUN)
     if code and not dry_run:
         return code
     plan = steps.plan(context, system)
@@ -136,7 +143,7 @@ def upgrade(system: System, dry_run: bool, when: str | None = None) -> int:
                    "sudo commands, service restarts, deployment and health checks.")
         if not runner.confirm_run(system, "upgrade", RERUN):
             return 1
-    status = runner.run(rest, system, AREA, dry_run=dry_run, first=2, rerun=RERUN,
+    status = runner.run(rest, system, AREA, dry_run=dry_run, first=3, rerun=RERUN,
                         root_confirmed=not dry_run)
     if dry_run:
         return status or code
@@ -152,6 +159,8 @@ def upgrade(system: System, dry_run: bool, when: str | None = None) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("upgrade", DESCRIPTION, EXAMPLES, NOTES)
     oh_cli.add_dry_run(parser)
+    parser.add_argument("--runtime-token-file", type=Path,
+                        help="advanced: import an existing internal runtime API token from your private file")
     arguments = parser.parse_args(argv)
     if os.geteuid() == 0:
         print("thermite upgrade: run it as your user; it asks once before applying the upgrade",
@@ -159,8 +168,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     system = System()
     try:
-        return upgrade(system, arguments.dry_run)
-    except deploy.DeployError as exc:
+        return upgrade(system, arguments.dry_run, runtime_token_file=arguments.runtime_token_file)
+    except (deploy.DeployError, ValueError, OSError) as exc:
         print(f"thermite upgrade: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

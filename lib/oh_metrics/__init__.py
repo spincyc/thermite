@@ -30,6 +30,7 @@ import re
 import urllib.parse
 
 import oh_ports
+import oh_units
 
 from . import alerts, dashboards
 from .exporter import EXPORTER_PORT, MAP_VERSION, THING_STATUSES
@@ -99,7 +100,7 @@ GRAFANA_FOLDER_UID = "thermite"
 GRAFANA_RELOAD_SECONDS = 30
 #: The systemd units node_exporter reports on; host.yaml `metrics: units:`
 #: names more (other services on the same host).
-SYSTEMD_UNITS = ("openhab.*",)
+SYSTEMD_UNITS = ("thermite-.*",)
 DBUS_SOCKET = "/run/dbus/system_bus_socket"
 
 #: Control ports of integrations whose module names none: the Sonos binding
@@ -173,9 +174,7 @@ class Service:
 
 
 #: The units of services(), whatever the host.
-SERVICE_UNITS = ("openhab-prometheus.service", "openhab-node-exporter.service", "openhab-blackbox.service",
-                 "openhab-metrics-exporter.service", "openhab-grafana.service",
-                 "openhab-alertmanager.service", "openhab-ntfy.service", "openhab-notifications.service")
+SERVICE_UNITS = oh_units.METRICS
 
 
 def services(host: dict) -> list[Service]:
@@ -186,23 +185,23 @@ def services(host: dict) -> list[Service]:
     secrets = Volume(STATE_SECRETS, SECRETS_MOUNT, "ro")
     return [
         Service(
-            "openhab-ntfy.service", "openhab-ntfy", "ntfy", "Local notification cache",
+            oh_units.NTFY, oh_units.CONTAINERS[oh_units.NTFY], "ntfy", "Local notification cache",
             f"{LOOPBACK}:{port['ntfy']}", ("serve", "--config=/etc/ntfy/server.yml"),
             (Volume(f"{STATE_CONFIG}/ntfy", "/etc/ntfy", "ro"), Volume(STATE_NTFY, "/var/lib/ntfy", "rw")),
             notes=("Loopback only; no upstream/APNs relay or phone delivery is enabled.",)),
         Service(
-            "openhab-notifications.service", "openhab-notifications", "atv_helper", "Local alert delivery adapter",
+            oh_units.NOTIFICATIONS, oh_units.CONTAINERS[oh_units.NOTIFICATIONS], "atv_helper", "Local alert delivery adapter",
             f"{LOOPBACK}:{port['notifications']}",
             (f"--listen={LOOPBACK}:{port['notifications']}", f"--ntfy=http://{LOOPBACK}:{port['ntfy']}", "--catalog=/etc/thermite-notifications/catalog.json"),
             (Volume(STATE_EXPORTER_APP, EXPORTER_APP_DIR, "ro"), Volume(f"{STATE_CONFIG}/notifications", "/etc/thermite-notifications", "ro")),
             command=("python3", f"{EXPORTER_APP_DIR}/{EXPORTER_APP[1]}"), environment=(("PYTHONDONTWRITEBYTECODE", "1"),)),
         Service(
-            "openhab-alertmanager.service", "openhab-alertmanager", "alertmanager", "Local alert routing",
+            oh_units.ALERTMANAGER, oh_units.CONTAINERS[oh_units.ALERTMANAGER], "alertmanager", "Local alert routing",
             f"{LOOPBACK}:{port['alertmanager']}",
             ("--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager", f"--web.listen-address={LOOPBACK}:{port['alertmanager']}", "--cluster.listen-address="),
             (Volume(f"{STATE_CONFIG}/alertmanager", "/etc/alertmanager", "ro"), Volume(STATE_ALERTMANAGER, "/alertmanager", "rw"))),
         Service(
-            "openhab-prometheus.service", "openhab-prometheus", "prometheus", "Prometheus for openHAB",
+            oh_units.PROMETHEUS, oh_units.CONTAINERS[oh_units.PROMETHEUS], "prometheus", "Prometheus for openHAB",
             f"{LOOPBACK}:{port['prometheus']}",
             (f"--config.file={PROMETHEUS_CONFIG_DIR}/prometheus.yml",
              f"--storage.tsdb.path={PROMETHEUS_DATA_DIR}",
@@ -218,7 +217,7 @@ def services(host: dict) -> list[Service]:
                    "its configuration with POST /-/reload (--web.enable-lifecycle)."),
         ),
         Service(
-            "openhab-node-exporter.service", "openhab-node-exporter", "node_exporter", "Host metrics for openHAB",
+            oh_units.NODE_EXPORTER, oh_units.CONTAINERS[oh_units.NODE_EXPORTER], "node_exporter", "Host metrics for openHAB",
             f"{LOOPBACK}:{port['node_exporter']}",
             ("--path.rootfs=/host",
              f"--web.listen-address={LOOPBACK}:{port['node_exporter']}",
@@ -238,7 +237,7 @@ def services(host: dict) -> list[Service]:
                    "need not link to /run."),
         ),
         Service(
-            "openhab-blackbox.service", "openhab-blackbox", "blackbox_exporter", "Device probes for openHAB",
+            oh_units.BLACKBOX, oh_units.CONTAINERS[oh_units.BLACKBOX], "blackbox_exporter", "Device probes for openHAB",
             f"{LOOPBACK}:{port['blackbox']}",
             (f"--config.file={BLACKBOX_CONFIG_DIR}/blackbox.yml",
              f"--web.listen-address={LOOPBACK}:{port['blackbox']}"),
@@ -246,7 +245,7 @@ def services(host: dict) -> list[Service]:
             notes=("bin/thermite deploy reloads its modules with POST /-/reload.",),
         ),
         Service(
-            "openhab-metrics-exporter.service", "openhab-metrics-exporter", "atv_helper",
+            oh_units.EXPORTER, oh_units.CONTAINERS[oh_units.EXPORTER], "atv_helper",
             "Thing and Item metrics for openHAB", f"{LOOPBACK}:{port['exporter']}",
             (f"--listen={LOOPBACK}:{port['exporter']}",
              f"--map={EXPORTER_CONFIG_DIR}/map.json",
@@ -260,7 +259,7 @@ def services(host: dict) -> list[Service]:
                    "map's file changes, and a deploy that changes the code restarts it."),
         ),
         Service(
-            "openhab-grafana.service", "openhab-grafana", "grafana", "Grafana dashboards for openHAB",
+            oh_units.GRAFANA, oh_units.CONTAINERS[oh_units.GRAFANA], "grafana", "Grafana dashboards for openHAB",
             f"0.0.0.0:{port['grafana']}",
             (),
             (Volume(f"{STATE_CONFIG}/grafana", GRAFANA_CONFIG_DIR, "ro"),

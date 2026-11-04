@@ -48,7 +48,7 @@ The non-login account `thermite:thermite`, UID/GID 9001, runs all application se
 
 ### Where does my house configuration belong?
 
-In a private site, separate from the installed application and the public repository. Keep real inventory, host settings and generated outputs in private Git; credentials and runtime state stay outside Git. `init` starts with fictional devices and activates no service. The [getting-started guide](https://spincyc.github.io/thermite/start.html) explains the boundary.
+In a private site, separate from the installed application and the public repository. Keep real inventory, host settings, native version pins and the application release requirement in private Git; generated outputs, credentials and runtime state stay outside Git. `init` starts with fictional devices and activates no service. The [getting-started guide](https://spincyc.github.io/thermite/start.html) explains the boundary.
 
 ### How do application upgrades and rollback work?
 

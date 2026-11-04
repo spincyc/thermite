@@ -129,7 +129,18 @@ no unverified callback route, firewall, root service or native listener change.
 
 ## Testing
 
-Run `make check` from the repository root for the shipped portable
-configuration, documentation and offline smoke checks. Full identity
-development fixtures and their Django test settings are not included
-in this portable source export.
+Run `make check` from the repository root for the portable application tests.
+The identity suite additionally exercises real Django, SQLite and Argon2 with
+synthetic accounts and in-memory runtime adapters. Install the hash-locked
+`lib/requirements-site.txt` in a development virtual environment, then run:
+
+```sh
+mkdir -p .scratch/identity-tests
+chmod 700 .scratch/identity-tests
+PYTHONPATH=lib DJANGO_SETTINGS_MODULE=oh_identity.test_settings \
+  THERMITE_IDENTITY_STATE="$PWD/.scratch/identity-tests" \
+  python -B -m django test oh_identity --noinput
+```
+
+Use a fresh scratch directory for this test state. The suite never uses a
+production identity database or contacts a native runtime or device.

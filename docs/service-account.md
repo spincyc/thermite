@@ -34,7 +34,10 @@ preserves its permissions:
 The leading `2` on shared directories makes new files inherit group
 `thermite`. Service credentials are private to the service account; an
 operator's local API token and terminal login token stay private to that
-operator. Packages, application environments and installed systemd unit files
+operator. Fresh installation also keeps a generated internal runtime account
+and token in `var/<host>/runtime-credentials.json`, mode 0600. This record lets
+setup resume without asking users to manage the runtime's own account pages;
+it is separate from household sign-in. Packages, application environments and installed systemd unit files
 retain their normal administrator ownership.
 
 More restrictive existing configuration modes are retained. Native userdata
@@ -62,9 +65,9 @@ Privileged host service management remains the administrator's responsibility.
 
 ## Upgrade an existing installation
 
-Older installations named the UID/GID 9001 account `openhab`. Use the current
-installer or upgrade workflow to migrate it. From your private site or
-complete source checkout, as its owner:
+Existing Thermite installations can migrate their old `openhab*` unit and
+container names while preserving the service account and data. From your
+private site or complete source checkout, as its owner:
 
 ```sh
 thermite upgrade --dry-run
@@ -77,14 +80,26 @@ For a source checkout without the installed command, use
 before applying it. The owner approves the privileged commands shown by
 the workflow.
 
-The migration stops the application services before renaming the existing
-user and group. It keeps UID and GID 9001, so existing files still belong to
-the same numeric account. It then repairs the configured service tree's
-ownership and permissions and installs the current units. An unrelated
-account using either name or numeric ID is refused for manual resolution.
+The migration verifies generated unit contents, their state bindings and
+the effective systemd registration before stopping or removing them. New
+inactive unit files are installed before old registrations are retired, so
+an interrupted migration retains proof of ownership for the next run. A
+shadowing service, unknown modification or ambiguous ownership stops the
+migration for review. Independently installed `openhab`, `prometheus` and
+`grafana` services are left alone. A nonempty state directory also needs proof
+that it belongs to Thermite; an unrelated application directory is not adopted.
+Empty installation scaffolding can be resumed.
 
-The account rename does not rename service units, relocate the state root or
-reinitialize a database. Keep your existing `state_root`, even if it is named
+An independent `openhab` account with different numeric IDs can coexist.
+Older Thermite installations that still use an `openhab` account at the
+configured service UID/GID need an administrator to resolve that collision
+first. The installer does not infer exclusive account ownership from its
+name or numeric ID and does not rename it automatically. Preserve numeric
+ownership for existing Thermite data; do not change IDs merely to bypass this
+check.
+
+Unit migration does not relocate the state root or reinitialize a database.
+Keep your existing `state_root`, even if it is named
 `/srv/old-runtime`. Configuration, users, pairings, histories and data
 stay in place. Do not replace them with the fictional example or change the
 numeric IDs to obtain the new account name.
@@ -107,6 +122,35 @@ installer cannot rewrite separately staged access releases without their
 owner's configuration. Restage older access units for `thermite` before
 starting them; keep their existing persistent state and do not bootstrap
 it again.
+
+## Service registration
+
+Every daemon and container uses the `thermite-` prefix, including
+`thermite-openhab`, `thermite-prometheus` and `thermite-grafana`. All daemon
+processes belong to `thermite.slice`, and `thermite.target` groups their
+systemd lifecycle. Each container refuses to replace an existing namesake;
+service cleanup uses its own container ID. After commissioning, manage the
+installed stack with:
+
+```sh
+systemctl status thermite.target
+systemctl list-dependencies thermite.target
+sudo systemctl restart thermite.target
+sudo systemctl stop thermite.target
+```
+
+Installation still starts components in stages and checks their readiness
+before enabling the target. An active target does not replace those health
+checks. The separately commissioned access gateway, worker and callback
+relay join the same target and slice when their staged units are enabled;
+generating the core units does not activate them.
+
+Default TCP listeners use Thermite's [13600–13625 range](ports.md).
+Persistent files remain below the selected Thermite state root; upstream
+container paths such as `/openhab` and `/var/lib/grafana` are private mounts,
+not the host's independent application directories. Discovery protocols keep
+their standard multicast ports; running two controllers against the same
+physical devices is still subject to those devices' protocol limits.
 
 ## Stage native access services
 

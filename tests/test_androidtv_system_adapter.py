@@ -15,6 +15,20 @@ from oh_androidtv_patch import owner_files as f
 
 
 class SystemGuards(unittest.TestCase):
+    def test_fixed_owner_bundle_uses_only_the_thermite_runtime_identity(self):
+        import oh_units
+        self.assertEqual(m.NATIVE_SERVICE, oh_units.RUNTIME)
+        self.assertEqual(m.NATIVE_CONTAINER, oh_units.CONTAINERS[oh_units.RUNTIME])
+        self.assertEqual(m.NATIVE_CGROUP, f"/{oh_units.SLICE}/{oh_units.RUNTIME}")
+        adapter = m.SystemAdapter(Path('/synthetic/native'))
+        with patch.object(adapter, 'command', return_value='LoadState=loaded\nMainPID=0\nActiveState=inactive\n') as command:
+            adapter.status()
+        self.assertEqual(command.call_args.args[0][2], oh_units.RUNTIME)
+        for group in ('/system.slice/openhab.service', '/another.slice/thermite-openhab.service',
+                      '/thermite.slice/../system.slice/openhab.service'):
+            with self.subTest(group=group), self.assertRaisesRegex(f.OwnerFileError, 'unexpected_native_cgroup'):
+                adapter.cgroup_pids(group)
+
     def test_mount_preflight_rejects_wrong_state_and_duplicate_destination(self):
         adapter = m.SystemAdapter(Path('/synthetic/native'))
         mounts = [{"Destination": "/openhab/" + name, "Source": "/synthetic/native/" + name}

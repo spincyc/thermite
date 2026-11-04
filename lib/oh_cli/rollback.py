@@ -11,7 +11,7 @@ from pathlib import Path
 import oh_cli
 import oh_deploy as deploy
 from oh_cli import AREA
-from oh_cli.deploy import VAR, print_changes, print_metrics
+from oh_cli.deploy import VAR, deployment_selection, print_changes, print_metrics
 
 DESCRIPTION = """\
 Put back an earlier commit's conf/ and Apple TV helper, as helm rollback
@@ -77,7 +77,19 @@ def roll_back(args, layout: deploy.State, installed: dict[str, Path] | None = No
     record = deploy.read_record(layout)
     entries = deploy.deploys(layout)
     commit, entry = target(entries, record, args.commit)
-    ran_here = entry is not None or commit == record.get("commit")
+    previous = entry if entry is not None else record if commit == record.get("commit") else None
+    ran_here = previous is not None
+    expected_digest = None
+    from oh_paths import SITE_FILE
+    if ran_here and deploy.export(AREA, commit, (SITE_FILE,)):
+        _, _, requirement = deploy.committed_inputs(AREA, commit)
+        if requirement and requirement["version"] == 2:
+            files, _ = deploy.prepared_files(AREA, commit, VAR)
+            conf = {name.removeprefix("conf/"): blob for name, blob in files.items() if name.startswith("conf/")}
+            # A commit-only receipt cannot prove that this derived output ran.
+            ran_here = previous.get("conf_digest") == deploy.tree_digest(conf)
+            if ran_here and not args.force:
+                expected_digest = previous["conf_digest"]
     current = record.get("commit")
     print(f"{'would roll back' if args.dry_run else 'rollback'} {current[:12] if current else 'nothing'} -> "
           f"{commit[:12]}" + (f", deploy #{entry['number']} of {entry['deployed_at']}" if entry else ""))
@@ -85,14 +97,15 @@ def roll_back(args, layout: deploy.State, installed: dict[str, Path] | None = No
         print("note    it ran here before, so it needs no fresh thermite test boot")
     for line in warn_units(commit, installed):
         print(line)
+    verified = {"expected_conf_digest": expected_digest} if expected_digest is not None else {}
     result = deploy.deploy(AREA, layout, VAR, commit, force=args.force or ran_here, dry_run=args.dry_run,
-                           how="rollback", host=host)
+                           how="rollback", host=host, **verified)
     print(f"{'dry run ' if args.dry_run else 'deploy  '}{result.commit[:12]} {result.subject}")
     print_changes("conf", result.conf)
     print_changes("helper", result.atv_app)
     print_metrics(result, layout)
     if not args.dry_run and result.atv_app:
-        print(f"helper  changed: openhab-atv-restart.path restarts openhab-atv.service ({layout.atv_restart})")
+        print(f"helper  changed: thermite-atv-restart.path restarts thermite-atv.service ({layout.atv_restart})")
     return 0
 
 
@@ -106,9 +119,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state", type=Path, metavar="DIR",
                         help="the state root (default: instance/host.yaml state_root)")
     args = parser.parse_args(argv)
-    host = deploy.load(AREA)[1]
-    layout = deploy.State(args.state) if args.state else deploy.state(host)
     try:
+        selected, host, _ = deployment_selection(args.commit or "HEAD")
+        if args.commit is not None:
+            args.commit = selected
+        layout = deploy.State(args.state) if args.state else deploy.state(host)
         return roll_back(args, layout, host=host)
     except deploy.DeployError as exc:
         print(f"thermite rollback: {exc}", file=sys.stderr)

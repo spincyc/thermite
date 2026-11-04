@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import re
 
+import oh_units
+
 DATASOURCE_UID = "thermite-prometheus"
 DATASOURCE = {"type": "prometheus", "uid": DATASOURCE_UID}
 #: Grafana 12/13's classic dashboard JSON; Grafana migrates older ones on load.
@@ -72,9 +74,7 @@ KIND_GROUPS = (
     ("streamers", "Streamers and players", ("streamer", "disc_player", "game_console")),
 )
 #: The units the Host dashboard shows.
-UNITS = ("openhab.service", "openhab-atv.service", "openhab-prometheus.service", "openhab-node-exporter.service",
-         "openhab-blackbox.service", "openhab-metrics-exporter.service", "openhab-grafana.service",
-         "openhab-alertmanager.service", "openhab-notifications.service", "openhab-ntfy.service")
+UNITS = oh_units.DAEMONS
 
 SWITCH_POINTS = ("power", "mute", "reachable")
 NUMBER_POINTS = ("volume", "input", "routing", "edid")

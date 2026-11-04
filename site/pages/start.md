@@ -68,7 +68,7 @@ devices:
 
 `observe` lists interfaces thermite may read. `control` lists interfaces it may command. The sample address above is reserved for documentation; use the TV's actual address in your private site.
 
-Create a private Git repository for that site. Keep real inventory, host settings and generated `conf/`, `metrics/` and `deploy/` there. Credentials and runtime state stay outside Git. The public application repository should contain only fictional examples.
+Create a private Git repository for that site. Commit real inventory, host settings, native version pins and `thermite-site.json`. Generated `conf/`, `metrics/` and `deploy/`, credentials and runtime state stay outside Git. The public application repository should contain only fictional examples.
 
 ## Check and deploy
 

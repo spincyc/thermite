@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -47,7 +48,7 @@ def show_metrics(host: dict, installed: dict[str, Path] | None = None) -> None:
     if health.systemd is not None:
         print("systemd  " + ("node_exporter reads the units' states over D-Bus" if health.systemd else
                              "node_exporter's systemd collector fails: sudo journalctl -u "
-                             "openhab-node-exporter.service says why"))
+                             "thermite-node-exporter.service says why"))
 
 
 def show(args, host: dict) -> int:
@@ -57,15 +58,17 @@ def show(args, host: dict) -> int:
         print(f"deployed {record['commit'][:12]} {record.get('subject', '')}")
         print(f"         at {record.get('deployed_at')} by {record.get('by')}"
               + ("" if record.get("boot_checked") else " (without passing thermite test boot)"))
-        head = deploy.resolve(AREA, "HEAD")
+        revision = getattr(args, "revision", None)
+        head = deploy.resolve(AREA, revision or "HEAD")
+        label = "selected" if revision else "HEAD"
         if head == record["commit"]:
-            print("HEAD     is what is deployed")
+            print(f"{label:<9}is what is deployed")
         else:
             try:
-                print(f"HEAD     {head[:12]}, {deploy.ahead(AREA, record['commit'], head)} commit(s) after "
+                print(f"{label:<9}{head[:12]}, {deploy.ahead(AREA, record['commit'], head)} commit(s) after "
                       "the deployed one")
             except deploy.DeployError:
-                print(f"HEAD     {head[:12]}; the deployed commit is not in this clone")
+                print(f"{label:<9}{head[:12]}; the deployed commit is not in this clone")
         for label, target, key in (("conf", layout.conf, "conf"), ("helper", layout.atv_app, "atv_app"),
                                    ("metrics", layout.metrics, "metrics"),
                                    ("exporter", layout.exporter_app, "exporter_app")):
@@ -81,7 +84,9 @@ def show(args, host: dict) -> int:
                     print(f"           {kind:<9}{path}")
     else:
         print(f"deployed nothing yet ({layout.record} does not exist)")
-    for name, target, how in deploy.installed_units(AREA):
+    revision = getattr(args, "revision", None)
+    units = deploy.installed_units(AREA, rev=revision) if revision else deploy.installed_units(AREA)
+    for name, target, how in units:
         print(f"unit     {target}: {how}" + (f" (the owner installs {name}: thermite upgrade)"
                                              if how in ("differs", "missing") else ""))
     for service, active in deploy.service_states().items():
@@ -102,11 +107,19 @@ def show(args, host: dict) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("status", DESCRIPTION, EXAMPLES)
+    parser.add_argument("--revision", help=argparse.SUPPRESS)
     parser.add_argument("--state", type=Path, metavar="DIR",
                         help="the state root (default: instance/host.yaml state_root)")
     args = parser.parse_args(argv)
-    _, host = deploy.load(AREA)
     try:
+        from oh_paths import SITE_FILE
+        from oh_cli.deploy import deployment_selection
+        if args.revision is not None or (AREA / SITE_FILE).is_file():
+            commit, host, requirement = deployment_selection(args.revision or "HEAD", area=AREA)
+            if requirement is not None or args.revision is not None:
+                args.revision = commit
+        else:
+            _, host = deploy.load(AREA)
         return show(args, host)
     except deploy.DeployError as exc:
         print(f"thermite status: {exc}", file=sys.stderr)

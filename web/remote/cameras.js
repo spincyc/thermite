@@ -345,7 +345,7 @@
     if (mock) ["./", "topology.html"].forEach((page) => {
       document.querySelectorAll('a[href="' + page + '"]').forEach((link) => link.setAttribute("href", page + "?backend=mock"));
     });
-    const model = create({ ...options, mock, manifestURL: "cameras.json" });
+    const model = create({ ...options, mock, manifestURL: global.ThermiteNavigation?.asset("cameras.json") || "cameras.json" });
     const find = (selector) => root.querySelector(selector);
     const cards = new Map();
     let selected = global.location.hash.slice(1), filter = "all", stopped = false, mediaKind = "idle";

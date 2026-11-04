@@ -2,21 +2,35 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="dark light">
-  <title>Home · thermite</title><link rel="icon" href="icon.svg" type="image/svg+xml"><link rel="stylesheet" href="theme.css"><link rel="stylesheet" href="shell.css">
-  <script src="appearance.js"></script><script src="access-config.js"></script><script src="access.js"></script>
+  <meta name="theme-color" content="#120e0c"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="thermite">
+  <link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <title>Home · thermite</title><link rel="icon" href="icon.svg" type="image/svg+xml"><link rel="stylesheet" href="theme.css"><link rel="stylesheet" href="shell.css"><link rel="stylesheet" href="home.css">
+  <script src="navigation.js"></script><script src="appearance.js"></script><script src="access-config.js"></script><script src="access.js"></script>
   <script defer src="house.js"></script><script defer src="remotes.js"></script><script defer src="activity.js"></script><script defer src="backend.js"></script><script defer src="shell.js"></script><script defer src="home.js"></script>
 </head>
 <body data-thermite-page="home">
-  <main class="thermite-home">
-    <h1>Home</h1><p>Your home, in one place.</p>
-    <div class="thermite-modules">
-      <a class="thermite-module" href="./" data-thermite-link="remotes"><strong>Remotes</strong><span>Rooms, sources and device controls</span></a>
-      <a class="thermite-module" href="security.html" data-thermite-link="security"><strong>Security</strong><span>Security system · Not connected</span></a>
-      <a class="thermite-module" href="cameras.html" data-thermite-link="cameras"><strong>Cameras</strong><span>Camera status and viewing</span></a>
-      <a class="thermite-module" href="topology.html" data-thermite-link="site"><strong>Site</strong><span>Configured video and USB connections</span></a>
+  <main class="thermite-home home">
+    <header class="home__header">
+      <div><h1>Home</h1><p>Rooms, sources and controls.</p></div>
+      <img class="home__mark" src="mark.svg" width="64" height="51" alt="" aria-hidden="true">
+    </header>
+    <div class="home__layout">
+      <section class="home__panel home__rooms" aria-labelledby="home-rooms-title">
+        <header class="home__panel-head"><h2 id="home-rooms-title">Rooms</h2><p data-home-status role="status">Reading reported sources…</p></header>
+        <div class="thermite-room-scroll"><table class="thermite-rooms" aria-describedby="home-rooms-note"><thead><tr><th scope="col">Room</th><th scope="col">Reported source</th><th scope="col">Status</th></tr></thead><tbody data-home-rooms></tbody></table></div>
+        <p class="home__note" id="home-rooms-note">Open a room for sources and device controls.</p>
+      </section>
+      <nav class="home__panel home__views" aria-labelledby="home-views-title">
+        <header class="home__panel-head"><h2 id="home-views-title">Controls and views</h2></header>
+        <div class="thermite-modules">
+          <a class="thermite-module home__module--primary" href="./" data-thermite-link="remotes"><svg class="home__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7"/></svg><span class="home__module-copy"><strong>Remotes</strong><span>Rooms, sources and device controls</span></span><span class="home__arrow" aria-hidden="true">›</span></a>
+          <a class="thermite-module" href="cameras.html" data-thermite-link="cameras"><svg class="home__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="m7 6 2-3h6l2 3"/><circle cx="12" cy="13" r="4"/></svg><span class="home__module-copy"><strong>Cameras</strong><span>Camera status and viewing</span></span><span class="home__arrow" aria-hidden="true">›</span></a>
+          <a class="thermite-module" href="topology.html" data-thermite-link="site"><svg class="home__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="8" y="3" width="8" height="6" rx="1"/><rect x="2" y="16" width="7" height="5" rx="1"/><rect x="15" y="16" width="7" height="5" rx="1"/><path d="M12 9v4M5.5 16v-3h13v3"/></svg><span class="home__module-copy"><strong>Site</strong><span>Video and USB connections</span></span><span class="home__arrow" aria-hidden="true">›</span></a>
+          <a class="thermite-module" href="security.html" data-thermite-link="security"><svg class="home__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3 4 6v6c0 4 4 7 8 9 4-2 8-5 8-9V6z"/></svg><span class="home__module-copy"><strong>Security</strong><span>Not connected</span></span><span class="home__arrow" aria-hidden="true">›</span></a>
+        </div>
+        <a class="home__system" href="system.html" data-home-system hidden><span>System</span><span>Information and administration</span><span class="home__arrow" aria-hidden="true">›</span></a>
+      </nav>
     </div>
-    <h2>Rooms</h2><p data-home-status role="status">Reading reported sources…</p>
-    <div class="thermite-room-scroll"><table class="thermite-rooms"><thead><tr><th scope="col">Room</th><th scope="col">Reported source</th><th scope="col">Status</th></tr></thead><tbody data-home-rooms></tbody></table></div>
   </main>
   <noscript><p>Enable JavaScript to read room status. The module links remain available.</p></noscript>
 </body>

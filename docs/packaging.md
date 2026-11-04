@@ -40,17 +40,32 @@ commissioning hardware. Init creates no account or service and does not
 initialize or publish Git.
 
 Select a site with `--site DIR`, `THERMITE_SITE`, or by working inside its
-directory. The private launcher also selects its site and Python environment.
+directory. The private launcher also selects its site and pinned Python
+environment, even when invoked as `python3 -B bin/thermite ...` with another
+Python. Keep that environment outside disposable source workspaces.
 Help, themes, documentation, packaging and ISO builds work without a site;
 commands that create configuration or state require one. Complete source
 checkouts retain their original behavior.
 
 The application supplies integrations, templates, web assets, terminal source,
-themes and dependency locks. The private site owns inventory, custom themes,
-IR profiles, generated `conf/`, `metrics/`, `deploy/`, caches and runtime state.
-Keep its configuration, manifest and generated outputs in private Git;
-`var/` and `build/` stay ignored. Production installation still requires a
-clean committed site and the native boot test.
+themes and dependency locks. The private site owns its `instance/` data
+(inventory, host settings, custom themes and IR profiles), native runtime pins
+in `versions.json`, and its application pin in `thermite-site.json`. Commit
+these inputs in private Git. The generated `conf/`, `metrics/` and `deploy/`
+trees are ignored local build output, alongside `var/` and `build/`.
+Application JavaScript changes therefore require no generated-code commit in
+the private repository.
+
+New sites use manifest schema 2. Deployment exports the selected Git revision's
+inputs and renders them with that revision's exact verified application from
+`var/application-releases/`. It uses a temporary private directory and an
+isolated Python subprocess; it never imports site `lib/` or uses working-tree
+inventory, generated files or environment overrides as deployment authority.
+Application source directories in a schema-2 site are refused. Planning may
+create and clean a temporary render directory, including in dry-run, but
+materializes no persistent generated tree and changes no service.
+Production installation still requires clean committed inputs and a boot test
+of the exact derived configuration.
 
 The private site and launcher stay owned by the operator. Installed
 application services use the non-login `thermite:thermite` account, UID/GID
@@ -98,22 +113,49 @@ thermite --site /path/to/private-site generate
 thermite --site /path/to/private-site validate
 ```
 
-This updates the application requirement and launcher while preserving
-inventory, runtime pins, generated outputs, credentials and state. A
-customized launcher is refused for manual review. Commit the resulting site
-revision, then review the normal runtime upgrade/deploy plan.
+This selects schema 2 and updates the application requirement, launcher and
+ignore rules while preserving inventory, runtime pins, credentials and state.
+Both the earlier generated launcher and the pinned-interpreter launcher are
+recognized; customized launchers are refused for review. If the site previously
+tracked generated output, remove that tracking before committing the new site
+revision:
+
+```sh
+git rm -r --cached --ignore-unmatch conf metrics deploy
+```
+
+This leaves the local files in place. Generated files are rebuilt from the
+committed inputs when required. Review the normal runtime upgrade/deploy plan
+after committing the inputs and application pin.
 
 Verified application releases are cached under
 `var/application-releases/`. Retain that cache and the original release
-artifacts for rollback. Deployment resolves configuration and the application
-requirement from the selected private Git revision, then copies the finite
-helper/exporter program files from that revision's cached release. Rollback
-uses that older release. A missing or modified artifact fails before deployment
-writes; deployment never downloads a substitute automatically.
+artifacts for rollback. Deployment resolves inputs and the application
+requirement from the selected private Git revision, renders its configuration
+and units with that cached release, and copies the finite helper/exporter
+program files from the same release. Rollback uses that older release. A
+missing or modified artifact fails before deployment writes; deployment never
+downloads a substitute automatically. A previous-deployment boot waiver must
+match the actual derived configuration digest as well as its Git revision.
+
+When an application update changes shared script libraries, use
+`thermite install --restart-runtime` after committing the new site pin. The
+normal installer preserves state and performs one controlled runtime restart
+after deployment, followed by readiness checks, under the same run approval.
+
+Historical schema-1 site revisions retain their committed generated trees and
+exact cached helper application. Historical complete-checkout revisions retain
+their committed source and generated configuration. Their rollback format is
+not silently reinterpreted as schema 2.
 
 Existing complete Git checkouts continue deploying their own committed program
-and configuration. Packaging does not relocate production data or service
-units. Program integrity assumes a trusted Python interpreter and installed
+and configuration until explicitly reduced to a config-only site. Init still
+refuses to overwrite a nonempty legacy checkout; conversion requires reviewed
+private Git changes after the application has been installed separately.
+Preserve the site's existing directory and ignored `var/`, and retain host
+state paths, ports, service identity and separately staged account/TLS state.
+Packaging does not relocate production data or service units. Program
+integrity assumes a trusted Python interpreter and installed
 bootstrap; it does not protect against an administrator changing them.
 
 ## Offline verification

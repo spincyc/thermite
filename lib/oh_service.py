@@ -30,6 +30,9 @@ RUNTIME_DIR = 0o750
 RUNTIME_FILE = 0o640
 PRIVATE_DIR = 0o700
 PRIVATE_FILE = 0o600
+# A completed check found missing protection. Exit 1/2 from sudo or the
+# helper instead means verification could not run, not that logging is unsafe.
+PAIRING_LOGGING_UNPROTECTED = 3
 # Graal 25.0.1's InternalResourceCache.installResource extracts this native
 # helper only when its versioned cache is absent. Its producer mode 0775 is
 # acceptable only behind checked service-owned 0700 parents. Keep an already
@@ -369,7 +372,10 @@ def normalize_state(root: Path, uid: int = UID, gid: int = GID, *, deployment: b
 def pairing_logging(root: Path) -> bool:
     import oh_logging
     # Read only the two fixed files; native userdata can be large and active.
-    directory = _open_root(Path(root) / "userdata/etc")
+    try:
+        directory = _open_root(Path(root) / "userdata/etc")
+    except FileNotFoundError:
+        return False
     try:
         contents = {}
         for path in (oh_logging.RELATIVE, oh_logging.SELECTOR):
@@ -382,6 +388,8 @@ def pairing_logging(root: Path) -> bool:
             finally:
                 os.close(descriptor)
         return oh_logging.selected_default(contents[oh_logging.SELECTOR]) and oh_logging.protected(contents[oh_logging.RELATIVE])
+    except FileNotFoundError:
+        return False
     finally:
         os.close(directory)
 
@@ -402,7 +410,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.check_pairing_logging:
             if not pairing_logging(args.root):
-                raise ServiceError("pairing logging protection is missing; run thermite install before deploying")
+                parser.exit(PAIRING_LOGGING_UNPROTECTED,
+                            "service state: pairing logging protection is missing; run thermite install before deploying\n")
             return 0
         issues = (audit_state(args.root, args.uid, args.gid, deployment=args.deployment) if args.check else
                   normalize_state(args.root, args.uid, args.gid, deployment=args.deployment, receipt=args.receipt))
