@@ -189,7 +189,7 @@ for name, value in outputs.items():
         self.assertEqual(log.stat().st_mode & 0o777, 0o600)
         self.assertIn(b"private fixture input", log.read_bytes())
 
-    def test_upgrade_accepts_the_legacy_launcher_and_preserves_private_state_and_ignore_rules(self):
+    def test_upgrade_preserves_private_state_and_ignore_rules(self):
         _, cached = self.release("launcher")
         program = self.root / "program"
         shutil.copytree(cached, program)
@@ -202,10 +202,6 @@ for name, value in outputs.items():
         (program / oh_release.FILE).write_bytes(oh_release.encoded(oh_release.create(files)))
         target = self.root / "initialized-site"
         oh_init.initialize(target, program=program)
-        launcher = target / "bin/thermite"
-        launcher.parent.mkdir()
-        launcher.write_text("#!" + sys.executable + "\n" + oh_init.LEGACY_WRAPPER)
-        (target / "Makefile").write_text(oh_init.MAKEFILE)
         descriptor = json.loads((target / "thermite-site.json").read_text())
         descriptor["version"] = 1
         (target / "thermite-site.json").write_text(json.dumps(descriptor))
@@ -214,37 +210,9 @@ for name, value in outputs.items():
         report = oh_init.initialize(target, program=program, upgrade=True)
         self.assertEqual(report["previous"]["version"], 1)
         self.assertEqual(json.loads((target / "thermite-site.json").read_text())["version"], 2)
-        self.assertFalse(launcher.exists())
-        self.assertFalse(launcher.parent.exists())
-        self.assertFalse((target / "Makefile").exists())
         self.assertEqual((target / "var/operator-state").read_bytes(), b"retain private state")
         self.assertTrue((target / ".gitignore").read_text().startswith("# owner rule\n/private-notes/\n"))
         self.assertTrue({"/conf/", "/metrics/", "/deploy/"} <= set((target / ".gitignore").read_text().splitlines()))
-
-
-class PinnedLauncher(unittest.TestCase):
-    def test_explicit_os_python_reexecutes_the_pinned_venv_without_resolving_its_symlink(self):
-        scratch = Path(os.environ.get("TMPDIR", AREA / ".scratch/split_migration_audit"))
-        scratch.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="launcher-", dir=scratch) as temporary:
-            root = Path(temporary)
-            environment = root / "venv"
-            subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(environment)],
-                           check=True, capture_output=True, timeout=30)
-            pinned = environment / "bin/python"
-            library = environment / f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
-            (library / "thermite_app.py").write_text(
-                "import json,os,sys\ndef main():\n print(json.dumps({'python':sys.executable,'site':os.environ['THERMITE_SITE'],'args':sys.argv[1:]}));return 0\n")
-            site = root / "site"
-            (site / "bin").mkdir(parents=True)
-            launcher = site / "bin/thermite"
-            launcher.write_text("#!" + str(pinned) + "\n" + oh_init.WRAPPER)
-            args = ["--site", str(root / "explicit-site"), "install", "--dry-run"]
-            result = subprocess.run([sys.executable, "-B", str(launcher), *args],
-                                    capture_output=True, text=True, timeout=5)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            report = json.loads(result.stdout)
-            self.assertEqual(report, {"python": str(pinned), "site": str(site), "args": args})
 
 
 if __name__ == "__main__":

@@ -50,7 +50,7 @@ class Upgrade(unittest.TestCase):
     @contextmanager
     def planning(self):
         with ExitStack() as scope:
-            scope.enter_context(patch.object(ownership, "inspect", return_value=ownership.Owned()))
+            scope.enter_context(patch.object(ownership, "inspect", return_value=ownership.Owned(recorded=True)))
             scope.enter_context(patch.object(steps.Services, "plan", return_value=([], [], False)))
             scope.enter_context(patch.object(steps.Units, "stale", return_value=()))
             scope.enter_context(patch.object(steps.Token, "saved", return_value=True))
@@ -176,7 +176,7 @@ class Upgrade(unittest.TestCase):
         with ExitStack() as scope:
             scope.enter_context(patch.object(upgrade_cli, "AREA", self.site))
             scope.enter_context(patch.object(steps, "committed_context", return_value=self.context))
-            scope.enter_context(patch.object(ownership, "inspect", return_value=ownership.Owned()))
+            scope.enter_context(patch.object(ownership, "inspect", return_value=ownership.Owned(recorded=True)))
             scope.enter_context(patch.object(upgrade_cli, "installed", return_value=True))
             scope.enter_context(patch.object(steps, "plan", return_value=plan))
             scope.enter_context(patch.object(steps, "upgrade", return_value=sequence))

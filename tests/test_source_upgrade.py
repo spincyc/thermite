@@ -7,7 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
@@ -46,6 +46,8 @@ class ApplicationFixture(unittest.TestCase):
         self.change_source_during_build = False
         self.approvals = []
         self.real_run = update.run
+        self.python = application.PYTHON
+        self.packaged = self.new
 
     def program(self, name):
         root = self.root / name
@@ -76,8 +78,13 @@ class ApplicationFixture(unittest.TestCase):
             binary = Path(args[3]) / "bin"
             binary.mkdir()
             (binary / "thermite").write_text("fixture CLI")
-            shutil.copytree(self.new, Path(args[3]) / "runtime")
+            (Path(args[3]) / "pyvenv.cfg").write_text(f"home = /usr/bin\nversion = {application.PYTHON}.0\n")
+            shutil.copytree(self.packaged, Path(args[3]) / "runtime")
             return ""
+        if args[1:5] == ("-I", "-B", "-c", application.PROBE):
+            if self.python is None:
+                raise subprocess.CalledProcessError(1, args)
+            return self.python + "\n"
         if args[1:6] == ("-I", "-m", "pip", "--isolated", "install"):
             if self.fail == "pip":
                 raise subprocess.CalledProcessError(1, args)
@@ -89,7 +96,7 @@ class ApplicationFixture(unittest.TestCase):
             release = oh_release.manifest(root)
             return json.dumps({"root": str(root), "digest": release["digest"], "application": release["application"]})
         if args[1] == "init":
-            oh_init.initialize(self.site, program=self.new, upgrade=True)
+            oh_init.initialize(self.site, program=self.packaged, upgrade=True)
         elif args[1] in ("upgrade", "install"):
             self.assertEqual(update.clean(self.repo), update.git(self.repo, "rev-parse", "HEAD"))
             self.assertEqual(self.launcher.resolve(), self.previous_launcher)
@@ -106,13 +113,18 @@ class ApplicationFixture(unittest.TestCase):
             raise subprocess.CalledProcessError(1, args)
         return ""
 
+    def simulated(self):
+        """Every subprocess, the foreground host phase included, through simulate."""
+        return patch.multiple(update, run=Mock(side_effect=self.simulate),
+                              foreground=Mock(side_effect=self.simulate))
+
     def execute(self, **kwargs):
         self.previous_launcher = self.launcher.resolve()
         def approve():
             self.approvals.append(True)
             return True
-        with patch.object(update, "run", side_effect=self.simulate):
-            return update.upgrade(self.site, source=self.source, home=self.home, approve=approve, **kwargs)
+        with self.simulated():
+            return application.upgrade(self.site, source=self.source, home=self.home, approve=approve, **kwargs)
 
 
 class SourceUpgrade(ApplicationFixture):

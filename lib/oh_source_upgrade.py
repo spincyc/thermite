@@ -5,13 +5,14 @@ import contextlib
 import fcntl
 import os
 from pathlib import Path
+import signal
 import stat
 import subprocess
 import sys
 
 
 SOURCE = Path(__file__).resolve().parents[1]
-SITE_FILES = ("thermite-site.json", ".gitignore", "bin/thermite", "Makefile")
+SITE_FILES = ("thermite-site.json", ".gitignore")
 
 
 def run(*argv: str | Path, capture: bool = False) -> str:
@@ -19,6 +20,26 @@ def run(*argv: str | Path, capture: bool = False) -> str:
                             stdout=subprocess.PIPE if capture else None,
                             env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
     return result.stdout if capture else ""
+
+
+def foreground(*argv: str | Path) -> int:
+    """Run a child that owns Ctrl-C, and return its exit status.
+
+    A terminal's SIGINT reaches the whole foreground process group. The child
+    stops its own work, sudo commands included, and says how to resume; this
+    process only notes the signal and keeps waiting, so its locks outlive the
+    child. subprocess.run would kill the child 0.25 s into that cleanup. A
+    Python handler, unlike SIG_IGN, resets to the default in the exec'd child.
+    """
+    interrupted = []
+    previous = signal.signal(signal.SIGINT, lambda number, frame: interrupted.append(number))
+    try:
+        code = subprocess.Popen([str(arg) for arg in argv], env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"}).wait()
+    finally:
+        signal.signal(signal.SIGINT, signal.default_int_handler if previous is None else previous)
+    if interrupted:
+        raise KeyboardInterrupt
+    return code
 
 
 def git(directory: Path, *args: str) -> str:
@@ -60,9 +81,9 @@ def site_update(command: Path, site: Path, *, expected_head: str | None = None) 
         try:
             run(command, "init", "--upgrade", site)
         finally:
-            # init can stop after replacing its descriptor (for example while
-            # removing a legacy wrapper). Keep that bounded partial output in
-            # the same rollback transaction as a successful preparation.
+            # init can stop after replacing its descriptor. Keep that bounded
+            # partial output in the same rollback transaction as a successful
+            # preparation.
             produced = {name: snapshot(root / name) for name in saved}
         run(command, "check", "--config", site)
         changed = changes(root)
@@ -114,12 +135,6 @@ def locked(directory: Path):
         except BlockingIOError:
             raise ValueError("another Thermite application operation is running") from None
         yield
-
-
-def upgrade(site: Path, **kwargs) -> int:
-    """Compatibility entry point; there is only one acquisition workflow."""
-    from oh_application_update import upgrade as apply
-    return apply(site, **kwargs)
 
 
 def main(argv: list[str] | None = None) -> int:

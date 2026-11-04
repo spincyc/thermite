@@ -12,7 +12,9 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 
@@ -22,6 +24,13 @@ import oh_source_upgrade as transaction
 OFFICIAL_SOURCE = "https://github.com/spincyc/thermite.git"
 DEFAULT_REVISION = "main"
 HOST_PHASE_PROTOCOL = 1
+SITE_FILE = "thermite-site.json"
+#: The hashed dependency lock installed before the application itself.
+REQUIREMENTS = "lib/requirements-app.txt"
+#: Application environments link to this interpreter; another minor version
+#: cannot import what was installed for it.
+PYTHON = "%d.%d" % sys.version_info[:2]
+PROBE = "import sys, thermite_app; print('%d.%d' % sys.version_info[:2])"
 
 # Exact pip/distlib console entry points, following an absolute Python shebang.
 # An existing custom owner command must never be silently replaced.
@@ -59,8 +68,19 @@ print(json.dumps({'root': str(root), 'digest': release['digest'], 'application':
 """
 
 
+class Downgrade(ValueError):
+    """The selected release is older than the one the site already pins."""
+
+
 def run(*argv: str | Path, capture: bool = False) -> str:
     return transaction.run(*argv, capture=capture)
+
+
+def host(*argv: str | Path) -> None:
+    """Run a host phase in the foreground; it owns Ctrl-C and its cleanup."""
+    code = transaction.foreground(*argv)
+    if code:
+        raise subprocess.CalledProcessError(code, [str(arg) for arg in argv])
 
 
 def safe_directory(path: Path) -> None:
@@ -161,6 +181,42 @@ def acquire(store: Path, source: Path | None, revision: str | None, release: str
     return checkout, key
 
 
+def requirements(package: Path) -> Path:
+    """The selected application's hashed dependency lock, else this program's."""
+    for path in (Path(package) / REQUIREMENTS, Path(__file__).resolve().parent / Path(REQUIREMENTS).name):
+        if path.is_file() and not path.is_symlink():
+            return path
+    raise ValueError(f"the application lacks its hashed dependency lock {REQUIREMENTS}")
+
+
+def pyvenv(environment: Path) -> str | None:
+    """The interpreter version an environment was created with."""
+    try:
+        lines = (environment / "pyvenv.cfg").read_text().splitlines()
+    except OSError:
+        return None
+    return next((value.strip() for key, _, value in (line.partition("=") for line in lines)
+                 if key.strip() == "version"), None)
+
+
+def stale(environment: Path, saved: dict) -> str | None:
+    """Why a retained environment cannot run here any more, or None.
+
+    Environments link to the system interpreter; after a minor upgrade the
+    link runs a Python that cannot import what was installed for the old one.
+    """
+    if saved.get("python") not in (None, PYTHON):
+        return f"it was built for Python {saved['python']} and this is Python {PYTHON}"
+    try:
+        running = run(environment / "bin/python", "-I", "-B", "-c", PROBE, capture=True).strip()
+    except (subprocess.CalledProcessError, OSError):
+        return "its Python can no longer start the application"
+    built = ".".join((pyvenv(environment) or running).split(".")[:2])
+    if running != built:
+        return f"it was built for Python {built} and its interpreter is now Python {running}"
+    return None
+
+
 def candidate(store: Path, package: Path, key: str, say: Callable[[str], None]) -> tuple[Path, dict]:
     record = store / (key + ".json")
     if record.is_symlink():
@@ -171,16 +227,20 @@ def candidate(store: Path, package: Path, key: str, say: Callable[[str], None]) 
         if not isinstance(name, str) or Path(name).name != name or not name.startswith("environment-"):
             raise ValueError("invalid saved application environment")
         environment = store / name
-        release = verify(environment)
-        if saved.get("release") != release:
-            raise ValueError("saved application release changed; preserve it for review")
-        say(f"Using verified Thermite {release['digest'][:12]} from {environment}")
-        return environment, release
+        reason = stale(environment, saved)
+        if reason is None:
+            release = verify(environment)
+            if saved.get("release") != release:
+                raise ValueError("saved application release changed; preserve it for review")
+            say(f"Using verified Thermite {release['digest'][:12]} from {environment}")
+            return environment, release
+        say(f"Rebuilding the application environment: {reason}. {environment} is retained unchanged.")
     environment = Path(tempfile.mkdtemp(prefix="environment-", dir=store))
     say(f"Preparing the selected Thermite application in {environment}")
     run(sys.executable, "-m", "venv", environment)
-    run(environment / "bin/python", "-I", "-m", "pip", "--isolated", "install",
-        "--disable-pip-version-check", package)
+    pip = (environment / "bin/python", "-I", "-m", "pip", "--isolated", "install", "--disable-pip-version-check")
+    run(*pip, "--require-hashes", "-r", requirements(package))
+    run(*pip, "--no-deps", "--no-build-isolation", package)
     release = verify(environment)
     if key.startswith("git-") and transaction.clean(package) != key.removeprefix("git-"):
         raise ValueError("the selected application changed during packaging")
@@ -189,7 +249,8 @@ def candidate(store: Path, package: Path, key: str, say: Callable[[str], None]) 
     descriptor, temporary = tempfile.mkstemp(prefix=".candidate-", dir=store)
     try:
         with os.fdopen(descriptor, "w") as output:
-            json.dump({"environment": environment.name, "release": release}, output)
+            json.dump({"environment": environment.name, "release": release, "python": PYTHON,
+                       "pyvenv": pyvenv(environment)}, output)
             output.write("\n")
         os.replace(temporary, record)
     finally:
@@ -197,26 +258,135 @@ def candidate(store: Path, package: Path, key: str, say: Callable[[str], None]) 
     return environment, release
 
 
+def commits(store: Path) -> dict[str, set[str]]:
+    """Release digest -> the source commits this owner prepared it from."""
+    found: dict[str, set[str]] = {}
+    for record in store.glob("git-*.json"):
+        try:
+            digest = json.loads(record.read_text())["release"]["digest"]
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+        commit = record.name.removeprefix("git-").removesuffix(".json")
+        if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{40,64}", commit):
+            found.setdefault(digest, set()).add(commit)
+    return found
+
+
+def status(repository: Path, *args: str) -> int:
+    """A read-only Git query's exit status, without its output."""
+    return subprocess.run(["git", "-C", str(repository), *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"}).returncode
+
+
+def ancestor(repositories: Sequence[Path], first: str, later: str) -> bool | None:
+    """Whether commit `first` precedes `later` in a repository holding both, if any does."""
+    for repository in repositories:
+        if repository.is_dir() and not any(status(repository, "cat-file", "-e", commit + "^{commit}")
+                                           for commit in (first, later)):
+            code = status(repository, "merge-base", "--is-ancestor", first, later)
+            if code in (0, 1):
+                return code == 0
+    return None
+
+
+def pin_order(site_root: Path, site: Path) -> list[str]:
+    """Release digests in the order this site's Git history first pinned them."""
+    path = (site / SITE_FILE).relative_to(site_root).as_posix()
+    order: list[str] = []
+    for commit in transaction.git(site_root, "log", "--reverse", "--diff-filter=AM", "--format=%H",
+                                  "--", f":(literal){path}").split():
+        try:
+            digest = json.loads(transaction.git(site_root, "show", f"{commit}:{path}"))["release"]
+        except (subprocess.CalledProcessError, ValueError, TypeError, KeyError):
+            continue
+        if isinstance(digest, str) and digest not in order:
+            order.append(digest)
+    return order
+
+
+def older(store: Path, site_root: Path, site: Path, digest: str, commit: str | None,
+          repositories: Sequence[Path] = ()) -> str | None:
+    """Why release `digest` is older than the site's committed pin, or None.
+
+    Every development build shares one version, so order comes from Git: the
+    source commits this owner prepared both releases from, else the order in
+    which the site first pinned them. Unknown order is not a downgrade.
+    """
+    try:
+        pinned = json.loads((site / SITE_FILE).read_text())["release"]
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    if not isinstance(pinned, str) or pinned == digest:
+        return None
+    if commit is not None:
+        repositories = [*repositories, store / "source.git", store / "sources" / commit]
+        for newer in sorted(commits(store).get(pinned, ())):
+            known = ancestor(repositories, commit, newer)
+            if known is not None:
+                return f"its source {commit[:12]} precedes the pinned release's {newer[:12]}" if known else None
+    order = pin_order(site_root, site)
+    if digest in order and pinned in order and order.index(digest) < order.index(pinned):
+        return "the site pinned it before the current release"
+    return None
+
+
+def refuse_older(reason: str | None, site: Path, digest: str) -> None:
+    if reason is not None:
+        try:
+            pinned = json.loads((site / SITE_FILE).read_text())["release"]
+        except (OSError, ValueError, TypeError, KeyError):
+            pinned = "?"
+        raise Downgrade(f"refusing to pin release {digest[:12]} over the site's newer release {str(pinned)[:12]}: "
+                        f"{reason}. The newer release may already have migrated state, such as the identity schema, "
+                        "that an older one cannot read. Restore matching backups deliberately "
+                        "(docs/installation.md#update-or-remove), then rerun with --allow-downgrade.")
+
+
+def preview(operation: str, site: Path, program: Path, exact: bool, host_args: Sequence[str],
+            say: Callable[[str], None]) -> int:
+    """Describe this host now with the running release, when the site pins it.
+
+    The selected application plans its own steps only after approval; this
+    read-only child is the running release's own host dry run.
+    """
+    try:
+        current = oh_release.manifest(program)["digest"]
+        pinned = json.loads((site / SITE_FILE).read_text())["release"]
+    except (oh_release.ReleaseError, OSError, ValueError, TypeError, KeyError):
+        current = pinned = None
+    if current is None or current != pinned:
+        say("No host plan is shown: the site does not pin the release running this command. An approved run "
+            "plans the host with the selected application after committing its requirement.")
+        return 0
+    say(f"Provisional host plan from the current release {current[:12]}: it describes this host now"
+        + ("; the approved run checks every step again." if exact else
+           "; the selected application plans its own steps after approval, and they may differ."))
+    return transaction.foreground(sys.executable, program / "bin/thermite", operation, "--config", site,
+                                  "--_host-phase", "--dry-run", *host_args)
+
+
 def apply(operation: str, site: Path, *, source: Path | None = None, revision: str | None = None,
           program: Path | None = None, dry_run: bool = False, approve: Callable[[], bool],
           home: Path | None = None, runtime_token_file: Path | None = None,
-          host_args: Sequence[str | Path] = (), say: Callable[[str], None] = print) -> int:
+          host_args: Sequence[str | Path] = (), allow_downgrade: bool = False,
+          say: Callable[[str], None] = print) -> int:
     if operation not in {"install", "upgrade"}:
         raise ValueError("application workflow must be install or upgrade")
     if revision is not None and (not revision or revision.startswith("-") or "\0" in revision):
         raise ValueError("select a Git branch, tag or commit as --revision")
     site = Path(site).expanduser().absolute()
-    if not (site / "thermite-site.json").is_file():
+    if not (site / SITE_FILE).is_file():
         raise ValueError("--config must name an existing private Thermite site; create a separate site "
                          "with thermite init DIR, commit its configuration, then pass --config DIR")
     site_root = Path(transaction.git(site, "rev-parse", "--show-toplevel"))
     site_head = transaction.clean(site_root)
+    if program is None:
+        from oh_paths import PROGRAM
+        program = PROGRAM
+    program = Path(program).expanduser().absolute()
     # An installed application's first deployment uses its exact release. A
     # source launch uses its clean current checkout. Only upgrade fetches latest.
     if source is None and operation == "install":
-        if program is None:
-            from oh_paths import PROGRAM
-            program = PROGRAM
         source = program
     source = Path(source).expanduser().absolute() if source is not None else None
     source_head = release_digest = None
@@ -236,6 +406,11 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
     selected = str(source) if source is not None else OFFICIAL_SOURCE
     selected_revision = revision or ("current release" if release_digest else "HEAD" if source else DEFAULT_REVISION)
     say(f"Application: {selected} ({selected_revision}).")
+    if release_digest is not None and not allow_downgrade:
+        refuse_older(older(store, site_root, site, release_digest, None), site, release_digest)
+    forwarded = [*map(str, host_args)]
+    if runtime_token_file is not None:
+        forwarded.extend(("--runtime-token-file", str(runtime_token_file)))
     if dry_run:
         say("Would resolve the selected application, prepare or reuse a private Python environment, "
             "validate and commit its site release requirement, apply the complete host and access "
@@ -243,7 +418,7 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
         if source is None:
             say("The remote revision and its host changes are unknown until an approved run fetches it; "
                 "this dry run does not fetch or change the site, application, or host.")
-        return 0
+        return preview(operation, site, program, release_digest is not None and source == program, forwarded, say)
     # Fail a missing commit identity before asking or preparing anything.
     transaction.git(site_root, "var", "GIT_AUTHOR_IDENT")
     transaction.git(site_root, "var", "GIT_COMMITTER_IDENT")
@@ -251,6 +426,7 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
         "the access gateway, backups when needed, sudo commands and readiness checks.")
     if not approve():
         return 1
+    key = None
     with transaction.locked(store):
         if transaction.clean(site_root) != site_head:
             raise ValueError("the site revision changed while waiting for approval")
@@ -265,14 +441,14 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
                 raise ValueError("the application revision changed during packaging")
             if transaction.clean(site_root) != site_head:
                 raise ValueError("the site revision changed during application preparation")
+            if not allow_downgrade:
+                commit = key.removeprefix("git-") if key.startswith("git-") else None
+                refuse_older(older(store, site_root, site, release["digest"], commit,
+                                   [source] if source_head is not None else []), site, release["digest"])
             command = environment / "bin/thermite"
             transaction.site_update(command, site, expected_head=site_head)
             committed = transaction.clean(site_root)
-            args = [str(command), operation, "--config", str(site), "--_host-phase", "--_run-approved",
-                    *map(str, host_args)]
-            if runtime_token_file is not None:
-                args.extend(("--runtime-token-file", str(runtime_token_file)))
-            run(*args)
+            host(command, operation, "--config", site, "--_host-phase", "--_run-approved", *forwarded)
             if transaction.clean(site_root) != committed:
                 raise ValueError("the site revision changed during host verification")
             unchanged_source(source, source_head, release_digest)
@@ -291,6 +467,8 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
                     os.replace(temporary, launcher)
                 finally:
                     temporary.unlink(missing_ok=True)
+        except Downgrade:
+            raise
         except BaseException:
             say("The run stopped; the previous owner command and application environments are retained. "
                 "A completed site release commit is retained so the same command can resume.")
@@ -299,13 +477,20 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
                 resume.extend(("--source", str(source)))
             if revision is not None:
                 resume.extend(("--revision", revision))
-            resume.extend(map(str, host_args))
-            if runtime_token_file is not None:
-                resume.extend(("--runtime-token-file", str(runtime_token_file)))
+            elif source is None and key is not None and key.startswith("git-"):
+                # Resume the fetched commit, not whatever the branch names later.
+                resume.extend(("--revision", key.removeprefix("git-")))
+            if allow_downgrade:
+                resume.append("--allow-downgrade")
+            resume.extend(forwarded)
             say("Resume: " + shlex.join(resume))
             raise
     say(f"{operation.capitalize()} complete. {launcher} selects the verified application; "
         "previous environments are retained.")
+    found = shutil.which("thermite")
+    if found is None or Path(found).resolve() != launcher.resolve():
+        say(f"Warning: `thermite` on PATH is {found or 'missing'}, not {launcher}. Put {launcher.parent} "
+            "first on PATH so later commands run the verified application.")
     return 0
 
 

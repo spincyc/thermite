@@ -25,6 +25,7 @@ import time
 from urllib.parse import urljoin, urlsplit
 import xml.etree.ElementTree as ET
 
+import oh_http
 import oh_ports
 from . import AccessError
 from .callbacks import CallbackRelay, SERVICES, XML_DECLARATION
@@ -38,6 +39,8 @@ UPNP_CONFIG = "/rest/services/org.jupnp/config"
 ITEMS = "/rest/items?recursive=false&fields=name"
 CALLBACK_URI = "http://localhost/upnpcallback"
 FILTER_TABLE = "thermite_native"
+#: An installer passes its remaining native readiness allowance, at most two hours.
+MAX_DEADLINE = 2 * 60 * 60
 FILTER_PRIORITY = -10
 _UDN = re.compile(r"RINCON_[0-9A-F]{12}01400\Z")
 _MAC = re.compile(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}\Z")
@@ -46,6 +49,10 @@ _SERVICE = re.compile(r"urn:([A-Za-z0-9.-]+):serviceId:([A-Za-z0-9_.-]+)\Z")
 
 class BoundaryError(AccessError):
     """Fixed diagnostics only: never include native responses or credentials."""
+
+
+class TransportError(BoundaryError):
+    """No HTTP status arrived: refused, reset or timed-out connection."""
 
 
 @dataclass(frozen=True)
@@ -120,7 +127,7 @@ def request(method, url, *, headers, body=None, timeout=5, max_bytes=MAX_BODY):
     def remaining():
         left = deadline - time.monotonic()
         if left <= 0:
-            raise BoundaryError("Native commissioning request timed out")
+            raise TransportError("Native commissioning request timed out")
         return left
 
     connection = http.client.HTTPConnection(target.hostname, target.port, timeout=remaining())
@@ -147,7 +154,7 @@ def request(method, url, *, headers, body=None, timeout=5, max_bytes=MAX_BODY):
                 raise BoundaryError("Native commissioning response exceeds its size limit")
             return Response(response.status, {k.lower(): v for k, v in fields.items()}, payload)
     except (OSError, http.client.HTTPException):
-        raise BoundaryError("Native commissioning request failed; rerun the deployment to resume") from None
+        raise TransportError("Native commissioning request failed; rerun the deployment to resume") from None
     finally:
         connection.close()
 
@@ -404,15 +411,20 @@ def verify_native_listeners(snapshot, *, http_port, https_port, lsp_port=oh_port
 
 
 def configure(runtime_url, token_file, house_data, lan_address, *, callback_port=oh_ports.CALLBACK_PORT,
-              existing_callbacks=None, request=request, timeout=120, clock=time.monotonic, sleep=time.sleep):
+              existing_callbacks=None, request=request, timeout=120, clock=time.monotonic, sleep=time.sleep,
+              record=None):
     """Preserve settings, configure the boundary, and prove authenticated access.
 
     The callback config is returned privately to the lifecycle caller. This
     function neither writes it nor logs native bodies, tokens, paths or peers.
     PUT is never retried after an unknown outcome; a rerun reads actual state.
+    Native reads retry transient statuses and failed connections (oh_http's
+    one rule) until the caller's deadline, which an installer shares with its
+    other native readiness waits. `record(service_path, original)` runs, and
+    must persist the complete original mapping, before each replacing PUT.
     """
     runtime_url = _runtime(runtime_url)
-    if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 < timeout <= 300:
+    if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 < timeout <= MAX_DEADLINE:
         raise BoundaryError("Invalid native commissioning deadline")
     deadline = clock() + timeout
     try:
@@ -449,16 +461,28 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
             raise
 
     def call(method, path, *, body=None, authenticated=True):
+        nonlocal observation
         headers = {"Accept": "application/json"}
         if authenticated:
             headers["Authorization"] = "Bearer " + token
         if body is not None:
             headers["Content-Type"] = "application/json"
-        response = bounded_request(method, runtime_url + path, headers=headers, body=body,
-                                   timeout=5, max_bytes=MAX_BODY)
+        try:
+            response = bounded_request(method, runtime_url + path, headers=headers, body=body,
+                                       timeout=5, max_bytes=MAX_BODY)
+        except TransportError:
+            # Add-on and configuration reloads restart the native HTTP stack.
+            # A read is repeated; a write's outcome is unknown, so it is not.
+            if not oh_http.retryable(method):
+                raise
+            observation = "connection failed"
+            return None
         if authenticated and response.status in {401, 403}:
             raise BoundaryError("Native commissioning rejected the internal credential; no replacement was made")
         return response
+
+    def pause():
+        sleep(min(1, max(0, deadline - clock())))
 
     def read(path, *, readback=False):
         nonlocal observation
@@ -466,15 +490,16 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
         # A configuration update can briefly unregister its REST resource.
         while True:
             response = call("GET", path)
-            if response.status == 200:
+            if response is not None and response.status == 200:
                 value = _json(response)
                 if not isinstance(value, dict):
                     raise BoundaryError("Native configuration is not a mapping")
                 return value
-            if response.status not in {404, 500, 502, 503, 504}:
-                raise BoundaryError("Native configuration could not be read")
-            observation = "last HTTP status " + str(response.status)
-            sleep(min(1, max(0, deadline - clock())))
+            if response is not None:
+                if not oh_http.retryable("GET", response.status):
+                    raise BoundaryError("Native configuration could not be read")
+                observation = "last HTTP status " + str(response.status)
+            pause()
 
     def update(path, desired):
         nonlocal observation
@@ -482,6 +507,11 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
         intended = {**original, **desired}
         if original != intended or any(type(original.get(key)) is not type(value) for key, value in desired.items()):
             stage(resources[path] + " update")
+            if record is not None:
+                try:
+                    record(path, original)
+                except (OSError, ValueError, TypeError, AccessError):
+                    raise BoundaryError("Could not record the original native configuration; nothing was replaced") from None
             response = call("PUT", path, body=json.dumps(intended, allow_nan=False, separators=(",", ":")).encode())
             if response.status not in {200, 204}:
                 raise BoundaryError("Native configuration update was not confirmed; rerun the deployment")
@@ -500,7 +530,7 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
                 elif actual[key] != value:
                     mismatches.append(key + " value mismatch")
             observation = ", ".join(mismatches) or "configuration keys differ"
-            sleep(min(1, max(0, deadline - clock())))
+            pause()
 
     if existing_callbacks is not None:
         if isinstance(existing_callbacks, (str, Path)):
@@ -525,17 +555,20 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
                    "Anonymous native Item access was not rejected; commissioning is incomplete")
         while True:
             response = call("GET", ITEMS, authenticated=authenticated)
-            if response.status == 200:
+            if response is None:
+                pass
+            elif response.status == 200:
                 if not isinstance(_json(response), list):
                     raise BoundaryError(failure)
                 if authenticated:
                     break
             elif not authenticated and response.status in {401, 403}:
                 break
-            elif response.status not in {404, 500, 502, 503, 504}:
+            elif not oh_http.retryable("GET", response.status):
                 raise BoundaryError(failure)
             # Config Admin readback can precede REST resource re-registration
             # and application of the auth filter. Only GET verification repeats.
-            observation = "last HTTP status " + str(response.status)
-            sleep(min(1, max(0, deadline - clock())))
+            if response is not None:
+                observation = "last HTTP status " + str(response.status)
+            pause()
     return {"native_security": True, "callbacks": callbacks}

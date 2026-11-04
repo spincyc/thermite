@@ -1,8 +1,10 @@
-"""HTTP response reads with an optional absolute deadline.
+"""Direct HTTP reads with an optional absolute deadline, and the transient rule.
 
 Callers supply remaining() so their own clock, error type and safe diagnostic
 stay local. The budget covers headers and body even when bytes keep arriving.
 Without that callback, request() retains urllib's ordinary timeout behavior.
+Neither function uses environment proxies or follows redirects: callers send
+runtime bearer credentials, which must reach only the URL they named.
 """
 
 import http.client
@@ -13,6 +15,24 @@ import urllib.request
 
 class DeadlineExpired(RuntimeError):
     """The caller's absolute HTTP deadline expired."""
+
+
+#: Statuses a starting or reloading native runtime answers before its REST
+#: resources settle. The standalone gateway helper (oh_access/deployment.py)
+#: mirrors this set; tests keep the copies equal.
+TRANSIENT_STATUSES = frozenset({404, 429, 500, 502, 503, 504})
+
+
+def retryable(method, status=None):
+    """Whether one native REST outcome may be retried before a deadline.
+
+    `status` None or 0 is a transport failure (refused, reset or timed out
+    connection). Only reads repeat: a write's outcome is unknown after any
+    failure, so a caller reads actual state again instead of resending it.
+    """
+    if method not in ("GET", "HEAD"):
+        return False
+    return status in (None, 0) or status in TRANSIENT_STATUSES
 
 
 class _DeadlineReader(io.RawIOBase):
@@ -74,6 +94,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _direct(*handlers):
+    return urllib.request.build_opener(_NoRedirect(), urllib.request.ProxyHandler({}), *handlers)
+
+
 def headers(req, *, timeout, remaining=None):
     """Return (status, headers), closing without reading a response body.
 
@@ -82,10 +106,7 @@ def headers(req, *, timeout, remaining=None):
     applies one caller-owned absolute deadline through every header read.
     """
     budget = (lambda: min(timeout, remaining())) if remaining is not None else (lambda: timeout)
-    handlers = [_NoRedirect(), urllib.request.ProxyHandler({})]
-    if remaining is not None:
-        handlers += [_DeadlineHTTPHandler(budget), _DeadlineHTTPSHandler(budget)]
-    opener = urllib.request.build_opener(*handlers)
+    opener = _direct(*((_DeadlineHTTPHandler(budget), _DeadlineHTTPSHandler(budget)) if remaining is not None else ()))
     try:
         try:
             response = opener.open(req, timeout=budget())
@@ -103,12 +124,15 @@ def headers(req, *, timeout, remaining=None):
 
 
 def request(req, *, timeout, remaining=None):
-    """Return (status, bytes); HTTP errors keep urllib's exception semantics."""
+    """Return (status, bytes); HTTP errors keep urllib's exception semantics.
+
+    A redirect is returned as its HTTPError status, never followed.
+    """
     if remaining is None:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with _direct().open(req, timeout=timeout) as response:
             return response.status, response.read()
     budget = lambda: min(timeout, remaining())
-    opener = urllib.request.build_opener(_DeadlineHTTPHandler(budget), _DeadlineHTTPSHandler(budget))
+    opener = _direct(_DeadlineHTTPHandler(budget), _DeadlineHTTPSHandler(budget))
     try:
         with opener.open(req, timeout=budget()) as response:
             result = response.status, response.read()

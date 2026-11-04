@@ -1,10 +1,11 @@
-"""Deploy the commit deployed before the current one, or a given one.
+"""Put back the configuration of the site commit deployed before, or a given one.
 
     thermite rollback [COMMIT] [-n | --dry-run] [--force] [--state DIR]
 """
 
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 
@@ -14,20 +15,25 @@ from oh_cli import AREA
 from oh_cli.deploy import VAR, deployment_selection, print_changes, print_metrics
 
 DESCRIPTION = """\
-Put back an earlier commit's conf/ and Apple TV helper, as helm rollback
-does: without COMMIT, the commit deployed before the one deployed now
-(thermite history lists them); with it, that commit. It deploys as
-thermite deploy does, as you, through the thermite group, with an explicit
+Put back an earlier site commit's runtime configuration (conf/), Apple TV
+helper files and monitoring configuration (metrics/), rendered with that
+commit's exact cached application release: without COMMIT, the commit
+deployed before the one deployed now (thermite history lists them); with it,
+that commit. It deploys as you, through the thermite group, with an explicit
 ownership handoff to thermite:thermite, and records a rollback in the history.
 
-A commit this host's history holds ran here before, so it needs no fresh
-boot test. Any other commit needs thermite test boot to have passed on its
-conf/ here, or --force.
+Only those files change. Rollback does not select another application for the
+owner command, change systemd units or native versions, or restore runtime
+data, the HTTPS gateway or identity state; docs/installation.md#update-or-remove
+and docs/packaging.md#update-and-roll-back describe that recovery.
 
-A deploy never changes the systemd units. When the commit's deploy/ holds
-other units than the installed ones (an older runtime pin, or a helper
-unit from before the apple-tv verb, which runs `atv serve`), it warns and
-names what the owner installs for that commit to run as it did.
+A commit this host's history holds ran here before, so it needs no fresh boot
+test, provided its configuration renders to the exact digest recorded then;
+the deploy checks that digest again before writing. Any other commit needs
+thermite test boot to have passed on its conf/ here, or --force.
+
+When the commit's deploy/ holds other units than the installed ones (an older
+runtime pin, for example), it warns and names how the owner installs them.
 """
 
 EXAMPLES = (
@@ -65,12 +71,13 @@ def warn_units(commit: str, installed: dict[str, Path] | None = None) -> list[st
     if not differ:
         return []
     names = ", ".join(Path(name).name for name in differ)
+    site = shlex.quote(str(AREA))
     return [f"warning  the installed {names} {'is' if len(differ) == 1 else 'are'} not {commit[:12]}'s, and a "
-            "deploy changes no unit.",
-            f"         For {commit[:12]} to run as it did, the owner installs its units: "
-            f"`git switch --detach {commit[:12]}`,",
-            "         then thermite upgrade there (thermite install in a commit from before it; "
-            "docs/deploy.md, Rolling back)."]
+            "rollback changes no unit.",
+            f"         For {commit[:12]} to run as it did, return the site to its inputs in a new commit "
+            f"(`git -C {site} revert --no-edit {commit[:12]}..HEAD`),",
+            f"         then `thermite install --config {site}`, with that commit's release if it pins another "
+            "(docs/installation.md#update-or-remove)."]
 
 
 def roll_back(args, layout: deploy.State, installed: dict[str, Path] | None = None, host: dict | None = None) -> int:
@@ -79,6 +86,8 @@ def roll_back(args, layout: deploy.State, installed: dict[str, Path] | None = No
     commit, entry = target(entries, record, args.commit)
     previous = entry if entry is not None else record if commit == record.get("commit") else None
     ran_here = previous is not None
+    # The boot-test waiver holds only for the exact configuration recorded
+    # then: deploy.deploy refuses to write when the final digest differs.
     expected_digest = None
     from oh_paths import SITE_FILE
     if ran_here and deploy.export(AREA, commit, (SITE_FILE,)):

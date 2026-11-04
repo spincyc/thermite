@@ -191,7 +191,8 @@ class SplitInstaller(unittest.TestCase):
         self.system.read_bytes.side_effect = None
         self.system.read_bytes.return_value = None
         self.system.stat.return_value = None
-        installs = [command for command in steps.Units(self.context).actions(self.system) if command.argv[:3] == ("install", "-m", "0644")]
+        installs = [command for command in steps.Units(self.context).actions(self.system)
+                    if getattr(command, "argv", ())[:3] == ("install", "-m", "0644")]
         self.assertTrue(installs)
         self.assertEqual({name for command in installs for name in command.argv[5:]},
                          {str(root / name) for name in deploy.INSTALLED})
@@ -304,7 +305,8 @@ class SplitInstaller(unittest.TestCase):
                 patch.object(deploy, "service_states", return_value={}), patch.object(deploy, "openhab_version", return_value=None), \
                 patch.object(deploy, "lan_address", return_value=None), patch.object(deploy, "hostname", return_value="fixture"), \
                 patch.object(status, "show_metrics"), patch.object(deploy, "deploys", return_value=[]), patch("sys.stdout", new=io.StringIO()):
-            self.assertEqual(status.show(args, host), 0)
+            # Nothing deployed and no runtime answering: status reports a problem.
+            self.assertEqual(status.show(args, host), 1)
             units.assert_called_once_with(status.AREA, rev=self.context.head)
 
     def test_symbolic_deploy_and_rollback_targets_are_pinned_before_the_body(self):

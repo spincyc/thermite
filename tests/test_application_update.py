@@ -18,7 +18,7 @@ class ApplicationUpdate(fixtures.ApplicationFixture):
     def apply(self, operation="upgrade", **kwargs):
         self.previous_launcher = self.launcher.resolve()
         options = {"home": self.home, "approve": lambda: True, **kwargs}
-        with patch.object(transaction, "run", side_effect=self.simulate):
+        with self.simulated():
             return application.apply(operation, self.site, **options)
 
     def test_remote_default_fetches_main_only_after_approval(self):
@@ -64,10 +64,12 @@ class ApplicationUpdate(fixtures.ApplicationFixture):
     def test_install_current_verified_release_does_not_fetch_or_need_source_git(self):
         self.assertEqual(self.apply("install", program=self.new), 0)
         self.assertFalse(any("clone" in args or "fetch" in args for args in self.calls))
-        pip = next(args for args in self.calls if "pip" in args)
-        self.assertEqual(pip[-1], str(self.new))
-        self.assertIn(str(self.home), pip[0])
-        self.assertIn("--isolated", pip)
+        locked, pip = [args for args in self.calls if "pip" in args]
+        self.assertEqual(locked[-3:], ("--require-hashes", "-r", str(fixtures.AREA / application.REQUIREMENTS)))
+        self.assertEqual(pip[-3:], ("--no-deps", "--no-build-isolation", str(self.new)))
+        for call in (locked, pip):
+            self.assertIn(str(self.home), call[0])
+            self.assertIn("--isolated", call)
 
     def test_revision_override_packages_exact_commit_without_switching_source(self):
         selected = transaction.clean(self.source)
@@ -77,7 +79,7 @@ class ApplicationUpdate(fixtures.ApplicationFixture):
         later = transaction.clean(self.source)
         self.assertEqual(self.apply(source=self.source, revision=selected), 0)
         self.assertEqual(transaction.clean(self.source), later)
-        pip = next(args for args in self.calls if "pip" in args)
+        pip = next(args for args in self.calls if "--no-deps" in args)
         self.assertEqual(transaction.clean(Path(pip[-1])), selected)
 
     def test_repeated_current_application_reuses_environment_and_keeps_launcher_and_commit(self):

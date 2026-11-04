@@ -112,7 +112,8 @@ class InstalledInstall(unittest.TestCase):
             self.assertTrue(all(action.approved_argv is None for action in actions[:-1]))
             self.assertEqual([action.terminal for action in actions], [False, False, False, True])
             self.assertEqual([action.argv for action in steps.Verify(self.context).actions(self.host)],
-                             [self.command("health", "--production", "--installation"), self.command("status")])
+                             [self.command("health", "--production", "--installation", "--settle", "120"),
+                              self.command("status")])
             verification = steps.Verify(self.context).actions(self.host)
             self.assertTrue(verification[0].show_output)
             self.assertFalse(verification[0].terminal)

@@ -19,6 +19,9 @@ import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 import uuid
 
+# Mirrors oh_http.TRANSIENT_STATUSES: the administrative helper imports this
+# module without the package (tests/test_lifecycle_flow.py holds them equal).
+TRANSIENT_STATUSES = frozenset({404, 429, 500, 502, 503, 504})
 MAX_BODY = 128 * 1024
 MAX_HEADERS = 32 * 1024
 REQUEST_SECONDS = 5
@@ -150,7 +153,7 @@ class _Client:
 def _expect(response, status, content_type=None, *, read=False):
     code, fields, payload = response
     if code != status:
-        if read and code in (404, 429, 500, 502, 503, 504):
+        if read and code in TRANSIENT_STATUSES:
             raise NativeAuthError("unavailable", retryable=True)
         raise NativeAuthError("credentials" if code in (401, 403) else "protocol")
     if content_type and fields.get_content_type() != content_type:

@@ -1,6 +1,7 @@
 """Install thermite on this host, or show what that would do.
 
     thermite install --config DIR [--dry-run] [--clean] [--restart-runtime]
+                     [--native-timeout SECONDS] [--allow-downgrade]
 """
 
 from __future__ import annotations
@@ -34,15 +35,28 @@ its TLS certificate and starts with Security off. Enable Security on its page
 to bootstrap the first administrator with owner proof.
 
 The command in ~/.local/bin is switched only after every check passes. Keep
-that directory on PATH. Rerun after a failure to resume; prior environments,
-releases and backups are retained. Application setup never changes OS Python.
+that directory first on PATH; a successful run warns when it is not. Rerun
+after a failure to resume; prior environments, releases and backups are
+retained. Application setup never changes OS Python. Install refuses to pin a
+release older than the site's committed one unless --allow-downgrade is given,
+after deliberately restoring state that the newer release may have migrated.
 
 --clean deletes the native state and local runtime/monitoring credentials;
 it requires typing the exact state path. Gateway identity/TLS state is retained.
 --restart-runtime requests one fresh native start and its readiness checks.
---dry-run reports the whole workflow without fetching, committing or changing
-the host. The exact host plan is resolved after an approved application fetch.
-Use -v for details. Agents only use --dry-run; they never run sudo.
+--native-timeout sets the one native readiness allowance (300-7200 seconds).
+--dry-run fetches, commits and changes nothing. When the site pins the release
+running it, it also prints that release's provisional host plan for this host;
+otherwise the host plan is resolved after approval. Use -v for details. Agents
+only use --dry-run; they never run sudo.
+"""
+
+NOTES = """\
+exit status:
+  0  complete and verified
+  1  declined or a step failed
+  2  invalid inputs, an older release without --allow-downgrade, or run as root
+  130  interrupted; the running step stopped its own commands first
 """
 
 EXAMPLES = (
@@ -55,7 +69,7 @@ EXAMPLES = (
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = oh_cli.command("install", DESCRIPTION, EXAMPLES)
+    parser = oh_cli.command("install", DESCRIPTION, EXAMPLES, NOTES)
     oh_cli.add_dry_run(parser)
     parser.add_argument("--clean", action="store_true",
                         help="delete native state and local API/Grafana credential copies, then reinstall; pairings are lost")
@@ -65,6 +79,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="advanced: import an existing internal runtime API token from your private file")
     parser.add_argument("--source", type=Path, help="use a clean application checkout for this deployment")
     parser.add_argument("--revision", help="application Git revision to deploy from --source")
+    parser.add_argument("--native-timeout", type=steps.native_timeout_argument, metavar="SECONDS",
+                        help="one native readiness allowance shared by runtime startup, gateway commissioning "
+                             "and final settlement (default 900)")
+    parser.add_argument("--allow-downgrade", action="store_true",
+                        help="pin a release older than the site's committed one, after restoring compatible state")
     parser.add_argument("--_host-phase", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--_run-approved", action="store_true", help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
@@ -80,14 +99,17 @@ def main(argv: list[str] | None = None) -> int:
             return oh_application_update.install(
                 AREA, source=arguments.source, revision=arguments.revision,
                 dry_run=arguments.dry_run, approve=lambda: runner.confirm_run(system, "install"),
-                runtime_token_file=arguments.runtime_token_file,
+                runtime_token_file=arguments.runtime_token_file, allow_downgrade=arguments.allow_downgrade,
                 host_args=(["--clean"] if arguments.clean else []) +
                           (["--restart-runtime"] if arguments.restart_runtime else []) +
+                          (["--native-timeout", str(arguments.native_timeout)]
+                           if arguments.native_timeout is not None else []) +
                           (["--verbose"] if oh_cli.switches.verbose else []), say=system.say)
         import oh_paths
         oh_paths.require_compatible()
         return install(system, arguments.dry_run, clean=arguments.clean, runtime_token_file=arguments.runtime_token_file,
-                       restart_runtime=arguments.restart_runtime, run_approved=arguments._run_approved)
+                       restart_runtime=arguments.restart_runtime, run_approved=arguments._run_approved,
+                       native_timeout=arguments.native_timeout)
     except subprocess.CalledProcessError as exc:
         print("thermite install: a deployment step failed; rerun the same command to resume", file=sys.stderr)
         return exc.returncode if exc.returncode > 0 else 1
@@ -117,7 +139,7 @@ def approve(system: System, context: steps.Context, clean: bool) -> bool:
 
 
 def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token_file: Path | None = None,
-            restart_runtime: bool = False, run_approved: bool = False) -> int:
+            restart_runtime: bool = False, run_approved: bool = False, native_timeout: int | None = None) -> int:
     if clean and runtime_token_file is not None:
         system.say("A clean installation creates new runtime credentials; an existing token cannot be imported into it.")
         return 2
@@ -130,6 +152,8 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
             runner.run([steps.Packages()], system, AREA, dry_run=True)
         return 2
     context = steps.committed_context(AREA, system, runtime_token_file)
+    if native_timeout is not None:
+        context = dataclasses.replace(context, native_timeout=native_timeout)
     if restart_runtime:
         context = dataclasses.replace(context, restart_runtime=True)
     versions, host = context.versions, context.host

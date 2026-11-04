@@ -9,10 +9,16 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import sys
 
 PROGRAM = Path(__file__).resolve().parents[1]
 SITE_FILE = "thermite-site.json"
 RELEASE_FILE = "thermite-release.json"
+RELEASES = "var/application-releases"
+#: Set to the release digest this process re-executed into; stops a loop.
+REEXEC = "THERMITE_PINNED_RELEASE"
+#: The launcher's own arguments, when it handed select_args all of sys.argv.
+LAUNCHED: list[str] | None = None
 
 
 class SiteError(ValueError):
@@ -21,7 +27,9 @@ class SiteError(ValueError):
 
 def select_args(argv: list[str]) -> list[str]:
     """Select the site before importing any verb or its module-level paths."""
-    global SITE
+    global SITE, LAUNCHED
+    if list(argv) == sys.argv[1:] and Path(sys.argv[0]).name == "thermite":
+        LAUNCHED = list(argv)
     out, chosen, index = [], None, 0
     while index < len(argv):
         word = argv[index]
@@ -93,14 +101,64 @@ def require_compatible() -> dict | None:
         if installed:
             raise SiteError("select a private site with --config DIR, or run thermite init DIR first")
         return None  # Original complete-checkout behavior.
-    if data["application"] != VERSION:
-        raise SiteError(f"site requires thermite {data['application']}; installed application is {VERSION}")
-    if not installed:
-        raise SiteError("this standalone site requires its installed application release; use the matching wheel")
-    release = manifest(PROGRAM)
-    if release["digest"] != data["release"]:
-        raise SiteError("site requires a different application release; install its exact reviewed artifact")
+    current = manifest(PROGRAM)["digest"] if installed else None
+    if data["application"] != VERSION or current != data["release"]:
+        pinned(data, current)
+    os.environ.pop(REEXEC, None)
     return data
+
+
+def prepared(digest: str) -> Path | None:
+    """The owner's prepared environment launcher for a release, if one is recorded."""
+    try:
+        store = Path.home() / ".local/share/thermite/application"
+    except RuntimeError:
+        return None
+    for record in sorted(store.glob("*.json")) if store.is_dir() else ():
+        try:
+            saved = json.loads(record.read_text())
+            name, release = saved["environment"], saved["release"]["digest"]
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+        launcher = store / str(name) / "bin/thermite"
+        if release == digest and Path(str(name)).name == name and launcher.is_file():
+            return launcher
+    return None
+
+
+def pinned(data: dict, current: str | None) -> None:
+    """Run the site's verified pinned release in place of this one, or say how to resume.
+
+    A failed host phase leaves the site pinned to its candidate while the owner
+    command still selects the previous application. Every site verb then runs
+    the exact cached candidate rather than refusing.
+    """
+    import oh_release
+    digest, store = data["release"], SITE / RELEASES
+    try:
+        root = oh_release.resolve(store, digest, data["application"], program=store / str(digest))
+        problem = ""
+    except (oh_release.ReleaseError, OSError) as exc:
+        root, problem = None, f" Its verified copy {store / str(digest)} is unusable: {exc}."
+    # Only the owner's own launcher re-executes, never root: the cache is the
+    # owner's private, writable site data.
+    if (root is not None and current is not None and LAUNCHED is not None and sys.executable
+            and os.environ.get(REEXEC) != digest and os.geteuid() != 0 and root.stat().st_uid == os.getuid()):
+        oh_cli = sys.modules.get("oh_cli")
+        if not getattr(getattr(oh_cli, "switches", None), "quiet", False):
+            print(f"thermite: {SITE} pins application release {digest[:12]}; running its verified copy {root}",
+                  file=sys.stderr)
+        sys.stdout.flush(); sys.stderr.flush()
+        os.environ[REEXEC] = digest
+        os.execv(sys.executable, [sys.executable, str(root / "bin/thermite"), *LAUNCHED])
+    import shlex
+    running = f"release {current[:12]}" if current else "a source checkout"
+    launcher = prepared(str(digest))
+    raise SiteError(f"site {SITE} requires thermite {data['application']} release {str(digest)[:12]}; this command "
+                    f"runs {running}." + (f" Its verified copy is {root}." if root is not None else problem)
+                    + (f" Its prepared launcher is {launcher}." if launcher else "")
+                    + " To finish an interrupted application update, rerun its printed Resume command, usually "
+                    f"`thermite upgrade --config {shlex.quote(str(SITE))}` (or the matching thermite install).")
 
 
 def command(*args: str) -> tuple[str, ...]:

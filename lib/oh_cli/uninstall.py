@@ -21,10 +21,11 @@ DESCRIPTION = """\
 Undo thermite install on this host, as apt remove does: stop runtime, the
 Apple TV helper, the metrics services (Prometheus, node_exporter,
 blackbox_exporter, the runtime exporter, Grafana) and their restart paths
-(and disable the path units), remove the unit files thermite install
-installed, and systemctl daemon-reload. The services come from quadlets,
-which systemd generates from those files, so removing them is what keeps
-them from starting at the next boot.
+(and disable the path units and the boot-time native port boundary),
+remove the unit files thermite install installed and its unit manifest,
+and systemctl daemon-reload. The services come from quadlets, which systemd
+generates from those files, so removing them is what keeps them from
+starting at the next boot.
 
 It keeps the state root (conf, userdata, secrets, the deploy records and
 backups, Prometheus' samples, Grafana's data and the metrics secrets), the
@@ -32,8 +33,9 @@ thermite user and group, the packages, images and host node-exporter
 confinement configuration, and says so: thermite
 install puts runtime and the metrics back on the same state. --purge, as apt
 purge does, also deletes the state root; before that step it shows the path
-and asks you to type it. Separately staged authenticated-access releases
-and state are managed separately.
+and asks you to type it. The HTTPS gateway, its worker and callback units,
+and their identity state (accounts, TLS key) are kept, with the commands
+that remove them; so are the loaded native port filter and its rule file.
 
 One y/n question approves this uninstall run, including its sudo commands.
 Compact status shows each stage; -v/--verbose shows details and commands.
@@ -51,10 +53,21 @@ EXAMPLES = (
 
 
 def kept(context: steps.Context, purge: bool) -> str:
+    from oh_access.staging import ACCESS_UNITS
+    from oh_install.ingress import RULE_FILE
     state = "" if purge else f"the state root, {context.layout.root} (thermite uninstall --purge deletes it); "
+    access = f"{context.layout.root}-access"
+    units = " ".join(ACCESS_UNITS)
     return (f"Kept: {state}the thermite user and group; the packages; the images (`sudo podman images` lists them, "
-            "`sudo podman rmi IMAGE` deletes one); host node-exporter confinement configuration; and this clone. thermite install installs runtime and the metrics "
-            "again.")
+            "`sudo podman rmi IMAGE` deletes one); host node-exporter confinement configuration; and this clone.\n"
+            f"Also kept: the HTTPS gateway ({units}) and its identity state in {access}: accounts, sessions and the "
+            "TLS key. Back that directory up first, then remove them with "
+            f"`sudo systemctl disable --now {units}`, "
+            + " ".join(f"`sudo rm /etc/systemd/system/{name}`" for name in ACCESS_UNITS)
+            + f", `sudo systemctl daemon-reload` and `sudo rm -rf --one-file-system {access}`.\n"
+            f"The native port filter stays loaded until reboot: `sudo nft delete table inet thermite_native` "
+            f"unloads it and `sudo rm {RULE_FILE}` removes its rules.\n"
+            "thermite install installs runtime, the gateway and the metrics again.")
 
 
 def uninstall(system: System, dry_run: bool, purge: bool) -> int:

@@ -1,13 +1,20 @@
-"""Recognize Thermite's installed artifacts before changing host identities.
+"""Recognize Thermite's installed unit files before changing or removing them.
 
-Legacy names are only candidates. A root-owned regular generated file must
-match a known template, including the configured state bindings, and an
-effective unit must resolve to that file without drop-ins. Unknown old names
-belong to someone else; collisions in the new namespace fail closed.
+A root-owned regular unit file is Thermite's when its exact bytes match the
+root-owned manifest the Units step records (MANIFEST: path -> sha256, with
+the application release that rendered them), the unit the current committed
+inputs render, or a unit an earlier verified build of this site rendered
+(var/site-builds/*/deploy/). The last takes over units installed before the
+manifest existed; the next Units step records them. Template signatures,
+which tolerate pin, port and allowlist changes, remain only for that takeover.
+An effective unit must also resolve to that file without unowned drop-ins.
+Anything else in the namespace belongs to someone else and fails closed.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from pathlib import Path
 import re
 from typing import TYPE_CHECKING
@@ -19,23 +26,9 @@ if TYPE_CHECKING:
     from oh_install.steps import Context
     from oh_install.system import System
 
-# Keep the historical mapping explicit. It must not expand when new services
-# are added to the namespace.
-LEGACY = {
-    oh_units.RUNTIME: "openhab.service", oh_units.ATV: "openhab-atv.service",
-    oh_units.PROMETHEUS: "openhab-prometheus.service",
-    oh_units.NODE_EXPORTER: "openhab-node-exporter.service",
-    oh_units.BLACKBOX: "openhab-blackbox.service",
-    oh_units.EXPORTER: "openhab-metrics-exporter.service",
-    oh_units.GRAFANA: "openhab-grafana.service",
-    oh_units.ALERTMANAGER: "openhab-alertmanager.service",
-    oh_units.NTFY: "openhab-ntfy.service",
-    oh_units.NOTIFICATIONS: "openhab-notifications.service",
-    oh_units.ATV_RESTART_PATH: "openhab-atv-restart.path",
-    oh_units.ATV_RESTART_SERVICE: "openhab-atv-restart.service",
-    oh_units.METRICS_RESTART_PATH: "openhab-metrics-restart.path",
-    oh_units.METRICS_RESTART_SERVICE: "openhab-metrics-restart.service",
-}
+#: Root-owned record of the unit files the Units step installed.
+MANIFEST = Path("/etc/thermite/units.json")
+MANIFEST_VERSION = 1
 
 
 def unit_name(path: Path) -> str:
@@ -44,23 +37,53 @@ def unit_name(path: Path) -> str:
     return path.stem + ".service" if path.suffix == ".container" else path.name
 
 
-def legacy_text(text: str) -> str:
-    """Only the namespace's declared additions differ from the old templates."""
-    lines = []
-    for line in text.splitlines():
-        if line in (f"PartOf={oh_units.TARGET}", f"Slice={oh_units.SLICE}", "PodmanArgs=--replace=false",
-                    "PodmanArgs=--cidfile=%t/%N.cid"):
-            continue
-        if line == f"WantedBy={oh_units.TARGET}":
-            line = "WantedBy=multi-user.target"
-        if "--collector.systemd.unit-include=" in line:
-            line = line.replace("thermite-.*", "openhab.*")
-        for current, old in sorted(LEGACY.items(), key=lambda pair: -len(pair[0])):
-            line = line.replace(current, old)
-            if line == f"ContainerName={current.removesuffix('.service')}":
-                line = f"ContainerName={old.removesuffix('.service')}"
-        lines.append(line)
-    return "\n".join(lines) + "\n"
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def manifest_bytes(context: Context) -> bytes:
+    """The manifest for the units this context installs."""
+    release = context.application["digest"] if getattr(context, "application", None) else None
+    units = {str(target): sha256(context.unit(source)) for source, target in sorted(deploy.INSTALLED.items())}
+    return (json.dumps({"version": MANIFEST_VERSION, "release": release, "units": units},
+                       sort_keys=True, indent=2) + "\n").encode()
+
+
+def recorded(system: System) -> dict[str, str] | None:
+    """The manifest's path -> sha256 map, when root custody protects it."""
+    file = system.unit_file(MANIFEST)
+    if file is None or file.uid != 0 or file.mode & 0o022 or not file.ancestors_trusted:
+        return None
+    try:
+        value = json.loads(file.content)
+    except (ValueError, UnicodeError):
+        return None
+    units = value.get("units") if isinstance(value, dict) and value.get("version") == MANIFEST_VERSION else None
+    if not isinstance(units, dict) or not all(isinstance(key, str) and isinstance(digest, str)
+                                              and re.fullmatch(r"[0-9a-f]{64}", digest) for key, digest in units.items()):
+        return None
+    return units
+
+
+def previous_builds(context: Context) -> dict[str, set[str]]:
+    """sha256s of each unit source rendered by this site's earlier verified builds."""
+    found: dict[str, set[str]] = {}
+    var = getattr(context, "var", None)
+    root = Path(var) / "site-builds" if var is not None else None
+    try:
+        builds = [path for path in root.iterdir() if path.is_dir() and not path.is_symlink()] if root and root.is_dir() else []
+    except OSError:
+        return found
+    for build in builds:
+        for source in deploy.INSTALLED:
+            path = build / source
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                found.setdefault(source, set()).add(sha256(path.read_bytes()))
+            except OSError:
+                continue
+    return found
 
 
 def _signature(raw: bytes) -> tuple[str, ...] | None:
@@ -77,15 +100,9 @@ def _signature(raw: bytes) -> tuple[str, ...] | None:
         return None
     lines = []
     for line in text.splitlines():
-        if not line or line.startswith("#") or line == "PodmanArgs=--runtime=runc":
+        if not line or line.startswith("#"):
             continue
-        # Earlier managed runtimes had no gateway ingress boundary. These
-        # exact tightening directives are installed during the same upgrade.
-        if line in {"Environment=OPENHAB_HTTP_ADDRESS=127.0.0.1",
-                    "ExecStartPre=/usr/bin/env nft -f /etc/thermite-native.nft",
-                    "Requires=thermite-native-boundary.service", "After=thermite-native-boundary.service"}:
-            continue
-        # Versions may change on the upgrade that performs the migration.
+        # Versions may change on the upgrade that takes these units over.
         if line.startswith("Image="):
             line = re.sub(r"@sha256:[0-9a-f]{64}$", "@sha256:PIN", line)
         if line.startswith("Description=openHAB "):
@@ -105,58 +122,60 @@ def _signature(raw: bytes) -> tuple[str, ...] | None:
 class Owned:
     # canonical role, effective unit name, source file
     entries: tuple[tuple[str, str, Path], ...] = ()
-    legacy: tuple[tuple[str, str, Path], ...] = ()
     problems: tuple[str, ...] = ()
+    #: Whether the manifest records exactly the files present now.
+    recorded: bool = False
 
     @property
     def runtime_bound(self) -> bool:
-        return any(role == oh_units.RUNTIME and path.suffix == '.container'
-                   for role, _, path in (*self.entries, *self.legacy))
+        return any(role == oh_units.RUNTIME and path.suffix == '.container' for role, _, path in self.entries)
 
     def units(self, roles=None) -> list[str]:
-        entries = (*self.entries, *self.legacy)
-        return list(dict.fromkeys([name for _, name, _ in entries] if roles is None else
-                                  [name for selected in roles for role, name, _ in entries if role == selected]))
+        return list(dict.fromkeys([name for _, name, _ in self.entries] if roles is None else
+                                  [name for selected in roles for role, name, _ in self.entries if role == selected]))
 
 
 def inspect(context: Context, system: System) -> Owned:
-    entries, old_entries, problems = [], [], []
+    entries, problems = [], []
     try:
         templates = deploy.render_units(context.versions, context.host)
     except (ValueError, KeyError, TypeError) as exc:
         return Owned(problems=(f"cannot validate generated service ownership: {exc}",))
+    manifest = recorded(system) or {}
+    builds = None
     candidates = []
     for source, target in deploy.INSTALLED.items():
         role = unit_name(target)
-        expected = templates[source]
         if not system.safe_unit_parent(target.parent):
             problems.append(f"unsafe unit directory {target.parent}; refusing to install or remove files through it")
-        candidates.append((target, role, role, expected, False))
-        if role in LEGACY and target.suffix != ".conf":
-            old = LEGACY[role]
-            old_target = target.with_name(old.removesuffix(".service") + ".container" if target.suffix == ".container" else old)
-            candidates.append((old_target, role, old, legacy_text(expected), True))
-    present = {path for path, *_ in candidates if system.lexists(path)}
-    matched = set()
-    for path, _, _, template, legacy in candidates:
+        candidates.append((source, target, role))
+    present = {target for _, target, _ in candidates if system.lexists(target)}
+    matched, hashes = set(), {}
+    for source, path, _ in candidates:
         if path not in present:
             continue
         file = system.unit_file(path)
-        signature = _signature(file.content) if file is not None else None
-        if (file is not None and file.uid == 0 and not file.mode & 0o022 and file.ancestors_trusted
-                and signature is not None and signature == _signature(template.encode())):
-            matched.add(path)
-        elif not legacy or signature is not None or file is None:
+        if file is None or file.uid != 0 or file.mode & 0o022 or not file.ancestors_trusted:
             problems.append(f"cannot prove Thermite ownership of {path}; preserve it and resolve the collision")
-    names = list(dict.fromkeys(name for path, _, name, _, legacy in candidates if not legacy or path in present))
+            continue
+        digest = hashes[str(path)] = sha256(file.content)
+        if manifest.get(str(path)) != digest and file.content != templates[source].encode():
+            if builds is None:
+                builds = previous_builds(context)
+            signature = _signature(file.content)
+            if digest not in builds.get(source, ()) and (signature is None or signature != _signature(templates[source].encode())):
+                problems.append(f"cannot prove Thermite ownership of {path}; it matches neither {MANIFEST}, "
+                                "this site's generated unit nor an earlier build; preserve it and resolve the collision")
+                continue
+        matched.add(path)
+    names = list(dict.fromkeys(role for _, _, role in candidates))
     origins = system.unit_origins(names)
     dropins = {role: deploy.INSTALLED[source] for role, source in deploy.CONTAINER_DROPINS.items()}
     primaries = {unit_name(path): path for path in deploy.INSTALLED.values() if path.suffix != '.conf'}
-    for path, role, name, _, legacy in candidates:
-        if legacy and path not in matched:
-            continue
+    for _, path, name in candidates:
         if path in present and path not in matched:
             continue
+        role = name
         origin = origins[name]
         if not origin.known:
             problems.append(f"cannot inspect {name}; systemd did not return a complete unit state")
@@ -164,11 +183,11 @@ def inspect(context: Context, system: System) -> Owned:
         if origin.transient is not False:
             problems.append(f"{name} is transient or has unknown unit custody; refusing to change it")
             continue
-        declared = {str(dropins[role])} if not legacy and role in dropins else set()
+        declared = {str(dropins[role])} if role in dropins else set()
         proven = {str(dropins[role])} if declared and dropins[role] in matched else set()
         actual = set(origin.drop_ins.split())
         active = origin.active in ('active', 'activating', 'reloading', 'deactivating')
-        if not actual <= proven or (active and not legacy and role in dropins and actual != declared):
+        if not actual <= proven or (active and role in dropins and actual != declared):
             problems.append(f"{name} has missing or unowned lifecycle drop-ins; refusing to change it")
             continue
         if path not in matched:
@@ -189,5 +208,6 @@ def inspect(context: Context, system: System) -> Owned:
         if path.suffix == '.conf' and loaded and primary not in matched:
             problems.append(f"{name} has no proven primary unit for its lifecycle drop-in")
             continue
-        (old_entries if legacy else entries).append((role, name, path))
-    return Owned(tuple(entries), tuple(old_entries), tuple(dict.fromkeys(problems)))
+        entries.append((role, name, path))
+    exact = bool(manifest) and set(manifest) == set(hashes) and all(manifest[key] == value for key, value in hashes.items())
+    return Owned(tuple(entries), tuple(dict.fromkeys(problems)), exact)

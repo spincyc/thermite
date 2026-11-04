@@ -62,9 +62,9 @@ PENDING_STATUSES = frozenset({"INITIALIZING", "UNKNOWN"})
 # UNINITIALIZED details that mean the handler itself has not arrived yet.
 HANDLER_PENDING_DETAILS = ("HANDLER_MISSING_ERROR", "NOT_YET_READY")
 FAIL_DETAILS = frozenset({"HANDLER_CONFIGURATION_PENDING", "CONFIGURATION_ERROR"})
-# Only completed handlers waiting for a device are installation warnings.
-# Unknown/unfinished initialization and handler/configuration errors remain
-# failures, including any new status detail that has not been reviewed here.
+# Completed handlers waiting for a device are installation warnings. Only
+# configuration errors are terminal; every other state, including a detail not
+# reviewed here, may still finish initializing (see thing_readiness).
 DEVICE_OFFLINE_DETAILS = frozenset({None, "NONE", "COMMUNICATION_ERROR", "BRIDGE_OFFLINE"})
 
 
@@ -292,8 +292,13 @@ def mirror_conf(source: Path, dest: Path, transform) -> Path:
         raise SandboxError(f"conf directory {source} does not exist")
     if not is_disposable(dest) or dest.is_symlink():
         raise SandboxError(f"refusing to mirror conf into {dest}: it is not a directory below {VAR}")
-    files = transform({p.relative_to(source).as_posix(): _conf_file(p.read_bytes())
-                       for p in sorted(source.rglob("*")) if p.is_file()})
+    try:
+        files = transform({p.relative_to(source).as_posix(): _conf_file(p.read_bytes())
+                           for p in sorted(source.rglob("*")) if p.is_file()})
+    except ValueError as exc:
+        # The read-only renderer fails closed on configuration it cannot prove
+        # safe; report its reason, not a traceback.
+        raise SandboxError(f"cannot mirror {source}: {exc}") from None
     present = {p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()} if dest.is_dir() else set()
     for path in sorted(present - set(files)):
         (dest / path).unlink()
@@ -415,15 +420,34 @@ def optional_heos_account(thing: dict) -> bool:
             and info.get("description") == "Can't log in. Username or password not set.")
 
 
+def thing_readiness(thing: dict) -> str:
+    """The one installation readiness predicate for a full Thing DTO.
+
+    'ok' is ONLINE. 'warn' is a completed handler waiting for its device, or
+    the reviewed account-free HEOS bridge. 'fail' is a configuration error,
+    which no wait repairs. Everything else is 'pending': handler, bridge and
+    device initialization (for example UNINITIALIZED/BRIDGE_UNINITIALIZED on a
+    bridged player while its bridge reloads) that may still finish. Installer
+    readiness waits for pending Things within its deadline; installation
+    health reports those still pending after its settle window as warnings.
+    """
+    info = thing.get("statusInfo") or {}
+    status = str(info.get("status") or "?").upper()
+    detail = str(info.get("statusDetail") or "NONE").upper()
+    if optional_heos_account(thing):
+        return "warn"
+    if detail in FAIL_DETAILS:
+        return "fail"
+    if status == "ONLINE":
+        return "ok"
+    if status == "OFFLINE" and detail in DEVICE_OFFLINE_DETAILS:
+        return "warn"
+    return "pending"
+
+
 def installation_thing_verdict(thing: dict) -> str:
     """Classify a full Thing DTO with the installation health policy."""
-    info = thing.get("statusInfo", {})
-    status, detail = info.get("status", "?"), info.get("statusDetail", "NONE")
-    verdict = classify_thing(status, detail, require_online=True)
-    if verdict == "fail" and (optional_heos_account(thing)
-                              or status == "OFFLINE" and detail in DEVICE_OFFLINE_DETAILS):
-        return "warn"
-    return verdict
+    return thing_readiness(thing)
 
 
 def thing_pending(thing: dict, devices: bool = True) -> bool:
@@ -495,6 +519,7 @@ def summarize_things(things: list[dict], require_online: bool = False, allow: fr
     by_status: dict[str, int] = {}
     rows = []
     failed = []
+    pending = []
     for thing in sorted(things, key=lambda t: t.get("UID", "")):
         info = thing.get("statusInfo", {})
         status = info.get("status", "?")
@@ -520,7 +545,10 @@ def summarize_things(things: list[dict], require_online: bool = False, allow: fr
         rows.append(row)
         if verdict == "fail":
             failed.append(row)
-    return {"count": len(rows), "by_status": dict(sorted(by_status.items())), "things": rows, "failed": failed}
+        elif verdict == "pending":
+            pending.append(row)
+    return {"count": len(rows), "by_status": dict(sorted(by_status.items())), "things": rows, "failed": failed,
+            **({"pending": pending} if installation else {})}
 
 
 # --------------------------------------------------------------------------

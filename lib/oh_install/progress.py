@@ -43,6 +43,10 @@ class Progress:
         self.notes = deque(maxlen=20)
         self.announced = False
         self.started = None
+        #: What a long wait currently reports, shown beside the spinner.
+        self.detail = ""
+        self.shown_detail = None
+        self.shown_at = None
 
     def __enter__(self):
         self.started = monotonic()
@@ -75,7 +79,7 @@ class Progress:
                 return
             width = shutil.get_terminal_size((80, 24)).columns
             symbol = "|/-\\"[self.frame % 4]
-            text = f"[ {symbol} ] {self.label}"
+            text = f"[ {symbol} ] {self.label}" + (f": {self.detail}" if self.detail else "")
             duration = f" ({self.elapsed()})"
             # A single physical line is essential: clearing a wrapped frame
             # would leave fragments behind. Retain elapsed time when a long
@@ -119,6 +123,25 @@ class Progress:
         minutes, seconds = divmod(seconds, 60)
         return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
 
+    #: Without animation, repeat an unchanged wait report at most this often.
+    UPDATE_INTERVAL = 30
+
+    def update(self, detail: str):
+        """Report a long wait's current state without ending the stage.
+
+        The spinner shows it in place. Plain and verbose output prints a
+        change, rate-limited, so a redirected log stays readable.
+        """
+        detail = " ".join(str(detail).split())
+        with self.lock:
+            self.detail = detail
+        if self.animate or self.quiet or not detail:
+            return
+        now = monotonic()
+        if detail != self.shown_detail and (self.shown_at is None or now - self.shown_at >= self.UPDATE_INTERVAL):
+            self.shown_detail, self.shown_at = detail, now
+            self.message(f"   waiting: {detail} ({self.elapsed()})")
+
     def working(self, detail: str = ""):
         if not self.announced:
             self.message(f"[ .. ] {self.label}" + (f": {detail}" if detail else ""))
@@ -146,6 +169,13 @@ class Progress:
         if self.notes:
             print("\n".join(self.notes), file=sys.stderr, flush=True)
             self.notes.clear()
+
+
+def update(detail: str) -> None:
+    """Show a long wait's current state on the active stage, if any."""
+    active = current.get()
+    if active is not None:
+        active.update(detail)
 
 
 @contextlib.contextmanager

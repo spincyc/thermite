@@ -23,6 +23,12 @@ import time
 from urllib.parse import urlsplit
 
 
+#: Native REST statuses retried during reloads. This helper runs standalone
+#: under `python3 -I -S`, so it mirrors oh_http.TRANSIENT_STATUSES; failed
+#: connections are retried too. Tests keep both rules identical.
+TRANSIENT_STATUSES = frozenset({404, 429, 500, 502, 503, 504})
+
+
 class DeploymentError(ValueError):
     pass
 
@@ -285,7 +291,7 @@ def upstream(config, expectations, *, service=None, connection_factory=http.clie
                     raise DeploymentError("staged gateway authenticated native readiness failed")
                 if clock() < deadline:
                     return
-            elif response.status not in {404, 500, 502, 503, 504}:
+            elif response.status not in TRANSIENT_STATUSES:
                 raise DeploymentError("staged gateway authenticated native readiness failed")
         except (OSError, http.client.HTTPException):
             pass

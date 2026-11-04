@@ -10,47 +10,6 @@ import tempfile
 import oh_paths
 import oh_release
 
-LEGACY_WRAPPER = '''
-"""This private site's installed thermite application."""
-import os
-import sys
-from pathlib import Path
-sys.dont_write_bytecode = True
-os.environ["THERMITE_SITE"] = str(Path(__file__).resolve().parents[1])
-from thermite_app import main
-raise SystemExit(main())
-'''
-WRAPPER = '''
-"""This private site's pinned thermite application environment."""
-import os
-import sys
-from pathlib import Path
-sys.dont_write_bytecode = True
-launcher = Path(__file__).resolve()
-with launcher.open(encoding="utf-8") as stream:
-    interpreter = stream.readline().strip()[2:]
-# Keep the venv path: resolving its symlink can mistake OS Python for the
-# pinned environment even though their installed application differs.
-if os.path.abspath(sys.executable) != os.path.abspath(interpreter):
-    os.execv(interpreter, [interpreter, "-B", str(launcher), *sys.argv[1:]])
-os.environ["THERMITE_SITE"] = str(launcher.parents[1])
-from thermite_app import main
-raise SystemExit(main())
-'''
-MAKEFILE = '''PYTHON ?= python3
-.PHONY: help check openhab-generate openhab-test openhab-deploy
-help:
-\t@bin/thermite --help
-check:
-\t@bin/thermite generate
-\t@bin/thermite validate
-openhab-generate:
-\t@bin/thermite generate
-openhab-test:
-\t@bin/thermite test $(TEST)
-openhab-deploy:
-\t@bin/thermite deploy
-'''
 IGNORED = ("/var/", "/build/", "/.scratch/", "/.venv/", "__pycache__/", "*.pyc", "/conf/", "/metrics/", "/deploy/")
 
 
@@ -62,9 +21,9 @@ def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool 
     for parent in (target, *target.parents):
         if parent.is_symlink(): raise ValueError("site path must not contain symlinks")
     # Check every mutable destination before caching or creating anything. An
-    # owned site's internal var/bin symlink must not redirect an upgrade into
-    # the immutable application or another site's launcher.
-    for relative in ("bin/thermite", "Makefile", "var/application-releases", oh_paths.SITE_FILE, ".gitignore"):
+    # owned site's internal var symlink must not redirect an upgrade into the
+    # immutable application.
+    for relative in ("var/application-releases", oh_paths.SITE_FILE, ".gitignore"):
         path = target / relative
         for parent in (path, *path.parents):
             if parent == target: break
@@ -78,10 +37,6 @@ def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool 
     if upgrade:
         previous = oh_paths.descriptor(target)
         if previous is None: raise ValueError("--upgrade needs an existing thermite site")
-        launcher = target / "bin/thermite"
-        if launcher.exists() and (not launcher.is_file()
-                or launcher.read_text().partition("\n")[2] not in (WRAPPER, LEGACY_WRAPPER)):
-            raise ValueError("site launcher was customized; review it before upgrading")
     elif existed and any(target.iterdir()):
         raise ValueError("init requires a new or empty directory; existing files are never overwritten")
     else:
@@ -110,13 +65,5 @@ def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool 
         with os.fdopen(handle, "w") as out: json.dump(descriptor, out, indent=2); out.write("\n")
         os.replace(temporary, path)
     finally: Path(temporary).unlink(missing_ok=True)
-    if upgrade:
-        launcher = target / "bin/thermite"
-        launcher.unlink(missing_ok=True)
-        if launcher.parent.is_dir() and not any(launcher.parent.iterdir()):
-            launcher.parent.rmdir()
-        makefile = target / "Makefile"
-        if makefile.is_file() and makefile.read_text() == MAKEFILE:
-            makefile.unlink()
     return {"site": str(target), "application": release["application"], "release": release["digest"],
             "cached": str(cached), "upgraded": upgrade, "previous": previous, "activated": False}

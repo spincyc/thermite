@@ -14,12 +14,13 @@ from pathlib import Path
 import oh_cli
 import oh_deploy as deploy
 import oh_apparmor
+import oh_http
 import oh_logging
 import oh_service
 import oh_units
 import oh_ports
 import oh_metrics as metrics
-from oh_install import backup, ownership
+from oh_install import backup, ownership, progress
 from oh_install.access import Gateway
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
 from oh_install.model import Action, Check, Command, ReadinessStep, Step, Task
@@ -37,7 +38,6 @@ PODMAN = (4, 5)
 #: The Apple TV helper's pins have no wheels for anything else.
 MACHINE = "x86_64"
 NAME = oh_service.ACCOUNT
-LEGACY_NAME = "openhab"
 PATH_UNIT = "thermite-atv-restart.path"
 METRICS_PATH_UNIT = Path(deploy.METRICS_RESTART_PATH).name
 #: The unit a changed file in deploy/ restarts; the restart service runs only
@@ -58,6 +58,98 @@ METRICS_WAIT = 5 * 60
 #: add-ons), and how often to ask.
 WAIT = 15 * 60
 POLL = 5
+#: Bounds for an operator's --native-timeout: one native readiness allowance
+#: shared by runtime startup, gateway commissioning and final settlement.
+NATIVE_TIMEOUT_RANGE = (5 * 60, 2 * 60 * 60)
+
+
+def native_timeout_argument(text: str) -> int:
+    """argparse type for --native-timeout SECONDS."""
+    import argparse
+    low, high = NATIVE_TIMEOUT_RANGE
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("--native-timeout takes whole seconds") from None
+    if not low <= value <= high:
+        raise argparse.ArgumentTypeError(f"--native-timeout must be between {low} and {high} seconds")
+    return value
+
+
+class NativeDeadline:
+    """One native readiness allowance per run.
+
+    Runtime startup, runtime access validation, the settle before gateway
+    commissioning, commissioning itself and the final readiness wait spend
+    one budget. Each native phase gets an absolute deadline for what is left;
+    only time inside native phases counts, so monitoring image downloads and
+    other steps between them cannot exhaust it. A step constructed alone (a
+    dry run, a later check) gets its own allowance.
+    """
+
+    def __init__(self, seconds: int | None = None):
+        self.seconds = seconds
+        self.spent = 0.0
+        self.deadline: float | None = None
+        self.began: float | None = None
+
+    @classmethod
+    def of(cls, context) -> NativeDeadline:
+        return cls(getattr(context, "native_timeout", None))
+
+    @property
+    def budget(self) -> float:
+        # Read WAIT when used, so the default follows the module setting.
+        return WAIT if self.seconds is None else self.seconds
+
+    def start(self, system: System) -> float:
+        """The current native phase's absolute deadline, beginning a phase if needed."""
+        if self.deadline is None:
+            self.began = system.clock()
+            self.deadline = self.began + max(0.0, self.budget - self.spent)
+        return self.deadline
+
+    def stop(self, system: System) -> None:
+        """End the current native phase; its time is spent."""
+        if self.deadline is not None:
+            began = self.deadline if self.began is None else self.began
+            self.spent += max(0.0, min(system.clock(), self.deadline) - began)
+        self.deadline = self.began = None
+
+    def remaining(self, system: System) -> float:
+        return self.start(system) - system.clock()
+
+    def describe(self) -> str:
+        minutes = self.budget / 60
+        return f"{minutes:g}-minute" if minutes >= 1 else f"{self.budget:g}-second"
+
+
+class UnitWatch:
+    """End a native wait early when its service failed or keeps restarting.
+
+    systemd assigns each activation a new active-enter timestamp. Restarts a
+    wait requested itself are excluded; others mean a crash loop.
+    """
+
+    restarts = 3
+
+    def __init__(self, name: str = "thermite-openhab.service"):
+        self.name = name
+        self.generations: list[int] = []
+        self.requested = 0
+
+    def problem(self, system: System, deadline: float) -> str | None:
+        unit = system.unit(self.name, timeout=max(0.001, min(POLL, deadline - system.clock())))
+        hint = f"`sudo journalctl -u {self.name}` shows why; fix the cause, then rerun"
+        if unit.active == "failed":
+            return f"{self.name} failed; {hint}"
+        generation = unit.generation if type(unit.generation) is int else None
+        if generation is not None and (not self.generations or self.generations[-1] != generation):
+            self.generations.append(generation)
+        restarted = len(self.generations) - 1 - self.requested
+        if restarted >= self.restarts:
+            return f"{self.name} restarted {restarted} times during this wait (crash loop); {hint}"
+        return None
 ACTIVE = ("active", "activating", "reloading", "deactivating")
 #: Ends the name of a backup that holds Grafana's data, before .tar.gz.
 GRAFANA_TAG = "-grafana"
@@ -82,6 +174,8 @@ class Context:
     prepared: dict[str, deploy.Blob] | None = None
     application: dict | None = None
     restart_runtime: bool = False
+    #: The operator's --native-timeout, in seconds; None selects WAIT.
+    native_timeout: int | None = None
 
     @property
     def var(self) -> Path:
@@ -325,9 +419,6 @@ class Preconditions(Step):
                                 "refusing to rename or adopt another service account")
             if by_name is not None and getattr(by_name, key) != host[key]:
                 problems.append(f"{NAME} has {key} {getattr(by_name, key)}, not {host[key]}")
-            legacy = system.group(LEGACY_NAME) if key == "gid" else system.user(LEGACY_NAME)
-            if legacy is not None and by_name is not None and getattr(legacy, key) == host[key]:
-                problems.append(f"both {LEGACY_NAME} and {NAME} use {key} {host[key]}; resolve the duplicate names first")
         named = system.user(NAME)
         if named is not None and named.gid != host["gid"]:
             problems.append(f"{named.name} has primary gid {named.gid}, not {host['gid']}")
@@ -638,12 +729,14 @@ class NativeListeners(Step):
         running = system.unit("thermite-openhab.service").active not in ("inactive", "failed", "unknown")
         actions: list[Action] = []
         if running:
-            actions.append(Command(("systemctl", "stop", "thermite-openhab.service"), root=True))
+            actions.append(Command(("systemctl", "stop", "thermite-openhab.service"), root=True,
+                                   stops=("thermite-openhab.service",)))
         actions.append(Command(("python3", str(PROGRAM / "lib/oh_ports.py"),
                                 str(self.context.layout.userdata), "--http-port", str(self.context.host["http_port"]),
                                 "--uid", str(self.context.host["uid"]), "--gid", str(self.context.host["gid"])), root=True))
         if running:
-            actions.append(Command(("systemctl", "start", "thermite-openhab.service"), root=True))
+            actions.append(Command(("systemctl", "start", "thermite-openhab.service"), root=True,
+                                   starts=("thermite-openhab.service",)))
         return actions
 
 
@@ -677,14 +770,16 @@ class PairingLogging(Step):
             actions.append(Command(application(self.context, "sandbox", "fetch")))
         running = system.unit("thermite-openhab.service").active not in ("inactive", "failed", "unknown")
         if running:
-            actions.append(Command(("systemctl", "stop", "thermite-openhab.service"), root=True))
+            actions.append(Command(("systemctl", "stop", "thermite-openhab.service"), root=True,
+                                   stops=("thermite-openhab.service",)))
         PROGRAM = self.context.program
         actions.append(Command(("python3", str(PROGRAM / "lib" / "oh_logging.py"),
                                 str(self.context.layout.userdata), "--http-port", str(self.context.host["http_port"]),
                                 "--template", str(self.template), "--uid", str(self.context.host["uid"]),
                                 "--gid", str(self.context.host["gid"])), root=True))
         if running:
-            actions.append(Command(("systemctl", "start", "thermite-openhab.service"), root=True))
+            actions.append(Command(("systemctl", "start", "thermite-openhab.service"), root=True,
+                                   starts=("thermite-openhab.service",)))
         return actions
 
 
@@ -747,24 +842,44 @@ class Units(Step):
                 and system.read_bytes(target) != self.context.unit(name)]
 
     def check(self, system: System) -> Check:
-        problems = ownership.inspect(self.context, system).problems
-        if problems:
-            return Check(False, "", "; ".join(problems))
+        owned = ownership.inspect(self.context, system)
+        if owned.problems:
+            return Check(False, "", "; ".join(owned.problems))
         stale = self.stale(system)
         if stale:
             return Check(False, "to install: " + ", ".join(stale))
-        return Check(True, f"the {len(deploy.INSTALLED)} installed unit files match deploy/")
+        if not owned.recorded or system.read_bytes(ownership.MANIFEST) != ownership.manifest_bytes(self.context):
+            return Check(False, f"to record the installed units in {ownership.MANIFEST}")
+        return Check(True, f"the {len(deploy.INSTALLED)} installed unit files match deploy/ and {ownership.MANIFEST}")
+
+    @property
+    def manifest(self) -> Path:
+        return self.context.var / "units-manifest.json"
 
     def actions(self, system: System) -> list[Action]:
         by_directory: dict[Path, list[str]] = {}
-        for name in self.stale(system):
+        stale = self.stale(system)
+        for name in stale:
             by_directory.setdefault(deploy.INSTALLED[name].parent, []).append(name)
         missing = [directory for directory in by_directory if system.stat(directory) is None]
         return [*([Command(("install", "-d", "-o", "0", "-g", "0", "-m", "0755", *map(str, missing)), root=True)] if missing else []),
                 *(Command(("install", "-m", "0644", "-t", str(directory),
                            *(str(self.context.configuration / name) if self.context.prepared is not None else name for name in names)), root=True)
                   for directory, names in by_directory.items()),
-                Command(("systemctl", "daemon-reload"), root=True)]
+                *([Command(("systemctl", "daemon-reload"), root=True)] if stale else []),
+                # Ownership is later proved by these recorded hashes, so a
+                # changed template or host setting never strands the units.
+                Task(f"prepare the unit manifest for {ownership.MANIFEST}", self.prepare_manifest),
+                Command(("install", "-D", "-o", "0", "-g", "0", "-m", "0644", str(self.manifest), str(ownership.MANIFEST)), root=True)]
+
+    def prepare_manifest(self, system: System) -> int:
+        try:
+            system.private_directory(self.manifest.parent)
+            system.write_private(self.manifest, ownership.manifest_bytes(self.context).decode())
+        except (OSError, ValueError):
+            system.say(f"   could not write {self.manifest}; check the site's var/ custody, then rerun")
+            return 1
+        return 0
 
 
 class Services(Step):
@@ -821,13 +936,13 @@ class Services(Step):
         services = [unit for unit in start if unit != self.path_unit]
         actions = self.prefetch(system, [*services, *restart])
         if services:
-            actions.append(Command(("systemctl", "start", *services), root=True))
+            actions.append(Command(("systemctl", "start", *services), root=True, starts=tuple(services)))
         if restart:
-            actions.append(Command(("systemctl", "restart", *restart), root=True))
+            actions.append(Command(("systemctl", "restart", *restart), root=True, starts=tuple(restart)))
         if self.force_runtime and oh_units.RUNTIME in (*services, *restart) and not self.runtime_restarted:
             actions.append(Task("record the requested fresh runtime start", self.record_runtime_restart))
         if enable or self.path_unit in start:
-            actions.append(Command(("systemctl", "enable", "--now", self.path_unit), root=True))
+            actions.append(Command(("systemctl", "enable", "--now", self.path_unit), root=True, starts=(self.path_unit,)))
         return actions
 
     def record_runtime_restart(self, system: System) -> int:
@@ -958,8 +1073,8 @@ class NativePreparation(Step):
         helper = ("/usr/bin/python3", str(PROGRAM / "lib/oh_service.py"), str(root),
                   "--uid", str(host["uid"]), "--gid", str(host["gid"]))
         userdata = str(self.context.layout.userdata)
-        return [*([Command(("systemctl", "stop", *paths), root=True)] if paths else []),
-                *([Command(("systemctl", "stop", *running), root=True)] if running else []),
+        return [*([Command(("systemctl", "stop", *paths), root=True, stops=_restartable(paths))] if paths else []),
+                *([Command(("systemctl", "stop", *running), root=True, stops=_restartable(running))] if running else []),
                 Command(helper, root=True),
                 Command(deploy.prepare_openhab_argv(self.context.versions, host), root=True),
                 Command(("python3", str(PROGRAM / "lib/oh_logging.py"), userdata, "--http-port", str(host["http_port"])), root=True),
@@ -967,6 +1082,13 @@ class NativePreparation(Step):
                          "--uid", str(host["uid"]), "--gid", str(host["gid"])), root=True),
                 Command((*helper, "--check-pairing-logging"), root=True),
                 Command((*helper, "--receipt"), root=True)]
+
+
+def _restartable(names: list[str]) -> tuple[str, ...]:
+    """Units a failed run starts again: not the boot target or path-triggered
+    one-shot restarts, which their path units start when needed."""
+    triggered = {"thermite-atv-restart.service", Path(deploy.METRICS_RESTART_SERVICE).name, oh_units.TARGET}
+    return tuple(name for name in names if name not in triggered)
 
 
 def _secret_wrong(system: System, context: Context, path: Path) -> str | None:
@@ -1124,9 +1246,10 @@ class MetricsAnswer(ReadinessStep):
 class Answers(ReadinessStep):
     title = "Runtime readiness"
 
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, native: NativeDeadline | None = None):
         super().__init__()
         self.context = context
+        self.native = native or NativeDeadline.of(context)
 
     def check(self, system: System) -> Check:
         url = self.context.url
@@ -1136,25 +1259,40 @@ class Answers(ReadinessStep):
         return Check(False, f"REST at {url} is not ready; startup and add-on loading may take several minutes")
 
     def actions(self, system: System) -> list[Action]:
-        return [Task(f"wait up to {WAIT // 60} minutes for {self.context.url}/rest/", self.wait)]
+        return [Task(f"wait for {self.context.url}/rest/ within the {self.native.describe()} native readiness allowance "
+                     "this run shares", self.wait)]
 
     def wait(self, system: System) -> int:
+        try:
+            return self._wait(system)
+        finally:
+            self.native.stop(system)
+
+    def _wait(self, system: System) -> int:
         self.begin_wait()
-        deadline = system.clock() + WAIT
+        deadline = self.native.start(system)
+        watch = UnitWatch()
         while system.clock() < deadline:
             found = self.check(system)
             if found.done:
                 return self.ready(found)
-            system.sleep(POLL)
-        system.say("   still nothing; `sudo journalctl -u thermite-openhab.service` shows why")
+            problem = watch.problem(system, deadline)
+            if problem:
+                system.say("   " + problem)
+                return 1
+            progress.update(found.detail)
+            system.sleep(max(0, min(POLL, deadline - system.clock())))
+        system.say("   still nothing; `sudo journalctl -u thermite-openhab.service` shows why; a slower host can "
+                   "rerun with --native-timeout SECONDS")
         return 1
 
 
 class Token(Step):
     title = "Runtime access"
 
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, native: NativeDeadline | None = None):
         self.context = context
+        self.native = native or NativeDeadline.of(context)
         self.validated = None
         self.validation_unavailable = False
         self.imported = False
@@ -1177,7 +1315,7 @@ class Token(Step):
         if unit.active != "active" or unit.since is None:
             return None
         age = max(0, system.wall_time() - unit.since)
-        return max(0, WAIT - age)
+        return max(0, self.native.budget - age)
 
     def status(self, system: System, token: str, deadline: float) -> int | None:
         found = system.native_probe(self.context.url, token, "/rest/things?summary=true", deadline)
@@ -1189,7 +1327,7 @@ class Token(Step):
 
     @staticmethod
     def transient(status: int | None) -> bool:
-        return status in (None, 0, 404) or 500 <= status <= 599
+        return oh_http.retryable("GET", status)
 
     def check(self, system: System) -> Check:
         if self.context.runtime_token_file is not None and not self.imported:
@@ -1218,16 +1356,22 @@ class Token(Step):
         if self.context.runtime_token_file is not None:
             return [Task("validate and import the explicitly supplied runtime credential", self.save)]
         if self.saved(system):
-            return [Task(f"check the saved API token, allowing up to {WAIT // 60} minutes for authentication readiness "
+            return [Task(f"check the saved API token within the {self.native.describe()} native readiness allowance "
                          "before offering replacement", self.wait)]
         return [Task("configure private internal runtime access", self.save)]
 
     def wait(self, system: System) -> int:
+        try:
+            return self._wait(system)
+        finally:
+            self.native.stop(system)
+
+    def _wait(self, system: System) -> int:
         saved = self.saved(system)
         if not saved:
             system.say("   the saved API token is no longer available; nothing was changed")
             return 1
-        deadline = system.clock() + WAIT
+        deadline = self.native.start(system)
         while True:
             if system.clock() >= deadline:
                 system.say("   runtime authentication did not become ready within the startup allowance; "
@@ -1260,8 +1404,14 @@ class Token(Step):
             system.sleep(min(POLL, left))
 
     def save(self, system: System) -> int:
+        try:
+            return self._save(system)
+        finally:
+            self.native.stop(system)
+
+    def _save(self, system: System) -> int:
         from oh_install.native_auth import NativeAuthError
-        deadline = system.clock() + WAIT
+        deadline = self.native.start(system)
         if self.context.runtime_token_file is not None:
             source = self.context.runtime_token_file
             if not source.is_absolute():
@@ -1342,7 +1492,7 @@ class Token(Step):
         # openHAB's tokens are oh.<name>.<secret>, and neither part holds a dot.
         if token.count(".") > 2:
             return "The credential file contains more than one token"
-        deadline = system.clock() + WAIT if deadline is None else deadline
+        deadline = self.native.start(system) if deadline is None else deadline
         waiting = False
         while system.clock() < deadline:
             status = self.status(system, token, deadline)
@@ -1378,22 +1528,31 @@ class _RestartBeforeDeadline:
         return self.system.run(argv, area, timeout=remaining)
 
 
-class NativeReady(ReadinessStep):
+class NativeReadiness(ReadinessStep):
+    """One snapshot of required add-ons, Things and native metrics, polled
+    on the run's shared native deadline."""
+
     title = "Native add-ons and handlers"
     grace = 60
     settle = 10
     addons_path = "/rest/addons?serviceId=all"
     things_path = "/rest/things?summary=false"
     metrics_path = "/rest/metrics/prometheus"
+    #: Whether every Thing must finish initializing and native metrics answer.
+    complete = True
+    #: Whether unchanged known first-start handler symptoms get one restart.
+    recovery = True
+    stable = "native initialization is ready; waiting for {settle} seconds of stable readiness after commissioning"
 
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, native: NativeDeadline | None = None):
         super().__init__()
         from oh_sandbox import addon_uids, parse_addons_cfg, read_requested_addons
         self.context = context
+        self.native = native or NativeDeadline.of(context)
         requested = (parse_addons_cfg(context.prepared["conf/services/addons.cfg"].data.decode("utf-8"))
                      if context.prepared is not None else read_requested_addons(context.area / "conf"))
         self.required = set(addon_uids(requested))
-        self.deadline = None
+        self.watch = UnitWatch()
         self.signature = None
         self.since = None
         self.restarted = False
@@ -1401,39 +1560,60 @@ class NativeReady(ReadinessStep):
         self.problem = None
         self.ready_signature = None
         self.ready_since = None
+        self.pending_rows: list[dict] = []
+        self.last = ""
+
+    @property
+    def deadline(self) -> float | None:
+        return self.native.deadline
+
+    @deadline.setter
+    def deadline(self, value: float | None):
+        self.native.deadline = value
 
     def reset(self):
         self.signature = self.since = None
 
+    def expired(self) -> str:
+        """The deadline failure, naming what was still unfinished."""
+        rows = self.pending_rows
+        shown = ", ".join(f"{row['UID']} {row['statusInfo']['status']}/{row['statusInfo'].get('statusDetail') or 'NONE'}"
+                          for row in rows[:8]) + (f" and {len(rows) - 8} more" if len(rows) > 8 else "")
+        state = f"; still initializing: {shown}" if rows else f"; last state: {self.last}" if self.last else ""
+        return (f"native readiness exceeded the {self.native.describe()} native readiness allowance{state}; "
+                "inspect journalctl -u thermite-openhab.service, or give a slower host --native-timeout SECONDS")
+
     def snapshot(self, system: System) -> tuple[Check, tuple | None]:
-        from oh_sandbox import HANDLER_PENDING_DETAILS, PENDING_STATUSES, installed_addon_uids, installation_thing_verdict
-        if self.deadline is None:
-            self.deadline = system.clock() + WAIT
-        if system.clock() >= self.deadline:
-            return Check(False, "", "native readiness exceeded the 15-minute startup allowance; inspect journalctl -u thermite-openhab.service"), None
+        from oh_sandbox import HANDLER_PENDING_DETAILS, installed_addon_uids, thing_readiness
+        deadline = self.native.start(system)
+        if system.clock() >= deadline:
+            return Check(False, "", self.expired()), None
         token = Token(self.context).saved(system)
         if not token:
             return Check(False, "", "native readiness requires the saved, validated API token; nothing was changed"), None
         if self.previous_generation is not None:
-            unit = system.unit("thermite-openhab.service", timeout=max(0.001, self.deadline - system.clock()))
+            unit = system.unit("thermite-openhab.service", timeout=max(0.001, deadline - system.clock()))
             if unit.active != "active" or unit.generation is None or unit.generation <= self.previous_generation:
                 return Check(False, "waiting for the requested restart to reach a new active service generation"), None
 
         values = {}
-        for path in (self.addons_path, self.things_path, self.metrics_path):
-            found = system.native_probe(self.context.url, token, path, self.deadline,
+        paths = (self.addons_path, self.things_path, self.metrics_path) if self.complete else (self.addons_path, self.things_path)
+        for path in paths:
+            found = system.native_probe(self.context.url, token, path, deadline,
                                         json_body=path != self.metrics_path)
             if found.status in (401, 403):
                 return Check(False, "", f"authenticated native readiness was refused (HTTP {found.status}); keep the saved credential and check access"), None
             if found.problem == "malformed JSON":
                 return Check(False, "", f"native readiness: {path} returned malformed JSON"), None
-            if found.status == 0 or (found.status == 404 and path != self.metrics_path) or 500 <= found.status <= 599:
+            if path == self.metrics_path and found.status == 404:
+                pass  # The metrics add-on may still be starting; reported below.
+            elif oh_http.retryable("GET", found.status):
                 return Check(False, f"waiting for a complete native readiness snapshot ({path} unavailable)"), None
-            if found.status != 200 and not (path == self.metrics_path and found.status == 404):
+            elif found.status != 200:
                 return Check(False, "", f"native readiness: {path} answered HTTP {found.status}"), None
             values[path] = found
-        if system.clock() >= self.deadline:
-            return Check(False, "", "native readiness exceeded the 15-minute startup allowance; inspect journalctl -u thermite-openhab.service"), None
+        if system.clock() >= deadline:
+            return Check(False, "", self.expired()), None
 
         addons, things = values[self.addons_path].value, values[self.things_path].value
         valid_addons = isinstance(addons, list) and all(isinstance(row, dict) and type(row.get("installed")) is bool
@@ -1445,34 +1625,42 @@ class NativeReady(ReadinessStep):
             and (row["statusInfo"].get("statusDetail") is None or isinstance(row["statusInfo"]["statusDetail"], str)) for row in things)
         if not valid_addons or not valid_things:
             return Check(False, "", "native readiness returned an invalid add-on or Thing JSON shape"), None
-        pending = []
-        handlers_pending = []
+        # The one installation Thing predicate, shared with final health:
+        # only configuration errors are terminal. Every other unfinished state
+        # (missing or reloading handlers, bridged players whose bridge is
+        # initializing, unknown details) waits within the deadline.
+        pending, handlers_pending, failed = [], [], []
         for row in things:
-            info = row["statusInfo"]
-            if installation_thing_verdict(row) != "fail":
-                continue
-            status, detail = info["status"], info.get("statusDetail")
-            if status == "UNINITIALIZED" and detail in HANDLER_PENDING_DETAILS:
-                handlers_pending.append(row)
+            verdict = thing_readiness(row)
+            if verdict == "fail":
+                failed.append(row)
+            elif verdict == "pending":
                 pending.append(row)
-            elif status in {"UNINITIALIZED", *PENDING_STATUSES} and detail in (None, "NONE"):
-                # jUPnP reloads pass through UNINITIALIZED/NONE and
-                # INITIALIZING before their handlers finish reattaching.
-                pending.append(row)
-            else:
-                return Check(False, "", "native Things report a configuration error or unsupported initialization state; "
-                             "fix the configuration before retrying; no recovery restart was requested"), None
+                if row["statusInfo"]["status"] == "UNINITIALIZED" and row["statusInfo"].get("statusDetail") in HANDLER_PENDING_DETAILS:
+                    handlers_pending.append(row)
+        if failed:
+            shown = ", ".join(f"{row['UID']} {row['statusInfo']['status']}/{row['statusInfo'].get('statusDetail')}"
+                              for row in failed[:8])
+            return Check(False, "", f"native Things report a configuration error ({shown}); "
+                         "fix the configuration before retrying; no recovery restart was requested"), None
+        self.pending_rows = pending if self.complete else []
         installed = installed_addon_uids(addons)
         missing = sorted(self.required - installed)
         if missing:
             return Check(False, "waiting for required add-ons: " + ", ".join(missing)), None
+        if not self.complete:
+            # Gateway commissioning reloads authentication and jUPnP; Thing
+            # initialization is required after it, not before.
+            return Check(True, "required add-ons installed and native REST answers"), (tuple(sorted(installed)),)
         metrics_status = values[self.metrics_path].status
         if not pending and metrics_status == 200:
             # Device reachability can fluctuate without invalidating an
             # installation. Track the complete inventory, not ONLINE/OFFLINE.
             signature = (tuple(sorted(installed)), tuple(sorted(row["UID"] for row in things)))
             return Check(True, "required add-ons installed, Thing initialization complete, and authenticated native metrics answer"), signature
-        detail = f"required add-ons installed; {len(pending)} Thing(s) still initializing; native metrics HTTP {metrics_status}"
+        first = (f"; e.g. {pending[0]['UID']} {pending[0]['statusInfo']['status']}/"
+                 f"{pending[0]['statusInfo'].get('statusDetail') or 'NONE'}") if pending else ""
+        detail = f"required add-ons installed; {len(pending)} Thing(s) still initializing{first}; native metrics HTTP {metrics_status}"
         signature = (tuple(sorted(installed)), tuple(sorted((row["UID"], row["statusInfo"]["status"],
                      row["statusInfo"].get("statusDetail") or "NONE") for row in things)), metrics_status) if handlers_pending else None
         return Check(False, detail), signature
@@ -1486,23 +1674,32 @@ class NativeReady(ReadinessStep):
             if signature != self.ready_signature or self.ready_since is None:
                 self.ready_signature, self.ready_since = signature, now
             if now - self.ready_since < self.settle:
-                found = Check(False, f"native initialization is ready; waiting for {self.settle} seconds of stable readiness after commissioning")
+                found = Check(False, self.stable.format(settle=self.settle))
         else:
             self.ready_signature = self.ready_since = None
             if signature is None:
                 self.reset()
             elif signature != self.signature:
                 self.signature, self.since = signature, system.clock()
+        if not found.problem:
+            self.last = found.detail
         # A dry-run may reach this before its planned token creation/replacement.
         # Describe the current report, then let the actual task enforce terminal
         # authentication/configuration errors without retrying those failures.
         return Check(found.done, found.detail or found.problem)
 
     def actions(self, system: System) -> list[Action]:
-        return [Task(f"wait for {self.settle} seconds of stable initialization within the {WAIT // 60}-minute native startup allowance; offer at most one approved "
-                     "same-state restart after unchanged known first-start handler symptoms for 60 seconds", self.wait)]
+        return [Task(f"wait for {self.settle} seconds of stable initialization within the {self.native.describe()} native readiness "
+                     "allowance this run shares; offer at most one approved same-state restart after unchanged known first-start "
+                     "handler symptoms for 60 seconds", self.wait)]
 
     def wait(self, system: System) -> int:
+        try:
+            return self._wait(system)
+        finally:
+            self.native.stop(system)
+
+    def _wait(self, system: System) -> int:
         self.begin_wait()
         from oh_install import runner
         if self.problem:
@@ -1515,8 +1712,14 @@ class NativeReady(ReadinessStep):
                 return 1
             if found.done:
                 return self.ready(found)
-            if not self.restarted and self.since is not None and system.clock() - self.since >= self.grace:
-                generation = system.unit("thermite-openhab.service", timeout=max(0.001, self.deadline - system.clock())).generation
+            deadline = self.native.start(system)
+            problem = self.watch.problem(system, deadline)
+            if problem:
+                system.say("   " + problem)
+                return 1
+            progress.update(found.detail)
+            if self.recovery and not self.restarted and self.since is not None and system.clock() - self.since >= self.grace:
+                generation = system.unit("thermite-openhab.service", timeout=max(0.001, deadline - system.clock())).generation
                 if generation is None:
                     system.say("   cannot verify the native service generation; no recovery restart was requested")
                     return 1
@@ -1524,21 +1727,104 @@ class NativeReady(ReadinessStep):
                 system.say("   installed add-ons still have unchanged missing/not-yet-ready handlers; "
                            "one restart may recover this first-start condition without replacing userdata or credentials")
                 command = Command(("systemctl", "--no-block", "restart", "thermite-openhab.service"), root=True)
-                code = runner.perform(command, _RestartBeforeDeadline(system, self.deadline), self.context.area)
+                code = runner.perform(command, _RestartBeforeDeadline(system, deadline), self.context.area)
                 if code is None or code:
                     return code or 1
+                self.watch.requested += 1
                 self.previous_generation = generation
                 self.reset()
-            left = self.deadline - system.clock()
+            left = deadline - system.clock()
             if left <= 0:
-                system.say("   native readiness exceeded the startup allowance; inspect journalctl -u thermite-openhab.service")
+                system.say("   " + self.expired())
                 return 1
             system.sleep(min(POLL, left))
+
+
+class NativeReady(NativeReadiness):
+    """The authoritative final wait, after commissioning and activation."""
+
+
+class NativeSettle(NativeReadiness):
+    """Wait for add-on installation to stop churning REST before commissioning.
+
+    Commissioning starts as soon as required add-ons are installed and native
+    REST has answered consistently for `settle` seconds. Thing initialization
+    is checked afterwards, by NativeReady, within the same native deadline.
+    """
+
+    title = "Native add-ons before commissioning"
+    complete = False
+    recovery = False
+    stable = "required add-ons are installed; waiting for {settle} seconds of stable native REST before commissioning"
+
+    def actions(self, system: System) -> list[Action]:
+        return [Task(f"wait for required add-ons and {self.settle} seconds of stable native REST within the "
+                     f"{self.native.describe()} native readiness allowance this run shares", self.wait)]
+
+
+class Commissioning:
+    """Gateway boundary hook: commission native security within the run's
+    native deadline, keeping each replaced native configuration's original.
+
+    Before replacing a native service configuration, its complete original
+    mapping is saved privately in the gateway deployment directory, once, as
+    native-original-<service>.json. A rerun keeps the first original.
+    """
+
+    def __init__(self, context: Context, native: NativeDeadline):
+        self.context = context
+        self.native = native
+        self.gateway = None
+
+    def original(self, path: str) -> Path:
+        service = path.removeprefix("/rest/services/").removesuffix("/config")
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", service):
+            raise ValueError("unexpected native configuration service")
+        return self.gateway.directory / f"native-original-{service}.json"
+
+    def record(self, path: str, original: dict) -> None:
+        from oh_access.files import json_private
+        target = self.original(path)
+        if not target.exists():
+            json_private(target, {"version": 1, "service": path, "original": original})
+
+    def __call__(self, system: System, metadata: dict, callback: Path | None) -> Path | None:
+        import oh_inventory
+        from oh_access import AccessError
+        from oh_access.files import json_private
+        from oh_access.native_boundary import MAX_DEADLINE, configure
+        try:
+            remaining = self.native.remaining(system)
+            if remaining <= 0:
+                raise AccessError(f"the {self.native.describe()} native readiness allowance expired before gateway "
+                                  "commissioning; rerun the deployment, with --native-timeout SECONDS for a slower host")
+            house = Path(self.gateway.options.get("house", self.context.configuration / "instance/devices.yaml"))
+            result = configure(self.context.url, self.context.area / self.context.token_file,
+                               oh_inventory.load(house), self.context.address, existing_callbacks=callback,
+                               timeout=min(remaining, MAX_DEADLINE), clock=system.clock, sleep=system.sleep,
+                               record=self.record)
+        finally:
+            self.native.stop(system)
+        if result["callbacks"] is None:
+            return None
+        selected = self.gateway.directory / "callbacks.json"
+        json_private(selected, result["callbacks"])
+        return selected
+
+
+def gateway_steps(context: Context, native: NativeDeadline) -> list[Step]:
+    """Settle native REST, then commission and activate the HTTPS gateway."""
+    hook = Commissioning(context, native)
+    hook.gateway = Gateway(context, boundary=hook)
+    return [NativeSettle(context, native), hook.gateway]
 
 
 class Verify(Step):
     title = "Read-only check"
     always = True
+    #: Seconds final health polls Things that a late handler reload left
+    #: initializing; any still pending then are warnings, not failures.
+    settle = 120
 
     def __init__(self, context: Context, *, materialized: bool = True):
         self.context = context
@@ -1560,7 +1846,8 @@ class Verify(Step):
             program = oh_release.resolve(self.context.var / "application-releases",
                                          self.context.application["digest"], self.context.application["version"])
             prefix = (sys.executable, str(program / "bin/thermite"), "--site", str(self.context.area))
-        return [Command((*prefix, "health", "--production", "--installation", *addons, *revision), show_output=True),
+        return [Command((*prefix, "health", "--production", "--installation", "--settle", str(self.settle), *addons, *revision),
+                        show_output=True),
                 operator_command(self.context, system, (*prefix, "status", *revision))]
 
 
@@ -1658,7 +1945,7 @@ def plan(context: Context, system: System) -> Plan:
     counts as running the installed unit's image when it started after the
     unit was installed."""
     owned = ownership.inspect(context, system)
-    runtime = next((path for role, _, path in (*owned.entries, *owned.legacy)
+    runtime = next((path for role, _, path in owned.entries
                     if role == oh_units.RUNTIME and path.suffix == '.container'),
                    deploy.INSTALLED[deploy.QUADLET])
     text = (system.read_bytes(runtime) or b"").decode("utf-8", "replace")
@@ -1667,8 +1954,8 @@ def plan(context: Context, system: System) -> Plan:
         start, restart, enable = step.plan(system)
         services += [*start, *restart, *([step.path_unit] if enable and step.path_unit not in start else [])]
     migration = []
-    if owned.legacy:
-        migration.append("legacy Thermite unit namespace")
+    if not owned.recorded:
+        migration.append(f"unit ownership manifest {ownership.MANIFEST}")
     if context.runtime_token_file is not None:
         migration.append("explicit runtime credential import")
     elif not Token(context).saved(system):
@@ -1817,7 +2104,7 @@ class Backup(Step):
         running = [name for name in ownership.inspect(self.context, system).units(self.stopped(self.grafana))
                    if system.unit(name).active in ACTIVE]
         if running:
-            actions.append(Command(("systemctl", "stop", *running), root=True))
+            actions.append(Command(("systemctl", "stop", *running), root=True, stops=_restartable(running)))
         directory = system.stat(backups)
         if directory is None or (directory.uid, directory.gid, directory.mode) != (host["uid"], host["gid"], 0o750):
             actions.append(Command(("install", "-d", "-o", str(host["uid"]), "-g", str(host["gid"]), "-m", "0750",
@@ -1842,44 +2129,35 @@ def metrics_steps(context: Context, restart: bool = False) -> list[Step]:
             MetricsRestart(context) if restart else MetricsServices(context)]
 
 
+def native_steps(context: Context, restart: bool = False) -> list[Step]:
+    """Runtime readiness through final native settlement, on one native deadline."""
+    native = NativeDeadline.of(context)
+    return [Answers(context, native), Token(context, native), *gateway_steps(context, native),
+            *metrics_steps(context, restart=restart), Target(context), NativeReady(context, native)]
+
+
 def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     """The upgrade's steps after its preconditions, in order. A host where
     openHAB runs without the metrics gets them here."""
     return [WhatChanges(plan_), Preconditions(context), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
-            Units(context), LegacyMigration(context), Account(context), StateDirectories(context), MetricsDirectories(context),
+            Units(context), Account(context), StateDirectories(context), MetricsDirectories(context),
             NativePreparation(context), NativeIngress(context), Deploy(context), Restart(context, restart_runtime=plan_.restart_runtime),
-            Answers(context), Token(context), Gateway(context),
-            *metrics_steps(context, restart=True), Target(context), NativeReady(context), MetricsAnswer(context), Verify(context)]
+            *native_steps(context, restart=True), MetricsAnswer(context), Verify(context)]
 
 
 # --------------------------------------------------------------------------
 # thermite uninstall
 
 
-class LegacyMigration(Step):
-    title = "Migrate legacy Thermite units"
-
-    def __init__(self, context: Context):
-        self.context = context
-
-    def check(self, system: System) -> Check:
-        owned = ownership.inspect(self.context, system)
-        if owned.problems:
-            return Check(False, "", "; ".join(owned.problems))
-        return Check(not owned.legacy, "no legacy Thermite units" if not owned.legacy else
-                     "stop and retire proven legacy units, preserving all state: "
-                     + ", ".join(name for _, name, _ in owned.legacy))
-
-    def actions(self, system: System) -> list[Action]:
-        owned = ownership.inspect(self.context, system)
-        paths = [name for role, name, _ in owned.legacy if role in oh_units.RESTART_PATHS
-                 and (system.unit(name).active in ACTIVE or system.unit(name).enabled == "enabled")]
-        running = [name for role, name, _ in owned.legacy if role not in oh_units.RESTART_PATHS
-                   and system.unit(name).active in ACTIVE]
-        return [*([Command(("systemctl", "disable", "--now", *paths), root=True)] if paths else []),
-                *([Command(("systemctl", "stop", *running), root=True)] if running else []),
-                Command(("rm", "--", *(str(path) for _, _, path in owned.legacy)), root=True),
-                Command(("systemctl", "daemon-reload"), root=True)]
+def boundary_owned(system: System) -> bool | None:
+    """Whether the native boundary unit is the installer's exact root-owned
+    file; None when there is none."""
+    from oh_install.ingress import UNIT_FILE, unit_text
+    if not system.lexists(UNIT_FILE):
+        return None
+    file = system.unit_file(UNIT_FILE)
+    return (file is not None and file.uid == 0 and not file.mode & 0o022 and file.ancestors_trusted
+            and file.content == unit_text().encode())
 
 
 class Stop(Step):
@@ -1896,7 +2174,11 @@ class Stop(Step):
                 if system.unit(name).active in ACTIVE]
 
     def paths_on(self, system: System) -> list[str]:
-        return [name for name in ownership.inspect(self.context, system).units(self.PATHS)
+        from oh_install.ingress import UNIT
+        # The boundary unit is a boot-time oneshot without ExecStop: disabling
+        # it leaves the loaded filter in place until removed or rebooted.
+        boundary = [UNIT] if boundary_owned(system) else []
+        return [name for name in (*ownership.inspect(self.context, system).units(self.PATHS), *boundary)
                 if system.unit(name).enabled == "enabled" or system.unit(name).active in ACTIVE]
 
     def check(self, system: System) -> Check:
@@ -1928,8 +2210,12 @@ class RemoveUnits(Step):
         self.context = context
 
     def present(self, system: System) -> list[Path]:
+        from oh_install.ingress import UNIT_FILE
         owned = ownership.inspect(self.context, system)
-        return sorted(path for _, _, path in (*owned.entries, *owned.legacy))
+        manifest = system.unit_file(ownership.MANIFEST)
+        extra = [*([UNIT_FILE] if boundary_owned(system) else []),
+                 *([ownership.MANIFEST] if manifest is not None and manifest.uid == 0 else [])]
+        return sorted(path for _, _, path in owned.entries) + extra
 
     def check(self, system: System) -> Check:
         problems = ownership.inspect(self.context, system).problems
@@ -2042,7 +2328,6 @@ def install_preflight(context: Context) -> list[Step]:
 def install(context: Context, *, preflight: bool = True) -> list[Step]:
     """Every step, in order."""
     return [*(install_preflight(context) if preflight else []), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context),
-            Units(context), LegacyMigration(context), Account(context), StateDirectories(context),
+            Units(context), Account(context), StateDirectories(context),
             MetricsDirectories(context), NativePreparation(context), NativeIngress(context), Deploy(context), Services(context, restart_runtime=context.restart_runtime),
-            Answers(context), Token(context), Gateway(context), *metrics_steps(context), Target(context),
-            NativeReady(context), MetricsAnswer(context), Verify(context)]
+            *native_steps(context), MetricsAnswer(context), Verify(context)]

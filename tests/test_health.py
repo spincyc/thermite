@@ -48,17 +48,22 @@ def observed_devices():
 
 
 class InstallationThingVerdicts(unittest.TestCase):
-    def test_complete_initializing_and_failed_states_use_the_strict_installation_policy(self):
+    def test_only_configuration_errors_fail_and_unfinished_states_are_pending(self):
         cases = [("ONLINE", None, "ok"), ("ONLINE", "NONE", "ok"),
                  *(('OFFLINE', detail, 'warn') for detail in (None, "NONE", "COMMUNICATION_ERROR", "BRIDGE_OFFLINE")),
-                 *(('OFFLINE', detail, 'fail') for detail in ("CONFIGURATION_ERROR", "HANDLER_CONFIGURATION_PENDING",
-                                                            "HANDLER_MISSING_ERROR", "UNEXPECTED_DETAIL")),
+                 *((status, detail, 'fail') for status in ("OFFLINE", "UNINITIALIZED", "UNKNOWN")
+                   for detail in ("CONFIGURATION_ERROR", "HANDLER_CONFIGURATION_PENDING")),
+                 *(('OFFLINE', detail, 'pending') for detail in ("HANDLER_MISSING_ERROR", "UNEXPECTED_DETAIL")),
                  ("ONLINE", "CONFIGURATION_ERROR", "fail"),
-                 *((status, detail, "fail") for status in ("INITIALIZING", "UNKNOWN", "UNINITIALIZED", "REMOVED")
+                 # Bridged players (HEOS, Sonos) wait while their bridge reloads.
+                 ("UNINITIALIZED", "BRIDGE_UNINITIALIZED", "pending"),
+                 *((status, detail, "pending") for status in ("INITIALIZING", "UNKNOWN", "UNINITIALIZED", "REMOVED")
                    for detail in (None, "NONE", "HANDLER_MISSING_ERROR", "NOT_YET_READY"))]
         for status, detail, expected in cases:
             with self.subTest(status=status, detail=detail):
-                self.assertEqual(sandbox.installation_thing_verdict(thing("http:url:fixture", status, detail)), expected)
+                row = thing("http:url:fixture", status, detail)
+                self.assertEqual(sandbox.installation_thing_verdict(row), expected)
+                self.assertEqual(sandbox.thing_readiness(row), expected, "installer and health share one predicate")
 
     def test_optional_heos_warning_requires_the_complete_exact_account_free_bridge(self):
         original = heos("heos:bridge:fixture")
@@ -80,9 +85,11 @@ class InstallationThingVerdicts(unittest.TestCase):
         before = copy.deepcopy(rows)
         installation = sandbox.summarize_things(rows, installation=True)
         strict = sandbox.summarize_things(rows, require_online=True)
-        self.assertEqual([row["verdict"] for row in installation["things"]], ["warn", "warn", "fail", "fail"])
+        self.assertEqual([row["verdict"] for row in installation["things"]], ["warn", "warn", "pending", "pending"])
         self.assertEqual([row["verdict"] for row in strict["things"]], ["warn", "fail", "fail", "fail"])
-        self.assertEqual(len(installation["failed"]), 2)
+        self.assertEqual(installation["failed"], [])
+        self.assertEqual([row["uid"] for row in installation["pending"]], ["http:url:a_fixture", "http:url:z_fixture"])
+        self.assertNotIn("pending", strict)
         self.assertEqual(installation["count"], 4)
         self.assertEqual(rows, before)
         self.assertNotIn(PRIVATE, json.dumps(installation))
@@ -160,19 +167,30 @@ class Health(unittest.TestCase):
                 self.assertEqual(result["failures"], [])
                 self.assertEqual(result["things"]["things"][0]["verdict"], "warn")
 
-    def test_handler_configuration_and_unfinished_states_remain_fatal(self):
+    def test_configuration_errors_remain_fatal(self):
         for status, detail in (("OFFLINE", "CONFIGURATION_ERROR"), ("ONLINE", "CONFIGURATION_ERROR"),
-                               ("OFFLINE", "HANDLER_CONFIGURATION_PENDING"),
-                               ("OFFLINE", "HANDLER_MISSING_ERROR"), ("OFFLINE", "UNEXPECTED_DETAIL"),
-                               ("UNINITIALIZED", "NONE"), ("UNINITIALIZED", "HANDLER_MISSING_ERROR"),
-                               ("UNINITIALIZED", "NOT_YET_READY"), ("UNINITIALIZED", "DISABLED"),
-                               ("UNKNOWN", "NONE"), ("INITIALIZING", "NONE"), ("REMOVED", "NONE")):
+                               ("OFFLINE", "HANDLER_CONFIGURATION_PENDING"), ("UNINITIALIZED", "CONFIGURATION_ERROR")):
             with self.subTest(status=status, detail=detail):
                 self.responses[THINGS] = 200, [thing("http:url:fixture", status, detail)]
                 result = self.report()
                 self.assertTrue(result["failures"])
                 self.assertEqual(result["things"]["things"][0]["verdict"], "fail")
                 self.assertNotIn("not ONLINE", " ".join(result["failures"]))
+
+    def test_unfinished_states_are_pending_warnings_not_failures(self):
+        for status, detail in (("OFFLINE", "HANDLER_MISSING_ERROR"), ("OFFLINE", "UNEXPECTED_DETAIL"),
+                               ("UNINITIALIZED", "NONE"), ("UNINITIALIZED", "HANDLER_MISSING_ERROR"),
+                               ("UNINITIALIZED", "NOT_YET_READY"), ("UNINITIALIZED", "BRIDGE_UNINITIALIZED"),
+                               ("UNINITIALIZED", "DISABLED"), ("UNKNOWN", "NONE"), ("INITIALIZING", "NONE"),
+                               ("REMOVED", "NONE")):
+            with self.subTest(status=status, detail=detail):
+                self.responses[THINGS] = 200, [thing("http:url:fixture", status, detail)]
+                result = self.report()
+                self.assertEqual(result["failures"], [])
+                self.assertEqual(result["things"]["things"][0]["verdict"], "pending")
+                self.assertEqual(len(result["things"]["pending"]), 1)
+                strict = self.report(installation=False)
+                self.assertTrue(strict["failures"], "ordinary health stays strict")
 
     def test_only_the_existing_exact_optional_heos_account_case_is_nonfatal(self):
         base = heos("heos:bridge:fixture")
