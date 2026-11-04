@@ -315,7 +315,8 @@ function paneHelp(ctx) {
     case "security": return ["Security · Not connected", [["F1"], "Home"]];
     case "system": return ["System", [["↑↓"], "choose"], [["Enter"], "open"], [["PgUp/PgDn"], "scroll"]];
     case "cameras": return ["Cameras", [["↑↓"], "camera"], [["Enter"], "open web"], [["F1"], "Home"]];
-    case "topology": return ["Site", [["↑↓"], "room"], [["←→"], "preview source"], [["Enter"], "web map"]];
+    case "topology": return ["Site", [["↑↓"], "room"], [["←→"], "preview"], [["Enter"], "web map"], [["s/S"], "sort/reverse"]];
+    case "settings": case "users": case "account": return ["Account & settings", [["↑↓"], "choose"], [["Enter"], "open"], [["PgUp/PgDn"], "scroll"]];
     case "rooms": return ["Rooms", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "apply source"]];
     case "sheet:rooms": return ["Rooms", [["\u2191\u2193"], "select room"], [["Enter"], "remote"]];
     case "sources": return ["Sources", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "activate"]];
@@ -337,20 +338,32 @@ function paneHelp(ctx) {
 function shortcutBar(frame, ctx, width, y) {
   const g = frame.grid;
   const log = [["L"], ctx.ui.logVisible === false ? "Show log" : "Hide log"];
-  const help = paneHelp(ctx);
-  const shortcuts = !["remote", "pairing"].includes(ctx.ui.screen) ? TUI_SHORTCUTS.filter(entry => ["F1", "F2", "F3", "F4", "F5", "F10", "?", "q"].includes(entry[0][0]))
-    : ctx.ui.screen === "pairing" ? PAIR_SHORTCUTS.filter((entry) => !["\u2191", "Enter", "Tab"].includes(entry[0][0]))
-    : ctx.Session.SHORTCUTS.filter((entry) => !["ArrowUp", "\u2190", "Enter", "Backspace"].includes(entry[0][0])).concat(TUI_SHORTCUTS.filter((entry) => entry[0][0] !== "Tab"));
-  const list = (["remote", "pairing"].includes(ctx.ui.screen) ? [log, [["Tab"], "Pane"]] : [[["Tab"], "Pane"]]).concat(help ? help.slice(1) : [], shortcuts.filter((entry) => entry[0][0] !== "L"));
+  // Pane controls already appear on the status line. Keep the footer quiet
+  // and reserve Help/Quit before adding optional shortcuts.
+  const list = ctx.ui.overlay ? [[["Esc"], "Close"]]
+    : [[["Tab"], "Pane"]].concat(ctx.ui.screen === "remote"
+      ? [[["r"], "Rooms"], [["d"], "Signal"], log, [["v"], "Volume"], [["t"], "Theme"]]
+      : ctx.ui.screen === "pairing" ? [[["Esc"], "Remotes"], log]
+        : (ctx.ui.screen === "home" ? [] : [[["F1"], "Home"]]).concat([[["t"], "Theme"]]));
   g.fill(0, y, width, 1, "footer");
+  const essentials = ctx.ui.overlay
+    ? [[[ctx.ui.overlay.kind === "access-form" ? "Ctrl-C" : "q"], "Quit"]]
+    : [[["?"], "Help"], [["q"], "Quit"]];
+  const essentialWidth = essentials.reduce((sum, entry) => sum + length(entry[0][0]) + length(entry[1]) + 4, 0);
+  const right = Math.max(1, width - essentialWidth);
   let at = 1;
-  for (const entry of list) {
+  function draw(entry) {
     const keys = entry[0].join(entry[2] || " ");
-    const size = length(keys) + 1 + length(entry[1]) + 3;
-    if (at + size > width) break;
     at = g.put(at, y, keys, "footer.key");
     at = g.put(at, y, " " + entry[1] + "   ", "footer");
   }
+  for (const entry of list) {
+    const size = length(entry[0].join(entry[2] || " ")) + length(entry[1]) + 4;
+    if (at + size > right) break;
+    draw(entry);
+  }
+  at = right;
+  essentials.forEach(draw);
 }
 
 function pageScreen(frame, ctx, rect) {
@@ -1047,19 +1060,25 @@ function inputsContent(g, w, ctx) {
 }
 
 function helpContent(g, w, ctx) {
-  let y = heading(g, 0, "Remote");
-  const rows = ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS);
-  rows.forEach((entry) => {
-    g.put(2, y, fit(entry[0].join(entry[2] || " "), 18), "hotkey");
-    g.put(21, y, entry[1], "base");
-    y += 1;
-  });
-  y = heading(g, y + 1, "Remotes / Pair devices (F6)");
-  PAIR_SHORTCUTS.forEach((entry) => {
-    g.put(2, y, fit(entry[0].join(" "), 18), "hotkey");
-    g.put(21, y, entry[1], "base");
-    y += 1;
-  });
+  let y = 0;
+  const rows = (title, entries) => {
+    y = heading(g, y, title);
+    const keyWidth = Math.min(18, Math.max(8, Math.floor((w - 5) / 3)));
+    entries.forEach((entry) => {
+      const keys = wrap(entry[0].join(entry[2] || " "), keyWidth);
+      keys.forEach((part, index) => g.put(2, y + index, part, "hotkey"));
+      y = Math.max(y + keys.length, paragraph(g, keyWidth + 3, y, w - keyWidth - 5, entry[1], "base"));
+    });
+    y++;
+  };
+  if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "v", "F6"].includes(entry[0][0]))));
+  else if (ctx.ui.screen === "pairing") rows("Pair devices", PAIR_SHORTCUTS.filter(entry => !["Tab", "L", "F1", "?", "q"].includes(entry[0][0])).concat([[["s/S"], "Sort/reverse"]]));
+  else {
+    const help = paneHelp({ ...ctx, ui: { ...ctx.ui, overlay: null, pane: ctx.ui.screen } });
+    if (help) rows(help[0], help.slice(1));
+  }
+  rows("Navigation", TUI_SHORTCUTS.filter(entry => /^F\d+$/.test(entry[0][0]) && entry[0][0] !== "F6"));
+  rows("Terminal", TUI_SHORTCUTS.filter(entry => ["Tab", "t", "a", "L", "?", "q"].includes(entry[0][0])));
   y = heading(g, y + 1, "Mouse");
   return paragraph(g, 2, y, w - 4, MOUSE_HELP, "base");
 }
@@ -1083,7 +1102,7 @@ function pairingScreen(frame, ctx, rect) {
   panel(frame, ctx, { x: rect.x, y: rect.y + listHeight, w: rect.w, h: height - listHeight }, {
     key: "pair-card", color: "pair", title: device ? "pair \u00b7 " + device.label : "pair",
     right: device ? device.room : "", footer: [["Esc", "remote"]],
-    content: (inner, w) => pairCardContent(inner, w, ctx, rect.w < 72)
+    content: (inner, w) => pairCardContent(inner, w, ctx, !listHeight)
   });
   logPanel(frame, ctx, rect, logHeight);
 }
@@ -1103,6 +1122,14 @@ function pairDevices(ctx) {
 }
 
 function pairColumns(width) {
+  if (width < 54) {
+    const available = Math.max(2, width - 5), status = Math.max(1, Math.min(16, Math.floor(available * .4)));
+    return [{ key: "device", width: available - status }, { key: "status", width: status }];
+  }
+  if (width < 88) {
+    const available = width - 8, room = Math.floor(available * .28), status = Math.min(18, Math.floor(available * .3));
+    return [{ key: "room", width: room }, { key: "device", width: available - room - status }, { key: "status", width: status }];
+  }
   const available = Math.max(4, width - 11);
   const room = Math.max(1, Math.floor(available * .22)), device = Math.max(1, Math.floor(available * .28));
   const status = Math.max(1, Math.min(18, Math.floor(available * .25)));
@@ -1160,7 +1187,7 @@ function pairCardContent(g, w, ctx, narrow) {
   }
   const devices = pairDevices(ctx);
   if (!devices.length) {
-    g.put(1, y, "thermite has no TVs or streamers to pair yet.", "dim");
+    paragraph(g, 1, y, w - 2, "No TVs or streamers to pair.", "dim");
     return;
   }
   const device = backend.device(pairing.selected) || devices[0];
@@ -1168,15 +1195,14 @@ function pairCardContent(g, w, ctx, narrow) {
   if (narrow) {
     const index = devices.findIndex((candidate) => candidate.id === device.id);
     let x = g.put(1, y, ARROW.left, "hotkey", { kind: "pair-step", step: -1, key: "pair-step:-1" });
-    x = g.put(x + 1, y, "device " + (index + 1) + " of " + devices.length + (pairing.mock ? "  (mock: 1234, A1B2C3)" : ""), "dim");
+    x = g.put(x + 1, y, "Device " + (index + 1) + " of " + devices.length, "dim");
     g.put(x + 1, y, ARROW.right, "hotkey", { kind: "pair-step", step: 1, key: "pair-step:1" });
     y += 2;
+    if (pairing.mock) y = paragraph(g, 1, y, w - 2, "Mock codes: 1234 / A1B2C3", "dim") + 1;
   }
-  let x = g.put(1, y, device.label, "strong");
-  if (device.model) g.put(x + 2, y, device.model, "dim");
-  y += 1;
-  g.put(1, y, device.room, "dim");
-  y += 2;
+  y = paragraph(g, 1, y, w - 2, device.label, "strong");
+  y = paragraph(g, 1, y, w - 2, [device.room, device.model].filter(Boolean).join(" · "), "dim") + 1;
+  let x;
   g.line(1, y, [[ledChar(view.tone || "off", ctx.ui.blink) + " ", ledStyle(view.tone || "off")], [view.label, "tone." + view.tone + "+bold"]]);
   y += 2;
   if (view.note) y = paragraph(g, 1, y, w - 2, view.note, "tone." + (view.noteTone || "")) + 1;
@@ -1200,8 +1226,7 @@ function pairCardContent(g, w, ctx, narrow) {
     y += 4;
   }
   if (view.form) {
-    g.put(1, y, "Code on the " + device.label + " screen", "base");
-    y += 1;
+    y = paragraph(g, 1, y, w - 2, "Code shown on screen", "base");
     const code = pairing.codes[device.id] || "";
     const cells = [];
     for (let index = 0; index < device.length; index += 1) cells.push(code[index] || "_");
@@ -1210,16 +1235,16 @@ function pairCardContent(g, w, ctx, narrow) {
       { kind: "code", device: device.id, key: "code", focus: true, label: "Type the code: " + ctx.Pairing.codeRule(device) });
     const ready = !busy && ctx.Pairing.codeOk(device, code);
     const send = view.busy === "code" ? "Sending\u2026" : "Send code";
+    if (x + 2 + length(send) + 4 > w - 1) { x = -1; y += 3; }
     button(g, ctx, x + 2, y, send, "send-code", { kind: "send-code", device: device.id, key: "send-code", focus: true, label: send + (ready ? "" : " (type the whole code first)") },
       ready ? "switch.on" : "key.off");
     y += 3;
-    g.put(1, y, "The code is " + ctx.Pairing.codeRule(device) + ".", "dim");
-    y += 2;
-    button(g, ctx, 1, y, view.busy === "request" ? "Asking\u2026" : "Ask for a new code", "new-code",
+    y = paragraph(g, 1, y, w - 2, ctx.Pairing.codeRule(device), "dim") + 1;
+    button(g, ctx, 1, y, view.busy === "request" ? "Asking\u2026" : "New code", "new-code",
       { kind: "new-code", device: device.id, key: "new-code", focus: true, label: "Ask for a new code" }, busy ? "key.off" : "key");
     y += 4;
     if (view.cancel) {
-      const stop = view.busy === "cancel" ? "Cancelling\u2026" : "Cancel: keep the old pairing";
+      const stop = view.busy === "cancel" ? "Cancelling\u2026" : "Keep old pairing";
       button(g, ctx, 1, y, stop, "pair-cancel",
         { kind: "pair-cancel", device: device.id, key: "pair-cancel", focus: true, label: stop }, busy ? "key.off" : "key");
       y += 4;

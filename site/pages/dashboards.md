@@ -1,14 +1,14 @@
 # Dashboards
 
-thermite keeps a history of your house and shows it in Grafana on the controller host. You can see when a TV stopped answering, which source a room was on last night, or whether the runtime is short of memory, from any phone or computer on your network.
+See device availability, room history and host health in Grafana, from a phone or computer on your network.
 
 ## What runs
 
-`thermite install` sets up monitoring services on that host, each from an image pinned by digest, with no privileges. Only Grafana can be reached from other machines.
+`thermite install` sets up these monitoring services from images pinned by digest. Their application processes run as the service account. Only Grafana accepts connections from other machines.
 
 | Service | Port | What it does |
 |---|---|---|
-| Prometheus | 13606, this machine only | collects everything below every 30 seconds and keeps 13 months of it, at most 12 GB |
+| Prometheus | 13606, this machine only | collects metrics every 30 seconds; retains 395 days or 12 GB, whichever comes first |
 | node_exporter | 13607, this machine only | the machine itself: CPU, memory, disks, temperatures, and thermite's services |
 | blackbox_exporter | 13608, this machine only | whether each device answers on the port thermite controls it through |
 | thermite's exporter | 13609, this machine only | each device's status, power, input and volume, by room |
@@ -17,7 +17,7 @@ thermite keeps a history of your house and shows it in Grafana on the controller
 | ntfy | 13612, this machine only | keeps local notifications |
 | Notification adapter | 13613, this machine only | delivers known alert messages to ntfy |
 
-Prometheus also reads the runtime's Metrics add-on, which thermite enables in every configuration: memory, threads, events and rule runs. `thermite test boot` checks that it answers.
+Prometheus also reads runtime memory, threads, events and rule runs through the Metrics add-on. `thermite test boot` checks that it answers. See [storage requirements](requirements.html#storage-and-metrics) for the retention budget.
 
 ## What you see
 

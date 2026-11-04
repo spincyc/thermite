@@ -19,5 +19,5 @@ def main(argv=None):
     if args.json: print(json.dumps(report, indent=2))
     else:
         print(f"{'Updated' if args.upgrade else 'Created'} private site {args.directory} for thermite {report['application']}.")
-        print("Edit the fictional instance files, then run thermite --site DIR generate and validate. Commit generated outputs only to private Git before deployment. No service was activated.")
+        print("Review instance files, then generate and validate. Commit site inputs and the release pin to private Git before deployment. No service was activated.")
     return 0

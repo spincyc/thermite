@@ -17,6 +17,7 @@ body.thermite-app { --thermite-nav-width: 176px; --thermite-header-height: 0px; 
 .thermite-shell .thermite-menu { display: none; }
 .thermite-shell :focus-visible { outline: 2px solid var(--th-focus); outline-offset: 2px; }
 .thermite-content { margin-left: var(--thermite-nav-width); min-width: 0; }
+.thermite-content :is(h1,h2,h3,p,code) { overflow-wrap: anywhere; }
 .thermite-breadcrumbs { display: none; align-items: center; gap: 6px; min-width: 0; color: var(--th-muted); font-size: 12px; white-space: nowrap; }
 .thermite-breadcrumbs a { color: inherit; text-decoration: none; padding: 0; }
 .thermite-breadcrumbs span { padding: 0; }
@@ -80,6 +81,23 @@ body.thermite-app { --thermite-nav-width: 176px; --thermite-header-height: 0px; 
 .thermite-room-state { color: var(--th-muted); }
 .thermite-content :is(button,select,input,table) { font-family: inherit; }
 .thermite-content :is(a,button,select,input):focus-visible { outline: 2px solid var(--th-focus); outline-offset: 3px; }
+.thermite-content :is(summary,textarea):focus-visible { outline: 2px solid var(--th-focus); outline-offset: 3px; }
+.thermite-content > :is(.thermite-system,.thermite-security) { max-width: 960px; padding-top: 24px; }
+.thermite-system::before { display: none; }
+.system-runtime { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 24px; padding: 18px 0; border-block: 1px solid var(--th-line); }
+.system-runtime h2 { margin-bottom: 4px; color: var(--th-muted); font-size: 12px; }
+.system-runtime strong { font-size: 20px; font-weight: 500; }
+.thermite-system button { min-height: 40px; padding: 8px 14px; border: 1px solid var(--th-line); border-radius: 7px; background: var(--th-surface); color: var(--th-text); font: inherit; cursor: pointer; }
+.thermite-system button:hover { border-color: var(--th-accent); }
+.thermite-system [data-system-status] { margin: 10px 0 24px; font-size: 12px; }
+.thermite-system summary { padding: 12px 0; cursor: pointer; }
+.thermite-system [data-system-tools] { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 32px; }
+.thermite-system [data-system-tools] section { min-width: 0; border-top: 1px solid var(--th-line); padding: 18px 0; }
+.thermite-system h3 { margin: 0 0 6px; font-size: 15px; font-weight: 550; }
+.thermite-system [data-system-tools] p { margin-bottom: 10px; }
+.thermite-system a { display: inline-block; color: var(--th-accent); text-underline-offset: 3px; padding-block: 5px; }
+.thermite-system code { font-size: 12px; }
+@media(max-width:600px) { .thermite-system [data-system-tools] { grid-template-columns: minmax(0,1fr); } }
 .thermite-not-connected { display: flex; align-items: center; gap: 10px; padding: 18px 0; font-size: 17px; }
 .thermite-not-connected::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--th-muted); }
 @media(max-width:600px) { .thermite-home::before { width: 96px; height: 77px; margin-left: 16px; } .thermite-modules { grid-template-columns: minmax(0,1fr); } }

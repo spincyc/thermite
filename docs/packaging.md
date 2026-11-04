@@ -1,12 +1,10 @@
 # Application releases and private sites
 
-Thermite supports a complete source checkout and an installed application
-with a separate private site. These are development builds, currently
-`0.1.0.dev0`. Check the [system requirements](requirements.md), then follow
-[installation](installation.md) for stock Arch or Ubuntu Server, or
-[ISO installation](iso.md) for a bare machine. The standalone ISO defaults
-to Arch; an Ubuntu base is optional. All paths use the same application and
-separate private site.
+Install the application separately from your private site's configuration and
+state. Each site pins an exact application release. These development builds
+are currently `0.1.0.dev0`; complete source checkouts are also supported.
+For a first installation, use the [server guide](installation.md) or
+[standalone ISO](iso.md).
 
 ## Package the application
 
@@ -105,7 +103,9 @@ new environment after an Arch system update changes Python's minor version.
 Retain the previous application and private-site backups until the update
 has been verified.
 
-Then explicitly update the private site:
+### Update the private site
+
+With the new application environment active:
 
 ```sh
 thermite init --upgrade /path/to/private-site
@@ -128,6 +128,8 @@ This leaves the local files in place. Generated files are rebuilt from the
 committed inputs when required. Review the normal runtime upgrade/deploy plan
 after committing the inputs and application pin.
 
+### Preserve rollback releases
+
 Verified application releases are cached under
 `var/application-releases/`. Retain that cache and the original release
 artifacts for rollback. Deployment resolves inputs and the application
@@ -142,6 +144,8 @@ When an application update changes shared script libraries, use
 `thermite install --restart-runtime` after committing the new site pin. The
 normal installer preserves state and performs one controlled runtime restart
 after deployment, followed by readiness checks, under the same run approval.
+
+### Legacy sites
 
 Historical schema-1 site revisions retain their committed generated trees and
 exact cached helper application. Historical complete-checkout revisions retain

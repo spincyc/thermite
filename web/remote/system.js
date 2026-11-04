@@ -121,13 +121,13 @@
   function node(tag, value) { const item = document.createElement(tag); if (value != null) item.textContent = value; return item; }
   function render() {
     const state = client.state;
-    status.textContent = state.loading ? "Reading system information…" : state.error || "Configured system information; this is not a live health check.";
+    status.textContent = state.loading ? "Reading system information…" : state.error || "Configured version · live health not checked";
     version.textContent = state.manifest ? state.manifest.runtime.version : "Not available";
     tools.replaceChildren(); advanced.hidden = !state.loaded;
     for (const tool of state.manifest?.tools || []) {
       const row = node("section"), title = node("h3", tool.label); row.append(title, node("p", tool.description));
       if (tool.localOnly) {
-        row.append(node("p", "On the Thermite host. Open there, or forward its port over SSH:"), node("code", tool.url));
+        row.append(node("p", "On the Thermite host · SSH forwarding:"), node("code", tool.url));
         if (tool.forwarding) row.append(node("p", tool.forwarding));
       } else {
         const link = node("a", "Open " + tool.label); link.href = tool.url; link.rel = "noopener noreferrer";

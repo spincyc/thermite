@@ -73,8 +73,9 @@ git commit -m 'Initialize fictional installation test house'
 Keep the generated fictional host defaults for comparable cases: native state
 at `/srv/thermite`, authenticated HTTPS at **13600** and native HTTP/HTTPS at
 **13601/13602**. Inspect `instance/host.yaml`; record and propagate any intentional
-overrides. Generated files and their matching inventory must be committed before
-installation. The site's `.scratch`, `var` and `build` directories are ignored;
+overrides. Site inputs and the application release pin must be committed before
+installation. Generated `conf/`, `metrics/` and `deploy/` stay ignored, as do
+the site's `.scratch`, `var` and `build` directories;
 credentials, runtime state and screenshots never enter the commit.
 
 The [fixture](fixture.py) derives fictional devices and MACs from the public

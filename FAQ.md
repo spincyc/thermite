@@ -6,11 +6,11 @@ Home automation built around openHAB. Describe your rooms, devices and connectio
 
 ### Do I need to know openHAB?
 
-No. You edit the house file; thermite writes openHAB's files. Knowing openHAB helps when something goes wrong, but you don't need it to start.
+No. You edit the house file; thermite writes openHAB's files. Familiarity helps with troubleshooting.
 
 ### What can it control?
 
-TVs, streaming boxes, AV receivers, projectors, speakers, and HDMI and USB switchers, each over its own network control. More kinds of devices are on the way.
+TVs, streaming boxes, AV receivers, projectors, speakers, and HDMI and USB switchers with compatible control interfaces.
 
 ### Does it need the internet?
 
@@ -18,7 +18,7 @@ Core AV controls run on your own network. Downloads and cloud-based integrations
 
 ### Can trying it break my house?
 
-Generating and validating configuration do not send device commands. Deployment installs a committed configuration after its native boot check (`thermite test boot`); `thermite rollback` restores the previous deployment. Remotes, pairing and explicit device commands act on the selected runtime, so use the mock remote or a sandbox when trying controls without changing the house.
+Generation and validation send no device commands. Try controls with `thermite remote --mock` or a sandbox; live remotes and pairing act on the selected runtime. Deployment requires committed configuration and a native boot check. `thermite rollback` restores the previous deployment.
 
 ### Where are passwords kept?
 
@@ -26,7 +26,7 @@ Outside the house file and Git, in private service and client stores. Site passw
 
 ### Can I change the colors?
 
-Yes. `--theme contrast` gives the most contrast. A theme file of your own can change only what you want, and `thermite theme check` warns you when something would be hard to read. See [Colors](https://spincyc.github.io/thermite/colors.html).
+Yes. Use `--theme contrast` or a custom theme. `thermite theme check` checks readability. See [Colors](https://spincyc.github.io/thermite/colors.html).
 
 ### Does it work with Apple Home?
 
@@ -34,29 +34,27 @@ Not yet. Bringing the house into Apple Home through openHAB is planned.
 
 ### What does it need to run?
 
-One always-on x86-64 Linux machine or VM. For the full stack, plan on at least 2 cores, 4 GiB RAM and a 64 GB SSD for light use; 4 cores, 8 GiB RAM and 128 GB is the recommended starting point. These are estimates, not benchmarked capacity limits. Existing servers need additional free space for state and container images; see the [system requirements](https://spincyc.github.io/thermite/requirements.html).
-
-Arch Linux is the primary [server installation](https://spincyc.github.io/thermite/installation.html) example and the default [standalone ISO](https://spincyc.github.io/thermite/iso.html) base. Ubuntu Server 24.04 is also documented, including an optional Ubuntu ISO. Each path keeps your private site separate from the application. The complete installer currently requires x86-64; ARM images for some dependencies do not make the full stack ARM-compatible.
+An always-on x86-64 Linux machine or VM, running Arch Linux or Ubuntu Server 24.04. The [system requirements](https://spincyc.github.io/thermite/requirements.html) give planning estimates and tested configurations. Use the [server guide](https://spincyc.github.io/thermite/installation.html) for an existing OS, or the [standalone ISO](https://spincyc.github.io/thermite/iso.html) for a dedicated machine. The complete stack does not currently support ARM.
 
 ### Are the screenshots from a real house?
 
-They show the actual clients in demo mode with fictional inventory. The simulated controls send no commands to real devices. You can reproduce the images with the [capture recipe](https://spincyc.github.io/thermite/screenshots.html), or try the terminal with `thermite remote --mock`.
+They show the actual clients with fictional inventory and simulated controls. See the [capture recipe](https://spincyc.github.io/thermite/screenshots.html), or try `thermite remote --mock`.
 
 ### Which Linux account runs the services?
 
-The non-login account `thermite:thermite`, UID/GID 9001, runs all application services and owns their deployed data. You continue using your own login for the CLI, terminal remote, builds and private Git. The host's systemd manager and Podman backend remain root-managed. Existing installations migrate the older `openhab` account name while keeping the numeric IDs and data paths; see [service ownership](https://spincyc.github.io/thermite/service-account.html).
+Application services use the non-login account `thermite:thermite`, UID/GID 9001. Use your own login for the CLI and private Git; systemd and Podman's backend remain root-managed. The [service ownership guide](https://spincyc.github.io/thermite/service-account.html) covers permissions and migration from the older `openhab` account.
 
 ### Where does my house configuration belong?
 
-In a private site, separate from the installed application and the public repository. Keep real inventory, host settings, native version pins and the application release requirement in private Git; generated outputs, credentials and runtime state stay outside Git. `init` starts with fictional devices and activates no service. The [getting-started guide](https://spincyc.github.io/thermite/start.html) explains the boundary.
+In a private site created by `thermite init`. Commit inventory, host settings and version pins to private Git. Generated output, credentials and runtime state stay outside Git. See [Get started](https://spincyc.github.io/thermite/start.html).
 
 ### How do application upgrades and rollback work?
 
-A private site pins the application's version and exact release digest. Install the reviewed new package, run `thermite init --upgrade /path/to/site`, then generate, validate and privately commit before deployment. Configuration and state are preserved. Rollback uses the older private revision's exact cached application release, so keep that cache. Runtime version pins are separate; no missing artifact is silently substituted.
+Install the reviewed package, run `thermite init --upgrade /path/to/site`, then generate, validate and privately commit before deployment. Configuration and state are preserved. Rollback needs the older revision's exact cached application release; retain that cache. See [Application releases](https://spincyc.github.io/thermite/packaging.html) for the full workflow and separate runtime pins.
 
 ### Why "thermite", and why a bowl?
 
-The name refers to aluminothermic metalworking. The shallow bowl, metal rim and small flame express the craft of joining parts into something useful. The [design notes](https://spincyc.github.io/thermite/colors.html) explain the historical reference and shared drawing.
+The name and bowl draw on aluminothermic metalworking. See the [design notes](https://spincyc.github.io/thermite/colors.html).
 
 ### Can I use it?
 

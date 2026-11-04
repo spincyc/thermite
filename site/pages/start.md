@@ -9,13 +9,7 @@ thermite runs on a Linux machine on your home network. Choose where it will live
 | Stock Arch Linux, or an existing Ubuntu Server | [Install thermite on your server](installation.html). Keep your existing operating system and create a private site. |
 | A dedicated machine | [Build the standalone ISO](iso.html). Arch is the default base; Ubuntu is optional. Boot it to install the operating system and thermite on that machine. |
 
-Check the [system requirements](requirements.html) first. Plan for 2 cores,
-4 GiB RAM and a 64 GB SSD for light use, or 4 cores, 8 GiB and 128 GB for
-more headroom. These full-stack estimates are not benchmarked capacity
-limits. Each installation path uses the same application, house file and
-remotes. The [ports guide](ports.html) lists the services and their exposure.
-
-You administer Thermite with your own login. Its application services and deployed data use the non-login `thermite:thermite` account, UID/GID 9001. The [service account guide](service-account.html) covers permissions and upgrades from the old `openhab` account name.
+Review the [system requirements](requirements.html) and [network ports](ports.html) before installing. Administer Thermite with your own login; application services use a separate [service account](service-account.html).
 
 ## Try the example
 
@@ -43,7 +37,7 @@ thermite remote --mock
 
 The initial inventory is fictional. Generating and validating files sends no device commands; the mock remote simulates controls. Its first run downloads its locked terminal dependency with npm. Podman is needed when you move on to an openHAB test runtime or server installation.
 
-The application stays in its Python environment. Your private site contains the inventory, host settings, generated configuration and runtime state. `init` creates files; it does not install services or create a Git repository.
+The application stays in its Python environment. `init` creates a separate private site; it starts no services and creates no Git repository.
 
 ## Describe your house
 
@@ -91,7 +85,7 @@ thermite access login --url https://thermite.example:13600 --user admin
 thermite remote --url https://thermite.example:13600
 ```
 
-Use `--ca-file` at login if your site uses a private certificate authority. Remotes lets you choose a room and source; Pair devices handles devices that need an on-screen code. Security shows Not connected until an alarm integration is configured. Cameras and Site show the camera catalogue and configured connections.
+Use `--ca-file` at login for a private certificate authority. Choose a room and source in Remotes; use Pair devices for equipment that needs an on-screen code. Cameras and Site show cameras and connections. Security remains Not connected until an alarm integration is configured.
 
 ## Keep it running
 

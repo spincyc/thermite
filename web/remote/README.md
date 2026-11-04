@@ -1,3 +1,7 @@
 # Web remote
 
-Run `bin/thermite generate` after editing the house file. The generated Home is served at / and Remotes at /remotes/. Source previews use the fictional sample; `?backend=mock` sends no commands.
+Run `thermite generate` from your private site after editing its house file.
+Home is served at `/`; Remotes at `/remotes/`.
+
+Source previews use the fictional sample. Add `?backend=mock` to simulate
+controls without sending commands.

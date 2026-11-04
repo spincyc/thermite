@@ -26,7 +26,7 @@ function create(options = {}) {
     try {
       let value;
       if (options.mock) {
-        value = JSON.parse(fs.readFileSync(path.join(__dirname, "../../conf/html/remote/topology.json"), "utf8"));
+        value = JSON.parse(fs.readFileSync(path.join(__dirname, "../../web/remote/topology.json"), "utf8"));
       } else {
         const response = await fetcher((options.base || "").replace(/\/+$/, "") + "/static/remote/topology.json",
           { method: "GET", signal: controller.signal });
@@ -159,7 +159,6 @@ function content(g, width, ctx) {
   const state = ctx.topology, data = state.backend ? state.backend.state() : {};
   let y = 0;
   const line = (value, style = "dim") => wrap(plain(value), Math.max(4, width - 2)).forEach(part => g.put(1, y++, part, style));
-  line("↑↓ room · ←→ preview source · Enter web map · s sort · S reverse");
   if (data.error) { line(data.error, "alert"); return y; }
   const manifest = data.manifest;
   if (!manifest) { line("Reading site topology…"); return y; }
@@ -172,10 +171,9 @@ function content(g, width, ctx) {
   const report = ctx.ui && ctx.ui.connected === false ? "Live unavailable · last report: " + source : source;
   line(room.label + " · " + manifest.nodes.length + " devices", "strong");
   line(!rows.length ? "No room source selector" : "Room source: " + report + (own(routes, reading.pending) ? " · Switching to " + plain(routes[reading.pending].label) : ""));
-  line("Sort: " + TITLES[state.sortField || "source"] + (state.sortDescending ? " ↓" : " ↑") + " · Preview: " + (preview ? preview.label : "None"));
-  line("Status describes the room source, not device power or link health.");
+  line("Source reports only; device power and link health are unknown.");
   y += 1;
-  line("Video chains · all configured routes", "hotkey+bold");
+  line("Configured video routes", "hotkey+bold");
   const cols = columns(width);
   let x = 1;
   cols.forEach((col, index) => {
@@ -203,16 +201,16 @@ function content(g, width, ctx) {
   });
   if (!rows.length) line("No AV route is configured for this room.");
   if (preview) {
-    y += 1; line("Selected path · " + preview.label + " · configured preview", "strong");
+    y += 1; line("Preview · " + preview.label, "strong");
     line(preview.route.nodes.map(node => plain(node.label) + (ports(node).length ? " [" + ports(node).join(" · ") + "]" : "")).join(" → "), "base");
     if (preview.route.audioNodes) line("Audio · " + preview.route.audioNodes.map(node => plain(node.label) + (ports(node).length ? " [" + ports(node).join(" · ") + "]" : "")).join(" → "), "base");
   }
   const audio = rows.filter(row => row.route.audioNodes && row.route.audioNodes.length);
   if (audio.length) {
-    y += 1; line("Separate audio branches · configured", "hotkey+bold");
+    y += 1; line("Configured audio routes", "hotkey+bold");
     audio.forEach(row => line(row.label + " · " + row.route.audioNodes.slice(1).map(node => plain(node.label) + " [" + ports(node).join(" · ") + "]").join(" → "), "base"));
   }
-  y += 1; line("Data rows · USB · Configured only", "tone.ok+bold");
+  y += 1; line("Configured USB", "hotkey+bold");
   const usb = rows.flatMap(row => (row.route.usb || []).map(entry => ({ row, entry })));
   if (!usb.length) line("No USB assignment configured for these sources.");
   else {

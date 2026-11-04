@@ -9,32 +9,24 @@ const MODULES = Navigation.pages.filter(page => page.module).map(page => ({ ...p
 function content(g, width, ctx, height) {
   let y = 1;
   const line = (value, style = "dim") => wrap(value, Math.max(4, width - 4)).forEach(part => g.put(2, y++, part, style));
-  line("thermite", "strong");
   line("Your home, in one place.");
   y += 1;
-  const columns = width >= 88 ? 2 : 1, gap = 2;
+  const columns = width >= 72 ? 2 : 1, gap = 2;
   const cardWidth = Math.max(10, Math.floor((width - 4 - gap * (columns - 1)) / columns));
-  const cardHeight = columns === 1 ? 3 : 6;
+  const cardHeight = 2;
   const modules = MODULES;
   modules.forEach((module, index) => {
     const x = 2 + (index % columns) * (cardWidth + gap), top = y + Math.floor(index / columns) * (cardHeight + 1);
     const key = "home:" + module.id;
     const active = ctx.ui.focusVisible && ctx.ui.focus === key;
-    const style = active ? "key.focus" : "key";
+    const style = active ? "row.focus" : "row";
     const hit = { kind: "screen", screen: module.id, key, focus: true, label: module.label + " (" + module.key + ")" };
-    g.put(x, top, "╭" + "─".repeat(cardWidth - 2) + "╮", style);
-    for (let row = 1; row < cardHeight - 1; row++) {
-      g.put(x, top + row, "│" + " ".repeat(cardWidth - 2) + "│", style);
-    }
-    g.put(x, top + cardHeight - 1, "╰" + "─".repeat(cardWidth - 2) + "╯", style);
-    g.put(x + 2, top + 1, fit(module.key + "  " + module.label + (columns === 1 ? " · " + module.compact : ""), cardWidth - 4), style + "+bold");
-    if (columns > 1) {
-      wrap(module.detail, Math.max(4, cardWidth - 4)).slice(0, 2).forEach((part, row) => g.put(x + 2, top + 2 + row, part, style));
-      g.put(x + 2, top + 4, fit(module.note, cardWidth - 4), active ? style : "bubble");
-    }
+    g.fill(x, top, cardWidth, cardHeight, style);
+    g.put(x, top, fit(module.key + "  " + module.label, cardWidth), active ? style + "+bold" : "link");
+    g.put(x, top + 1, fit(module.compact, cardWidth), active ? style : "dim");
     g.hit(x, top, cardWidth, cardHeight, hit);
   });
-  y += Math.ceil(modules.length / columns) * (cardHeight + 1) + 1;
+  y += Math.ceil(modules.length / columns) * (cardHeight + 1);
   const accessLinks = Navigation.pages.filter(page => (page.account || page.system) && Navigation.allowed(page, ctx.access))
     .map(page => [page.screen, page.key + " " + page.label]);
   let accessX = 2;
@@ -77,10 +69,8 @@ function content(g, width, ctx, height) {
 function security(g, width) {
   let y = 2;
   const line = (value, style = "dim") => wrap(value, Math.max(4, width - 4)).forEach(part => g.put(2, y++, part, style));
-  line("Security", "strong"); y += 1;
   line("Not connected", "section"); y += 1;
-  line("The security system has not been connected to thermite.");
-  line("No live system status or zones are available here.");
+  line("Security status and zones are unavailable until a system is connected.");
   return y;
 }
 
@@ -93,10 +83,8 @@ function system(g, width, ctx) {
     g.put(2, y++, fit(label, width - 4), ctx.ui.focus === key ? "row.focus" : "link",
       { kind: "system-action", action: id, tool: tool?.id, key, focus: true, label });
   };
-  line("Thermite", "strong");
-  line("Rooms, devices, pairing and schedules stay in Thermite."); y++;
-  line("Configured runtime version: " + (state?.manifest?.runtime.version || "Not available"), "strong");
-  line("Configured information does not establish live system health.");
+  line("Runtime " + (state?.manifest?.runtime.version || "unavailable") + " · configured", "strong");
+  line("Live health is not checked here.");
   if (state?.loading) line("Reading system information…");
   if (state?.error) line(state.error, "alert");
   action("Refresh information", "refresh");
@@ -104,11 +92,10 @@ function system(g, width, ctx) {
   y++;
   action((ctx.system.expanded ? "▾ " : "▸ ") + "Advanced tools", "advanced");
   if (ctx.system.expanded) {
-    line("Open a tool deliberately for its specialist controls.");
     for (const tool of state.manifest.tools) {
       y++; line(tool.label, "strong"); line(tool.description);
       if (tool.localOnly) {
-        line("On the Thermite host. Open there, or forward its port over SSH:");
+        line("Host only · open locally or forward over SSH:");
         line(tool.url); if (tool.forwarding) line(tool.forwarding);
       } else action("Open " + tool.label + " in browser ›", "open", tool);
     }

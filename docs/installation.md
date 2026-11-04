@@ -1,17 +1,13 @@
 # Install on a Linux server
 
-Thermite runs on one x86-64 Linux machine with systemd. Arch Linux is the
-primary path; Ubuntu Server 24.04 LTS is the alternative shown below.
-Start with the [system requirements](requirements.md): the full stack's
-planning minimum is 2 cores, 4 GiB RAM and a 64 GB SSD, with 4 cores,
-8 GiB RAM and 128 GB recommended. These estimates are not benchmarked limits.
+Use an x86-64 machine running Arch Linux or Ubuntu Server 24.04 LTS.
+Review the [system requirements](requirements.md) first. These are development
+builds, currently `0.1.0.dev0`.
 
-These are development builds, currently `0.1.0.dev0`. A wheel installs the
-application; a private site holds your configuration and state. Installing
-the application starts no service. Commissioning the runtime is a separate,
-interactive step. For a bare machine, the [installer ISO](iso.md) defaults
-to Arch and also offers an Ubuntu base. After either ISO installation,
-continue at “Create your private site.”
+Install the application, create a private site, commission the runtime, then
+set up HTTPS and accounts. Installing the application alone starts no service.
+For a bare machine, use the [installer ISO](iso.md), then continue at
+[Create your private site](#create-your-private-site).
 
 For a stock OS installation, first follow the official
 [Arch installation guide](https://wiki.archlinux.org/title/Installation_guide)
@@ -98,20 +94,19 @@ thermite install --dry-run
 thermite install
 ```
 
-Install, upgrade and uninstall show compact stage status, with checkmarks
-and a spinner on a terminal. Use `thermite -v install` (or `upgrade` or
-`uninstall`) for stage details and commands. Failed checks print their
-diagnostics. Package transactions, sudo and other interactive commands keep
-the terminal while the spinner pauses; `--dry-run` lists the planned
+Use `-v` for stage details and commands. Failures always show diagnostics;
+interactive commands keep control of the terminal. `--dry-run` lists planned
 commands without running them.
 
 Read the plan first. The installer checks architecture, kernel support,
 ports and IDs; installs prerequisites; creates the service account and state
 directories; boots the configuration on a test runtime; deploys the committed
-site; installs systemd Quadlets; starts services; and requests the runtime API
-token. It asks once to approve the whole run, including root commands and the
+site; installs systemd Quadlets; starts services; and provisions internal runtime
+access. It asks once to approve the whole run, including root commands and the
 deployment ownership handoff. It can be rerun after a failure or a declined
 step. Do not run the whole CLI as root.
+
+### Service ownership
 
 Application services run as the non-login user and group `thermite`, UID/GID
 9001, and deployed files belong to that account. Your login keeps ownership
@@ -132,6 +127,8 @@ Existing installations retain their Thermite account IDs and data paths when
 legacy unit names are migrated. Independent application accounts are not
 renamed; see
 [service ownership and migration](service-account.md).
+
+### Startup and recovery
 
 The native boot test downloads its pinned runtime and JRE. Before starting
 or restarting a service, the installer downloads any missing pinned container
@@ -174,6 +171,8 @@ Native runtime installation is followed by the HTTPS and account setup below.
 The ISO and runtime installer do not create household accounts, provision
 TLS or start the authenticated frontend for you. Internal runtime credentials
 created during installation are separate from household identities.
+
+### Open the controls
 
 Open the site's root URL for Thermite Home; existing `/overview/` bookmarks
 also lead there. The web and terminal interfaces share navigation, room and

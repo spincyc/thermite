@@ -40,7 +40,7 @@ function create(client, house, changed) {
       const user = client.current(); line(user ? "Signed in as " + user.username : "Not signed in", "strong");
       if (!user) { line("Run thermite access login for this address, then reopen the remote."); return y; }
       line(user?.can_edit ? "Administrator" : client.has("room.control") ? "Control of granted, unlocked rooms" : "Read-only access");
-      line("Your terminal sign-in is stored in an owner-only credential file."); y++;
+      y++;
       item("Room settings · F7", "settings"); if (canEdit()) item("Users & roles · F8", "users");
       item("Sign out this terminal", "logout"); return y;
     }
@@ -49,9 +49,9 @@ function create(client, house, changed) {
       line(room?.label || "Room", "strong");
       line(saved?.effective ? saved.effective.locked ? "Locked by schedule" : "Unlocked" : "Current policy not reported");
       line("Timezone: " + (policy?.timezone || "Site timezone"));
-      line("Last verification: " + (({ verified: "Verified", degraded: "Needs attention", unknown: "Unknown" })[saved?.enforcement?.state] || "Not reported"));
       const stamp = saved?.enforcement?.updated_at;
-      line("Verification time: " + (typeof stamp === "string" && Number.isFinite(Date.parse(stamp)) ? new Date(stamp).toLocaleString() : "Not reported"));
+      line("Verification: " + (({ verified: "Verified", degraded: "Needs attention", unknown: "Unknown" })[saved?.enforcement?.state] || "Not reported")
+        + (typeof stamp === "string" && Number.isFinite(Date.parse(stamp)) ? " · " + new Date(stamp).toLocaleString() : " · time unknown"));
       y++; if (!canEdit()) line("Read-only schedule values", "dim");
       line(policy?.enabled ? "Schedule enabled" : "Schedule disabled", "strong");
       (policy?.daily_off || []).forEach((rule) => line("Off " + rule.time + " · " + rule.days.map((day) => DAYS[day]).join(" ")));

@@ -36,13 +36,13 @@
   const STATES = {
     paired: "Paired",
     unpaired: "Not paired",
-    code_shown: "Showing a code",
+    code_shown: "Enter code",
     repairing: "Pairing again",
     checking: "Checking",
     failed: "Code not accepted",
-    closed: "Cannot ask for a code",
-    unreachable: "Not answering (plug it in and turn it on)",
-    unavailable: "Cannot pair right now",
+    closed: "Pairing closed",
+    unreachable: "Not responding",
+    unavailable: "Unavailable",
     unknown: "Checking"
   };
   const TONES = {
@@ -63,10 +63,10 @@
   const MESSAGES = {
     checking: "Checking the code\u2026",
     paired: "Paired. You can use the remote now.",
-    failed: "The code was not accepted. Ask for a new code and try again.",
-    failedAgain: "The code was not accepted, so thermite goes back to the pairing it had.",
-    restored: "Back on the pairing it had: the remote works as before. Pair again to try once more.",
-    repairing: "Type the new code its screen shows. Until then thermite cannot control it; Cancel goes back to the pairing it had.",
+    failed: "Code not accepted. Request a new code and try again.",
+    failedAgain: "Code not accepted. Restoring the previous pairing.",
+    restored: "Previous pairing restored. The remote is ready.",
+    repairing: "Enter the new code to restore control. Cancel keeps the previous pairing.",
     offline: "Could not reach thermite. Check that this phone is on the home Wi-Fi."
   };
 
@@ -614,7 +614,7 @@
       local.asked = local.requesting ? null : this.now();
       local.requesting = false;
       if (local.asked !== null) this.later(id, "asked", this.codeOpenMs, () => this.changed(id));
-      local.note = "There is no answer from the " + device.label + " yet. If its screen shows a new code, type that one, or ask for a new code.";
+      local.note = "No response yet. Enter the code on screen, or request a new one.";
       local.tone = "busy";
       this.changed(id);
     };
@@ -648,11 +648,13 @@
       note = MESSAGES.repairing;
       tone = "busy";
     } else if (!note && status === "unavailable") {
-      note = "thermite cannot pair with it right now: its connection to the " + device.label + " is not running.";
+      note = "The device connection is not running. Try again when it is available.";
       tone = "";
+    } else if (!note && status === "unreachable") {
+      note = "Check the device is plugged in and turned on.";
+      tone = "bad";
     } else if (!note && status === "closed") {
-      note = "The " + device.label + " does not let thermite ask it for a code: its pairing service does not answer. "
-        + "Restart it (unplug it for a minute), then ask for a code again.";
+      note = "Pairing is not responding. Unplug the device for a minute, then try again.";
       tone = "bad";
     }
     return {
@@ -895,7 +897,7 @@
     const announcer = document.getElementById("announcer");
     document.getElementById("mock-note").hidden = !backend.mock;
     const cards = Object.create(null);
-    const sorting = { key: "room", descending: false };
+    const sorting = { key: "device", descending: false };
     const headers = Object.create(null);
     const table = element("table", "pair-table");
     const caption = element("caption", "pair-table__caption", "Looking for TVs and streamers\u2026");
@@ -904,9 +906,14 @@
     const tableBody = element("tbody");
     const empty = element("p", "pair__empty", "thermite has no TVs or streamers to pair yet.");
     empty.hidden = true;
-    [["room", "Room"], ["device", "Device"], ["model", "Model"], ["status", "Status"], ["actions", "Actions"]].forEach(([key, label]) => {
+    [["device", "Device"], ["status", "Status"], ["actions", "Actions"]].forEach(([key, label]) => {
       const th = element("th", "pair-table__" + key);
       th.scope = "col";
+      if (key === "actions") {
+        th.appendChild(element("span", "sr-only", label));
+        headerRow.appendChild(th);
+        return;
+      }
       const button = element("button", "pair-table__sort", label);
       button.type = "button";
       button.addEventListener("click", () => {
@@ -946,7 +953,7 @@
 
     // Reorder the existing row and detail nodes, never an input's contents.
     // Moving a focused DOM subtree can blur it, so restore that same element
-    // and its caret without scrolling the page or horizontal table region.
+    // and its caret without scrolling the page.
     function keepFocus(work) {
       const active = document.activeElement;
       const caret = active && typeof active.selectionStart === "number"
@@ -980,11 +987,16 @@
       const id = device.id;
       const root = element("tr", "pair-device");
       root.dataset.device = id;
-      const room = element("td", "pair-device__room", device.room);
-      const name = element("th", "pair-device__label", device.label);
-      name.scope = "row";
-      const model = element("td", "pair-device__model", device.model || "\u2014");
-      root.append(room, name, model);
+      const identity = element("th", "pair-device__identity");
+      identity.scope = "row";
+      const name = element("span", "pair-device__label", device.label);
+      const metadata = element("span", "pair-device__metadata");
+      const room = element("span", "pair-device__room", device.room);
+      const model = element("span", "pair-device__model", device.model);
+      model.hidden = !device.model;
+      metadata.append(room, model);
+      identity.append(name, metadata);
+      root.appendChild(identity);
 
       const status = element("p", "pair-device__status");
       const statusIcon = icon("dot");
@@ -998,7 +1010,7 @@
       detail.dataset.deviceDetail = id;
       detail.hidden = true;
       const detailCell = element("td");
-      detailCell.colSpan = 5;
+      detailCell.colSpan = 3;
       const detailBody = element("div", "pair-device__body");
       detailCell.appendChild(detailBody); detail.appendChild(detailCell);
 
@@ -1011,8 +1023,7 @@
       pair.type = "button";
       const again = element("button", "button button--quiet", "Pair again");
       again.type = "button";
-      const idle = element("span", "pair-device__idle", "\u2014");
-      actions.append(pair, again, idle);
+      actions.append(pair, again);
       const actionCell = element("td");
       actionCell.appendChild(actions); root.appendChild(actionCell);
 
@@ -1026,20 +1037,23 @@
       yes.type = "button";
       const keep = element("button", "button button--quiet", "Keep this pairing");
       keep.type = "button";
-      confirm.append(question, yes, keep);
+      const confirmActions = element("div", "pair-device__actions");
+      confirmActions.append(yes, keep);
+      confirm.append(question, confirmActions);
       detailBody.appendChild(confirm);
 
       const form = element("form", "pair-code");
       form.noValidate = true;
       form.hidden = true;
       const inputId = "code-" + id;
-      const label = element("label", "pair-code__label", "Code on the " + device.label + " screen");
+      const label = element("label", "pair-code__label", "Code on screen");
       label.htmlFor = inputId;
       const row = element("div", "pair-code__row");
       const input = element("input", "pair-code__input");
       input.id = inputId;
       input.type = "text";
       input.name = "code";
+      input.setAttribute("aria-label", "Code on the " + device.label + " screen");
       input.maxLength = device.length;
       input.size = device.length + 1;
       input.setAttribute("autocomplete", "one-time-code");
@@ -1052,19 +1066,21 @@
         input.setAttribute("autocapitalize", "characters");
         input.classList.add("pair-code__input--hex");
       }
-      const rule = element("p", "pair-code__rule", "The code is " + codeRule(device) + ".");
+      const rule = element("p", "pair-code__rule", codeRule(device));
       rule.id = inputId + "-rule";
       input.setAttribute("aria-describedby", rule.id);
       const send = element("button", "button button--primary pair-code__send", "Send code");
       send.type = "submit";
       send.disabled = true;
       row.append(input, send);
-      const fresh = element("button", "button button--quiet pair-code__again", "Ask for a new code");
+      const fresh = element("button", "button button--quiet pair-code__again", "New code");
       fresh.type = "button";
-      const stop = element("button", "button button--quiet pair-code__cancel", "Cancel: keep the old pairing");
+      const stop = element("button", "button button--quiet pair-code__cancel", "Cancel pairing");
       stop.type = "button";
       stop.hidden = true;
-      form.append(label, row, rule, fresh, stop);
+      const codeActions = element("div", "pair-device__actions");
+      codeActions.append(fresh, stop);
+      form.append(label, row, rule, codeActions);
       const hint = element("p", "pair-code__hint", device.hint);
       hint.hidden = !device.hint;
       form.appendChild(hint);
@@ -1115,9 +1131,9 @@
       });
       status.tabIndex = -1;
 
-      return { id, root, room, name, model, detail, status, statusIcon, statusText, note, pair, again, idle,
+      return { id, root, room, name, model, detail, status, statusIcon, statusText, note, pair, again,
         confirm, question, yes, keep, form, input, label, rule, hint, send, fresh, stop,
-        sort: { room: device.room, device: device.label, model: device.model || "", status: "", actions: "" }, lastNote: null };
+        sort: { device: device.label, status: "" }, lastNote: null };
     }
 
     function update(id, reorder = true) {
@@ -1135,6 +1151,7 @@
         announce(device.label + ", " + device.room + ": " + view.note);
       }
       entry.lastNote = view.note;
+      entry.detail.hidden = !view.note && !view.confirm && !view.form;
       const busy = Boolean(view.busy);
       entry.pair.hidden = view.action !== "pair";
       entry.again.hidden = view.action !== "again";
@@ -1154,25 +1171,20 @@
       }
       entry.stop.hidden = !view.cancel;
       entry.stop.disabled = busy;
-      entry.stop.textContent = view.busy === "cancel" ? "Cancelling\u2026" : "Cancel: keep the old pairing";
+      entry.stop.textContent = view.busy === "cancel" ? "Cancelling\u2026" : "Cancel pairing";
       const opening = entry.form.hidden && view.form;
       entry.form.hidden = !view.form;
       if (!view.form) entry.input.value = "";
       entry.send.disabled = busy || !codeOk(device, entry.input.value);
       entry.send.textContent = view.busy === "code" ? "Sending\u2026" : "Send code";
       entry.fresh.disabled = busy;
-      entry.fresh.textContent = view.busy === "request" ? "Asking\u2026" : "Ask for a new code";
+      entry.fresh.textContent = view.busy === "request" ? "Asking\u2026" : "New code";
       if (opening && focusCode === id) {
         focusCode = null;
         entry.input.focus();
       }
-      entry.idle.hidden = !entry.pair.hidden || !entry.again.hidden;
-      const action = view.confirm ? "Confirm pairing" : view.form ? "Enter code" : view.action === "pair" ? "Pair" : view.action === "again" ? "Pair again" : "\u2014";
-      entry.idle.textContent = action;
-      entry.detail.hidden = !view.note && !view.confirm && !view.form;
       entry.sort.status = view.label;
-      entry.sort.actions = action;
-      if (reorder && (sorting.key === "status" || sorting.key === "actions")) arrange();
+      if (reorder && sorting.key === "status") arrange();
     }
 
     function build(rooms) {
@@ -1183,10 +1195,11 @@
           const entry = cards[device.id] || (cards[device.id] = card(device));
           entry.room.textContent = device.room;
           entry.name.textContent = device.label;
-          entry.model.textContent = device.model || "\u2014";
+          entry.model.textContent = device.model || "";
+          entry.model.hidden = !device.model;
           entry.room.title = device.room; entry.name.title = device.label; entry.model.title = device.model || "";
-          entry.label.textContent = "Code on the " + device.label + " screen";
-          entry.rule.textContent = "The code is " + codeRule(device) + ".";
+          entry.input.setAttribute("aria-label", "Code on the " + device.label + " screen");
+          entry.rule.textContent = codeRule(device);
           entry.hint.textContent = device.hint || ""; entry.hint.hidden = !device.hint;
           entry.input.maxLength = device.length; entry.input.size = device.length + 1;
           entry.input.classList.toggle("pair-code__input--hex", device.chars === "hex");
@@ -1197,7 +1210,7 @@
             entry.input.setAttribute("autocapitalize", "characters");
             entry.input.removeAttribute("inputmode"); entry.input.removeAttribute("pattern");
           }
-          entry.sort.room = device.room; entry.sort.device = device.label; entry.sort.model = device.model || "";
+          entry.sort.device = device.label;
           update(device.id, false);
         }));
         Object.keys(cards).forEach(id => {
@@ -1206,7 +1219,7 @@
           cards[id].root.remove(); cards[id].detail.remove(); delete cards[id];
         });
         roomsNode.removeAttribute("aria-busy");
-        caption.textContent = known.size + (known.size === 1 ? " device" : " devices") + " \u00b7 pair one screen at a time";
+        caption.textContent = known.size + (known.size === 1 ? " device" : " devices");
         table.hidden = !known.size; empty.hidden = Boolean(known.size);
         arrange();
       });

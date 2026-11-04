@@ -1,24 +1,26 @@
 /*
  * The Pairing page (pair.html). Loaded after remote.css and built on its
- * tokens and themes. Rows keep the same columns on phones, with horizontal
- * scrolling inside the table rather than turning devices into cards.
+ * tokens and themes. Device details share one column so pairing fits a phone.
  */
 
 .pair-page {
   overflow-y: auto;
-  overflow-x: hidden;
 }
 
 .pair {
   width: 100%;
-  max-width: none;
+  max-width: 960px;
   min-width: 0;
-  margin: 0;
+  margin: 0 auto;
   padding:
     calc(env(safe-area-inset-top) + var(--space-4))
     calc(env(safe-area-inset-right) + var(--space-4))
     calc(env(safe-area-inset-bottom) + var(--space-7))
     calc(env(safe-area-inset-left) + var(--space-4));
+}
+
+.thermite-app .thermite-content > .pair {
+  max-width: 960px;
 }
 
 .pair__head {
@@ -87,8 +89,6 @@
 .pair__rooms {
   width: 100%;
   min-width: 0;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
   border: 0;
   border-top: 1px solid var(--panel-border);
   border-radius: 0;
@@ -97,37 +97,33 @@
 
 .pair-table {
   width: 100%;
-  min-width: 850px;
   border-collapse: collapse;
   table-layout: fixed;
   font-size: 13px;
 }
 
 .pair-table__caption {
-  padding: 10px 12px;
+  padding: 10px 0;
   text-align: left;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--ink-muted);
 }
 
 .pair-table td,
 .pair-table th {
-  padding: 6px 12px;
+  padding: 12px 10px;
   text-align: left;
   vertical-align: middle;
   border-bottom: 1px solid var(--panel-border);
 }
 
 .pair-table thead th {
-  padding: 0 12px;
-  background: var(--sheet-bg);
+  padding: 0 10px;
 }
 
-.pair-table__room { width: 17%; }
-.pair-table__device { width: 25%; }
-.pair-table__model { width: 22%; }
-.pair-table__status { width: 18%; }
-.pair-table__actions { width: 18%; }
+.pair-table__device { width: auto; }
+.pair-table__status { width: 156px; }
+.pair-table__actions { width: 136px; }
 
 .pair-table__sort {
   display: block;
@@ -153,29 +149,38 @@
   outline-offset: -2px;
 }
 
-.pair-device__room,
-.pair-device__model,
-.pair-device__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.pair-device__identity {
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.pair-device__metadata {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.pair-device__model:not([hidden])::before {
+  content: " · ";
+}
+
+.pair-device__model[hidden] {
+  display: none;
 }
 
 .pair-device__label {
+  display: block;
   margin: 0;
   font-size: 14px;
   font-weight: 600;
 }
 
-.pair-device__model {
-  font-size: 13px;
-  color: var(--ink-muted);
-}
-
 .pair-device__status {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   margin: 0;
   font-size: 13px;
   font-weight: 600;
@@ -206,10 +211,9 @@
 
 .pair-device__note {
   margin: 0;
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-size: 15px;
-  background: var(--panel-hover);
+  padding: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .pair-device__note[hidden] {
@@ -222,7 +226,6 @@
 
 .pair-device__note[data-tone="bad"] {
   color: var(--bad);
-  background: var(--bad-soft);
 }
 
 .pair-device__actions {
@@ -233,7 +236,6 @@
 }
 
 .pair-device__detail[hidden],
-.pair-device__idle[hidden],
 .pair-table[hidden] {
   display: none;
 }
@@ -244,6 +246,10 @@
   margin: 0;
   font-size: 14px;
   padding: 7px 12px;
+}
+
+.pair-device__detail .button {
+  width: auto;
 }
 
 .pair-device .button[hidden],
@@ -258,9 +264,8 @@
   transform: none;
 }
 
-.pair-device__idle { color: var(--ink-muted); font-size: 13px; }
 .pair-device__detail > td { padding: 0; background: var(--panel-hover); }
-.pair-device__body { display: grid; gap: var(--space-2); max-width: 700px; padding: 12px; }
+.pair-device__body { display: grid; gap: var(--space-2); max-width: 480px; padding: 16px 10px; overflow-wrap: anywhere; }
 
 .button--primary {
   border-color: transparent;
@@ -277,9 +282,7 @@
 .pair-confirm {
   display: grid;
   gap: var(--space-2);
-  padding: var(--space-3);
-  border-radius: 8px;
-  background: var(--panel-hover);
+  padding: 0;
 }
 
 .pair-confirm[hidden] {
@@ -288,7 +291,7 @@
 
 .pair-confirm__text {
   margin: 0;
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .pair-code {
@@ -313,7 +316,8 @@
 
 .pair-code__input {
   width: 100%;
-  min-height: 56px;
+  min-width: 0;
+  min-height: 48px;
   padding: 0 14px;
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-row);
@@ -321,8 +325,8 @@
   background: var(--well);
   box-shadow: var(--well-edge);
   font-family: var(--font-mono);
-  font-size: 28px;
-  letter-spacing: 0.25em;
+  font-size: 22px;
+  letter-spacing: 0.15em;
 }
 
 .pair-code__input--hex {
@@ -349,4 +353,20 @@
   .pair {
     padding-top: var(--space-4);
   }
+}
+
+@media (max-width: 600px) {
+  .pair-table__device { width: auto; }
+  .pair-table__status { width: 26%; }
+  .pair-table__actions { width: 29%; }
+  .pair-table td,
+  .pair-table th { padding-inline: 5px; }
+  .pair-table tr > :first-child { padding-left: 0; }
+  .pair-table tr > :last-child { padding-right: 0; }
+  .pair-device__status { font-size: 12px; overflow-wrap: anywhere; }
+  .pair-device__status span { min-width: 0; }
+  .pair-device__status .icon { display: none; }
+  .pair-device .button { width: 100%; padding-inline: 5px; font-size: 13px; }
+  .pair-device__actions { width: 100%; }
+  .pair-device__body { padding: 12px 8px; }
 }

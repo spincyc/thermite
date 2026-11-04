@@ -40,8 +40,7 @@
 <p>thermite runs on a Linux machine on your home network. Choose where it will live, or try the fictional example first. These are development builds, version <code>0.1.0.dev0</code>.</p>
 <h2 id="choose-where-to-run-it">Choose where to run it</h2>
 <table><thead><tr><th>Your setup</th><th>Installation path</th></tr></thead><tbody><tr><td>Stock Arch Linux, or an existing Ubuntu Server</td><td><a href="installation.html">Install thermite on your server</a>. Keep your existing operating system and create a private site.</td></tr><tr><td>A dedicated machine</td><td><a href="iso.html">Build the standalone ISO</a>. Arch is the default base; Ubuntu is optional. Boot it to install the operating system and thermite on that machine.</td></tr></tbody></table>
-<p>Check the <a href="requirements.html">system requirements</a> first. Plan for 2 cores, 4 GiB RAM and a 64 GB SSD for light use, or 4 cores, 8 GiB and 128 GB for more headroom. These full-stack estimates are not benchmarked capacity limits. Each installation path uses the same application, house file and remotes. The <a href="ports.html">ports guide</a> lists the services and their exposure.</p>
-<p>You administer Thermite with your own login. Its application services and deployed data use the non-login <code>thermite:thermite</code> account, UID/GID 9001. The <a href="service-account.html">service account guide</a> covers permissions and upgrades from the old <code>openhab</code> account name.</p>
+<p>Review the <a href="requirements.html">system requirements</a> and <a href="ports.html">network ports</a> before installing. Administer Thermite with your own login; application services use a separate <a href="service-account.html">service account</a>.</p>
 <h2 id="try-the-example">Try the example</h2>
 <p>You can generate configuration and use the terminal remote in demo mode before connecting hardware. On stock Arch, prepare the development tools:</p>
 <pre><code class="language-sh">sudo pacman -Syu --needed python python-pip git nodejs npm</code></pre>
@@ -55,7 +54,7 @@ thermite generate
 thermite validate
 thermite remote --mock</code></pre>
 <p>The initial inventory is fictional. Generating and validating files sends no device commands; the mock remote simulates controls. Its first run downloads its locked terminal dependency with npm. Podman is needed when you move on to an openHAB test runtime or server installation.</p>
-<p>The application stays in its Python environment. Your private site contains the inventory, host settings, generated configuration and runtime state. <code>init</code> creates files; it does not install services or create a Git repository.</p>
+<p>The application stays in its Python environment. <code>init</code> creates a separate private site; it starts no services and creates no Git repository.</p>
 <h2 id="describe-your-house">Describe your house</h2>
 <p>Edit <code>instance/devices.yaml</code> and <code>instance/host.yaml</code> in the private site. Replace the example inventory with your own rooms and devices, using fixed network addresses. A TV entry looks like this:</p>
 <pre><code class="language-yaml">rooms:
@@ -84,13 +83,13 @@ thermite test boot</code></pre>
 <p>The installation guide covers site access and the first account. After commissioning authenticated access, open your site's web address and sign in. In a terminal:</p>
 <pre><code class="language-sh">thermite access login --url https://thermite.example:13600 --user admin
 thermite remote --url https://thermite.example:13600</code></pre>
-<p>Use <code>--ca-file</code> at login if your site uses a private certificate authority. Remotes lets you choose a room and source; Pair devices handles devices that need an on-screen code. Security shows Not connected until an alarm integration is configured. Cameras and Site show the camera catalogue and configured connections.</p>
+<p>Use <code>--ca-file</code> at login for a private certificate authority. Choose a room and source in Remotes; use Pair devices for equipment that needs an on-screen code. Cameras and Site show cameras and connections. Security remains Not connected until an alarm integration is configured.</p>
 <h2 id="keep-it-running">Keep it running</h2>
 <ul><li><code>thermite health --production</code> reports device health.</li><li><code>thermite history</code> lists deployments; <code>thermite rollback</code> restores the previous one.</li><li><code>thermite version</code> shows application and runtime versions.</li><li><a href="packaging.html">Application releases and private sites</a> explains application upgrades and cached releases for rollback.</li><li><code>thermite help &lt;command&gt;</code> explains any command, with examples.</li></ul>
 
   </main>
   <footer class="foot">
-    <span class="foot-mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg> thermite · simple parts, joined</span>
+    <span class="foot-mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="18" height="18" role="img" aria-label="thermite"><title>thermite</title><path fill="none" stroke="var(--th-flame)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M16 44 C12 39 15 33 21 29 C19 35 24 37 26 36 C23 28 31 23 34 14 C39 21 35 28 41 32 C49 36 51 41 45 45 C37 48 23 48 16 44"/><path fill="none" stroke="var(--th-mark-core)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M29 42 C26 38 30 35 32 32 C32 37 36 39 34 43"/><path fill="none" stroke="var(--th-metal)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="M5 47 L59 47 C56 59 8 59 5 47"/></svg> thermite</span>
     <span>© 2026. All rights reserved.</span>
   </footer>
   <script src="assets/site.js"></script>

@@ -22,6 +22,7 @@ import termios
 import threading
 import time
 from xml.sax.saxutils import escape
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -74,6 +75,7 @@ def main() -> None:
     from oh_cli.remote import look
     import oh_public
     import oh_render
+    import oh_routes
 
     inventory = oh_public.demo()
     inventory_bytes = (json.dumps(inventory, sort_keys=True, separators=(",", ":")) + "\n").encode()
@@ -109,6 +111,15 @@ def main() -> None:
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
             super().__init__(*a, directory=work, **kw)
+
+        def translate_path(self, path):
+            route = urlsplit(path).path
+            pages = {url: asset for _, url, asset in oh_routes.PAGES}
+            if route in pages:
+                path = "/web/" + pages[route]
+            elif route.startswith("/static/remote/"):
+                path = "/web/" + route.removeprefix("/static/remote/")
+            return super().translate_path(path)
 
         def log_message(self, *a):
             pass

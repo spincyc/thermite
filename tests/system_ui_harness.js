@@ -118,7 +118,7 @@ function response(value = manifest) {
   assert(!p.controller.context().system.backend.state.loaded);
   p.controller.key(null, { name: "f10" }); await tick(); let frame = p.controller.frame(149, 45);
   assert.equal(p.controller.ui.screen, "system"); assert(frame.grid.text().includes("5.2.3"));
-  assert(frame.grid.text().includes("does not establish live system health"));
+  assert(frame.grid.text().includes("Live health is not checked here."));
   assert(!frame.focusables.some(hit => hit.kind === "system-action" && hit.action === "open"));
   assert.equal(opened.length, 0);
   p.controller.key(null, { name: "down" }); p.controller.key(null, { name: "down" });
@@ -131,7 +131,7 @@ function response(value = manifest) {
     p.controller.mouse({ action: "mousedown", x: hit.x, y: hit.y });
   }
   click("system:advanced"); frame = p.controller.frame(149, 60);
-  assert(frame.grid.text().includes("On the Thermite host"));
+  assert(frame.grid.text().includes("Host only · open locally or forward over SSH:"));
   assert(!frame.focusables.some(hit => hit.tool === "prometheus"));
   assert.equal(opened.length, 0);
   click("system:open:openhab"); await tick(); assert.deepEqual(opened, ["http://localhost:15601/settings/"]);

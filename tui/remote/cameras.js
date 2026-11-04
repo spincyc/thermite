@@ -30,7 +30,7 @@ function content(g, width, ctx) {
   const paragraph = (value, style = "dim") => {
     wrap(value, Math.max(4, width - 2)).forEach((line) => g.put(1, y++, line, style));
   };
-  paragraph("Read-only status. ↑↓ choose a camera; Enter opens its web view.");
+  paragraph("Video opens in your browser.");
   y += 1;
   if (!backend) { paragraph("Reading cameras…"); return y; }
   const status = backend.state(), cameras = backend.list();
@@ -59,8 +59,8 @@ function content(g, width, ctx) {
   y += 1;
   paragraph(camera.ringing === true ? "Doorbell ringing" : camera.motion === true ? "Motion reported"
     : camera.motion === false ? "No motion reported" : "Motion unknown", camera.motion === true ? "tone.busy" : "dim");
-  paragraph(camera.recording === true ? "Recording reported" : camera.recording === false ? "Not recording reported" : "Recording unknown");
-  paragraph("Last motion received: " + (camera.lastMotion === null ? "Not reported" : new Date(camera.lastMotion).toLocaleString()));
+  paragraph(camera.recording === true ? "Recording" : camera.recording === false ? "Not recording" : "Recording unknown");
+  paragraph("Last motion: " + (camera.lastMotion === null ? "Not reported" : new Date(camera.lastMotion).toLocaleString()));
   if (camera.doorbell) paragraph("Last ring: " + (camera.lastRing === null ? "Not reported" : new Date(camera.lastRing).toLocaleString()));
   y += 1;
   const key = "camera-open";

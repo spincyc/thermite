@@ -6,12 +6,12 @@
   "capture": "site/capture-docs.py; Chromium web render and actual PTY output rendered by xterm.js",
   "files": {
     "web-remote.png": {
-      "sha256": "b19105f90ea0195632073f8d0a57ce2a83093d7c4e8de6e4661fa0008c897510",
+      "sha256": "fa3b178a0ebdac407f912d4d5ba66420bc072a97ec873fb320a3e8e3d79ea126",
       "width": 1440,
       "height": 1000
     },
     "terminal-remote.png": {
-      "sha256": "54ba6c24a2b5d0e34768e249f3892e7b19358d2b1b52640ead0360108c54ee7a",
+      "sha256": "6c689698e66b8ba91cc64c689c4f5eee48405d3130087e71ff70a6a669774860",
       "width": 1232,
       "height": 880
     }

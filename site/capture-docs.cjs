@@ -22,7 +22,7 @@ async function main() {
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.goto(origin + "/web/index.html?backend=mock&room=example_west&choose=example_player&latency=10&theme=dark&volume=slider");
+    await page.goto(origin + "/remotes/?backend=mock&room=example_west&choose=example_player&latency=10&theme=dark&volume=slider");
     await page.getByText("Example West", { exact: true }).first().waitFor();
     await page.waitForTimeout(1000);
     await page.screenshot({ path: path.join(destination, "web-remote.png") });

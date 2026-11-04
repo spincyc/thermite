@@ -7,11 +7,11 @@
   <script defer src="shell.js"></script><script defer src="system.js"></script>
 </head>
 <body data-thermite-page="system">
-  <main class="thermite-home">
-    <h1>System</h1><p>Use Thermite for rooms, devices, pairing and schedules. Advanced tools open their own administration interfaces.</p>
-    <h2>Runtime</h2><p>Configured runtime version: <strong data-system-version>Reading…</strong></p>
-    <p data-system-status role="status">Reading system information…</p><button type="button" data-system-refresh>Refresh information</button>
-    <details data-system-advanced hidden><summary>Advanced tools</summary><p>Open a tool deliberately when you need its specialist controls.</p><div data-system-tools></div></details>
+  <main class="thermite-home thermite-system">
+    <h1>System</h1>
+    <section class="system-runtime"><div><h2>Runtime</h2><strong data-system-version>Reading…</strong></div><button type="button" data-system-refresh>Refresh</button></section>
+    <p data-system-status role="status">Reading system information…</p>
+    <details data-system-advanced hidden><summary>Advanced tools</summary><div data-system-tools></div></details>
   </main>
 </body>
 </html>

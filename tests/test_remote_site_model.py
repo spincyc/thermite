@@ -159,6 +159,27 @@ catch (_) { process.stderr.write('selected model unavailable'); process.exitCode
         self.assertEqual(missing.returncode, 2)
         self.assertEqual(missing.stdout, "")
 
+    @unittest.skipUnless(shutil.which("node"), "Node is required for the topology preview")
+    def test_mock_topology_uses_bundled_catalogue_without_generated_site_files(self):
+        runtime = self.root / "runtime"
+        for name in ("tui/remote/topology.js", "tui/remote/grid.js", "web/remote/topology.json"):
+            destination = runtime / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(AREA / name, destination)
+        script = """const topology = require(process.argv[1]);
+const backend = topology.create({ mock: true, fetch: () => { throw Error('network forbidden'); } });
+backend.open().then(manifest => {
+  if (backend.state().error || !manifest) throw Error('bundled preview unavailable');
+  process.stdout.write(JSON.stringify(manifest.rooms.map(room => room.id)));
+}).catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        result = subprocess.run([shutil.which("node"), "-e", script, str(runtime / "tui/remote/topology.js")],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = json.loads((runtime / "web/remote/topology.json").read_text())
+        self.assertEqual(json.loads(result.stdout), [room["id"] for room in expected["rooms"]])
+        self.assertFalse((runtime / "conf").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
