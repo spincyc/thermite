@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from datetime import timedelta
 import json
+from pathlib import Path
 import secrets
 from unittest.mock import patch
 
@@ -236,3 +237,50 @@ class ManualLockTransactions(Requests, TransactionTestCase):
         self.assertEqual(response.json()["accepted"], ["desk"])
         self.assertEqual(response.json()["skipped"], [{"room": "den", "reason": "room_locked"}])
         self.assertEqual(self.adapter.transport.commands, [("loc_desk_source", "off")])
+
+
+class SharedDevices(TestCase):
+    """A lock protects what its room holds, not every room sharing a source."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.owner = bootstrap("owner", PASSPHRASE)
+
+    def setUp(self):
+        import oh_render, oh_site_contract
+        from oh_conf import House
+        from oh_identity.runtime import RuntimeAdapter, RuntimeContract
+        data = json.loads((Path(__file__).resolve().parents[3] / "instance/devices.yaml").read_text())
+        data["routing"]["rooms"]["example_east"]["sources"].append("example_player")
+        self.commands = []
+        transport = type("Transport", (), {"command": lambda _, item, value: self.commands.append((item, value)),
+                                            "read": lambda _, item: "off"})()
+        self.adapter = RuntimeAdapter(RuntimeContract(**oh_site_contract.compile(House(data), oh_render.build(data))),
+                                      transport, policy=oh_room_policy)
+        install_adapter(self.adapter)
+
+    def hold(self, room, desired):
+        config = {"version": 1, "room": room, "timezone": settings.TIME_ZONE, "revision": 1, "enabled": False,
+                  "daily_off": [], "locks": [], "manual_lock": {"desired": desired, "started_at": timezone.now().isoformat()}}
+        RoomPolicy.objects.update_or_create(room_id=room, defaults={"config": config, "revision": 1})
+
+    def outcome(self, room, action, value):
+        try:
+            self.adapter.dispatch(Guest(get_state().revision, True), room, action, value)
+            return "sent"
+        except Problem as refused:
+            return refused.code
+
+    def test_a_room_held_off_leaves_shared_sources_to_other_rooms(self):
+        self.hold("example_west", "off")
+        self.assertEqual(self.outcome("example_east", "source", "example_player"), "sent")
+        self.assertEqual(self.outcome("example_east", "example_player.key", "back"), "sent")
+        self.assertEqual(self.outcome("example_west", "source", "example_player"), "room_locked")
+
+    def test_a_held_source_may_be_shared_but_not_driven_from_another_room(self):
+        self.hold("example_west", "example_player")
+        self.assertEqual(self.outcome("example_east", "source", "example_player"), "sent")
+        self.assertEqual(self.outcome("example_east", "source", "off"), "sent")
+        for action, value in (("example_player.key", "back"), ("example_player.power", "OFF")):
+            self.assertEqual(self.outcome("example_east", action, value), "device_locked", action)
+        self.assertNotIn(("example_player_power", "OFF"), self.commands)

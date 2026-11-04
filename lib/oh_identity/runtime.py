@@ -206,14 +206,38 @@ class RuntimeAdapter:
         self.policy = policy
         # Root composition supplies the same room/resource lock authority as the worker.
         self.command_lock = command_lock or (lambda rooms, resources: nullcontext())
+        self._plans = {}
 
-    def allowed(self, room_id):
+    def allowed(self, room_id, command=None):
         """Every principal controls unlocked rooms; only a room's policy refuses."""
         if room_id not in self.contract.rooms:
             raise Problem("unknown_room", 404)
-        self.check_policy(room_id)
+        self.check_policy(room_id, command)
 
-    def check_policy(self, room_id):
+    def _plan(self, room, choice):
+        key = (id(self.contract), room, choice)
+        if key not in self._plans:
+            self._plans[key] = self.policy.expected_plan(plain(self.contract.house), room, choice)
+        return self._plans[key]
+
+    def _disturbs(self, command, held_room, desired):
+        """Whether a command made in another room would change what a locked
+        room holds: a source route setting a field the held route needs to
+        another value, or any command to a device the held route uses."""
+        room, action, value = command
+        if desired is None or not hasattr(self.policy, "expected_plan"):
+            return True  # without a route to compare, a lock protects every room the contract names
+        try:
+            held = self._plan(held_room, desired)
+            if action == "source":
+                return bool(self.policy.conflicts(self._plan(room, value), [held]))
+            return bool(set(self.contract.rooms[room]["actions"][action].get("resources", ())) & set(held.resources))
+        except Exception:
+            return True
+
+    def check_policy(self, room_id, command=None):
+        """`command` (room, action, value) names a command made in another
+        room; the lock then refuses only what would disturb it."""
         from django.utils import timezone
         from oh_room_policy import active
         from .models import RoomPolicy
@@ -232,7 +256,10 @@ class RuntimeAdapter:
         except Exception:
             raise Problem("policy_unavailable", 503) from None
         if not answer.get("allowed"):
-            raise Problem("room_locked", 423)
+            if command is None:
+                raise Problem("room_locked", 423)
+            if self._disturbs(command, room_id, answer.get("desired")):
+                raise Problem("device_locked", 423)
 
     def dispatch(self, user, room_id, action, value):
         item, command, affected = self.contract.command(room_id, action, value)
@@ -245,8 +272,10 @@ class RuntimeAdapter:
         from .auth import revalidate
         # After the lock wait and before I/O: a queued stale principal is insufficient.
         revalidate(user)
-        for ident in dict.fromkeys((room_id, *affected)):
-            self.allowed(ident)
+        self.allowed(room_id)
+        for ident in dict.fromkeys(affected):
+            if ident != room_id:
+                self.allowed(ident, (room_id, action, command))
         try:
             self.transport.command(item, command)
         except Exception:

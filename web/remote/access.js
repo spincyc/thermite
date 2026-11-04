@@ -7,6 +7,7 @@
     invalid_login: "The username or password was not accepted.", login_throttled: "Too many sign-in attempts. Try again later.",
     forbidden: "Your account does not allow this action.", room_locked: "This room is locked.",
     policy_locked: "This room is locked.", policy_unavailable: "Room lock status is unavailable. Control is paused.",
+    device_locked: "A locked room is using this device or route, so it cannot change now.",
     policy_checking: "Checking whether this room is locked. Try again in a moment.",
     room_state_unavailable: "Wait until the room reports a current source or Off before locking it.",
     runtime_unavailable: "The room could not be read. Try again when it is connected.",

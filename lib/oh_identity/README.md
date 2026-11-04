@@ -194,7 +194,11 @@ volume settings. All ordinary commands, including Admin commands, obey locks.
 
 POST `/api/v1/rooms/<id>/commands` takes `{action,value}`. The immutable server
 contract resolves the action to a known Item and validates enum/range/step.
-Every affected room, not just the caller's room, is checked against its lock.
+The commanded room's lock refuses every ordinary command (`room_locked`). A
+locked room the contract names as affected refuses only what would disturb
+the route it holds (`device_locked`): a source route setting a field that
+route needs to another value, or any command to a device it uses. Choosing a
+shared source the locked room also shows remains allowed.
 A fresh principal/revision is checked immediately before transport.
 POST `/api/v1/all-off` with `{}` affects only unlocked authorized rooms and
 returns accepted/skipped IDs. It cannot create an override. No public API
