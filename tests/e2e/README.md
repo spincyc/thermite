@@ -69,8 +69,9 @@ git add .
 git commit -m 'Initialize fictional installation test house'
 ```
 
-Keep the generated fictional host defaults for comparable cases: native state
-at `/srv/thermite`, authenticated HTTPS at **13600** and native HTTP/HTTPS at
+Keep the generated fictional host defaults for comparable cases: the
+installation root `/srv/thermite` (native state in its `runtime/`, the gateway
+in its `access/`), authenticated HTTPS at **13600** and native HTTP/HTTPS at
 **13601/13602**. Inspect `instance/host.yaml`; record and propagate any intentional
 overrides. Site inputs and the application release pin must be committed before
 installation. Generated `conf/`, `metrics/` and `deploy/` stay ignored, as do
@@ -159,8 +160,8 @@ Set up the authenticated gateway.
 
 Follow [HTTPS and accounts](../../docs/installation.md#set-up-https-and-accounts),
 including a new login for membership in group `thermite`, explicit ownership
-handoff and service-user verification. Use `/srv/thermite-access` outside native
-state. For this fixture, issue a test certificate covering `localhost` and
+handoff and service-user verification. Use `/srv/thermite/access`, beside the
+native `runtime/`. For this fixture, issue a test certificate covering `localhost` and
 `127.0.0.1`, retain its key privately and trust its public certificate explicitly
 in each test client. Stage with `--allowed-host localhost --allowed-host 127.0.0.1`,
 port 13600 and the native loopback origin from the guide. Do not use a private owner-home path for service
@@ -169,7 +170,7 @@ releases or state.
 Use these names consistently for the remaining guest commands:
 
 ```sh
-ACCESS_ROOT=/srv/thermite-access
+ACCESS_ROOT=/srv/thermite/access
 RELEASE="$ACCESS_ROOT/releases/first"
 URL=https://127.0.0.1:13600
 CERT="$TEST_ROOT/tls/ca.pem"

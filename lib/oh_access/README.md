@@ -9,12 +9,14 @@ installs or starts those units. No service path points
 back into the source checkout. Use `--wheelhouse` for an offline installation.
 
 Use a service-accessible root outside native runtime state and private operator
-home directories, for example `/srv/thermite-access`. After the installer has
-created the `thermite` account and group, the owner prepares its staging parents:
+home directories: the installer uses `access/` in the installation root,
+`/srv/thermite/access` by default. After the installer has created the
+`thermite` account and group and the root-owned installation root, the owner
+prepares its staging parents as the installer does:
 
 ```sh
-ACCESS_ROOT=/srv/thermite-access
-sudo install -d -o "$(id -un)" -g thermite -m 2750 "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
+ACCESS_ROOT=/srv/thermite/access
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0755 "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
 ```
 
 Stage as the operator, with `--destination "$ACCESS_ROOT/releases/first"` and
@@ -41,8 +43,9 @@ installation step; never install units from the service-owned release.
 Bootstrap and activation remain separate. Release and state ancestors must
 also be owned by root or the operator and protected from group/world writes;
 root-owned sticky directories are allowed because they protect each trusted
-child from replacement. Older `2770` access parents must be tightened to
-`2750` before staging. Staging as the service account is refused.
+child from replacement. Group- or world-writable access parents, such as an
+older `2770` one, must be tightened before staging. Staging as the service
+account is refused.
 
 Python environment installation writes a private `environment-install.log`
 inside the operator's plan. On environment or dependency failure, staging

@@ -20,8 +20,12 @@ membership only to people who administer the installation.
 ## Files and permissions
 
 The private site and its Git history stay owned by their human operator.
-The deployed service tree is owned by `thermite:thermite`. The installer creates the layout and the deploy command
-preserves its permissions:
+Everything else lives in the installation root, `/srv/thermite` by default
+(see [host layout](installation.md#host-layout)). Root owns that directory,
+mode 0755; on btrfs it is a subvolume. Its `runtime/` is the deployed service
+tree, owned by `thermite:thermite` and the account's home; its `access/` is the
+HTTPS gateway root. The installer creates the layout and the deploy command
+preserves the runtime's permissions:
 
 | Deployed files | Directories | Files |
 |---|---|---|
@@ -102,9 +106,9 @@ or adopt another service account. An administrator must resolve that
 collision first. Preserve numeric ownership for existing Thermite data; do not
 change IDs merely to bypass this check.
 
-Upgrades do not relocate the state root or reinitialize a database. Keep your
-existing `state_root`. Configuration, users, pairings, histories and data stay
-in place. Do not replace them with the fictional example.
+Upgrades do not relocate the installation root or reinitialize a database.
+Configuration, users, pairings, histories and data stay in place. Do not
+replace them with the fictional example.
 
 After the workflow succeeds, log out and back in, then check:
 
@@ -145,7 +149,7 @@ the same workflow and join the same target and slice. Generating files alone
 starts no service.
 
 Default TCP listeners use Thermite's [13600–13625 range](ports.md).
-Persistent files remain below the selected Thermite state root; upstream
+Persistent files remain below the installation root's `runtime/`; upstream
 container paths such as `/openhab` and `/var/lib/grafana` are private mounts,
 not the host's independent application directories. Discovery protocols keep
 their standard multicast ports; running two controllers against the same
@@ -155,10 +159,12 @@ physical devices is still subject to those devices' protocol limits.
 
 `thermite install --config DIR` and `thermite upgrade --config DIR` manage the
 HTTPS gateway, policy worker and verified callback relay together with the
-native services. Their releases and identity state live outside the native
-state root, by default at the same path with `-access` appended. Release
-parents belong to the operator; private release files and persistent identity
-belong to `thermite:thermite`. Root owns the installed unit copies and backups.
+native services. Their releases and identity state live in the installation
+root's `access/`, beside the native `runtime/` and never inside it. `access/`
+and its `releases/` belong to the operator, mode 0755; private release files
+and the persistent identity in `state/` belong to `thermite:thermite`, mode
+0700. Root owns the installed unit copies, `backups/` (0700) and the trust
+certificate `tls-cert.pem`.
 
 The gateway's private certificate authority is separate: it lives in the
 private site's `var/gateway/authority/`, owned by the operator (directory 0700,
@@ -178,17 +184,18 @@ account. The service account still has no interactive login.
 
 An older HTTPS release may keep its private access state inside an operator's
 home. If `thermite` cannot traverse that location, move only that access-state
-directory once. This does not move the native runtime's `state_root`. First
+directory once. This does not move the native `runtime/`. First
 stop the gateway, worker, any callback service and any user-service preview
 that uses the state. Keep a backup and choose an unused destination; never
 merge it with another site's state.
 
-As the owner, with the `thermite` account already installed:
+As the owner, with the `thermite` account and the root-owned installation
+root already installed:
 
 ```sh
-ACCESS_ROOT=/srv/thermite-access
+ACCESS_ROOT=/srv/thermite/access
 OLD_ACCESS_STATE=/absolute/path/to/existing/access-state
-sudo install -d -o "$(id -un)" -g thermite -m 2750 \
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0755 \
   "$ACCESS_ROOT" "$ACCESS_ROOT/releases"
 sudo mv --no-clobber --no-target-directory -- \
   "$OLD_ACCESS_STATE" "$ACCESS_ROOT/state"
@@ -196,7 +203,7 @@ sudo mv --no-clobber --no-target-directory -- \
 
 Confirm the old path is gone and the new directory contains the existing
 state before continuing. Stage a new release with
-`--state /srv/thermite-access/state`, then run its explicit ownership commands
+`--state /srv/thermite/access/state`, then run its explicit ownership commands
 and service-user verification. This preserves the database, site identity,
 signing keys, policies and locks. Skip bootstrap. Keep the prior release for
 rollback; because its configuration names the old state location, it must be

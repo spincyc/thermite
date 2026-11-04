@@ -66,8 +66,9 @@ thermite init "$HOME/thermite-site"
 cd "$HOME/thermite-site"
 ```
 
-Edit `instance/devices.yaml` and `instance/host.yaml` for your own equipment,
-time zone and state directory. Init's inventory is fictional: use it only
+Edit `instance/devices.yaml` and `instance/host.yaml` for your own equipment
+and time zone; see [host layout](#host-layout) before adding a `root`.
+Init's inventory is fictional: use it only
 for the mock example, then replace its devices before commissioning real
 equipment. Keep the default gateway access mode. The gateway's persistent
 Security switch controls household authentication separately; a new site
@@ -174,6 +175,31 @@ that record, so time zone edits and template changes do not block an upgrade.
 An unknown modification or an unowned drop-in stops for review; see
 [service ownership](service-account.md).
 
+### Host layout
+
+Everything the installation keeps under `/srv` lives in one directory, the
+installation root:
+
+```text
+/srv/thermite/    root:root 0755; a btrfs subvolume when /srv is btrfs
+├── runtime/      thermite 0750: the runtime state and the thermite account's home
+└── access/       you, 0755: the HTTPS gateway root
+```
+
+`runtime/` holds the native runtime's configuration and userdata, add-ons,
+the Apple TV helper, secrets, the deploy records, upgrade backups and the
+monitoring data. `access/` holds the gateway's `releases/`, its identity
+`state/` (thermite, 0700), its identity `backups/` (root, 0700) and the
+clients' trust certificate `tls-cert.pem`. Neither directory is inside the
+other, so the gateway's custody checks see only root- and operator-owned
+parents. On btrfs the installation root is the one subvolume to snapshot or
+back up: `sudo btrfs subvolume snapshot -r /srv/thermite /srv/thermite-$(date +%F)`.
+
+The installer creates this layout. A host that needs another location sets
+`root: /absolute/path` in `instance/host.yaml`; `runtime/` and `access/` are
+always its children. Unit files, `/etc/thermite`, the owner's
+`~/.local/share/thermite` and the private site's `var/` stay where they are.
+
 ### Startup and recovery
 
 The native boot test downloads its pinned runtime and JRE. Before starting
@@ -279,8 +305,8 @@ automation; `thermite pair --help` lists supported pairing steps.
 ## Set up HTTPS and accounts
 
 Installation prints the verified HTTPS URL and the path to its trust
-certificate, `tls-cert.pem` in the gateway root (by default the state root
-with `-access` appended). The installer creates a private certificate authority
+certificate, `tls-cert.pem` in the gateway root (`/srv/thermite/access` by
+default; see [host layout](#host-layout)). The installer creates a private certificate authority
 for the site once, in `var/gateway/authority/` (directory mode 0700, key
 0600, valid for 10 years), and serves an 825-day server certificate it signed
 for the hostnames and addresses the installer selected. The trust file is the
@@ -409,12 +435,12 @@ services. Dropped, refused or transiently failing native reads retry until the
 native deadline; writes are never repeated, and credentials are not replaced.
 
 `thermite uninstall --config "$HOME/thermite-site" --dry-run` shows service
-removal, including the boot-time `thermite-native-boundary.service`. State is
-retained by default; review the explicit purge option separately. Uninstall
-keeps the HTTPS gateway units, their identity state in `<state_root>-access`
-(accounts, sessions and the TLS key) and the native port filter (the
+removal, including the boot-time `thermite-native-boundary.service`. The
+runtime state is retained by default; `--purge` deletes `runtime/` only. Uninstall
+keeps the HTTPS gateway units, their identity state in `access/` (accounts,
+sessions and the TLS key) and the native port filter (the
 `inet thermite_native` nft table and its rule file), and prints the commands
-that remove each. Back up private configuration, runtime data, credentials,
+that remove each, then the emptied installation root. Back up private configuration, runtime data, credentials,
 `var/gateway/authority/` and release artifacts before deleting an
 installation.
 
