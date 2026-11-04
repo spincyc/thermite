@@ -364,7 +364,8 @@ def remote(device: dict) -> dict | None:
     }
     from . import heos
     if heos.enabled(device):
-        control["playback"] = {"item": heos.playback_item(device), "label": "HEOS playback"}
+        control["playback"] = {"item": heos.playback_item(device), "label": "HEOS playback",
+                               "input": "NET", "activate": "HEOS Music"}
     return control
 
 

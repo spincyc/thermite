@@ -27,6 +27,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from oh_integrations import _instr as instr
 
 PATH = instr.PATH
+#: The longest request body taken; the matrices' JSON requests are a few
+#: hundred bytes.
+MAX_BODY = 64 * 1024
 
 
 def _aggregate(values: list, differ: int) -> int:
@@ -48,6 +51,10 @@ class Matrix:
         #: When set, every request gets its connection closed unanswered:
         #: the matrix does not answer.
         self.muted = False
+        #: Seconds a quiet connection is held, per read: over HTTP, one at a
+        #: time, so a client that connects and says nothing holds every
+        #: other client only this long.
+        self.idle_s = 5.0
         self.lock = threading.Lock()
 
     def answer(self, request: dict) -> dict | None:
@@ -331,6 +338,12 @@ SIMS = {"bk808_http": BK808, "ukm404_http": UKM404, "vrroom_http": VRROOM, "avpr
 class _Handler(BaseHTTPRequestHandler):
     server: "_Server"
 
+    def setup(self) -> None:
+        self.timeout = self.server.matrix.idle_s
+        super().setup()
+        # The connection in hand, for stop() to end.
+        self.server.connection = self.connection
+
     def do_GET(self) -> None:  # noqa: N802 (http.server's name)
         matrix = self.server.matrix
         request = None if matrix.muted else matrix.parse_get(self.path)
@@ -341,15 +354,20 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(404 if reply.get("result") == 0 else 200, reply)
 
     def do_POST(self) -> None:  # noqa: N802 (http.server's name)
-        length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length)
+        # A length that is not a byte count up to MAX_BODY is refused before
+        # any read: rfile.read() of a negative one reads to EOF.
+        length = (self.headers.get("Content-Length") or "0").strip()
+        if not (length.isascii() and length.isdigit() and int(length) <= MAX_BODY):
+            self.send_error(400, "bad Content-Length")
+            return
+        raw = self.rfile.read(int(length))
         matrix = self.server.matrix
         if self.path != PATH or matrix.muted:
             self.close_connection = True
             return
         try:
             request = json.loads(raw.decode("utf-8"))
-        except ValueError:
+        except (ValueError, RecursionError):
             request = {"comhead": None, "body": raw.decode("utf-8", errors="replace")}
         if not isinstance(request, dict):
             request = {"comhead": None, "body": request}
@@ -373,6 +391,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 class _Server(HTTPServer):
     matrix: Matrix
+    connection: socket.socket | None = None
 
 
 class Server:
@@ -396,7 +415,16 @@ class Server:
 
     def stop(self) -> None:
         if self.thread.is_alive():
-            self.httpd.shutdown()
+            # shutdown() waits for the request in hand, which a client that
+            # trickles or says nothing holds open: ask for it on the side,
+            # end that connection, and wait a bounded time.
+            threading.Thread(target=self.httpd.shutdown, daemon=True).start()
+            connection = self.httpd.connection
+            if connection is not None:
+                try:
+                    connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
             self.thread.join(timeout=5)
         self.httpd.server_close()
 

@@ -834,14 +834,16 @@ def run_check(args, rt: lib.Runtime, log) -> int:
     started = time.monotonic()
     deadline = started + args.timeout
     try:
-        for server in check.servers.values():
-            server.start()
-        lib.wipe_dir(conf)
-        render.write(conf, check.conf())
-        check.seed()
+        # conf/ is rewritten only under the lock, so a run the lock refuses
+        # leaves the holder's conf/ alone.
         with lib.InstanceLock(inst):
             if lib.running_pgid(inst):
                 raise lib.SandboxError(f"a kept test instance is still running (pid file {inst.pid_file})")
+            for server in check.servers.values():
+                server.start()
+            lib.wipe_dir(conf)
+            render.write(conf, check.conf())
+            check.seed()
             inst.console_log.unlink(missing_ok=True)
             booted = lib.boot(rt, inst, lib.read_requested_addons(conf), started, deadline, log=log)
             if booted.missing:

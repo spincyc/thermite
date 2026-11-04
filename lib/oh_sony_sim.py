@@ -24,6 +24,9 @@ LIFETIME = 14 * 24 * 60 * 60
 HDMI = re.compile(r"extInput:hdmi\?port=([1-4])")
 IRCC = re.compile(r"<IRCCCode>([^<]+)</IRCCCode>")
 IRCC_ACTION = '"urn:schemas-sony-com:service:IRCC:1#X_SendIRCC"'
+ILLEGAL = {"error": [3, "Illegal Argument"]}
+#: The longest request body taken.
+MAX_BODY = 64 * 1024
 
 
 class TV:
@@ -58,37 +61,43 @@ class TV:
         self.cookies.add(cookie)
         return 200, {"result": [], "id": 8}, f"auth={cookie}; Path=/sony/; Max-Age={LIFETIME}"
 
-    def answer(self, method: str, params: list) -> dict:
+    def answer(self, method: str, params: object) -> dict:
+        # A set method takes one object of the right types; anything else is
+        # refused as the TV refuses it, never raised into the handler.
+        arg = params[0] if isinstance(params, list) and params and isinstance(params[0], dict) else {}
         if method == "getPowerStatus":
             return {"result": [{"status": "active" if self.power else "standby"}]}
         if method == "setPowerStatus":
-            self.commands.append(f"setPowerStatus {params[0]['status']}")
-            self.power = params[0]["status"] is True
+            if not isinstance(arg.get("status"), bool):
+                return dict(ILLEGAL)
+            self.commands.append(f"setPowerStatus {arg['status']}")
+            self.power = arg["status"]
             return {"result": []}
         if not self.power:
             return {"error": [40005, "Display Is Turned off"]}
         if method == "getPlayingContentInfo":
             return {"result": [{"uri": self.uri, "source": "extInput:hdmi", "title": "HDMI"}]}
         if method == "setPlayContent":
-            match = HDMI.fullmatch(str(params[0].get("uri")))
-            if not match:
-                return {"error": [3, "Illegal Argument"]}
-            self.commands.append(f"setPlayContent {params[0]['uri']}")
-            self.uri = params[0]["uri"]
+            if not isinstance(arg.get("uri"), str) or not HDMI.fullmatch(arg["uri"]):
+                return dict(ILLEGAL)
+            self.commands.append(f"setPlayContent {arg['uri']}")
+            self.uri = arg["uri"]
             return {"result": []}
         if method == "getVolumeInformation":
             return {"result": [[{"target": "speaker", "volume": self.volume, "mute": self.muted,
                                  "maxVolume": self.max_volume, "minVolume": 0}]]}
         if method == "setAudioVolume":
-            volume = str(params[0].get("volume"))
-            if params[0].get("target") != "speaker" or not volume.isdigit():
-                return {"error": [3, "Illegal Argument"]}
+            volume = str(arg.get("volume"))
+            if arg.get("target") != "speaker" or not (volume.isascii() and volume.isdigit()):
+                return dict(ILLEGAL)
             self.commands.append(f"setAudioVolume {volume}")
             self.volume = min(int(volume), self.max_volume)
             return {"result": [0]}
         if method == "setAudioMute":
-            self.commands.append(f"setAudioMute {params[0]['status']}")
-            self.muted = params[0]["status"] is True
+            if not isinstance(arg.get("status"), bool):
+                return dict(ILLEGAL)
+            self.commands.append(f"setAudioMute {arg['status']}")
+            self.muted = arg["status"]
             return {"result": [0]}
         return {"error": [12, "No Such Method"]}
 
@@ -117,7 +126,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         tv: TV = self.server.tv
-        body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode("utf-8", "replace")
+        length = (self.headers.get("Content-Length") or "0").strip()
+        if not (length.isascii() and length.isdigit() and int(length) <= MAX_BODY):
+            return self.reply(400, b"")
+        body = self.rfile.read(int(length)).decode("utf-8", "replace")
         match = re.fullmatch(r"auth=(.+)", self.headers.get("Cookie") or "")
         authed = bool(match) and match.group(1) in tv.cookies
         with tv.lock:
@@ -134,7 +146,7 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 request = json.loads(body)
                 method, params = request["method"], request.get("params") or []
-            except (ValueError, KeyError, TypeError):
+            except (ValueError, KeyError, TypeError, RecursionError):
                 return self.reply(400, b"")
             if method == "actRegister":
                 status, answer, cookie = tv.register(self.headers.get("Authorization"))

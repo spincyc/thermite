@@ -4,20 +4,22 @@ const source=fs.readFileSync(process.argv[2],'utf8');
 class NativeMap extends Map { get(key){return super.has(key)?super.get(key):null;} put(key,value){assert.equal(typeof value,'string');this.set(key,value);} }
 class Queue {constructor(){this.rows=[];} offer(value){assert.equal(typeof value,'string');if(this.rows.length>=512)return false;this.rows.push(value);return true;}poll(){return this.rows.length?this.rows.shift():null;}isEmpty(){return this.rows.length===0;}size(){return this.rows.length;} }
 const number=()=>({n:0,get(){return this.n;},incrementAndGet(){return ++this.n;},decrementAndGet(){return --this.n;}});
-function setup(initial,moduleSource=source){
+function setup(initial,moduleSource=source,options={}){
  const broker={states:new NativeMap(),events:new Queue(),active:number(),eventWake:{value:false,set(value){this.value=value;},compareAndSet(before,after){if(this.value!==before)return false;this.value=after;return true;}},overflow:{value:false,get(){return this.value;},set(v){this.value=v;}},lock:{depth:0,lock(){this.depth++;},unlock(){this.depth--;}}};
  const descriptor={io:{epoch:'config-1',wake:'events',actors:{switch:{wake:'switchWake',resources:['D1','D2']},other:{wake:'otherWake',resources:['P']}}}};
  const context={module:{exports:{}},require(){throw Error('unexpected native dependency');},Date,JSON,Map,Object,String,Error};
  vm.runInNewContext(moduleSource,context);
  const module=context.module.exports, writes=[], events=[], journals=[], wakes=[];
  let active=true, serial=0, fail=false, midway=null;
- const env={broker,noRules:true,wake:name=>wakes.push(name),now:()=>++serial,id:()=>String(++serial)};
+ const logs=[], sleeps=[];
+ const log={error:m=>logs.push(['error',m]),warn:m=>logs.push(['warn',m]),info:m=>logs.push(['info',m])};
+ const env={broker,noRules:true,wake:name=>wakes.push(name),now:options.now||(()=>++serial),id:()=>String(++serial),log,sleep:ms=>sleeps.push(ms)};
  const bridge=module.create(descriptor,env);
  const journal={data:initial||null,load(){return this.data;},save(row){if(fail)throw Error('disk failure');this.data=JSON.parse(JSON.stringify(row));journals.push({...row});if(midway&&row.status==='admitted')midway();}};
- const provider={has:(r,v)=>['D1','D2'].includes(r)&&['1','2','3','4'].includes(String(v)),execute(r,v){writes.push([r,v]);return {terminal:true};},probe(r){return {value:'3',fresh:true};}};
+ const provider={has:(r,v)=>['D1','D2'].includes(r)&&['1','2','3','4'].includes(String(v)),execute(r,v){writes.push([r,v]);return {outcome:'applied',sample:{value:String(v),fresh:true}};},probe(r){return {value:'3',fresh:true};}};
  const actor=module.actor({key:'switch',io:descriptor.io},provider,{...env,journal,id:()=>String(++serial)});
  const submit=(token,resource,value='3')=>bridge.dispatch({token,key:'switch',resource,value,phase:'acquire',isCurrent:()=>active},r=>events.push({...r}));
- return {bridge,actor,submit,writes,events,journals,wakes,provider,broker,journal,descriptor,env,module,
+ return {bridge,actor,submit,writes,events,journals,wakes,provider,broker,journal,descriptor,env,module,logs,sleeps,
   inactive(){active=false;},failJournal(){fail=true;},onJournal(fn){midway=fn;}};
 }
 const tests=[];
@@ -32,7 +34,7 @@ test('generation change during durable admission cancels before write',()=>{
  assert.equal(f.writes.length,0);assert(f.events.some(e=>e.type==='terminal'&&e.admitted===false));
 });
 test('already admitted operations remain correlated across supersession',()=>{
- const f=setup();f.provider.execute=(r,v)=>{f.inactive();f.bridge.invalidateStale();f.writes.push([r,v]);return {terminal:true};};f.submit('admitted','D1');f.actor.drain();f.bridge.events();
+ const f=setup();f.provider.execute=(r,v)=>{f.inactive();f.bridge.invalidateStale();f.writes.push([r,v]);return {outcome:'applied',sample:{value:String(v),fresh:true}};};f.submit('admitted','D1');f.actor.drain();f.bridge.events();
  assert.equal(f.writes.length,1);assert(f.events.some(e=>e.type==='terminal'&&e.admitted===true));
 });
 test('unknown quarantines key and survives restart',()=>{
@@ -40,7 +42,9 @@ test('unknown quarantines key and survives restart',()=>{
  f.submit('later','D2');f.actor.drain();f.bridge.events();assert.equal(f.writes.length,0);assert(f.events.some(e=>e.reason==='executor_quarantined'));
  const restarted=setup(f.journal.data);restarted.submit('restart','D1');restarted.actor.drain();restarted.bridge.events();assert.equal(restarted.writes.length,0);
 });
-test('journal failure forbids mutation',()=>{const f=setup();f.failJournal();f.submit('disk','D1');f.actor.drain();f.bridge.events();assert.equal(f.writes.length,0);assert(f.events.some(e=>e.type==='uncertain'));});
+test('journal failure forbids mutation without quarantining what was never sent',()=>{const f=setup();f.failJournal();f.submit('disk','D1');f.actor.drain();f.bridge.events();assert.equal(f.writes.length,0);
+ assert(f.events.some(e=>e.type==='terminal'&&e.admitted===false&&e.reason==='journal_failed'));assert(!f.events.some(e=>e.type==='uncertain'));
+ assert.equal(JSON.parse(f.broker.states.get('switch')).quarantine,null);assert(f.logs.some(l=>l[0]==='error'&&/journal/.test(l[1])));});
 test('owned probes are separate from terminal reports',()=>{const f=setup();f.bridge.probe({token:String('read'),key:'switch',resource:'D1'},r=>f.events.push({...r}));f.actor.drain();f.bridge.events();assert(f.events.some(e=>e.type==='sample'&&e.fresh&&e.retired&&e.value==='3'));assert.equal(f.writes.length,0);});
 test('wakeup alone cannot authorize mutation',()=>{const f=setup();f.actor.drain();assert.equal(f.writes.length,0);assert(!f.actor.legacy('D1','99'));f.actor.legacy('D1','2');f.actor.drain();assert.equal(f.writes.length,0);f.bridge.onLegacy(row=>f.bridge.transaction(()=>f.bridge.authorizeLegacy(row.token)));f.bridge.events();f.actor.drain();assert.equal(f.writes.length,1);});
 test('readonly reports no admission rather than fake completion',()=>{const f=setup();const actor=f.module.actor({key:'other',io:f.descriptor.io},f.provider,{...f.env,readonly:true,journal:{load:()=>null,save(){} }});f.bridge.dispatch({token:String('ro'),key:'other',resource:'P',value:'ON'},e=>f.events.push(e));actor.drain();f.bridge.events();assert(f.events.some(e=>e.readonly&&e.admitted===false));assert.equal(f.writes.length,0);});
@@ -59,15 +63,15 @@ test('source provider requires correlated native evidence, never cached GET or A
  let driver=fs.readFileSync(process.argv[3],'utf8').replace('const DEVICES = null;',`const DEVICES = [{id:'source',host:'192.0.2.1',helper:'http://owned'}];`).replace('const PRESSES = null;','const PRESSES = {};').replace('const APPS = null;','const APPS = {};');
  vm.runInContext(driver,context);
  const provider=vm.runInContext('routingProvider()',context), op={token:String('native'),value:'OFF'};
- assert(provider.execute('source_power','OFF',op).terminal);
+ assert.equal(provider.execute('source_power','OFF',op).outcome,'applied');
  const sample=provider.probe('source_power',op);assert(sample.fresh);assert.equal(sample.value,'OFF');assert.equal(sample.observedAt,1000);assert.equal(sample.nativeSequence,4);
  assert(requests.every(row=>row[0]==='http://owned/devices/source/lifecycle'&&row[1]==='POST'));
  assert.deepEqual(requests[0][2],{host:'192.0.2.1',operation:'native',kind:'power',on:false});
- answer={...answer,terminal:false};assert(!provider.execute('source_power','OFF',op).terminal);assert.throws(()=>provider.probe('source_power',op));
- answer={...answer,terminal:true,operation:'stale'};assert(!provider.execute('source_power','OFF',op).terminal);
- answer={id:'source',ok:true,paired:true,connected:true,power:'off',power_reported_at:1000};assert(!provider.execute('source_power','OFF',op).terminal);
+ answer={...answer,terminal:false};assert.equal(provider.execute('source_power','OFF',op).outcome,'unknown');assert.throws(()=>provider.probe('source_power',op));
+ answer={...answer,terminal:true,operation:'stale'};assert.equal(provider.execute('source_power','OFF',op).outcome,'unknown');
+ answer={id:'source',ok:true,paired:true,connected:true,power:'off',power_reported_at:1000};assert.equal(provider.execute('source_power','OFF',op).outcome,'unknown');
  answer={...answer,operation:'native',terminal:true,submitted:false,native_sequence:4};status=502;
- assert(provider.execute('source_power','OFF',op).terminal);assert.throws(()=>provider.probe('source_power',op));
+ assert.equal(provider.execute('source_power','OFF',op).outcome,'unsent');assert.throws(()=>provider.probe('source_power',op));
  status=200;answer={...answer,native_sequence:0};assert.throws(()=>provider.probe('source_power',op));
  // Use the actual broker around the actual source provider: a completed
  // refusal permits another explicit pairing attempt, uncertainty does not.
@@ -109,7 +113,7 @@ test('actor retirement evidence rechecks live flight and quarantine',()=>{
 });
 test('new controller learns when admitted old work truly retires',()=>{
  const f=setup(),proof=[];let replacement;
- f.provider.execute=()=>{replacement=f.module.create(f.descriptor,f.env);replacement.onLegacy(e=>proof.push(e));return {terminal:true};};
+ f.provider.execute=()=>{replacement=f.module.create(f.descriptor,f.env);replacement.onLegacy(e=>proof.push(e));return {outcome:'applied'};};
  f.submit('old-admitted','D1');f.actor.drain();replacement.events();assert(proof.some(e=>e.type==='retired'&&e.token==='old-admitted'));
 });
 test('failed pure read retires without a sample and permits later wake',()=>{
@@ -126,7 +130,7 @@ test('actor wakeups are coalesced for pending work and never broadcast to idle p
  f.actor.drain();f.actor.drain();f.bridge.events();
  assert.equal(f.wakes.filter(name=>name==='switchWake').length,2);
  assert.equal(f.wakes.filter(name=>name==='otherWake').length,0);
- f.provider.execute=(r,v)=>{f.submit('queued-while-busy','D2');assert.equal(f.wakes.filter(name=>name==='switchWake').length,3);return {terminal:true};};
+ f.provider.execute=(r,v)=>{f.submit('queued-while-busy','D2');assert.equal(f.wakes.filter(name=>name==='switchWake').length,3);return {outcome:'applied'};};
  f.submit('busy','D1');f.actor.drain();
  assert.equal(f.wakes.filter(name=>name==='switchWake').length,4);
 });
@@ -155,7 +159,9 @@ test('VRROOM requires owned matching readback without inventing an ACK response 
   return {reports,requests};
  }
  for(const body of ['', 'OK']){const out=run(body,3,'readback');assert(out.reports.some(e=>e.type==='terminal'&&e.admitted));assert.equal(out.requests.length,2);}
- assert(run('',2,'readback').reports.some(e=>e.type==='uncertain'));
+ // A switch that answered but still reads the old input is re-read four
+ // times, then retires without an owned sample; the planner marks it.
+ const lagging=run('',2,'readback');assert(lagging.reports.some(e=>e.type==='terminal'&&e.admitted&&!e.sample));assert.equal(lagging.requests.length,6);
  assert(run('',3,'result').reports.some(e=>e.type==='uncertain'));
 });
 test('Denon main-zone probes keep the firmware UTF-8 CRLF serialization',()=>{
@@ -200,7 +206,7 @@ test('sanitized activity counts queued, active and unknown work without exposing
  const publications=published.length;bridge.events();assert.equal(published.length,publications+1);
  bridge.dispatch({token:String('private-id'),key:'switch',resource:'D1',value:'3'},()=>{});
  assert.equal(bridge.status().pending,1);let active;
- f.provider.execute=()=>{active=bridge.status();return {terminal:true};};f.actor.drain();
+ f.provider.execute=()=>{active=bridge.status();return {outcome:'applied'};};f.actor.drain();
  assert.equal(active.active,1);assert.equal(active.pending,0);assert(bridge.status().eventsQueued>0);
  bridge.events();assert.deepEqual(published.at(-1),{pending:0,active:0,quarantined:0,eventsQueued:0});
  f.provider.execute=()=>{throw Error('lost reply');};bridge.dispatch({token:String('private-unknown'),key:'switch',resource:'D2',value:'3'},()=>{});f.actor.drain();bridge.events();
@@ -208,24 +214,101 @@ test('sanitized activity counts queued, active and unknown work without exposing
  assert(!JSON.stringify(published).includes('private-'));assert(!JSON.stringify(published).includes('D1'));
 });
 test('qualified terminal write readback is sanitized and published after durable retirement',()=>{
- const f=setup();f.provider.execute=()=>({terminal:true,sample:{value:3,fresh:true,retired:false,basis:'provider text',observedAt:123,privatePayload:'discard'}});
+ const f=setup();f.provider.execute=()=>({outcome:'applied',sample:{value:3,fresh:true,retired:false,basis:'provider text',observedAt:123,privatePayload:'discard'}});
  f.submit('owned-write-read','D1');f.actor.drain();f.bridge.events();
  const receipt=f.events.find(e=>e.type==='terminal');assert.equal(f.journal.data.status,'retired');
  assert.deepEqual(receipt.sample,{value:'3',fresh:true,retired:true,basis:'owned_post_write_read',observedAt:123});
 });
 test('stale mismatched refused ambiguous and untracked write samples never qualify',()=>{
  for(const done of [
-  {terminal:true,sample:{value:'3',fresh:false}}, {terminal:true,sample:{value:'2',fresh:true}},
-  {terminal:false,sample:{value:'3',fresh:true}}, {terminal:true,refused:true,sample:{value:'3',fresh:true}},
-  {terminal:true,accepted:false,sample:{value:'3',fresh:true}}]) {
-  const f=setup();f.provider.execute=()=>done;f.submit('unqualified','D1');f.actor.drain();f.bridge.events();assert(f.events.every(e=>!e.sample));
+  {outcome:'applied',sample:{value:'3',fresh:false}}, {outcome:'applied',sample:{value:'2',fresh:true}},
+  {outcome:'unknown',sample:{value:'3',fresh:true}}, {outcome:'refused',sample:{value:'3',fresh:true}},
+  {terminal:true,sample:{value:'3',fresh:true}}]) {
+  // Re-reads still show another value, so no owned read can qualify either.
+  const f=setup();f.provider.execute=()=>done;f.provider.probe=()=>({value:'2',fresh:true});f.submit('unqualified','D1');f.actor.drain();f.bridge.events();assert(f.events.every(e=>!e.sample));
  }
- const f=setup(),manual=[];f.provider.has=()=>true;f.provider.execute=()=>({terminal:true,sample:{value:'3',fresh:true}});
+ const f=setup(),manual=[];f.provider.has=()=>true;f.provider.execute=()=>({outcome:'applied',sample:{value:'3',fresh:true}});
  f.bridge.onLegacy(e=>{manual.push(e);if(e.type==='legacy')f.bridge.authorizeLegacy(e.token);});f.actor.legacy('unmanaged','3');f.bridge.events();f.actor.drain();f.bridge.events();assert(manual.every(e=>!e.sample));
 });
 test('failed retirement journal cannot leak a terminal write sample',()=>{
- const f=setup();f.provider.execute=()=>{f.failJournal();return {terminal:true,sample:{value:'3',fresh:true}};};
+ const f=setup();f.provider.execute=()=>{f.failJournal();return {outcome:'applied',sample:{value:'3',fresh:true}};};
  f.submit('retirement-disk-fault','D1');f.actor.drain();f.bridge.events();
  assert(f.events.some(e=>e.type==='uncertain'));assert(f.events.every(e=>!e.sample));assert.equal(f.journal.data.status,'admitted');
+});
+test('connect failure is terminal and unadmitted, refusal fails cleanly, only silence quarantines',()=>{
+ const f=setup();f.provider.execute=()=>({outcome:'unsent'});f.submit('offline','D1');f.actor.drain();f.bridge.events();
+ assert(f.events.some(e=>e.token==='offline'&&e.type==='terminal'&&e.admitted===false&&e.reason==='device_not_reached'));
+ assert.equal(JSON.parse(f.broker.states.get('switch')).quarantine,null);assert.equal(f.journal.data.status,'retired');
+ f.provider.execute=(r,v)=>{f.writes.push([r,v]);return {outcome:'refused',sample:{value:'4',fresh:true}};};
+ f.submit('declined','D2','4');f.actor.drain();f.bridge.events();
+ assert(f.events.some(e=>e.token==='declined'&&e.type==='terminal'&&e.admitted&&e.refused===true&&e.reason==='device_refused'&&!e.sample));
+ assert.equal(JSON.parse(f.broker.states.get('switch')).quarantine,null);
+ assert.equal(f.logs.filter(l=>l[0]==='error').length,0);
+ f.provider.execute=(r,v)=>{f.writes.push([r,v]);return {outcome:'unknown'};};f.submit('silent','D1');f.actor.drain();f.bridge.events();
+ assert(f.events.some(e=>e.token==='silent'&&e.type==='uncertain'));assert.equal(JSON.parse(f.broker.states.get('switch')).quarantine,'silent');
+ assert.equal(f.logs.filter(l=>l[0]==='error'&&/quarantined/.test(l[1])).length,1);
+});
+test('an applied write whose readback lags is re-read within a bounded window',()=>{
+ const f=setup();let reads=0;f.provider.execute=()=>({outcome:'applied',sample:{value:'2',fresh:true}});
+ f.provider.probe=()=>(++reads<2?{value:'2',fresh:true}:{value:'3',fresh:true,observedAt:7,privatePayload:'discard'});
+ f.submit('slow','D1','3');f.actor.drain();f.bridge.events();
+ const settled=f.events.find(e=>e.token==='slow'&&e.type!=='admitted');assert.equal(settled.type,'terminal');assert.equal(reads,2);
+ assert.deepEqual(settled.sample,{value:'3',fresh:true,retired:true,basis:'owned_post_write_read',observedAt:7});
+ reads=0;f.provider.probe=()=>{reads++;return {value:'2',fresh:true};};f.submit('stuck','D1','3');f.actor.drain();f.bridge.events();
+ const stuck=f.events.find(e=>e.token==='stuck'&&e.type!=='admitted');assert.equal(stuck.type,'terminal');assert(!stuck.sample);assert.equal(reads,4);
+ assert.equal(JSON.parse(f.broker.states.get('switch')).quarantine,null);assert.equal(f.sleeps.length,6);
+ // Unmanaged one-shot keys have no readback to wait for.
+ const g=setup(),manual=[];g.provider.has=()=>true;g.provider.oneShot=()=>true;g.provider.execute=()=>({outcome:'applied'});
+ g.provider.probe=()=>{throw Error('keys have no readback');};
+ g.bridge.onLegacy(e=>{manual.push(e);if(e.type==='legacy')g.bridge.authorizeLegacy(e.token);});
+ g.actor.legacy('menu_key','UP');g.bridge.events();g.actor.drain();g.bridge.events();
+ assert(manual.some(e=>e.type==='terminal'&&e.admitted));assert.equal(g.sleeps.length,0);
+});
+test('quarantine recovers from one fresh in-domain read after the window, then survives no restart',()=>{
+ let time=1000;const f=setup(null,source,{now:()=>time}),proof=[];f.bridge.onLegacy(e=>proof.push(e));
+ f.provider.execute=()=>{throw Error('lost reply');};f.submit('unknown','D2','4');f.actor.drain();f.bridge.events();
+ assert(f.events.some(e=>e.token==='unknown'&&e.type==='uncertain'));
+ const restarted=setup(f.journal.data);assert.equal(JSON.parse(restarted.broker.states.get('switch')).quarantine,'unknown');
+ assert(restarted.logs.some(l=>l[0]==='error'&&/restart/.test(l[1])));
+ const reads=[];f.provider.probe=r=>{reads.push(r);return {value:'3',fresh:true};};
+ time+=59999;assert.equal(f.actor.recover(),false);assert.equal(reads.length,0);
+ time+=1;f.provider.probe=r=>{reads.push(r);throw Error('still offline');};assert.equal(f.actor.recover(),false);
+ assert.deepEqual(reads,['D2','D1']);
+ f.provider.probe=()=>({value:'99',fresh:true});assert.equal(f.actor.recover(),false);
+ f.provider.probe=()=>({value:'4',fresh:false});assert.equal(f.actor.recover(),false);
+ assert.equal(JSON.parse(f.broker.states.get('switch')).quarantine,'unknown');assert.equal(f.journal.data.status,'admitted');
+ f.provider.probe=()=>({value:'4',fresh:true});assert.equal(f.actor.recover(),true);
+ assert.equal(JSON.parse(f.broker.states.get('switch')).quarantine,null);assert.equal(f.journal.data.status,'retired');
+ assert(f.logs.some(l=>l[0]==='info'&&/quarantine cleared/.test(l[1])));
+ f.bridge.events();assert(proof.some(e=>e.type==='retired'&&e.recovered&&e.key==='switch'));
+ f.provider.execute=(r,v)=>{f.writes.push([r,v]);return {outcome:'applied'};};f.submit('after','D1','3');f.actor.drain();f.bridge.events();
+ assert.deepEqual(f.writes,[['D1','3']]);
+ assert.equal(JSON.parse(setup(f.journal.data).broker.states.get('switch')).quarantine,null);
+});
+test('event overflow reports live tickets uncertain, revokes unadmitted work when drained, then resumes',()=>{
+ const f=setup(),proof=[];f.bridge.onLegacy(e=>{proof.push(e);if(e.type==='legacy')f.bridge.authorizeLegacy(e.token);});
+ f.actor.legacy('D2','2');f.submit('lost','D1','3');f.broker.overflow.set(true);f.actor.drain();assert.equal(f.writes.length,0);
+ f.bridge.events();
+ assert(f.events.some(e=>e.token==='lost'&&e.type==='uncertain'&&e.reason==='executor_event_overflow'));
+ assert.equal(f.broker.overflow.get(),false);assert.deepEqual(JSON.parse(f.broker.states.get('switch')).pending,{});
+ assert.equal(f.logs.filter(l=>l[0]==='error'&&/overflowed/.test(l[1])).length,1);
+ f.actor.drain();assert.equal(f.writes.length,0);
+ f.bridge.events();assert(proof.some(e=>e.type==='terminal'&&e.reason==='executor_event_overflow'));
+ assert(proof.some(e=>e.type==='retired'&&e.key==='switch'));
+ f.submit('fresh','D2','4');f.actor.drain();f.bridge.events();assert.deepEqual(f.writes,[['D2','4']]);
+ // A flight admitted before the overflow announces its retirement.
+ const g=setup(),retired=[];g.bridge.onLegacy(e=>retired.push(e));
+ g.provider.execute=(r,v)=>{g.broker.overflow.set(true);g.bridge.events();g.writes.push([r,v]);return {outcome:'applied'};};
+ g.submit('inflight','D1','3');g.actor.drain();assert.equal(g.broker.overflow.get(),false);
+ g.bridge.events();assert(retired.some(e=>e.type==='retired'&&e.key==='switch'));
+});
+test('dropped manual commands warn once per device and reason, never with their value',()=>{
+ const f=setup();f.provider.execute=()=>{throw Error('lost reply');};f.submit('unknown','D1');f.actor.drain();f.bridge.events();
+ f.logs.length=0;
+ assert.equal(f.actor.legacy('D1','2',true),false);assert.equal(f.actor.legacy('D2','3'),false);
+ assert.equal(f.actor.legacy('D1','4321',true),false);assert.equal(f.actor.legacy('D2','9876'),false);
+ const warnings=f.logs.filter(l=>l[0]==='warn');assert.equal(warnings.length,2);
+ assert(/quarantined/.test(warnings[0][1]));assert(/not a value/.test(warnings[1][1]));
+ assert(!warnings.some(l=>l[1].includes('4321')||l[1].includes('9876')));
 });
 process.stdout.write(JSON.stringify({passed:tests.length,tests}));

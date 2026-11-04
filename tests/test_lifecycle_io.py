@@ -90,7 +90,7 @@ class Broker(unittest.TestCase):
     def test_actual_executor_source(self):
         result=subprocess.run([shutil.which('node'),str(AREA/'tests/lifecycle_io_harness.js'),str(lifecycle_io.SOURCE),str(pyatv_http.SOURCE)],capture_output=True,text=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(json.loads(result.stdout)['passed'],30)
+        self.assertEqual(json.loads(result.stdout)['passed'],35)
 
 
 class Quiescence(unittest.TestCase):

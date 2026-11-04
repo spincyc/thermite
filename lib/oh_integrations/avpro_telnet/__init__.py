@@ -1,4 +1,28 @@
-"AVPro Edge HDMI matrices (the AC-MX-44X) over telnet, TCP 23.\n\nThe matrix takes one CRLF-terminated ASCII line per request on its telnet\nport, with no login while its telnet login is off, as the example's\nis. `GET OUT0 VS` answers one `OUT<n> VS IN<m>` line per output, and `SET\nOUT<n> VS IN<m>` routes input m to output n: the line the matrix's own web\npage sends to switch. On connect it lists every output's input and other\nsettings unasked. No binding speaks it, so a rule does:\nconf/automation/js/avpro_telnet_<device>.js, avpro_telnet.js beside this file with\nthe device table filled in. Every 5 seconds it opens one short connection\nper matrix, waits for that listing to end, asks `GET OUT0 VS` and posts\neach output's input; a matrix that does not answer gets UNDEF. A command to\nan output's Item is sent as SET on a connection of its own, followed by the\nsame read.\n\nItems, per matrix:\n\n- `<id>_output<N>_input` (Number): the input routed to output N; commanded\n  with an input number.\n\nA room's HDMI switch in the routing (oh_features.routing) may be one of its\noutputs, as the example TV's is (ports(), switch_item()). The rule\nholds oh_conf.RULE_SENDS, so oh_render.read_only() makes it read the\nmatrices and send them nothing.\n"
+"""AVPro Edge HDMI matrices (the AC-MX-44X) over telnet, TCP 23.
+
+The matrix takes one CRLF-terminated ASCII line per request on its telnet
+port, with no login while its telnet login is off, as the example's
+is. `GET OUT0 VS` answers one `OUT<n> VS IN<m>` line per output, and `SET
+OUT<n> VS IN<m>` routes input m to output n: the line the matrix's own web
+page sends to switch. On connect it lists every output's input and other
+settings unasked. No binding speaks it, so a rule does:
+conf/automation/js/avpro_telnet_<device>.js, avpro_telnet.js beside this file with
+the device table filled in. Every 5 seconds it opens one short connection
+per matrix, waits for that listing to end, asks `GET OUT0 VS` and posts
+each output's input; a matrix that does not answer gets UNDEF. A command to
+an output's Item is sent as SET on a connection of its own, followed by the
+same read.
+
+Items, per matrix:
+
+- `<id>_output<N>_input` (Number): the input routed to output N; commanded
+  with an input number.
+
+A room's HDMI switch in the routing (oh_features.routing) may be one of its
+outputs, as the example TV's is (ports(), switch_item()). The rule
+holds oh_conf.RULE_SENDS, so oh_render.read_only() makes it read the
+matrices and send them nothing.
+"""
 
 from __future__ import annotations
 

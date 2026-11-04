@@ -1,4 +1,47 @@
-"Room sources over the HDMI and USB matrices (docs/routing.md).\n\ninstance/devices.yaml `routing` says which HDMI matrix input and USB host\neach source is cabled to, which HDMI output and USB device ports each room\nhas (and, under `usb_only`, a source that moves only some of those ports),\nwhich rooms have an HDMI switch in front of their display (the matrix\non one of its inputs, sources cabled to the room alone on others; or one\noutput of a matrix of the room's own, as the example's AVPro), each\nroom's receiver and display (`receiver`, `display`: the device, the input\nthe signal before it arrives on, and sources cabled to it alone). A display\nmay instead be `{device: ..., passive: true}`: a configured endpoint with no\ncontrol integration, guessed input, zone, power command or readback. What else\na source or Off does there (`on_actions`, `off_actions`: a curtain and\nlights, say), which dedicated sources explicitly enter standby on Off\n(`sleep_sources`), and, under\n`edid`, whether a source's input follows the EDID of the room display it is\nturned on in. A room without an `hdmi_output` offers only sources cabled\nto it, and one whose id is not a room's names its room (`room`), as the\nexample beside the Office's desk screen does. This feature validates it\nand renders:\n\n- one Source selector Item per room, `loc_<room>_source` (Main UI's Overview\n  lists them, oh_features.overview);\n- conf/automation/js/routing.js: routing.js beside this file with TABLE\n  filled in. For every room and choice TABLE lists the port Items to\n  command (the HDMI output first, then the room's HDMI switch, then its USB\n  device ports), the power and input Items of its receiver and display, the\n  power Item that wakes the source itself and the actions a choice sends,\n  and which choice each input on the room's display, receiver, HDMI switch\n  and HDMI output means; under `edid`, the EDID Item of each source's\n  input and the EDID code each room's output gives its sources. The rule\n  only commands; the Source state is always read back from the room's\n  devices and the HDMI matrix.\n\nThe matrices are any devices whose integration can switch (`ports()` and\n`switch_item()`, as bk808_http and ukm404_http provide), the HDMI switches\nany devices whose integration has `INPUTS` and `input_item()`, as\nvrroom_http does, receivers and displays any whose integration has\n`stage()`, as denonmarantz_http and sony_adcp do, and EDIDs need an HDMI\nmatrix integration with `EDID`, `edid_item()` and `copy_edid()`, so this\nmodule knows rooms and sources, not protocols.\n"
+"""Room sources over the HDMI and USB matrices. routing.js beside this file
+describes the rendered behaviour; lifecycle_io.js describes ordered
+execution, quarantine, recovery and journals.
+
+instance/devices.yaml `routing` says which HDMI matrix input and USB host
+each source is cabled to, which HDMI output and USB device ports each room
+has (and, under `usb_only`, a source that moves only some of those ports),
+which rooms have an HDMI switch in front of their display (the matrix
+on one of its inputs, sources cabled to the room alone on others; or one
+output of a matrix of the room's own, as the example's AVPro), each
+room's receiver and display (`receiver`, `display`: the device, the input
+the signal before it arrives on, and sources cabled to it alone). A display
+may instead be `{device: ..., passive: true}`: a configured endpoint with no
+control integration, guessed input, zone, power command or readback. What else
+a source or Off does there (`on_actions`, `off_actions`: a curtain and
+lights, say), which dedicated sources explicitly enter standby on Off
+(`sleep_sources`), and, under
+`edid`, whether a source's input follows the EDID of the room display it is
+turned on in. A room without an `hdmi_output` offers only sources cabled
+to it, and one whose id is not a room's names its room (`room`), as the
+example beside the Office's desk screen does. This feature validates it
+and renders:
+
+- one Source selector Item per room, `loc_<room>_source` (Main UI's Overview
+  lists them, oh_features.overview);
+- conf/automation/js/routing.js: routing.js beside this file with TABLE
+  filled in. For every room and choice TABLE lists the port Items to
+  command (the HDMI output first, then the room's HDMI switch, then its USB
+  device ports), the power and input Items of its receiver and display, the
+  power Item that wakes the source itself and the actions a choice sends,
+  and which choice each input on the room's display, receiver, HDMI switch
+  and HDMI output means; under `edid`, the EDID Item of each source's
+  input and the EDID code each room's output gives its sources. The rule
+  only commands; the Source state is always read back from the room's
+  devices and the HDMI matrix.
+
+The matrices are any devices whose integration can switch (`ports()` and
+`switch_item()`, as bk808_http and ukm404_http provide), the HDMI switches
+any devices whose integration has `INPUTS` and `input_item()`, as
+vrroom_http does, receivers and displays any whose integration has
+`stage()`, as denonmarantz_http and sony_adcp do, and EDIDs need an HDMI
+matrix integration with `EDID`, `edid_item()` and `copy_edid()`, so this
+module knows rooms and sources, not protocols.
+"""
 
 from __future__ import annotations
 
@@ -16,8 +59,8 @@ RULE = "automation/js/routing.js"
 SOURCE = Path(__file__).resolve().parent / "routing.js"
 MARK = "const TABLE = null;"
 HEADER = (
-    "One Source selector per room, from the inventory's routing",
-    "(docs/routing.md). conf/automation/js/routing.js turns a command into",
+    "One Source selector per room, from the inventory's routing.",
+    "conf/automation/js/routing.js turns a command into",
     "commands to the matrices and the room's receiver and display; the state",
     "is read back from those, so autoupdate is off and the selector never",
     "runs ahead of them.",

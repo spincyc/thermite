@@ -35,6 +35,8 @@ from xml.sax.saxutils import escape
 #: A reply: HTTP status, Content-Type, body.
 Reply = tuple[int, str, bytes]
 XML = "text/xml; charset=utf-8"
+#: The longest request body taken.
+MAX_BODY = 64 * 1024
 
 
 class Device:
@@ -291,7 +293,13 @@ class _Handler(BaseHTTPRequestHandler):
         self._answer(b"")
 
     def do_POST(self) -> None:  # noqa: N802 (http.server's name)
-        self._answer(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+        # A length that is not a byte count up to MAX_BODY is refused before
+        # any read: rfile.read() of a negative one reads to EOF.
+        length = (self.headers.get("Content-Length") or "0").strip()
+        if not (length.isascii() and length.isdigit() and int(length) <= MAX_BODY):
+            self.send_error(400, "bad Content-Length")
+            return
+        self._answer(self.rfile.read(int(length)))
 
     def _answer(self, body: bytes) -> None:
         device = self.server.device

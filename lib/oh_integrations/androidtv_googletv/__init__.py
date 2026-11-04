@@ -52,8 +52,8 @@ Items, per device:
 The rule hands its presses to the Thing's handler, as the binding's console
 command does, so no Item links the binding's keycode, debug or pincode
 channels: a client presses only what the rule allows. It holds
-oh_conf.RULE_SENDS, and oh_render.read_only() keeps the Items on the
-binding's channels display-only (COMMANDING_BINDINGS), so a read-only copy
+oh_conf.RULE_SENDS, and oh_render.read_only() guards every Item on a
+channel that is not READONLY, the binding's included, so a read-only copy
 commands nothing.
 """
 

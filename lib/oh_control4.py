@@ -414,8 +414,13 @@ def devices(items: list[dict], bindings: dict | None = None, inventory: dict | N
     details = details or {}
     inventory_devices = [d for d in inventory.get("devices") or [] if d.get("id")]
     # devices.yaml c4_item settles a match; such a device matches nothing else.
-    linked = {c4: d["id"] for d in inventory_devices if d.get("c4_item") is not None
-              for c4 in (d["c4_item"] if isinstance(d["c4_item"], list) else [d["c4_item"]])}
+    # A list links one device to several Control4 items (a TV, its IR driver,
+    # its UI button): that is no ambiguity. Two devices claiming one item is.
+    linked: dict[object, list[str]] = {}
+    for d in inventory_devices:
+        if d.get("c4_item") is not None:
+            for c4 in d["c4_item"] if isinstance(d["c4_item"], list) else [d["c4_item"]]:
+                linked.setdefault(c4, []).append(d["id"])
     unlinked = [d for d in inventory_devices if d.get("c4_item") is None]
     stale = set(inventory.get("control4_stale") or [])
     by_id = {item.get("id"): item for item in items if isinstance(item, dict)}
@@ -512,7 +517,7 @@ def devices(items: list[dict], bindings: dict | None = None, inventory: dict | N
             "stale": top.get("id") in stale,
         }
         if top.get("id") in linked:
-            device["matches"] = [linked[top.get("id")]]
+            device["matches"] = sorted(set(linked[top.get("id")]))
         else:
             device["matches"] = [] if device["virtual"] or device["stale"] else match_inventory(device, unlinked)
         room["devices"].append(device)
@@ -525,8 +530,11 @@ def devices(items: list[dict], bindings: dict | None = None, inventory: dict | N
     for device in found:
         for ident in device["matches"]:
             matched_by.setdefault(ident, []).append(device["c4_id"])
+    # Several Control4 devices on one inventory device are shared only when a
+    # guess put them there; the items its own c4_item names are its own.
+    claimed = {ident for idents in linked.values() for ident in idents}
     return {"rooms": rooms, "devices": found, "other_types": other_types, "has_details": bool(details),
-            "shared_matches": {i: ids for i, ids in sorted(matched_by.items()) if len(ids) > 1},
+            "shared_matches": {i: ids for i, ids in sorted(matched_by.items()) if len(ids) > 1 and i not in claimed},
             "inventory_unlisted": sorted(d["id"] for d in inventory_devices if d["id"] not in matched_by)}
 
 
@@ -616,12 +624,14 @@ def markdown(source: Path, result: dict, inventory: dict) -> str:
     if result["other_types"]:
         out += ["", "Non-device items: " + ", ".join(
             f"{k} {v}" for k, v in sorted(result["other_types"].items())) + "."]
-    ambiguous = [d for d in physical if len(d["matches"]) > 1]
+    # A software driver matches only through c4_item, and may be linked to
+    # one device (its UI button) or, wrongly, to several.
+    ambiguous = [d for d in result["devices"] if len(d["matches"]) > 1]
     shared = result.get("shared_matches") or {}
     if ambiguous or shared:
         out += ["", "## Ambiguous matches", ""]
         out += [f"- {d['name']} [{d['c4_id']}] in {d['room']}: {', '.join(d['matches'])}" for d in ambiguous]
-        names = {d["c4_id"]: f"{d['name']} [{d['c4_id']}] in {d['room']}" for d in physical}
+        names = {d["c4_id"]: f"{d['name']} [{d['c4_id']}] in {d['room']}" for d in result["devices"]}
         out += [f"- {ident} is matched by {len(ids)} Control4 devices: {'; '.join(names[i] for i in ids)}"
                 for ident, ids in shared.items()]
     missing = [d for d in physical if not d["matches"] and not d["stale"]]

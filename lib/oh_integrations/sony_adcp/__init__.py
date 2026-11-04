@@ -1,4 +1,31 @@
-"Sony projectors over ADCP (Advanced Display Control Protocol), TCP 53595.\n\nNo binding speaks ADCP (openHAB's sonyprojector binding speaks PJ Talk on\n53484, which the VPL-VW915ES has closed), so a rule does:\nconf/automation/js/sony_adcp_<device>.js, sony_adcp.js beside this file with the\ndevice table filled in. Every 15 seconds it opens one short connection\nper projector, reads `power_status ?`, `input ?` and, while the projector is\non, `picture_mode ?`, and posts them to the Items; a projector that does not\nanswer gets UNDEF. A device that also lists sony_adcp under control has its\npower, input and key Items turned into ADCP lines (LINES) on a connection of\ntheir own. The projector greets with NOKEY when ADCP authentication is off,\nas the example's is; the rule does not implement the password handshake and\nreports a projector that asks for one.\n\nItems, per device:\n\n- `<id>_power` (Switch): ON while on or starting up, OFF in standby or\n  cooling down; commanded ON / OFF under control.\n- `<id>_power_state` (String): power_status as the projector reports it.\n- `<id>_input` (String): the input shown (INPUTS); commanded with one under\n  control.\n- `<id>_picture_mode` (String): the picture mode, UNDEF in standby.\n- `<id>_key` (String, control only): a remote button id (KEYS) to press.\n\nUnder observe only, every Item is display-only and the rule listens to none\nof them. The rule holds oh_conf.RULE_SENDS, so oh_render.read_only() makes it\nread the projectors and send them nothing.\n"
+"""Sony projectors over ADCP (Advanced Display Control Protocol), TCP 53595.
+
+No binding speaks ADCP (openHAB's sonyprojector binding speaks PJ Talk on
+53484, which the VPL-VW915ES has closed), so a rule does:
+conf/automation/js/sony_adcp_<device>.js, sony_adcp.js beside this file with the
+device table filled in. Every 15 seconds it opens one short connection
+per projector, reads `power_status ?`, `input ?` and, while the projector is
+on, `picture_mode ?`, and posts them to the Items; a projector that does not
+answer gets UNDEF. A device that also lists sony_adcp under control has its
+power, input and key Items turned into ADCP lines (LINES) on a connection of
+their own. The projector greets with NOKEY when ADCP authentication is off,
+as the example's is; the rule does not implement the password handshake and
+reports a projector that asks for one.
+
+Items, per device:
+
+- `<id>_power` (Switch): ON while on or starting up, OFF in standby or
+  cooling down; commanded ON / OFF under control.
+- `<id>_power_state` (String): power_status as the projector reports it.
+- `<id>_input` (String): the input shown (INPUTS); commanded with one under
+  control.
+- `<id>_picture_mode` (String): the picture mode, UNDEF in standby.
+- `<id>_key` (String, control only): a remote button id (KEYS) to press.
+
+Under observe only, every Item is display-only and the rule listens to none
+of them. The rule holds oh_conf.RULE_SENDS, so oh_render.read_only() makes it
+read the projectors and send them nothing.
+"""
 
 from __future__ import annotations
 

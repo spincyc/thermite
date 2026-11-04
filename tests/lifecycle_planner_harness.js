@@ -53,6 +53,7 @@ function rig(options = {}) {
   let coordinator;
   coordinator = createCoordinator(config, {
     instanceId: options.instanceId || 'test', now: () => time, store,
+    log: options.log || {error() {}}, journalPath: options.journalPath,
     dispatch: (operation, report) => pending.push({operation, report}),
     probe: (operation, report) => pending.push({operation, report}),
     changed: () => { changes.push(time); if (options.changed) options.changed(pending); },
@@ -569,6 +570,42 @@ test('deterministic interleavings never admit standby against actual or pending 
     }
     r.coordinator.close();
   }
+});
+
+test('a device refusal fails its goal at once without quarantine or retry', () => {
+  const r = rig(); r.seed(); r.coordinator.request('Desk', 'LocalComputer');
+  r.drain(operation => operation.resource === 'BPower' && operation.kind === 'write');
+  const refusal = r.take(operation => operation.resource === 'BPower' && operation.kind === 'write');
+  assert(refusal); assert(r.begin(refusal));
+  refusal.report({type: 'terminal', token: refusal.operation.token, admitted: true, refused: true, reason: 'device_refused'});
+  r.drain();
+  const status = r.coordinator.snapshot();
+  assert.equal(status.endpoints.Desk.failures.BPower, 'device-refused');
+  assert.equal(status.slots.b.quarantine, null); assert.equal(status.slots.b.operation, null);
+  assert(status.resources.BPower.possible.includes('ON'));
+  assert.equal(r.writes.filter(write => write === 'BPower=ON').length, 0);
+});
+
+test('a write that never reached its device fails without quarantine', () => {
+  const r = rig(); r.seed(); r.coordinator.request('Desk', 'LocalComputer');
+  r.drain(operation => operation.resource === 'BPower' && operation.kind === 'write');
+  const offline = r.take(operation => operation.resource === 'BPower' && operation.kind === 'write');
+  assert(offline); assert(r.begin(offline));
+  offline.report({type: 'terminal', token: offline.operation.token, admitted: false, reason: 'device_not_reached'});
+  r.drain();
+  const status = r.coordinator.snapshot();
+  assert.equal(status.endpoints.Desk.failures.BPower, 'device_not_reached');
+  assert.equal(status.slots.b.quarantine, null);
+  r.coordinator.request('Desk', 'LocalComputer'); r.drain();
+  assert(r.coordinator.snapshot().endpoints.Desk.pathReady);
+});
+
+test('a planner fault is logged once at error with its journal path', () => {
+  const logged = [], path = '/srv/openhab/userdata/thermite-routing/executor_coordinator.json';
+  const r = rig({failSave: true, journalPath: path, log: {error: message => logged.push(message)}});
+  r.coordinator.request('Desk', 'LocalComputer'); r.coordinator.request('Desk', 'Off');
+  assert.equal(r.coordinator.snapshot().fault, 'journal-save-failed');
+  assert.equal(logged.length, 1); assert(logged[0].includes('journal-save-failed')); assert(logged[0].includes(path));
 });
 
 let failed = 0;
