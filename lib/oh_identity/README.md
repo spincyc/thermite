@@ -110,7 +110,8 @@ ASGI scope; no header can. `oh_identity.guest` answers such a request only as
 a Guest: its `Host` must name a listener address or name with the port; a
 site session or CSRF cookie or an `Authorization` header is refused with 403
 `secure_connection_required`; only the routes in `ROUTES` (Home, Remotes and
-their files, `me`, `security`, item state and events, room policy status,
+their files, `me`, `security`, item state, the `remote` and `home` event
+streams (not `pair`), room policy status,
 `locks`, room commands and All Off) are found; and a POST needs one of the
 listener's own origins and a JSON body in place of the CSRF cookie. Other
 cookies are dropped unread and no response sets one. Commands keep every room
@@ -159,13 +160,30 @@ Personal token GET/POST `/api/v1/tokens`, DELETE `/api/v1/tokens/<uuid>` expose
 metadata only except the raw token's one issuance response. Tokens expire in
 1–90 days, store a digest, and are checked against the current active user and
 authorization revision. Token logout revokes that token. The list omits
-revoked tokens and those that expired over a week ago. SSE checks the user,
+revoked tokens and those that expired over a week ago.
+
+Each page holds one event stream, GET `/api/v1/events/<view>` with no query:
+`remote` (the remote page and the terminal remote: room Sources as
+`stateupdated`, controls, problems, route problems and the activity feed's
+Items as `statechanged`, and the feed's commands), `home` (Home and Topology:
+room Sources as `statechanged`) or `pair` (Admin only: pairing status and
+result Items as `stateupdated`). `oh_site_contract.views` names each view's
+Items; the gateway keeps only public topics of them, and an Item a view takes
+as `stateupdated` is never also sent as `statechanged`. The first frame is a
+snapshot, `{"type":"snapshot","view":...,"states":{item: value}}`, of the
+view's projected values; events follow in openHAB's own shape. While openHAB
+is not answering, the stream stays open and sends `{"type":"unavailable"}`,
+then a fresh snapshot once it is back. A stream checks the user,
 session/token existence, expiry and revision when it opens, at most once per
-second while events flow, and at every quiet-stream heartbeat; cancellation
-closes the upstream iterator. Topic queries are deduplicated and limited to 512
-patterns, 8 item-name globs and 1000 matched topics; exact topics need no scan.
-Each peer bucket may hold 12 streams and the gateway 64; more answer 429
-`too_many_streams` with `Retry-After`.
+second while events flow, and at every quiet-stream heartbeat (5 s), and ends
+when one fails. Each peer bucket may hold 8 streams (a page each, a terminal
+two while it pairs, and a reload's old stream until its next heartbeat) and
+the gateway 48, under half of its 100 in-flight requests; more answer 429
+`too_many_streams` with `Retry-After`. Observers in `oh_identity.hub`
+(`observers`) see each stream open, close (with its seconds and reason) and
+refusal, keyed by view, origin (`https` or the `guest` listener), principal
+kind, HTTP version and peer digest; `EventHub.status()` counts streams per
+view and the upstream's connections, failures and resyncs.
 
 Security events are audited with the principal kind (`guest`, `session`,
 `token`, `password`, `local` or `anonymous`) and a keyed digest of the peer's
@@ -262,8 +280,8 @@ URLs. The runtime transport takes a service-owned 0600 bearer file and explicit
 loopback origin, disables redirects and environment proxy discovery, and never
 returns upstream error bodies to a client.
 
-Read compatibility is limited to known `/rest/items/<item>/state` and finite
-`/rest/events?topics=...`. Unknown/private/credential Items are filtered before
+Read compatibility is limited to known `/rest/items/<item>/state`; there is
+no `/rest/events` route. Unknown/private/credential Items are filtered before
 payload parsing or output. Pairing statuses/results are reconstructed from
 known fields. Free String values fail closed. Site house.js/JSON assets remain
 available to Guests through the same finite projection; administrative assets
@@ -313,15 +331,21 @@ When the configured site timezone changes, `serve` and `worker` each call
 schedule; it revises/retimestamps policies so the worker fences old
 occurrences and does not replay prior boundaries.
 
-Native SSE suffix compaction uses exact public Item wildcards only when all
-three verbs are approved, never pairing credential families. Complete exact
-topics split into at most four upstream URL batches of at most 6000 bytes;
-oversized topics or a fifth batch fail closed, never truncate. One shared HTTP
-client feeds a 64-entry queue with backpressure; projection happens before the
-queue. A closed/failed shard cancels all shards, and disconnect/revocation
-closes their HTTP contexts. The compiler/integration checks must prove complete
-topic coverage with no extra Items. Set connection/concurrency limits at the ASGI/TLS
-service boundary; this core has no unbounded event history or fanout queue.
+Every client stream is served from one upstream subscription per gateway
+process (`oh_identity.hub`), opened with the first stream and closed a minute
+after the last. openHAB 5.2 tests every filter of every subscriber against
+each event as a regular expression, so the upstream asks for one wildcard per
+verb, `openhab/items/*/<verb>`, instead of hundreds of exact topics; the
+gateway discards every topic outside the views before parsing its payload,
+projects the rest once, keeps each Item's latest value and fans frames out in
+process. Each (re)connection reads every viewed Item's state in one GET
+`/rest/items?fields=name,state` once the subscription is open; an event during
+that read wins. Reconnection backs off from 1 to 30 seconds. A client that
+falls 256 frames behind loses them and is sent a fresh snapshot instead, so
+no client grows the gateway's memory; there is no event history. The policy
+worker is a separate process and holds its own single wildcard subscription
+(`oh_access.worker.OBSERVED`), keeping only its observed Items. Set
+connection/concurrency limits at the ASGI/TLS service boundary.
 
 Production cutover still requires owner integration: native REST/HTTPS/ws and
 alternate UIs must not bypass this boundary, implicit user role must be off,

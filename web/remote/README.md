@@ -29,6 +29,13 @@ Right-click or long-press a source bubble, or Off, for a menu that locks the
 room on it: a different source is chosen first and locked once the room
 reports it.
 
+Each page keeps one live connection to thermite while it is shown: Remotes
+for rooms, devices and the activity log, Home and Topology for room sources
+only, Pairing for its devices. The page fills from the first message and
+needs no further reads; a page in the background closes its connection and
+catches up when shown again. When thermite loses openHAB the page says the
+live reports are unavailable and refreshes itself once they return.
+
 Source previews use the fictional sample. Add `?backend=mock` to simulate
 controls without sending commands.
 

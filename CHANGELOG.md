@@ -102,6 +102,16 @@ rollback. The unified deployment workflow uses a separate committed private site
   command" in the installation guide lists the searches. The next install
   or upgrade reruns native preparation once to route the log, restarting
   openHAB.
+- Live updates: each page holds one event stream, `/api/v1/events/remote`,
+  `/home` or `/pair`, whose first message is a snapshot of what the page
+  shows, so opening or reconnecting a page no longer reads every room, control
+  and problem one request at a time. The gateway holds one openHAB
+  subscription for all of them, wildcard by verb, and keeps each Item's
+  latest value; Home and Topology follow only room sources. A slow client is
+  resynchronized, never buffered without bound; while openHAB is unavailable
+  pages say so and resync when it returns. `/rest/events` is gone from the
+  gateway, and a browser or terminal may hold 8 streams (was 12) and the
+  gateway 48 (was 64). The policy worker subscribes with one wildcard too.
 - A locked room no longer blocks shared sources in other rooms: another room is
   refused only what would change the locked room's route, such as driving a
   device it is showing. Lock and Unlock live under Info on Remotes; the remote
