@@ -588,12 +588,6 @@ function remoteContent(frame, g, w, ctx) {
   const lock = session.roomLock(), blocked = session.controlBlock();
   if (lock.text) y = paragraph(g, 2, y, w - 4, lock.text, lock.locked ? "strong" : "dim");
   else if (blocked && lock.status !== "checking") y = paragraph(g, 2, y, w - 4, "Read-only · " + blocked, "dim");
-  if (lock.canManage) {
-    const key = "room-lock:" + current.id;
-    const hit = lock.disabled ? null : { kind: "room-lock", key, room: current.id, focus: true, label: lock.label };
-    button(g, ctx, 2, y, lock.label + " (K)", key, hit, lock.disabled ? "dim" : "key"); y += 4;
-  }
-  if (lock.error || lock.reason) y = paragraph(g, 2, y, w - 4, lock.error || lock.reason, lock.error ? "alert" : "dim");
   const shown = session.view(current, state);
   if (shown.problem) y = paragraph(g, 2, y, w - 4, "\u26a0 " + shown.problem, "alert");
   const remote = session.remoteOf(target);
@@ -918,6 +912,15 @@ function infoContent(g, w, ctx, compact = false) {
     g.put(1, y, fit(entry[0], labelWidth), "dim");
     y = paragraph(g, labelWidth + 2, y, w - labelWidth - 3, entry[1], "base");
   });
+  const lock = session.roomLock();
+  if (lock.canManage) {
+    y = heading(g, y + 1, "Room lock");
+    y = paragraph(g, 1, y, w - 2, lock.text || "Unlocked. Locking holds the current source or Off until you unlock it.", lock.locked ? "strong" : "dim");
+    if (lock.error || lock.reason) y = paragraph(g, 1, y, w - 2, lock.error || lock.reason, lock.error ? "alert" : "dim");
+    const key = "room-lock:" + session.current().id;
+    const hit = lock.disabled ? null : { kind: "room-lock", key, room: session.current().id, focus: true, label: lock.label + " (K)" };
+    button(g, ctx, 1, y, lock.label + " (K)", key, hit, lock.disabled ? "dim" : "key"); y += 4;
+  }
   y = heading(g, y + 1, "Volume");
   const slider = session.volumeMode() === "slider";
   y = switchRow(g, ctx, y, slider, "volume-mode", "Volume slider", "Off: the + and \u2212 keys",

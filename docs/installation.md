@@ -246,7 +246,7 @@ Guests control unlocked rooms; ordinary accounts add camera snapshots and live
 video while authentication is on; administrators also manage locks,
 schedules, users, pairing and the system. Guests still see camera status.
 
-Administrators can use **Lock room** on Remotes to hold the current reported
+Administrators can use **Lock room**, under Info on Remotes, to hold the current reported
 source or Off until **Unlock room** is selected. The server captures the source;
 an unknown source cannot be locked. This manual lock survives restarts and takes
 precedence over schedules, even when the schedule itself is disabled. Unlocking

@@ -31,6 +31,10 @@ rollback. The unified deployment workflow uses a separate committed private site
   locks out, a username; room commands no longer evict the security audit;
   server and worker errors are logged; event streams are capped; responses carry
   a Content-Security-Policy, `Allow` and `Retry-After`; SQLite runs in WAL mode.
+- A locked room no longer blocks shared sources in other rooms: another room is
+  refused only what would change the locked room's route, such as driving a
+  device it is showing. Lock and Unlock live under Info on Remotes; the remote
+  itself shows only the lock state.
 - Remotes: the terminal locks and unlocks a room with `K`; web keyboard
   shortcuts obey locks; the lock control states its reason and last error;
   schedule locks show their end time; one failed status refresh no longer pauses

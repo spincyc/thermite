@@ -80,7 +80,11 @@ function assemble(site, room) {
   assert.equal(lock.status, "ready"); assert.equal(lock.canManage, true); assert.equal(lock.disabled, false, JSON.stringify(lock));
   assert.equal(parts.session.controlBlock(), null);
   let frame = parts.controller.frame(149, 40);
-  assert(frame.focusables.some(hit => hit.kind === "room-lock"), "terminal lock button");
+  assert(!frame.focusables.some(hit => hit.kind === "room-lock"), "the remote shows the lock state, not its control");
+  parts.controller.key("i", { name: "i" });
+  frame = parts.controller.frame(149, 40);
+  assert(frame.focusables.some(hit => hit.kind === "room-lock"), "terminal lock button under Info");
+  parts.controller.key(null, { name: "escape" });
   parts.controller.key("k", { name: "k" });
   for (let i = 0; i < 20 && !parts.session.roomLock().manual; i++) await tick();
   lock = parts.session.roomLock();

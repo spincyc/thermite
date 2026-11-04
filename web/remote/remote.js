@@ -125,18 +125,20 @@
   // disturbed by every policy refresh.
   function updateRoomLock() {
     const lock = session.roomLock();
-    const row = $("[data-room-lock]"), button = $('[data-action="room-lock"]'), status = $("[data-room-lock-status]");
-    const note = lock.error || lock.reason;
-    const text = [lock.text || (lock.canManage ? "Unlocked · Lock room holds the current source or Off until you unlock it" : ""), note].filter(Boolean).join(" · ");
     const set = (element, property, value) => { if (element[property] !== value) element[property] = value; };
-    set(row, "hidden", !lock.enabled || !text);
-    set(status, "textContent", text);
-    set(button, "hidden", !lock.canManage);
-    set(button, "textContent", lock.label);
-    // Busy keeps focus on the button; the session ignores a second press.
-    set(button, "disabled", lock.disabled && !lock.busy);
-    if (button.getAttribute("aria-disabled") !== String(lock.busy)) button.setAttribute("aria-disabled", String(lock.busy));
-    set(button.dataset, "room", lock.room || "");
+    const row = $("[data-room-lock]");
+    set(row, "hidden", !lock.enabled || !lock.text);
+    set(row, "textContent", lock.text);
+    const info = [lock.text || "Unlocked. Locking holds the current source or Off until you unlock it.", lock.error || lock.reason].filter(Boolean).join(" ");
+    all("[data-room-lock-section]").forEach((section) => set(section, "hidden", !lock.canManage));
+    all("[data-room-lock-info]").forEach((note) => set(note, "textContent", info));
+    all('[data-action="room-lock"]').forEach((button) => {
+      set(button, "textContent", lock.label);
+      // Busy keeps focus on the button; the session ignores a second press.
+      set(button, "disabled", lock.disabled && !lock.busy);
+      if (button.getAttribute("aria-disabled") !== String(lock.busy)) button.setAttribute("aria-disabled", String(lock.busy));
+      set(button.dataset, "room", lock.room || "");
+    });
   }
 
   function buildRoomLists() {
@@ -470,6 +472,12 @@
         node("h3", { class: "info__title" }, "Room controls"),
         node("div", { class: "room-controls", "data-room-controls": "" }),
         node("p", { class: "info__note" }, "Not connected yet. Later, turning the room on and off will run them; these buttons stay as a backup.")
+      ]));
+      // Administrators lock the room from here; the remote shows only the state.
+      info.appendChild(node("section", { class: "info__section", "data-room-lock-section": "", hidden: "" }, [
+        node("h3", { class: "info__title" }, "Room lock"),
+        node("p", { class: "info__note", "data-room-lock-info": "" }),
+        node("button", { type: "button", class: "button room-lock__toggle", "data-action": "room-lock" }, "Lock room")
       ]));
       info.prepend(node("section", { class: "info__section" }, [
         node("h3", { class: "info__title" }, "Devices in the room"),
