@@ -319,7 +319,8 @@ def fill(text: str) -> str:
 
 def page(name: str, content: str) -> str:
     template = (SOURCE / "template.html").read_text(encoding="utf-8")
-    nav = "".join(f'<a href="{p}.html"{" aria-current=\"page\"" if p == name else ""}>{label}</a>'
+    current = ' aria-current="page"'
+    nav = "".join(f'<a href="{p}.html"{current if p == name else ""}>{label}</a>'
                   for p, label, _, _ in PAGES if p not in DOCUMENT_PAGES)
     _, _, title, description = next(p for p in PAGES if p[0] == name)
     out = template

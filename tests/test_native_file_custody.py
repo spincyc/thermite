@@ -122,6 +122,21 @@ class Listeners(Scratch):
         self.assertVictimUntouched()
         self.assertEqual(sorted(path.name for path in self.etc.iterdir() if path.name.startswith(".")), [])
 
+    def test_a_reused_inode_number_is_not_the_file_that_was_read(self):
+        # ext4 can give a planted file the inode number just freed; btrfs and
+        # tmpfs never do, so the reuse is simulated here.
+        with oh_ports.native_etc(self.userdata) as etc:
+            _, info = oh_ports.read_regular(etc, "custom.properties")
+        def reused(index=None, value=None, ctime_ns=info.st_ctime_ns):
+            fields = list(info)
+            if index is not None:
+                fields[index] = value
+            return os.stat_result(fields, {"st_ctime_ns": ctime_ns})
+        self.assertTrue(oh_ports.unchanged(info, reused()))
+        self.assertFalse(oh_ports.unchanged(info, reused(stat.ST_MODE, stat.S_IFLNK | 0o777)))
+        self.assertFalse(oh_ports.unchanged(info, reused(stat.ST_NLINK, 2)))
+        self.assertFalse(oh_ports.unchanged(info, reused(ctime_ns=info.st_ctime_ns + 1)))
+
     def test_replacement_owns_new_inodes_by_descriptor_without_set_id_bits(self):
         console = self.etc / oh_ports.SHELL_CFG.name
         console.chmod(0o4640)

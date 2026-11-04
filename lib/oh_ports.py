@@ -239,6 +239,14 @@ def read_regular(directory: int, name: str, limit: int = MAXIMUM_CONFIG) -> tupl
         os.close(descriptor)
 
 
+def unchanged(previous: os.stat_result, current: os.stat_result) -> bool:
+    """Whether a name still holds the inode read earlier. The descriptor is
+    closed by then, and ext4 hands a freed inode number straight to the next
+    file, so type, link count and change time must match as well."""
+    return (os.path.samestat(previous, current) and stat.S_IFMT(previous.st_mode) == stat.S_IFMT(current.st_mode)
+            and previous.st_nlink == current.st_nlink and previous.st_ctime_ns == current.st_ctime_ns)
+
+
 def replace_regular(directory: int, name: str, data: bytes, previous: os.stat_result, *,
                     uid: int | None = None, gid: int | None = None) -> None:
     """Atomically replace a file read by read_regular() in the same directory.
@@ -248,7 +256,7 @@ def replace_regular(directory: int, name: str, data: bytes, previous: os.stat_re
     inode by descriptor: the previous owner unless uid/gid are given. Its
     permission bits are kept, without set-ID bits.
     """
-    if not os.path.samestat(previous, os.stat(name, dir_fd=directory, follow_symlinks=False)):
+    if not unchanged(previous, os.stat(name, dir_fd=directory, follow_symlinks=False)):
         raise ValueError(f"{name} changed while it was being configured")
     temporary = f".{name}.{os.urandom(8).hex()}.tmp"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
