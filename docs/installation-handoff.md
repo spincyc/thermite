@@ -69,9 +69,12 @@ before Uvicorn re-raises SIGTERM. An idempotent outer cleanup still handles
 startup/listener errors.
 
 The gateway has since moved from Uvicorn to Hypercorn to serve HTTP/2. Its
-shutdown keeps the order and bounds tested here: 15 seconds for held requests,
-which are then cancelled, up to 2 seconds for their connections to close, 5
-seconds for leftover tasks, then the command drain and transport close. It
+shutdown keeps the order tested here. Held requests get 15 seconds. Each one
+still running is then told that its client has gone, and gets up to 2 seconds
+to end with its connection. A request that ignores this is cancelled, and its
+connection gets up to 2 more seconds to close. Leftover tasks then get 5
+seconds, followed by the command drain and transport close. The gateway keeps
+these deadlines itself, so they are the same on Python 3.11 and later. It
 then returns normally instead of re-raising SIGTERM, so systemd records exit
 status 0. The stop measurements in this document describe the Uvicorn
 artifacts; they are not a guest acceptance claim for the Hypercorn gateway.

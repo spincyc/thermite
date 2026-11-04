@@ -25,6 +25,7 @@ import h2.config
 import h2.connection
 import h2.events
 import httpx
+from django.core.signals import request_finished
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
 
 from oh_access import service
@@ -251,9 +252,25 @@ class Http2Gateway(TransactionTestCase):
             with self.subTest(http2=http2):
                 self.held_stream_at_shutdown(http2)
 
+    def test_shutdown_ends_a_held_event_stream_where_servers_close_at_once(self):
+        # On Python 3.11, asyncio.Server.wait_closed() does not wait for
+        # connections, so Hypercorn goes straight on to its own wait for
+        # them, which once had a deadline racing _serve's. Run that path on
+        # every Python.
+        async def closed(server):
+            pass
+        with patch.object(asyncio.base_events.Server, "wait_closed", closed):
+            for http2 in (True, False):
+                with self.subTest(http2=http2):
+                    self.held_stream_at_shutdown(http2)
+
     def held_stream_at_shutdown(self, http2):
-        # Hypercorn cancels the connection after graceful_timeout; Django's
-        # own response tasks outlive that, and _serve cancels them.
+        # After graceful_timeout, _serve tells the held request that its
+        # client has gone. Django ends it, with the tasks it started for it,
+        # as for any disconnect, and the connection closes.
+        finished = []
+        request_finished.connect(record := lambda sender, **_: finished.append(sender))
+        self.addCleanup(request_finished.disconnect, record)
         server = Running(service.Admission(application), self.cert, self.key, graceful=1).__enter__()
 
         async def exercise():
@@ -274,7 +291,7 @@ class Http2Gateway(TransactionTestCase):
 
         started = time.monotonic()
         # A clean shutdown logs nothing: no failed connection or task, and no
-        # traceback for the cancelled stream, which uvicorn logged as
+        # traceback for the stream it ends, which uvicorn logged as
         # "Exception in ASGI application" with a CancelledError.
         with contextlib.ExitStack() as quiet:
             for name in ("asyncio", "hypercorn.error", "django.request", "oh_identity", "oh_access", None):
@@ -283,6 +300,8 @@ class Http2Gateway(TransactionTestCase):
         self.assertLess(time.monotonic() - started, 10)
         self.assertTrue(server.drained.is_set())
         self.assertEqual(streams.slots.count(), 0)
+        # Django finished the request itself; a cancelled one never would.
+        self.assertEqual(len(finished), 1)
 
     def test_websocket_handshakes_are_refused_before_django(self):
         seen = Seen(application)
@@ -387,7 +406,7 @@ class GatewayServer(SimpleTestCase):
         from oh_access.staging import units
         unit = units("/srv/thermite/access/releases/example", state="/srv/thermite/access/state")["thermite-access.service"]
         stop = int(next(line for line in unit.splitlines() if line.startswith("TimeoutStopSec=")).split("=")[1])
-        self.assertLessEqual(config.graceful_timeout + service.CLOSE_SECONDS + service.CANCEL_SECONDS + 5, stop)
+        self.assertLessEqual(config.graceful_timeout + 2 * service.CLOSE_SECONDS + service.CANCEL_SECONDS + 5, stop)
 
     def test_rapidly_reset_streams_stay_within_the_request_limit(self):
         # CVE-2023-44487: a reset stream leaves HTTP/2's concurrent-stream
@@ -463,11 +482,12 @@ class GatewayServer(SimpleTestCase):
                 stdout, stderr = unit.communicate(timeout=20)
                 self.assertEqual(unit.returncode, 0, stderr)
                 self.assertLess(time.monotonic() - started, 10)
-                # The held request was cancelled after graceful_timeout, its
-                # connection closed, leftover tasks were cancelled, and
-                # on_shutdown ran before the loop ended. Nothing failed: only a
-                # stubborn leftover is reported.
-                self.assertEqual(stdout.split(), ["drained", "exited"])
+                # After graceful_timeout the held request heard that its
+                # client had gone: a quiet one ended, a stubborn one was
+                # cancelled. Its connection closed, leftover tasks were
+                # cancelled, and on_shutdown ran before the loop ended. Nothing
+                # failed: only the stubborn leftover is reported.
+                self.assertEqual(stdout.split(), ["disconnected"] * (mode == "quiet") + ["drained", "exited"])
                 reports = [line for line in stderr.splitlines() if "cleanup incomplete" in line]
                 expected = ["Access shutdown cleanup incomplete: 1 unfinished task(s), 0 failed task(s)."]
                 self.assertEqual(reports, expected if mode == "stubborn" else [], stderr)
@@ -486,8 +506,9 @@ class GatewayServer(SimpleTestCase):
 
 
 # The unit's lifecycle in its own process: real signals, real exit status.
-# Every request is held open and leaves behind an orphaned task, as Django's
-# response and stream tasks are; "stubborn" orphans outlive cancellation.
+# Every request is held open and leaves behind an orphaned task. A "quiet"
+# request ends when told that its client has gone; a "stubborn" one ignores
+# that and is cancelled, and its orphan outlives cancellation.
 UNIT = """
 import asyncio
 import sys
@@ -512,7 +533,11 @@ async def held(scope, receive, send):
     orphans.add(asyncio.get_running_loop().create_task(orphan()))
     await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/event-stream")]})
     await send({"type": "http.response.body", "body": b": open\\n\\n", "more_body": True})
-    await asyncio.Event().wait()
+    if mode == "stubborn":
+        await asyncio.Event().wait()
+    while (await receive())["type"] == "http.request":
+        pass
+    print("disconnected", flush=True)
 
 
 config = service.listener("127.0.0.1", int(port), service.tls_context(cert, key))
