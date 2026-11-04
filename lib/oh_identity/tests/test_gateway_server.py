@@ -3,6 +3,7 @@ throwaway certificate and the identity tests' fake runtime. No household
 address, account or certificate is used."""
 
 import asyncio
+import contextlib
 from contextlib import AsyncExitStack
 import json
 import logging
@@ -214,12 +215,18 @@ class Http2Gateway(TransactionTestCase):
         self.assertEqual(admission.active, 0)
 
     def test_shutdown_ends_a_held_event_stream_and_releases_its_slot(self):
+        for http2 in (True, False):
+            with self.subTest(http2=http2):
+                self.held_stream_at_shutdown(http2)
+
+    def held_stream_at_shutdown(self, http2):
         # Hypercorn cancels the connection after graceful_timeout; Django's
         # own response tasks outlive that, and _serve cancels them.
         server = Running(service.Admission(application), self.cert, self.key, graceful=1).__enter__()
 
         async def exercise():
-            async with self.http2(server.port) as client, \
+            async with httpx.AsyncClient(http2=http2, verify=trusting(self.cert), trust_env=False, timeout=10,
+                                         base_url=f"https://{HOST}:{server.port}") as client, \
                     client.stream("GET", "/rest/events", params={"topics": TOPIC}) as held:
                 lines = held.aiter_lines()
                 while not (await anext(lines)).startswith("data:"):
@@ -234,8 +241,12 @@ class Http2Gateway(TransactionTestCase):
                 await stopping
 
         started = time.monotonic()
-        # A clean shutdown logs nothing: no failed connection or task.
-        with self.assertNoLogs("asyncio", logging.WARNING), self.assertNoLogs("hypercorn.error", logging.WARNING):
+        # A clean shutdown logs nothing: no failed connection or task, and no
+        # traceback for the cancelled stream, which uvicorn logged as
+        # "Exception in ASGI application" with a CancelledError.
+        with contextlib.ExitStack() as quiet:
+            for name in ("asyncio", "hypercorn.error", "django.request", "oh_identity", "oh_access", None):
+                quiet.enter_context(self.assertNoLogs(name, logging.WARNING))
             asyncio.run(exercise())
         self.assertLess(time.monotonic() - started, 10)
         self.assertTrue(server.drained.is_set())
