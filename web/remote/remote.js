@@ -193,7 +193,7 @@
   function bubble(item) {
     const remote = item.remote ? layouts.remotes[item.remote] : null;
     const tab = node("button", {
-      type: "button", role: "tab", class: "target", id: "target-" + item.id, "aria-controls": "controls",
+      type: "button", class: "target", id: "target-" + item.id, "aria-controls": "controls",
       "data-action": "bubble", "data-device": item.id, "data-role": item.role, "data-choose": item.choose ? "" : null,
       "aria-keyshortcuts": item.digit || null,
       title: remote ? item.label + " · " + remote.label : "Turn the room off"
@@ -228,7 +228,9 @@
     all("[data-targets] .target").forEach((tab) => {
       const shown = session.bubbleState(tab.item, state);
       tab.setAttribute("data-state", shown);
-      tab.setAttribute("aria-selected", tab.item.id === selected ? "true" : "false");
+      // Buttons, not tabs: choosing a source sends a command, and the arrow
+      // keys belong to the D-pad. aria-current marks the remote on show.
+      if (tab.item.id === selected) tab.setAttribute("aria-current", "true"); else tab.removeAttribute("aria-current");
       tab.setAttribute("aria-label", session.bubbleLabel(tab.item, shown));
       if (shown !== "idle") lit = tab;
     });

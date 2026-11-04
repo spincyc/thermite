@@ -567,7 +567,7 @@ button {
   background: var(--panel-hover);
 }
 
-.target[aria-selected="true"] {
+.target[aria-current="true"] {
   color: var(--key-ink);
   background: var(--key-top);
   box-shadow: var(--key-shadow);
