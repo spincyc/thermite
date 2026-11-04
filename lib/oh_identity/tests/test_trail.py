@@ -18,10 +18,11 @@ import oh_room_policy
 from oh_access import audit as audit_reader
 from oh_identity import streams, trail
 from oh_identity.batches import commands
-from oh_identity.models import Audit, PersonalToken, RoomPolicy, User
+from oh_identity.models import Audit, PersonalToken, RoomPolicy, SecurityState, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter
 from oh_identity.services import bootstrap, issue_token
 from oh_identity.tests.test_core import PASSPHRASE, FakeRuntime, Policy, adapter
+from oh_identity.tests.test_guest_listener import call as guest_call
 from oh_identity.transport import CommandRefused
 
 HEX8 = re.compile(r"[0-9a-f]{8}")
@@ -202,6 +203,37 @@ class Commands(Requests, TestCase):
         self.assertEqual(trail.origin(forged), trail.Origin("api", None, None))
         with self.assertRaises(ValueError):
             trail.Origin("admin")
+
+
+class GuestListener(TestCase):
+    """Commands through the plain-HTTP Guest listener: origin guest from the
+    listener's scope mark, principal guest, a peer digest and no address."""
+
+    def setUp(self):
+        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True, "revision": 1})
+        self.adapter = adapter()
+        install_adapter(self.adapter)
+
+    def test_listener_commands_are_guests_whatever_the_client_claims(self):
+        command = {"action": "source", "value": "off"}
+        with self.assertLogs("oh_identity.trail", "INFO") as logs:
+            self.assertEqual(guest_call("post", "/api/v1/rooms/den/commands", command,
+                                        **{"X-Thermite-Client": TAB}).status_code, 202)
+            self.assertEqual(guest_call("post", "/api/v1/rooms/den/commands", command,
+                                        **{"X-Thermite-Client": "tui/laptop"}).status_code, 202)
+            RoomPolicy.objects.create(room_id="den", config={"locked": True})
+            self.assertEqual(guest_call("post", "/api/v1/rooms/den/commands", command).status_code, 423)
+        web, terminal, refused = lines(logs, "cmd")
+        self.assertEqual(without(web, "id", "peer", "ms"), {
+            "origin": "guest", "client": TAB, "user": "guest", "principal": "guest", "token": NONE, "req": NONE,
+            "room": "den", "action": "source", "item": "loc_den_source", "value": "off", "outcome": "accepted"})
+        self.assertEqual((terminal["origin"], terminal["client"], terminal["principal"]), ("guest", "tui/laptop", "guest"))
+        self.assertEqual((refused["origin"], refused["principal"], refused["outcome"], refused["lock_room"]),
+                         ("guest", "guest", "room_locked", "den"))
+        self.assertIn(refused["lock"], ("manual", "schedule"))
+        self.assertTrue(trail.peer_digest("192.0.2.50").startswith(web["peer"]))
+        self.assertNotIn("192.0.2.50", "\n".join(logs.output))
+        self.assertEqual(self.adapter.transport.sources, ["thermite.guest:" + web["id"], "thermite.guest:" + terminal["id"]])
 
 
 class AllOff(Requests, TransactionTestCase):

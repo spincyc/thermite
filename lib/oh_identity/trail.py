@@ -16,8 +16,8 @@ validated command values, never pairing codes (always <private>), bodies,
 credentials or addresses: peer is the first 8 characters of the audit's keyed
 peer digest. Nothing here is stored; the journal is the trail.
 
-Importing this module loads no framework: the gateway, the worker and the
-room-policy engine share it.
+Importing this module loads no framework (oh_access.guest loads none
+either): the gateway, the worker and the room-policy engine share it.
 """
 
 from dataclasses import dataclass, replace
@@ -30,12 +30,13 @@ import secrets
 import threading
 import time
 
+from oh_access.guest import SCOPE as GUEST_SCOPE
+
 LOG = logging.getLogger("oh_identity.trail")
 #: ASGI scope keys. Request data never reaches a scope's top level, so no
-#: client can set them. GUEST_SCOPE is oh_access.guest.SCOPE, which the
-#: plain-HTTP Guest listener sets on its requests.
+#: client can set them. GUEST_SCOPE is the plain-HTTP Guest listener's mark
+#: on its requests (oh_identity.guest.listener reads the same key).
 REQUEST_ID = "thermite.request_id"
-GUEST_SCOPE = "thermite.guest_http"
 #: A client's own label: web/<tab id> from the web remote, tui/<host> from
 #: the terminal remote. It is a claim, never authority.
 CLIENT = re.compile(r"(web|tui)/([A-Za-z0-9][A-Za-z0-9._-]{0,62})")
@@ -115,8 +116,10 @@ class Origin:
 
 
 def origin(request):
-    """A gateway request's Origin. The Guest listener's mark wins over any
-    header; a header is a label only and is ignored unless well formed."""
+    """A gateway request's Origin. The Guest listener's mark (its scope key,
+    as oh_identity.guest.listener reads it) wins over any header; such a
+    request carries no credential, so its principal is guest. A header is a
+    label only and is ignored unless well formed."""
     scope = getattr(request, "scope", None)
     scope = scope if isinstance(scope, dict) else {}
     label = request.headers.get("X-Thermite-Client", "")
