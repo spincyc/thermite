@@ -1,9 +1,9 @@
 # Thermite listening ports
 
-Thermite's default TCP listeners occupy **13600–13625**, anchored at the
+Thermite's default TCP listeners occupy **13600–13626**, anchored at the
 HTTPS application on **13600**. `lib/oh_ports.py` owns the allocation.
 `instance/host.yaml` keeps the site's native HTTP/HTTPS choices and optional
-`metrics: <service>_port` overrides. Generation rejects invalid values and
+`metrics: <service>_port` and `guest_http: port` overrides. Generation rejects invalid values and
 collisions, including collisions with the sandbox, boot test and docs preview.
 Explicit overrides may leave the default range. Commit changes and run
 `thermite install --config DIR` or `thermite upgrade --config DIR`; the same
@@ -38,8 +38,13 @@ listeners are checked against the complete allocation and native upstream.
 | 13623 | Native Karaf shutdown control | 127.0.0.1 only |
 | 13624 | Sandbox Karaf shutdown control | 127.0.0.1 only |
 | 13625 | Boot-check Karaf shutdown control | 127.0.0.1 only |
+| 13626 | Optional plain-HTTP Guest controls | Listed `guest_http.listen` addresses, admitting only `guest_http.clients`; no listener without `guest_http` |
 
 HTTPS is the application entry point whether authentication is on or off.
+The Guest port is the one application listener without TLS, and it serves
+Guests only: see [Guest access over plain HTTP](installation.md#guest-access-over-plain-http).
+The managed firewall table leaves it alone; a host with its own firewall opens
+it from the guest network only.
 Installation restricts native HTTP/HTTPS to loopback and blocks non-loopback
 traffic to native HTTP, HTTPS, Karaf, LSP and shutdown ports in the dedicated
 `inet thermite_native` nftables table. It leaves other firewall tables intact,
@@ -87,7 +92,8 @@ ports, the usual application defaults displaced above, and Kubernetes' default
 [Prysm's QUIC listener](https://github.com/OffchainLabs/prysm/discussions/14728)
 and the [AgentTeams dashboard](https://github.com/agentteams-group/agentteams-dashboard).
 Targeted searches found no known open-source default allocation for the chosen
-13600–13625 run. This is a local convention, not an IANA reservation or a
+13600–13625 run; 13626, added later for the Guest port, lies in the same
+unassigned block. This is a local convention, not an IANA reservation or a
 promise that no other program uses those numbers. Startup preconditions still
 check whether required ports are occupied.
 

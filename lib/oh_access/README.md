@@ -207,6 +207,18 @@ port and path, then a notification that changes the native Item. jUPnP's
 `httpProxyPort` changes the advertised port; it does not create this listener.
 An HTTP 200 alone does not prove a state update or callback preservation.
 
+## Optional Guest listener
+
+`guest_http` in `instance/host.yaml` (validated by `oh_access.guest`, staged
+into `config.json` version 2) adds plain-HTTP Hypercorn listeners to the HTTPS
+service itself, one per `listen` address; no unit is added. Their sockets
+close a connection whose peer lies outside `clients` as it is accepted,
+before the server reads it. They serve the same application and share the
+HTTPS listener's 100-request budget, wrapped by `guest.mark`, which sets the
+listener in the ASGI scope. A listener that cannot bind stops the service's
+startup. `oh_identity.guest` then answers those requests only as a Guest. See
+[Guest access over plain HTTP](../../docs/installation.md#guest-access-over-plain-http).
+
 ## Activation boundary
 
 The staged receipt explicitly says `security_boundary_active: false`.

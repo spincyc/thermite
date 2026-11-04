@@ -365,6 +365,57 @@ need the server's URL and a copy of `tls-cert.pem`, passed once with
 there without a private site (with no `--url` it opens `https://thermite:13600`),
 and `thermite access login` takes the same switches.
 
+## Guest access over plain HTTP
+
+Phones on a guest network rarely trust the site's private authority, so the
+HTTPS site warns them on every visit. For them the gateway can open a second,
+opt-in port that serves Home and Remotes, as a Guest, over plain HTTP. It is
+off unless `instance/host.yaml` asks for it. For a host with one address on
+the guest network:
+
+```yaml
+guest_http:
+  listen: [198.51.100.2]       # this host's address on the guest network
+  clients: [198.51.100.0/24]   # the networks allowed to connect
+  # port: 13626                # the default
+  # names: [remote.guest.example]
+```
+
+`listen` names this host's own addresses, never a wildcard; `clients` names
+the guest network. The gateway closes a connection from any other address
+before reading it, and logs how many it closed at most once a minute. Guests
+open `http://198.51.100.2:13626/`, or a name from the optional `names` that
+resolves to a `listen` address; a request naming any other host is refused.
+Commit the change and run `thermite upgrade --config DIR`. `thermite status`
+lists the Guest addresses, and install and upgrade check each one as a Guest
+when this host's own address is inside `clients`.
+
+The listener only ever answers as a Guest: Home, Remotes, room states and
+lock status, commands to unlocked rooms and All Off. Locks and schedules
+apply as they do over HTTPS. Sign-in, Security, accounts, cameras, pairing,
+settings and System are not found there, and no answer sets a cookie. A
+request carrying the site's session cookie or an `Authorization` header is
+refused, so a credential sent over plain HTTP is never used. The page offers
+**Sign in on the secure site**, which opens the Account page at the gateway's
+first HTTPS address. The terminal remote uses HTTPS only.
+
+Weigh the trade-offs before enabling it:
+
+- Anyone on the guest network gets Guest controls: every unlocked room, and
+  All Off. Lock the rooms guests should not use.
+- Nothing is encrypted. Someone who can intercept the guest network can read
+  the traffic and alter the page, for instance to point its sign-in link at a
+  look-alike that collects passwords. Sign in from a bookmark of the HTTPS
+  site, never by following that link on a network you do not trust.
+- HSTS can never be enabled for this host: browsers apply it to every port of
+  a name, so they would refuse the Guest port. Thermite sends none.
+- Guests share the gateway's 100 requests in flight with HTTPS clients, so a
+  busy guest network can briefly make the HTTPS site answer 503 too.
+- Bind the listener only to the guest network's address and keep `clients` to
+  that network. The managed `nftables` table guards native ports only and
+  leaves this port alone; on a host with its own firewall, open 13626/tcp
+  (or your `port`) from the guest network, and from nowhere else.
+
 ## Update or remove
 
 Use the same owner command from any directory; `--native-timeout SECONDS`

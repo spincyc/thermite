@@ -84,6 +84,21 @@ object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action
 by CSP). There is deliberately no HSTS: households reach the gateway through a
 self-signed certificate exception that HSTS would forbid.
 
+The optional plain-HTTP Guest listener (`oh_access.guest`, configured by
+`guest_http` in `instance/host.yaml`) marks each request it accepts in the
+ASGI scope; no header can. `oh_identity.guest` answers such a request only as
+a Guest: its `Host` must name a listener address or name with the port; a
+site session or CSRF cookie or an `Authorization` header is refused with 403
+`secure_connection_required`; only the routes in `ROUTES` (Home, Remotes and
+their files, `me`, `security`, item state and events, room policy status,
+`locks`, room commands and All Off) are found; and a POST needs one of the
+listener's own origins and a JSON body in place of the CSRF cookie. Other
+cookies are dropped unread and no response sets one. Commands keep every room
+check, locks included. The page's access configuration names the HTTPS site
+for signing in. Responses keep the headers above except
+`Cross-Origin-Opener-Policy`, which browsers ignore without TLS, and are
+never redirected to HTTPS.
+
 Browser login: GET `/api/v1/session` returns a CSRF token and secure CSRF cookie;
 POST the same endpoint with JSON `{username,password}` and `X-CSRFToken` from
 the same origin. It creates a Secure/HttpOnly/SameSite session. POST logout is

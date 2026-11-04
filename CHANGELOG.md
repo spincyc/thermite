@@ -75,6 +75,15 @@ rollback. The unified deployment workflow uses a separate committed private site
   how it is locked: Home, and the Remotes room list in the browser and the
   terminal. The gateway's new `GET /api/v1/locks` reports every room's lock in
   one read, which clients poll only while a room list is on show.
+- Security-relevant, opt-in: `guest_http` in `instance/host.yaml` opens a
+  plain-HTTP Guest port on the gateway (13626 by default, extending the
+  allocation to 13600–13626) for phones on a guest network. It binds only the
+  listed addresses, closes connections from outside `clients`, and serves Home
+  and Remotes as a Guest only: no sign-in, cookies, credentials, cameras,
+  pairing or administration, with Origin and JSON checks on controls. Locks
+  apply as over HTTPS. `thermite status` lists its addresses and install
+  checks them. See [Guest access over plain HTTP](docs/installation.md#guest-access-over-plain-http)
+  for the trade-offs.
 - Routing: rooms on different zones of one receiver can share a source cabled
   to the receiver itself: list it under each room's `receiver.sources` on its
   input. Each room switches and powers only its own zone, so either can turn
