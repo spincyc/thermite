@@ -127,9 +127,9 @@ authorization revision. Token logout revokes that token. The list omits
 revoked tokens and those that expired over a week ago. SSE checks the user,
 session/token existence, expiry and revision when it opens, at most once per
 second while events flow, and at every quiet-stream heartbeat; cancellation
-closes the upstream iterator. Topic queries are deduplicated and limited to 64
-patterns and 1000 matched topics; exact topics need no scan. Each peer bucket
-may hold four streams and the gateway 32; more answer 429
+closes the upstream iterator. Topic queries are deduplicated and limited to 512
+patterns, 8 item-name globs and 1000 matched topics; exact topics need no scan.
+Each peer bucket may hold 12 streams and the gateway 64; more answer 429
 `too_many_streams` with `Retry-After`.
 
 Security events are audited with the principal kind (`guest`, `session`,
