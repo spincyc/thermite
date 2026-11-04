@@ -371,7 +371,7 @@ def house_facts(house: Path = oh_cli.HOUSE, host_file: Path = HOST_FILE) -> set[
     """Strings that would name this house: every address, MAC and compound
     id (one-word ids such as a room called office are ordinary words), the
     devices' names and models, their makes but PUBLIC_MAKES, the rooms'
-    labels, the host's state root and time zone; but public_defaults(). The
+    labels, the host's installation root and time zone; but public_defaults(). The
     build host's own name is not one: a site that must not name it lists it
     in private-words.txt."""
     import yaml
@@ -404,8 +404,8 @@ def house_facts(house: Path = oh_cli.HOUSE, host_file: Path = HOST_FILE) -> set[
     facts.update(key for key in (data.get("rooms") or {}) if "_" in key)
     facts.update(key for key in ((data.get("routing") or {}).get("sources") or {}) if "_" in key)
     host = (yaml.safe_load(host_file.read_text(encoding="utf-8")) if host_file.exists() else None) or {}
-    if host.get("state_root"):
-        facts.add(str(host["state_root"]).rstrip("/").lower())
+    if host.get("root"):
+        facts.add(str(host["root"]).rstrip("/").lower())
     if host.get("timezone"):
         zone = str(host["timezone"]).lower()
         facts.update({zone, zone.rsplit("/", 1)[-1].replace("_", " ")})
@@ -417,7 +417,7 @@ def house_facts(house: Path = oh_cli.HOUSE, host_file: Path = HOST_FILE) -> set[
 def public_defaults() -> set[str]:
     """What the public site may name though a house shares it: the fictional
     sample house's (oh_public.demo()) ids, names, makes, models and room
-    labels, and the default host's state root and time zone."""
+    labels, and the default host's installation root and time zone."""
     import oh_public
     sample = oh_public.demo()
     out = {"", "utc", "etc/utc", "/srv/thermite"}

@@ -33,9 +33,9 @@ MODEL_PATH = "/static/remote/house.js"
 #: (oh_install.access.Gateway), and <gateway root>/tls-cert.pem its authority.
 UNIT = Path("/etc/systemd/system/thermite-access.service")
 AUTHORITY = "tls-cert.pem"
-#: Where a server keeps that file when its state_root is /srv/thermite: the
-#: gateway root is the state root with -access appended.
-EXAMPLE_AUTHORITY = "/srv/thermite-access/" + AUTHORITY
+#: Where a server keeps that file in the default installation root,
+#: /srv/thermite: the gateway root is its access/ directory.
+EXAMPLE_AUTHORITY = "/srv/thermite/access/" + AUTHORITY
 TIMEOUT = 10
 #: X509_V_ERR_CERT_HAS_EXPIRED and X509_V_ERR_HOSTNAME_MISMATCH.
 EXPIRED, MISNAMED = 10, 62
@@ -61,8 +61,8 @@ for the same address, that account's personal credential is used.
 TRUST = f"""\
 trust:
   The gateway's certificate is signed by the server's private certificate
-  authority: {AUTHORITY} in the gateway root, which is the state root with
-  -access appended (e.g. {EXAMPLE_AUTHORITY}); thermite
+  authority: {AUTHORITY} in the gateway root, the installation root's
+  access/ directory (e.g. {EXAMPLE_AUTHORITY}); thermite
   install prints its path. On the server itself the installation's copy is
   used. On another computer, copy that file once and pass it with
   --ca-file; it is then remembered for that address, as thermite access

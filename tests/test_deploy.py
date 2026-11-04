@@ -39,7 +39,7 @@ VERSIONS = {
     **{name: {"version": "1.0.0", "image": {"ref": f"docker.io/example/{name}:v1.0.0", "digest": "sha256:" + c * 64}}
        for name, c in (("prometheus", "c"), ("node_exporter", "d"), ("blackbox_exporter", "e"), ("grafana", "f"), ("alertmanager", "1"), ("ntfy", "2"))},
 }
-HOST = {"state_root": "/srv/services/openhab", "timezone": "America/Chicago", "http_port": 8080,
+HOST = {"timezone": "America/Chicago", "http_port": 8080,
         "https_port": 8443, "uid": 9001, "gid": 9001}
 
 
@@ -62,7 +62,7 @@ class Units(unittest.TestCase):
         self.assertIn("Image=docker.io/openhab/openhab@sha256:" + "a" * 64, text)
         self.assertNotIn(":5.2.3-debian", text)
         self.assertIn("Network=host", text)
-        self.assertIn("Volume=/srv/services/openhab/userdata:/openhab/userdata:Z", text)
+        self.assertIn("Volume=/srv/thermite/runtime/userdata:/openhab/userdata:Z", text)
 
     def test_tag_is_refused(self):
         versions = {"openhab": {"version": "5.2.3", "image": {"ref": "x:5", "digest": "latest"}}}
@@ -74,8 +74,8 @@ class Units(unittest.TestCase):
         self.assertIn("Image=docker.io/library/python@sha256:" + "b" * 64, text)
         self.assertIn("Network=host", text)
         self.assertIn("User=9001", text)
-        self.assertIn("Volume=/srv/services/openhab/atv/app:/app:ro,Z", text)
-        self.assertIn("Volume=/srv/services/openhab/atv/secrets:/secrets:Z", text)
+        self.assertIn("Volume=/srv/thermite/runtime/atv/app:/app:ro,Z", text)
+        self.assertIn("Volume=/srv/thermite/runtime/atv/secrets:/secrets:Z", text)
         self.assertIn(f"Environment=OPENHAB_ATV_VENV={deploy.ATV_VENV}", text)
         self.assertIn("Exec=python3 /app/bin/thermite apple-tv serve --setup --secrets /secrets", text)
         self.assertNotIn("--allow-remote", text)
@@ -212,7 +212,7 @@ class Units(unittest.TestCase):
             self.assertEqual(sum(argv[5] == "--cidfile=" + cid for argv in cleanup), 2)
 
     def test_restart_path_watches_the_deploy_trigger(self):
-        self.assertIn("PathChanged=/srv/services/openhab/deploy/atv-restart", deploy.render_atv_restart_path(HOST))
+        self.assertIn("PathChanged=/srv/thermite/runtime/deploy/atv-restart", deploy.render_atv_restart_path(HOST))
         self.assertIn("ExecStart=/usr/bin/systemctl try-restart thermite-atv.service",
                       deploy.render_atv_restart_service(HOST))
 
@@ -311,7 +311,7 @@ class GrafanaConditions(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         # The generated command must retain these as literal filename bytes.
         self.host = {**HOST, "uid": 1234, "gid": 2345,
-                     "state_root": str(Path(self.temporary.name) / 'state with $cache 80% "quote" \\ slash')}
+                     "root": str(Path(self.temporary.name) / 'state with $cache 80% "quote" \\ slash')}
         self.secret = deploy.state(self.host).monitoring_secrets / deploy.metrics.GRAFANA_ADMIN_PASSWORD
         self.secret.parent.mkdir(parents=True, mode=0o700)
 
@@ -352,9 +352,9 @@ class GrafanaConditions(unittest.TestCase):
                                       'credential=$(/usr/bin/cat -- "$1") && test -n "$credential"',
                                       "thermite-grafana", str(self.secret)])
         # Quoting is defense in depth: the host boundary refuses such a root.
-        with self.assertRaisesRegex(deploy.HostError, "state_root"):
+        with self.assertRaisesRegex(deploy.HostError, "root must be"):
             deploy.render_units(VERSIONS, self.host)
-        for name, text in deploy.render_units(VERSIONS, {**self.host, "state_root": "/srv/thermite"}).items():
+        for name, text in deploy.render_units(VERSIONS, {**self.host, "root": "/srv/thermite"}).items():
             if not name.endswith("thermite-grafana.container"):
                 with self.subTest(unit=name):
                     self.assertNotIn("ExecCondition=", text)
@@ -482,9 +482,9 @@ class MetricsUnits(unittest.TestCase):
 
     def test_volumes_are_labelled_privately_except_the_shared_secrets_and_host_mounts(self):
         prometheus = self.unit("prometheus")
-        self.assertIn("Volume=/srv/services/openhab/metrics/prometheus:/etc/prometheus:ro,Z\n", prometheus)
-        self.assertIn("Volume=/srv/services/openhab/monitoring/prometheus:/prometheus:Z\n", prometheus)
-        self.assertIn("Volume=/srv/services/openhab/monitoring/secrets:/secrets:ro,z\n", prometheus)
+        self.assertIn("Volume=/srv/thermite/runtime/metrics/prometheus:/etc/prometheus:ro,Z\n", prometheus)
+        self.assertIn("Volume=/srv/thermite/runtime/monitoring/prometheus:/prometheus:Z\n", prometheus)
+        self.assertIn("Volume=/srv/thermite/runtime/monitoring/secrets:/secrets:ro,z\n", prometheus)
         node = self.unit("node-exporter")
         self.assertIn("Volume=/:/host:ro,rslave\n", node)
         self.assertIn("Volume=/run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro\n", node)
@@ -497,14 +497,14 @@ class MetricsUnits(unittest.TestCase):
 
     def test_the_exporter_runs_its_deployed_code(self):
         text = self.unit("metrics-exporter")
-        self.assertIn("Volume=/srv/services/openhab/exporter/app:/app:ro,z\n", text)
+        self.assertIn("Volume=/srv/thermite/runtime/exporter/app:/app:ro,z\n", text)
         self.assertIn("Exec=python3 /app/lib/oh_metrics/exporter.py --listen=127.0.0.1:13609 ", text)
         self.assertIn("--openhab=http://127.0.0.1:8080 --token-file=/secrets/openhab-token\n", text)
 
     def test_grafana_reads_its_password_from_a_file(self):
         text = self.unit("grafana")
         self.assertIn("Environment=GF_SECURITY_ADMIN_PASSWORD__FILE=/secrets/grafana-admin-password\n", text)
-        self.assertIn("Volume=/srv/services/openhab/monitoring/grafana:/var/lib/grafana:Z\n", text)
+        self.assertIn("Volume=/srv/thermite/runtime/monitoring/grafana:/var/lib/grafana:Z\n", text)
         self.assertNotIn("Exec=", text)
 
     def test_exec_words_survive_systemd_unescaping(self):
@@ -514,7 +514,7 @@ class MetricsUnits(unittest.TestCase):
 
     def test_the_restart_path_restarts_the_exporter_and_grafana(self):
         units = deploy.render_units(VERSIONS, HOST)
-        self.assertIn("PathChanged=/srv/services/openhab/deploy/metrics-restart\n", units[deploy.METRICS_RESTART_PATH])
+        self.assertIn("PathChanged=/srv/thermite/runtime/deploy/metrics-restart\n", units[deploy.METRICS_RESTART_PATH])
         self.assertIn("ExecStart=/usr/bin/systemctl try-restart thermite-metrics-exporter.service "
                       "thermite-grafana.service thermite-notifications.service thermite-ntfy.service\n", units[deploy.METRICS_RESTART_SERVICE])
 
@@ -1203,8 +1203,11 @@ class HostFacts(unittest.TestCase):
         self.refused("missing timezone", timezone=None)
         self.refused("unknown setting timezon ", timezon="Etc/UTC")
         with self.assertRaisesRegex(deploy.HostError, "must be a mapping"):
-            deploy.validate_host(["state_root"])
+            deploy.validate_host(["root"])
         self.refused("unknown metrics setting retension", metrics={"retension": "30d"})
+        # The installation root replaced state_root, which has no other meaning now.
+        self.refused(r"unknown setting state_root \(allowed: gid, http_port, https_port, metrics, root, timezone, uid\)",
+                     state_root="/srv/thermite")
 
     def test_values_cannot_inject_unit_directives(self):
         for zone in ("Etc/UTC\nExecStartPre=/bin/true", "Etc/UTC ", "../etc/passwd", "Etc/%n", 'Etc/"UTC"', 5):
@@ -1214,7 +1217,7 @@ class HostFacts(unittest.TestCase):
         for root in ("srv/thermite", "/", "/srv/my thermite", "/srv/thermite\n[Service]", "/srv/a:b", "/srv/%h",
                      "/srv/../etc", "/srv/thermite/", "//srv"):
             with self.subTest(root=root):
-                self.refused("state_root", state_root=root)
+                self.refused("root must be", root=root)
         self.refused("metrics.units", metrics={"units": ["x.service\nExecStart=/bin/sh"]})
         self.refused("metrics.retention ", metrics={"retention": 30})
         self.refused("metrics.retention_size", metrics={"retention_size": "12 GB"})
@@ -1228,7 +1231,7 @@ class HostFacts(unittest.TestCase):
             (area / "instance").mkdir()
             (area / "versions.json").write_text(json.dumps(VERSIONS))
             path = area / "instance/host.yaml"
-            for text, pattern in (("state_root: [", "not valid YAML"), ("{}", "missing state_root"),
+            for text, pattern in (("root: [", "not valid YAML"), ("{}", "missing timezone"),
                                   (json.dumps({**HOST, "timezone": "Etc/UTC\nX=1"}), "timezone")):
                 with self.subTest(text=text):
                     path.write_text(text)

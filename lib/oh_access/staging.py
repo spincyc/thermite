@@ -115,7 +115,7 @@ def _service_parents(target, state, uid, gid):
             info = parent.stat()
             bit = stat.S_IXUSR if info.st_uid == uid else stat.S_IXGRP if info.st_gid == gid else stat.S_IXOTH
             if not info.st_mode & bit:
-                raise AccessError("Service parents must permit thermite traversal; use a prepared persistent location such as /srv/thermite-access")
+                raise AccessError("Service parents must permit thermite traversal; use a prepared persistent location such as /srv/thermite/access")
 
 
 def _state_directory(state, uid, gid):
@@ -257,8 +257,8 @@ def _new_release(target, *, purpose="Release", private_parent=False):
         descriptor = os.open(target.name, flags, dir_fd=parent)
         try:
             try:
-                # A prepared releases parent is SGID 2750. Clear its inherited
-                # bit on this exclusively created directory, through its fd.
+                # A releases parent prepared by hand may be SGID. Clear any
+                # inherited bit on this exclusively created directory, through its fd.
                 os.fchmod(descriptor, 0o700)
                 yield descriptor
             except BaseException as error:

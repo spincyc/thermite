@@ -130,7 +130,7 @@ class Gateway(Step):
         self.versions = {"site": context.head, "application": application}
         identifier = hashlib.sha256(json.dumps({**self.versions, "configuration": context.conf_digest}, sort_keys=True).encode()).hexdigest()[:24]
         self.identifier = identifier
-        self.root = Path(self.options.get("root", str(context.layout.root) + "-access"))
+        self.root = Path(self.options.get("root", context.installation.access))
         self.directory = context.var / "gateway" / identifier
         self.journal_path = self.directory / "deployment.json"
         self.helper = self.directory / "deployment.py"

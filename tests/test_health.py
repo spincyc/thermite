@@ -20,7 +20,7 @@ import oh_sandbox as sandbox  # noqa: E402
 
 TOKEN = "oh." + "fixture.private-token-sentinel"
 PRIVATE = "private-configuration-sentinel"
-HOST = {"state_root": "/srv/fixture", "http_port": 13601, "https_port": 13602,
+HOST = {"root": "/srv/fixture", "http_port": 13601, "https_port": 13602,
         "uid": 9001, "gid": 9001, "timezone": "UTC"}
 THINGS = "/rest/things?summary=false"
 ITEMS = "/rest/items?recursive=false&fields=name,type,state,groupType"

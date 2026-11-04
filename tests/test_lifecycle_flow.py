@@ -187,7 +187,7 @@ class CommissioningTransport(unittest.TestCase):
 
 def context(**changes):
     values = dict(area=AREA, versions={"openhab": {"version": "5.2.3"}},
-                  host={"state_root": "/srv/fictional", "uid": 9001, "gid": 9001, "http_port": 13601},
+                  host={"root": "/srv/fictional", "uid": 9001, "gid": 9001, "http_port": 13601},
                   head="a" * 40, conf_digest="b" * 64, hostname="fixture", address=None,
                   prepared={"conf/services/addons.cfg": deploy.Blob(b"binding=sonos\n")},
                   application={"version": "0.1.0.dev0", "digest": "c" * 64})
@@ -602,9 +602,13 @@ class Uninstall(unittest.TestCase):
 
     def test_kept_lists_gateway_identity_and_filter_with_commands(self):
         text = uninstall.kept(context(), purge=True)
-        for expected in ("thermite-access.service", "/srv/fictional-access", "nft delete table inet thermite_native",
-                         "systemctl disable --now"):
+        for expected in ("thermite-access.service", "identity state in /srv/fictional/access:",
+                         "rm -rf --one-file-system /srv/fictional/access", "sudo rmdir /srv/fictional`",
+                         "nft delete table inet thermite_native", "systemctl disable --now"):
             self.assertIn(expected, text)
+        self.assertNotIn("/srv/fictional/runtime", text)
+        self.assertIn("the runtime state, /srv/fictional/runtime (thermite uninstall --purge deletes it)",
+                      uninstall.kept(context(), purge=False))
 
 
 if __name__ == "__main__":

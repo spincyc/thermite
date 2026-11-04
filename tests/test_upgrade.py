@@ -29,7 +29,7 @@ class Upgrade(unittest.TestCase):
         self.application = {"version": "0.1.0.dev0", "digest": "a" * 64}
         self.context = steps.Context(
             self.site, {"openhab": {"version": "5.2.3"}},
-            {"uid": 9001, "gid": 9001, "state_root": str(self.site / "runtime")},
+            {"uid": 9001, "gid": 9001, "root": str(self.site / "installation")},
             "b" * 40, "c" * 64, "fixture-host", None,
             prepared={"conf/services/addons.cfg": deploy.Blob(b"binding = http,network\n")},
             application=self.application)

@@ -47,7 +47,7 @@ class InstalledInstall(unittest.TestCase):
             self.site / "var/server/api-token", 10 + steps.WAIT)
 
     def test_existing_runtime_recovers_only_a_missing_operator_copy(self):
-        self.context.host.update(http_port=13601, uid=9001, state_root=str(self.site / "runtime"))
+        self.context.host.update(http_port=13601, uid=9001, root=str(self.site / "installation"))
         self.host.clock.return_value = 10
         self.host.read_private.side_effect = [FileNotFoundError(), FileNotFoundError(), "synthetic-recovered-token\n"]
         self.host.configure_runtime_access.side_effect = NativeAuthError("existing_users")
@@ -58,7 +58,7 @@ class InstalledInstall(unittest.TestCase):
         action, host, area = perform.call_args.args
         self.assertTrue(action.root)
         self.assertEqual(action.argv, ("python3", str(self.program / "lib/oh_install/secrets.py"),
-                         str(self.site / "runtime"), "--name", "openhab-token", "--source",
+                         str(self.site / "installation/runtime"), "--name", "openhab-token", "--source",
                          str(self.site / "var/server/api-token"), "--uid", "9001", "--gid", "9001",
                          "--recover-runtime-token", "--runtime-url", "http://127.0.0.1:13601"))
         self.assertIs(host, self.host)
@@ -79,7 +79,7 @@ class InstalledInstall(unittest.TestCase):
                 perform.assert_not_called()
 
     def test_runtime_requiring_authentication_for_uuid_can_recover_without_local_credentials(self):
-        self.context.host.update(http_port=13601, uid=9001, state_root=str(self.site / "runtime"))
+        self.context.host.update(http_port=13601, uid=9001, root=str(self.site / "installation"))
         self.host.clock.return_value = 10
         self.host.read_private.side_effect = [FileNotFoundError(), FileNotFoundError(), "synthetic-recovered-token\n"]
         self.host.configure_runtime_access.side_effect = NativeAuthError("credentials")
@@ -89,7 +89,7 @@ class InstalledInstall(unittest.TestCase):
         perform.assert_called_once()
 
     def test_declined_or_failed_service_recovery_does_not_validate_a_token(self):
-        self.context.host.update(http_port=13601, uid=9001, state_root=str(self.site / "runtime"))
+        self.context.host.update(http_port=13601, uid=9001, root=str(self.site / "installation"))
         self.host.clock.return_value = 10
         self.host.read_private.side_effect = FileNotFoundError
         self.host.configure_runtime_access.side_effect = NativeAuthError("existing_users")

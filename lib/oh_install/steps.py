@@ -204,8 +204,12 @@ class Context:
         return self.prepared[name].data if self.prepared is not None else (self.area / name).read_bytes()
 
     @property
+    def installation(self) -> deploy.Installation:
+        return deploy.installation(self.host)
+
+    @property
     def layout(self) -> deploy.State:
-        return deploy.state(self.host)
+        return self.installation.state
 
     @property
     def url(self) -> str:
@@ -423,9 +427,13 @@ class Preconditions(Step):
         if named is not None and named.gid != host["gid"]:
             problems.append(f"{named.name} has primary gid {named.gid}, not {host['gid']}")
         problems.extend(ownership.inspect(self.context, system).problems)
+        top = self.context.installation.root
         if not system.safe_directory(self.context.layout.root):
             problems.append(f"{self.context.layout.root} has a symlink or unreadable ancestor; "
                             "refusing to change state outside the configured directory")
+        elif not installation_owned(self.context, system):
+            problems.append(f"cannot prove {top} is Thermite's installation root: it may hold only "
+                            f"{deploy.RUNTIME}/ and {deploy.ACCESS}/; refusing to adopt or change unrelated data")
         elif not state_owned(self.context, system):
             problems.append(f"cannot prove {self.context.layout.root} is Thermite state or empty installation "
                             "scaffolding; refusing to adopt or change unrelated data")
@@ -622,28 +630,40 @@ class StateDirectories(Step):
                     wrong.append((mode, path))
         return wrong
 
+    def top_wrong(self, system: System) -> bool:
+        """Whether the installation root is missing, or not root's with ROOT_MODE."""
+        found = system.stat(self.context.installation.root)
+        return not (found and found.is_dir and (found.uid, found.gid, found.mode) == (0, 0, deploy.ROOT_MODE))
+
     def check(self, system: System) -> Check:
-        root = self.context.layout.root
-        if system.stat(root) is None:
-            return Check(False, f"{root} does not exist")
-        wrong = self.wrong(system)
+        top = self.context.installation.root
+        if system.stat(top) is None:
+            return Check(False, f"{top} does not exist")
+        wrong = [path for _, path in self.wrong(system)]
         if self.applied and self.context.host["gid"] not in system.process_groups():
             return Check(True, f"service directories installed for {NAME}; log in again for group access")
-        if wrong:
-            return Check(False, "to create or fix: " + ", ".join(str(p.relative_to(root)) for _, p in wrong))
+        if self.top_wrong(system) or wrong:
+            return Check(False, "to create or fix: " + ", ".join(
+                [*([f"{top} (root, {deploy.ROOT_MODE:04o})"] if self.top_wrong(system) else []),
+                 *(str(path.relative_to(top)) for path in wrong)]))
         count = sum(len(paths) for _, paths in self.directories())
-        return Check(True, f"{root} and its {count} directories, owned by {NAME}")
+        return Check(True, f"{top}, owned by root, and its {count} runtime directories, owned by {NAME}")
 
     def actions(self, system: System) -> list[Action]:
-        root = self.context.layout.root
+        # The installation root is the subvolume; runtime/ and the gateway's
+        # access/ are plain directories inside it.
+        top = self.context.installation.root
         actions = []
-        if system.stat(root) is None:
-            if system.stat(root.parent) is None:
-                actions.append(Command(("mkdir", "-p", str(root.parent)), root=True))
-            if system.fstype(root.parent) == "btrfs":
-                actions.append(Command(("btrfs", "subvolume", "create", str(root)), root=True))
+        if system.stat(top) is None:
+            if system.stat(top.parent) is None:
+                actions.append(Command(("mkdir", "-p", str(top.parent)), root=True))
+            if system.fstype(top.parent) == "btrfs":
+                actions.append(Command(("btrfs", "subvolume", "create", str(top)), root=True))
             else:
-                actions.append(Command(("mkdir", str(root)), root=True))
+                actions.append(Command(("mkdir", str(top)), root=True))
+        if self.top_wrong(system):
+            actions.append(Command(("install", "-d", "-o", "root", "-g", "root", "-m", f"{deploy.ROOT_MODE:05o}",
+                                    str(top)), root=True))
         return actions + self.fix(system)
 
     def fix(self, system: System) -> list[Action]:
@@ -1015,6 +1035,15 @@ def service_receipt(context: Context, system: System) -> bool:
             "uid": context.host["uid"], "gid": context.host["gid"]})
     except ValueError:
         return False
+
+
+def installation_owned(context: Context, system: System) -> bool:
+    """The installation root holds nothing but its two fixed children."""
+    top = context.installation.root
+    if system.stat(top) is None:
+        return not system.lexists(top)
+    names = system.directory_entries(top)
+    return names is not None and set(names) <= {deploy.RUNTIME, deploy.ACCESS}
 
 
 def state_owned(context: Context, system: System) -> bool:
@@ -2232,7 +2261,7 @@ class RemoveUnits(Step):
 
 
 class Purge(Step):
-    title = "Delete the state root (--purge)"
+    title = "Delete the runtime state (--purge)"
 
     def __init__(self, context: Context):
         self.context = context
@@ -2263,11 +2292,10 @@ class Purge(Step):
                             "metrics secrets)")
 
     def actions(self, system: System) -> list[Action]:
+        # A plain directory inside the installation root, never a subvolume:
+        # the root and the gateway's access/ beside it stay (uninstall.kept).
         root = self.context.layout.root
-        if system.fstype(root.parent) == "btrfs":
-            delete = ("btrfs", "subvolume", "delete", str(root))
-        else:
-            delete = ("rm", "-rf", "--one-file-system", "--", str(root))
+        delete = ("rm", "-rf", "--one-file-system", "--", str(root))
         return [Task(f"type {root} to confirm", self.confirm, interactive=True), Command(delete, root=True)]
 
     def confirm(self, system: System) -> int:

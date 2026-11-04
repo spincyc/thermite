@@ -111,7 +111,7 @@ class UnifiedInstall(unittest.TestCase):
     def test_both_workflows_apply_ingress_before_native_and_gateway_before_completion(self):
         import oh_deploy
         context = steps.Context(AREA, {"openhab": {"version": "5.2.3"}},
-                                {"state_root": "/srv/fictional", "uid": 9001, "gid": 9001},
+                                {"root": "/srv/fictional", "uid": 9001, "gid": 9001},
                                 "a" * 40, "b" * 64, "fixture", None,
                                 prepared={"conf/services/addons.cfg": oh_deploy.Blob(b"binding = http\n")},
                                 application={"version": "0.1.0.dev0", "digest": "c" * 64})
@@ -147,7 +147,7 @@ class GatewayReadinessLifecycle(unittest.TestCase):
         import oh_deploy
         import oh_sandbox
         context = steps.Context(AREA, {"openhab": {"version": "5.2.3"}},
-                                {"state_root": "/srv/fictional", "uid": 9001, "gid": 9001, "http_port": 13601},
+                                {"root": "/srv/fictional", "uid": 9001, "gid": 9001, "http_port": 13601},
                                 "a" * 40, "b" * 64, "fixture", None,
                                 prepared={"conf/services/addons.cfg": oh_deploy.Blob(b"binding=sonos\n")},
                                 application={"version": "0.1.0.dev0", "digest": "c" * 64})

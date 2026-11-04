@@ -58,7 +58,7 @@ SCRAPE_TIMEOUT = "10s"
 #: Shorter than SCRAPE_TIMEOUT, so a dead device fails its probe instead of the scrape.
 PROBE_TIMEOUT = "5s"
 
-#: Below the state root (instance/host.yaml state_root): the deployed copy of
+#: Below the runtime state (oh_deploy.State): the deployed copy of
 #: metrics/ (written by bin/thermite deploy through the group, like conf/),
 #: and the monitoring directory with the stores and secrets.
 STATE_CONFIG = "metrics"
@@ -139,7 +139,7 @@ def openhab_address(host: dict) -> str:
 
 @dataclasses.dataclass(frozen=True)
 class Volume:
-    """One mount: `source` is below the state root unless it is absolute."""
+    """One mount: `source` is below the runtime state unless it is absolute."""
 
     source: str
     target: str

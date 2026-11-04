@@ -47,11 +47,11 @@ class SystemMetadata(unittest.TestCase):
         sentinel = "-".join(("private", "credential", "sentinel"))
         host = {"http_port": 14001, "metrics": {"grafana_port": 14002, "prometheus_port": 14003,
                 "alertmanager_port": 14004, "ntfy_port": 14005}, "hostname": "private-host.invalid",
-                "state_root": "/private/site/path", "password": sentinel}
+                "root": "/private/site/path", "password": sentinel}
         result = remote_system.manifest(host, "5.3.0-SNAPSHOT")
         self.assertEqual([tool["port"] for tool in result["tools"]], list(range(14001, 14006)))
         encoded = json.dumps(result)
-        for private in (host["hostname"], host["state_root"], host["password"]):
+        for private in (host["hostname"], host["root"], host["password"]):
             self.assertNotIn(private, encoded)
         self.assertNotIn("url", result["tools"][0])
         self.assertFalse(any("healthy" in tool or "status" in tool or "installed" in tool for tool in result["tools"]))
@@ -73,7 +73,7 @@ class SystemMetadata(unittest.TestCase):
             site, program = root / "site", root / "program"
             (site / "instance").mkdir(parents=True)
             (program / "instance").mkdir(parents=True)
-            host = ("state_root: /srv/thermite\ntimezone: Etc/UTC\nhttps_port: 13602\nuid: 9001\ngid: 9001\n")
+            host = ("root: /srv/thermite\ntimezone: Etc/UTC\nhttps_port: 13602\nuid: 9001\ngid: 9001\n")
             (site / "instance/host.yaml").write_text(host + "http_port: 14001\nmetrics:\n  grafana_port: 14002\n")
             (program / "instance/host.yaml").write_text(host + "http_port: 15001\n")
             (site / "versions.json").write_text(json.dumps({"openhab": {"version": "0.0.0"}}))
@@ -87,7 +87,7 @@ class SystemMetadata(unittest.TestCase):
             (program / "versions.json").write_text(json.dumps({"openhab": {"version": "5.2.3"}}))
             # The site's host file is validated by the one host loader.
             (site / "instance/host.yaml").write_text("http_port: 14001\n")
-            with self.assertRaisesRegex(ValueError, "valid host file.*missing state_root"):
+            with self.assertRaisesRegex(ValueError, "valid host file.*missing timezone"):
                 remote_system.selected(site=site, program=program)
 
 

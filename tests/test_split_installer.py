@@ -50,7 +50,8 @@ class SplitInstaller(unittest.TestCase):
         self.requirement = {"version": 2, "application": release["application"], "release": release["digest"]}
         (self.site / oh_paths.SITE_FILE).write_text(json.dumps(self.requirement))
         self.versions = {"openhab": {"version": "5.2.3"}, "java": {"version": "21"}}
-        self.host = {"uid": 9001, "gid": 9001, "state_root": str(self.site / "native-state"), "http_port": 13601}
+        self.host = {"uid": 9001, "gid": 9001, "root": str(self.site / "installation"), "http_port": 13601}
+        self.runtime = self.site / "installation/runtime"
         self.files = {name: deploy.Blob(("frozen " + name).encode()) for name in deploy.INSTALLED}
         self.files.update({"conf/services/addons.cfg": deploy.Blob(b"binding = http,network\nmisc = metrics\n"),
                            "conf/automation/js/owned.js": deploy.Blob(b"// committed generated rule\n"),
@@ -198,7 +199,7 @@ class SplitInstaller(unittest.TestCase):
                          {str(root / name) for name in deploy.INSTALLED})
         deploy_actions = steps.Deploy(self.context).actions(self.system)
         self.assertEqual(len(deploy_actions), 1)
-        self.assertEqual(deploy_actions[0].argv, (*prefix, "deploy", self.context.head, "--state", self.host["state_root"], "--_configuration-phase"))
+        self.assertEqual(deploy_actions[0].argv, (*prefix, "deploy", self.context.head, "--state", str(self.runtime), "--_configuration-phase"))
         self.assertIn("--yes", deploy_actions[0].approved_argv)
         self.assertTrue(deploy_actions[0].terminal)
         verification = steps.Verify(self.context).actions(self.system)[0]
@@ -254,7 +255,7 @@ class SplitInstaller(unittest.TestCase):
                     patch.object(deploy, "prepared_files", return_value=(self.files, self.application)), \
                     patch.object(rollback_cli, "warn_units", return_value=[]), \
                     patch.object(deploy, "deploy", return_value=result) as applied, patch("sys.stdout", new=io.StringIO()):
-                self.assertEqual(rollback_cli.roll_back(args, deploy.State(Path(self.host["state_root"])), host=self.host), 0)
+                self.assertEqual(rollback_cli.roll_back(args, deploy.State(self.runtime), host=self.host), 0)
                 self.assertEqual(applied.call_args.kwargs["force"], accepted)
                 self.assertEqual(applied.call_args.kwargs.get("expected_conf_digest"), self.context.conf_digest if accepted else None)
 
@@ -318,7 +319,7 @@ class SplitInstaller(unittest.TestCase):
                 patch.object(rollback_cli, "roll_back", return_value=0) as apply:
             self.assertEqual(rollback_cli.main(["previous", "--dry-run"]), 0)
             self.assertEqual(apply.call_args.args[0].commit, self.context.head)
-            self.assertEqual(apply.call_args.args[1].root, Path(self.host["state_root"]))
+            self.assertEqual(apply.call_args.args[1].root, self.runtime)
 
     def test_privileged_helper_paths_use_the_frozen_application(self):
         program = self.site / "var/application-releases" / self.application["digest"]

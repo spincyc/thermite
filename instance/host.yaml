@@ -1,5 +1,4 @@
 {
-  "state_root": "/srv/thermite",
   "timezone": "Etc/UTC",
   "http_port": 13601,
   "https_port": 13602,

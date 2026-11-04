@@ -28,7 +28,7 @@ history lists more).
 EXAMPLES = (
     ("thermite status", "the deployed commit against HEAD, the units, the services, runtime"),
     ("thermite status --json", "the same, as JSON, with the problems that make it exit 1"),
-    ("thermite status --state /tmp/state", "the same for a state root somewhere else"),
+    ("thermite status --state /tmp/state", "the same for a runtime state somewhere else"),
 )
 
 NOTES = """\
@@ -160,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     oh_cli.add_json(parser)
     parser.add_argument("--revision", help=argparse.SUPPRESS)
     parser.add_argument("--state", type=Path, metavar="DIR",
-                        help="the state root (default: instance/host.yaml state_root)")
+                        help="the runtime state (default: runtime/ in instance/host.yaml's root, /srv/thermite)")
     args = parser.parse_args(argv)
     try:
         from oh_paths import SITE_FILE

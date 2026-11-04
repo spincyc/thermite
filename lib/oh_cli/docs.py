@@ -23,7 +23,7 @@ The docs site is plain HTML, made from site/: its pages, every verb's own
 help (the commands page), and the torch and color themes. The thermite
 repository publishes it with GitHub Pages, so it is public: every action
 first refuses a site that names this house: an address, a MAC, the host's
-state root or time zone, a device's id, name, model or make, a room's label,
+installation root or time zone, a device's id, name, model or make, a room's label,
 or a word in instance/private-words.txt (list the host's name there if the
 site must not name it).
 """

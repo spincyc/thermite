@@ -94,7 +94,7 @@ def _owner_copy(parent, name, content, uid, gid):
     os.fsync(parent)
 
 
-def install(state_root, *, name, source=None, uid, gid, preserve_existing=False, generate_if_missing=False):
+def install(runtime, *, name, source=None, uid, gid, preserve_existing=False, generate_if_missing=False):
     """Install exact bytes, or preserve an existing password without opening source."""
     if name not in NAMES or type(uid) is not int or type(gid) is not int or uid <= 0 or gid <= 0:
         raise SecretError("choose a supported credential and non-root service uid/gid")
@@ -102,9 +102,9 @@ def install(state_root, *, name, source=None, uid, gid, preserve_existing=False,
         raise SecretError("only the generated Grafana password may preserve an existing credential")
     if generate_if_missing and not preserve_existing:
         raise SecretError("generation requires preserving the existing Grafana password")
-    root = _path(state_root)
+    root = _path(runtime)
     if root == Path("/"):
-        raise SecretError("the filesystem root cannot be a service state root")
+        raise SecretError("the filesystem root cannot be the runtime state")
     if os.geteuid() != 0 and (uid != os.geteuid() or gid != os.getegid()):
         raise SecretError("an administrative command is required to install another service identity's credential")
     with ExitStack() as stack:
@@ -213,7 +213,7 @@ def _validate_runtime_token(url, content):
         raise SecretError("installed runtime credential could not be verified") from None
 
 
-def recover_runtime_token(state_root, *, destination, uid, gid, url):
+def recover_runtime_token(runtime, *, destination, uid, gid, url):
     """Restore only a missing operator token from the installed service copy.
 
     No account or service secret is changed. Existing local credentials and
@@ -221,9 +221,9 @@ def recover_runtime_token(state_root, *, destination, uid, gid, url):
     """
     if type(uid) is not int or type(gid) is not int or uid <= 0 or gid <= 0:
         raise SecretError("choose a non-root service identity")
-    root, destination = _path(state_root), _path(destination)
+    root, destination = _path(runtime), _path(destination)
     if root == Path("/") or destination.name != "api-token":
-        raise SecretError("choose the installed state root and operator api-token path")
+        raise SecretError("choose the installed runtime state and operator api-token path")
     try:
         owner = int(os.environ.get("SUDO_UID", str(os.getuid())))
         group = int(os.environ.get("SUDO_GID", str(os.getgid())))
@@ -271,7 +271,7 @@ def recover_runtime_token(state_root, *, destination, uid, gid, url):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("state_root", type=Path)
+    parser.add_argument("runtime", type=Path)
     parser.add_argument("--name", required=True, choices=NAMES)
     parser.add_argument("--source", type=Path, help="invoking administrator's private mode-0600 copy")
     parser.add_argument("--uid", required=True, type=int)
@@ -285,7 +285,7 @@ def main(argv=None):
         if args.recover_runtime_token:
             if args.name != "openhab-token" or args.source is None or args.preserve_existing or args.generate_if_missing:
                 raise SecretError("invalid runtime recovery arguments")
-            result = recover_runtime_token(args.state_root, destination=args.source, uid=args.uid, gid=args.gid, url=args.runtime_url)
+            result = recover_runtime_token(args.runtime, destination=args.source, uid=args.uid, gid=args.gid, url=args.runtime_url)
         else:
             if args.runtime_url is not None:
                 raise SecretError("runtime origin is only used for credential recovery")

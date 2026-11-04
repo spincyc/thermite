@@ -29,7 +29,7 @@ EXAMPLES = (
     ("thermite history", "the last 10 deploys here"),
     ("thermite history --last 0", "every one"),
     ("thermite history --json", "the same, as JSON"),
-    ("thermite history --state /tmp/state", "the deploys of a state root somewhere else"),
+    ("thermite history --state /tmp/state", "the deploys of a runtime state somewhere else"),
 )
 
 BOOT = {True: "passed", False: "not passed", None: "?"}
@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="the last N deploys; 0 for every one (default: 10)")
     oh_cli.add_json(parser)
     parser.add_argument("--state", type=Path, metavar="DIR",
-                        help="the state root (default: instance/host.yaml state_root)")
+                        help="the runtime state (default: runtime/ in instance/host.yaml's root, /srv/thermite)")
     args = parser.parse_args(argv)
     if args.last < 0:
         parser.error("--last takes 0 or more")

@@ -36,7 +36,7 @@ class CommittedSnapshots(unittest.TestCase):
         (self.site / ".gitignore").write_text("/var/\n/conf/\n/metrics/\n/deploy/\n")
         (self.site / "instance").mkdir()
         (self.site / "instance/host.yaml").write_text(
-            "state_root: /srv/thermite-fixture\ntimezone: Etc/UTC\nhttp_port: 13601\nhttps_port: 13602\nuid: 9001\ngid: 9001\n")
+            "root: /srv/thermite-fixture\ntimezone: Etc/UTC\nhttp_port: 13601\nhttps_port: 13602\nuid: 9001\ngid: 9001\n")
         (self.site / "versions.json").write_text('{"native":"fixture-one"}\n')
         self.var = self.site / "var"
         self.var.mkdir()
@@ -116,7 +116,7 @@ for name, value in outputs.items():
         self.assertEqual(deploy.unit_differences(self.site, commit, mapping), list(mapping))
         (self.site / "instance/host.yaml").write_text("invalid working host")
         versions, host, requirement = deploy.committed_inputs(self.site, commit)
-        self.assertEqual(host["state_root"], "/srv/thermite-fixture")
+        self.assertEqual(host["root"], "/srv/thermite-fixture")
         self.assertEqual(versions, {"native": "fixture-one"})
         self.assertEqual(requirement["version"], 2)
 

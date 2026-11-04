@@ -25,13 +25,13 @@ are service and recovery primitives, not a separate deployment sequence.
 """
 
 EXAMPLES = (("thermite access login --url https://thermite.example:13600 --user operator", "save this site's personal credential privately"),
-            ("thermite access setup --config /srv/thermite/config.json", "arm first admin setup on the HTTPS Security page"),
-            ("thermite access migrate --config /srv/thermite/config.json", "upgrade identity schema after stopping services and backing up state"),
-            ("thermite access bootstrap --config /srv/thermite/config.json --user admin", "initialize one site's first admin locally"),
-            ("thermite access verify --config /srv/thermite-access/releases/current/config.json", "check service ownership and configuration as thermite before activation"),
-            ("thermite access serve --config /srv/thermite/config.json", "serve the compiled site over verified TLS"),
-            ("thermite access worker --config /srv/thermite/config.json", "run the single supervised room-policy worker"),
-            ("thermite access prune --config /srv/thermite/config.json", "delete saved policies for rooms the house no longer has"))
+            ("thermite access setup --config /srv/thermite/access/releases/RELEASE/config.json", "arm first admin setup on the HTTPS Security page"),
+            ("thermite access migrate --config /srv/thermite/access/releases/RELEASE/config.json", "upgrade identity schema after stopping services and backing up state"),
+            ("thermite access bootstrap --config /srv/thermite/access/releases/RELEASE/config.json --user admin", "initialize one site's first admin locally"),
+            ("thermite access verify --config /srv/thermite/access/releases/RELEASE/config.json", "check service ownership and configuration as thermite before activation"),
+            ("thermite access serve --config /srv/thermite/access/releases/RELEASE/config.json", "serve the compiled site over verified TLS"),
+            ("thermite access worker --config /srv/thermite/access/releases/RELEASE/config.json", "run the single supervised room-policy worker"),
+            ("thermite access prune --config /srv/thermite/access/releases/RELEASE/config.json", "delete saved policies for rooms the house no longer has"))
 
 
 def hidden_password(prompt="Password: ", *, confirm=False):
@@ -86,7 +86,7 @@ def main(argv=None):
         sub.add_argument("--config", required=True, type=Path, help="private site service configuration")
         if name == "bootstrap":
             sub.add_argument("--user", required=True, help="first admin's username")
-    sub = oh_cli.action(commands, "callbacks", "run the explicitly configured plaintext UPnP NOTIFY listener", examples=[("thermite access callbacks --config /srv/thermite/release/callbacks.json", "run only verified callback paths and peers")])
+    sub = oh_cli.action(commands, "callbacks", "run the explicitly configured plaintext UPnP NOTIFY listener", examples=[("thermite access callbacks --config /srv/thermite/access/releases/RELEASE/callbacks.json", "run only verified callback paths and peers")])
     sub.add_argument("--config", required=True, type=Path, help="private mode0600 callback-only configuration")
     for name in ("login", "logout", "status"):
         sub = oh_cli.action(commands, name, {"login": "log this terminal into a site", "logout": "revoke this terminal's site credential", "status": "read this terminal's current site identity and policies"}[name], examples=[("thermite access " + name + " --url https://thermite.example:13600" + (" --user operator" if name == "login" else ""), "use this site's private terminal credential")])

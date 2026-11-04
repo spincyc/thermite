@@ -215,7 +215,7 @@ class Trust(Scratch):
         self.assertEqual(status, 2)
         self.assertIn("does not trust", err)
         self.assertIn("tls-cert.pem", err)
-        self.assertIn("-access", err)
+        self.assertIn("/srv/thermite/access/tls-cert.pem", err)
         self.assertIn(f"thermite tui --url https://thermite:{PORT} --ca-file FILE", err)
         self.assertNotIn("Traceback", err)
         self.launch.assert_not_called()
@@ -253,7 +253,7 @@ class Trust(Scratch):
         self.assertEqual(self.opened, [])
 
     def test_on_the_server_the_installed_gateways_authority_is_used(self):
-        root = self.root / "srv/thermite-access"
+        root = self.root / "srv/thermite/access"
         (root / "releases/abc").mkdir(parents=True)
         shutil.copyfile(self.authority(), root / "tls-cert.pem")
         unit = self.root / "thermite-access.service"

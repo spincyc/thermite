@@ -75,7 +75,7 @@ def demo() -> dict:
 
 def demo_host() -> dict:
     from oh_ports import HTTP_PORT, HTTPS_PORT
-    return {"state_root": "/srv/thermite", "timezone": "Etc/UTC", "http_port": HTTP_PORT, "https_port": HTTPS_PORT,
+    return {"timezone": "Etc/UTC", "http_port": HTTP_PORT, "https_port": HTTPS_PORT,
             "uid": 9001, "gid": 9001, "metrics": {"units": []}}
 
 

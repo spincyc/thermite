@@ -299,7 +299,7 @@ def main(argv=None) -> int:
     p = oh_cli.action(sub, "logs", "show userdata/logs/openhab.log", examples=(
         ("thermite sandbox logs", "the last 50 lines"),
         ("thermite sandbox logs -f", "and keep following it"),
-        ("thermite sandbox logs -f --userdata STATE_ROOT/userdata", "production's log (state_root: the host file)"),
+        ("thermite sandbox logs -f --userdata /srv/thermite/runtime/userdata", "production's log, in the runtime state"),
     ))
     p.add_argument("-f", "--follow", action="store_true", help="keep following the log")
     p.add_argument("-n", "--lines", type=int, default=50, metavar="N", help="lines to show first (default: 50)")

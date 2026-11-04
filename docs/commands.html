@@ -744,8 +744,8 @@ switches every verb takes:
 examples:
   thermite sandbox logs             the last 50 lines
   thermite sandbox logs -f          and keep following it
-  thermite sandbox logs -f --userdata STATE_ROOT/userdata
-                                    production&#x27;s log (state_root: the host file)
+  thermite sandbox logs -f --userdata /srv/thermite/runtime/userdata
+                                    production&#x27;s log, in the runtime state
 </pre></details>
 </section>
 <section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, with one approval for the whole run.</p><pre class="help">usage: thermite install [-h] [--config DIR] [-n] [--clean] [--restart-runtime]
@@ -904,15 +904,17 @@ and systemctl daemon-reload. The services come from quadlets, which systemd
 generates from those files, so removing them is what keeps them from
 starting at the next boot.
 
-It keeps the state root (conf, userdata, secrets, the deploy records and
-backups, Prometheus&#x27; samples, Grafana&#x27;s data and the metrics secrets), the
-thermite user and group, the packages, images and host node-exporter
-confinement configuration, and says so: thermite
-install puts runtime and the metrics back on the same state. --purge, as apt
-purge does, also deletes the state root; before that step it shows the path
-and asks you to type it. The HTTPS gateway, its worker and callback units,
-and their identity state (accounts, TLS key) are kept, with the commands
-that remove them; so are the loaded native port filter and its rule file.
+It keeps the runtime state, runtime/ in the installation root (conf,
+userdata, secrets, the deploy records and backups, Prometheus&#x27; samples,
+Grafana&#x27;s data and the metrics secrets), the thermite user and group, the
+packages, images and host node-exporter confinement configuration, and says
+so: thermite install puts runtime and the metrics back on the same state.
+--purge, as apt purge does, also deletes the runtime state; before that step
+it shows the path and asks you to type it. The HTTPS gateway, its worker and
+callback units, and their identity state (accounts, TLS key) in the
+installation root&#x27;s access/ are kept, with the commands that remove them and
+then the emptied installation root; so are the loaded native port filter and
+its rule file.
 
 One y/n question approves this uninstall run, including its sudo commands.
 Compact status shows each stage; -v/--verbose shows details and commands.
@@ -925,7 +927,7 @@ options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
   -n, --dry-run         report what it would do; change nothing
-  --purge               also delete the state root: conf, userdata, secrets, deploy
+  --purge               also delete the runtime state: conf, userdata, secrets, deploy
                         records, backups, metrics
 
 switches every verb takes:
@@ -957,7 +959,8 @@ options:
   --yes                 approve the ownership handoff for this invocation;
                         install/upgrade use their run approval
   --force               install a conf thermite test boot has not passed on here
-  --state DIR           the state root (default: instance/host.yaml state_root)
+  --state DIR           the runtime state (default: runtime/ in instance/host.yaml&#x27;s
+                        root, /srv/thermite)
 
 switches every verb takes:
   -q, --quiet           print only errors
@@ -1003,7 +1006,8 @@ options:
   -n, --dry-run         report what it would do; change nothing
   --force               deploy a commit that never ran here without a passed thermite
                         test boot
-  --state DIR           the state root (default: instance/host.yaml state_root)
+  --state DIR           the runtime state (default: runtime/ in instance/host.yaml&#x27;s
+                        root, /srv/thermite)
 
 switches every verb takes:
   -q, --quiet           print only errors
@@ -1036,7 +1040,8 @@ options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
   --json                print the report as JSON
-  --state DIR           the state root (default: instance/host.yaml state_root)
+  --state DIR           the runtime state (default: runtime/ in instance/host.yaml&#x27;s
+                        root, /srv/thermite)
 
 switches every verb takes:
   -q, --quiet           print only errors
@@ -1055,7 +1060,7 @@ examples:
   thermite status                   the deployed commit against HEAD, the units, the services, runtime
   thermite status --json            the same, as JSON, with the problems that make it exit 1
   thermite status --state /tmp/state
-                                    the same for a state root somewhere else
+                                    the same for a runtime state somewhere else
 </pre>
 </section>
 <section class="verb" id="history"><h3><code>thermite history</code></h3><p>This host&#x27;s deploys, numbered, the latest last.</p><pre class="help">usage: thermite history [-h] [--config DIR] [--last N] [--json] [--state DIR]
@@ -1075,7 +1080,8 @@ options:
   --config, --site DIR  use this private configuration directory
   --last N              the last N deploys; 0 for every one (default: 10)
   --json                print the report as JSON
-  --state DIR           the state root (default: instance/host.yaml state_root)
+  --state DIR           the runtime state (default: runtime/ in instance/host.yaml&#x27;s
+                        root, /srv/thermite)
 
 switches every verb takes:
   -q, --quiet           print only errors
@@ -1087,7 +1093,7 @@ examples:
   thermite history --last 0         every one
   thermite history --json           the same, as JSON
   thermite history --state /tmp/state
-                                    the deploys of a state root somewhere else
+                                    the deploys of a runtime state somewhere else
 </pre>
 </section>
 <section class="verb" id="health"><h3><code>thermite health</code></h3><p>Read-only: every Thing ONLINE in the runtime.</p><pre class="help">usage: thermite health [-h] [--config DIR] (--production | --sandbox | --url URL)
@@ -1883,8 +1889,8 @@ switches every verb takes:
 
 trust:
   The gateway&#x27;s certificate is signed by the server&#x27;s private certificate
-  authority: tls-cert.pem in the gateway root, which is the state root with
-  -access appended (e.g. /srv/thermite-access/tls-cert.pem); thermite
+  authority: tls-cert.pem in the gateway root, the installation root&#x27;s
+  access/ directory (e.g. /srv/thermite/access/tls-cert.pem); thermite
   install prints its path. On the server itself the installation&#x27;s copy is
   used. On another computer, copy that file once and pass it with
   --ca-file; it is then remembered for that address, as thermite access
@@ -1957,19 +1963,19 @@ switches every verb takes:
 examples:
   thermite access login --url https://thermite.example:13600 --user operator
                                     save this site&#x27;s personal credential privately
-  thermite access setup --config /srv/thermite/config.json
+  thermite access setup --config /srv/thermite/access/releases/RELEASE/config.json
                                     arm first admin setup on the HTTPS Security page
-  thermite access migrate --config /srv/thermite/config.json
+  thermite access migrate --config /srv/thermite/access/releases/RELEASE/config.json
                                     upgrade identity schema after stopping services and backing up state
-  thermite access bootstrap --config /srv/thermite/config.json --user admin
+  thermite access bootstrap --config /srv/thermite/access/releases/RELEASE/config.json --user admin
                                     initialize one site&#x27;s first admin locally
-  thermite access verify --config /srv/thermite-access/releases/current/config.json
+  thermite access verify --config /srv/thermite/access/releases/RELEASE/config.json
                                     check service ownership and configuration as thermite before activation
-  thermite access serve --config /srv/thermite/config.json
+  thermite access serve --config /srv/thermite/access/releases/RELEASE/config.json
                                     serve the compiled site over verified TLS
-  thermite access worker --config /srv/thermite/config.json
+  thermite access worker --config /srv/thermite/access/releases/RELEASE/config.json
                                     run the single supervised room-policy worker
-  thermite access prune --config /srv/thermite/config.json
+  thermite access prune --config /srv/thermite/access/releases/RELEASE/config.json
                                     delete saved policies for rooms the house no longer has
 </pre>
 <details id="access-bootstrap"><summary><code>thermite access bootstrap</code></summary><pre class="help">usage: thermite access bootstrap [-h] --config CONFIG --user USER
@@ -1987,7 +1993,7 @@ switches every verb takes:
   --no-color       no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access bootstrap --config /srv/thermite/config.json --user admin
+  thermite access bootstrap --config /srv/thermite/access/releases/RELEASE/config.json --user admin
                                     initialize one site&#x27;s first admin locally
 </pre></details>
 <details id="access-setup"><summary><code>thermite access setup</code></summary><pre class="help">usage: thermite access setup [-h] --config CONFIG
@@ -2004,7 +2010,7 @@ switches every verb takes:
   --no-color       no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access setup --config /srv/thermite/config.json
+  thermite access setup --config /srv/thermite/access/releases/RELEASE/config.json
                                     arm first admin setup on the HTTPS Security page
 </pre></details>
 <details id="access-migrate"><summary><code>thermite access migrate</code></summary><pre class="help">usage: thermite access migrate [-h] --config CONFIG
@@ -2021,7 +2027,7 @@ switches every verb takes:
   --no-color       no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access migrate --config /srv/thermite/config.json
+  thermite access migrate --config /srv/thermite/access/releases/RELEASE/config.json
                                     upgrade identity schema after stopping services and backing up state
 </pre></details>
 <details id="access-serve"><summary><code>thermite access serve</code></summary><pre class="help">usage: thermite access serve [-h] --config CONFIG
@@ -2038,7 +2044,7 @@ switches every verb takes:
   --no-color       no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access serve --config /srv/thermite/config.json
+  thermite access serve --config /srv/thermite/access/releases/RELEASE/config.json
                                     serve the compiled site over verified TLS
 </pre></details>
 <details id="access-worker"><summary><code>thermite access worker</code></summary><pre class="help">usage: thermite access worker [-h] --config CONFIG
@@ -2055,7 +2061,7 @@ switches every verb takes:
   --no-color       no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access worker --config /srv/thermite/config.json
+  thermite access worker --config /srv/thermite/access/releases/RELEASE/config.json
                                     run the single supervised room-policy worker
 </pre></details>
 <details id="access-verify"><summary><code>thermite access verify</code></summary><pre class="help">usage: thermite access verify [-h] --config CONFIG
@@ -2072,7 +2078,7 @@ switches every verb takes:
   --no-color       no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access verify --config /srv/thermite-access/releases/current/config.json
+  thermite access verify --config /srv/thermite/access/releases/RELEASE/config.json
                                     check service ownership and configuration as thermite before activation
 </pre></details>
 <details id="access-prune"><summary><code>thermite access prune</code></summary><pre class="help">usage: thermite access prune [-h] --config CONFIG
@@ -2089,7 +2095,7 @@ switches every verb takes:
   --no-color       no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access prune --config /srv/thermite/config.json
+  thermite access prune --config /srv/thermite/access/releases/RELEASE/config.json
                                     delete saved policies for rooms the house no longer has
 </pre></details>
 <details id="access-callbacks"><summary><code>thermite access callbacks</code></summary><pre class="help">usage: thermite access callbacks [-h] --config CONFIG
@@ -2106,7 +2112,7 @@ switches every verb takes:
   --no-color       no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access callbacks --config /srv/thermite/release/callbacks.json
+  thermite access callbacks --config /srv/thermite/access/releases/RELEASE/callbacks.json
                                     run only verified callback paths and peers
 </pre></details>
 <details id="access-login"><summary><code>thermite access login</code></summary><pre class="help">usage: thermite access login [-h] [--url URL] --user USER [--ca-file CA_FILE] [--json]
@@ -2378,7 +2384,7 @@ The docs site is plain HTML, made from site/: its pages, every verb&#x27;s own
 help (the commands page), and the torch and color themes. The thermite
 repository publishes it with GitHub Pages, so it is public: every action
 first refuses a site that names this house: an address, a MAC, the host&#x27;s
-state root or time zone, a device&#x27;s id, name, model or make, a room&#x27;s label,
+installation root or time zone, a device&#x27;s id, name, model or make, a room&#x27;s label,
 or a word in instance/private-words.txt (list the host&#x27;s name there if the
 site must not name it).
 

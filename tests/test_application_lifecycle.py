@@ -384,7 +384,7 @@ class Commands(unittest.TestCase):
 
     def test_host_phase_threads_native_timeout_into_its_context(self):
         context = steps.Context(AREA, {"openhab": {"version": "5.2.3"}},
-                                {"state_root": "/srv/fictional", "uid": 9001, "gid": 9001},
+                                {"root": "/srv/fictional", "uid": 9001, "gid": 9001},
                                 "a" * 40, "b" * 64, "fixture", None)
         seen = []
 
@@ -464,6 +464,12 @@ Path(report).write_text(json.dumps({"code": code, "host": host}))
         environment.pop("THERMITE_SITE", None)
         subprocess.run([sys.executable, "-B", str(installed / "bin/thermite"), "init", str(site)],
                        check=True, capture_output=True, env=environment, timeout=120)
+        # The owner's one edit before this upgrade: the installed release wrote
+        # state_root, which this release rejects; the default root replaces it.
+        host_file = site / "instance/host.yaml"
+        host = yaml.safe_load(host_file.read_text())
+        self.assertEqual(host.pop("state_root"), "/srv/thermite")
+        host_file.write_text(json.dumps(host, indent=2) + "\n")
         self.initialize_git(site)
         official = root / "official"
         official.mkdir()

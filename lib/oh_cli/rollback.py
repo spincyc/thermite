@@ -126,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true",
                         help="deploy a commit that never ran here without a passed thermite test boot")
     parser.add_argument("--state", type=Path, metavar="DIR",
-                        help="the state root (default: instance/host.yaml state_root)")
+                        help="the runtime state (default: runtime/ in instance/host.yaml's root, /srv/thermite)")
     args = parser.parse_args(argv)
     try:
         selected, host, _ = deployment_selection(args.commit or "HEAD")

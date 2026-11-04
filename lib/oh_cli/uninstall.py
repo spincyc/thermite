@@ -27,15 +27,17 @@ and systemctl daemon-reload. The services come from quadlets, which systemd
 generates from those files, so removing them is what keeps them from
 starting at the next boot.
 
-It keeps the state root (conf, userdata, secrets, the deploy records and
-backups, Prometheus' samples, Grafana's data and the metrics secrets), the
-thermite user and group, the packages, images and host node-exporter
-confinement configuration, and says so: thermite
-install puts runtime and the metrics back on the same state. --purge, as apt
-purge does, also deletes the state root; before that step it shows the path
-and asks you to type it. The HTTPS gateway, its worker and callback units,
-and their identity state (accounts, TLS key) are kept, with the commands
-that remove them; so are the loaded native port filter and its rule file.
+It keeps the runtime state, runtime/ in the installation root (conf,
+userdata, secrets, the deploy records and backups, Prometheus' samples,
+Grafana's data and the metrics secrets), the thermite user and group, the
+packages, images and host node-exporter confinement configuration, and says
+so: thermite install puts runtime and the metrics back on the same state.
+--purge, as apt purge does, also deletes the runtime state; before that step
+it shows the path and asks you to type it. The HTTPS gateway, its worker and
+callback units, and their identity state (accounts, TLS key) in the
+installation root's access/ are kept, with the commands that remove them and
+then the emptied installation root; so are the loaded native port filter and
+its rule file.
 
 One y/n question approves this uninstall run, including its sudo commands.
 Compact status shows each stage; -v/--verbose shows details and commands.
@@ -55,8 +57,9 @@ EXAMPLES = (
 def kept(context: steps.Context, purge: bool) -> str:
     from oh_access.staging import ACCESS_UNITS
     from oh_install.ingress import RULE_FILE
-    state = "" if purge else f"the state root, {context.layout.root} (thermite uninstall --purge deletes it); "
-    access = f"{context.layout.root}-access"
+    installation = context.installation
+    state = "" if purge else f"the runtime state, {installation.runtime} (thermite uninstall --purge deletes it); "
+    access = installation.access
     units = " ".join(ACCESS_UNITS)
     return (f"Kept: {state}the thermite user and group; the packages; the images (`sudo podman images` lists them, "
             "`sudo podman rmi IMAGE` deletes one); host node-exporter confinement configuration; and this clone.\n"
@@ -64,7 +67,9 @@ def kept(context: steps.Context, purge: bool) -> str:
             "TLS key. Back that directory up first, then remove them with "
             f"`sudo systemctl disable --now {units}`, "
             + " ".join(f"`sudo rm /etc/systemd/system/{name}`" for name in ACCESS_UNITS)
-            + f", `sudo systemctl daemon-reload` and `sudo rm -rf --one-file-system {access}`.\n"
+            + f", `sudo systemctl daemon-reload` and `sudo rm -rf --one-file-system {access}`. Once runtime/ and "
+            f"access/ are both gone, `sudo rmdir {installation.root}` removes the installation root, "
+            "a btrfs subvolume or a plain directory.\n"
             f"The native port filter stays loaded until reboot: `sudo nft delete table inet thermite_native` "
             f"unloads it and `sudo rm {RULE_FILE}` removes its rules.\n"
             "thermite install installs runtime, the gateway and the metrics again.")
@@ -78,7 +83,7 @@ def uninstall(system: System, dry_run: bool, purge: bool) -> int:
                f"{'would do' if dry_run else 'step by step'}:")
     if not dry_run:
         system.say(f"This run stops runtime and monitoring, removes their units, and "
-                   f"{'deletes' if purge else 'keeps'} the state at {context.layout.root}.")
+                   f"{'deletes' if purge else 'keeps'} the runtime state at {context.layout.root}.")
         if not runner.confirm_run(system, "uninstall", RERUN):
             return 1
     code = runner.run(steps.uninstall(context, purge), system, AREA, dry_run=dry_run, rerun=RERUN,
@@ -92,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = oh_cli.command("uninstall", DESCRIPTION, EXAMPLES)
     oh_cli.add_dry_run(parser)
     parser.add_argument("--purge", action="store_true",
-                        help="also delete the state root: conf, userdata, secrets, deploy records, backups, metrics")
+                        help="also delete the runtime state: conf, userdata, secrets, deploy records, backups, metrics")
     arguments = parser.parse_args(argv)
     if os.geteuid() == 0:
         print("thermite uninstall: run it as your user; it asks once before applying the uninstall",

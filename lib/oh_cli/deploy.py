@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true",
                         help="install a conf thermite test boot has not passed on here")
     parser.add_argument("--state", type=Path, metavar="DIR",
-                        help="the state root (default: instance/host.yaml state_root)")
+                        help="the runtime state (default: runtime/ in instance/host.yaml's root, /srv/thermite)")
     parser.add_argument("--_configuration-phase", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:

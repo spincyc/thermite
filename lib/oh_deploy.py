@@ -111,13 +111,22 @@ class HostError(DeployError, ValueError):
     """instance/host.yaml is unusable; generated units are never written from it."""
 
 
-HOST_REQUIRED = ("state_root", "timezone", "http_port", "https_port", "uid", "gid")
-HOST_KEYS = frozenset((*HOST_REQUIRED, "metrics"))
+#: Everything an installation keeps on the host's state filesystem lives in
+#: this one root-owned directory unless instance/host.yaml names another root
+#: (Installation).
+DEFAULT_ROOT = "/srv/thermite"
+#: Installation's two fixed children.
+RUNTIME = "runtime"
+ACCESS = "access"
+#: The installation root's mode; root owns it.
+ROOT_MODE = 0o755
+HOST_REQUIRED = ("timezone", "http_port", "https_port", "uid", "gid")
+HOST_KEYS = frozenset((*HOST_REQUIRED, "root", "metrics"))
 METRICS_KEYS = frozenset(("units", "retention", "retention_size", "yoke_targets",
                           *(name + "_port" for name in oh_ports.METRICS)))
 #: Host values are pasted into unit files, container arguments and shell
 #: words: no whitespace, quotes, systemd specifiers or volume separators.
-_STATE_ROOT = re.compile(r"/[A-Za-z0-9._@+-]+(?:/[A-Za-z0-9._@+-]+)*")
+_ROOT = re.compile(r"/[A-Za-z0-9._@+-]+(?:/[A-Za-z0-9._@+-]+)*")
 _TIMEZONE = re.compile(r"[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*")
 _UNIT = re.compile(r"[A-Za-z0-9:_.@\\-]+")
 _DURATION = re.compile(r"0|(?=\d)(?:\d+y)?(?:\d+w)?(?:\d+d)?(?:\d+h)?(?:\d+m)?(?:\d+s)?(?:\d+ms)?")
@@ -137,9 +146,9 @@ def validate_host(host: object, where: str = "instance/host.yaml") -> dict:
         fail("missing " + ", ".join(missing))
     if unknown:
         fail("unknown setting " + ", ".join(unknown) + " (allowed: " + ", ".join(sorted(HOST_KEYS)) + ")")
-    root = host["state_root"]
-    if (not isinstance(root, str) or not _STATE_ROOT.fullmatch(root) or os.path.normpath(root) != root):
-        fail("state_root must be a normalized absolute path below / of letters, digits and ._@+-")
+    root = host.get("root", DEFAULT_ROOT)
+    if (not isinstance(root, str) or not _ROOT.fullmatch(root) or os.path.normpath(root) != root):
+        fail("root must be a normalized absolute path below / of letters, digits and ._@+-")
     zone = host["timezone"]
     if not isinstance(zone, str) or not _TIMEZONE.fullmatch(zone) or ".." in zone.split("/"):
         fail("timezone must be an IANA time zone name such as Etc/UTC")
@@ -210,7 +219,8 @@ def image(versions: dict, name: str = "openhab") -> str:
 
 @dataclasses.dataclass(frozen=True)
 class State:
-    """The state subvolume's layout (instance/host.yaml state_root)."""
+    """The runtime state's layout: Installation.runtime, the service
+    account's home. Every path below is service-owned."""
 
     root: Path
 
@@ -345,8 +355,39 @@ class State:
         return self.metrics.is_dir() and self.exporter_app.is_dir()
 
 
+@dataclasses.dataclass(frozen=True)
+class Installation:
+    """Everything an installation keeps on the host: one directory
+    (instance/host.yaml root, DEFAULT_ROOT by default) that root owns with
+    ROOT_MODE, a btrfs subvolume where its parent filesystem is btrfs: the
+    unit for snapshots, backups and removal. It holds only its two fixed
+    children, neither the other's ancestor, so the gateway's custody checks
+    meet only root- and operator-owned parents (oh_access.staging)."""
+
+    root: Path
+
+    @property
+    def runtime(self) -> Path:
+        """The runtime state (State), owned by thermite."""
+        return self.root / RUNTIME
+
+    @property
+    def access(self) -> Path:
+        """The gateway root (oh_install.access.Gateway): operator-owned, with
+        releases/, the identity state/, backups/ and tls-cert.pem."""
+        return self.root / ACCESS
+
+    @property
+    def state(self) -> State:
+        return State(self.runtime)
+
+
+def installation(host: dict) -> Installation:
+    return Installation(Path(host.get("root", DEFAULT_ROOT)))
+
+
 def state(host: dict) -> State:
-    return State(Path(host["state_root"]))
+    return installation(host).state
 
 
 # --------------------------------------------------------------------------
@@ -556,7 +597,7 @@ def openhab_prepare() -> str:
 def prepare_openhab_argv(versions: dict, host: dict) -> tuple[str, ...]:
     """Owner-approved Podman management; the offline payload remains non-root."""
     oh_service.validate_identity(host["uid"], host["gid"])
-    root = host["state_root"]
+    root = state(host).root
     return ("podman", "run", "--rm", "--runtime=runc", "--network=host", "--user", f"{host['uid']}:{host['gid']}",
             "--umask=0077", "--cap-drop=all", "--security-opt=no-new-privileges", "--entrypoint=/bin/sh",
             "--env", f"TZ={host['timezone']}",
@@ -568,7 +609,7 @@ def prepare_openhab_argv(versions: dict, host: dict) -> tuple[str, ...]:
 
 def render_quadlet(versions: dict, host: dict) -> str:
     oh_service.validate_identity(host["uid"], host["gid"])
-    root = host["state_root"]
+    root = state(host).root
     version = versions["openhab"]["version"]
     lines = [
         f"# openHAB {version}. Generated by bin/thermite generate",
@@ -773,7 +814,7 @@ def _grafana_conditions(host: dict) -> list[str]:
 
 def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service) -> str:
     oh_service.validate_identity(host["uid"], host["gid"])
-    root = Path(host["state_root"])
+    root = state(host).root
     every = metrics.services(host)
     used = [volume.source for other in every for volume in other.volumes]
     shared = {source for source in used if used.count(source) > 1}
