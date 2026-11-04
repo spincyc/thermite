@@ -9,6 +9,9 @@
   if (typeof document === "undefined") return;
   const body = document.body, current = body.dataset.thermitePage;
   if (!current || document.querySelector("[data-thermite-shell]")) return;
+  const access = global.ThermiteAccess && global.ThermiteAccess.client;
+  // Pages the Guest listener does not serve are hidden there, never fetched.
+  const unavailable = entry => Boolean(access?.guestOnly && !navigation.allowed(entry, access));
   const page = pages.find(entry => entry.id === current) || pages[0];
   const node = (tag, cls, text) => {
     const item = document.createElement(tag);
@@ -39,11 +42,18 @@
     const a = link(entry, "thermite-nav-link" + (entry.parent ? " thermite-nav-child" : ""));
     a.dataset.view = entry.id;
     if (entry.admin || entry.system) { a.hidden = true; a.dataset.adminOnly = ""; }
+    if (unavailable(entry)) a.hidden = true;
     if (global.ThermiteAccess?.client?.native && ["settings", "users", "access"].includes(entry.id)) { a.hidden = true; a.dataset.nativeUnavailable = ""; }
     if (entry.id === current) a.setAttribute("aria-current", "page");
     if (entry.id === page.parent) a.dataset.parentActive = "true";
     nav.appendChild(a);
   });
+  const secure = access?.guestOnly && access.secureSite();
+  if (secure) {
+    const a = node("a", "thermite-nav-link thermite-secure-link", "Sign in on the secure site");
+    a.href = secure + "/account/";
+    nav.appendChild(a);
+  }
   // The narrow bar keeps the theme switch at the foot of the menu; the sidebar keeps its own button.
   const themeItem = node("button", "thermite-nav-link thermite-nav-theme"); themeItem.type = "button";
   const theme = node("button", "thermite-theme", "◐"); theme.type = "button";
@@ -97,7 +107,6 @@
   // The bar names the page, so an h1 that only repeats it is left to screen readers on a phone.
   const heading = main.querySelector("h1");
   if (heading && heading.textContent.trim().toLowerCase() === page.label.toLowerCase()) heading.dataset.thermiteTitled = "";
-  const access = global.ThermiteAccess && global.ThermiteAccess.client;
   const updateAccess = () => {
     shell.querySelectorAll("[data-view]").forEach((link) => {
       const entry = pages.find(page => page.id === link.dataset.view);
@@ -107,7 +116,10 @@
   if (access) { access.subscribe(updateAccess); access.ready().then(updateAccess).catch(() => {}); }
   document.querySelectorAll("a[href]").forEach(a => {
     const entry = pages.find(page => a.getAttribute("href") === page.href || a.getAttribute("href") === page.path);
-    if (entry) a.href = href(entry.id, location.search);
+    if (entry) { a.href = href(entry.id, location.search); if (unavailable(entry)) a.hidden = true; }
   });
-  document.querySelectorAll("[data-thermite-link]").forEach(a => { a.href = href(a.dataset.thermiteLink, location.search); });
+  document.querySelectorAll("[data-thermite-link]").forEach(a => {
+    a.href = href(a.dataset.thermiteLink, location.search);
+    if (unavailable(pages.find(page => page.id === a.dataset.thermiteLink) || pages[0])) a.hidden = true;
+  });
 })(globalThis);

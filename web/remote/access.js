@@ -46,6 +46,11 @@
   }
   // Everyone controls unlocked rooms; accounts add camera media; administrators manage the site.
   const PERMISSIONS = ["site.read", "room.control", "camera.view", "settings.manage", "users.manage", "pairing.manage"];
+  // An https: origin and nothing more, or null.
+  function secureOrigin(value) {
+    let url; try { url = new URL(value); } catch (_) { return null; }
+    return url.protocol === "https:" && !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash ? url.origin : null;
+  }
   function principal(value) {
     if (!value || !Number.isInteger(value.id) || typeof value.username !== "string" || value.username.length > 150
         || /[\x00-\x1f\x7f-\x9f]/.test(value.username) || !Array.isArray(value.permissions)) throw problem("invalid_response");
@@ -57,6 +62,8 @@
     const config = options || {}, rawFetch = config.fetch || global.fetch.bind(global);
     const base = (config.base || "").replace(/\/$/, ""), origin = new URL(base || global.location.href).origin;
     const legacy = config.native === true, mock = config.mock === true;
+    // The plain-HTTP Guest listener: a Guest only, signing in on the HTTPS site.
+    const guestOnly = !legacy && !mock && config.guest === true, secure = guestOnly ? secureOrigin(config.secure) : null;
     let token = config.token || null;  // lint: allow — credential supplied by the caller
     const listeners = [], policies = Object.create(null), policyReads = Object.create(null), policyWrites = new Set(), policyFailures = new Set();
     const policyAt = Object.create(null), POLICY_EVERY = config.policyInterval || 5000, POLICY_GRACE = config.policyGrace || 15000;
@@ -193,7 +200,7 @@
       if (!loading) loading = (async () => {
         const mode = security || await loadSecurity(), revision = authRevision;
         if (mode.enabled && !token && config.getToken) token = config.getToken();
-        if (mode.enabled && !token) {
+        if (mode.enabled && !token && !guestOnly) {
           const answer = await data("/api/v1/session"); csrf = answer.csrf;
         }
         const answer = principal(await data("/api/v1/me", null, true)); stale(revision);
@@ -239,7 +246,9 @@
       ]).finally(() => clearTimeout(timer));
     }
     const client = {
-      native: legacy, mock, base, origin, ready, fetch: fetchAuth, json, loadSecurity,
+      native: legacy, mock, guestOnly, base, origin, ready, fetch: fetchAuth, json, loadSecurity,
+      // The HTTPS site's origin, which the Guest listener names; else null.
+      secureSite: () => secure,
       security: () => security,
       authEnabled: () => mock || Boolean(security && security.enabled),
       current: () => user,
@@ -355,7 +364,7 @@
       async allOff() { await ready(); return json("/api/v1/all-off", "POST", {}); },
       async login(username, password) {
         const address = new URL(origin);
-        if (address.protocol !== "https:" && !["127.0.0.1", "localhost", "[::1]"].includes(address.hostname)) throw problem("secure_connection_required");
+        if (guestOnly || address.protocol !== "https:" && !["127.0.0.1", "localhost", "[::1]"].includes(address.hostname)) throw problem("secure_connection_required");
         if (!(await loadSecurity()).enabled) throw problem("auth_disabled", 403);
         ended = false; user = null; authRevision++; const revision = authRevision;
         const session = await data("/api/v1/session"); csrf = session.csrf;
@@ -408,18 +417,22 @@
     };
     return client;
   }
-  const exported = { create, problem, returnTo, MESSAGES, client: null };
+  const exported = { create, problem, returnTo, secureOrigin, MESSAGES, client: null };
   global.ThermiteAccess = exported;
   if (typeof module !== "undefined" && module.exports) module.exports = exported;
   if (typeof document === "undefined") return;
   const params = new URLSearchParams(location.search), nativeFetch = global.fetch.bind(global), NativeEvents = global.EventSource;
   const site = global.THERMITE_ACCESS_CONFIG;
   const siteNative = site && site.version === 1 && site.mode === "native";
+  const siteGuest = site && site.version === 1 && site.mode === "guest";
   const client = exported.client = create({ fetch: nativeFetch, native: params.get("backend") !== "mock" && (params.get("backend") === "native" || siteNative), mock: params.get("backend") === "mock",
+    guest: siteGuest, secure: siteGuest ? site.secure : null,
     onUnauthorized() {
       if (document.body && ["access", "security"].includes(document.body.dataset.thermitePage)) return;
-      document.querySelectorAll("main,.app").forEach((main) => { const message = document.createElement("p"); message.textContent = "Sign in to thermite to continue."; main.replaceChildren(message); });
-      if (document.body && document.body.dataset.thermitePage !== "access") location.replace("/account/?next=" + encodeURIComponent(returnTo(location.href, location.origin)));
+      // A Guest listener page has no Account page to go to; a reload admits the Guest again.
+      const text = client.guestOnly ? "Guest access changed. Reload this page to continue." : "Sign in to thermite to continue.";
+      document.querySelectorAll("main,.app").forEach((main) => { const message = document.createElement("p"); message.textContent = text; main.replaceChildren(message); });
+      if (!client.guestOnly && document.body && document.body.dataset.thermitePage !== "access") location.replace("/account/?next=" + encodeURIComponent(returnTo(location.href, location.origin)));
     } });
   if (!client.native && !client.mock) { global.fetch = client.fetch; if (NativeEvents) global.EventSource = client.eventSource(NativeEvents); }
   document.addEventListener("visibilitychange", () => client.setActive(document.visibilityState !== "hidden"));

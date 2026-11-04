@@ -19,6 +19,7 @@ body.thermite-app::before { content: ""; position: fixed; inset: 0 0 auto; z-ind
 .thermite-navigation .thermite-nav-link[aria-current="page"] { background: var(--th-surface); color: var(--th-accent); font-weight: 600; }
 .thermite-navigation [data-parent-active] { color: var(--th-accent); }
 .thermite-navigation .thermite-nav-theme { display: none; }
+.thermite-navigation .thermite-secure-link { margin-top: 8px; min-height: 34px; color: var(--th-muted); font-size: 12px; }
 .thermite-shell button { font: inherit; min-height: 36px; padding: 7px 10px; border: 1px solid var(--th-line); border-radius: 7px; color: var(--th-text); background: transparent; cursor: pointer; }
 .thermite-shell .thermite-theme { width: 44px; height: 44px; margin: auto 0 0 4px; padding: 0; font-size: 18px; }
 .thermite-shell .thermite-menu { display: none; }

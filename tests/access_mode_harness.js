@@ -179,5 +179,32 @@ async function browser(page, client) {
   grid = new Grid(100, null, "base"); guestTerminal.content(grid, 100, { ui: {} });
   assert(grid.text().includes("Guest · no sign-in required"));
   assert(grid.text().includes("thermite access login"));
-  process.stdout.write(JSON.stringify({ enabledGuest: true, guestGateway: true, terminalCsrf: true, noFallback: true, transitionFence: true, bootstrapForms: true, staleRecovery: true, terminalSecurity: true }));
+
+  // The plain-HTTP Guest listener: Guest only, no session or CSRF, sign-in on the HTTPS site.
+  const plain = "http://198.51.100.2:13626", secure = "https://house.example.test:13600", plainCalls = [];
+  const listener = Access.create({ base: plain, guest: true, secure, fetch: async (url, init) => {
+    const route = new URL(url).pathname; plainCalls.push(route);
+    if (route === "/api/v1/security") { const { csrf, ...status } = mode(true); return response(status); }
+    if (route === "/api/v1/me") return response({ ...guest, auth_enabled: true, permissions: ["site.read", "room.control"] });
+    if (route === "/api/v1/rooms/den/policy") return response({ room: "den", revision: 0, can_lock: false, effective: { allowed: true, locked: false } });
+    if (route === "/api/v1/rooms/den/commands") {
+      assert.equal(init.headers.get("Content-Type"), "application/json");
+      assert.equal(init.headers.get("X-CSRFToken"), null); assert.equal(init.headers.get("Cookie"), null);
+      assert.equal(init.headers.get("Authorization"), null);
+      return response({ ok: true });
+    }
+    throw Error("Unexpected route on the Guest listener: " + route);
+  } });
+  assert.equal((await listener.ready()).is_guest, true); assert.equal(listener.guestOnly, true);
+  assert.equal(listener.secureSite(), secure);
+  await listener.loadPolicy("den"); await listener.command("den", "source", "off");
+  await assert.rejects(listener.login("owner", "unused"), error => error.code === "secure_connection_required");
+  assert.deepEqual(plainCalls, ["/api/v1/security", "/api/v1/me", "/api/v1/rooms/den/policy", "/api/v1/rooms/den/commands"]);
+  assert.deepEqual(Navigation.pages.filter(page => Navigation.allowed(page, listener)).map(page => page.id), ["home", "remotes"]);
+  assert.equal(Access.create({ base: plain, guest: true, secure: "http://house.example.test:13600", fetch: async () => response(guest) }).secureSite(), null);
+  for (const value of ["javascript:alert(1)", secure + "/account/", "https://user@house.example.test:13600", secure + "?next=x", "", null])
+    assert.equal(Access.secureOrigin(value), null, String(value));
+  assert.equal(Access.secureOrigin(secure + "/"), secure);
+  assert.equal(Access.create({ base: origin, guest: true, mock: true, fetch: async () => response(guest) }).guestOnly, false);
+  process.stdout.write(JSON.stringify({ enabledGuest: true, guestGateway: true, terminalCsrf: true, noFallback: true, transitionFence: true, bootstrapForms: true, staleRecovery: true, terminalSecurity: true, guestListener: true }));
 })().catch(error => { process.stderr.write(error.stack + "\n"); process.exitCode = 1; });

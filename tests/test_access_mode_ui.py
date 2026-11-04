@@ -33,3 +33,6 @@ class AccessModeUI(unittest.TestCase):
 
     def test_terminal_security_and_disabled_schedules_explain_the_same_authority(self):
         self.assertTrue(self.proof["terminalSecurity"])
+
+    def test_guest_listener_pages_are_guest_only_and_sign_in_on_https(self):
+        self.assertTrue(self.proof["guestListener"])

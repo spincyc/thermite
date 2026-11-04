@@ -2,8 +2,8 @@
 (function (global) {
   "use strict";
   const pages = [
-    { id: "home", screen: "home", key: "F1", label: "Home", href: "home.html", top: true },
-    { id: "remotes", screen: "remote", key: "F2", label: "Remotes", href: "./", top: true, module: true,
+    { id: "home", screen: "home", key: "F1", label: "Home", href: "home.html", top: true, guest: true },
+    { id: "remotes", screen: "remote", key: "F2", label: "Remotes", href: "./", top: true, module: true, guest: true,
       detail: "Rooms, sources and device controls", note: "Pair devices from the Remotes menu", compact: "Rooms, devices & pairing" },
     { id: "pairing", screen: "pairing", key: "F6", label: "Pair devices", href: "pair.html", parent: "remotes", auth: true },
     { id: "security", screen: "security", key: "F3", label: "Security", href: "security.html", top: true, module: true,
@@ -34,6 +34,8 @@
     return page?.path || null;
   }
   function allowed(entry, access) {
+    // The plain-HTTP Guest listener serves Home and Remotes only (oh_identity/guest.py).
+    if (access?.guestOnly) return entry.guest === true;
     if (entry.auth && access?.authEnabled && !access.authEnabled()) return false;
     if (entry.id === "pairing" && access?.has && !access.has("pairing.manage")) return false;
     if (entry.system) return Boolean(access && (access.native || access.canEdit()));
