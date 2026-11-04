@@ -301,7 +301,8 @@ Complete this cutover and persistence checklist for every case:
   authentication test.
 - Review and apply an explicit **guest-only** native-listener seal. This recipe
   does not modify production firewalls or invent callback maps. Inventory actual
-  listeners against [ports](../../docs/ports.md): 13600 is authenticated HTTPS;
+  listeners against [ports](../../docs/ports.md): 13600 is authenticated HTTPS
+  (the default; `gateway: port` in `instance/host.yaml` moves it);
   13601/13602 are native HTTP/HTTPS, 13603 is loopback Karaf and 13604 is LSP.
   Native HTTP ports also carry websocket and alternate-UI paths. Investigate any
   legacy listeners instead of assuming generation removed them.

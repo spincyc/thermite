@@ -116,7 +116,7 @@ def main(argv=None):
     sub.add_argument("--tls-key", required=True, type=Path, help="operator-owned mode0600 TLS private key input; copied for service handoff")
     sub.add_argument("--allowed-host", required=True, action="append", dest="allowed_hosts", help="exact HTTP Host name (repeatable; no wildcard)")
     sub.add_argument("--bind-host", default="0.0.0.0", help="HTTPS listener address (default: all IPv4 interfaces)")
-    sub.add_argument("--port", type=int, default=oh_ports.ACCESS_PORT, help=f"unprivileged HTTPS port (default: {oh_ports.ACCESS_PORT})")
+    sub.add_argument("--port", type=int, help=f"unprivileged HTTPS port (default: the selected site's gateway.port, else {oh_ports.ACCESS_PORT})")
     sub.add_argument("--timezone", default="UTC", help="site's IANA timezone (default: UTC)")
     sub.add_argument("--service-user", dest="user", choices=("thermite",), default="thermite", help="fixed service account (thermite); ownership handoff is reported explicitly")
     sub.add_argument("--wheelhouse", type=Path, help="install pinned dependencies offline from this directory")
@@ -184,6 +184,8 @@ def main(argv=None):
             values.pop("command")
             values.pop("json")
             values["host_ports"] = _site_ports()
+            if values["port"] is None:
+                values["port"] = (values["host_ports"] or oh_ports.DEFAULTS)["access"]
             result = stage(**values)
         if args.command == "stage" and not args.json:
             print_stage(result, args)

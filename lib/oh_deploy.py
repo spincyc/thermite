@@ -121,7 +121,7 @@ ACCESS = "access"
 #: The installation root's mode; root owns it.
 ROOT_MODE = 0o755
 HOST_REQUIRED = ("timezone", "http_port", "https_port", "uid", "gid")
-HOST_KEYS = frozenset((*HOST_REQUIRED, "root", "metrics", "guest_http"))
+HOST_KEYS = frozenset((*HOST_REQUIRED, "root", "gateway", "metrics", "guest_http"))
 METRICS_KEYS = frozenset(("units", "retention", "retention_size", "yoke_targets",
                           *(name + "_port" for name in oh_ports.METRICS)))
 #: Host values are pasted into unit files, container arguments and shell

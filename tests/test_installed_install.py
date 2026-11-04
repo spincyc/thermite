@@ -197,16 +197,18 @@ class InstalledInstall(unittest.TestCase):
                     self.assertEqual(action.approved_argv, (*expected, "--yes"))
                     self.assertTrue(action.terminal)
 
-    def test_access_staging_uses_installed_resources_and_selected_site_boundary(self):
+    def stage_access(self, **arguments):
+        """Stage the gateway from an installed application: (its root, the
+        release, the receipt, the patched state check and subprocess runner)."""
         from oh_access import staging
         from oh_access.files import atomic_private, json_private
         from oh_features.remote import FILES
         root = Path(self.temporary.name)
-        (self.program / "lib").mkdir(parents=True)
+        (self.program / "lib").mkdir(parents=True, exist_ok=True)
         (self.program / "lib/reviewed.py").write_text("# application resource\n")
-        (self.program / "bin").mkdir()
+        (self.program / "bin").mkdir(exist_ok=True)
         (self.program / "bin/thermite").write_text("# application launcher\n")
-        assets = self.site / "conf/html/remote"; assets.mkdir(parents=True)
+        assets = self.site / "conf/html/remote"; assets.mkdir(parents=True, exist_ok=True)
         for name in FILES: (assets / name).write_text("private generated asset\n")
         atomic_private(root / "bearer", b"fixture")
         atomic_private(root / "key", b"fixture")
@@ -222,10 +224,14 @@ class InstalledInstall(unittest.TestCase):
             receipt = staging.stage(target, state=root / "identity-state", house=self.site / "instance/devices.yaml",
                                     assets=assets, runtime_url="http://127.0.0.1:13601",
                                     runtime_token_file=root / "bearer", tls_cert=root / "cert", tls_key=root / "key",
-                                    allowed_hosts=["site.example"], bind_host="127.0.0.1", port=13600,
+                                    allowed_hosts=["site.example"], bind_host="127.0.0.1",
                                     timezone="Etc/UTC", install_environment=False,
-                                    plan_directory=root / "operator-plan",
-                                    guest_http={"listen": ["192.0.2.10", "192.0.2.10"], "clients": ["192.0.2.0/24"]})
+                                    plan_directory=root / "operator-plan", **arguments)
+        return root, target, receipt, location, run
+
+    def test_access_staging_uses_installed_resources_and_selected_site_boundary(self):
+        root, target, receipt, location, run = self.stage_access(
+            port=13600, guest_http={"listen": ["192.0.2.10", "192.0.2.10"], "clients": ["192.0.2.0/24"]})
         config = json.loads((target / "config.json").read_text())
         self.assertEqual((config["version"], config["guest_http"]),
                          (2, {"port": 13626, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"], "names": []}))
@@ -242,5 +248,22 @@ class InstalledInstall(unittest.TestCase):
             self.assertEqual(source.read_bytes(), (target / "units" / source.name).read_bytes())
         run.assert_not_called()
 
+    def test_access_staging_writes_a_moved_https_port_beside_guests_on_13600(self):
+        import oh_deploy
+        import oh_ports
+        from oh_access import AccessError
+        from oh_access.service import load_config
+        host = oh_deploy.validate_host({"timezone": "Etc/UTC", "http_port": 13601, "https_port": 13602, "uid": 9001,
+                                        "gid": 9001, "gateway": {"port": 16301},
+                                        "guest_http": {"port": 13600, "listen": ["192.0.2.10"],
+                                                       "clients": ["192.0.2.0/24"]}})
+        with self.assertRaisesRegex(AccessError, "listener port 13600 collides"):
+            self.stage_access(port=13600, guest_http=host["guest_http"], host_ports=oh_ports.effective(host))
+        self.assertFalse((Path(self.temporary.name) / "persistent-release").exists())
+        _, target, _, _, _ = self.stage_access(port=oh_ports.gateway_port(host), guest_http=host["guest_http"],
+                                               host_ports=oh_ports.effective(host))
+        config = load_config(target / "config.json", tls=False)
+        self.assertEqual((config["version"], config["port"], config["guest_http"]),
+                         (2, 16301, {"port": 13600, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"], "names": []}))
 
 if __name__ == "__main__": unittest.main()

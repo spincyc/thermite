@@ -9,13 +9,16 @@ import json
 import os
 import shutil
 import socket
+import socketserver
 import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 from urllib.error import HTTPError, URLError
+from urllib.request import build_opener
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
@@ -37,6 +40,35 @@ def unverified(code=20):
     error = ssl.SSLCertVerificationError(1, "certificate verify failed")
     error.verify_code = code
     return URLError(error)
+
+
+class PlainHTTP(socketserver.BaseRequestHandler):
+    """Answers whatever arrives, a TLS handshake included, as a plain-HTTP
+    server such as a gateway's Guest port does: with an HTTP error."""
+
+    def handle(self):
+        self.request.recv(4096)
+        self.request.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+
+
+@contextlib.contextmanager
+def plain_http():
+    """A loopback plain-HTTP server's port."""
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), PlainHTTP)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+#: A site's instance/host.yaml that moves HTTPS to 16301 and gives Guests 13600.
+MOVED = {"timezone": "Etc/UTC", "http_port": 13601, "https_port": 13602, "uid": 9001, "gid": 9001,
+         "gateway": {"port": 16301},
+         "guest_http": {"port": 13600, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"]}}
 
 
 class Response(io.BytesIO):
@@ -147,6 +179,72 @@ class NoSite(Scratch):
         self.assertEqual(status, 0, err)
         self.assertEqual(self.opened[0][0], f"https://thermite:{PORT}{tui.MODEL_PATH}")
         self.launch.assert_called_once()
+
+
+class SiteDefault(Scratch):
+    """With a site selected, the default follows its HTTPS port (gateway.port)."""
+
+    def host_file(self, host):
+        (self.site / "instance").mkdir(exist_ok=True)
+        (self.site / "instance/host.yaml").write_text(json.dumps(host))
+
+    def test_without_a_host_file_the_product_default_stays(self):
+        self.assertEqual(tui.default_url(), f"https://thermite:{oh_ports.ACCESS_PORT}")
+        self.assertEqual(tui.gateway("192.0.2.50"), f"https://192.0.2.50:{oh_ports.ACCESS_PORT}")
+
+    def test_default_and_bare_hosts_use_the_sites_gateway_port_never_its_guest_port(self):
+        self.host_file(MOVED)
+        cases = {None: "https://thermite:16301", "thermite": "https://thermite:16301",
+                 "192.0.2.50": "https://192.0.2.50:16301", "[2001:db8::10]": "https://[2001:db8::10]:16301",
+                 "192.0.2.50:13700": "https://192.0.2.50:13700", "https://thermite.example": "https://thermite.example"}
+        for given, expected in cases.items():
+            with self.subTest(given=given):
+                self.assertEqual(tui.gateway(given), expected)
+        status, _, err = self.run_main()
+        self.assertEqual(status, 0, err)
+        self.assertEqual(self.opened[0][0], f"https://thermite:16301{tui.MODEL_PATH}")
+
+    def test_an_unusable_host_file_is_named_unless_the_url_gives_a_port(self):
+        self.host_file({**MOVED, "gateway": {"port": "16301"}})
+        status, _, err = self.run_main()
+        self.assertEqual(status, 2)
+        self.assertIn("gateway.port: listener port must be an integer", err)
+        self.assertIn("--url HOST:PORT", err)
+        self.assertEqual(self.opened, [])
+        status, _, err = self.run_main("--url", "192.0.2.50:16301")
+        self.assertEqual(status, 0, err)
+        self.assertEqual(self.opened[0][0], f"https://192.0.2.50:16301{tui.MODEL_PATH}")
+
+
+class PlainPort(Scratch):
+    """A plain-HTTP port, such as a Guest port, is named as one."""
+
+    def test_a_port_answering_plain_http_is_named_with_the_fix(self):
+        self.answer = lambda request: URLError(ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number"))
+        with plain_http() as port:
+            status, _, err = self.run_main("--url", f"127.0.0.1:{port}")
+        self.assertEqual(status, 2)
+        self.assertIn(f"https://127.0.0.1:{port} is not HTTPS: 127.0.0.1:{port} answers plain HTTP", err)
+        self.assertIn("Guest port", err)
+        self.assertIn("thermite tui --url 127.0.0.1:PORT", err)
+        self.assertNotIn("Traceback", err)
+        self.launch.assert_not_called()
+
+    def test_a_failed_handshake_without_plain_http_keeps_the_general_hint(self):
+        self.answer = lambda request: URLError(ssl.SSLError(1, "[SSL: UNEXPECTED_EOF_WHILE_READING] EOF"))
+        with socket.socket() as unused:
+            unused.bind(("127.0.0.1", 0))
+            port = unused.getsockname()[1]
+            status, _, err = self.run_main("--url", f"127.0.0.1:{port}")
+        self.assertEqual(status, 2)
+        self.assertIn(f"cannot make a secure connection to https://127.0.0.1:{port}", err)
+        self.assertIn("gateway.port", err)
+
+    def test_a_real_handshake_with_a_plain_http_server_is_recognized(self):
+        with mock.patch.object(tui, "build_opener", side_effect=build_opener), \
+                plain_http() as port, self.assertRaises(tui.Problem) as raised:
+            tui.fetch(f"https://127.0.0.1:{port}", None, "the system's")
+        self.assertIn("answers plain HTTP", raised.exception.lines[0])
 
 
 class Delegation(Scratch):

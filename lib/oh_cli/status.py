@@ -8,10 +8,12 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import oh_cli
 import oh_deploy as deploy
-from oh_access import guest
+import oh_ports
+from oh_access import AccessError, guest
 from oh_cli import AREA
 from oh_cli.history import lines as history_lines
 
@@ -21,7 +23,9 @@ Report, read-only, what runs here: the commit thermite deploy installed
 installed conf/, Apple TV helper, metrics/ and metrics exporter still match
 that deploy, whether each installed systemd unit matches deploy/ (the owner
 installs one that differs, with thermite upgrade), the services, whether
-runtime answers, the plain-HTTP Guest addresses instance/host.yaml opens,
+runtime answers, the HTTPS application's address on the port
+instance/host.yaml sets (and whether the installed gateway still serves
+another), the plain-HTTP Guest addresses instance/host.yaml opens,
 Grafana's address on the LAN and whether it answers, Prometheus' scrape
 targets (up of all), and the last deploys (thermite history lists more).
 """
@@ -37,8 +41,8 @@ exit status:
   0  what HEAD (or the selected commit) holds is deployed, unchanged, and
      its services and runtime are up
   1  nothing is deployed, HEAD is not what is deployed, a deployed file or
-     unit differs or is missing, a service is not active, or runtime does
-     not answer
+     unit differs or is missing, a service is not active, runtime does not
+     answer, or the installed gateway serves HTTPS on another port
   2  a wrong switch, or the host file or deploy record cannot be read
 """
 
@@ -68,6 +72,28 @@ def show_metrics(host: dict, installed: dict[str, Path] | None = None, report: d
         say("systemd  " + ("node_exporter reads the units' states over D-Bus" if health.systemd else
                            "node_exporter's systemd collector fails: sudo journalctl -u "
                            "thermite-node-exporter.service says why"))
+
+
+def show_gateway(host: dict, report: dict, say, problems: list[str]) -> None:
+    """The HTTPS application's address on instance/host.yaml's port, where
+    everyone signs in, and a problem while the installed gateway, as its
+    verified profile records it, still serves another port."""
+    port = oh_ports.gateway_port(host)
+    url = guest.origin("https", deploy.hostname(), port) + "/"
+    address = deploy.lan_address()
+    lan = guest.origin("https", address, port) + "/" if address else None
+    try:
+        from oh_access import client
+        profile = client.deployment(AREA)
+    except AccessError:
+        profile = None
+    installed = profile["url"] + "/" if profile else None
+    report["gateway"] = {"url": url, "lan": lan, "port": port, "installed": installed}
+    say(f"gateway  {url}: the HTTPS application, where everyone signs in"
+        + (f"; from the LAN: {lan}" if lan else ""))
+    if installed and (urlsplit(installed).port or 443) != port:
+        problems.append(f"gateway {installed}: instance/host.yaml moves HTTPS to port {port}")
+        say(f"         installed on {installed}; thermite upgrade moves it to port {port}")
 
 
 def show_guest(host: dict, report: dict, say) -> None:
@@ -151,6 +177,7 @@ def show(args, host: dict) -> int:
     if not version:
         problems.append(f"runtime {url}: not answering")
     say(f"runtime  {url}: " + (f"runtime {version} answers; from the LAN: {lan}" if version else "not answering"))
+    show_gateway(host, report, say, problems)
     show_guest(host, report, say)
     show_metrics(host, report=report if as_json else None)
     entries = deploy.deploys(layout)

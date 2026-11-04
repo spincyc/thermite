@@ -43,8 +43,10 @@ It runs the page's own house.js, remotes.js,
 backend.js, session.js and pair.js from web/remote/ under node, so both
 front ends drive thermite the same way (tui/remote/README.md).
 
-By default it uses the authenticated site (THERMITE_SITE_URL, or
-https://localhost:13600). A site with access.mode: native instead uses its
+By default it uses the authenticated site: THERMITE_SITE_URL, the installed
+gateway's verified address, or https://localhost on the site's HTTPS port
+(instance/host.yaml's gateway.port, 13600 by default). A site with
+access.mode: native instead uses its
 production runtime without login; --native explicitly selects that testing
 mode for this run. Choosing a source really switches the room. --sandbox talks to
 the sandbox on 127.0.0.1:13615 and --mock to the page's mock backend,
@@ -145,6 +147,18 @@ def native_mode(arguments: argparse.Namespace) -> bool:
     return oh_access_mode.mode(oh_inventory.load(oh_cli.HOUSE) or {}) == "native"
 
 
+def gateway_port(area: Path | None = None) -> int:
+    """The HTTPS application port the site's instance/host.yaml configures
+    (gateway.port), or the product default for an area without a host file.
+    Raises ValueError (oh_deploy.HostError) for a host file it cannot use."""
+    path = Path(oh_cli.AREA if area is None else area) / "instance/host.yaml"
+    if not path.is_file():
+        return oh_ports.ACCESS_PORT
+    import oh_deploy
+
+    return oh_ports.gateway_port(oh_deploy.load_host(path))
+
+
 def target(arguments: argparse.Namespace) -> list[str]:
     """Which backend main.js uses: --mock, or a thermite controller's URL."""
     if arguments.mock:
@@ -158,7 +172,13 @@ def target(arguments: argparse.Namespace) -> list[str]:
             return ["--url", os.environ["THERMITE_SITE_URL"]]
         from oh_access import client
         profile = client.deployment(AREA)
-        return ["--url", profile["url"] if profile else f"https://localhost:{oh_ports.ACCESS_PORT}"]
+        if profile:
+            return ["--url", profile["url"]]
+        try:
+            port = gateway_port(AREA)
+        except ValueError as exc:
+            raise RemoteModelError(f"cannot read this site's gateway port: {exc}") from None
+        return ["--url", f"https://localhost:{port}"]
     import oh_deploy as deploy
 
     return ["--url", deploy.production_url(deploy.load(AREA)[1])]

@@ -90,7 +90,8 @@ thermite remote --config /path/to/private-site
 With authentication enabled, first run `thermite access login --config
 /path/to/private-site --user admin`. Any other computer with thermite
 installed runs `thermite tui`, which needs no private site and opens
-`https://thermite:13600` (`--url` names another server); pass a copy of that
+`https://thermite:13600` (`--url` names another server, and `HOST:PORT` a
+gateway moved off 13600); pass a copy of that
 authority file once with `--ca-file`. Use the same `--url` and `--ca-file`
 with `thermite access login` to sign in there. Guests control
 unlocked rooms; signed-in accounts add camera snapshots and live video;

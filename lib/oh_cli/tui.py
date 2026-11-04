@@ -24,6 +24,8 @@ from oh_cli import remote
 
 #: Most homes run their Thermite server on a computer of this name.
 HOST = "thermite"
+#: The default without a site: the product's HTTPS application port. A
+#: selected site's instance/host.yaml can move it (gateway.port; default_url).
 DEFAULT_URL = f"https://{HOST}:{oh_ports.ACCESS_PORT}"
 #: The only hosts plain http may name, as web/remote/access.js allows them.
 LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -51,8 +53,11 @@ first run installs the pinned blessed into ~/.cache/thermite/tui-remote
 Without --url it opens {DEFAULT_URL}: most homes run their
 Thermite server on a computer named {HOST}. --url names the gateway as
 https://HOST:PORT, or as HOST:PORT or HOST, which mean https (on port
-{oh_ports.ACCESS_PORT} without one). Plain http reaches only this computer:
-localhost, 127.0.0.1 or [::1].
+{oh_ports.ACCESS_PORT} without one). With a private site selected (--config DIR),
+the HTTPS port its instance/host.yaml sets, gateway.port, replaces
+{oh_ports.ACCESS_PORT} in both. Plain http reaches only this computer: localhost,
+127.0.0.1 or [::1]. A site's plain-HTTP Guest port serves browsers on its
+guest network, not this remote; pointed at one, it says so.
 
 Guests control unlocked rooms without a login. After thermite access login
 for the same address, that account's personal credential is used.
@@ -73,13 +78,15 @@ EXIT = """\
 exit status:
   0  the remote was quit
   1  the remote stopped on an error (printed once the terminal is restored)
-  2  a wrong switch, no Node.js, the gateway not found, not answering or not
-     serving a house, or its certificate not trusted
+  2  a wrong switch, no Node.js, the gateway not found, not answering, not
+     serving a house or answering plain HTTP, or its certificate not trusted
 """
 
 EXAMPLES = (
     ("thermite tui", f"the house on {DEFAULT_URL}, the server named {HOST}"),
     ("thermite tui --url 192.0.2.50", f"a server of another name: https://192.0.2.50:{oh_ports.ACCESS_PORT}"),
+    ("thermite tui --config ~/thermite-site --url 192.0.2.50",
+     "the same, on the HTTPS port that site's instance/host.yaml sets (gateway.port)"),
     (f"thermite tui --url https://192.0.2.50:{oh_ports.ACCESS_PORT} --ca-file ~/thermite-ca.pem",
      f"from a laptop, trusting a copy of the server's {AUTHORITY}"),
     (f"thermite access login --url {DEFAULT_URL} --user operator",
@@ -117,10 +124,24 @@ def build() -> Path:
     return cache() / "build"
 
 
+def default_port() -> int:
+    """The HTTPS application port: the selected site's gateway.port, else the
+    product default; raises ValueError for a host file it cannot use."""
+    try:
+        return remote.gateway_port(oh_cli.AREA)
+    except ValueError as exc:
+        raise ValueError(f"{exc}; fix it, or name the gateway's port with --url HOST:PORT") from None
+
+
+def default_url() -> str:
+    """The gateway without --url: the server named thermite, on default_port()."""
+    return f"https://{HOST}:{default_port()}"
+
+
 def gateway(value: str | None) -> str:
     """The gateway's origin from --url: a bare HOST or HOST:PORT is https,
-    on the access port when it names none; raises ValueError."""
-    text = (value or DEFAULT_URL).strip()
+    on default_port() when it names none; raises ValueError."""
+    text = (value or default_url()).strip()
     bare = "://" not in text
     if bare:
         text = "https://" + text
@@ -142,7 +163,7 @@ def gateway(value: str | None) -> str:
     if scheme != "https":
         raise ValueError(f"--url {value}: a gateway is https, not {scheme}")
     if bare and port is None:
-        port = oh_ports.ACCESS_PORT
+        port = default_port()
     from oh_access import client
 
     shown = f"[{host}]" if ":" in host else host
@@ -274,9 +295,16 @@ def fetch(url: str, ca: str | None, source: str) -> bytes:
                               "e.g. thermite tui --url 192.0.2.50") from None
             raise Problem(f"cannot find {host}", "check the name, or pass the server's address with --url") from None
         if isinstance(reason, ssl.SSLError):
+            port = urlsplit(url).port or 443
+            if plain_http(host, port):
+                shown = f"[{host}]" if ":" in host else host
+                raise Problem(f"{url} is not HTTPS: {shown}:{port} answers plain HTTP",
+                              "that is not the gateway's HTTPS port; a plain-HTTP Guest port serves browsers on a "
+                              f"guest network only. Name the HTTPS port: thermite tui --url {shown}:PORT "
+                              "(thermite status on the server shows it)") from None
             raise Problem(f"cannot make a secure connection to {url}",
-                          f"is it a Thermite gateway? (its port is {oh_ports.ACCESS_PORT} unless the host file "
-                          "moves it)") from None
+                          f"is it a Thermite gateway's HTTPS port? ({oh_ports.ACCESS_PORT} unless the site's "
+                          "instance/host.yaml sets gateway.port)") from None
         if isinstance(reason, ConnectionRefusedError):
             raise Problem(f"nothing answers at {url}",
                           "check that the server is up (thermite status on it), or pass another --url") from None
@@ -285,6 +313,23 @@ def fetch(url: str, ca: str | None, source: str) -> bytes:
                           "check the address and the network, or pass another --url") from None
         raise Problem(f"cannot reach {url}: {getattr(reason, 'strerror', None) or reason}",
                       "check the address and the network, or pass another --url") from None
+
+
+def plain_http(host: str, port: int) -> bool:
+    """Whether host:port answers plain HTTP, as a Guest port does, where a TLS
+    handshake failed: asked for a page's headers, its answer starts HTTP/."""
+    shown = f"[{host}]" if ":" in host else host
+    oh_cli.trace_http("HEAD", f"http://{shown}:{port}/")
+    try:
+        with socket.create_connection((host, port), timeout=TIMEOUT) as connection:
+            connection.sendall(f"HEAD / HTTP/1.1\r\nHost: {shown}:{port}\r\nConnection: close\r\n\r\n"
+                               .encode("ascii"))
+            start = b""
+            while len(start) < 5 and (chunk := connection.recv(5 - len(start))):
+                start += chunk
+            return start == b"HTTP/"
+    except (OSError, UnicodeError):
+        return False
 
 
 def remember(url: str, ca: str) -> None:
@@ -304,7 +349,8 @@ def remember(url: str, ca: str) -> None:
 def parser() -> argparse.ArgumentParser:
     parser = oh_cli.command("tui", DESCRIPTION, EXAMPLES, TRUST + "\n" + remote.NOTES + "\n" + EXIT)
     parser.add_argument("--url", metavar="URL",
-                        help=f"the gateway: https://HOST:PORT, HOST:PORT or HOST (default: {DEFAULT_URL})")
+                        help=f"the gateway: https://HOST:PORT, HOST:PORT or HOST (default: {DEFAULT_URL}, "
+                             "or a selected site's gateway.port)")
     parser.add_argument("--ca-file", type=Path, metavar="FILE",
                         help=f"trust this copy of the server's {AUTHORITY}; remembered for that address")
     remote.add_view(parser, "thermite")

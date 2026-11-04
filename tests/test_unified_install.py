@@ -49,6 +49,26 @@ class UnifiedInstall(unittest.TestCase):
             self.assertEqual(remote.target(arguments), ["--url", arguments.url])
             self.assertNotIn("NODE_EXTRA_CA_CERTS", remote.launch_environment(arguments, None))
 
+    def test_without_a_profile_the_terminal_uses_the_sites_https_port(self):
+        import tempfile
+        from oh_cli import remote
+        from oh_access import client
+        arguments = argparse.Namespace(mock=False, native=False, url=None, sandbox=False)
+        scratch = AREA / ".scratch/unified-root"
+        scratch.mkdir(parents=True, exist_ok=True)
+        host = {"timezone": "Etc/UTC", "http_port": 13601, "https_port": 13602, "uid": 9001, "gid": 9001}
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary, \
+                patch.object(client, "deployment", return_value=None), patch.dict(os.environ, {}, clear=True):
+            site = Path(temporary)
+            with patch.object(remote, "AREA", site):
+                self.assertEqual(remote.target(arguments), ["--url", "https://localhost:13600"])
+                (site / "instance").mkdir()
+                (site / "instance/host.yaml").write_text(json.dumps({**host, "gateway": {"port": 16301}}))
+                self.assertEqual(remote.target(arguments), ["--url", "https://localhost:16301"])
+                (site / "instance/host.yaml").write_text(json.dumps({**host, "gateway": {"port": 80}}))
+                with self.assertRaisesRegex(remote.RemoteModelError, "gateway port: .*gateway.port"):
+                    remote.target(arguments)
+
     def test_local_profile_rejects_native_urls_invalid_certificates_and_extra_credentials(self):
         from oh_access import client, AccessError
         profile = dict(version=1, url="https://fixture.example:13600", ca_file="/fictional/public-cert.pem",

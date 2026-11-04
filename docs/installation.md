@@ -307,8 +307,10 @@ automation; `thermite pair --help` lists supported pairing steps.
 
 ## Set up HTTPS and accounts
 
-Installation prints the verified HTTPS URL and the path to its trust
-certificate, `tls-cert.pem` in the gateway root (`/srv/thermite/access` by
+Installation prints the verified HTTPS URL, on port 13600 unless
+`gateway: {port: N}` in `instance/host.yaml` moves it (see
+[moving the HTTPS application](ports.md#moving-the-https-application)), and the
+path to its trust certificate, `tls-cert.pem` in the gateway root (`/srv/thermite/access` by
 default; see [host layout](#host-layout)). The installer creates a private certificate authority
 for the site once, in `var/gateway/authority/` (directory mode 0700, key
 0600, valid for 10 years), and serves an 825-day server certificate it signed
@@ -364,8 +366,9 @@ ordinary controls without a login. To view cameras or administer the site, log i
 credential; installation itself creates no household account. Other computers
 need the server's URL and a copy of `tls-cert.pem`, passed once with
 `--ca-file`: `thermite tui --url URL --ca-file FILE` opens the terminal remote
-there without a private site (with no `--url` it opens `https://thermite:13600`),
-and `thermite access login` takes the same switches.
+there without a private site (with no `--url` it opens `https://thermite:13600`;
+with `--config DIR` it uses that site's `gateway.port`), and
+`thermite access login` takes the same switches.
 
 ## Guest access over plain HTTP
 
@@ -392,6 +395,22 @@ Commit the change and run `thermite upgrade --config DIR`. `thermite status`
 lists the Guest addresses, and install and upgrade check each one as a Guest
 when this host's own address is inside `clients`.
 
+For an easier address to type, move the HTTPS application off 13600 and give
+guests that port:
+
+```yaml
+gateway:
+  port: 16301                  # the HTTPS application, where everyone signs in
+guest_http:
+  port: 13600                  # allowed once the gateway has moved off it
+  listen: [198.51.100.2]
+  clients: [198.51.100.0/24]
+```
+
+Moving the gateway changes every client's HTTPS address; see
+[moving the HTTPS application](ports.md#moving-the-https-application) for
+what to update.
+
 The listener only ever answers as a Guest: Home, Remotes, room states and
 lock status, commands to unlocked rooms and All Off. Locks and schedules
 apply as they do over HTTPS. Sign-in, Security, accounts, cameras, pairing,
@@ -399,7 +418,8 @@ settings and System are not found there, and no answer sets a cookie. A
 request carrying the site's session cookie or an `Authorization` header is
 refused, so a credential sent over plain HTTP is never used. The page offers
 **Sign in on the secure site**, which opens the Account page at the gateway's
-first HTTPS address. The terminal remote uses HTTPS only.
+first HTTPS address, on its configured port. The terminal remote uses HTTPS
+only, and says so when pointed at the Guest port.
 
 Weigh the trade-offs before enabling it:
 

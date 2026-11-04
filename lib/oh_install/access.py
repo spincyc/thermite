@@ -211,6 +211,13 @@ class Gateway(Step):
             self._helper(system, "adopt", Path(previous) / "config.json", destination,
                          "--uid", os.geteuid(), "--gid", os.getegid(), "--service-uid", uid)
             metadata = json.loads(read_private(destination / "adopted.json"))
+            # The HTTPS port is host.yaml's (gateway.port), as guest_http is,
+            # never the replaced release's: an upgrade can move it.
+            port = oh_ports.gateway_port(self.context.host)
+            if metadata["port"] != port:
+                system.say(f"   Gateway HTTPS moves from port {metadata['port']} to {port}: "
+                           "update bookmarks, home-screen apps and terminal --url")
+            metadata["port"] = port
             metadata["callback_file"] = str(destination / "callbacks.json") if metadata["callbacks"] else None
             origin = system.unit_origin("thermite-access-callbacks.service")
             if not origin.known or origin.load_state != "not-found" and not metadata["callbacks"]:
@@ -225,7 +232,7 @@ class Gateway(Step):
             if not certificate.exists() or not key.exists():
                 self._issue(system, inputs, hosts, authority)
             metadata = {"state": str(self.root / "state"), "allowed_hosts": hosts,
-                        "bind_host": "0.0.0.0", "port": oh_ports.ACCESS_PORT,
+                        "bind_host": "0.0.0.0", "port": oh_ports.gateway_port(self.context.host),
                         "timezone": self.context.host["timezone"], "tls_cert": str(certificate),
                         "tls_key": str(key), "tls_ca": str(authority[0]), "callbacks": False, "callback_file": None}
         self._save(journal, metadata=metadata, phase="inputs")

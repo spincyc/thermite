@@ -137,6 +137,12 @@ def openhab_address(host: dict) -> str:
     return f"{LOOPBACK}:{host['http_port']}"
 
 
+def gateway_address(host: dict) -> str:
+    """The HTTPS gateway (the application) as this host reaches it, on
+    host.yaml's gateway.port; a probe of it speaks TLS."""
+    return f"{LOOPBACK}:{oh_ports.gateway_port(host)}"
+
+
 @dataclasses.dataclass(frozen=True)
 class Volume:
     """One mount: `source` is below the runtime state unless it is absolute."""
@@ -717,6 +723,6 @@ def render(inventory: dict, host: dict, versions: dict | None = None, *, conf=No
 
 __all__ = [
     "BLACKBOX_PORT", "EXPORTER_PORT", "GRAFANA_PORT", "NODE_EXPORTER_PORT", "PROMETHEUS_PORT", "Probe", "Service",
-    "THING_STATUSES", "Volume", "exporter_map", "ports", "probes", "render", "retention", "select_point", "services",
+    "THING_STATUSES", "Volume", "exporter_map", "gateway_address", "ports", "probes", "render", "retention", "select_point", "services",
     "yoke_targets",
 ]

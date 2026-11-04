@@ -467,6 +467,21 @@ class Sockets(SimpleTestCase):
         asyncio.run(application({"type": "http"}, None, None))
         self.assertEqual(seen[1].secure, f"https://[2001:db8::10]:{self.main}")
 
+    def test_the_sign_in_link_names_the_configured_https_port(self):
+        # host.yaml's gateway.port moved HTTPS off 13600, and Guests took it.
+        config = {**self.config, "port": 16301, "guest_http": {**self.config["guest_http"], "port": 13600}}
+        seen = []
+
+        async def inner(scope, receive, send):
+            seen.append(scope[SCOPE])
+        pairs = service.guest_listeners(config, inner)
+        self.assertEqual([listener.bind for _, listener in pairs], [["127.0.0.1:13600"], ["127.0.0.5:13600"]])
+        asyncio.run(pairs[0][0]({"type": "http"}, None, None))
+        self.assertEqual(seen[0].secure, "https://house.example.test:16301")
+        script = guest.access_config(type("Request", (), {"scope": {SCOPE: seen[0]}})())
+        self.assertEqual(script, 'globalThis.THERMITE_ACCESS_CONFIG = Object.freeze('
+                                 '{"version":1,"mode":"guest","secure":"https://house.example.test:16301"});\n')
+
     def test_guest_listeners_bind_only_their_addresses_and_close_other_peers_unread(self):
         with self.assertLogs("oh_access", "WARNING") as logs, Serving(self.listeners(service.Admission(self.app))):
             listening(self.main, "127.0.0.1")

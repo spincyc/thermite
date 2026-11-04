@@ -59,6 +59,44 @@ class Allocation(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "collides"):
                 oh_ports.listener(name, 14040, upstream=14040)
 
+    def test_gateway_port_moves_the_https_application_and_is_strictly_checked(self):
+        host = {"timezone": "Etc/UTC", "http_port": 13601, "https_port": 13602, "uid": 9001, "gid": 9001}
+        self.assertEqual(oh_ports.gateway_port(), oh_ports.ACCESS_PORT)
+        self.assertEqual(oh_ports.gateway_port(host), 13600)
+        moved = {**host, "gateway": {"port": 16301}}
+        self.assertEqual(oh_deploy.validate_host(moved)["gateway"], {"port": 16301})
+        self.assertEqual(oh_ports.effective(moved)["access"], 16301)
+        self.assertEqual(oh_ports.gateway_port(moved), 16301)
+        self.assertEqual(oh_metrics.gateway_address(moved), "127.0.0.1:16301")
+        self.assertEqual(oh_metrics.gateway_address(host), "127.0.0.1:13600")
+        # Native https_port stays the native runtime's own listener.
+        self.assertEqual(oh_ports.effective(moved)["https"], 13602)
+        self.assertEqual(oh_ports.gateway_port({**host, "gateway": None}), 13600)
+        rejected = {
+            "gateway: must be a mapping": [16301],
+            "unknown gateway setting bind": {"port": 16301, "bind": "0.0.0.0"},
+            "gateway.port: listener port": {"port": "16301"},
+        }
+        for value in (True, 0, 1023, 65536, None, 16301.0):
+            with self.subTest(port=value), self.assertRaisesRegex(oh_deploy.HostError, "gateway.port: listener port"):
+                oh_deploy.validate_host({**host, "gateway": {"port": value}})
+        for reason, value in rejected.items():
+            with self.subTest(reason=reason), self.assertRaisesRegex(oh_deploy.HostError, reason):
+                oh_deploy.validate_host({**host, "gateway": value})
+
+    def test_gateway_port_cannot_take_another_listener(self):
+        host = {"timezone": "Etc/UTC", "http_port": 13601, "https_port": 13602, "uid": 9001, "gid": 9001}
+        taken = {"native HTTP": 13601, "native HTTPS": 13602, "sandbox HTTP": 13615, "boot check": 13619,
+                 "docs preview": oh_ports.DOCS_PORT, "default Guest port": oh_ports.GUEST_HTTP_PORT}
+        for name, port in taken.items():
+            with self.subTest(listener=name), self.assertRaisesRegex(oh_deploy.HostError, "collides"):
+                oh_deploy.validate_host({**host, "gateway": {"port": port}})
+        moved = {**host, "gateway": {"port": 16301}}
+        for clash in ({"https_port": 16301}, {"metrics": {"grafana_port": 16301}},
+                      {"guest_http": {"port": 16301, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"]}}):
+            with self.subTest(clash=clash), self.assertRaisesRegex(oh_deploy.HostError, "collides"):
+                oh_deploy.validate_host({**moved, **clash})
+
     def test_explicit_upstream_cannot_free_the_selected_sites_configured_http_port(self):
         allocated = oh_ports.effective()
         with self.assertRaisesRegex(ValueError, "collides"):

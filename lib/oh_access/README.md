@@ -25,7 +25,10 @@ operator's custody; staging copies them into the new release. The receipt's
 `ownership_commands` invokes the operator-owned custody helper for the finite
 release and state manifest, followed separately by its
 `verification_command`. Normal output is a concise summary; `--json` returns
-the full receipt for automation.
+the full receipt for automation. `--port`, the HTTPS listener, defaults to the
+selected site's `gateway.port` in `instance/host.yaml` (13600 without one);
+install and upgrade always take it from there, never from the release they
+replace, so an upgrade can move it.
 
 The required `--plan-directory` saves an operator-owned receipt, `handoff.sh`
 and `activate.sh`

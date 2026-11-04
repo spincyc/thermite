@@ -159,6 +159,17 @@ rollback. The unified deployment workflow uses a separate committed private site
   gateway accepts, the devices in rooms nested in it. The Sonos volume and
   access callback tests the private site dropped are restored, with fictional
   devices.
+- `gateway: {port: N}` in `instance/host.yaml` moves the HTTPS application off
+  13600, the default. A moved gateway frees 13600 for `guest_http.port`; every
+  other collision is still refused. Install and upgrade take the port from the
+  host file, never from the release being replaced, so an upgrade closes the
+  old listener, binds the new one and checks HTTPS readiness there; the Guest
+  page's sign-in link, `thermite access stage`, `thermite remote`'s fallback
+  and `thermite status` use it too. `thermite tui` and its bare `--url HOST`
+  follow the selected site's port (13600 without a site), and say so plainly
+  when a port answers plain HTTP. Bookmarks, home-screen apps and saved
+  terminal logins are per address: see
+  [moving the HTTPS application](docs/ports.md#moving-the-https-application).
 - Routing: rooms on different zones of one receiver can share a source cabled
   to the receiver itself: list it under each room's `receiver.sources` on its
   input. Each room switches and powers only its own zone, so either can turn

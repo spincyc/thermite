@@ -2,7 +2,8 @@
 
 import json
 import hashlib
-from contextlib import closing
+from contextlib import closing, contextmanager
+import http.server
 import os
 from pathlib import Path
 import shutil
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -46,6 +48,38 @@ def handshake(chain, key, authority, name):
         if done == 2:
             return talking.getpeercert()
     raise AssertionError("TLS handshake did not complete")
+
+
+@contextmanager
+def https_security(chain, key):
+    """A loopback HTTPS server answering the gateway's security endpoint, as
+    the installer's readiness check reads it: (its port, the requests seen)."""
+    requests = []
+
+    class Security(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append((self.path, self.headers["Host"]))
+            body = json.dumps({"enabled": False, "revision": 1}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(chain, key)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Security)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_address[1], requests
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 class PrivateFixture(unittest.TestCase):
@@ -423,6 +457,61 @@ class Lifecycle(PrivateFixture):
             before = len(system.commands)
             self.assertEqual(gateway.perform(system), 0)
             self.assertFalse(any("stop" in command or "migrate" in command or "--now" in command for command in system.commands[before:]))
+
+    def test_upgrade_moves_https_to_the_host_files_port_and_checks_readiness_there(self):
+        gateway, system = self.gateway(), real_openssl(Host())
+        journal = json.loads(gateway.journal_path.read_bytes())
+        served = journal["metadata"]
+        # The installed version 2 release serves HTTPS on 13600.
+        old = private_directory(self.root / "old-release")
+        json_private(old / "config.json", {
+            "version": 2, "state": served["state"], "contract_file": str(old / "contract.json"),
+            "runtime_url": "http://127.0.0.1:13601", "runtime_token_file": str(old / "runtime-bearer"),
+            "allowed_hosts": served["allowed_hosts"], "bind_host": "0.0.0.0", "port": 13600,
+            "tls_cert": served["tls_cert"], "tls_key": served["tls_key"], "timezone": "UTC", "guest_http": None})
+        json_private(gateway.journal_path, {**{key: journal[key] for key in (
+            "version", "versions", "runtime_credential_sha256", "runtime_token_file")},
+            "previous_release": str(old), "phase": "planned"})
+        system.installed, system.active = old, True
+        system.overrides["thermite-access-callbacks.service"] = UnitOrigin(load_state="not-found", active="inactive")
+        helper = gateway._helper
+
+        def adopt_or_helper(system, *argv):
+            if argv[0] != "adopt":
+                return helper(system, *argv)
+            deployment.adopt(argv[1], argv[2], uid=os.geteuid(), gid=os.getegid(), service_uid=os.geteuid())
+
+        def stage(release, **kwargs):
+            self.assertEqual((kwargs["port"], kwargs["host_ports"]["access"]), (port, port))
+            command = ["sudo", "-u", "thermite", "-g", "thermite", str(release / "env/bin/python"),
+                       str(release / "program/bin/thermite"), "access"]
+            return {"destination": str(release), "persistent_state": kwargs["state"], "config": str(release / "config.json"),
+                    "units": ["thermite-access.service", "thermite-access-worker.service"], "ownership_commands": [],
+                    "verification_command": [*command, "verify", "--config", str(release / "config.json")],
+                    "unit_install_commands": self.unit_commands(gateway, release)}
+
+        with https_security(Path(served["tls_cert"]), Path(served["tls_key"])) as (port, requests), \
+                patch.object(gateway, "_helper", side_effect=adopt_or_helper), \
+                patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())), \
+                patch.object(staging, "stage", side_effect=stage) as staged, \
+                patch.object(gateway, "_assets", return_value=self.root / "managed-assets"):
+            gateway.context.host = {"timezone": "UTC", "gateway": {"port": port}}
+            self.assertEqual(gateway.perform(system), 0, system.messages)
+            staged.assert_called_once()
+        metadata = json.loads(gateway.journal_path.read_bytes())["metadata"]
+        self.assertEqual((metadata["port"], metadata["previous_release"]), (port, str(old)))
+        self.assertIn(f"   Gateway HTTPS moves from port 13600 to {port}: update bookmarks, home-screen apps "
+                      "and terminal --url", system.messages)
+        # The old listener's process stops before the new release starts, and
+        # readiness is checked, and the terminal profile saved, on the new port.
+        stops = [index for index, command in enumerate(system.commands) if "stop" in command]
+        start = next(index for index, command in enumerate(system.commands) if "--now" in command)
+        self.assertTrue(stops)
+        self.assertLess(max(stops), start)
+        self.assertEqual(requests, [("/api/v1/security", f"house.example.test:{port}")])
+        self.assertIn(f"   Gateway verified: https://house.example.test:{port}", system.messages)
+        profile = json.loads((gateway.context.var / "gateway/current.json").read_bytes())
+        self.assertEqual(profile["url"], f"https://house.example.test:{port}")
 
     def test_not_found_units_do_not_block_fresh_deployment(self):
         gateway, system = self.gateway(), Host()

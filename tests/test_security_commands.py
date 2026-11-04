@@ -133,6 +133,24 @@ class Audit(unittest.TestCase):
         self.assertIn("Run as thermite", error.getvalue())
 
 
+class StagePort(unittest.TestCase):
+    def test_staged_https_port_defaults_to_the_selected_sites_gateway_port(self):
+        import oh_ports
+        from oh_access import staging
+        moved = oh_ports.effective({"gateway": {"port": 16301}})
+        required = ["stage", "--destination", "/fictional/release", "--state", "/fictional/state",
+                    "--plan-directory", "/fictional/plan", "--assets", "/fictional/assets",
+                    "--runtime-url", "http://127.0.0.1:13601", "--runtime-token-file", "/fictional/bearer",
+                    "--tls-cert", "/fictional/cert", "--tls-key", "/fictional/key", "--allowed-host", "house.example.test",
+                    "--json"]
+        for site, extra, expected in ((moved, [], 16301), (None, [], 13600), (moved, ["--port", "14000"], 14000)):
+            with self.subTest(site=bool(site), extra=extra), contextlib.redirect_stdout(io.StringIO()), \
+                    patch.object(access, "_site_ports", return_value=site), \
+                    patch.object(staging, "stage", return_value={}) as stage:
+                self.assertEqual(access.main([*required, *extra]), 0)
+                self.assertEqual((stage.call_args.kwargs["port"], stage.call_args.kwargs["host_ports"]), (expected, site))
+
+
 class Prune(unittest.TestCase):
     def test_prune_runs_the_service_operation_and_prints_its_result(self):
         output = io.StringIO()

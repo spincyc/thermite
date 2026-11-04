@@ -16,6 +16,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
@@ -77,6 +78,24 @@ class Schema(unittest.TestCase):
                 oh_deploy.validate_host({**HOST, "guest_http": {**SINGLE, "port": port}})
         with self.assertRaisesRegex(ValueError, "collides"):
             validate_listeners(oh_ports.NATIVE_URL, 14626, guest_port=14626)
+
+    def test_guests_may_take_13600_only_once_the_gateway_moves_off_it(self):
+        first = {**SINGLE, "port": 13600}
+        with self.assertRaisesRegex(oh_deploy.HostError, "listener port 13600 collides: access and guest_http"):
+            oh_deploy.validate_host({**HOST, "guest_http": first})
+        moved = oh_deploy.validate_host({**HOST, "gateway": {"port": 16301}, "guest_http": first})
+        ports = oh_ports.effective(moved)
+        self.assertEqual((ports["access"], ports["guest_http"]), (16301, 13600))
+        self.assertEqual(guest.origins(guest.settings(moved["guest_http"])), ["http://192.0.2.10:13600"])
+        # Staging checks the listeners it writes against that allocation.
+        validate_listeners(oh_ports.NATIVE_URL, 16301, guest_port=13600, host_ports=ports)
+        validate_listeners(oh_ports.NATIVE_URL, 16301, guest_port=13600)
+        for port, guest_port in ((13600, 13600), (16301, 16301), (16301, 13601), (16301, oh_ports.DOCS_PORT)):
+            with self.subTest(port=port, guest_port=guest_port), self.assertRaisesRegex(ValueError, "collides"):
+                validate_listeners(oh_ports.NATIVE_URL, port, guest_port=guest_port, host_ports=ports)
+        # The freed default does not free anything else: the sandbox's ports stay reserved.
+        with self.assertRaisesRegex(oh_deploy.HostError, "collides"):
+            oh_deploy.validate_host({**HOST, "gateway": {"port": 16301}, "guest_http": {**SINGLE, "port": 13615}})
 
 
 class Peers(unittest.TestCase):
@@ -191,6 +210,13 @@ class GatewayConfiguration(unittest.TestCase):
         with self.assertRaises(AccessError):
             load_config(self.root / "config.json", tls=False)
 
+    def test_a_moved_gateway_serves_https_beside_guests_on_13600(self):
+        settings = guest.settings({**SINGLE, "port": 13600})
+        loaded = self.load(port=16301, guest_http=settings)
+        self.assertEqual((loaded["port"], loaded["guest_http"]["port"]), (16301, 13600))
+        with self.assertRaises(AccessError):
+            self.load(port=13600, guest_http=settings)
+
     def test_upgrade_adopts_version_one_and_two_configurations(self):
         release = private_directory(self.root / "release")
         for name in ("cert", "key"):
@@ -260,6 +286,32 @@ class InstallerAndStatus(unittest.TestCase):
         with self.server(json.dumps({"id": 1, "is_guest": False}).encode()) as port:
             with self.assertRaisesRegex(AccessError, "Guest HTTP listener returned an unexpected response"):
                 self.gateway({**settings, "port": port})._guest_http()
+
+    def test_status_shows_the_https_address_on_the_configured_port(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(status, "AREA", Path(temporary)), \
+                mock.patch.object(status.deploy, "hostname", return_value="house"), \
+                mock.patch.object(status.deploy, "lan_address", return_value="192.0.2.10"):
+            for host, expected in ((HOST, 13600), ({**HOST, "gateway": {"port": 16301}}, 16301)):
+                report, problems, out = {}, [], io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    status.show_gateway(host, report, print, problems)
+                self.assertEqual(report["gateway"], {"url": f"https://house:{expected}/", "port": expected,
+                                                     "lan": f"https://192.0.2.10:{expected}/", "installed": None})
+                self.assertEqual(out.getvalue().splitlines(),
+                                 [f"gateway  https://house:{expected}/: the HTTPS application, where everyone "
+                                  f"signs in; from the LAN: https://192.0.2.10:{expected}/"])
+                self.assertEqual(problems, [])
+            # The installed gateway's verified profile still names the old port.
+            profiles = [{"url": "https://house:13600", "ca_file": "/fictional/ca.pem"},
+                        {"url": "https://house:16301", "ca_file": "/fictional/ca.pem"}]
+            for profile, expected in zip(profiles, (["gateway https://house:13600/: instance/host.yaml moves HTTPS to port 16301"], [])):
+                report, problems, out = {}, [], io.StringIO()
+                with mock.patch("oh_access.client.deployment", return_value=profile), contextlib.redirect_stdout(out):
+                    status.show_gateway({**HOST, "gateway": {"port": 16301}}, report, print, problems)
+                self.assertEqual(report["gateway"]["installed"], profile["url"] + "/")
+                self.assertEqual(problems, expected)
+                self.assertEqual("thermite upgrade moves it to port 16301" in out.getvalue(), bool(expected))
 
     def test_status_lists_the_guest_addresses(self):
         for settings, expected in ((None, []), ({**SINGLE, "names": ["remote.guest.example"]},

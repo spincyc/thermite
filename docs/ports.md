@@ -3,16 +3,18 @@
 Thermite's default TCP listeners occupy **13600–13626**, anchored at the
 HTTPS application on **13600**. `lib/oh_ports.py` owns the allocation.
 `instance/host.yaml` keeps the site's native HTTP/HTTPS choices and optional
-`metrics: <service>_port` and `guest_http: port` overrides. Generation rejects invalid values and
+`gateway: port`, `metrics: <service>_port` and `guest_http: port` overrides.
+Generation rejects invalid values and
 collisions, including collisions with the sandbox, boot test and docs preview.
-Explicit overrides may leave the default range. Commit changes and run
+Explicit overrides may leave the default range, and a default an override
+frees may be taken by another override. Commit changes and run
 `thermite install --config DIR` or `thermite upgrade --config DIR`; the same
 workflow updates the native boundary and gateway together. Gateway and callback
 listeners are checked against the complete allocation and native upstream.
 
 | Port | Listener | Binding / use |
 | --- | --- | --- |
-| 13600 | Application HTTPS with toggleable authentication | Configured address; TLS required |
+| 13600 | Application HTTPS with toggleable authentication; `gateway: port` moves it | Configured address; TLS required |
 | 13601 | Native runtime HTTP | 127.0.0.1 only; verified device callbacks use the relay |
 | 13602 | Native runtime HTTPS | 127.0.0.1 only |
 | 13603 | Native Karaf console | 127.0.0.1 only |
@@ -41,6 +43,8 @@ listeners are checked against the complete allocation and native upstream.
 | 13626 | Optional plain-HTTP Guest controls | Listed `guest_http.listen` addresses, admitting only `guest_http.clients`; no listener without `guest_http` |
 
 HTTPS is the application entry point whether authentication is on or off.
+[Moving the HTTPS application](#moving-the-https-application) explains its
+override.
 The Guest port is the one application listener without TLS, and it serves
 Guests only: see [Guest access over plain HTTP](installation.md#guest-access-over-plain-http).
 The managed firewall table leaves it alone; a host with its own firewall opens
@@ -80,6 +84,47 @@ Grafana from 3000, Alertmanager from 9093, ntfy from 2586, notifications from
 and the docs preview from 8000. Regenerate the private site, review generated
 units, run the unified install/upgrade, and update bookmarks as needed. Existing runtime state is not rewritten by
 `generate` alone.
+
+## Moving the HTTPS application
+
+`gateway: {port: N}` in `instance/host.yaml` moves the HTTPS application, the
+gateway everyone signs in to. It is a mapping named for the gateway, beside
+`metrics:` and `guest_http:`, so it cannot be mistaken for the top-level
+`http_port` and `https_port`, which are the native runtime's loopback
+listeners. The product default stays 13600. A moved gateway frees 13600, and
+`guest_http: {port: 13600}` may then take it, giving guests the range's
+first port; while the gateway keeps 13600, that Guest port collides.
+
+```yaml
+gateway:
+  port: 16301
+guest_http:
+  port: 13600
+  listen: [198.51.100.2]
+  clients: [198.51.100.0/24]
+```
+
+Commit the change and run `thermite upgrade --config DIR`. The upgrade stops
+the gateway, so its old listeners close, then starts the new release on the
+configured ports; it takes the port from `instance/host.yaml` each time, never
+from the release it replaces, and its HTTPS readiness check and the verified
+address it saves for terminals use the new port. Its certificate names hosts,
+not ports, so client trust is unchanged. Origins include the port, though:
+
+- Bookmarks and home-screen apps (an iPhone's **Add to Home Screen**) keep the
+  old address; add them again at the new one. Site data a browser keeps per
+  origin, such as the light/dark choice, starts afresh.
+- `thermite access login` credentials and `--ca-file` choices are saved per
+  address: log in once more, and pass `--ca-file` once more, at the new one.
+- On the server, `thermite remote --config DIR` follows the verified address
+  automatically, and `thermite tui --config DIR` uses the site's port.
+  Elsewhere, pass `--url HOST:PORT`.
+- The managed firewall table leaves the gateway's ports alone. A host with its
+  own firewall opens the new HTTPS port, and closes the old one unless the
+  Guest listener now uses it.
+
+`thermite status` shows the HTTPS address on the configured port, and reports
+a problem while the installed gateway still serves another.
 
 ## Why this range
 

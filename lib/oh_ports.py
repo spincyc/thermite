@@ -58,10 +58,27 @@ def unique(ports: dict[str, int]) -> dict[str, int]:
     return ports
 
 
+#: host.yaml's `gateway:` mapping. Its port is the HTTPS application,
+#: allocated as "access"; top-level http_port/https_port are native runtime's.
+GATEWAY_FIELDS = ("port",)
+
+
 def effective(host: dict | None = None) -> dict[str, int]:
-    """Validate production overrides against each other and the remaining listeners."""
+    """Validate production overrides against each other and the remaining listeners.
+
+    Every listener keeps its default unless host.yaml moves it, so a default
+    a moved listener frees (such as 13600 after `gateway: {port: ...}`) may
+    be taken by another override, such as the Guest port.
+    """
     host = host or {}
     result = dict(DEFAULTS)
+    gateway = host.get("gateway") or {}
+    if not isinstance(gateway, dict):
+        raise ValueError("gateway: must be a mapping")
+    unknown = sorted(str(key) for key in gateway if key not in GATEWAY_FIELDS)
+    if unknown:
+        raise ValueError("unknown gateway setting " + ", ".join(unknown) + " (allowed: " + ", ".join(GATEWAY_FIELDS) + ")")
+    result["access"] = checked("gateway.port", gateway.get("port", result["access"]))
     for name in ("http", "https"):
         result[name] = host.get(name + "_port", result[name])
     metrics = host.get("metrics") or {}
@@ -74,6 +91,11 @@ def effective(host: dict | None = None) -> dict[str, int]:
         raise ValueError("guest_http: must be a mapping")
     result["guest_http"] = guest.get("port", result["guest_http"])
     return unique(result)
+
+
+def gateway_port(host: dict | None = None) -> int:
+    """The HTTPS application's port: host.yaml's gateway.port, else ACCESS_PORT."""
+    return effective(host)["access"]
 
 
 def listeners(selected: dict[str, int], *, upstream: int | None = None,
