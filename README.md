@@ -41,5 +41,6 @@ Use an always-on x86-64 host. The [system requirements](https://spincyc.github.i
 - [Questions](FAQ.md): requirements, privacy and upgrades.
 - [Colors](https://spincyc.github.io/thermite/colors.html): light and dark modes, accessible themes and the bowl mark.
 - [Hardware endpoint design](design/hardware-endpoints.md): proposed standalone USB and IR endpoints.
+- [Handheld remote research](design/handheld-remote.md): flashable remote hardware and its radio link.
 
 Under active development, version `0.1.0.dev0`. All rights reserved.
