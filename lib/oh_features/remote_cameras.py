@@ -31,6 +31,25 @@ def validate(data: dict) -> list[str]:
 
 
 def manifest(house: House, conf: Conf | None = None) -> dict:
-    return {"version": 1, "statusGroup": unifi_protect.STATUS_GROUP, "pollSeconds": 5,
-            "cameras": [unifi_protect.descriptor(device, house) for device in house.devices
-            if uses(device, unifi_protect.PHASE, unifi_protect.NAME)]}
+    """The camera catalogue; built once per conf (Conf.derived) when given one."""
+    def make():
+        return {"version": 1, "statusGroup": unifi_protect.STATUS_GROUP, "pollSeconds": 5,
+                "cameras": [unifi_protect.descriptor(device, house) for device in house.devices
+                            if uses(device, unifi_protect.PHASE, unifi_protect.NAME)]}
+    return make() if conf is None else conf.derived("remote_cameras", make)
+
+
+def media(manifest: dict) -> dict:
+    """{native media path: {"kind": "snapshot" | "sdp"}} of a manifest's
+    cameras; ValueError for a path that is not exactly the integration's."""
+    found = {}
+    for camera in manifest["cameras"]:
+        snapshot = camera["media"]["snapshot"]
+        if not unifi_protect.SNAPSHOT_PATH.fullmatch(snapshot):
+            raise ValueError("Camera snapshot must be an exact native path")
+        found[snapshot] = {"kind": "snapshot"}
+        for value in camera["media"]["streams"].values():
+            if not unifi_protect.STREAM_PATH.fullmatch(value):
+                raise ValueError("Camera stream must be an exact native path")
+            found[value] = {"kind": "sdp"}
+    return found

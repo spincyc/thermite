@@ -97,6 +97,45 @@ does what their binding cannot, provides
               files rendered from all the devices it renders at once, such
               as its rule under automation/js/
 
+Facts about a vendor's devices live in its module, never in a generic one:
+the generic code reads these optional attributes through REGISTRY
+(declared() for the tuples), so no table outside this package names an
+integration.
+
+    DEVICE_KEYS   device fields it reads (validate() checks them); the house
+                  file refuses any device key no module or the inventory
+                  core (oh_inventory) declares
+    HOUSE_KEYS    top-level house-file keys it reads, likewise
+    NEEDS_MAC = True
+                  it derives a device's identity from its mac, so a device
+                  listing it needs one
+    HOUSE_ITEMS   Items it renders that belong to the house, not a device
+    ITEM_ONLY_RULES
+                  rules under automation/js/ it renders that open no
+                  connection, so hold no RULE_SENDS (oh_render.read_only)
+    REMOTE_LAYOUT the remote page's layout for its devices, unless it
+                  provides remote_of(device)
+    READBACK_INPUTS
+                  every input value its routed input Items read back; the
+                  remote's route diagnosis may report these
+    PORT, PROBE_PORTS
+                  the device's TCP ports metrics probes besides its Things'
+                  (PROBE_PORTS for an integration with several, or whose
+                  Things name none)
+    PROBED = False
+                  metrics never probes its devices: it has no fixed port
+    PROBLEM_CLEAR_STATE
+                  the state its <id>_problem Item holds for "nothing wrong"
+    ROUTE_OPTIONAL = True
+                  its Things and ports never gate a routed source's health
+    DISCOVER_PORTS, DISCOVER_MDNS
+                  TCP ports and mDNS service names or labels that mark a
+                  host on the LAN as AV gear (bin/thermite discover)
+    HANDLER_POOL, HANDLER_POOL_WHY
+                  the openHAB thingHandler threads its binding needs while
+                  it blocks them, and why; oh_features.threadpools raises
+                  the pool when any device lists such a module
+
 A module renders exactly the devices that list NAME under controls.<PHASE>.
 Adding an integration is one module, one line in REGISTRY, and its test.
 Modules whose names start with an underscore are helpers shared by
@@ -138,3 +177,9 @@ def allowed() -> dict[str, set[str]]:
         if getattr(module, "CONTROL", False):
             names["control"].add(module.NAME)
     return names
+
+
+def declared(attribute: str, modules=REGISTRY) -> tuple:
+    """Every value of the optional tuple `attribute` across `modules`, in
+    their order, without repeats."""
+    return tuple(dict.fromkeys(value for module in modules for value in getattr(module, attribute, ())))

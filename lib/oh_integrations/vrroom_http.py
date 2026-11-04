@@ -34,6 +34,7 @@ ASSETS: dict[str, str] = {}
 KINDS = {"hdmi_switch"}
 #: The input numbers TX0 can show (RX0-RX3).
 INPUTS = range(0, 4)
+READBACK_INPUTS = tuple(str(number) for number in INPUTS)
 #: The insel value that makes one output copy the other.
 COPY = 4
 STATUS = "/ssi/infopage.ssi"

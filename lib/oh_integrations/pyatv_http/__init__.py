@@ -52,6 +52,13 @@ HEADER = (
 )
 ADDONS = (Addon("automation", "jsscripting", "the Apple TV rule (pyatv_http.js)"),)
 ASSETS: dict[str, str] = {}
+REMOTE_LAYOUT = "apple_tv"
+#: No fixed port to probe: the helper reaches an Apple TV on the Companion
+#: port it announces over mDNS, which changes.
+PROBED = False
+#: AirPlay, which every Apple TV announces and answers on.
+DISCOVER_PORTS = (7000,)
+DISCOVER_MDNS = ("_airplay", "_raop", "AirPlay", "AirTunes")
 #: Where the rule reaches the helper: on the openHAB host itself, never the
 #: LAN (bin/thermite apple-tv serve listens on 127.0.0.1 only).
 from oh_ports import HELPER_PORT

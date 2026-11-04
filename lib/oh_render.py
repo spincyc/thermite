@@ -96,11 +96,12 @@ READ_ONLY_HEADER = (
 #: Rules under automation/js/ that hold no RULE_SENDS because they open no
 #: connection of their own: they command Items only, which read_only()
 #: guards, or watch the runtime. Any other rule without a SEND declaration
-#: is refused.
+#: is refused. The house-wide ones here, and those integrations and
+#: features declare (ITEM_ONLY_RULES).
 ITEM_ONLY_RULES = frozenset({
     "automation/js/all_off.js", "automation/js/routing.js", "automation/js/thermite_entry.js",
-    "automation/js/thermite_handler_pool.js", "automation/js/unifi_protect.js",
     "automation/js/node_modules/thermite-routing-lifecycle/index.js",
+    *integrations.declared("ITEM_ONLY_RULES", (*integrations.REGISTRY, *features.REGISTRY)),
 })
 #: RULE_SENDS, however it is spaced.
 SEND_DECLARATION = re.compile(r"^(\s*)(?:const|let|var)\s+SEND\s*=\s*true\s*;?\s*$")

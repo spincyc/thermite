@@ -34,11 +34,15 @@ def manifest(host: dict, runtime_version: str, *, mode: str = "authenticated") -
 
 
 def selected(*, site: Path | None = None, program: Path | None = None, mode: str = "authenticated") -> dict:
-    """Read only the selected host settings and the application's runtime pin."""
-    import yaml
+    """Read only the selected host settings and the application's runtime pin.
+    The host file is checked by oh_deploy.load_host, the one host loader."""
+    import oh_deploy
     from oh_paths import PROGRAM, SITE
 
-    host = yaml.safe_load((Path(site or SITE) / "instance/host.yaml").read_text(encoding="utf-8"))
+    try:
+        host = oh_deploy.load_host(Path(site or SITE) / "instance/host.yaml")
+    except oh_deploy.HostError as exc:
+        raise ValueError(f"System metadata requires a valid host file: {exc}") from None
     versions = json.loads((Path(program or PROGRAM) / "versions.json").read_text(encoding="utf-8"))
     try:
         runtime = versions["openhab"]["version"]

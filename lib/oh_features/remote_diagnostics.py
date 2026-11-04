@@ -137,7 +137,12 @@ def validate(data: dict) -> list[str]:
 
 
 def manifest(house: House, conf: Conf) -> dict:
-    """Configured HDMI paths; a client selects one using confirmed readback."""
+    """Configured HDMI paths; a client selects one using confirmed readback.
+    Built once per conf (Conf.derived)."""
+    return conf.derived("remote_diagnostics", lambda: _manifest(house, conf))
+
+
+def _manifest(house: House, conf: Conf) -> dict:
     descriptions = providers(house)
     devices = {device["id"]: device for device in house.devices}
     # A descriptor cannot create an arbitrary REST read or refer to an Item

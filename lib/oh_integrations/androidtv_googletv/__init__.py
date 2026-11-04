@@ -81,7 +81,16 @@ HEADER = (
 ADDONS = (Addon("binding", "androidtv"),
           Addon("automation", "jsscripting", "the Android TV key, volume and pairing rule (androidtv_googletv.js)"))
 ASSETS: dict[str, str] = {}
+DEVICE_KEYS = ("volume_max",)
 PORT = 6466
+#: The remote protocol's port and its pairing port.
+DISCOVER_PORTS = (PORT, 6467)
+DISCOVER_MDNS = ("_androidtvremote2",)
+#: The pinned binding's connections block openHAB's thingHandler pool, so a
+#: house with one of these devices raises the pool to this many threads
+#: (oh_features.threadpools); a capacity mitigation, not a fix.
+HANDLER_POOL = 32
+HANDLER_POOL_WHY = "Google TV connections block thingHandler"
 #: Seconds from a command to its read-back: none, the TV reports a change at once.
 READ_BACK = 0
 RULE = "automation/js/androidtv_googletv.js"

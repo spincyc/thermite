@@ -8,6 +8,9 @@ Each module provides:
     render(house, conf)
               adds its files, Items and pages to conf (an oh_conf.Conf)
 
+and may declare, as an integration does (oh_integrations), HOUSE_KEYS,
+HOUSE_ITEMS and ITEM_ONLY_RULES.
+
 Features run after every integration, in REGISTRY order, so they can read
 the point Items the integrations made (oh_conf.Conf.points).
 """

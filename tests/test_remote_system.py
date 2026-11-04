@@ -73,8 +73,9 @@ class SystemMetadata(unittest.TestCase):
             site, program = root / "site", root / "program"
             (site / "instance").mkdir(parents=True)
             (program / "instance").mkdir(parents=True)
-            (site / "instance/host.yaml").write_text("http_port: 14001\nmetrics:\n  grafana_port: 14002\n")
-            (program / "instance/host.yaml").write_text("http_port: 15001\n")
+            host = ("state_root: /srv/thermite\ntimezone: Etc/UTC\nhttps_port: 13602\nuid: 9001\ngid: 9001\n")
+            (site / "instance/host.yaml").write_text(host + "http_port: 14001\nmetrics:\n  grafana_port: 14002\n")
+            (program / "instance/host.yaml").write_text(host + "http_port: 15001\n")
             (site / "versions.json").write_text(json.dumps({"openhab": {"version": "0.0.0"}}))
             (program / "versions.json").write_text(json.dumps({"openhab": {"version": "5.2.3"}}))
             result = remote_system.selected(site=site, program=program)
@@ -82,6 +83,11 @@ class SystemMetadata(unittest.TestCase):
             self.assertEqual([tool["port"] for tool in result["tools"][:2]], [14001, 14002])
             (program / "versions.json").write_text("{}")
             with self.assertRaises(ValueError):
+                remote_system.selected(site=site, program=program)
+            (program / "versions.json").write_text(json.dumps({"openhab": {"version": "5.2.3"}}))
+            # The site's host file is validated by the one host loader.
+            (site / "instance/host.yaml").write_text("http_port: 14001\n")
+            with self.assertRaisesRegex(ValueError, "valid host file.*missing state_root"):
                 remote_system.selected(site=site, program=program)
 
 

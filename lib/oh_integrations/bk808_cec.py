@@ -18,6 +18,7 @@ HEADER = ("Optional source CEC requests through an explicitly wired BK-808 input
           "Transport replies are not player power/playback observations.")
 ADDONS = (Addon("binding", "http"), Addon("automation", "jsscripting", "finite source CEC keys"))
 ASSETS: dict[str, str] = {}
+DEVICE_KEYS = ("cec",)
 RULE = "automation/js/bk808_cec.js"
 SOURCE = Path(__file__).with_suffix(".js")
 KEYS = {"power_on": 1, "power_off": 2, "up": 3, "left": 4, "ok": 5, "right": 6,

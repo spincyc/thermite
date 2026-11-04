@@ -410,6 +410,15 @@ class Conf:
         # Optional explicit deployment facts for the System catalogue. Public
         # export supplies its fictional host instead of reading the active site.
         self.system_metadata = system_metadata
+        self._derived: dict[str, object] = {}
+
+    def derived(self, key: str, make):
+        """make() once per Conf: a house-wide manifest that several features
+        and the metrics read, built after every integration has rendered.
+        Callers must not change what it returns."""
+        if key not in self._derived:
+            self._derived[key] = make()
+        return self._derived[key]
 
     def yaml_file(self, path: str, header: tuple[str, ...] | list[str]) -> YamlFile:
         if path not in self.yaml:

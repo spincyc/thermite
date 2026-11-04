@@ -44,6 +44,9 @@ ADDONS = (
     Addon("automation", "jsscripting", "JS(...) transformations for WiiM hex titles and commands"),
 )
 ASSETS = {"transform/hex-to-utf8.js": "hex-to-utf8.js"}
+DEVICE_KEYS = ("volume_max",)
+REMOTE_LAYOUT = "wiim"
+DISCOVER_MDNS = ("_linkplay",)
 HEX_TEXT = "JS(hex-to-utf8.js)"
 #: (channel and Item suffix, channel type, Item type, label, JSON field, tags, icon)
 POINTS = (

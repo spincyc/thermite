@@ -14,6 +14,9 @@ HEADER = (
 )
 ADDONS = (Addon("binding", "chromecast"),)
 ASSETS: dict[str, str] = {}
+#: Cast's setup HTTP port and its control channel.
+DISCOVER_PORTS = (8008, 8009)
+DISCOVER_MDNS = ("_googlecast",)
 #: (Item suffix, type, label, tags, channel, icon); volume is read-write.
 POINTS = (
     ("cast_app", "String", "Cast App", ["Status", "App"], "appName", None),

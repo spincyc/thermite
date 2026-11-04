@@ -14,6 +14,8 @@ HEADER = (
 )
 ADDONS = (Addon("binding", "network"),)
 ASSETS: dict[str, str] = {}
+#: ICMP has no port to probe.
+PROBED = False
 
 
 def validate(device: dict) -> list[str]:

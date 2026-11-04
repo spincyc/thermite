@@ -83,6 +83,14 @@ HEADER = (
 )
 ADDONS = (Addon("automation", "jsscripting", "the Sony TV rule (sony_ip_control.js)"),)
 ASSETS: dict[str, str] = {}
+DEVICE_KEYS = ("volume_max", "sony_speaker_audio")
+REMOTE_LAYOUT = "sony_tv"
+#: The rule talks to the TV's REST API and IRCC on plain HTTP.
+PROBE_PORTS = (80,)
+#: The rule publishes UNDEF to <id>_problem for "nothing wrong".
+PROBLEM_CLEAR_STATE = "UNDEF"
+#: BRAVIA Simple IP control, open on a TV with IP control enabled.
+DISCOVER_PORTS = (20060,)
 #: The modules whose files the rule needs beside its own: sony_rest's Thing
 #: reads the power Item the rule commands.
 NEEDS = (sony_rest,)
@@ -101,6 +109,8 @@ HDMI = (1, 2, 3, 4)
 INPUTS = tuple((f"hdmi{n}", f"HDMI {n}") for n in HDMI)
 #: The input state while the TV shows something of its own.
 OWN = ("tv", "TV (apps, home, tuner)")
+#: Every input state the rule reports.
+READBACK_INPUTS = (OWN[0], *(value for value, _ in INPUTS))
 #: The TV's volume scale, as getVolumeInformation reports it.
 MAX_VOLUME = 100
 #: Use the full supported range unless devices.yaml explicitly sets volume_max.

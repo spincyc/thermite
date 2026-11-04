@@ -22,6 +22,9 @@ HEADER = ("Verified IR keys only; no device power or playback state is inferred.
 ADDONS = (Addon("binding", "globalcache"), Addon("transformation", "map"),
           Addon("automation", "jsscripting", "finite verified IR dispatch"))
 ASSETS: dict[str, str] = {}
+DEVICE_KEYS = ("ir",)
+#: The iTach's TCP API.
+DISCOVER_PORTS = (4998,)
 from oh_paths import SITE
 INSTANCE = SITE / "instance"
 RULE = "automation/js/globalcache_ir.js"

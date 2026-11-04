@@ -26,6 +26,14 @@ HEADER = (
 )
 ADDONS = (Addon("binding", "sonos"), Addon("automation", "jsscripting", "Sonos remote keys"))
 ASSETS: dict[str, str] = {}
+#: The binding derives a player's UDN from its MAC, so a device needs one.
+NEEDS_MAC = True
+DEVICE_KEYS = ("sonos_udn", "volume_max")
+REMOTE_LAYOUT = "sonos"
+#: The binding talks UPnP to the player's HTTP port.
+PROBE_PORTS = (1400,)
+DISCOVER_PORTS = (1400,)
+DISCOVER_MDNS = ("_sonos",)
 #: Inventory model -> the binding's Thing type.
 THING_TYPES = {"Arc": "Arc", "Amp": "Amp"}
 MAX_VOLUME = 100

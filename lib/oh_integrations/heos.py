@@ -24,6 +24,11 @@ HEADER = ("Receiver HEOS transport only, through the native HEOS binding.",
           "No account or media/group/volume/input control is configured.")
 ADDONS = (Addon("binding", "heos"), Addon("automation", "jsscripting", "guarded HEOS transport keys"))
 ASSETS: dict[str, str] = {}
+DEVICE_KEYS = ("heos_pid",)
+#: Optional music transport, never an HDMI routing stage: an unavailable HEOS
+#: connection does not fail a routed source's working power/input path.
+ROUTE_OPTIONAL = True
+DISCOVER_MDNS = ("_heos",)
 RULE = "automation/js/heos.js"
 SOURCE = Path(__file__).with_name("heos.js")
 KEYS = {"previous": "PREVIOUS", "play": "PLAY", "pause": "PAUSE", "next": "NEXT"}

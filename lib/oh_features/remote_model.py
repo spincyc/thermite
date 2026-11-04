@@ -86,11 +86,6 @@ def literal(text: str) -> dict:
         raise ValueError("invalid remote presentation data") from exc
 
 
-#: The remote layout of an integration without remote_of().
-LAYOUTS = {"sony_ip_control": "sony_tv", "sony_adcp": "sony_projector", "pyatv_http": "apple_tv",
-           "denonmarantz_http": "marantz_avr", "wiim_http": "wiim", "sonos": "sonos"}
-
-
 def provider(device: dict) -> tuple[object | None, dict | None]:
     """The first integration (REGISTRY order) that gives the device a remote,
     and its control Items; (None, None) without one."""
@@ -104,7 +99,7 @@ def provider(device: dict) -> tuple[object | None, dict | None]:
 def capabilities(device: dict) -> tuple[dict | None, str | None, str | None]:
     module, control = provider(device)
     if module is not None:
-        layout = module.remote_of(device) if hasattr(module, "remote_of") else LAYOUTS.get(module.NAME)
+        layout = module.remote_of(device) if hasattr(module, "remote_of") else getattr(module, "REMOTE_LAYOUT", None)
         problem = module.problem(device) if hasattr(module, "problem") else None
         return control, layout, problem
     for module in integrations.REGISTRY:

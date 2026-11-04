@@ -39,6 +39,8 @@ HEADER = (
 ADDONS = instr.ADDONS
 ASSETS: dict[str, str] = {}
 INPUTS = OUTPUTS = 8
+DEVICE_KEYS = ("settings",)
+READBACK_INPUTS = tuple(str(number) for number in range(1, INPUTS + 1))
 KINDS = {"hdmi_matrix"}
 #: All that the Thing ever sends: it reads and sets routing and input EDIDs.
 COMHEADS = frozenset({"get video status", "video switch", "get input status", "get output status", "set edid"})

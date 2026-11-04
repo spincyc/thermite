@@ -18,8 +18,9 @@ volume, input...) and conversion:
     problem  1 while the problem text is set, 0 when it is empty
 
 NULL, UNDEF and anything unparsable are absent, never stale. The explicit
-clear_state descriptor is the sole exception: Sony's problem Item uses a
-present UNDEF to mean "nothing wrong", which becomes 0. Missing/NULL never
+clear_state descriptor is the sole exception: a problem Item whose
+integration declares a PROBLEM_CLEAR_STATE (Sony's: UNDEF) uses that present
+state to mean "nothing wrong", which becomes 0. Missing/NULL never
 becomes healthy. A scrape makes
 at most one REST round (GET /rest/things and /rest/items, ROUND_SECONDS
 for both), shared by scrapes within CACHE_SECONDS. When openHAB does not answer,

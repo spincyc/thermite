@@ -89,6 +89,60 @@ ADDRESS_VARIABLE = re.compile(
 SECRET_VARIABLE = re.compile(r"(?i)pass|secret|token|key|auth|cred|user|login|pin(?:$|_)")
 
 
+# -- devices.yaml ----------------------------------------------------------
+
+#: The devices.yaml keys this module reads: c4_item on a device names the
+#: Control4 items that are that device; control4_stale lists items known to
+#: be gone; control4_rooms maps a Control4 room name to a room id;
+#: control4_director selects the controller `fetch` asks.
+HOUSE_KEYS = ("control4_rooms", "control4_stale", "control4_director")
+DEVICE_KEYS = ("c4_item",)
+
+
+def item_id(value: object) -> bool:
+    """Whether a value is a Control4 item id: a positive integer."""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def validate(data: dict) -> list[str]:
+    """Problems in devices.yaml's Control4 keys; an item belongs to at most
+    one device or control4_stale."""
+    problems: list[str] = []
+    owners: dict[int, str] = {}
+
+    def claim(c4_item: object, where: str, what: str) -> None:
+        if not item_id(c4_item):
+            problems.append(f"{what} {c4_item!r} is not a Control4 item id")
+        elif c4_item in owners:
+            problems.append(f"{where}: c4_item {c4_item} already used by {owners[c4_item]}")
+        else:
+            owners[c4_item] = where
+
+    devices = data.get("devices") if isinstance(data.get("devices"), list) else []
+    for index, device in enumerate(devices):
+        if not isinstance(device, dict) or device.get("c4_item") is None:
+            continue
+        where = str(device.get("id") or f"devices[{index}]")
+        c4_items = device["c4_item"] if isinstance(device["c4_item"], list) else [device["c4_item"]]
+        for c4_item in c4_items:
+            claim(c4_item, where, f"{where}: c4_item")
+    stale = data.get("control4_stale") or []
+    if not isinstance(stale, list):
+        problems.append("control4_stale must be a list of Control4 item ids")
+        stale = []
+    for c4_item in stale:
+        claim(c4_item, "control4_stale", "control4_stale:")
+    rooms = data.get("rooms") if isinstance(data.get("rooms"), dict) else {}
+    mapping = data.get("control4_rooms")
+    if mapping is not None and not isinstance(mapping, dict):
+        problems.append("control4_rooms must be a mapping")
+        mapping = {}
+    for name, room in (mapping or {}).items():
+        if not isinstance(room, str) or room not in rooms:
+            problems.append(f"control4_rooms: '{name}' maps to '{room}', which is not in rooms")
+    return problems
+
+
 # -- fetch -----------------------------------------------------------------
 
 def director_ip(inventory: dict, explicit: str | None = None) -> str:

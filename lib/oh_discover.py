@@ -21,6 +21,8 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import oh_integrations as integrations
+
 GROUP = "239.255.255.250"
 SSDP_PORT = 1900
 SDDP_PORT = 1902
@@ -29,23 +31,23 @@ DDP_PORTS = (9302, 987)
 DDP_SEARCH = "SRCH * HTTP/1.1\ndevice-discovery-protocol-version:00030010\n"
 OUI_DB = Path("/usr/share/hwdata/oui.txt")
 
-#: Control ports of the AV products in this house and their common peers.
-PORTS = (
-    22, 23, 80, 443, 1400, 1443, 1883, 1902, 1925, 1926, 3000, 3001, 4352,
-    4998, 5000, 5020, 5021, 5555, 6466, 6467, 7000, 7345, 8001, 8002, 8008,
-    8009, 8060, 8080, 8102, 8443, 8750, 9000, 9197, 10101, 14999, 20060,
-    36669, 49152, 50001, 52235, 60128,
-)
-#: Ports that mark a host as AV or control gear rather than infrastructure.
-AV_PORTS = {
-    23, 1400, 1902, 3000, 3001, 4998, 5555, 6466, 6467, 7000, 8001, 8002,
-    8008, 8009, 8060, 8102, 10101, 14999, 20060, 60128,
-}
-MDNS_AV = (
-    "_airplay", "_raop", "AirPlay", "AirTunes", "_googlecast", "_sonos",
-    "_androidtvremote2", "_nv_shield_remote", "_heos", "Amazon Fire TV",
-    "_spotify-connect", "_linkplay",
-)
+#: Ports that mark a host as AV or control gear rather than infrastructure,
+#: besides those the integrations declare (DISCOVER_PORTS): telnet and
+#: Control4's SDDP, and AV products Thermite has no integration for.
+COMMON_AV_PORTS = frozenset({23, 1902, 3000, 3001, 5555, 8001, 8002, 8060, 8102, 10101, 14999, 60128})
+#: Other ports worth a probe: web, SSH, MQTT and the control ports of AV and
+#: network gear that do not by themselves mark a host as AV.
+COMMON_PORTS = frozenset({
+    22, 80, 443, 1443, 1883, 1925, 1926, 4352, 5000, 5020, 5021, 7345, 8080,
+    8443, 8750, 9000, 9197, 36669, 49152, 50001, 52235,
+})
+AV_PORTS = COMMON_AV_PORTS | frozenset(integrations.declared("DISCOVER_PORTS"))
+#: Every port probe_ports() tries by default.
+PORTS = tuple(sorted(COMMON_PORTS | AV_PORTS))
+#: mDNS service names and labels that mark a host as AV gear: those the
+#: integrations declare (DISCOVER_MDNS), and these of products and services
+#: Thermite has no integration for.
+MDNS_AV = (*integrations.declared("DISCOVER_MDNS"), "_nv_shield_remote", "Amazon Fire TV", "_spotify-connect")
 
 
 def parse_headers(payload: str) -> tuple[str, dict[str, str]]:

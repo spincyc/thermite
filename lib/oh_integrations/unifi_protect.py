@@ -29,7 +29,17 @@ ASSETS: dict[str, str] = {}
 CONTROLLER_UID = "unifi:controller:protect_console"
 NVR_UID = "unifi:nvr:protect"
 STATUS_GROUP = "house_camera_status"
+RULE = "automation/js/unifi_protect.js"
+DEVICE_KEYS = ("protect",)
+#: The console's host and port (oh_features.remote_cameras validates them).
+HOUSE_KEYS = ("protect",)
+HOUSE_ITEMS = (STATUS_GROUP,)
+#: The motion-timestamp rule only updates Items.
+ITEM_ONLY_RULES = (RULE,)
 DEVICE_ID = re.compile(r"[a-f0-9]{24}")
+#: The native media paths descriptor() names, which the runtime serves.
+SNAPSHOT_PATH = re.compile(r"/unifi/media/image/[A-Za-z0-9:_-]+")
+STREAM_PATH = re.compile(r"/unifi/media/play/[A-Za-z0-9:_-]+")
 CHANNELS = {
     "online": ("Switch", "Connected", None),
     "recording": ("Switch", "Recording", "is-recording"),
@@ -130,7 +140,7 @@ for (const camera of CAMERAS) {
     }});
 }
 """ % json.dumps(table, separators=(",", ":"))
-    return {"automation/js/unifi_protect.js": script,
+    return {RULE: script,
             "services/unifiprotect.cfg": "# Native Protect media, on the LAN or VPN.\nuseStun = false\ndownloadBinaries = true\n"}
 
 

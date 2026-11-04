@@ -50,6 +50,7 @@ HEADER = (
 ADDONS = (Addon("binding", "denonmarantz"), Addon("binding", "http"),
           Addon("automation", "jsscripting", "read-only receiver signal snapshots"))
 ASSETS: dict[str, str] = {}
+DEVICE_KEYS = ("volume_max", "zones")
 #: Seconds between the binding's polls of the HTTP API, the shortest it
 #: takes (a Thing polling more often goes OFFLINE as a configuration error).
 #: It reads nothing after a command, so a command is read back at the next
@@ -79,6 +80,9 @@ INPUT_ALIASES = {"GAME": "GAME1"}
 #: The input of a zone other than the main one that plays whatever the main
 #: zone plays: such a zone reports it, and takes it as a command (Z2SOURCE).
 ZONE_SOURCE = ("SOURCE", "Main Zone Source")
+#: Every SI code a zone may report as its selected input (room diagnostics).
+READBACK_INPUTS = tuple(dict.fromkeys([code for code, _ in INPUTS] + [code for pairs in GAME_INPUTS.values() for code, _ in pairs]
+                                      + [ZONE_SOURCE[0]]))
 #: Remote button id (web/remote/remotes.js) -> receiver command (Denon AVR
 #: control protocol). power and input are Items of their own, never keys;
 #: any other id, previous, play_pause and next among them, is dropped (from

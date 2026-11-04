@@ -12,9 +12,9 @@ can compare.
 
 What the house file decides is found from the conf/ it generates
 (oh_render.build), never listed twice: the Things of each device, its
-control ports (from its Things' URLs and port settings, from an integration
-module's PORT, or from CONTROL_PORTS for an integration whose module names
-none) and the Items worth keeping (select_point()). Device names and
+control ports (from its Things' URLs and port settings, and from its
+integration modules' PORT and PROBE_PORTS) and the Items worth keeping
+(select_point()). Device names and
 addresses appear only in the output.
 
 Everything a unit needs that is not a file (listen addresses, retention,
@@ -103,14 +103,6 @@ GRAFANA_RELOAD_SECONDS = 30
 #: names more (other services on the same host).
 SYSTEMD_UNITS = ("thermite-.*",)
 DBUS_SOCKET = "/run/dbus/system_bus_socket"
-
-#: Control ports of integrations whose module names none: the Sonos binding
-#: talks UPnP to the player's HTTP port; the Sony IP control rule talks to
-#: the TV's REST API and IRCC on plain HTTP.
-CONTROL_PORTS = {"sonos": (1400,), "sony_ip_control": (80,)}
-#: Integrations with no fixed port to probe: the Apple TV helper reaches an
-#: Apple TV on the Companion port it announces over mDNS, which changes.
-UNPROBED = frozenset({"pyatv_http", "network_ping"})
 
 #: Blackbox modules.
 TCP = "tcp_connect"
@@ -347,7 +339,7 @@ def probes(inventory: dict, conf=None) -> tuple[list[Probe], list[tuple[str, tup
         by_port: dict[int, list[str]] = {}
         for module in oh_integrations.REGISTRY:
             phases = [module.PHASE] + (["control"] if getattr(module, "CONTROL", False) else [])
-            if not any(_uses(device, phase, module.NAME) for phase in phases) or module.NAME in UNPROBED:
+            if not any(_uses(device, phase, module.NAME) for phase in phases) or not getattr(module, "PROBED", True):
                 continue
             numbers: list[int] = []
             if isinstance(getattr(module, "PORT", None), int):
@@ -356,7 +348,7 @@ def probes(inventory: dict, conf=None) -> tuple[list[Probe], list[tuple[str, tup
             for uid, thing in sorted((file.things if file else {}).items()):
                 if uid.split(":")[-1] == ident:
                     numbers += thing_ports(thing)
-            numbers += CONTROL_PORTS.get(module.NAME, ())
+            numbers += getattr(module, "PROBE_PORTS", ())
             for number in numbers:
                 names = by_port.setdefault(number, [])
                 if module.NAME not in names:
@@ -417,6 +409,7 @@ def exporter_map(inventory: dict, conf=None) -> dict:
     (select_point()) with how its state becomes a number, plus each room's
     Source selector."""
     import oh_conf
+    import oh_integrations
 
     conf = conf if conf is not None else _build(inventory)
     house = oh_conf.House(inventory)
@@ -437,10 +430,13 @@ def exporter_map(inventory: dict, conf=None) -> dict:
             point, convert = chosen
             entry = {"device": ident, "room": device["room"], "kind": device["kind"], "point": point,
                      "convert": convert}
-            # Sony's rule explicitly publishes UNDEF for "nothing wrong";
-            # other undefined telemetry remains unknown. Missing/NULL is not clear.
-            if point == "problem" and _uses(device, "control", "sony_ip_control") and name == f"{ident}_problem":
-                entry["clear_state"] = "UNDEF"
+            # An integration may name the state its problem Item holds for
+            # "nothing wrong" (PROBLEM_CLEAR_STATE); other undefined
+            # telemetry remains unknown. Missing/NULL is not clear.
+            clear = next((module.PROBLEM_CLEAR_STATE for module in oh_integrations.REGISTRY
+                          if hasattr(module, "PROBLEM_CLEAR_STATE") and _uses(device, module.PHASE, module.NAME)), None)
+            if point == "problem" and clear is not None and name == f"{ident}_problem":
+                entry["clear_state"] = clear
             if convert == "enum":
                 entry["options"] = _options(item)
             items[name] = entry
@@ -491,10 +487,10 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
 
     def device_checks(ident: str, demand: dict | None, node: dict | None = None) -> None:
         device = devices[ident]
-        # HEOS supplies optional music transport, never an HDMI routing stage.
-        # Its connection remains observable without invalidating a movie's
-        # working Denon power/input path when that transport is unavailable.
-        controls = set((device.get("controls") or {}).get("control") or []) - {"heos"}
+        # An optional transport (ROUTE_OPTIONAL) remains observable without
+        # invalidating a source's working power/input path when it is down.
+        controls = set((device.get("controls") or {}).get("control") or []) - {
+            module.NAME for module in oh_integrations.REGISTRY if getattr(module, "ROUTE_OPTIONAL", False)}
         for module in oh_integrations.REGISTRY:
             if module.NAME not in controls:
                 continue

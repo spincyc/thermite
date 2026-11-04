@@ -60,6 +60,8 @@ KEYS_MARK = "const KEYS = null;"
 INPUTS_MARK = "const INPUTS = null;"
 #: (value, label) of every input the remote offers: the VW915ES has two.
 INPUTS = (("hdmi1", "HDMI 1"), ("hdmi2", "HDMI 2"))
+READBACK_INPUTS = tuple(value for value, _ in INPUTS)
+REMOTE_LAYOUT = "sony_projector"
 #: power_status values, their label, and whether the power Switch is ON.
 POWER_STATES = {
     "standby": ("Standby", False),

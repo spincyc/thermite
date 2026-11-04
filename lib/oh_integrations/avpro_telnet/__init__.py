@@ -46,6 +46,7 @@ ASSETS: dict[str, str] = {}
 KINDS = {"hdmi_matrix"}
 PORT = 23
 INPUTS = OUTPUTS = 4
+READBACK_INPUTS = tuple(str(number) for number in range(1, INPUTS + 1))
 #: All that the rule ever sends, named as lib/oh_matrix_sim's stand-in
 #: records it: the routing read and the switch.
 COMHEADS = frozenset({"get vs", "set vs"})

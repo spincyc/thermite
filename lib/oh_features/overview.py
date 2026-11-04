@@ -65,7 +65,7 @@ def render(house: House, conf: Conf) -> None:
         columns.append(list_card_column(dict(COLUMN), "Source by room", [
             label_item(item_name(room), room_label(house.data, room), action="options", actionItem=item_name(room))
             for room in house.rooms if room in routing["rooms"]]))
-    if remote_cameras.manifest(house)["cameras"]:
+    if remote_cameras.manifest(house, conf)["cameras"]:
         columns.append(list_card_column(dict(COLUMN), "Cameras", [{"component": "oh-list-item", "config": {
             "title": "Open cameras", "footer": "Protect status, snapshots and live video.", "icon": "f7:camera",
             "action": "url", "actionUrl": "/cameras/", "actionUrlSameWindow": True}}]))

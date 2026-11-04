@@ -14,6 +14,7 @@ from pathlib import Path
 
 import yaml
 
+import oh_control4
 from oh_semantic import KINDS, LOCATION_TAGS
 
 ID = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -21,21 +22,20 @@ MAC = re.compile(r"^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$")
 IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])")
 
 ROOM_KEYS = {"label", "tag", "in"}
-#: Every key devices.yaml may have at its top level; the features and
-#: integrations that read each one validate what is under it.
+#: The keys devices.yaml may have at its top level that this module, access
+#: (oh_access_mode) and the house-wide remote read. Integrations, features
+#: and Control4 (oh_control4) declare theirs (HOUSE_KEYS, keys()); the
+#: module that reads each key validates what is under it.
 TOP_KEYS = frozenset({"version", "rooms", "devices", "routing", "later", "services", "access", "theme",
-                      "protect", "diagnostics", "control4_rooms", "control4_stale", "control4_director"})
-#: Every key a device may have: its identity and address, the fields
-#: integrations read (each validates its own: volume_max, sonos_udn, ...),
-#: and owner documentation no program reads: notes, and the Control4 driver
-#: name `thermite control4 summary` suggests.
-DEVICE_KEYS = frozenset({"id", "room", "kind", "name", "make", "model", "ip", "mac", "via", "controls", "c4_item",
-                         "volume_max", "sonos_udn", "heos_pid", "zones", "settings", "protect", "cec", "ir",
-                         "sony_speaker_audio", "notes", "control4"})
+                      "diagnostics"})
+#: The keys any device may have: its identity, address and controls, and
+#: owner documentation no program reads: notes, and the Control4 driver name
+#: `thermite control4 summary` suggests. Integrations and Control4 declare
+#: the fields they read (DEVICE_KEYS, keys()) and validate them.
+DEVICE_KEYS = frozenset({"id", "room", "kind", "name", "make", "model", "ip", "mac", "via", "controls", "notes",
+                         "control4"})
 #: Device keys whose value is text.
 TEXT_KEYS = ("id", "room", "kind", "name", "make", "model", "ip", "mac", "via", "notes", "control4")
-#: Integrations that derive a device's identity from its MAC, so need one.
-NEEDS_MAC = frozenset({"sonos"})
 
 DSL_THING = re.compile(
     r"^\s*(?:Thing|Bridge)\s+([\w-]+:[\w-]+(?::[\w-]+)+)(.*)$", re.MULTILINE)
@@ -139,6 +139,19 @@ def validate_rooms(rooms: object) -> list[str]:
     return problems
 
 
+def keys() -> tuple[frozenset, frozenset]:
+    """(top-level keys, device keys) devices.yaml may have: this module's,
+    and those the integrations, the features and Control4 declare."""
+    # Imported here: the integration modules import lib/oh_conf.py, which
+    # imports this module.
+    import oh_features
+    import oh_integrations
+
+    owners = (*oh_integrations.REGISTRY, *oh_features.REGISTRY, oh_control4)
+    return (TOP_KEYS | frozenset(oh_integrations.declared("HOUSE_KEYS", owners)),
+            DEVICE_KEYS | frozenset(oh_integrations.declared("DEVICE_KEYS", owners)))
+
+
 def validate(data: object) -> list[str]:
     """Every structural problem in a parsed devices.yaml.
 
@@ -152,10 +165,11 @@ def validate(data: object) -> list[str]:
 
     if not isinstance(data, dict) or data.get("version") != 1:
         return ["devices.yaml: version must be 1"]
-    problems = [f"unknown top-level key '{key}'{hint(key, TOP_KEYS)}" for key in data if key not in TOP_KEYS]
+    top_keys, device_keys = keys()
+    problems = [f"unknown top-level key '{key}'{hint(key, top_keys)}" for key in data if key not in top_keys]
     for key, kind, what in (("rooms", dict, "a mapping of room ids"), ("devices", list, "a list of devices"),
                             ("routing", dict, "a mapping"), ("later", list, "a list of devices"),
-                            ("services", list, "a list of service ids"), ("control4_rooms", dict, "a mapping")):
+                            ("services", list, "a list of service ids")):
         if data.get(key) is not None and not isinstance(data[key], kind):
             problems.append(f"{key} must be {what}")
     if problems:
@@ -163,7 +177,8 @@ def validate(data: object) -> list[str]:
     problems = validate_rooms(data.get("rooms") or {}) + oh_access_mode.validate(data)
     rooms = data.get("rooms") if isinstance(data.get("rooms"), dict) else {}
     allowed = oh_integrations.allowed()
-    seen: dict[str, dict[str, str]] = {"id": {}, "ip": {}, "mac": {}, "c4_item": {}}
+    needs_mac = {module.NAME for module in oh_integrations.REGISTRY if getattr(module, "NEEDS_MAC", False)}
+    seen: dict[str, dict[str, str]] = {"id": {}, "ip": {}, "mac": {}}
 
     def unique(kind: str, value: str, where: str) -> None:
         if value in seen[kind]:
@@ -179,8 +194,8 @@ def validate(data: object) -> list[str]:
             continue
         where = str(device.get("id") or f"devices[{index}]")
         for key in device:
-            if key not in DEVICE_KEYS:
-                problems.append(f"{where}: unknown key '{key}'{hint(key, DEVICE_KEYS)}")
+            if key not in device_keys:
+                problems.append(f"{where}: unknown key '{key}'{hint(key, device_keys)}")
         wrong = [key for key in TEXT_KEYS if device.get(key) is not None and not isinstance(device[key], str)]
         for key in wrong:
             problems.append(f"{where}: {key} {device[key]!r} must be text")
@@ -212,14 +227,6 @@ def validate(data: object) -> list[str]:
                 problems.append(
                     f"{where}: mac '{device['mac']}' is not lowercase aa:bb:..")
             unique("mac", device["mac"], where)
-        c4_items = device.get("c4_item")
-        if c4_items is not None:
-            c4_items = c4_items if isinstance(c4_items, list) else [c4_items]
-            for c4_item in c4_items:
-                if isinstance(c4_item, bool) or not isinstance(c4_item, int) or c4_item <= 0:
-                    problems.append(f"{where}: c4_item {c4_item!r} is not a Control4 item id")
-                else:
-                    unique("c4_item", str(c4_item), where)
         controls = device.get("controls")
         if controls is None:
             controls = {}
@@ -238,24 +245,13 @@ def validate(data: object) -> list[str]:
                     other = [p for p in allowed if p != phase and isinstance(name, str) and name in allowed[p]]
                     problems.append(f"{where}: unknown {phase} integration {name!r}"
                                     + (f"; it is a {other[0]} integration" if other else hint(name, allowed[phase])))
-                elif name in NEEDS_MAC and not device.get("mac"):
+                elif name in needs_mac and not device.get("mac"):
                     problems.append(f"{where}: {name} needs the device's mac")
     for device in devices:
         if isinstance(device, dict) and device.get("via") and device["via"] not in seen["id"]:
             problems.append(f"{device.get('id')}: via '{device['via']}' is not a device id"
                             f"{hint(device['via'], seen['id'])}")
-    stale = data.get("control4_stale") or []
-    if not isinstance(stale, list):
-        problems.append("control4_stale must be a list of Control4 item ids")
-        stale = []
-    for c4_item in stale:
-        if isinstance(c4_item, bool) or not isinstance(c4_item, int) or c4_item <= 0:
-            problems.append(f"control4_stale: {c4_item!r} is not a Control4 item id")
-        else:
-            unique("c4_item", str(c4_item), "control4_stale")
-    for name, room in (data.get("control4_rooms") or {}).items():
-        if not isinstance(room, str) or room not in rooms:
-            problems.append(f"control4_rooms: '{name}' maps to '{room}', which is not in rooms")
+    problems += oh_control4.validate(data)
     for index, entry in enumerate(data.get("later") or []):
         if not isinstance(entry, dict):
             problems.append(f"later[{index}]: must be a mapping with at least an id")
@@ -339,18 +335,20 @@ def addresses(value: object) -> set[str]:
     return found
 
 
-#: Items of the whole house rather than of a room or a device: All off
-#: (oh_features.all_off).
-HOUSE_ITEMS = frozenset({"house_all_off", "house_camera_status", "house_routing_io_events", "house_routing_io_status"})
+#: Items of the whole house rather than of a room or a device that the
+#: house-wide All off (oh_features.all_off) and routing render; integrations
+#: and other features declare theirs (HOUSE_ITEMS).
+HOUSE_ITEMS = frozenset({"house_all_off", "house_routing_io_events", "house_routing_io_status"})
 
 
 def cross_check(data: dict, things: dict, items: dict) -> list[str]:
     """Problems where conf/ disagrees with the inventory."""
-    from oh_integrations import REGISTRY  # Runtime-only: providers import inventory through oh_conf.
-    from oh_features.threadpools import ITEM_NAMES as HANDLER_ITEMS
+    # Runtime-only: providers import inventory through oh_conf.
+    import oh_features
+    from oh_integrations import REGISTRY, declared
 
     devices = {d["id"]: d for d in data.get("devices") or [] if d.get("id")}
-    house_items = HOUSE_ITEMS | frozenset(HANDLER_ITEMS.values())
+    house_items = HOUSE_ITEMS | frozenset(declared("HOUSE_ITEMS", (*REGISTRY, *oh_features.REGISTRY)))
     services = set(data.get("services") or [])
     rooms = set(data.get("rooms") or {})
     problems: list[str] = []
