@@ -366,7 +366,7 @@ class Gateway(Step):
     def _verify_boundary(self, system):
         from oh_access.native_boundary import verify_firewall, verify_native_listeners
         self._run(system, "sudo", "-v")
-        code, snapshot = system.capture(("sudo", "-n", "nft", "--json", "list", "table", "inet", "thermite_native"))
+        code, snapshot = system.capture(("sudo", "-n", "nft", "--json", "list", "table", "inet", "thermite_native"), diagnostics=True)
         if code:
             raise AccessError("cannot verify the native listener network filter")
         verify_firewall(snapshot, self.context.host)

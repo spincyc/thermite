@@ -197,7 +197,11 @@ thermite install --config "$HOME/thermite-site"
 A failed check does not approve a deployment. The longer check must pass
 against the same committed configuration before installation continues.
 If a system update replaced the running kernel's modules, reboot before
-commissioning so Podman can use overlayfs.
+commissioning so Podman and the native-port firewall can load their required
+modules. Installation validates firewall access, policy ownership and the
+required rules before stopping services or replacing units. Failed inspection
+reports the underlying command's error; the validation does not apply rules or
+change existing firewall tables.
 
 The gateway uses the same verified application and generated client assets as
 the native deployment. Existing household identities, authentication settings,
@@ -300,6 +304,12 @@ native data or an identity database. A failed migration or cutover can leave
 services stopped. Recover native and identity state from their corresponding
 backups only with the appropriate compatible application release; do not
 initialize new accounts or replace credentials merely to retry.
+
+If a missing kernel module stopped an older installer after services were
+stopped, reboot into the installed kernel and then rerun the upgrade. The
+reboot alone does not complete deployment: the upgrade must install and verify
+the native-port boundary before starting the runtime. Keep the printed backup
+until the upgrade succeeds.
 
 `thermite uninstall --config "$HOME/thermite-site" --dry-run` shows service
 removal. State is retained by default; review the explicit purge option

@@ -19,7 +19,7 @@ import oh_paths
 from oh_cli import deploy, install, upgrade
 from oh_install import steps
 from oh_install.access import Gateway
-from oh_install.ingress import NativeIngress, unit_text
+from oh_install.ingress import NativeIngress, NativeIngressPrerequisites, unit_text
 
 
 class UnifiedInstall(unittest.TestCase):
@@ -120,6 +120,15 @@ class UnifiedInstall(unittest.TestCase):
             self.assertLess(types.index(steps.NativeReady), types.index(Gateway))
             self.assertLess(types.index(Gateway), types.index(steps.Verify))
             self.assertTrue(sequence[types.index(Gateway)].stop_on_failure)
+        for sequence in (steps.install(context), steps.upgrade(context, plan, "fixture"), steps.clean_install(context)):
+            types = [type(step) for step in sequence]
+            probe = types.index(NativeIngressPrerequisites)
+            self.assertLess(types.index(steps.Packages), probe)
+            for disruptive in (steps.BootTest, steps.Backup, steps.Units, steps.NativePreparation,
+                               steps.Stop, steps.RemoveUnits, steps.Purge, steps.OperatorCredentialsReset):
+                if disruptive in types:
+                    self.assertLess(probe, types.index(disruptive))
+            self.assertTrue(sequence[probe].stop_on_failure)
         unit = unit_text()
         self.assertIn("Before=thermite-openhab.service", unit)
         self.assertNotIn("ExecStop=", unit, "stopping services must retain the native filter")

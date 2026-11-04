@@ -11,6 +11,9 @@ rollback. The unified deployment workflow uses a separate committed private site
   upgrade --config DIR` updates the application, native services, monitoring,
   HTTPS gateway and identity schema in one approved run. The stable command
   switches only after readiness; failed runs retain their candidate and backups.
+- Installation checks firewall access, policy ownership and kernel rule support
+  before stopping services or replacing units. Failed firewall inspection now
+  shows its diagnostic and explains recovery when kernel modules are missing.
 - Gateway deployment adopts existing authority and TLS, backs up stopped identity
   state before migrations, verifies callback routes and seals native ingress.
   Local terminal clients discover the verified HTTPS endpoint and certificate;

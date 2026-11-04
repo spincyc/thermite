@@ -104,7 +104,18 @@ class NativeIngress(Step):
     def actions(self, system):
         return [Task("install persistent native-port rules and verify the active kernel rules", self.perform)]
 
-    def perform(self, system):
+    @staticmethod
+    def kernel_hint(system):
+        """Explain a failed probe without guessing that a usable kernel is broken."""
+        kernel = system.kernel()
+        if (system.stat(Path("/sys/module/nf_tables")) is None
+                and all(system.stat(Path(root) / kernel) is None
+                        for root in ("/usr/lib/modules", "/lib/modules"))):
+            system.say(f"The running kernel ({kernel}) has no installed module tree and nf_tables is not loaded. "
+                       "If the kernel was updated, reboot into the installed kernel, then rerun the same upgrade command. "
+                       "A reboot alone does not complete an interrupted deployment.")
+
+    def perform(self, system, *, probe=False):
         from oh_access.files import atomic_private, private_directory, read_private
         from oh_access.native_boundary import verify_firewall
         from oh_install import runner
@@ -115,16 +126,17 @@ class NativeIngress(Step):
         code = runner.perform(Command(("-v",), root=True, terminal=True), system, self.context.area)
         if code is None or code:
             return code or 1
-        code, current = system.capture(("sudo", "-n", "nft", "--json", "list", "tables"))
+        code, current = system.capture(("sudo", "-n", "nft", "--json", "list", "tables"), diagnostics=True)
         if code:
-            system.say("Cannot inspect existing firewall tables; no boundary rules were changed.")
+            system.say(f"Cannot inspect existing firewall tables (exit {code}); no boundary rules were changed.")
+            self.kernel_hint(system)
             return 1
         try:
             occupied = ("inet", "thermite_native") in table_names(current)
             if occupied and not (system.lexists(UNIT_FILE) and system.lexists(RULE_FILE)):
                 raise ValueError("an existing thermite_native firewall table has no managed boundary files; preserve it for review")
             if occupied:
-                code, current = system.capture(("sudo", "-n", "nft", "--json", "list", "table", "inet", "thermite_native"))
+                code, current = system.capture(("sudo", "-n", "nft", "--json", "list", "table", "inet", "thermite_native"), diagnostics=True)
                 previous = system.unit_file(RULE_FILE)
                 if code or previous is None:
                     raise ValueError("cannot inspect previous native firewall policy")
@@ -139,14 +151,22 @@ class NativeIngress(Step):
                     # A completed apply may have been interrupted before
                     # removing an older journal. Snapshot the policy actually
                     # running now before starting the next port transition.
-                    atomic_private(previous_path, previous.content)
+                    if not probe:
+                        atomic_private(previous_path, previous.content)
         except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
             system.say(str(exc))
             return 1
         atomic_private(rules, rule_text(self.context.host).encode())
+        code = runner.perform(Command(("nft", "--check", "--file", str(rules)), root=True, terminal=True),
+                              system, self.context.area)
+        if code is None or code:
+            if code is not None:
+                self.kernel_hint(system)
+            return code or 1
+        if probe:
+            return 0
         atomic_private(unit, unit_text().encode())
         commands = [
-            ("nft", "--check", "--file", str(rules)),
             ("install", "-o", "root", "-g", "root", "-m", "0644", str(rules), str(RULE_FILE)),
             ("install", "-o", "root", "-g", "root", "-m", "0644", str(unit), str(UNIT_FILE)),
             ("systemctl", "daemon-reload"),
@@ -157,7 +177,7 @@ class NativeIngress(Step):
             code = runner.perform(Command(argv, root=True, terminal=True), system, self.context.area)
             if code is None or code:
                 return code or 1
-        code, output = system.capture(("sudo", "-n", "nft", "--json", "list", "table", "inet", "thermite_native"))
+        code, output = system.capture(("sudo", "-n", "nft", "--json", "list", "table", "inet", "thermite_native"), diagnostics=True)
         try:
             if code:
                 raise ValueError("cannot inspect the active native firewall")
@@ -167,3 +187,16 @@ class NativeIngress(Step):
             return 1
         previous_path.unlink(missing_ok=True)
         return 0
+
+
+class NativeIngressPrerequisites(NativeIngress):
+    """Prove firewall support before replacing units or stopping native writers."""
+    title = "Native network prerequisites"
+
+    def check(self, system):
+        result = super().check(system)
+        return result if result.problem else Check(False, "validate firewall access, ownership and rule support before stopping services")
+
+    def actions(self, system):
+        return [Task("inspect existing firewall policy and check the required rules without applying them",
+                     lambda system: self.perform(system, probe=True))]

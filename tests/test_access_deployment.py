@@ -234,7 +234,7 @@ class Host:
             return UnitFile(self.unit_bytes[str(path)], 0, 0o644)
         return UnitFile(("[Service]\nUser=thermite\nGroup=thermite\nWorkingDirectory=" + str(self.installed) + "\n").encode(), 0, 0o644)
 
-    def capture(self, argv):
+    def capture(self, argv, *, diagnostics=False):
         if "--value" in argv:
             return 0, "123\n"
         return 0, "ActiveState=active\nMainPID=123\nUnitFileState=enabled\nNeedDaemonReload=no\n"

@@ -3,6 +3,7 @@
 import contextlib
 import io
 import os
+import subprocess
 import sys
 import threading
 import unittest
@@ -17,6 +18,102 @@ from oh_install import progress, runner
 from oh_install import output
 from oh_install.model import Check, Command, Step, Task
 from oh_install.system import System
+
+
+class CaptureDiagnostics(unittest.TestCase):
+    def setUp(self):
+        options = mock.patch.object(oh_cli, "switches", oh_cli.Switches())
+        options.start()
+        self.addCleanup(options.stop)
+        self.system = System()
+
+    def test_opted_in_failure_reports_status_and_stderr_without_stdout_or_arguments(self):
+        argv = ("/private/programs/nft", "--json", "private-argument")
+        child = subprocess.CompletedProcess(argv, 3, "private captured firewall", "Kernel rules unavailable\n")
+        oh_cli.switches.verbose = True
+        with mock.patch("oh_install.system.subprocess.run", return_value=child) as run, \
+                contextlib.redirect_stdout(io.StringIO()) as visible, \
+                contextlib.redirect_stderr(io.StringIO()) as trace:
+            self.assertEqual(self.system.capture(argv, timeout=4, diagnostics=True), (3, child.stdout))
+        run.assert_called_once_with(list(argv), capture_output=True, text=True, check=False, timeout=4)
+        self.assertIn("nft: exit status 3", visible.getvalue())
+        self.assertIn("Kernel rules unavailable", visible.getvalue())
+        shown = visible.getvalue() + trace.getvalue()
+        for private in (child.stdout, "private-argument", "/private/programs"):
+            self.assertNotIn(private, shown)
+
+    def test_failure_stderr_is_bounded_and_terminal_controls_are_removed(self):
+        stderr = "earlier stderr\n" + "x" * 200 + "\n\x1b[31mKernel\x1b[0m\x00\u202e unavailable\r\n"
+        child = subprocess.CompletedProcess(("nft",), 1, "private captured firewall", stderr)
+        with mock.patch("oh_install.system.subprocess.run", return_value=child), \
+                mock.patch.object(output, "TAIL_BYTES", 64), mock.patch.object(self.system, "say") as say:
+            self.assertEqual(self.system.capture(("nft",), diagnostics=True), (1, child.stdout))
+        say.assert_called_once()
+        shown = say.call_args.args[0]
+        self.assertIn("[earlier stderr omitted]", shown)
+        self.assertIn("Kernel unavailable", shown)
+        self.assertLessEqual(len(shown), len("   nft: exit status 1\n[earlier stderr omitted]\n") + 64)
+        self.assertNotIn("earlier stderr\n", shown)
+        for private in (child.stdout, "\x1b", "\x00", "\u202e", "\r"):
+            self.assertNotIn(private, shown)
+
+    def test_timeout_reports_fixed_reason_and_safe_byte_stderr_only(self):
+        argv = ("nft", "private-argument")
+        expired = subprocess.TimeoutExpired(argv, 5, output=b"private captured firewall",
+                                            stderr=b"\x1b[31mKernel still unavailable\x1b[0m\n")
+        with mock.patch("oh_install.system.subprocess.run", side_effect=expired), \
+                mock.patch.object(self.system, "say") as say:
+            self.assertEqual(self.system.capture(argv, timeout=5, diagnostics=True), (124, ""))
+        say.assert_called_once()
+        shown = say.call_args.args[0]
+        self.assertIn("exit status 124 (timed out)", shown)
+        self.assertIn("Kernel still unavailable", shown)
+        for private in ("private-argument", "private captured firewall", "\x1b"):
+            self.assertNotIn(private, shown)
+
+    def test_missing_executable_reports_fixed_reason_without_exception_details(self):
+        error = FileNotFoundError(2, "private exception detail", "/private/programs/nft")
+        with mock.patch("oh_install.system.subprocess.run", side_effect=error), \
+                mock.patch.object(self.system, "say") as say:
+            self.assertEqual(self.system.capture(("/private/programs/nft", "private-argument"), diagnostics=True), (127, ""))
+        say.assert_called_once_with("   nft: exit status 127 (program not found)")
+
+    def test_executable_label_is_bounded_and_has_no_control_characters(self):
+        executable = "/private/\x1b[31mnft\n" + "x" * 200
+        child = subprocess.CompletedProcess((executable,), 1, "private output", "")
+        with mock.patch("oh_install.system.subprocess.run", return_value=child), \
+                mock.patch.object(self.system, "say") as say:
+            self.system.capture((executable,), diagnostics=True)
+        shown = say.call_args.args[0]
+        self.assertLessEqual(len(shown), len("   : exit status 1") + 64)
+        self.assertNotIn("\x1b", shown)
+        self.assertNotIn("\n", shown)
+        self.assertNotIn("/private", shown)
+
+    def test_success_keeps_stderr_silent_and_returns_stdout_unchanged(self):
+        child = subprocess.CompletedProcess(("nft",), 0, "private captured firewall\n", "successful warning\n")
+        with mock.patch("oh_install.system.subprocess.run", return_value=child), \
+                mock.patch.object(self.system, "say") as say:
+            self.assertEqual(self.system.capture(("nft",), diagnostics=True), (0, child.stdout))
+        say.assert_not_called()
+
+    def test_default_nonzero_stdout_remains_available_without_diagnostics(self):
+        argv = ("pacman", "-T", "fixture-package")
+        child = subprocess.CompletedProcess(argv, 127, "fixture-package\n", "expected package absence\n")
+        with mock.patch("oh_install.system.subprocess.run", return_value=child) as run, \
+                mock.patch.object(self.system, "say") as say:
+            self.assertEqual(self.system.capture(argv), (127, child.stdout))
+        run.assert_called_once_with(list(argv), capture_output=True, text=True, check=False, timeout=None)
+        say.assert_not_called()
+
+    def test_default_missing_and_timeout_remain_silent(self):
+        errors = ((FileNotFoundError(), 127),
+                  (subprocess.TimeoutExpired(("child",), 5, output="private output", stderr="private error"), 124))
+        for error, code in errors:
+            with self.subTest(code=code), mock.patch("oh_install.system.subprocess.run", side_effect=error), \
+                    mock.patch.object(self.system, "say") as say:
+                self.assertEqual(self.system.capture(("child",)), (code, ""))
+            say.assert_not_called()
 
 
 class Terminal(io.StringIO):

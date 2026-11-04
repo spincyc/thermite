@@ -6,11 +6,12 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
-from oh_install import ingress
+from oh_install import ingress, runner
+from oh_install.model import Command
 from oh_install.system import UnitFile, UnitOrigin
 
 OLD = {"http_port": 13601, "https_port": 13602}
@@ -43,6 +44,13 @@ class System:
         self.corrupt_after_restart = False
         self.safe = True
         self.override = None
+        self.module_tree = True
+
+    def kernel(self):
+        return "fictional-kernel"
+
+    def stat(self, path):
+        return object() if self.module_tree and path == Path("/usr/lib/modules/fictional-kernel") else None
 
     def safe_unit_parent(self, path):
         return self.safe
@@ -61,7 +69,8 @@ class System:
     def say(self, text):
         self.messages.append(text)
 
-    def capture(self, argv):
+    def capture(self, argv, *, diagnostics=False):
+        assert diagnostics
         self.captures.append(tuple(argv))
         assert tuple(argv[:4]) == ("sudo", "-n", "nft", "--json")
         if tuple(argv[4:]) == ("list", "tables"):
@@ -104,9 +113,9 @@ class NativeIngress(unittest.TestCase):
         self.step = ingress.NativeIngress(self.context)
         self.previous = self.context.var / "native-boundary/previous.nft"
 
-    def perform(self, system):
+    def perform(self, system, *, probe=False):
         with patch("oh_install.runner.perform", side_effect=system.perform):
-            return self.step.perform(system)
+            return self.step.perform(system, probe=probe)
 
     def save_previous(self, host=OLD):
         from oh_access.files import atomic_private, private_directory
@@ -209,6 +218,84 @@ class NativeIngress(unittest.TestCase):
         system.list_status = 1
         self.assertEqual(self.perform(system), 1)
         self.assert_no_install(system)
+
+    def test_prerequisites_preserve_live_policy_root_files_and_recovery_record(self):
+        self.save_previous()
+        before = self.previous.read_bytes()
+        system = System(installed=NEW, live=OLD)
+        files, live = copy.deepcopy(system.files), copy.deepcopy(system.live)
+        self.assertEqual(self.perform(system, probe=True), 0)
+        self.assertEqual(system.commands[0], ("-v",))
+        self.assertEqual(system.commands[1][:2], ("nft", "--check"))
+        self.assertEqual(len(system.commands), 2)
+        self.assertEqual(system.files, files)
+        self.assertEqual(system.live, live)
+        self.assertEqual(self.previous.read_bytes(), before)
+
+    def test_missing_modules_hint_follows_failed_probe_only(self):
+        system = System()
+        system.module_tree = False
+        self.assertEqual(self.perform(system, probe=True), 0)
+        self.assertNotIn("reboot", " ".join(system.messages))
+        system.commands.clear()
+        system.list_status = 3
+        self.assertEqual(self.perform(system, probe=True), 1)
+        self.assert_no_install(system)
+        self.assertIn("exit 3", " ".join(system.messages))
+        self.assertIn("reboot", " ".join(system.messages))
+        self.assertIn("A reboot alone does not complete", " ".join(system.messages))
+
+    def test_rule_validation_failure_preserves_active_policy_and_root_files(self):
+        system = System(installed=OLD, live=OLD)
+        files, live = copy.deepcopy(system.files), copy.deepcopy(system.live)
+        system.fail = ("nft", "--check")
+        self.assertEqual(self.perform(system, probe=True), 7)
+        self.assertEqual(system.files, files)
+        self.assertEqual(system.live, live)
+        self.assertFalse(self.previous.exists())
+        self.assertEqual(len(system.commands), 2)
+
+    def test_interrupted_install_with_missing_boundary_can_resume_after_probe(self):
+        system = System()
+        self.assertEqual(self.perform(system, probe=True), 0)
+        self.assertEqual(system.files, {})
+        self.assertIsNone(system.live)
+        self.assertEqual(self.perform(system), 0)
+        self.assertIn(ingress.UNIT_FILE, system.files)
+        self.assertIn(ingress.RULE_FILE, system.files)
+        self.assertEqual(system.live, live_policy(NEW))
+
+    def test_dry_run_does_not_probe_or_create_files(self):
+        system = System()
+        step = ingress.NativeIngressPrerequisites(self.context)
+        self.assertEqual(runner.run([step], system, self.root, dry_run=True), 0)
+        self.assertEqual(system.commands, [])
+        self.assertEqual(system.captures, [])
+        self.assertFalse(self.context.var.exists())
+
+    def test_failed_prerequisite_stops_workflow_before_following_service_step(self):
+        for failure in ("inspection", "rule_check"):
+            with self.subTest(failure=failure):
+                system = System()
+                if failure == "inspection":
+                    system.list_status = 1
+                else:
+                    system.fail = ("nft", "--check")
+                following = Mock()
+                perform = runner.perform
+
+                def fake_commands(action, host, area, *args, **kwargs):
+                    if isinstance(action, Command):
+                        return system.perform(action, host, area)
+                    return perform(action, host, area, *args, **kwargs)
+
+                with patch.object(runner, "perform", side_effect=fake_commands):
+                    result = runner.run([ingress.NativeIngressPrerequisites(self.context), following],
+                                        system, self.root, root_confirmed=True)
+                self.assertNotEqual(result, 0)
+                following.check.assert_not_called()
+                self.assertEqual(system.files, {})
+                self.assertIsNone(system.live)
 
     def test_preflight_rejects_changed_root_files_or_service_overrides(self):
         for case in ("permissions", "rule_body", "unit_body", "parent", "dropin", "unknown"):

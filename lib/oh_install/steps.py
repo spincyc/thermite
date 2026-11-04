@@ -21,7 +21,7 @@ import oh_ports
 import oh_metrics as metrics
 from oh_install import backup, ownership
 from oh_install.access import Gateway
-from oh_install.ingress import NativeIngress
+from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
 from oh_install.model import Action, Check, Command, Step, Task
 from oh_install.system import System
 
@@ -1810,7 +1810,7 @@ def metrics_steps(context: Context, restart: bool = False) -> list[Step]:
 def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     """The upgrade's steps after its preconditions, in order. A host where
     openHAB runs without the metrics gets them here."""
-    return [WhatChanges(plan_), Preconditions(context), *configuration_steps(context), Packages(), NodeConfinement(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
+    return [WhatChanges(plan_), Preconditions(context), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
             Units(context), LegacyMigration(context), Account(context), StateDirectories(context), MetricsDirectories(context),
             NativePreparation(context), NativeIngress(context), Deploy(context), Restart(context, restart_runtime=plan_.restart_runtime),
             Answers(context), Token(context), NativeReady(context), Gateway(context),
@@ -1997,7 +1997,7 @@ class OperatorCredentialsReset(Step):
 def clean_install(context: Context) -> list[Step]:
     # Complete prerequisites before deleting otherwise recoverable state.
     # The normal install rechecks these steps and reuses the boot receipt.
-    return [*configuration_steps(context), Packages(), BootTest(context), *uninstall(context, purge=True), OperatorCredentialsReset(context)]
+    return [*configuration_steps(context), Packages(), NativeIngressPrerequisites(context), BootTest(context), *uninstall(context, purge=True), OperatorCredentialsReset(context)]
 
 
 def install_preflight(context: Context) -> list[Step]:
@@ -2006,7 +2006,7 @@ def install_preflight(context: Context) -> list[Step]:
 
 def install(context: Context, *, preflight: bool = True) -> list[Step]:
     """Every step, in order."""
-    return [*(install_preflight(context) if preflight else []), *configuration_steps(context), Packages(), NodeConfinement(context), BootTest(context),
+    return [*(install_preflight(context) if preflight else []), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context),
             Units(context), LegacyMigration(context), Account(context), StateDirectories(context),
             MetricsDirectories(context), NativePreparation(context), NativeIngress(context), Deploy(context), Services(context, restart_runtime=context.restart_runtime),
             Answers(context), Token(context), NativeReady(context), Gateway(context), *metrics_steps(context), Target(context), Verify(context)]

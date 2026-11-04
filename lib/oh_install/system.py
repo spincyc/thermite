@@ -130,16 +130,40 @@ class System:
     def which(self, name: str) -> str | None:
         return shutil.which(name)
 
-    def capture(self, argv: Sequence[str], *, timeout: float | None = None) -> tuple[int, str]:
-        """Exit status and output of a read-only command; 127 if it is missing."""
-        oh_cli.trace_run(argv)
+    def capture(self, argv: Sequence[str], *, timeout: float | None = None,
+                diagnostics: bool = False) -> tuple[int, str]:
+        """Exit status and stdout; 127 if missing, 124 on timeout.
+
+        Opt in only when the command's stderr is safe to display. Failed
+        diagnostic captures report bounded stderr, never stdout or arguments.
+        """
+        executable = Path(str(argv[0])).name if argv else "command"
+        executable = "".join(char if char.isascii() and (char.isalnum() or char in "._+-") else "?"
+                             for char in executable[:64]) or "command"
+        oh_cli.trace_run((executable,) if diagnostics else argv)
         try:
             out = subprocess.run(list(argv), capture_output=True, text=True, check=False, timeout=timeout)
         except FileNotFoundError:
+            if diagnostics:
+                self._capture_diagnostic(executable, 127, reason="program not found")
             return 127, ""
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            if diagnostics:
+                self._capture_diagnostic(executable, 124, exc.stderr, reason="timed out")
             return 124, ""
+        if diagnostics and out.returncode:
+            self._capture_diagnostic(executable, out.returncode, out.stderr)
         return out.returncode, out.stdout
+
+    def _capture_diagnostic(self, executable: str, status: int, stderr: str | bytes | None = None, *,
+                            reason: str | None = None) -> None:
+        from oh_install import output
+
+        heading = f"   {executable}: exit status {status}" + (f" ({reason})" if reason else "")
+        data = stderr.encode("utf-8", errors="replace") if isinstance(stderr, str) else stderr or b""
+        text = output._safe_text(data[-output.TAIL_BYTES:]).strip()
+        omitted = "[earlier stderr omitted]\n" if len(data) > output.TAIL_BYTES else ""
+        self.say(heading + ("\n" + omitted + text if omitted or text else ""))
 
     def group(self, key: str | int) -> Group | None:
         try:
