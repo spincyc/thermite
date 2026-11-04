@@ -627,7 +627,10 @@ def render_quadlet(versions: dict, host: dict) -> str:
         f"PartOf={oh_units.TARGET}",
         "Wants=network-online.target",
         "After=network-online.target",
-        "Requires=thermite-native-boundary.service",
+        # Wants=, not Requires=: restarting the boundary (a deploy that
+        # changes its rules) must not restart openHAB. ExecStartPre below
+        # loads the same rules, so openHAB still never starts without them.
+        "Wants=thermite-native-boundary.service",
         "After=thermite-native-boundary.service",
         f"# A runtime failing within seconds stops after {RUNTIME_START_BURST} starts in "
         f"{RUNTIME_START_INTERVAL // 60} minutes;",

@@ -247,10 +247,14 @@ class Units(unittest.TestCase):
                     self.assertEqual(parsed["Unit"]["PartOf"], "thermite.target")
                     self.assertNotIn("After=thermite.target", text)
                     if name == deploy.QUADLET:
-                        self.assertIn("Requires=thermite-native-boundary.service", text)
+                        # Wants=, not Requires=: restarting the boundary must
+                        # not restart openHAB, whose own ExecStartPre loads the
+                        # same rules and fails its start without them.
+                        self.assertIn("Wants=thermite-native-boundary.service", text)
+                        self.assertIn("After=thermite-native-boundary.service", text)
                         self.assertIn("ExecStartPre=/usr/bin/env nft -f /etc/thermite-native.nft", text)
-                    else:
-                        self.assertNotIn("Requires=", text)
+                        self.assertIn(f" {deploy.JAVA_HEAP_OPTS}\"", text)
+                    self.assertNotIn("Requires=", text)
                     self.assertNotIn("BindsTo=", text)
                     if name.endswith((".container", ".path")):
                         self.assertEqual(parsed["Install"]["WantedBy"], "thermite.target")
