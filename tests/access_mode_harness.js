@@ -80,7 +80,10 @@ async function browser(page, client) {
     throw Error("Unexpected guest route: " + route);
   } });
   assert.equal((await unsigned.ready()).is_guest, true);
-  assert.equal(unsigned.canEdit(), false); assert.equal(unsigned.canControl("den"), false, "wait for current lock status");
+  // An unknown lock holds nothing back: the command goes before any policy read, and the server checks it.
+  assert.equal(unsigned.canEdit(), false); assert(unsigned.canControl("den"), "an unknown lock does not hold controls");
+  await unsigned.command("den", "source", "off");
+  assert.deepEqual(guestCalls.filter(route => route.startsWith("/api/v1/rooms/")), ["/api/v1/rooms/den/commands"]);
   await unsigned.loadPolicy("den"); assert(unsigned.canControl("den"));
   await unsigned.command("den", "source", "off");
   await assert.rejects(unsigned.setRoomLock("den", 0, true), error => error.code === "forbidden");
@@ -113,7 +116,9 @@ async function browser(page, client) {
     throw Error("Unexpected route: " + route);
   } });
   changing.subscribe(event => events.push(event.type)); await changing.ready(); await changing.loadPolicy("den");
-  assert(!changing.canControl("den")); const pending = changing.fetch(origin + "/pending"); await tick();
+  // A known lock is refused here; nothing reaches the gateway (an unexpected route would fail as connection_failed).
+  assert(!changing.canControl("den")); await assert.rejects(changing.command("den", "source", "off"), error => error.code === "room_locked");
+  const pending = changing.fetch(origin + "/pending"); await tick();
   const transition = await changing.setSecurity({ enabled: false, revision: 1, password: confirmation });
   assert.equal(transition.enabled, false); assert.equal(changing.current(), null); assert.equal(changing.policy("den"), null);
   release(response({ obsolete: true })); await assert.rejects(pending, error => error.stale === true);

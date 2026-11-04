@@ -590,9 +590,10 @@ function remoteContent(frame, g, w, ctx) {
   const target = session.activeTarget(list);
   const state = session.state(current.id);
   let y = 0;
-  // The padlock bubble shows a lock; words only where no bubble can.
+  // The padlock bubble shows a lock; words only where no bubble can, or
+  // while the lock is unknown, which leaves the controls working.
   const notice = session.lockNotice();
-  if (notice) y = paragraph(g, 2, y, w - 4, "Read-only · " + notice, "dim");
+  if (notice) y = paragraph(g, 2, y, w - 4, (session.controlBlock() ? "Read-only · " : "") + notice, "dim");
   const shown = session.view(current, state);
   if (shown.problem) y = paragraph(g, 2, y, w - 4, "\u26a0 " + shown.problem, "alert");
   // A room that is off shows no remote until a device bubble is tapped.

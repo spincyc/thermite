@@ -149,6 +149,7 @@
     const lockRequests = new Set();
     let lockError = null;
     const SWITCHING = "Wait for the room to finish switching and report its source.";
+    const UNKNOWN = "Room lock status unknown";
     const clock = (value) => {
       const at = new Date(value);
       if (!Number.isFinite(at.getTime())) return "";
@@ -156,7 +157,11 @@
       return at.toLocaleString([], sameDay ? { hour: "2-digit", minute: "2-digit" } : { weekday: "short", hour: "2-digit", minute: "2-digit" });
     };
     // The current room's lock as both clients show it. The server decides;
-    // this only explains its last answer.
+    // this only explains its last answer. With no answer yet ("checking") or
+    // after reads fail ("unavailable") the lock is unknown and holds nothing
+    // back; only failed reads say so (text), so opening a room does not flash
+    // a notice. unavailable: the server answered that it cannot evaluate the
+    // room's saved policy, so it refuses every command there.
     function roomLock() {
       const access = backend.access, room = current;
       const enabled = Boolean(room && access && !access.native && access.authEnabled());
@@ -165,14 +170,15 @@
       const state = room && states[room.id];
       const settled = state && !state.pending && room.options.some(option => option.id === state.value);
       const busy = Boolean(room && lockRequests.has(room.id));
-      const canManage = enabled && access.canEdit() && policy?.can_lock === true;
-      const unavailable = status === "unavailable" || policy?.effective?.reason === "policy_unavailable";
+      const admin = enabled && access.canEdit(), canManage = admin && policy?.can_lock === true;
+      const unavailable = policy?.effective?.reason === "policy_unavailable";
       const until = locked && !manual && policy.effective.until ? clock(policy.effective.until) : "";
-      const text = lockText(unavailable, locked, manual, until);
-      const reason = busy || !canManage || manual ? "" : unavailable ? "Lock status is unavailable."
-        : !settled ? SWITCHING : "";
+      const text = status === "unavailable" ? UNKNOWN : lockText(unavailable, locked, manual, until);
+      // An administrator manages a lock once it is known.
+      const reason = busy || manual ? "" : !canManage ? (admin && !policy ? "Room lock status is not known yet." : "")
+        : unavailable ? "Lock status is unavailable." : !settled ? SWITCHING : "";
       const error = lockError && lockError.room === room?.id && lockError.revision === policy?.revision ? lockError.message : "";
-      return { room: room?.id || null, enabled, status, manual, locked, busy, canManage, text, until, reason, error,
+      return { room: room?.id || null, enabled, status, manual, locked, unavailable, busy, canManage, text, until, reason, error,
         disabled: busy || !canManage || Boolean(reason), label: busy ? "Saving…" : manual ? "Unlock room" : "Lock room" };
     }
 
@@ -294,18 +300,19 @@
       return [entry(item.id === Remote.OFF ? "Lock off" : "Lock on " + item.label, () => lockOn(item.id, room.id))];
     }
 
-    // Why ordinary controls cannot act on the current room, or null. Both
-    // clients show this one answer; the server still checks every command.
+    // Why ordinary controls cannot act on the current room, or null. Only a
+    // known lock holds them back; while it is unknown they send, and the
+    // server, which checks every command, refuses one for a locked room.
+    // Both clients show this one answer.
     function controlBlock() {
       const access = backend.access;
       if (!current || !access || access.canControl(current.id)) return null;
       const lock = roomLock();
+      if (lock.unavailable) return "Room lock status is unavailable, so controls are paused.";
       if (lock.locked) {
         return lock.manual ? "This room is locked until an administrator unlocks it."
           : "This room is locked by its schedule" + (lock.until ? " until " + lock.until : "") + ".";
       }
-      if (lock.status === "checking") return "Checking whether this room is locked…";
-      if (lock.status === "unavailable") return "Room lock status is unavailable, so controls are paused.";
       return "Room control is unavailable.";
     }
 
@@ -824,13 +831,17 @@
       return { locked: locked, inert: !locked && Boolean(controlBlock()) };
     }
 
-    // What the remote's face says about the lock in words: nothing while a
-    // padlock bubble shows it, or during the first brief check.
+    // What the remote's face says about the lock in words: why a known lock
+    // holds controls back, unless a padlock bubble shows it, or that a failed
+    // read left it unknown (controlBlock() is null then). Nothing during the
+    // first read.
     function lockNotice() {
+      const lock = roomLock();
+      if (lock.status === "unavailable") return lock.text;
       const reason = controlBlock();
-      if (!reason || roomLock().status === "checking") return "";
+      if (!reason) return "";
       const showing = Remote.showing(states[current.id]);
-      return roomLock().locked && current.options.some((choice) => choice.id === showing) ? "" : reason;
+      return lock.locked && current.options.some((choice) => choice.id === showing) ? "" : reason;
     }
 
     // Off and the room's sources switch the room; any other bubble only brings

@@ -28,6 +28,14 @@ class RemoteLockUI(unittest.TestCase):
     def test_guest_refusal_keeps_access_and_failed_poll_keeps_last_answer(self):
         self.assertTrue(self.proof["guestRefusalKeepsAccess"] and self.proof["policyRefresh"])
 
+    def test_unknown_lock_holds_nothing_back_and_a_refusal_reads_it_again(self):
+        for key in ("checkingQuiet", "checkingSends", "adminWaitsForLock", "unknownSaid", "unknownSends",
+                    "refusalRereads"):
+            self.assertTrue(self.proof[key], key)
+
+    def test_server_that_cannot_evaluate_a_policy_pauses_controls(self):
+        self.assertTrue(self.proof["serverUnavailablePaused"])
+
     def test_locked_room_shows_a_padlock_on_its_lit_bubble_and_greys_the_rest(self):
         for key in ("padlockBubble", "othersInert", "noLockRow", "lockedOffNoRemote", "litTapExplains",
                     "unlitLockInWords"):

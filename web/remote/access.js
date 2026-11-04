@@ -6,9 +6,8 @@
     invalid_token: "Your terminal sign-in has ended. Run thermite access login again.",
     invalid_login: "The username or password was not accepted.", login_throttled: "Too many sign-in attempts. Try again later.",
     forbidden: "Your account does not allow this action.", room_locked: "This room is locked.",
-    policy_locked: "This room is locked.", policy_unavailable: "Room lock status is unavailable. Control is paused.",
+    policy_locked: "This room is locked.", policy_unavailable: "Room lock status is unavailable. Try again in a moment.",
     device_locked: "A locked room is using this device or route, so it cannot change now.",
-    policy_checking: "Checking whether this room is locked. Try again in a moment.",
     room_state_unavailable: "Wait until the room reports a current source or Off before locking it.",
     room_state_changed: "The room changed before it could be locked. Check what it shows and try again.",
     runtime_unavailable: "The room could not be read. Try again when it is connected.",
@@ -74,7 +73,7 @@
     let user = null, csrf = null, loading = null, ended = false, policyRoom = null, authRevision = 0;
     let active = typeof document === "undefined" || document.visibilityState !== "hidden";
     // Every room's lock in one read, for the room lists. The watched room's
-    // detailed policy (policies) still gates its controls.
+    // detailed policy (policies) still decides whether its controls are held back.
     let lockRooms = null, locksAt = 0, locksWatched = false, lockReads = 0;
     const policyPoll = poller(() => client.loadPolicy(policyRoom), () => Boolean(policyRoom));
     const lockPoll = poller(() => client.loadLocks(), () => locksWatched);
@@ -255,12 +254,16 @@
       subscribe(fn) { listeners.push(fn); return () => { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); }; },
       has(permission) { return legacy || Boolean(user && user.permissions && user.permissions.includes(permission)); },
       canEdit() { return client.authEnabled() && Boolean(user && user.can_edit); },
+      // Only a known lock holds a command back. While a room's lock is unknown
+      // (not read yet, or unreadable past the grace) commands are sent: the
+      // server checks each one under the room lock and refuses it if locked.
       canControl(room) {
         if (legacy || mock) return true;
-        return !client.authEnabled() || policies[room]?.effective?.allowed === true;
+        return !client.authEnabled() || policies[room]?.effective?.allowed !== false;
       },
       policy(room) { return client.authEnabled() ? policies[room] || null : null; },
       // "checking" until the first answer for a room; a failed read stays "unavailable" until one succeeds.
+      // Neither is a lock: canControl holds nothing back for them.
       policyStatus(room) { return !client.authEnabled() ? "off" : policies[room] ? "ready" : policyFailures.has(room) ? "unavailable" : "checking"; },
       async loadPolicy(room) {
         const sequence = policyReads[room] = (policyReads[room] || 0) + 1, authority = authRevision;
@@ -349,12 +352,10 @@
       },
       async command(room, action, value) {
         await ready();
-        if (!client.canControl(room)) {
-          const status = client.policyStatus(room);
-          throw problem(status === "ready" ? "room_locked" : status === "checking" ? "policy_checking" : "policy_unavailable", 403);
-        }
+        if (!client.canControl(room)) throw problem(policies[room]?.effective?.reason === "policy_unavailable" ? "policy_unavailable" : "room_locked", 403);
+        // A refusal means the lock shown may be out of date: read it again.
         try { return await json("/api/v1/rooms/" + encodeURIComponent(room) + "/commands", "POST", { action, value }); }
-        catch (error) { if ([403, 423].includes(error.status)) client.loadPolicy(room).catch(() => {}); throw error; }
+        catch (error) { if ([403, 423].includes(error.status) || error.code === "policy_unavailable") client.loadPolicy(room).catch(() => {}); throw error; }
       },
       watchRoom(room) { policyRoom = room; return policyPoll.start(); },
       // A room list on show asks for every room's lock; nothing is read otherwise.

@@ -1,8 +1,9 @@
 "use strict";
 // Real shared access/backend/session/terminal code against a fake gateway:
-// lock display, control gating, the padlock bubble, locking on a source,
-// the Off face, Guest refusals, policy refresh behaviour and every room's
-// lock in the room lists (terminal and browser Home).
+// lock display, control gating, an unknown lock that gates nothing, the
+// padlock bubble, locking on a source, the Off face, Guest refusals, policy
+// refresh behaviour and every room's lock in the room lists (terminal and
+// browser Home).
 const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
 const Main = require("../tui/remote/main"), Shared = require("../tui/remote/shared");
 console.log = console.info = () => {};
@@ -18,9 +19,10 @@ const ROOMS = Shared.load().house.rooms.map(({ id }) => id);
 
 function gateway(options) {
   // sources: what each room's Source Item reads; locks: every lock body sent;
-  // summary: what GET /api/v1/locks says of a room instead of its policy.
+  // summary: what GET /api/v1/locks says of a room instead of its policy;
+  // policyGate: a promise every policy read waits for.
   const site = { principal: options.principal, policies: {}, calls: [], commands: [], locks: [], sources: {}, summary: {},
-    failPolicy: false, failLocks: false, refuseCommands: false };
+    failPolicy: false, failLocks: false, refuseCommands: false, policyGate: null };
   const policy = room => site.policies[room] || (site.policies[room] = { room, revision: 0, config: null, manual_lock: null,
     can_edit: site.principal.can_edit, can_lock: site.principal.can_edit, enforcement: { state: "unknown" },
     effective: { allowed: true, locked: false, reason: "unlocked", desired: null, until: null, evaluated_at: String(Date.now()) } });
@@ -37,6 +39,7 @@ function gateway(options) {
     }
     let match = /^\/api\/v1\/rooms\/([a-z0-9_]+)\/policy$/.exec(route);
     if (match) {
+      if (site.policyGate) await site.policyGate;
       if (site.failPolicy) return json({ error: "policy_unavailable" }, 503);
       return json({ ...policy(match[1]), effective: { ...policy(match[1]).effective, evaluated_at: String(Date.now()) } });
     }
@@ -92,9 +95,9 @@ function clock() {
     fire(ms) { for (const [id, timer] of timers) if (timer.ms === ms) { timers.delete(id); timer.fn(); } } };
 }
 
-function assemble(site, room) {
+function assemble(site, room, options) {
   const shared = Shared.load(), timers = clock();
-  const access = shared.Access.create({ base: origin, fetch: site.fetch, policyInterval: 3600000 });
+  const access = shared.Access.create({ base: origin, fetch: site.fetch, policyInterval: 3600000, ...options });
   const parts = Main.assemble(Main.parse(["--url", origin, "--room", room, "--still"]), {
     shared, access, fetch: site.fetch, EventSource: QuietEvents, environ: {},
     setInterval: () => 0, clearInterval() {}, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout
@@ -119,6 +122,7 @@ function panelText(frame, key) {
   return frame.grid.rows.slice(region.y, region.y + region.h).map(row => row.slice(region.x, region.x + region.w).map(cell => cell.ch).join("")).join("\n");
 }
 async function settle(condition) { for (let i = 0; i < 40 && !condition(); i++) await tick(); }
+const pause = () => new Promise(resolve => setTimeout(resolve, 5));
 
 (async () => {
   const proof = {};
@@ -395,6 +399,82 @@ async function settle(condition) { for (let i = 0; i < 40 && !condition(); i++) 
   proof.policyRefresh = true;
   third.parts.controller.stop();
 
+  // An unknown lock holds nothing back. While the first read is out the
+  // remote says nothing and greys nothing, and a choice is sent; an
+  // administrator's K waits for the lock to be known.
+  const pending = gateway({ principal: admin });
+  let answer; pending.policyGate = new Promise(resolve => { answer = resolve; });
+  const fifth = assemble(pending, room), waiting = fifth.parts.session;
+  await fifth.parts.controller.start(room);
+  assert.equal(fifth.access.policyStatus(room), "checking");
+  assert.equal(waiting.controlBlock(), null); assert.equal(waiting.lockNotice(), ""); assert.equal(waiting.roomLock().text, "");
+  frame = fifth.parts.controller.frame(149, 40);
+  waiting.bubbles(waiting.controls()).forEach(item => assert(!bubbleHit(frame, item.id).hit.disabled, item.id));
+  assert.doesNotMatch(panelText(frame, "remote"), /Read-only|lock status/i);
+  proof.checkingQuiet = true;
+  const first = waiting.current().options[1].id;
+  assert.equal(waiting.chooseDigit("1"), first);
+  await settle(() => pending.commands.length);
+  assert.deepEqual(pending.commands, [room + " source=" + first]);
+  proof.checkingSends = true;
+  fifth.parts.controller.key("k", { name: "k" });
+  assert.equal(fifth.parts.controller.ui.toast.body, "Room lock status is not known yet.");
+  assert.equal(pending.locks.length, 0);
+  answer(); await settle(() => fifth.access.policyStatus(room) === "ready");
+  assert.equal(waiting.roomLock().canManage, true);
+  fifth.parts.controller.stop();
+  proof.adminWaitsForLock = true;
+
+  // A failed read past the grace forgets a known lock: the remote says the
+  // lock is unknown, not Read-only, and sends. The server refuses a locked
+  // room; the refusal says so and reads the lock again, which greys the room.
+  const flaky = gateway({ principal: guest });
+  const sixth = assemble(flaky, room, { policyGrace: 1 }), blind = sixth.parts.session;
+  await sixth.parts.controller.start(room);
+  await settle(() => sixth.access.policyStatus(room) === "ready");
+  flaky.policies[room] = { ...flaky.policies[room], revision: 4, manual_lock: { desired: "off" },
+    effective: { allowed: false, locked: true, reason: "manual_lock", desired: "off", until: null } };
+  await sixth.access.loadPolicy(room);
+  assert.match(blind.controlBlock(), /locked until an administrator unlocks it/);
+  flaky.failPolicy = true; await pause();
+  await assert.rejects(sixth.access.loadPolicy(room));
+  assert.equal(sixth.access.policyStatus(room), "unavailable");
+  assert.equal(blind.controlBlock(), null); assert.equal(blind.roomLock().locked, false);
+  assert.equal(blind.lockNotice(), "Room lock status unknown"); assert.equal(blind.roomLock().text, "Room lock status unknown");
+  frame = sixth.parts.controller.frame(149, 40);
+  assert.match(panelText(frame, "remote"), /Room lock status unknown/); assert.doesNotMatch(panelText(frame, "remote"), /Read-only/);
+  blind.bubbles(blind.controls()).forEach(item => assert(!bubbleHit(frame, item.id).hit.disabled, item.id));
+  proof.unknownSaid = true;
+  flaky.failPolicy = false; flaky.refuseCommands = true;
+  const policyReads = () => flaky.calls.filter(call => call === "GET /api/v1/rooms/" + room + "/policy").length, readsBefore = policyReads();
+  assert.equal(await blind.choose(first), null);
+  assert.deepEqual(flaky.commands, [room + " source=" + first]);
+  assert.equal(sixth.toasts.at(-1), "Could not choose: This room is locked.");
+  proof.unknownSends = true;
+  await settle(() => sixth.access.policyStatus(room) === "ready");
+  assert(policyReads() > readsBefore, "a refusal reads the lock again");
+  assert.match(blind.controlBlock(), /locked until an administrator unlocks it/);
+  assert.equal(blind.lockNotice(), "");
+  frame = sixth.parts.controller.frame(149, 40);
+  assert(bubbleHit(frame, first).hit.disabled, "a known lock greys the room again");
+  proof.refusalRereads = true;
+
+  // A server that cannot evaluate the room's saved policy answers locked
+  // (policy_unavailable) and refuses every command: controls are paused, and
+  // the padlock and the tap say so rather than blaming a schedule.
+  flaky.policies[room] = { ...flaky.policies[room], revision: 5, manual_lock: null,
+    effective: { allowed: false, locked: true, reason: "policy_unavailable", desired: null, until: null } };
+  await sixth.access.loadPolicy(room);
+  assert.equal(blind.controlBlock(), "Room lock status is unavailable, so controls are paused.");
+  assert.equal(blind.roomLock().text, "Room lock status unavailable · controls paused");
+  const sent = flaky.commands.length;
+  blind.tapBubble(bubble(blind, "off"));
+  assert.equal(sixth.toasts.at(-1), "Read-only: Room lock status is unavailable, so controls are paused.");
+  await assert.rejects(sixth.access.command(room, "source", "off"), error => error.code === "policy_unavailable");
+  assert.equal(flaky.commands.length, sent);
+  sixth.parts.controller.stop();
+  proof.serverUnavailablePaused = true;
+
   // Room lists: another room's lock comes from the summary of every room, read
   // only while a list is on show; the terminal's room list and Home show ⚿
   // after its source and say the lock in the row's label.
@@ -430,7 +510,6 @@ async function settle(condition) { for (let i = 0; i < 40 && !condition(); i++) 
 
   // The current room follows its detailed policy, as its remote does, over a
   // summary that disagrees; another room follows whichever was read last.
-  const pause = () => new Promise(resolve => setTimeout(resolve, 5));
   lists.summary[room] = { locked: true, manual: true, until: null, reason: "manual_lock" };
   await listed.access.loadLocks();
   assert.deepEqual(lister.roomLocked(room), { locked: false, text: "" });

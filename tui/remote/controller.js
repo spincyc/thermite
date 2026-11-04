@@ -780,9 +780,14 @@ function create(options) {
   // K, or the button, from any Remotes pane: the D-pad keeps Enter and the arrows.
   function toggleRoomLock(room) {
     const lock = session.roomLock();
-    if (!lock.canManage) return toast("Room lock", lock.enabled ? "Sign in as an administrator to lock rooms" : "Enable authentication in Security to lock rooms");
+    if (!lock.canManage) return toast("Room lock", manageRefusal(lock));
     if (lock.disabled) return toast("Room lock", lock.reason || "Wait for the current change to finish");
     session.toggleRoomLock(room);
+  }
+
+  // Why K and o cannot manage this room's lock: an administrator waits for it to be known.
+  function manageRefusal(lock) {
+    return lock.reason || (lock.enabled ? "Sign in as an administrator to lock rooms" : "Enable authentication in Security to lock rooms");
   }
 
   // A bubble's lock menu as a small sheet; false when it offers nothing.
@@ -798,14 +803,13 @@ function create(options) {
   // o: the focused bubble's menu, else the source cursor's, else what the room shows.
   function lockMenuKey() {
     const lock = session.roomLock();
-    if (!lock.canManage) return toast("Room lock", lock.enabled ? "Sign in as an administrator to lock rooms" : "Enable authentication in Security to lock rooms");
+    if (!lock.canManage) return toast("Room lock", manageRefusal(lock));
     const room = session.current().id, hit = ui.focusVisible ? focusedHit() : null;
     const id = hit && hit.kind === "bubble" ? hit.item.id
       : ui.pane === "remote" ? options.Remote.showing(session.state(room)) : ui.sourceCursor[room] || session.state(room).value;
     const item = session.bubbles(session.controls()).find((entry) => entry.id === id);
     if (openLockMenu(item)) return;
-    toast("Room lock", lock.status !== "ready" ? lock.reason || "Room lock status is not known yet"
-      : lock.locked ? "A schedule holds this room: only what it shows can stay locked" : "Choose Off or a source to lock the room on");
+    toast("Room lock", lock.locked ? "A schedule holds this room: only what it shows can stay locked" : "Choose Off or a source to lock the room on");
   }
 
   function pressKey(candidates) {
