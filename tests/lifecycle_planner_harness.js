@@ -53,7 +53,7 @@ function rig(options = {}) {
   let coordinator;
   coordinator = createCoordinator(config, {
     instanceId: options.instanceId || 'test', now: () => time, store,
-    log: options.log || {error() {}}, journalPath: options.journalPath,
+    log: options.log === undefined ? {error() {}} : options.log, journalPath: options.journalPath,
     dispatch: (operation, report) => pending.push({operation, report}),
     probe: (operation, report) => pending.push({operation, report}),
     changed: () => { changes.push(time); if (options.changed) options.changed(pending); },
@@ -681,6 +681,99 @@ test('a follower left at its own devices relinquishes its claims and lease witho
   r.coordinator.request('Leader', 'T'); r.drain();
   assert.deepEqual(r.writes, ['LeaderOut=2']);
   assert.throws(() => r.coordinator.relinquish('Nobody'), /unknown lifecycle route/);
+});
+
+test('a command id labels the operations its route originates and changes no decision or journal', () => {
+  const run = route => {
+    const r = rig(); r.seed();
+    const operations = [];
+    r.coordinator.request('Desk', 'LocalComputer', route);
+    for (let step = 0; step < 500 && r.pending.length; step++) {
+      const entry = r.take();
+      operations.push(entry.operation);
+      if (r.begin(entry)) r.complete(entry);
+    }
+    return {r, operations};
+  };
+  const tagged = run('1a2b3c4d'), plain = run(undefined);
+  assert(tagged.operations.length >= 4);
+  for (const operation of tagged.operations) {
+    assert.equal(operation.route, '1a2b3c4d'); assert.equal(operation.room, 'Desk'); assert.equal(operation.choice, 'LocalComputer');
+  }
+  assert(plain.operations.every(operation => !('route' in operation) && operation.room === 'Desk'));
+  const strip = operations => operations.map(({route, room, choice, isCurrent, ...rest}) => rest);
+  assert.deepEqual(strip(tagged.operations), strip(plain.operations));
+  assert.deepEqual(tagged.r.saved(), plain.r.saved());
+  assert.equal(JSON.stringify(tagged.r.statuses), JSON.stringify(plain.r.statuses));
+  assert(!JSON.stringify(tagged.r.saved()).includes('1a2b3c4d'));
+  assert(!JSON.stringify(tagged.r.statuses).includes('1a2b3c4d'));
+});
+
+test('only an 8-hex command id labels a route, and only for its own request', () => {
+  for (const route of ['1A2B3C4D', '1a2b3c4', '1a2b3c4d5', 'thermite.web:1a2b3c4d', ' 1a2b3c4d', 12345678, {}, null]) {
+    const r = rig(); r.seed();
+    r.coordinator.request('Desk', 'LocalComputer', route);
+    assert(r.pending.length > 0);
+    assert(r.pending.every(entry => !('route' in entry.operation) && entry.operation.room === 'Desk'), String(route));
+  }
+  const r = rig(); r.seed();
+  r.coordinator.request('Desk', 'LocalComputer', '1a2b3c4d'); r.drain();
+  r.coordinator.request('Desk', 'Other');
+  assert(r.pending.length > 0 && r.pending.every(entry => !('route' in entry.operation) && entry.operation.choice === 'Other'));
+});
+
+test('a goal two routes share carries the label of the latest command', () => {
+  const r = rig({actual: {APower: 'OFF'}});
+  r.coordinator.request('Desk', 'SharedComputer', 'aaaaaaaa');
+  r.coordinator.request('Media', 'SharedComputer', 'bbbbbbbb');
+  const shared = [];
+  for (let step = 0; step < 200 && r.pending.length; step++) {
+    const entry = r.take();
+    if (Object.keys(entry.operation.origins).length === 2) shared.push(entry.operation);
+    else assert.equal(entry.operation.route, {Desk: 'aaaaaaaa', Media: 'bbbbbbbb'}[entry.operation.room]);
+    if (r.begin(entry)) r.complete(entry);
+  }
+  assert(shared.some(operation => operation.kind === 'write' && operation.resource === 'APower'));
+  assert(shared.every(operation => operation.route === 'bbbbbbbb' && operation.room === 'Media'));
+});
+
+test('an expired route warns once with what it waits for, its id and no free text', () => {
+  const logged = [];
+  const r = rig({log: {error() {}, warn: message => logged.push(message)}});
+  r.seed();
+  r.coordinator.request('Desk', 'LocalComputer', '1a2b3c4d');
+  // Display's read is refused with arbitrary text; BPower's outcome is lost.
+  const display = r.take(operation => operation.resource === 'Display');
+  r.begin(display);
+  display.report({type: 'terminal', token: display.operation.token, admitted: false, reason: 'device said: secret body'});
+  const power = r.take(operation => operation.resource === 'BPower');
+  r.begin(power);
+  power.report({type: 'uncertain', token: power.operation.token, reason: 'provider_outcome_unknown'});
+  r.advance(9999); assert.deepEqual(logged, []);
+  r.advance(1);
+  assert.deepEqual(logged, ['routing deadline room=Desk choice=LocalComputer route=1a2b3c4d ms=10000 '
+    + 'waiting=D1:queued,Display:unverified,BPower:quarantined cleanup=D2:pending,UnusedHDMI:pending failed=Display:?']);
+  r.drain(); r.coordinator.observe('D1', 'H1'); r.advance(100000);
+  assert.equal(logged.length, 1);
+  assert(!logged[0].includes('secret'));
+  // Without a command id, and with every requirement in flight.
+  const quiet = [], q = rig({log: {warn: message => quiet.push(message)}});
+  q.coordinator.request('Media', 'SharedComputer'); q.advance(10000);
+  assert.deepEqual(quiet, ['routing deadline room=Media choice=SharedComputer route=- ms=10000 '
+    + 'waiting=APower:in_flight,Zone:in_flight cleanup=- failed=-']);
+  // A route that cannot prove itself ready (unmanaged steps, or Off with no
+  // deactivation) ends at its deadline as usual: nothing managed is left.
+  const config = descriptor(); config.endpoints.Desk.choices.LocalComputer.complete = false;
+  const usual = [], u = rig({config, log: {warn: message => usual.push(message)}});
+  u.seed(); u.coordinator.request('Desk', 'LocalComputer', '1a2b3c4d'); u.drain();
+  assert(u.coordinator.snapshot().endpoints.Desk.active); u.advance(10000);
+  assert.equal(u.coordinator.snapshot().endpoints.Desk.failures.deadline, 'deadline'); assert.deepEqual(usual, []);
+  const config2 = descriptor(); config2.endpoints.Media.choices.Off = {off: true};
+  const off = [], o = rig({config: config2, log: {warn: message => off.push(message)}});
+  o.coordinator.request('Media', 'Off', '1a2b3c4d'); o.drain(); o.advance(10000); assert.deepEqual(off, []);
+  // No log dependency: the planner stays silent and keeps working.
+  const silent = rig({log: null}); silent.seed(); silent.coordinator.request('Desk', 'LocalComputer'); silent.advance(10000);
+  assert.equal(silent.coordinator.snapshot().endpoints.Desk.failures.deadline, 'deadline');
 });
 
 let failed = 0;

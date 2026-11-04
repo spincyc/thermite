@@ -1,7 +1,7 @@
 'use strict';
 // Loads the production routing.js template with a minimal lifecycle TABLE and
 // stub openHAB, executor and planner modules. No device or network access.
-const fs = require('fs'), vm = require('vm'), assert = require('assert');
+const fs = require('fs'), path = require('path'), vm = require('vm'), assert = require('assert');
 const source = fs.readFileSync(process.argv[2], 'utf8');
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
@@ -24,7 +24,7 @@ const TABLE = {
 };
 
 function load(options = {}) {
-  const items = new Map(), sent = [], posted = [], rules = {}, logs = [], calls = [];
+  const items = new Map(), sent = [], posted = [], rules = {}, logs = [], calls = [], routes = [];
   let onLegacy = null, deps = null;
   const slots = options.slots || {};
   const item = (name, state = 'NULL') => {
@@ -39,8 +39,9 @@ function load(options = {}) {
   }
   item('matrix_input1_edid', '5');
   const lifecycle = {
-    request(id, choice) {
+    request(id, choice, route) {
       calls.push(`request ${id} ${choice}`);
+      routes.push(route);
       if (options.refuse && options.refuse[id]) throw new Error(options.refuse[id]);
       return 1;
     },
@@ -67,10 +68,33 @@ function load(options = {}) {
     setTimeout: () => 0, clearTimeout() {}, Date, JSON, Map, Set, Object, String, Number, Error, Math,
   });
   vm.runInContext(source.replace('const TABLE = null;', 'const TABLE = ' + JSON.stringify(TABLE) + ';'), context);
-  posted.length = 0; calls.length = 0;
-  const command = (id, value) => rules[`routing_${id}_command`].execute({ receivedCommand: value });
-  return { sent, posted, logs, calls, command, deps: () => deps, legacy: event => onLegacy(event) };
+  posted.length = 0; calls.length = 0; logs.length = 0;
+  const command = (id, value, eventSource) => rules[`routing_${id}_command`].execute({ receivedCommand: value, eventSource });
+  return { sent, posted, logs, calls, routes, command, context, deps: () => deps, legacy: event => onLegacy(event) };
 }
+
+// Sources a command can carry: what openHAB's REST API makes of the
+// gateway's X-OpenHAB-Source, and others that must never be logged as text.
+const GATEWAY = 'thermite.web:1a2b3c4d=>org.openhab.core.io.rest$thermite';
+const SOURCES = [
+  [GATEWAY, { origin: 'web', route: '1a2b3c4d' }],
+  ['thermite.all_off:0123abcd', { origin: 'all_off', route: '0123abcd' }],
+  ['thermite.schedule:89abcdef=>org.openhab.core.io.rest$thermite=>org.openhab.automation.jsscripting$rule', { origin: 'schedule', route: '89abcdef' }],
+  ['org.openhab.core.io.rest$admin', { origin: 'openhab', route: null }],
+  ['org.openhab.automation.jsscripting$scene_rule', { origin: 'openhab', route: null }],
+  ['thermite.web:1A2B3C4D', { origin: 'other', route: null }],
+  ['thermite.web:1a2b3c4', { origin: 'other', route: null }],
+  ['thermite.web:1a2b3c4d9', { origin: 'other', route: null }],
+  ['thermite.web:1a2b3c4d extra=>org.openhab.core.io.rest$x', { origin: 'other', route: null }],
+  ['thermite.w:1a2b3c4d', { origin: 'other', route: null }],
+  ['thermite.Web:1a2b3c4d', { origin: 'other', route: null }],
+  ['x=>thermite.web:1a2b3c4d', { origin: 'other', route: null }],
+  ['hostile route=deadbeef origin=web\nforged line', { origin: 'other', route: null }],
+  ['', { origin: 'none', route: null }],
+  [null, { origin: 'none', route: null }],
+  [undefined, { origin: 'none', route: null }],
+];
+const COMMAND_LINE = /^routing command room=[a-z0-9_]+ choice=[A-Za-z0-9_.@-]+ origin=[a-z_]+ route=(?:[0-9a-f]{8}|-)$/;
 
 test('a refused route claim sends no EDID, hold or unmanaged step and re-reads the room', () => {
   const r = load({ refuse: { den: 'lifecycle resource conflict: matrix_output1_input (office)' } });
@@ -119,6 +143,60 @@ test('recovery retires the manual command whose outcome was unknown, and only th
 
 test('the planner is told where its journal is', () => {
   assert.equal(load().deps().journalPath, '/userdata/thermite-routing/executor_coordinator.json');
+});
+
+test('a gateway command logs its origin and id and the id rides the planner request as a label', () => {
+  const r = load();
+  r.command('office', 'tv', GATEWAY);
+  assert.deepEqual(r.logs[0], ['info', 'routing command room=office choice=tv origin=web route=1a2b3c4d']);
+  assert.match(r.logs[0][1], COMMAND_LINE);
+  assert.deepEqual(r.calls.slice(0, 1), ['request office tv']); assert.deepEqual(r.routes, ['1a2b3c4d']);
+  // A refused claim was still asked for with its id, and the line before the
+  // refusal names it.
+  const refused = load({ refuse: { den: 'lifecycle resource conflict: matrix_output1_input (office)' } });
+  refused.command('den', 'tv', GATEWAY);
+  assert.deepEqual(refused.routes, ['1a2b3c4d']);
+  assert.deepEqual(refused.logs.map(([level]) => level), ['info', 'warn']);
+  assert.equal(refused.logs[0][1], 'routing command room=den choice=tv origin=web route=1a2b3c4d');
+});
+
+test('any other source is named coarsely, never by its text, and carries no id', () => {
+  for (const [source, expected] of SOURCES) {
+    const r = load();
+    r.command('den', 'tv', source);
+    const line = r.logs.find(([level]) => level === 'info')[1];
+    assert.match(line, COMMAND_LINE, String(source));
+    assert.equal(line, `routing command room=den choice=tv origin=${expected.origin} route=${expected.route || '-'}`, String(source));
+    assert.deepEqual(r.routes, [expected.route], String(source));
+    if (!expected.route) {
+      for (const text of ['hostile', 'forged', 'deadbeef', 'admin', 'scene_rule', 'extra', '1A2B3C4D'])
+        assert(!r.logs.some(([, message]) => message.includes(text)), `${source} leaked ${text}`);
+    }
+  }
+});
+
+test('an unknown choice is refused with its source fields and without its text', () => {
+  const r = load();
+  r.command('den', 'not-a-source <script>', GATEWAY);
+  assert.deepEqual(r.logs, [['warn', 'routing command room=den choice=- origin=web route=1a2b3c4d outcome=refused reason=unknown_choice']]);
+  assert.deepEqual(r.calls, []); assert.deepEqual(r.sent, []);
+});
+
+test('routing.js and lifecycle_io.js parse command sources identically', () => {
+  const r = load();
+  const io = { exports: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(path.dirname(process.argv[2]), 'lifecycle_io.js'), 'utf8'),
+    { module: io, require: () => assert.fail('no module at load') });
+  for (const [source, expected] of SOURCES) {
+    assert.deepEqual(JSON.parse(JSON.stringify(r.context.commandSource(source))), expected, String(source));
+    assert.deepEqual(JSON.parse(JSON.stringify(io.exports.commandSource(source))), expected, String(source));
+  }
+});
+
+test('the planner logs through the script console', () => {
+  const r = load();
+  r.deps().log.warn('routing deadline room=den');
+  assert.deepEqual(r.logs, [['warn', 'routing deadline room=den']]);
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

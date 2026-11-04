@@ -17,5 +17,5 @@ class LifecyclePlanner(unittest.TestCase):
         result = subprocess.run([shutil.which("node"), str(harness)], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads(result.stdout)
-        self.assertGreaterEqual(report["checks"], 20)
+        self.assertGreaterEqual(report["checks"], 50)
         self.assertEqual(report["failed"], 0)

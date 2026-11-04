@@ -1,5 +1,5 @@
 'use strict';
-const fs=require('fs'), vm=require('vm'), assert=require('assert');
+const fs=require('fs'), path=require('path'), vm=require('vm'), assert=require('assert');
 const source=fs.readFileSync(process.argv[2],'utf8');
 class NativeMap extends Map { get(key){return super.has(key)?super.get(key):null;} put(key,value){assert.equal(typeof value,'string');this.set(key,value);} }
 class Queue {constructor(){this.rows=[];} offer(value){assert.equal(typeof value,'string');if(this.rows.length>=512)return false;this.rows.push(value);return true;}poll(){return this.rows.length?this.rows.shift():null;}isEmpty(){return this.rows.length===0;}size(){return this.rows.length;} }
@@ -24,6 +24,31 @@ function setup(initial,moduleSource=source,options={}){
 }
 const tests=[];
 function test(name,fn){fn();tests.push(name);}
+// Ticket log lines: their shape, and the fields of one.
+const TICKET=/^routing ticket route=(?:[0-9a-f]{8}|-) room=\S+ choice=\S+ resource=\S+ value=\S+ phase=\S+ outcome=(?:terminal|sample|uncertain) reason=\S+ readback=(?:confirmed|unconfirmed|-) ms=\d+ wait=(?:\d+|-) polls=\d+(?: http=\d{3}| exc=[A-Za-z_][A-Za-z0-9_]*)?$/;
+const tickets=f=>f.logs.filter(l=>l[1].startsWith('routing ticket ')).map(([level,line])=>{assert.equal(level,'info');assert.match(line,TICKET);return line;});
+const fieldsOf=line=>Object.fromEntries(line.slice('routing ticket '.length).split(' ').map(part=>[part.slice(0,part.indexOf('=')),part.slice(part.indexOf('=')+1)]));
+const timeless=line=>{const row=fieldsOf(line);delete row.ms;delete row.wait;return row;};
+// An httpActor around the VRROOM wiring above, with a scripted exchange.
+function httpRig({status=200,body='',thing=true,ack='readback',fail=null,observed=3,rules=null}={}){
+ const f=setup();
+ const nativeThing={getConfiguration:()=>new Map([['baseURL','http://owned'],['commandMethod','GET'],['stateMethod','GET']]),
+  getChannel:()=>({getConfiguration:()=>new Map([['commandExtension','/cmd?insel=%2$s'],['commandTransformation',['JS(|parseInt(input))']],['stateExtension','/status'],['stateTransformation',['JSONPATH($.portseltx0)']]])})};
+ const openhab={things:{getThing:()=>thing?{rawThing:nativeThing}:null},items:{getItem:()=>({postUpdate(){}})},
+  rules:{JSRule(rule){rules[rule.id]=rule;}},triggers:{ItemCommandTrigger:name=>({name})}};
+ const context=vm.createContext({module:{exports:{}},
+  require(name){if(name==='openhab')return openhab;if(name==='@runtime'&&rules)return {lifecycleTracker:{addDisposeHook(){}}};assert.fail(name);},
+  thermiteIO:{http(url){if(fail)throw fail;return {getStatus:()=>status,getContentAsString:()=>url.includes('/cmd')?body:JSON.stringify({portseltx0:observed})};},
+   unreached:error=>!!error&&error.unreached===true}});
+ vm.runInContext(source,context);const module=context.module.exports,bridge=module.create(f.descriptor,f.env);
+ const actor=module.httpActor({key:'switch',io:f.descriptor.io,fields:{D1:{kind:'http',thing:'native',channel:'input',ack,allowed:['1','2','3','4']}}},
+  {...f.env,noRules:!rules,journal:{load:()=>null,save(){}}});
+ const write=(value='3',labels={})=>{bridge.dispatch({token:String('w')+value,key:'switch',resource:'D1',value,phase:'acquire',...labels},()=>{});actor.drain();bridge.events();};
+ const read=()=>{bridge.probe({token:String('read'),key:'switch',resource:'D1'},()=>{});actor.drain();bridge.events();};
+ return {f,bridge,actor,write,read};
+}
+// A Java exception as GraalJS hands it to a catch: a host object with a cause chain.
+const javaError=(name,cause=null,extra={})=>({getClass:()=>({getSimpleName:()=>name}),getCause:()=>cause,getMessage:()=>'secret message',...extra});
 test('distinct properties survive, latest same property coalesces',()=>{
  const f=setup();f.submit('old','D1','2');f.submit('next','D1','3');f.submit('mouse','D2','4');f.actor.drain();f.actor.drain();f.bridge.events();
  assert.deepEqual(f.writes,[['D1','3'],['D2','4']]);assert(f.events.some(e=>e.token==='old'&&e.admitted===false));
@@ -186,6 +211,8 @@ test('Denon main-zone probes keep the firmware UTF-8 CRLF serialization',()=>{
  }
  assert.equal(reports.filter(row=>row.type==='terminal'&&row.reason==='owned_probe_failed').length,2);
  assert.equal(JSON.parse(f.broker.states.get('switch')).quarantine,null);
+ // The failed reads are logged by their error's name, never its message.
+ const lines=tickets(f);assert.equal(lines.length,2);assert(lines.every(line=>line.endsWith(' exc=Error')&&!line.includes('fixture')));
 });
 test('superseded manual proposal cannot take over current intent but its receipt survives',()=>{
  const f=setup(),manual=[];f.bridge.onLegacy(e=>{manual.push(e);if(e.type==='legacy'){assert(f.broker.lock.depth>0);f.bridge.authorizeLegacy(e.token);}});
@@ -310,5 +337,106 @@ test('dropped manual commands warn once per device and reason, never with their 
  const warnings=f.logs.filter(l=>l[0]==='warn');assert.equal(warnings.length,2);
  assert(/quarantined/.test(warnings[0][1]));assert(/not a value/.test(warnings[1][1]));
  assert(!warnings.some(l=>l[1].includes('4321')||l[1].includes('9876')));
+});
+test('each ticket ends with one key=value line carrying its route labels',()=>{
+ const f=setup();
+ f.bridge.dispatch({token:String('routed'),key:'switch',resource:'D1',value:'3',phase:'acquire',route:'1a2b3c4d',room:'den',choice:'tv@lounge',isCurrent:()=>true},()=>{});
+ f.actor.drain();f.bridge.events();
+ let lines=tickets(f);assert.equal(lines.length,1);
+ assert.deepEqual(timeless(lines[0]),{route:'1a2b3c4d',room:'den',choice:'tv@lounge',resource:'D1',value:'3',phase:'acquire',outcome:'terminal',reason:'-',readback:'confirmed',polls:'0'});
+ f.bridge.probe({token:String('owned-read'),key:'switch',resource:'D2',route:'1a2b3c4d',room:'den',choice:'tv'},()=>{});f.actor.drain();
+ assert.deepEqual(timeless(tickets(f)[1]),{route:'1a2b3c4d',room:'den',choice:'tv',resource:'D2',value:'-',phase:'probe',outcome:'sample',reason:'-',readback:'-',polls:'0'});
+ // Malformed labels never reach the broker, so the line names none.
+ f.bridge.dispatch({token:String('forged'),key:'switch',resource:'D1',value:'4',phase:'release',route:'1A2B3C4D',room:'den room=x',choice:'<b>',isCurrent:()=>true},()=>{});
+ const queued=JSON.parse(f.broker.states.get('switch')).pending.D1;assert(!('route' in queued)&&!('room' in queued)&&!('choice' in queued));
+ f.actor.drain();lines=tickets(f);assert.equal(lines.length,3);
+ assert.deepEqual(timeless(lines[2]),{route:'-',room:'-',choice:'-',resource:'D1',value:'4',phase:'release',outcome:'terminal',reason:'-',readback:'confirmed',polls:'0'});
+ // A read-only actor still says what became of its tickets.
+ const g=setup(null,source.replace('const SEND = true;','const SEND = false;'));g.submit('readonly','D1');g.actor.drain();
+ assert.equal(fieldsOf(tickets(g)[0]).reason,'read_only');
+});
+test('failed exchanges keep only their HTTP status or exception class',()=>{
+ const cases=[
+  [()=>({outcome:'unsent',exc:'ConnectException'}),'terminal','device_not_reached',' exc=ConnectException'],
+  [()=>({outcome:'unknown',http:503}),'uncertain','provider_outcome_unknown',' http=503'],
+  [()=>({outcome:'refused',http:409,body:'secret body'}),'terminal','device_refused',' http=409'],
+  [()=>{throw javaError('ExecutionException',javaError('ConnectException'));},'uncertain','provider_outcome_unknown',' exc=ConnectException'],
+  [()=>{throw Error('lost reply: secret body');},'uncertain','provider_outcome_unknown',' exc=Error'],
+  [()=>{throw Error('executor_thing_unavailable');},'uncertain','provider_outcome_unknown',' exc=executor_thing_unavailable'],
+  [()=>({outcome:'unsent',exc:'secret class name'}),'terminal','device_not_reached',''],
+  [()=>({outcome:'unsent',http:999,exc:7}),'terminal','device_not_reached',''],
+ ];
+ for(const [execute,outcome,reason,cause] of cases){
+  const f=setup();f.provider.execute=execute;f.submit('failing','D1');f.actor.drain();
+  const [line]=tickets(f);const row=fieldsOf(line);
+  assert.equal(row.outcome,outcome,line);assert.equal(row.reason,reason,line);assert.equal(row.readback,'-',line);
+  assert(line.endsWith(` polls=0${cause}`),line);assert(!line.includes('secret'),line);
+ }
+ const f=setup();f.provider.probe=()=>{throw Object.assign(Error('executor_http_refused'),{http:502});};
+ f.bridge.probe({token:String('failed-read'),key:'switch',resource:'D1'},()=>{});f.actor.drain();
+ assert.deepEqual(timeless(tickets(f)[0]),{route:'-',room:'-',choice:'-',resource:'D1',value:'-',phase:'probe',outcome:'terminal',reason:'owned_probe_failed',readback:'-',polls:'0',http:'502'});
+});
+test('HTTP actors surface the status or exception class but never a body',()=>{
+ const expect=(rig,act,outcome,reason,cause)=>{act(rig);const line=tickets(rig.f).at(-1);const row=fieldsOf(line);
+  assert.equal(row.outcome,outcome,line);assert.equal(row.reason,reason,line);assert(line.endsWith(cause),line);assert(!line.includes('secret'),line);};
+ expect(httpRig({status:503,body:'secret body'}),r=>r.write(),'uncertain','provider_outcome_unknown',' http=503');
+ expect(httpRig({status:404,body:'secret body'}),r=>r.write(),'terminal','device_refused',' http=404');
+ expect(httpRig({fail:javaError('ExecutionException',javaError('ConnectException'),{unreached:true})}),r=>r.write(),'terminal','device_not_reached',' exc=ConnectException');
+ expect(httpRig({fail:javaError('TimeoutException')}),r=>r.write(),'uncertain','provider_outcome_unknown',' exc=TimeoutException');
+ expect(httpRig({body:'{"result":0,"detail":"secret payload"}',ack:'result'}),r=>r.write(),'uncertain','provider_outcome_unknown',' http=200');
+ expect(httpRig({body:'secret, not JSON',ack:'result'}),r=>r.write(),'uncertain','provider_outcome_unknown',' http=200');
+ expect(httpRig({thing:false}),r=>r.write(),'terminal','device_not_reached',' exc=executor_thing_unavailable');
+ expect(httpRig({status:500,body:'secret body'}),r=>r.read(),'terminal','owned_probe_failed',' http=500');
+ const lagging=httpRig({observed:2});lagging.write('3');
+ assert.deepEqual(timeless(tickets(lagging.f)[0]),{route:'-',room:'-',choice:'-',resource:'D1',value:'3',phase:'acquire',outcome:'terminal',reason:'-',readback:'unconfirmed',polls:'4'});
+});
+test('a manual command keeps a private value private and takes a gateway id from its source',()=>{
+ const f=setup(),values=[];f.provider.has=()=>true;f.provider.execute=(r,v)=>{values.push(v);return {outcome:'applied'};};
+ f.bridge.onLegacy(e=>{if(e.type==='legacy')f.bridge.authorizeLegacy(e.token);});
+ assert(f.actor.legacy('source_pairing','4321',true,'thermite.tui:0123abcd=>org.openhab.core.io.rest$thermite'));
+ f.bridge.events();f.actor.drain();f.bridge.events();
+ assert.deepEqual(values,['4321']);
+ assert.deepEqual(timeless(tickets(f)[0]),{route:'0123abcd',room:'-',choice:'-',resource:'source_pairing',value:'<private>',phase:'legacy',outcome:'terminal',reason:'-',readback:'-',polls:'0'});
+ assert(!f.logs.some(l=>l[1].includes('4321')));assert(!String(f.broker.states.get('switch')).includes('4321'));
+ for(const source of ['org.openhab.core.io.rest$admin','thermite.tui:0123ABCD','free text thermite.tui:0123abcd',null,undefined,42]){
+  f.logs.length=0;assert(f.actor.legacy('D1','2',false,source));f.bridge.events();f.actor.drain();f.bridge.events();
+  const line=tickets(f)[0];assert.equal(fieldsOf(line).route,'-',String(source));assert(!/admin|free|0123/i.test(line),line);
+ }
+ // The native control rule hands its event source over.
+ const rules={},rig=httpRig({rules});rig.bridge.onLegacy(e=>{if(e.type==='legacy')rig.bridge.authorizeLegacy(e.token);});
+ rules.thermite_routing_legacy_switch.execute({itemName:'D1',receivedCommand:'3',eventSource:'thermite.web:1a2b3c4d=>org.openhab.core.io.rest$thermite'});
+ rig.bridge.events();rig.actor.drain();rig.bridge.events();
+ assert.deepEqual(timeless(tickets(rig.f)[0]),{route:'1a2b3c4d',room:'-',choice:'-',resource:'D1',value:'3',phase:'legacy',outcome:'terminal',reason:'-',readback:'confirmed',polls:'0'});
+});
+test('a planner route carries its command id through the broker onto every ticket line',()=>{
+ const f=setup();let actual='1';
+ f.provider.probe=()=>({value:actual,fresh:true});f.provider.execute=(r,v)=>{actual=v;return {outcome:'applied',sample:{value:v,fresh:true}};};
+ const {createCoordinator}=require(path.join(path.dirname(path.resolve(process.argv[2])),'lifecycle.js'));
+ const planner=createCoordinator({version:1,sources:{},resources:{D1:{key:'switch',values:['1','2','3','4'],capable:true}},
+  endpoints:{den:{choices:{tv:{requirements:{D1:'3'}}}}}},{instanceId:'test',store:{load:()=>null,save(){}},now:()=>0,setTimer:()=>0,clearTimer(){},
+  dispatch:(op,report)=>f.bridge.dispatch(op,report),probe:(op,report)=>f.bridge.probe(op,report),changed:()=>f.bridge.invalidateStale()});
+ planner.request('den','tv','1a2b3c4d');
+ for(let n=0;n<4;n++){f.actor.drain();f.bridge.events();}
+ assert(planner.snapshot().endpoints.den.pathReady);
+ assert.deepEqual(tickets(f).map(timeless),[
+  {route:'1a2b3c4d',room:'den',choice:'tv',resource:'D1',value:'-',phase:'probe',outcome:'sample',reason:'-',readback:'-',polls:'0'},
+  {route:'1a2b3c4d',room:'den',choice:'tv',resource:'D1',value:'3',phase:'acquire',outcome:'terminal',reason:'-',readback:'confirmed',polls:'0'}]);
+});
+test('Java exceptions are named by class however GraalJS presents it, never by message',()=>{
+ const shapes=[
+  name=>({getClass:()=>({getSimpleName:()=>name})}),
+  name=>({getClass:()=>({class:{getSimpleName:()=>name}})}),
+  name=>({getClass:()=>{throw Error('no reflection');},toString:()=>`java.net.${name}: secret message`}),
+  name=>({getClass:()=>({}),toString:()=>`org.eclipse.jetty.Outer$${name}`}),
+ ];
+ for(const shape of shapes){
+  const f=setup();
+  f.provider.execute=()=>{throw {...shape('ExecutionException'),getCause:()=>({...shape('ConnectException'),getCause:()=>null})};};
+  f.submit('java','D1');f.actor.drain();
+  const [line]=tickets(f);assert(line.endsWith(' exc=ConnectException'),line);assert(!line.includes('secret'),line);
+ }
+ // A toString() that is not a qualified class name names nothing.
+ const f=setup();f.provider.execute=()=>{throw {getClass:()=>({}),getCause:()=>null,toString:()=>'secret: message'};};
+ f.submit('opaque','D1');f.actor.drain();assert(tickets(f)[0].endsWith(' polls=0'));
 });
 process.stdout.write(JSON.stringify({passed:tests.length,tests}));
