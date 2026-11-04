@@ -201,9 +201,11 @@ class Http2Gateway(TransactionTestCase):
         opened = [message for message in messages if message.startswith("stream open ")]
         closed = [message for message in messages if message.startswith("stream close ")]
         self.assertEqual(sorted(message.split(" ")[2] for message in opened), sorted("id=" + each for each in ids))
-        self.assertIn("streams_peer=8 streams_total=8", opened[-1])
+        # Each stream is counted and logged in its own thread, so the line
+        # logged last need not carry the last count; one line carries each.
+        self.assertIn("streams_peer=8 streams_total=8", "\n".join(opened))
         self.assertEqual(len(closed), 8)
-        self.assertIn("streams_peer=0 streams_total=0", closed[-1])
+        self.assertIn("streams_peer=0 streams_total=0", "\n".join(closed))
         self.assertFalse([message for message in messages if message.startswith("req ")], "successful reads are not logged")
         self.assertNotIn("198.51.100.7", "\n".join(messages))
         self.assertNotIn(HOST, "\n".join(messages))
