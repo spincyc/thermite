@@ -79,7 +79,7 @@
     if (mode.enabled && !client.canEdit()) {
       const account = global.ThermiteNavigation.href("access", location.search);
       host.append(node("p", "Sign in as an administrator to change authentication. To elevate an existing account, ask an administrator to change its role in Users & roles, then sign in again."),
-        node("a", client.current() ? "Switch to an administrator account" : "Sign in as an administrator", { href: account + (account.includes("?") ? "&" : "?") + "next=%2Fsecurity%2F" }));
+        node("a", client.current() && !client.current().is_guest ? "Switch to an administrator account" : "Sign in as an administrator", { href: account + (account.includes("?") ? "&" : "?") + "next=%2Fsecurity%2F" }));
       return;
     }
     if (mode.bootstrap_required) {

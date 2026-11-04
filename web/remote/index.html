@@ -96,9 +96,9 @@
       </header>
 
       <div class="room-lock" data-room-lock hidden>
-        <span class="room-lock__status" data-room-lock-status role="status"></span>
-        <button class="button room-lock__toggle" type="button" role="switch" aria-checked="false"
-          aria-label="Hold this room until unlocked" data-action="room-lock" hidden>Lock room</button>
+        <span class="room-lock__status" id="room-lock-status" data-room-lock-status></span>
+        <button class="button room-lock__toggle" type="button" aria-describedby="room-lock-status"
+          data-action="room-lock" hidden>Lock room</button>
       </div>
 
       <div class="targets-wrap">

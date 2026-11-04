@@ -145,6 +145,15 @@
     }
 
     const lockRequests = new Set();
+    let lockError = null;
+    const clock = (value) => {
+      const at = new Date(value);
+      if (!Number.isFinite(at.getTime())) return "";
+      const sameDay = at.toDateString() === new Date(now()).toDateString();
+      return at.toLocaleString([], sameDay ? { hour: "2-digit", minute: "2-digit" } : { weekday: "short", hour: "2-digit", minute: "2-digit" });
+    };
+    // The current room's lock as both clients show it. The server decides;
+    // this only explains its last answer.
     function roomLock() {
       const access = backend.access, room = current;
       const enabled = Boolean(room && access && !access.native && access.authEnabled());
@@ -157,17 +166,20 @@
       const unavailable = status === "unavailable" || policy?.effective?.reason === "policy_unavailable";
       let text = "";
       if (unavailable) text = "Room lock status unavailable · controls paused";
-      else if (status === "checking") text = "Checking room lock…";
-      else if (locked) text = manual ? "Locked · until unlocked" : "Locked by schedule";
-      return { room: room?.id || null, enabled, manual, locked, busy, canManage,
-        disabled: busy || !canManage || !manual && (!settled || unavailable),
-        text, label: busy ? "Saving…" : manual ? "Unlock room" : "Lock room" };
+      else if (locked && manual) text = "Locked · until unlocked";
+      else if (locked) text = "Locked by schedule" + (policy.effective.until && clock(policy.effective.until) ? " until " + clock(policy.effective.until) : "");
+      const reason = busy || !canManage || manual ? "" : unavailable ? "Lock status is unavailable."
+        : !settled ? "Wait for the room to finish switching and report its source." : "";
+      const error = lockError && lockError.room === room?.id && lockError.revision === policy?.revision ? lockError.message : "";
+      return { room: room?.id || null, enabled, status, manual, locked, busy, canManage, text, reason, error,
+        disabled: busy || !canManage || Boolean(reason), label: busy ? "Saving…" : manual ? "Unlock room" : "Lock room" };
     }
 
     async function toggleRoomLock(expectedRoom) {
       const lock = roomLock(), room = current;
       if (!room || expectedRoom && expectedRoom !== room.id || lock.disabled) return false;
       const policy = backend.access.policy(room.id), desired = !lock.manual;
+      lockError = null;
       lockRequests.add(room.id); emit({ type: "change" });
       try {
         const saved = await backend.access.setRoomLock(room.id, policy.revision, desired);
@@ -176,9 +188,31 @@
           : saved.effective?.locked ? "Manual lock released. The room is still locked by its schedule." : "Room unlocked.");
         return true;
       } catch (error) {
-        if (!error.stale) toast(room.label, error.message, "bad");
+        if (error.stale) return false;
+        // Kept beside the control until the room's policy changes; a toast alone vanishes too soon.
+        lockError = { room: room.id, revision: backend.access.policy(room.id)?.revision, message: error.message };
+        toast(room.label, error.message, "bad");
         return false;
       } finally { lockRequests.delete(room.id); emit({ type: "change" }); }
+    }
+
+    // Why ordinary controls cannot act on the current room, or null. Both
+    // clients show this one answer; the server still checks every command.
+    function controlBlock() {
+      const access = backend.access;
+      if (!current || !access || access.canControl(current.id)) return null;
+      const lock = roomLock();
+      if (lock.locked) return lock.manual ? "This room is locked until an administrator unlocks it." : "This room is locked by its schedule.";
+      if (lock.status === "checking") return "Checking whether this room is locked…";
+      if (lock.status === "unavailable") return "Room lock status is unavailable, so controls are paused.";
+      return "Your account cannot control this room.";
+    }
+
+    // True, after saying why, when ordinary controls must not send.
+    function refused() {
+      const reason = controlBlock();
+      if (reason) toast("Read-only", reason, "muted");
+      return Boolean(reason);
     }
 
     function subscribe(callback) {
@@ -343,7 +377,7 @@
     }
 
     function choose(sourceId) {
-      if (!current) return Promise.resolve(null);
+      if (!current || refused()) return Promise.resolve(null);
       return backend.choose(current.id, sourceId).catch((error) => {
         toast("Could not choose", error.message, "bad");
         return null;
@@ -364,7 +398,7 @@
     // 0 is Off, then the room's sources in order: the id chosen, or null.
     function chooseDigit(digit) {
       const choice = current && current.options[Number(digit)];
-      if (!choice) return null;
+      if (!choice || refused()) return null;
       chooseSource(choice.id);
       return choice.id;
     }
@@ -376,7 +410,7 @@
     }
 
     function press(button) {
-      if (!current) return Promise.resolve(null);
+      if (!current || refused()) return Promise.resolve(null);
       const target = activeTarget(controls());
       if (!canPress(button, target)) {
         toast(spec(button) ? spec(button).label : button,
@@ -414,6 +448,7 @@
     // A key for a button the remote on show lacks still asks the backend,
     // which says why. Returns the button pressed.
     function pressKey(candidates) {
+      if (refused()) return null;
       const target = activeTarget(controls());
       const offered = target ? Remote.buttonsOf(target.remote) : [];
       const button = candidates.find((id) => Remote.AUDIO[id] || offered.indexOf(id) >= 0) || candidates[0];
@@ -482,6 +517,7 @@
     }
 
     function chooseInput(value) {
+      if (refused()) return Promise.resolve(null);
       return backend.setInput(current.id, inputsOf, value)
         .then((result) => {
           toast(result.device.short + " input", result.note, "", result.sent ? "" : result.tag || "Not sent");
@@ -493,6 +529,7 @@
     }
 
     function operate(controlId, actionId) {
+      if (refused()) return Promise.resolve(null);
       return backend.operate(current.id, controlId, actionId)
         .then((result) => {
           toast(result.label, result.note, "muted", result.sent ? "" : "Not connected");
@@ -522,7 +559,7 @@
     // The slider moved to value; final when it was let go.
     function slide(value, final) {
       const audio = current && current.audio;
-      if (!audio) return;
+      if (!audio || controlBlock()) return;
       if (final) fader.dragging = false;
       const control = Remote.controlOf(house, audio.id);
       if (!control || !control.volume) return;
@@ -816,7 +853,8 @@
       setVolumeMode: setVolumeMode,
       toggleVolumeMode: () => setVolumeMode(volumeMode === "slider" ? "buttons" : "slider"),
       access: backend.access || null,
-      controlAllowed: () => !backend.access || backend.access.canControl(current && current.id),
+      controlAllowed: () => !controlBlock(),
+      controlBlock,
       roomLock,
       toggleRoomLock,
       audioView: audioView,

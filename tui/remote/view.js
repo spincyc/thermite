@@ -320,7 +320,8 @@ function paneHelp(ctx) {
     case "rooms": return ["Rooms", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "apply source"]];
     case "sheet:rooms": return ["Rooms", [["\u2191\u2193"], "select room"], [["Enter"], "remote"]];
     case "sources": return ["Sources", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "activate"]];
-    case "remote": return ["Remote", [["\u2190\u2191\u2192\u2193"], "D-pad"], [["Enter"], "OK"]];
+    case "remote": return ["Remote", [["\u2190\u2191\u2192\u2193"], "D-pad"], [["Enter"], "OK"]]
+      .concat(ctx.session?.roomLock().canManage ? [[["k"], "lock/unlock room"]] : []);
     case "info": return ["Info", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"]];
     case "signal": return ["Signal & audio", [["↑↓"], "room"], [["←→"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"]];
     case "sheet:info": return ["Info", [["\u2191\u2193"], "scroll"]];
@@ -491,7 +492,7 @@ function keyLabel(ctx, id) {
 }
 
 function keyStyle(ctx, id, options) {
-  if (ctx.session.controlAllowed && !ctx.session.controlAllowed()) return "dim";
+  if (ctx.session.controlBlock()) return "dim";
   if (ctx.session.canPress && !ctx.session.canPress(id)) return focused(ctx, "key:" + id) ? "dim key.focus" : "dim";
   const key = "key:" + id;
   if (ctx.ui.pressed[key]) return "key.pressed";
@@ -584,14 +585,15 @@ function remoteContent(frame, g, w, ctx) {
   const target = session.activeTarget(list);
   const state = session.state(current.id);
   let y = 0;
-  const lock = session.roomLock?.();
-  if (lock?.text) y = paragraph(g, 2, y, w - 4, lock.text, lock.locked ? "strong" : "dim");
-  if (lock?.canManage) {
+  const lock = session.roomLock(), blocked = session.controlBlock();
+  if (lock.text) y = paragraph(g, 2, y, w - 4, lock.text, lock.locked ? "strong" : "dim");
+  else if (blocked && lock.status !== "checking") y = paragraph(g, 2, y, w - 4, "Read-only · " + blocked, "dim");
+  if (lock.canManage) {
     const key = "room-lock:" + current.id;
     const hit = lock.disabled ? null : { kind: "room-lock", key, room: current.id, focus: true, label: lock.label };
-    button(g, ctx, 2, y, lock.label, key, hit, lock.disabled ? "dim" : "key"); y += 4;
+    button(g, ctx, 2, y, lock.label + " (K)", key, hit, lock.disabled ? "dim" : "key"); y += 4;
   }
-  if (!lock?.text && session.controlAllowed && !session.controlAllowed()) y = paragraph(g, 2, y, w - 4, "Read-only · account permission", "dim");
+  if (lock.error || lock.reason) y = paragraph(g, 2, y, w - 4, lock.error || lock.reason, lock.error ? "alert" : "dim");
   const shown = session.view(current, state);
   if (shown.problem) y = paragraph(g, 2, y, w - 4, "\u26a0 " + shown.problem, "alert");
   const remote = session.remoteOf(target);
@@ -1079,7 +1081,8 @@ function helpContent(g, w, ctx) {
     });
     y++;
   };
-  if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "v", "F6"].includes(entry[0][0]))));
+  if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "v", "F6"].includes(entry[0][0])))
+    .concat(ctx.session?.roomLock().canManage ? [[["K"], "Lock or unlock this room (administrators)"]] : []));
   else if (ctx.ui.screen === "pairing") rows("Pair devices", PAIR_SHORTCUTS.filter(entry => !["Tab", "L", "F1", "?", "q"].includes(entry[0][0])).concat([[["s/S"], "Sort/reverse"]]));
   else {
     const help = paneHelp({ ...ctx, ui: { ...ctx.ui, overlay: null, pane: ctx.ui.screen } });

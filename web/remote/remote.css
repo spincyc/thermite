@@ -623,7 +623,7 @@ button {
 .room-lock[hidden], .room-lock__toggle[hidden] { display: none; }
 .room-lock__status { flex: 1; min-width: 160px; }
 .room-lock__toggle { flex: none; min-height: 40px; }
-.room-lock__toggle[aria-checked="true"] { color: var(--bad); }
+.room-lock__toggle[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
 
 .alert {
   display: flex;

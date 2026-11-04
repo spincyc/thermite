@@ -108,26 +108,36 @@
     updateSimulation();
     updateSignal();
     syncSignal();
-    const lock = session.roomLock();
-    const lockRow = $("[data-room-lock]"), lockButton = $('[data-action="room-lock"]');
-    lockRow.hidden = !lock.enabled || !lock.text && !lock.canManage;
-    $("[data-room-lock-status]").textContent = lock.text || "Hold the current source or Off until unlocked";
-    lockButton.hidden = !lock.canManage;
-    lockButton.textContent = lock.label;
-    lockButton.disabled = lock.disabled;
-    lockButton.dataset.room = lock.room || "";
-    lockButton.setAttribute("aria-checked", String(lock.manual));
-    lockButton.title = !lock.manual && lock.disabled && !lock.busy ? "Wait for the room to finish switching and report its source." : "";
-    const allowed = session.controlAllowed();
+    updateRoomLock();
+    const lock = session.roomLock(), blocked = session.controlBlock();
     all('[data-action="all-off"]').forEach((button) => { button.disabled = Boolean(backend.access && !backend.access.has("room.control")); });
     all('[data-button], [data-choose], [data-action="control"], [data-action="input"]').forEach((button) => {
-      if (!allowed && !button.hasAttribute("data-policy-disabled")) { button.dataset.policyDisabled = String(button.disabled); button.disabled = true; }
-      else if (allowed && button.hasAttribute("data-policy-disabled")) { button.disabled = button.dataset.policyDisabled === "true"; delete button.dataset.policyDisabled; }
+      if (blocked && !button.hasAttribute("data-policy-disabled")) { button.dataset.policyDisabled = String(button.disabled); button.disabled = true; }
+      else if (!blocked && button.hasAttribute("data-policy-disabled")) { button.disabled = button.dataset.policyDisabled === "true"; delete button.dataset.policyDisabled; }
     });
-    if (!allowed) {
+    if (blocked) {
       $("[data-fader-input]").disabled = true;
-      if (!lock.text) { $("#alert").hidden = false; $("#alert-text").textContent = [$("#alert-text").textContent, "Read-only · account permission"].filter(Boolean).join(" · "); }
+      // The lock row explains locks; a brief first check stays quiet.
+      if (!lock.text && lock.status !== "checking") { $("#alert").hidden = false; $("#alert-text").textContent = [$("#alert-text").textContent, blocked].filter(Boolean).join(" · "); }
     }
+  }
+
+  // Writes only what changed, so a screen reader and keyboard focus are not
+  // disturbed by every policy refresh.
+  function updateRoomLock() {
+    const lock = session.roomLock();
+    const row = $("[data-room-lock]"), button = $('[data-action="room-lock"]'), status = $("[data-room-lock-status]");
+    const note = lock.error || lock.reason;
+    const text = [lock.text || (lock.canManage ? "Unlocked · Lock room holds the current source or Off until you unlock it" : ""), note].filter(Boolean).join(" · ");
+    const set = (element, property, value) => { if (element[property] !== value) element[property] = value; };
+    set(row, "hidden", !lock.enabled || !text);
+    set(status, "textContent", text);
+    set(button, "hidden", !lock.canManage);
+    set(button, "textContent", lock.label);
+    // Busy keeps focus on the button; the session ignores a second press.
+    set(button, "disabled", lock.disabled && !lock.busy);
+    if (button.getAttribute("aria-disabled") !== String(lock.busy)) button.setAttribute("aria-disabled", String(lock.busy));
+    set(button.dataset, "room", lock.room || "");
   }
 
   function buildRoomLists() {

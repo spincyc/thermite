@@ -7,6 +7,7 @@
     invalid_login: "The username or password was not accepted.", login_throttled: "Too many sign-in attempts. Try again later.",
     forbidden: "Your account does not allow this action.", room_locked: "This room is locked.",
     policy_locked: "This room is locked.", policy_unavailable: "Room lock status is unavailable. Control is paused.",
+    policy_checking: "Checking whether this room is locked. Try again in a moment.",
     room_state_unavailable: "Wait until the room reports a current source or Off before locking it.",
     runtime_unavailable: "The room could not be read. Try again when it is connected.",
     revision_conflict: "The room policy changed. Review its current state and try again.", last_admin: "Keep at least one active administrator.",
@@ -57,7 +58,11 @@
     const legacy = config.native === true, mock = config.mock === true;
     let token = config.token || null;  // lint: allow — credential supplied by the caller
     const listeners = [], policies = Object.create(null), policyReads = Object.create(null), policyWrites = new Set(), policyFailures = new Set();
-    let security = null, discovering = null, csrfCookie = null;
+    const policyAt = Object.create(null), POLICY_EVERY = config.policyInterval || 5000, POLICY_GRACE = config.policyGrace || 15000;
+    // What a room's lock display depends on; evaluated_at changes on every read.
+    const policySignature = (value) => JSON.stringify([value.revision, value.manual_lock, value.can_lock, value.can_edit,
+      { ...value.effective, evaluated_at: null }, value.enforcement]);
+    let security = null, discovering = null, csrfCookie = null, probing = null;
     let user = null, csrf = null, loading = null, ended = false, policyRoom = null, policyTimer = null, policyGeneration = 0, authRevision = 0;
     let active = typeof document === "undefined" || document.visibilityState !== "hidden";
     const demo = { users: [{ id: 1, username: "Demo", role: 1, rooms: null, active: true }],
@@ -85,11 +90,12 @@
       if (path === "/api/v1/logout") return Promise.resolve({ ok: true });
       throw problem("access_not_configured", 404);
     }
-    const notify = (type) => listeners.slice().forEach((fn) => fn({ type, user, security }));
+    const notify = (type, extra) => listeners.slice().forEach((fn) => fn({ type, user, security, ...extra }));
     function lost(code) {
+      const guest = Boolean(user && user.is_guest);
       user = null; csrf = null; ended = true; authRevision++; clearTimeout(policyTimer);
       Object.keys(policies).forEach((id) => delete policies[id]); policyFailures.clear();
-      notify("unauthorized");
+      notify("unauthorized", { guest });
       if (config.onUnauthorized) config.onUnauthorized(code);
     }
     async function raw(path, init, publicRequest) {
@@ -124,18 +130,19 @@
       if (revision === authRevision) return;
       const error = problem("session_expired", 401); error.stale = true; throw error;
     }
+    // A Guest asking for an account-only resource has lost nothing; any other
+    // 401 means the credential or the authentication switch changed.
+    const guestRefusal = (value) => Boolean(user && user.is_guest && value && value.error === "login_required");
     async function data(path, init, check, publicRequest) {
       const revision = authRevision;
       const response = await raw(path, init, publicRequest);
       if (check) stale(revision);
-      let value;
-      if (check && response.status === 401) lost("session_expired");
-      try { value = await response.json(); } catch (_) { throw problem(response.status === 401 ? "session_expired" : "invalid_response", response.status); }
-      if (check && response.status !== 401) stale(revision);
-      if (!response.ok) {
-        if (check && response.status === 401 && !ended) lost(value && value.error);
-        throw problem(response.status === 404 && ["/api/v1/session", "/api/v1/security"].includes(path) ? "access_not_configured" : value && value.error, response.status);
-      }
+      let value = null;
+      try { value = await response.json(); } catch (_) { /* reported below */ }
+      if (check) stale(revision);
+      if (check && response.status === 401 && !guestRefusal(value)) lost("session_expired");
+      if (value === null) throw problem(response.status === 401 ? "session_expired" : "invalid_response", response.status);
+      if (!response.ok) throw problem(response.status === 404 && ["/api/v1/session", "/api/v1/security"].includes(path) ? "access_not_configured" : value.error, response.status);
       return value;
     }
     function securityStatus(value) {
@@ -185,7 +192,12 @@
       const revision = authRevision;
       const response = await raw(target.href, init);
       stale(revision);
-      if (response.status === 401) { lost("session_expired"); throw problem("session_expired", 401); }
+      if (response.status === 401) {
+        const body = user && user.is_guest && typeof response.clone === "function" ? await response.clone().json().catch(() => null) : null;
+        stale(revision);
+        if (guestRefusal(body)) throw problem("login_required", 401);
+        lost("session_expired"); throw problem("session_expired", 401);
+      }
       return response;
     }
     async function json(path, method, value, options) {
@@ -227,9 +239,18 @@
           if (value.room !== room || !Number.isInteger(value.revision) || typeof value.effective?.allowed !== "boolean"
               || typeof value.effective?.locked !== "boolean") throw problem("invalid_response");
           if (policies[room] && policies[room].revision > value.revision) return policies[room];
-          policies[room] = value; policyFailures.delete(room); notify("policy"); return value;
+          const changed = !policies[room] || policySignature(policies[room]) !== policySignature(value);
+          const recovered = policyFailures.delete(room);
+          policies[room] = value; policyAt[room] = Date.now();
+          if (changed || recovered) notify("policy");
+          return value;
         } catch (error) {
-          if (sequence === policyReads[room] && !policyWrites.has(room)) { delete policies[room]; policyFailures.add(room); notify("policy"); }
+          // One slow or failed read keeps the last answer briefly; the server
+          // still checks every command against the current policy.
+          if (sequence === policyReads[room] && !policyWrites.has(room) && !error.stale
+              && (!policies[room] || Date.now() - (policyAt[room] || 0) > POLICY_GRACE)) {
+            delete policies[room]; policyFailures.add(room); notify("policy");
+          }
           throw error;
         } finally { clearTimeout(timer); }
       },
@@ -250,7 +271,7 @@
           stale(authority);
           if (saved.room !== room || !Number.isInteger(saved.revision) || typeof saved.effective?.allowed !== "boolean"
               || typeof saved.effective?.locked !== "boolean") throw problem("invalid_response");
-          policies[room] = saved; policyFailures.delete(room); notify("policy"); return saved;
+          policies[room] = saved; policyAt[room] = Date.now(); policyFailures.delete(room); notify("policy"); return saved;
         } catch (error) {
           // A rejected/uncertain write never changes the displayed switch optimistically.
           policyWrites.delete(room);
@@ -260,7 +281,10 @@
       },
       async command(room, action, value) {
         await ready();
-        if (!client.canControl(room)) throw problem(client.has("room.control") ? "room_locked" : "forbidden", 403);
+        if (!client.canControl(room)) {
+          const granted = client.has("room.control") && (user.rooms === null || user.rooms.includes(room)), status = client.policyStatus(room);
+          throw problem(!granted ? "forbidden" : status === "ready" ? "room_locked" : status === "checking" ? "policy_checking" : "policy_unavailable", 403);
+        }
         try { return await json("/api/v1/rooms/" + encodeURIComponent(room) + "/commands", "POST", { action, value }); }
         catch (error) { if ([403, 423].includes(error.status)) client.loadPolicy(room).catch(() => {}); throw error; }
       },
@@ -270,7 +294,7 @@
         const refresh = () => {
           if (!active || ended || !policyRoom || generation !== policyGeneration) return;
           return client.loadPolicy(policyRoom).catch(() => null).finally(() => {
-            if (active && !ended && generation === policyGeneration) { policyTimer = setTimeout(refresh, 5000); if (policyTimer.unref) policyTimer.unref(); }
+            if (active && !ended && generation === policyGeneration) { policyTimer = setTimeout(refresh, POLICY_EVERY); if (policyTimer.unref) policyTimer.unref(); }
           });
         };
         return refresh();
@@ -319,10 +343,11 @@
               source.onerror = (event) => {
                 this.readyState = source.readyState;
                 if (event && [401, 403].includes(event.status)) lost("session_expired");
-                else if (!token) data("/api/v1/me", null, true).catch(() => {});
+                // One credential probe per outage, however many streams report it.
+                else if (!token && !probing) probing = data("/api/v1/me", null, true).catch(() => {}).finally(() => { probing = null; });
                 if (this.onerror) this.onerror(event);
               };
-            }).catch(() => { this.readyState = 2; if (this.onerror) this.onerror({ status: 401 }); });
+            }).catch((error) => { this.readyState = 2; if (this.onerror) this.onerror({ status: error.status || 0 }); });
             this.unsubscribe = client.subscribe((event) => { if (event.type === "unauthorized") this.close(); });
           }
           close() { this.closed = true; this.readyState = 2; if (this.source) this.source.close(); if (this.unsubscribe) this.unsubscribe(); }

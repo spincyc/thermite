@@ -204,7 +204,8 @@ function create(options) {
 
   function onSession(event) {
     if (event.type === "access" && event.unauthorized) {
-      ui.log = []; ui.toast = null; ui.announce = ""; ui.error = "Your sign-in has ended. Run thermite access login again.";
+      ui.log = []; ui.toast = null; ui.announce = "";
+      ui.error = event.guest ? "The site's access settings changed. Reopen the remote." : "Your sign-in has ended. Run thermite access login again.";
       pairing.codes = {}; pairing.notes = {}; if (pairing.backend) pairing.backend.stop(); pairing.backend = null; pairing.loaded = false;
       if (cameras.backend) cameras.backend.stop();
       system.backend?.close(); system.expanded = false; system.link = null;
@@ -456,7 +457,8 @@ function create(options) {
   }
 
   function applySourceCursor() {
-    if (session.controlAllowed && !session.controlAllowed()) return toast("Read-only", session.roomLock?.().locked ? "Room is locked" : "Account permission or room lock status");
+    const blocked = session.controlBlock();
+    if (blocked) return toast("Read-only", blocked);
     const room = session.current().id;
     const list = session.bubbles(session.controls());
     const id = ui.sourceCursor[room] || session.state(room).value;
@@ -619,9 +621,8 @@ function create(options) {
     if (hit.kind.startsWith("pair-") || ["send-code", "new-code", "code"].includes(hit.kind)) {
       if (ui.screen !== "pairing") return;
     }
-    if (session.controlAllowed && !session.controlAllowed() && (["key", "control", "input"].includes(hit.kind) || hit.kind === "bubble" && hit.item?.choose)) {
-      return toast("Read-only", session.roomLock?.().locked ? "Room is locked" : "Account permission or room lock status");
-    }
+    const blocked = session.controlBlock();
+    if (blocked && (["key", "control", "input"].includes(hit.kind) || hit.kind === "bubble" && hit.item?.choose)) return toast("Read-only", blocked);
     if (hit.kind === "access-action" || hit.kind === "access-field") {
       if (hit.action === "settings" || hit.action === "users") setScreen(hit.action);
       else { access.activate(hit); changed(); }
@@ -629,7 +630,7 @@ function create(options) {
     }
     switch (hit.kind) {
       case "room-lock":
-        session.toggleRoomLock(hit.room);
+        toggleRoomLock(hit.room);
         break;
       case "pair-sort":
         if (!pairing.backend || pairing.backend.view(pairing.selected)?.confirm || !View.PAIR_FIELDS.includes(hit.field)) return;
@@ -760,8 +761,17 @@ function create(options) {
     changed();
   }
 
+  // K, or the button, from any Remotes pane: the D-pad keeps Enter and the arrows.
+  function toggleRoomLock(room) {
+    const lock = session.roomLock();
+    if (!lock.canManage) return toast("Room lock", lock.enabled ? "Sign in as an administrator to lock rooms" : "Enable authentication in Security to lock rooms");
+    if (lock.disabled) return toast("Room lock", lock.reason || "Wait for the current change to finish");
+    session.toggleRoomLock(room);
+  }
+
   function pressKey(candidates) {
-    if (session.controlAllowed && !session.controlAllowed()) return toast("Read-only", session.roomLock?.().locked ? "Room is locked" : "Account permission or room lock status");
+    const blocked = session.controlBlock();
+    if (blocked) return toast("Read-only", blocked);
     const button = session.pressKey(candidates);
     flash("key:" + button);
   }
@@ -788,7 +798,7 @@ function create(options) {
   }
 
   function slideBy(name) {
-    if (session.controlAllowed && !session.controlAllowed()) return;
+    if (session.controlBlock()) return;
     const view = session.audioView();
     if (view.disabled) return;
     const step = RANGE[name];
@@ -970,7 +980,8 @@ function create(options) {
       }
     }
     if (ch && /^[0-9]$/.test(ch)) {
-      if (session.controlAllowed && !session.controlAllowed()) return;
+      const blocked = session.controlBlock();
+      if (blocked) return toast("Read-only", blocked);
       const choice = session.chooseDigit(ch);
       if (choice) flash("bubble:" + choice);
       return;
@@ -998,6 +1009,7 @@ function create(options) {
     }
     if (lower === "t") return toggleTheme();
     if (lower === "a") return toggleStill();
+    if (lower === "k") return toggleRoomLock();
     const buttons = Session.KEYS[KEY_NAMES[name] || ch];
     if (["backspace", "escape"].includes(name) && ui.pane !== "remote") return;
     if (buttons) pressKey(buttons);
@@ -1128,7 +1140,7 @@ function create(options) {
         ui.paneFocus[ui.pane] = hit.key;
       }
       if (hit.kind === "slider" && ui.screen === "remote") {
-        if (session.controlAllowed && !session.controlAllowed()) return;
+        if (session.controlBlock()) return;
         dragging = entry;
         session.setDragging(true);
         session.slide(sliderValue(entry, x), false);

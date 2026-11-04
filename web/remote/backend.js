@@ -103,6 +103,8 @@
   const ACTIVITY_PATH = "/static/remote/activity.json";
   const EVENT_URL_BYTES = 6000;
   const EVENT_STREAMS = 3;
+  // Delays before reopening event streams a browser closed for good.
+  const REOPEN_MS = [1000, 2000, 5000, 15000, 30000];
   const EVENT_TYPES = { command: "ItemCommandEvent", stateupdated: "ItemStateUpdatedEvent", statechanged: "ItemStateChangedEvent" };
   // Three SSE connections and two background reads leave an HTTP/1.1 origin
   // connection available for controls. Commands never enter this queue.
@@ -817,7 +819,7 @@
           this.stop(); this.connected = false; this.devices = unread(house); this.problems = {}; this.aims = {}; this.activity = null;
           Object.values(this.items).forEach((item) => { item.value = NULL_STATE; item.pending = null; });
         }
-        this.emit({ type: "access", unauthorized: event.type === "unauthorized" });
+        this.emit({ type: "access", unauthorized: event.type === "unauthorized", guest: event.guest === true });
       });
     }
     if (config.activityManifest && global.RemoteActivity) {
@@ -1135,6 +1137,7 @@
           if (this.activity) this.activityNotice("Connected to thermite again", "Events during the gap may be missing");
         }
         this.connected = true;
+        this.reopenAttempt = 0;
         if (!ready) { ready = true; this.readAll(); }
       };
       source.onerror = () => {
@@ -1147,10 +1150,24 @@
           if (this.activity) this.activityNotice("Lost the connection to thermite", "Events during the gap may be missing", "bad");
         }
         this.connected = false;
+        // A browser closes a stream for good on any non-200 answer, such as a
+        // 502 while the gateway restarts; it never retries that by itself.
+        if (source.readyState === 2) this.reopenStreams(generation);
       };
       return source;
     });
     this.events = this.eventSources[0];
+  };
+
+  OpenHabBackend.prototype.reopenStreams = function (generation) {
+    if (this.timers.reopen) return;
+    const attempt = this.reopenAttempt || 0;
+    this.reopenAttempt = attempt + 1;
+    this.timers.reopen = setTimeout(() => {
+      delete this.timers.reopen;
+      if (generation === this.streamGeneration && this.active && !this.stopped) this.listen();
+    }, REOPEN_MS[Math.min(attempt, REOPEN_MS.length - 1)]);
+    if (this.timers.reopen.unref) this.timers.reopen.unref();
   };
 
   // Hidden browser tabs must release the origin's limited HTTP/1.1 slots.
