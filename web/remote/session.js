@@ -724,9 +724,10 @@
           ["Buttons", target ? target.label + " · " + remote.label : current.label + " shows nothing: choose a source"],
           ["Volume, mute", audio ? audio.label : current.label + " has no audio device in the inventory"],
           ["Other remotes here", others.length ? others.map((candidate) => candidate.label).join(", ") : "None"]
-        ].concat(playback ? [["HEOS playback", (() => {
+        ].concat(playback ? [[playback.label || "Playback", (() => {
+          // The integration names its playback service and the input that carries it.
           const state = backend.deviceSnapshot(target.id);
-          if (state.power !== "ON" || state.input !== "NET") return "Not active · select HEOS Music";
+          if (state.power !== "ON" || playback.input && state.input !== playback.input) return "Not active" + (playback.activate ? " · select " + playback.activate : "");
           return state.playback === "PLAY" ? "Playing" : state.playback === "PAUSE" ? "Paused or stopped" : "Unknown";
         })()]] : []),
         controls: current.controls.map((control) => ({

@@ -598,8 +598,7 @@ function remoteContent(frame, g, w, ctx) {
   if (shown.problem) y = paragraph(g, 2, y, w - 4, "\u26a0 " + shown.problem, "alert");
   const remote = session.remoteOf(target);
   const groups = remote && remote.keyGroups ? remote.keyGroups : null;
-  const dense = w >= 104 && target && ["sony_tv", "sony_bluray"].includes(target.remote)
-    && groups && groups.some((group) => !group.primary);
+  const dense = w >= 104 && remote && remote.wide && groups && groups.some((group) => !group.primary);
   const width = dense ? 100 : Math.min(54, w);
   const primaryWidth = dense ? 48 : width;
   const body = new Grid(width, null, "base"), primary = new Grid(primaryWidth, null, "base");

@@ -21,6 +21,7 @@
  *                                    optional semantic grids; keys is derived
  *                                    from these for older consumers. Secondary
  *                                    groups can sit beside a wide terminal remote.
+ *       wide: true,                  a wide terminal lays secondary groups beside the primary ones
  *       note                         instead of buttons, for a source that takes none
  *                                    (a PC); {device} becomes its name
  *   } }
@@ -124,6 +125,7 @@ globalThis.REMOTE_LAYOUTS = {
     },
     sony_bluray: {
       label: "Blu-ray remote",
+      wide: true,
       corners: ["power", "eject", "back", "home"],
       playback: ["previous", "rewind", "play", "pause", "stop", "fast_forward", "next"],
       keyGroups: [
@@ -149,6 +151,7 @@ globalThis.REMOTE_LAYOUTS = {
     },
     sony_tv: {
       label: "Sony TV remote",
+      wide: true,
       corners: ["power", "settings", "back", "home"],
       top: ["input", "guide", "info", "action_menu"],
       playback: ["previous", "rewind", "play", "pause", "stop", "fast_forward", "next"],
