@@ -23,6 +23,9 @@ CONFIG_FIELDS = {"version", "state", "contract_file", "runtime_url", "runtime_to
 STARTUP_FAILURE = 3
 # In-flight HTTP requests across the gateway; every HTTP/2 stream counts.
 MAX_REQUESTS = 100
+# After the shutdown deadline cancels the requests still running, their
+# connections get this long to close themselves.
+CLOSE_SECONDS = 2
 # Once the listeners have drained, leftover tasks get this long to cancel.
 CANCEL_SECONDS = 5
 
@@ -294,9 +297,24 @@ async def _serve(bound, *, on_shutdown=None, stop=None):
         for signum in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(signum, stop.set)
 
+    requests = set()
+
+    def tracked(application):
+        async def handle(scope, receive, send):
+            if scope["type"] == "lifespan":
+                return await application(scope, receive, send)
+            # Hypercorn runs each request in its own task, inside its
+            # connection's task group.
+            requests.add(task := asyncio.current_task())
+            try:
+                await application(scope, receive, send)
+            finally:
+                requests.discard(task)
+        return handle
+
     async def listen(application, config, sockets):
         try:
-            await worker_serve(ASGIWrapper(application), config, sockets=sockets, shutdown_trigger=stop.wait)
+            await worker_serve(ASGIWrapper(tracked(application)), config, sockets=sockets, shutdown_trigger=stop.wait)
         finally:
             stop.set()  # One listener ending ends them all.
 
@@ -309,13 +327,23 @@ async def _serve(bound, *, on_shutdown=None, stop=None):
         # kills the unit. Keep the deadline here.
         grace = max(config.graceful_timeout for _, config, _ in bound)
         _, overdue = await asyncio.wait(listeners, timeout=grace)
-        for task in overdue:
-            task.cancel()
+        if overdue:
+            # Cancel the requests, not their connections. A request's last
+            # act closes its HTTP/2 stream, which restarts the connection's
+            # idle timer in the connection's task group; were that group
+            # already cancelled, the request would fail with "TaskGroup is
+            # shutting down" and the connection with it. Without requests,
+            # each terminated connection closes itself.
+            for task in requests:
+                task.cancel()
+            _, overdue = await asyncio.wait(overdue, timeout=CLOSE_SECONDS)
+            for task in overdue:
+                task.cancel()
         ended = await asyncio.gather(*listeners, return_exceptions=True)
     finally:
-        # Cancel what is left: connections still open at the deadline, and
-        # the response/stream tasks Django spawns outside them. Then drain
-        # and close before the loop and the process end.
+        # Cancel what is left: connections that did not close in time, and
+        # the response/stream tasks Django spawns outside its requests. Then
+        # drain and close before the loop and the process end.
         pending = asyncio.all_tasks() - {asyncio.current_task()}
         if pending:
             for task in pending:

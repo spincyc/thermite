@@ -234,7 +234,9 @@ class Http2Gateway(TransactionTestCase):
                 await stopping
 
         started = time.monotonic()
-        asyncio.run(exercise())
+        # A clean shutdown logs nothing: no failed connection or task.
+        with self.assertNoLogs("asyncio", logging.WARNING), self.assertNoLogs("hypercorn.error", logging.WARNING):
+            asyncio.run(exercise())
         self.assertLess(time.monotonic() - started, 10)
         self.assertTrue(server.drained.is_set())
         self.assertEqual(streams.slots.count(), 0)
@@ -337,6 +339,12 @@ class GatewayServer(SimpleTestCase):
         self.assertEqual(service.Admission(None).limit, 100)
         # Event streams can never take the whole request budget.
         self.assertLess(streams.TOTAL_STREAMS, service.MAX_REQUESTS)
+        # The whole shutdown fits inside the unit's stop timeout, with time
+        # left for the command drain, so systemd never has to kill it.
+        from oh_access.staging import units
+        unit = units("/srv/thermite/access/releases/example", state="/srv/thermite/access/state")["thermite-access.service"]
+        stop = int(next(line for line in unit.splitlines() if line.startswith("TimeoutStopSec=")).split("=")[1])
+        self.assertLessEqual(config.graceful_timeout + service.CLOSE_SECONDS + service.CANCEL_SECONDS + 5, stop)
 
     def test_rapidly_reset_streams_stay_within_the_request_limit(self):
         # CVE-2023-44487: a reset stream leaves HTTP/2's concurrent-stream
@@ -412,11 +420,16 @@ class GatewayServer(SimpleTestCase):
                 stdout, stderr = unit.communicate(timeout=20)
                 self.assertEqual(unit.returncode, 0, stderr)
                 self.assertLess(time.monotonic() - started, 10)
-                # The held stream was cancelled after graceful_timeout, leftover
-                # tasks were cancelled, and on_shutdown ran before the loop ended.
+                # The held request was cancelled after graceful_timeout, its
+                # connection closed, leftover tasks were cancelled, and
+                # on_shutdown ran before the loop ended. Nothing failed: only a
+                # stubborn leftover is reported.
                 self.assertEqual(stdout.split(), ["drained", "exited"])
-                incomplete = "Access shutdown cleanup incomplete: 1 unfinished task(s), 0 failed task(s)."
-                self.assertEqual(incomplete in stderr, mode == "stubborn", stderr)
+                reports = [line for line in stderr.splitlines() if "cleanup incomplete" in line]
+                expected = ["Access shutdown cleanup incomplete: 1 unfinished task(s), 0 failed task(s)."]
+                self.assertEqual(reports, expected if mode == "stubborn" else [], stderr)
+                self.assertNotIn("Traceback", stderr)
+                self.assertNotIn("Unhandled exception", stderr)
 
     def test_a_listener_that_cannot_bind_exits_with_startup_failure(self):
         with socket.socket() as taken:

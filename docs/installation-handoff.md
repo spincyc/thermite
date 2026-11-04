@@ -70,7 +70,8 @@ startup/listener errors.
 
 The gateway has since moved from Uvicorn to Hypercorn to serve HTTP/2. Its
 shutdown keeps the order and bounds tested here: 15 seconds for held requests,
-5 seconds for leftover tasks, then the command drain and transport close. It
+which are then cancelled, up to 2 seconds for their connections to close, 5
+seconds for leftover tasks, then the command drain and transport close. It
 then returns normally instead of re-raising SIGTERM, so systemd records exit
 status 0. The stop measurements in this document describe the Uvicorn
 artifacts; they are not a guest acceptance claim for the Hypercorn gateway.
