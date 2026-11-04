@@ -97,6 +97,12 @@ function create(options) {
     }
   }
 
+  // Every room's lock is read only while a room list can show it: on Home
+  // and Remotes (its rooms panel or sheet).
+  function syncLocks() {
+    if (options.access && options.access.watchLocks) options.access.watchLocks(ui.ready && (ui.screen === "home" || ui.screen === "remote"));
+  }
+
   function changed() {
     if (!stopped) onChange();
   }
@@ -138,6 +144,7 @@ function create(options) {
         ui.pane = ui.screen === "pairing" ? "pair-list" : ui.screen === "remote" ? "rooms" : ui.screen;
         ui.focus = ui.screen === "remote" && session.current() ? "room:" + session.current().id : ui.screen === "home" ? "home:remote" : null;
         ui.focusVisible = true;
+        syncLocks();
         if (ui.screen === "cameras") openCameras();
         if (ui.screen === "topology") openTopology();
         if (ui.screen === "system") system.backend?.open().then(changed);
@@ -589,6 +596,7 @@ function create(options) {
     if (name === "home") ui.focus = "home:remote";
     ui.focusVisible = true;
     syncDiagnostics();
+    syncLocks();
     if (name === "pairing") openPairing();
     if (name === "cameras") openCameras();
     if (name === "topology") openTopology();

@@ -9,17 +9,26 @@
   }).catch(() => {});
   const mock = new URLSearchParams(location.search).get("backend") === "mock";
   const backend = global.RemoteBackend.create(house, { backend: mock ? "mock" : undefined, active: document.visibilityState !== "hidden" });
+  // Home starts no remote; an idle session still words each room's lock as the remote does.
+  const session = global.RemoteSession?.create({ backend, house });
+  access?.ready().then(() => access.watchLocks(true)).catch(() => {});
   const values = Object.create(null), turns = Object.create(null), rows = new Map();
   let connected = document.visibilityState === "hidden" ? false : null;
   house.rooms.forEach(room => {
     const row = document.createElement("tr"), name = document.createElement("td"), link = document.createElement("a");
     link.textContent = room.label; link.href = global.ThermiteShell.href("remotes", location.search, room.id); name.appendChild(link);
-    const source = document.createElement("td"), sourceText = document.createElement("span"), status = document.createElement("td");
-    sourceText.className = "home__source"; status.className = "thermite-room-state";
-    sourceText.textContent = status.textContent = "Reading…"; source.appendChild(sourceText);
+    const source = document.createElement("td"), pill = document.createElement("span"), sourceText = document.createElement("span"), status = document.createElement("td");
+    pill.className = "home__source"; status.className = "thermite-room-state";
+    sourceText.textContent = status.textContent = "Reading…"; pill.append(sourceText, padlock()); source.appendChild(pill);
     row.dataset.state = "unknown"; row.append(name, source, status); rooms.appendChild(row);
-    rows.set(room.id, { element: row, source: sourceText, status });
+    rows.set(room.id, { element: row, source: sourceText, lock: pill.lastChild, status });
   });
+  // The remote's padlock, after a locked room's source; its label says the lock.
+  function padlock() {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"), use = document.createElementNS(svg.namespaceURI, "use");
+    svg.setAttribute("class", "home__lock"); svg.setAttribute("role", "img"); use.setAttribute("href", "#i-lock"); svg.appendChild(use);
+    return svg;
+  }
   function update(id) {
     const row = rows.get(id), value = values[id]; if (!row) return;
     const room = house.rooms.find(room => room.id === id);
@@ -28,8 +37,13 @@
     row.status.textContent = connected === false ? "Live unavailable" : value?.pending ? "Switching" : choice ? "Reported" : value?.value === "off" ? "Room off" : "Unknown";
     row.element.dataset.state = connected === false ? "unavailable" : value?.pending ? "switching" : choice ? "reported" : value?.value === "off" ? "off" : "unknown";
   }
+  function showLock(row, id) {
+    const lock = session ? session.roomLocked(id) : { locked: false, text: "" };
+    row.element.toggleAttribute("data-locked", lock.locked); row.lock.setAttribute("aria-label", lock.text);
+  }
   backend.subscribe(event => {
     if (event.type === "state") { turns[event.room] = (turns[event.room] || 0) + 1; values[event.room] = event.state; update(event.room); }
+    if (event.type === "access") rows.forEach(showLock);
     if (event.type === "connection") { connected = event.connected; house.rooms.forEach(room => update(room.id)); notice.textContent = !house.rooms.length ? "No rooms configured" : connected ? "Reported room sources" : "Live room reports unavailable"; }
   });
   house.rooms.forEach(room => {

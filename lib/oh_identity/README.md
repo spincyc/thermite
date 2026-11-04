@@ -197,6 +197,16 @@ Manual locks use the same configured route enforcement and physical-device
 limitations as scheduled locks; they do not snapshot arbitrary playback or
 volume settings. All ordinary commands, including Admin commands, obey locks.
 
+GET `/api/v1/locks` returns every room's lock in one read, for the room lists:
+`{"rooms":{id:{locked,manual,until,reason}}}`, one entry per room of the
+compiled house. `until` is a scheduled lock's end, else null; `reason` is
+`unlocked`, `room_locked`, `manual_lock` or `policy_unavailable`. One query
+reads every room's policy, and each is evaluated as policy status evaluates
+`effective`, so a saved active policy that cannot be evaluated is locked with
+`policy_unavailable`. Guests, Members and Admins read the same answer; while
+authentication is off every room is unlocked. Clients read it only while a
+room list is on show, at the policy status interval.
+
 POST `/api/v1/rooms/<id>/commands` takes `{action,value}`. The immutable server
 contract resolves the action to a known Item and validates enum/range/step.
 The commanded room's lock refuses every ordinary command (`room_locked`). A

@@ -18,6 +18,7 @@ urlpatterns = [
     path("api/v1/all-off", views.all_off),
     path("api/v1/tokens", views.tokens), path("api/v1/tokens/<uuid:ident>", views.tokens),
     path("api/v1/users", views.users), path("api/v1/users/<int:ident>", views.users),
+    path("api/v1/locks", views.locks),
     path("api/v1/rooms/<room:room>/policy", views.room_policy),
     path("api/v1/rooms/<room:room>/lock", views.room_lock),
     path("api/v1/rooms/<room:room>/commands", views.command),

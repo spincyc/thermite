@@ -54,6 +54,10 @@ rollback. The unified deployment workflow uses a separate committed private site
   `room_state_changed` if the room no longer shows it. While a room is locked,
   its keys and controls are greyed too. A room that is Off now selects Off and
   shows no remote until a device bubble is chosen.
+- Room lists show a padlock after a locked room's source, and their labels say
+  how it is locked: Home, and the Remotes room list in the browser and the
+  terminal. The gateway's new `GET /api/v1/locks` reports every room's lock in
+  one read, which clients poll only while a room list is on show.
 - Routing: rooms on different zones of one receiver can share a source cabled
   to the receiver itself: list it under each room's `receiver.sources` on its
   input. Each room switches and powers only its own zone, so either can turn

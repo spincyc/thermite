@@ -1,6 +1,6 @@
 /* Home is navigation and reported room state, never a device control. */
 "use strict";
-const { fit, wrap } = require("./grid");
+const { LOCK, fit, fitTail, wrap } = require("./grid");
 const Torch = require("./torch");
 const Navigation = require("../../web/remote/navigation");
 
@@ -40,14 +40,14 @@ function content(g, width, ctx, height) {
   if (!ctx.session.rooms().length) { line("No rooms configured"); return y; }
   const nameWidth = Math.min(25, Math.max(10, Math.floor((width - 5) * .4)));
   ctx.session.rooms().forEach(room => {
-    const state = ctx.session.state(room.id), shown = ctx.session.view(room, state);
+    const state = ctx.session.state(room.id), shown = ctx.session.view(room, state), lock = ctx.session.roomLocked(room.id);
     const key = "home-room:" + room.id, active = ctx.ui.focusVisible && ctx.ui.focus === key;
     const style = active ? "row.focus" : "row";
     g.fill(1, y, width - 2, 1, style);
     g.put(2, y, fit(room.label, nameWidth), active ? style : "base");
-    g.put(nameWidth + 4, y, fit(shown.short, Math.max(1, width - nameWidth - 6)), active ? style : "dim");
+    g.put(nameWidth + 4, y, fitTail(shown.short, lock.locked ? " " + LOCK : "", Math.max(1, width - nameWidth - 6)), active ? style : "dim");
     g.hit(1, y++, width - 2, 1, { kind: "home-room", room: room.id, key, focus: true,
-      label: room.label + ", " + shown.spoken + ". Open Remotes" });
+      label: room.label + ", " + shown.spoken + (lock.locked ? ". " + lock.text : "") + ". Open Remotes" });
   });
   const used = y;
   // The existing compact mark belongs to Home's quiet hero space. Never

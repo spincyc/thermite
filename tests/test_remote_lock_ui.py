@@ -49,6 +49,17 @@ class RemoteLockUI(unittest.TestCase):
         for key in ("terminalMenuMouse", "terminalMenuKey", "nonAdminNoMenu"):
             self.assertTrue(self.proof[key], key)
 
+    def test_room_lists_show_a_padlock_after_a_locked_rooms_source(self):
+        for key in ("terminalRoomList", "terminalHome", "browserHome"):
+            self.assertTrue(self.proof[key], key)
+
+    def test_current_room_in_a_list_follows_its_detailed_policy(self):
+        self.assertTrue(self.proof["currentRoomPolicy"] and self.proof["fresherPolicy"])
+
+    def test_every_rooms_lock_is_polled_only_while_a_list_is_shown_and_pauses(self):
+        for key in ("summaryPolled", "summaryPaused", "listsOnlyPoll"):
+            self.assertTrue(self.proof[key], key)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -189,8 +189,9 @@ def users(request, ident=None):
     return JsonResponse(user_data(user), status=200 if ident else 201)
 
 
-def policy_data(adapter, room, user, saved):
-    now = timezone.now()
+def effective_lock(adapter, room, saved, now):
+    """A room's effective lock now, its desired state and its manual hold. A
+    saved active policy that cannot be evaluated locks the room."""
     effective = {"locked": False, "desired": None, "allowed": True, "reason": "unlocked", "until": None,
                  "evaluated_at": now}
     state, manual = {"locked": False}, None
@@ -206,6 +207,12 @@ def policy_data(adapter, room, user, saved):
         except Exception:
             effective.update(locked=True, allowed=False, reason="policy_unavailable")
             state = None
+    return effective, state, manual
+
+
+def policy_data(adapter, room, user, saved):
+    now = timezone.now()
+    effective, state, manual = effective_lock(adapter, room, saved, now)
     reconciled = ReconcileState.objects.filter(room_id=room, revision=saved.revision).first() if saved else None
     return {"room": room, "revision": saved.revision if saved else 0,
             "config": saved.config if saved else None, "can_edit": is_admin(user), "can_lock": is_admin(user),
@@ -269,6 +276,22 @@ def room_policy(request, room):
                                                                              "updated_by": request.identity_user})
         audit(request.identity_user, "policy.update", room, outcome)
     return JsonResponse({"room": room, "revision": saved.revision, "config": saved.config})
+
+
+@api()
+def locks(request):
+    """Every room's effective lock in one read, for the room lists. Anyone who
+    reads the site sees it; while authentication is off no lock applies."""
+    adapter, now = get_adapter(), timezone.now()
+    rooms = list(adapter.contract.rooms)
+    saved = ({row.room_id: row for row in RoomPolicy.objects.filter(room_id__in=rooms)}
+             if request.identity_state.enabled else {})
+    summary = {}
+    for room in rooms:
+        effective, _, manual = effective_lock(adapter, room, saved.get(room), now)
+        summary[room] = {"locked": effective["locked"], "manual": manual is not None, "until": effective["until"],
+                         "reason": effective["reason"]}
+    return JsonResponse({"rooms": summary})
 
 
 @api(methods=("PUT",), admin=True)

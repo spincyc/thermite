@@ -8,7 +8,9 @@ authentication is enabled or disabled. A room that is Off selects its Off
 bubble and shows no remote until a device bubble is tapped for its buttons. In
 a locked room the bubble for what it shows, Off included, carries a padlock and
 every other bubble is greyed out; tapping the padlocked bubble says why it is
-locked and, for a schedule, until when.
+locked and, for a schedule, until when. The room lists, on Home and in Remotes'
+sidebar and room sheet, show a padlock after a locked room's source, and a
+screen reader hears how it is locked.
 
 When authentication is enabled, administrators can use **Lock room**, under
 Info, to hold

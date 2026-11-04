@@ -25,7 +25,11 @@
 .home .thermite-rooms a { display: flex; align-items: center; min-height: 44px; color: var(--th-text); font-size: 14px; font-weight: 620; line-height: 1.35; border-radius: 5px; }
 .home .thermite-rooms a:hover { color: var(--th-accent); }
 .home .thermite-rooms a:focus-visible { outline: 2px solid var(--th-focus); outline-offset: 3px; }
-.home .home__source { display: inline-flex; align-items: center; max-width: 100%; min-height: 32px; padding: 6px 10px; border: 1px solid transparent; border-radius: 999px; background: var(--th-surface); color: var(--th-muted); font-size: 12px; line-height: 1.4; }
+.home .home__source { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 32px; padding: 6px 10px; border: 1px solid transparent; border-radius: 999px; background: var(--th-surface); color: var(--th-muted); font-size: 12px; line-height: 1.4; }
+.home .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+/* A locked room's padlock follows its source, in the source's ink. */
+.home .home__lock { display: none; flex: none; width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.home tr[data-locked] .home__lock { display: block; }
 .home tr[data-state="reported"] .home__source { color: var(--th-text); background: var(--th-raised); border-color: var(--th-line); }
 .home tr[data-state="switching"] .home__source { border-color: var(--th-busy); }
 .home .thermite-room-state { font-size: 11px; line-height: 1.5; color: var(--th-muted); }

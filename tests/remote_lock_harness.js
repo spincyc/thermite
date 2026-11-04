@@ -1,8 +1,9 @@
 "use strict";
 // Real shared access/backend/session/terminal code against a fake gateway:
 // lock display, control gating, the padlock bubble, locking on a source,
-// the Off face, Guest refusals and policy refresh behaviour.
-const assert = require("node:assert/strict");
+// the Off face, Guest refusals, policy refresh behaviour and every room's
+// lock in the room lists (terminal and browser Home).
+const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
 const Main = require("../tui/remote/main"), Shared = require("../tui/remote/shared");
 console.log = console.info = () => {};
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -13,10 +14,13 @@ const text = value => ({ ok: true, status: 200, text: async () => value, json: a
 const admin = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, auth_enabled: true,
   permissions: ["site.read", "room.control", "camera.view", "settings.manage", "users.manage", "pairing.manage"] };
 const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, auth_enabled: true, permissions: ["site.read", "room.control"] };
+const ROOMS = Shared.load().house.rooms.map(({ id }) => id);
 
 function gateway(options) {
-  // sources: what each room's Source Item reads; locks: every lock body sent.
-  const site = { principal: options.principal, policies: {}, calls: [], commands: [], locks: [], sources: {}, failPolicy: false, refuseCommands: false };
+  // sources: what each room's Source Item reads; locks: every lock body sent;
+  // summary: what GET /api/v1/locks says of a room instead of its policy.
+  const site = { principal: options.principal, policies: {}, calls: [], commands: [], locks: [], sources: {}, summary: {},
+    failPolicy: false, failLocks: false, refuseCommands: false };
   const policy = room => site.policies[room] || (site.policies[room] = { room, revision: 0, config: null, manual_lock: null,
     can_edit: site.principal.can_edit, can_lock: site.principal.can_edit, enforcement: { state: "unknown" },
     effective: { allowed: true, locked: false, reason: "unlocked", desired: null, until: null, evaluated_at: String(Date.now()) } });
@@ -26,6 +30,11 @@ function gateway(options) {
     if (route === "/api/v1/security") return json({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, csrf });
     if (route === "/api/v1/session") return json({ csrf });
     if (route === "/api/v1/me") return json(site.principal);
+    if (route === "/api/v1/locks") {
+      if (site.failLocks) return json({ error: "policy_unavailable" }, 503);
+      return json({ rooms: Object.fromEntries(ROOMS.map(id => [id, site.summary[id] || { locked: policy(id).effective.locked,
+        manual: Boolean(policy(id).manual_lock), until: policy(id).effective.until, reason: policy(id).effective.reason }])) });
+    }
     let match = /^\/api\/v1\/rooms\/([a-z0-9_]+)\/policy$/.exec(route);
     if (match) {
       if (site.failPolicy) return json({ error: "policy_unavailable" }, 503);
@@ -56,6 +65,18 @@ function gateway(options) {
     return json({ error: "not_found" }, 404);
   };
   return site;
+}
+
+// Just enough DOM for browser Home's room rows.
+class Element {
+  constructor(tag, namespaceURI = "http://www.w3.org/1999/xhtml") { Object.assign(this, { tag, namespaceURI, children: [], attributes: {}, dataset: {}, textContent: "" }); }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  getAttribute(name) { return name in this.attributes ? this.attributes[name] : null; }
+  hasAttribute(name) { return name in this.attributes; }
+  toggleAttribute(name, force) { if (force) this.attributes[name] = ""; else delete this.attributes[name]; return Boolean(force); }
+  append(...children) { this.children.push(...children); }
+  appendChild(child) { this.children.push(child); return child; }
+  get lastChild() { return this.children.at(-1) || null; }
 }
 
 class QuietEvents {
@@ -101,7 +122,7 @@ async function settle(condition) { for (let i = 0; i < 40 && !condition(); i++) 
 
 (async () => {
   const proof = {};
-  const room = Shared.load().house.rooms[0].id;
+  const room = ROOMS[0];
 
   // Administrator: K locks the current room from the terminal, the view offers
   // the button with its key, and the session gates every ordinary control.
@@ -373,6 +394,110 @@ async function settle(condition) { for (let i = 0; i < 40 && !condition(); i++) 
   assert.equal(third.parts.session.controlBlock(), null);
   proof.policyRefresh = true;
   third.parts.controller.stop();
+
+  // Room lists: another room's lock comes from the summary of every room, read
+  // only while a list is on show; the terminal's room list and Home show ⚿
+  // after its source and say the lock in the row's label.
+  const lists = gateway({ principal: guest }), other = ROOMS[1];
+  lists.summary[other] = { locked: true, manual: true, until: null, reason: "manual_lock" };
+  const listed = assemble(lists, room), watched = [], watch = listed.access.watchLocks;
+  listed.access.watchLocks = on => { watched.push(on); return watch(on); };
+  await listed.parts.controller.start(room);
+  await settle(() => listed.access.lockSummary(other) && listed.access.policyStatus(room) === "ready");
+  const lister = listed.parts.session, otherLabel = lister.room(other).label, roomLabel = lister.room(room).label;
+  assert(lists.calls.includes("GET /api/v1/locks"));
+  assert.deepEqual(lister.roomLocked(other), { locked: true, text: "Locked · until unlocked" });
+  assert.deepEqual(lister.roomLocked(room), { locked: false, text: "" });
+  const rowOf = (text, label) => text.split("\n").find(line => line.includes(label));
+  const hitOf = (kind, id) => frame.grid.hits.find(entry => entry.hit.kind === kind && entry.hit.room === id).hit.label;
+  frame = listed.parts.controller.frame(149, 40);
+  assert.match(rowOf(panelText(frame, "rooms"), otherLabel), /Off \u26bf/);
+  assert.doesNotMatch(rowOf(panelText(frame, "rooms"), roomLabel), /\u26bf/);
+  assert.equal(hitOf("room", other), otherLabel + ", Off. Locked · until unlocked");
+  assert.equal(hitOf("room", room), roomLabel + ", Off");
+  proof.terminalRoomList = true;
+  listed.parts.controller.key(null, { name: "f1" });
+  frame = listed.parts.controller.frame(149, 40);
+  assert.match(rowOf(frame.grid.text(), otherLabel), /Off \u26bf/);
+  assert.doesNotMatch(rowOf(frame.grid.text(), roomLabel), /\u26bf/);
+  assert.equal(hitOf("home-room", other), otherLabel + ", Off. Locked · until unlocked. Open Remotes");
+  assert.equal(hitOf("home-room", room), roomLabel + ", Off. Open Remotes");
+  proof.terminalHome = true;
+  listed.parts.controller.key(null, { name: "f3" });
+  listed.parts.controller.key(null, { name: "f2" });
+  assert.deepEqual(watched, [true, true, false, true], "Security shows no room list");
+  proof.listsOnlyPoll = true;
+
+  // The current room follows its detailed policy, as its remote does, over a
+  // summary that disagrees; another room follows whichever was read last.
+  const pause = () => new Promise(resolve => setTimeout(resolve, 5));
+  lists.summary[room] = { locked: true, manual: true, until: null, reason: "manual_lock" };
+  await listed.access.loadLocks();
+  assert.deepEqual(lister.roomLocked(room), { locked: false, text: "" });
+  lists.summary[room] = { locked: false, manual: false, until: null, reason: "unlocked" };
+  lists.policies[room] = { ...lists.policies[room], revision: 3,
+    effective: { allowed: false, locked: true, reason: "room_locked", desired: "off", until: new Date(Date.now() + 3600000).toISOString() } };
+  await listed.access.loadLocks(); await pause(); await listed.access.loadPolicy(room);
+  assert.match(lister.roomLock().text, /^Locked by schedule until /);
+  assert.deepEqual(lister.roomLocked(room), { locked: true, text: lister.roomLock().text });
+  lister.selectRoom(other);
+  await settle(() => listed.access.policy(other));
+  assert.deepEqual(lister.roomLocked(other), { locked: false, text: "" }, "the new current room follows its own policy");
+  assert.equal(lister.roomLocked(room).locked, true, "a policy read since the summary");
+  assert.match(lister.roomLocked(room).text, /^Locked by schedule until /);
+  await pause(); await listed.access.loadLocks();
+  assert.deepEqual(lister.roomLocked(room), { locked: false, text: "" }, "a summary read since the policy");
+  proof.currentRoomPolicy = proof.fresherPolicy = true;
+
+  // Browser Home, run as the page runs it: the padlock follows the reported
+  // source, its label is the lock in words; an unlocked room shows none.
+  const homeShared = Shared.load(), homeAccess = homeShared.Access.create({ base: origin, fetch: lists.fetch, policyInterval: 3600000 });
+  const homeBackend = homeShared.Remote.create(homeShared.house, { backend: "openhab", base: origin, access: homeAccess,
+    fetch: homeAccess.fetch, EventSource: homeAccess.eventSource(QuietEvents) });
+  const tbody = new Element("tbody"), notice = new Element("p"), homeCalls = lists.calls.length;
+  const page = { URLSearchParams, REMOTE_HOUSE: homeShared.house, RemoteSession: homeShared.Session, ThermiteAccess: { client: homeAccess },
+    RemoteBackend: { create: () => homeBackend }, ThermiteShell: { href: () => "#" }, location: { search: "" }, addEventListener() {},
+    document: { visibilityState: "visible", querySelector: selector => ({ "[data-home-rooms]": tbody, "[data-home-status]": notice })[selector] || null,
+      createElement: tag => new Element(tag), createElementNS: (namespace, tag) => new Element(tag, namespace), addEventListener() {} } };
+  vm.createContext(page); vm.runInContext(fs.readFileSync(path.join(__dirname, "../web/remote/home.js"), "utf8"), page);
+  await settle(() => tbody.children.some(row => row.hasAttribute("data-locked")));
+  assert(lists.calls.slice(homeCalls).includes("GET /api/v1/locks"), "Home reads every room's lock");
+  const homeRow = id => tbody.children[ROOMS.indexOf(id)], padlockOf = row => row.children[1].children[0].lastChild;
+  assert(homeRow(other).hasAttribute("data-locked") && !homeRow(room).hasAttribute("data-locked"));
+  assert.equal(padlockOf(homeRow(other)).getAttribute("aria-label"), "Locked · until unlocked");
+  assert.equal(padlockOf(homeRow(other)).getAttribute("role"), "img");
+  assert.equal(padlockOf(homeRow(other)).children[0].getAttribute("href"), "#i-lock");
+  assert.equal(padlockOf(homeRow(room)).getAttribute("aria-label"), "");
+  assert.equal(tbody.children.length, ROOMS.length, "no column or row added");
+  proof.browserHome = true;
+  homeBackend.stop();
+  listed.parts.controller.stop();
+
+  // The summary is read now and again every interval while the client is
+  // active and a list watches it; a hidden page pauses it as it does a policy.
+  const polled = gateway({ principal: guest }), wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const awaitReads = async condition => { for (const end = Date.now() + 2000; !condition() && Date.now() < end;) await wait(5); };
+  const polling = Shared.load().Access.create({ base: origin, fetch: polled.fetch, policyInterval: 5 });
+  const reads = () => polled.calls.filter(call => call === "GET /api/v1/locks").length;
+  let lockNotices = 0;
+  polling.subscribe(event => { if (event.type === "locks") lockNotices++; });
+  await polling.ready(); await wait(20);
+  assert.equal(reads(), 0, "nothing reads every room's lock until a list asks");
+  await polling.watchLocks(true); await awaitReads(() => reads() >= 3);
+  assert(reads() >= 3, "reads " + reads());
+  assert.equal(lockNotices, 1, "an unchanged summary does not re-render");
+  polling.setActive(false);
+  let settled = reads(); await wait(40);
+  assert.equal(reads(), settled, "a hidden page reads nothing");
+  polling.setActive(true); await awaitReads(() => reads() > settled);
+  assert(reads() > settled, "showing the page reads again");
+  polling.watchLocks(false); settled = reads(); await wait(40);
+  assert.equal(reads(), settled, "no list, no reads");
+  polled.failLocks = true;
+  await assert.rejects(polling.loadLocks());
+  assert.deepEqual(polling.lockSummary(room), { locked: false, manual: false, until: null, reason: "unlocked" }, "one failed read keeps the last answer");
+  polling.stop();
+  proof.summaryPolled = proof.summaryPaused = true;
 
   process.stdout.write(JSON.stringify(proof));
 })().catch(error => { process.stderr.write(error.stack + "\n"); process.exitCode = 1; });

@@ -1508,6 +1508,18 @@ button {
   text-overflow: ellipsis;
 }
 
+/* A locked room's padlock follows its source, in the source's ink. */
+.room__lock {
+  display: none;
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.2;
+}
+
+.room[data-locked] .room__lock {
+  display: block;
+}
+
 .rooms--sheet .room {
   min-height: 56px;
   font-size: 17px;

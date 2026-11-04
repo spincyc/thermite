@@ -57,6 +57,8 @@
   session.start(params.get("room"))
     .then(() => {
       buildRoomLists();
+      // Both room lists, the sidebar and the sheet, show every room's lock.
+      if (session.access) session.access.watchLocks(true);
       buildInfo();
       buildShortcuts();
       bind();
@@ -151,7 +153,8 @@
             node("span", { class: "room__label" }, room.label),
             node("span", { class: "room__source" }, [
               node("span", { class: "led", "aria-hidden": "true" }),
-              node("span", { class: "room__source-text" })
+              node("span", { class: "room__source-text" }),
+              icon("i-lock", "room__lock")
             ])
           ])
         ]));
@@ -163,10 +166,11 @@
     const current = session.current();
     all("[data-room-list] .room").forEach((button) => {
       const room = session.room(button.getAttribute("data-room"));
-      const shown = session.view(room, session.state(room.id));
+      const shown = session.view(room, session.state(room.id)), lock = session.roomLocked(room.id);
       button.setAttribute("aria-current", room === current ? "true" : "false");
       button.setAttribute("data-led", shown.led);
-      button.setAttribute("aria-label", room.label + ", " + shown.spoken);
+      button.toggleAttribute("data-locked", lock.locked);
+      button.setAttribute("aria-label", room.label + ", " + shown.spoken + (lock.locked ? ". " + lock.text : ""));
       button.querySelector(".room__source-text").textContent = shown.short;
     });
   }

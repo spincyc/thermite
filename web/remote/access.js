@@ -64,8 +64,31 @@
     const policySignature = (value) => JSON.stringify([value.revision, value.manual_lock, value.can_lock, value.can_edit,
       { ...value.effective, evaluated_at: null }, value.enforcement]);
     let security = null, discovering = null, csrfCookie = null, probing = null;
-    let user = null, csrf = null, loading = null, ended = false, policyRoom = null, policyTimer = null, policyGeneration = 0, authRevision = 0;
+    let user = null, csrf = null, loading = null, ended = false, policyRoom = null, authRevision = 0;
     let active = typeof document === "undefined" || document.visibilityState !== "hidden";
+    // Every room's lock in one read, for the room lists. The watched room's
+    // detailed policy (policies) still gates its controls.
+    let lockRooms = null, locksAt = 0, locksWatched = false, lockReads = 0;
+    const policyPoll = poller(() => client.loadPolicy(policyRoom), () => Boolean(policyRoom));
+    const lockPoll = poller(() => client.loadLocks(), () => locksWatched);
+    // Reads now and again POLICY_EVERY after each answer, while the client is
+    // active and wanted() holds; start() replaces any earlier loop.
+    function poller(read, wanted) {
+      let timer = null, generation = 0;
+      const stop = () => { clearTimeout(timer); generation++; };
+      return {
+        stop,
+        start() {
+          stop(); const own = generation;
+          const live = () => own === generation && active && !ended && wanted();
+          if (legacy || mock || !client.authEnabled() || !live()) return Promise.resolve(null);
+          const refresh = () => live() ? read().catch(() => null).finally(() => {
+            if (live()) { timer = setTimeout(refresh, POLICY_EVERY); if (timer.unref) timer.unref(); }
+          }) : undefined;
+          return refresh();
+        }
+      };
+    }
     const demo = { users: [{ id: 1, username: "Demo", admin: true, active: true }], policies: {} };
     function demoRequest(path, method, value) {
       const policy = /^\/api\/v1\/rooms\/([^/]+)\/policy$/.exec(path);
@@ -91,8 +114,8 @@
     const notify = (type, extra) => listeners.slice().forEach((fn) => fn({ type, user, security, ...extra }));
     function lost(code) {
       const guest = Boolean(user && user.is_guest);
-      user = null; csrf = null; ended = true; authRevision++; clearTimeout(policyTimer);
-      Object.keys(policies).forEach((id) => delete policies[id]); policyFailures.clear();
+      user = null; csrf = null; ended = true; authRevision++; policyPoll.stop(); lockPoll.stop();
+      Object.keys(policies).forEach((id) => delete policies[id]); policyFailures.clear(); lockRooms = null;
       notify("unauthorized", { guest });
       if (config.onUnauthorized) config.onUnauthorized(code);
     }
@@ -206,6 +229,15 @@
       if (value !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(value); }
       return data(path, init, true);
     }
+    // A lock read that gives up after policyTimeout, so one hung request cannot stall its poll.
+    function timedGet(path) {
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      let timer;
+      return Promise.race([
+        json(path, "GET", undefined, controller ? { signal: controller.signal } : {}),
+        new Promise((_, reject) => { timer = setTimeout(() => { controller?.abort(); reject(problem("policy_unavailable", 503)); }, config.policyTimeout || 8000); })
+      ]).finally(() => clearTimeout(timer));
+    }
     const client = {
       native: legacy, mock, base, origin, ready, fetch: fetchAuth, json, loadSecurity,
       security: () => security,
@@ -223,13 +255,8 @@
       policyStatus(room) { return !client.authEnabled() ? "off" : policies[room] ? "ready" : policyFailures.has(room) ? "unavailable" : "checking"; },
       async loadPolicy(room) {
         const sequence = policyReads[room] = (policyReads[room] || 0) + 1, authority = authRevision;
-        const controller = typeof AbortController === "function" ? new AbortController() : null;
-        let timer;
         try {
-          const value = await Promise.race([
-            json("/api/v1/rooms/" + encodeURIComponent(room) + "/policy", "GET", undefined, controller ? { signal: controller.signal } : {}),
-            new Promise((_, reject) => { timer = setTimeout(() => { controller?.abort(); reject(problem("policy_unavailable", 503)); }, config.policyTimeout || 8000); })
-          ]);
+          const value = await timedGet("/api/v1/rooms/" + encodeURIComponent(room) + "/policy");
           stale(authority);
           if (sequence !== policyReads[room] || policyWrites.has(room)) return policies[room] || null;
           if (value.room !== room || !Number.isInteger(value.revision) || typeof value.effective?.allowed !== "boolean"
@@ -248,7 +275,41 @@
             delete policies[room]; policyFailures.add(room); notify("policy");
           }
           throw error;
-        } finally { clearTimeout(timer); }
+        }
+      },
+      // GET /api/v1/locks: {rooms: {id: {locked, manual, until, reason}}}.
+      async loadLocks() {
+        const sequence = ++lockReads, authority = authRevision;
+        try {
+          const value = await timedGet("/api/v1/locks");
+          stale(authority);
+          if (sequence !== lockReads) return lockRooms;
+          const rooms = value?.rooms, next = Object.create(null);
+          if (!rooms || typeof rooms !== "object" || Array.isArray(rooms)) throw problem("invalid_response");
+          for (const [room, lock] of Object.entries(rooms)) {
+            if (!/^[a-z][a-z0-9_]{0,99}$/.test(room) || typeof lock?.locked !== "boolean") throw problem("invalid_response");
+            next[room] = { locked: lock.locked, manual: lock.manual === true, until: typeof lock.until === "string" ? lock.until : null,
+              reason: typeof lock.reason === "string" ? lock.reason : "" };
+          }
+          const changed = JSON.stringify(next) !== JSON.stringify(lockRooms);
+          lockRooms = next; locksAt = Date.now();
+          if (changed) notify("locks");
+          return lockRooms;
+        } catch (error) {
+          // As with a policy, one failed read keeps the last answer briefly.
+          if (sequence === lockReads && !error.stale && lockRooms && Date.now() - locksAt > POLICY_GRACE) { lockRooms = null; notify("locks"); }
+          throw error;
+        }
+      },
+      // A room's lock for the room lists: its detailed policy when read since
+      // the summary, else the summary; null while neither is known.
+      lockSummary(room) {
+        const policy = client.policy(room);
+        if (policy && (policyAt[room] || 0) >= locksAt) {
+          return { locked: policy.effective.locked === true, manual: Boolean(policy.manual_lock),
+            until: policy.effective.until || null, reason: policy.effective.reason || "" };
+        }
+        return client.authEnabled() && lockRooms?.[room] || null;
       },
       async savePolicy(room, revision, value) {
         const saved = await json("/api/v1/rooms/" + encodeURIComponent(room) + "/policy", "PUT", { revision, config: value });
@@ -286,19 +347,11 @@
         try { return await json("/api/v1/rooms/" + encodeURIComponent(room) + "/commands", "POST", { action, value }); }
         catch (error) { if ([403, 423].includes(error.status)) client.loadPolicy(room).catch(() => {}); throw error; }
       },
-      watchRoom(room) {
-        policyRoom = room; clearTimeout(policyTimer); const generation = ++policyGeneration;
-        if (legacy || mock || !client.authEnabled() || !room || !active || ended) return Promise.resolve(null);
-        const refresh = () => {
-          if (!active || ended || !policyRoom || generation !== policyGeneration) return;
-          return client.loadPolicy(policyRoom).catch(() => null).finally(() => {
-            if (active && !ended && generation === policyGeneration) { policyTimer = setTimeout(refresh, POLICY_EVERY); if (policyTimer.unref) policyTimer.unref(); }
-          });
-        };
-        return refresh();
-      },
-      setActive(value) { active = Boolean(value); clearTimeout(policyTimer); policyGeneration++; if (active && policyRoom) client.watchRoom(policyRoom); },
-      stop() { active = false; clearTimeout(policyTimer); policyGeneration++; },
+      watchRoom(room) { policyRoom = room; return policyPoll.start(); },
+      // A room list on show asks for every room's lock; nothing is read otherwise.
+      watchLocks(on) { locksWatched = Boolean(on); return lockPoll.start(); },
+      setActive(value) { active = Boolean(value); policyPoll.start(); lockPoll.start(); },
+      stop() { active = false; policyPoll.stop(); lockPoll.stop(); },
       async allOff() { await ready(); return json("/api/v1/all-off", "POST", {}); },
       async login(username, password) {
         const address = new URL(origin);

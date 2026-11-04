@@ -8,7 +8,7 @@
  */
 "use strict";
 
-const { Grid, fit, wrap, length } = require("./grid");
+const { Grid, LOCK, fit, fitTail, wrap, length } = require("./grid");
 const { METER } = require("./theme");
 const Cameras = require("./cameras");
 const Topology = require("./topology");
@@ -23,9 +23,6 @@ const GLYPHS = {
 };
 const LIT = "\u25cf";
 const UNLIT = "\u25cb";
-// A locked room's lit bubble, in place of its LED. The padlock emoji takes
-// two columns; this squared key takes one, as the LEDs do.
-const LOCK = "\u26bf";
 const ARROW = { left: "\u2039", right: "\u203a" };
 // A block's left eighths, one to eight.
 const EIGHTHS = ["\u258f", "\u258e", "\u258d", "\u258c", "\u258b", "\u258a", "\u2589", "\u2588"];
@@ -466,16 +463,19 @@ function roomsContent(g, w, ctx) {
   let y = 0;
   session.rooms().forEach((room) => {
     const shown = session.view(room, session.state(room.id));
+    const lock = session.roomLocked(room.id), mark = lock.locked ? " " + LOCK : "";
     const key = "room:" + room.id;
     const style = focused(ctx, key) ? "row.focus" : room === current ? "row.current" : "row";
     g.fill(0, y, w, 1, style);
     if (style === "row.current") g.put(0, y, "\u258e", "row.mark");
     g.put(1, y, ledChar(shown.led, ctx.ui.blink), style === "row.focus" ? style : style + "+" + ledStyle(shown.led));
-    const labelWidth = Math.max(4, w - 4 - Math.min(12, length(shown.short)) - 1);
+    const labelWidth = Math.max(4, w - 4 - Math.min(12, length(shown.short)) - mark.length - 1);
     g.put(3, y, fit(room.label, labelWidth), style);
-    const short = fit(shown.short, Math.max(0, w - 4 - labelWidth));
+    // A locked room's padlock follows its source, which is cut to leave it room.
+    const short = fitTail(shown.short, mark, Math.max(0, w - 4 - labelWidth));
     g.put(w - 1 - length(short), y, short, style === "row" ? "dim" : style);
-    g.hit(0, y, w, 1, { kind: "room", room: room.id, key: key, focus: true, label: room.label + ", " + shown.spoken });
+    g.hit(0, y, w, 1, { kind: "room", room: room.id, key: key, focus: true,
+      label: room.label + ", " + shown.spoken + (lock.locked ? ". " + lock.text : "") });
     y += 1;
   });
   y += 1;

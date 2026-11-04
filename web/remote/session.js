@@ -168,15 +168,34 @@
       const canManage = enabled && access.canEdit() && policy?.can_lock === true;
       const unavailable = status === "unavailable" || policy?.effective?.reason === "policy_unavailable";
       const until = locked && !manual && policy.effective.until ? clock(policy.effective.until) : "";
-      let text = "";
-      if (unavailable) text = "Room lock status unavailable · controls paused";
-      else if (locked && manual) text = "Locked · until unlocked";
-      else if (locked) text = "Locked by schedule" + (until ? " until " + until : "");
+      const text = lockText(unavailable, locked, manual, until);
       const reason = busy || !canManage || manual ? "" : unavailable ? "Lock status is unavailable."
         : !settled ? SWITCHING : "";
       const error = lockError && lockError.room === room?.id && lockError.revision === policy?.revision ? lockError.message : "";
       return { room: room?.id || null, enabled, status, manual, locked, busy, canManage, text, until, reason, error,
         disabled: busy || !canManage || Boolean(reason), label: busy ? "Saving…" : manual ? "Unlock room" : "Lock room" };
+    }
+
+    // A lock in words, as the remote and the room lists say it.
+    function lockText(unavailable, locked, manual, until) {
+      if (unavailable) return "Room lock status unavailable · controls paused";
+      if (locked && manual) return "Locked · until unlocked";
+      return locked ? "Locked by schedule" + (until ? " until " + until : "") : "";
+    }
+
+    // A room's lock as the room lists show it: the current room's exactly as
+    // its remote does (roomLock), any other from the gateway's summary of
+    // every room, which the lists ask for with access.watchLocks.
+    function roomLocked(roomId) {
+      const access = backend.access;
+      if (current && current.id === roomId && access?.policy(roomId)) {
+        const lock = roomLock();
+        return { locked: lock.locked, text: lock.locked ? lock.text : "" };
+      }
+      const lock = access && !access.native ? access.lockSummary(roomId) : null;
+      if (!lock?.locked) return { locked: false, text: "" };
+      return { locked: true, text: lockText(lock.reason === "policy_unavailable", true, lock.manual,
+        !lock.manual && lock.until ? clock(lock.until) : "") };
     }
 
     async function toggleRoomLock(expectedRoom) {
@@ -972,6 +991,7 @@
       controlAllowed: () => !controlBlock(),
       controlBlock,
       roomLock,
+      roomLocked,
       toggleRoomLock,
       lockOn,
       lockMenu,

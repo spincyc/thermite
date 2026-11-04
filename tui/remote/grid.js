@@ -105,6 +105,10 @@ class Grid {
   }
 }
 
+// A locked room's padlock, on its lit bubble and after its source in a room
+// list. The padlock emoji takes two columns; this squared key takes one.
+const LOCK = "\u26bf";
+
 // Text cut to width with an ellipsis, or padded to it.
 function fit(text, width, align) {
   const chars = characters(text);
@@ -112,6 +116,11 @@ function fit(text, width, align) {
   if (chars.length > width) return chars.slice(0, Math.max(0, width - 1)).join("") + "\u2026";
   const pad = " ".repeat(width - chars.length);
   return align === "right" ? pad + chars.join("") : chars.join("") + pad;
+}
+
+// Text cut to leave tail whole after it (a padlock), padded to width.
+function fitTail(text, tail, width) {
+  return fit(fit(text, width - length(tail)).trimEnd() + tail, width);
 }
 
 function length(text) {
@@ -150,4 +159,4 @@ function wrap(text, width) {
   return lines;
 }
 
-module.exports = { Grid, fit, wrap, length };
+module.exports = { Grid, LOCK, fit, fitTail, wrap, length };
