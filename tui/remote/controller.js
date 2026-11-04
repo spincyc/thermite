@@ -845,19 +845,21 @@ function create(options) {
     const view = session.audioView();
     if (view.disabled) return;
     const step = RANGE[name];
+    // The device's own scale: a key moves one of its steps, a page a tenth of its range.
+    const scale = { min: view.min, max: view.max, step: view.step };
     let value = view.value;
-    if (step === "min") value = view.min || 0;
+    if (step === "min") value = view.min;
     else if (step === "max") value = view.max;
-    else if (step === "page") value += view.max / 10;
-    else if (step === "-page") value -= view.max / 10;
-    else value += step * (view.step || 1);
-    session.slide(options.Remote.volumeValue({ max: view.max, native: { min: view.min, step: view.step } }, value), true);
+    else if (step === "page") value += (view.max - view.min) / 10;
+    else if (step === "-page") value -= (view.max - view.min) / 10;
+    else value += step * view.step;
+    session.slide(options.Remote.volumeValue(scale, value), true);
   }
 
   function sliderValue(entry, x) {
     const fraction = Math.max(0, Math.min(1, (x - entry.x) / Math.max(1, entry.w - 1)));
-    return options.Remote.volumeValue({ max: entry.hit.max, native: { min: entry.hit.min, step: entry.hit.step } },
-      (entry.hit.min || 0) + fraction * (entry.hit.max - (entry.hit.min || 0)));
+    const scale = { min: entry.hit.min, max: entry.hit.max, step: entry.hit.step };
+    return options.Remote.volumeValue(scale, scale.min + fraction * (scale.max - scale.min));
   }
 
   // ---- the Pairing screen ----------------------------------------------

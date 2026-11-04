@@ -281,6 +281,18 @@ def options_text(pairs) -> str:
     return ",".join(entries)
 
 
+def volume_js(volume: dict) -> str:
+    """An inline JS transformation ("|..."): a volume command passed on when
+    it lies on the device's own scale, `volume` (an integration's VOLUME:
+    min, max and step, as the device reports and takes them); null, so
+    nothing is sent, for anything else: INCREASE, DECREASE, a value outside
+    min-max or between two steps. Nothing is clamped or rescaled."""
+    low, high, step = (repr(volume[key]) for key in ("min", "max", "step"))
+    return (f"|(function (n) {{ var k = (n - {low}) / {step}; "
+            f"return /^-?\\d+(\\.\\d+)?$/.test(input) && n >= {low} && n <= {high} "
+            f"&& Math.abs(k - Math.round(k)) < 1e-7 ? String({low} + Math.round(k) * {step}) : null; }})(Number(input))")
+
+
 def parse_options(text: str) -> list[tuple[str, str | None]]:
     """(value, label) of every option in an `options` text, as openHAB reads it."""
     out: list[tuple[str, str | None]] = []

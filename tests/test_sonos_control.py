@@ -1,8 +1,8 @@
 """Native Sonos Arc Items, command routing and room volume, with no device access.
 
 Ported from the private site's tests when the application moved here; the
-house is fictional. Volume limits beyond the Arc's own 0-100 range are not
-covered here (tests/test_volume_limits.py owns them).
+house is fictional. The Arc's own 0-100 scale is also covered with every
+other device's in tests/test_volume_native.py.
 """
 import copy
 import json
@@ -112,7 +112,8 @@ class NativeItems(unittest.TestCase):
                   [tv, [UDN, "RINCON_ANOTHER", "http://example.invalid/", "ON"]]]
         run = subprocess.run([shutil.which("node"), "-e", script, json.dumps(probes)], text=True,
                              capture_output=True, check=True, timeout=10)
-        self.assertEqual(json.loads(run.stdout), [["50", "75", "100", "100", None, None, None, None],
+        # A volume off the Arc's own scale is dropped, never clamped.
+        self.assertEqual(json.loads(run.stdout), [["50", "75", "100", None, None, None, None, None],
                                                 [UDN, None, None, None]])
 
     @unittest.skipUnless(shutil.which("node"), "node needed for native key-rule stand-in")

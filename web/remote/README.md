@@ -36,6 +36,13 @@ needs no further reads; a page in the background closes its connection and
 catches up when shown again. When thermite loses openHAB the page says the
 live reports are unavailable and refreshes itself once they return.
 
+Volume is each audio device's own number on its own scale: 38 on a WiiM or a
+Sonos, 69.5 on a Denon or Marantz receiver, or −10.5 dB when the receiver's
+own display is set to show dB. The slider runs from the device's minimum to
+its maximum, and each press of + or − moves one of the device's own steps
+(0.5 on a receiver, 1 elsewhere). Nothing caps or rescales it; a limit set on
+the device itself is the device's to apply.
+
 Source previews use the fictional sample. Add `?backend=mock` to simulate
 controls without sending commands.
 

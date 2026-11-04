@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from oh_conf import GUARD_PROFILE, Addon, House, YamlFile, point, uses
+from oh_conf import GUARD_PROFILE, Addon, House, YamlFile, point, uses, volume_js
 
 NAME = "sonos"
 PHASE = "observe"
@@ -28,7 +28,7 @@ ADDONS = (Addon("binding", "sonos"), Addon("automation", "jsscripting", "Sonos r
 ASSETS: dict[str, str] = {}
 #: The binding derives a player's UDN from its MAC, so a device needs one.
 NEEDS_MAC = True
-DEVICE_KEYS = ("sonos_udn", "volume_max")
+DEVICE_KEYS = ("sonos_udn",)
 REMOTE_LAYOUT = "sonos"
 #: The binding talks UPnP to the player's HTTP port.
 PROBE_PORTS = (1400,)
@@ -36,22 +36,18 @@ DISCOVER_PORTS = (1400,)
 DISCOVER_MDNS = ("_sonos",)
 #: Inventory model -> the binding's Thing type.
 THING_TYPES = {"Arc": "Arc", "Amp": "Amp"}
-MAX_VOLUME = 100
-DEFAULT_VOLUME_MAX = 100
+#: A zone player's master volume as the binding's volume channel reports and
+#: takes it: the player's own 0-100 in whole steps (UPnP RenderingControl
+#: DesiredVolume). openHAB sonos 5.2.3: ZonePlayerHandler.setVolume() sends
+#: DecimalType.intValue() as DesiredVolume and steps INCREASE/DECREASE by 1
+#: within 0-100. A volume limit set in the Sonos app is the player's to apply.
+VOLUME = {"min": 0, "max": 100, "step": 1}
 KEYS = {"previous": "PREVIOUS", "play_pause": "PLAY_PAUSE", "next": "NEXT", "night": "NIGHT", "speech": "SPEECH"}
 ARC_KEYS = {**KEYS, "tv": "TV"}
 RULE = "automation/js/sonos_control.js"
 SOURCE = Path(__file__).with_name("sonos_control.js")
 MARK = "const DEVICES = null;"
 READ_BACK = 60
-
-
-def volume_max(device: dict) -> int:
-    return device.get("volume_max", DEFAULT_VOLUME_MAX)
-
-
-def volume_js(cap: int) -> str:
-    return f"|/^\\d+(\\.\\d+)?$/.test(input) ? String(Math.min(Math.round(Number(input)), {cap})) : null"
 
 
 def keys(device: dict) -> dict:
@@ -74,9 +70,6 @@ def validate(device: dict) -> list[str]:
     if uses(device, PHASE, NAME) and device.get("model") not in THING_TYPES:
         problems.append(f"{where}: sonos knows no Thing type for model {device.get('model')!r} "
                         f"(one of {', '.join(sorted(THING_TYPES))})")
-    cap = device.get("volume_max")
-    if used and cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or not 0 <= cap <= MAX_VOLUME):
-        problems.append(f"{where}: volume_max {cap!r} is not a whole number 0-{MAX_VOLUME}")
     return problems
 
 
@@ -102,9 +95,9 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         volume = items[f"{ident}_volume"]
         del volume["channel"]
         volume["channels"] = {f"{uid}:volume": {"profile": GUARD_PROFILE, "toItemScript": "|input",
-                                                   "toHandlerScript": volume_js(volume_max(device))}}
+                                                   "toHandlerScript": volume_js(VOLUME)}}
         volume["autoupdate"] = False
-        volume["metadata"] = {"stateDescription": {"config": {"min": 0, "max": volume_max(device), "step": 1}}}
+        volume["metadata"] = {"stateDescription": {"config": dict(VOLUME)}}
         items[f"{ident}_mute"]["autoupdate"] = False
         for suffix, kind, label, channel in [("player", "Player", "Playback", "control"),
                                              ("night", "Switch", "Night Mode", "nightmode"),
@@ -139,7 +132,7 @@ def remote(device: dict) -> dict | None:
         return None
     ident = device["id"]
     return {"key": f"{ident}_key", "mute": f"{ident}_mute",
-            "volume": {"item": f"{ident}_volume", "max": volume_max(device), "step": 1, "unit": "%", "offset": 0}}
+            "volume": {"item": f"{ident}_volume", **VOLUME}}
 
 
 def simulation_udn(device: dict) -> str:

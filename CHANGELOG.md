@@ -7,6 +7,17 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Volume is each audio device's own number on its own scale, from its minimum
+  to the maximum the device itself allows, in its own steps and unit: 0-98 in
+  0.5 steps on a Denon or Marantz receiver (or dB as its display is set),
+  0-100 in 1s on a Sonos, WiiM or Sony TV, and the binding's 0-100 % on an
+  Android TV. The web and terminal remotes show that number and step by it (a
+  WiiM's keys now move 1, not 2); the gateway accepts exactly that scale and
+  refuses anything else, and openHAB's profiles and rules drop an off-scale
+  value instead of clamping it. Nothing is normalized across rooms or devices.
+  The `volume_max` device key is removed: a house file that still sets it is
+  refused as an unknown key; a limit set on the device itself is the device's.
+
 - Remotes provide an administrator-only manual room lock that captures the
   current reported source or Off and persists until unlocked. Manual holds
   survive restarts, preserve schedules, and take precedence while active.
@@ -284,8 +295,6 @@ rollback. The unified deployment workflow uses a separate committed private site
   committed inputs using that release, including rollback.
 - Denon/Marantz routing status requests use the receiver's accepted XML wire
   format, restoring power and input probes before source changes and Off.
-- Volume controls default to each integration's full supported range. Explicit
-  per-device `volume_max` limits still apply consistently to commands and clients.
 - Root and `/overview/` open Thermite Home while native sign-in callbacks and
   deliberate runtime administration remain available. The web and terminal
   share navigation and a System view with explicit Advanced tools access;

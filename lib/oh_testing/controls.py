@@ -49,9 +49,10 @@ does, and check that:
    device shows, and runtime sent them no command while it started;
 3. power, every input, a volume, mute and every remote key reach the
    simulated device as that device's own command, and are read back;
-4. a volume above the configured limit is held to it. A full-range Sonos
-   Dimmer reaches 100 and rejects 110 at REST without a device write;
-   an unknown key sends nothing;
+4. a volume reaches the device anywhere on its own scale (VOLUME), its
+   max included; one past that max never reaches it (a Dimmer whose scale
+   ends at 100 rejects it at REST with HTTP 400, a receiver's 0-98 profile
+   drops 98.5); an unknown key sends nothing;
 5. each device's Mute (Input on a projector), pressed as the page presses
    it, reaches its simulated device within REACH seconds and is read back on the
    page's event stream within its integration's READ_BACK plus SLACK; the
@@ -277,7 +278,7 @@ class SonyTVStandIn:
         self.module = module
         self.ident = device["id"]
         self.sim = sony_sim.TV(pin="0000", cookie=f"stand-in-{os.urandom(8).hex()}",
-                               max_volume=module.MAX_VOLUME)
+                               max_volume=module.VOLUME["max"])
         self.server = sony_sim.Server(self.sim)
         self.buttons = {code: button for button, code in module.KEYS.items()}
         self.path: Path | None = None
@@ -583,11 +584,10 @@ class Check:
             sent = {field: entry for field, entry in zip(fields, together) if entry}
             for item, value, _ in sent.values():
                 self.command(item, value)
-            what = ", ".join(f"{field} {value}" + (f" held to {shown}" if shown != value else "")
-                             for field, (_, value, shown) in sent.items())
+            what = ", ".join(f"{field} {value}" for field, (_, value, _) in sent.items())
             self.agree(f"{ident} {what}", ident, {field: shown for field, (_, _, shown) in sent.items()})
-        if module.NAME == "sonos" and control.get("volume", {}).get("max") == 100:
-            self._reject_sonos_volume(ident)
+        if control.get("volume"):
+            self._reject_volume_past_max(ident)
         if control.get("key"):
             buttons = module.keys(self.devices[ident]) if hasattr(module, "keys") else getattr(module, "KEYS", {})
             for button in buttons:
@@ -601,11 +601,11 @@ class Check:
 
     def values(self, ident: str) -> dict[str, list[tuple[str, str, str]]]:
         """field -> (Item, value sent, value read back) for each value a
-        device is sent: every input, ending on the one it showed; half its
-        volume limit, 0 and an above-limit value held to the limit; mute
-        on and off. Full-range Sonos reaches 100, then a separate check
-        proves REST rejects an out-of-range Dimmer command."""
-        module, control = self.controls[ident]
+        device is sent: every input, ending on the one it showed; the middle
+        of its own volume scale, its min and its max, each read back as
+        sent; mute on and off. A separate check proves a volume past the
+        device's max never reaches it."""
+        _, control = self.controls[ident]
         values = {}
         if control.get("input"):
             options = [value for value, _ in control["input"]["options"]]
@@ -614,30 +614,31 @@ class Check:
             values["input"] = [(control["input"]["item"], value, value) for value in order]
         if control.get("volume"):
             spec = control["volume"]
-            half = f"{int(spec['max']) // 2}"
-            above = min(100, spec["max"] + 10) if module.NAME == "sonos" else spec["max"] + 10
-            values["volume"] = [(spec["item"], half, half), (spec["item"], "0", "0"),
-                                (spec["item"], f"{above:g}", f"{spec['max']:g}")]
+            middle = spec["min"] + round((spec["max"] - spec["min"]) / 2 / spec["step"]) * spec["step"]
+            values["volume"] = [(spec["item"], f"{value:g}", f"{value:g}") for value in (middle, spec["min"], spec["max"])]
         if control.get("mute"):
             values["mute"] = [(control["mute"], value, value) for value in ("ON", "OFF")]
         return values
 
-    def _reject_sonos_volume(self, ident: str) -> None:
-        """A native Dimmer rejects values above 100 before channel profiles."""
-        item = self.controls[ident][1]["volume"]["item"]
+    def _reject_volume_past_max(self, ident: str) -> None:
+        """One step past the device's own max never reaches it: openHAB's
+        Dimmer rejects anything over 100 at REST before any profile; below
+        that, the integration's profile or rule drops it."""
+        spec = self.controls[ident][1]["volume"]
+        past = spec["max"] + spec["step"]
         stand_in = self.stand_ins[ident]
         before = list(stand_in.writes())
         status = None
         try:
-            self.command(item, "110")
+            self.command(spec["item"], f"{past:g}")
         except urllib.error.HTTPError as exc:
             status = exc.code
             exc.close()
-        if status != 400:
-            self.failures.append(f"{ident} volume 110 was not rejected with HTTP 400")
+        if past > 100 and status != 400:
+            self.failures.append(f"{ident} volume {past:g} was not rejected with HTTP 400")
         time.sleep(QUIET)
         if stand_in.writes() != before:
-            self.failures.append(f"an out-of-range volume reached {ident}")
+            self.failures.append(f"a volume past its max reached {ident}")
 
     def step_unknown_key(self) -> None:
         self.each(self._unknown_key)
@@ -819,7 +820,7 @@ def run_check(args, rt: lib.Runtime, log) -> int:
                     ("initial read-back", check.step_readback),
                     ("read-only signal snapshots transformed by the runtime", check.step_diagnostics),
                     ("Sony PIN pairing and native log privacy", lambda: check.step_pairing(inst)),
-                    ("power, inputs, volume and its limit, mute and keys", check.step_commands),
+                    ("power, inputs, volume on its own scale, mute and keys", check.step_commands),
                     ("an unknown key", check.step_unknown_key),
                     ("how long a press takes", lambda: check.step_latency(inst)),
                     ("a command from the remote page, with no login", check.step_remote),

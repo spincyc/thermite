@@ -7,12 +7,12 @@ name, INPUTS) and `<id>_key` (String: a remote button id, KEYS) too.
 
 Under observe only, every channel is READONLY and requests only
 getPlayerStatus. Under control, volume, mute, input and key send
-setPlayerCmd commands: the volume held to the player's volume_max
-(devices.yaml; default DEFAULT_VOLUME_MAX), an input only when it is one of
-INPUTS, a key only when it is one of KEYS. INCREASE and DECREASE send
-nothing: the binding turns them into fixed strings, not a step from the
-volume read. Title and Artist arrive hex-encoded UTF-8; hex-to-utf8.js beside
-this file decodes them and is copied to conf/transform/.
+setPlayerCmd commands: a volume only when it is on the player's own scale
+(VOLUME), an input only when it is one of INPUTS, a key only when it is one
+of KEYS. INCREASE and DECREASE send nothing: the binding turns them into
+fixed strings, not a step from the volume read. Title and Artist arrive
+hex-encoded UTF-8; hex-to-utf8.js beside this file decodes them and is
+copied to conf/transform/.
 
 The API has no command that wakes the player (only setShutdown and reboot),
 so no Item switches its power.
@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import re
 
-from oh_conf import Addon, House, YamlFile, options_text, point, retarget, uses
+from oh_conf import Addon, House, YamlFile, options_text, point, retarget, uses, volume_js
 
 NAME = "wiim_http"
 PHASE = "observe"
@@ -34,9 +34,9 @@ HEADER = (
     "The device serves HTTPS with a self-signed certificate, hence",
     "ignoreSSLErrors. A player under observe only has every channel READONLY",
     "and only getPlayerStatus requested; one under control also has volume,",
-    "mute, input and key send setPlayerCmd commands, the volume held to its",
-    "volume_max. Title and Artist arrive hex-encoded UTF-8; transform/",
-    "hex-to-utf8.js decodes them.",
+    "mute, input and key send setPlayerCmd commands, the volume only on the",
+    "player's own 0-100 scale. Title and Artist arrive hex-encoded UTF-8;",
+    "transform/hex-to-utf8.js decodes them.",
 )
 ADDONS = (
     Addon("binding", "http"),
@@ -44,7 +44,6 @@ ADDONS = (
     Addon("automation", "jsscripting", "JS(...) transformations for WiiM hex titles and commands"),
 )
 ASSETS = {"transform/hex-to-utf8.js": "hex-to-utf8.js"}
-DEVICE_KEYS = ("volume_max",)
 REMOTE_LAYOUT = "wiim"
 DISCOVER_MDNS = ("_linkplay",)
 HEX_TEXT = "JS(hex-to-utf8.js)"
@@ -64,10 +63,13 @@ BASE_URL = "https://{ip}/httpapi.asp?"
 #: Seconds from a command to its read-back: the binding asks for
 #: getPlayerStatus again a second after a command (refreshAfterCommand).
 READ_BACK = 1
-#: The player's volume scale.
-MAX_VOLUME = 100
-#: Use the full supported range unless devices.yaml explicitly sets volume_max.
-DEFAULT_VOLUME_MAX = MAX_VOLUME
+#: The player's volume as getPlayerStatus reports it (vol) and setPlayerCmd
+#: takes it: 0-100 in whole steps. LinkPlay HTTP API, as openHAB linkplay
+#: 5.2.3 LinkPlayHTTPClient documents it: "setPlayerCmd:vol:{value} - Set
+#: volume (0-100)". An Amp Pro reports "vol":"38" and getStatusEx
+#: "max_volume":"100" (read 2026-11-04); a lower maximum set in the WiiM
+#: app is the player's to apply.
+VOLUME = {"min": 0, "max": 100, "step": 1}
 #: (switchmode name, label) of every input the remote offers: the Amp Pro's
 #: (getStatusEx plm_support: line in, Bluetooth, optical, HDMI ARC) and the
 #: network.
@@ -86,17 +88,7 @@ def thing_uid(device: dict) -> str:
     return f"http:url:{device['id']}"
 
 
-def volume_max(device: dict) -> int:
-    """The highest volume the player may be sent."""
-    return device.get("volume_max", DEFAULT_VOLUME_MAX)
-
-
 def validate(device: dict) -> list[str]:
-    # volume_max means another scale to denonmarantz_http, so only a player's is checked here.
-    cap = device.get("volume_max")
-    if uses(device, PHASE, NAME) and cap is not None and not (
-            isinstance(cap, int) and not isinstance(cap, bool) and 0 <= cap <= MAX_VOLUME):
-        return [f"{device.get('id')}: volume_max {cap!r} is not a whole number 0-{MAX_VOLUME}"]
     return []
 
 
@@ -105,12 +97,6 @@ def _lookup_js(table: dict[str, str], otherwise: str = "null") -> str:
     `otherwise` (JS)."""
     return (f"JS(|(function (table) {{ return Object.prototype.hasOwnProperty.call(table, input) ? table[input] : "
             f"{otherwise}; }})({json.dumps(table, separators=(',', ':'))}))")
-
-
-def volume_js(cap: int) -> str:
-    """An inline JS transformation: a volume command, rounded and held to
-    `cap`; null (nothing sent) for anything but a number."""
-    return f"JS(|/^\\d+(\\.\\d+)?$/.test(input) ? String(Math.min(Math.round(Number(input)), {cap})) : null)"
 
 
 def input_js() -> str:
@@ -154,7 +140,7 @@ def _controlled_channels(device: dict) -> dict:
         body = _channel(type_, label, field)
         body["config"].update(stateExtension=STATUS, refreshAfterCommand=True)
         channels[channel] = body
-    for channel, extra in (("volume", command("vol:", volume_js(volume_max(device)))), ("mute", command("mute:"))):
+    for channel, extra in (("volume", command("vol:", f"JS({volume_js(VOLUME)})")), ("mute", command("mute:"))):
         config = channels[channel]["config"]
         del config["mode"]
         config.update(extra)
@@ -209,7 +195,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     items[f"{ident}_status"] = point(ident, "String", "Playback State", ["Status", "MediaControl"],
                                      f"{uid}:status")
     items[f"{ident}_volume"] = _control(ident, "Dimmer", "Volume", ["Control", "SoundVolume"], f"{uid}:volume",
-                                        icon="soundvolume", state={"min": 0, "max": volume_max(device)})
+                                        icon="soundvolume", state=dict(VOLUME))
     items[f"{ident}_mute"] = _control(ident, "Switch", "Mute", ["Control", "SoundVolume"], f"{uid}:mute",
                                       icon="soundvolume_mute")
     items[f"{ident}_input"] = _control(ident, "String", "Input", ["Control", "Channel"], f"{uid}:input",
@@ -227,8 +213,7 @@ def remote(device: dict) -> dict | None:
     return {
         "key": f"{ident}_key",
         "mute": f"{ident}_mute",
-        "volume": {"item": f"{ident}_volume", "max": volume_max(device), "step": 2, "unit": "", "offset": 0,
-                   "native": {"min": 0, "max": MAX_VOLUME, "step": 1}},
+        "volume": {"item": f"{ident}_volume", **VOLUME},
         "input": {"item": f"{ident}_input", "options": [list(pair) for pair in INPUTS]},
     }
 

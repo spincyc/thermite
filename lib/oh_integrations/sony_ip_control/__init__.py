@@ -35,7 +35,7 @@ Items, per TV under control:
   unread; commanded with hdmi1 to hdmi4.
 - `<id>_volume` (Dimmer, 0-100) and `<id>_mute` (Switch): the TV speaker's
   volume and mute as it reports them, UNDEF in standby; a volume command is
-  held to the TV's volume_max (devices.yaml; default DEFAULT_VOLUME_MAX).
+  sent only when it is on the TV's own scale (VOLUME), else dropped.
   `sony_speaker_audio: false` omits these Items and their commands and
   readback when a TV's speaker API is unavailable. It defaults to true and
   does not affect a room's separate audio device, input, power or IRCC keys.
@@ -83,7 +83,7 @@ HEADER = (
 )
 ADDONS = (Addon("automation", "jsscripting", "the Sony TV rule (sony_ip_control.js)"),)
 ASSETS: dict[str, str] = {}
-DEVICE_KEYS = ("volume_max", "sony_speaker_audio")
+DEVICE_KEYS = ("sony_speaker_audio",)
 REMOTE_LAYOUT = "sony_tv"
 #: The rule talks to the TV's REST API and IRCC on plain HTTP.
 PROBE_PORTS = (80,)
@@ -111,10 +111,11 @@ INPUTS = tuple((f"hdmi{n}", f"HDMI {n}") for n in HDMI)
 OWN = ("tv", "TV (apps, home, tuner)")
 #: Every input state the rule reports.
 READBACK_INPUTS = (OWN[0], *(value for value, _ in INPUTS))
-#: The TV's volume scale, as getVolumeInformation reports it.
-MAX_VOLUME = 100
-#: Use the full supported range unless devices.yaml explicitly sets volume_max.
-DEFAULT_VOLUME_MAX = MAX_VOLUME
+#: The TV speaker's volume as audio getVolumeInformation reports it and
+#: setAudioVolume takes it: whole steps from minVolume 0 to maxVolume 100
+#: (Sony BRAVIA REST API, audio service v1.0, getVolumeInformation and
+#: setAudioVolume; pro-bravia.sony.net/develop/integrate/rest-api/spec/).
+VOLUME = {"min": 0, "max": 100, "step": 1}
 #: The remote layout (web/remote/remotes.js) these TVs are drawn with.
 REMOTE = "sony_tv"
 #: Remote button id -> the IRCC command it sends, by the name the TV's
@@ -223,11 +224,6 @@ PAIRING = {
 }
 
 
-def volume_max(device: dict) -> int:
-    """The highest volume the TV may be set to."""
-    return device.get("volume_max", DEFAULT_VOLUME_MAX)
-
-
 def speaker_audio(device: dict) -> bool:
     """Whether this TV exposes its own speaker volume/mute controls and reads."""
     return device.get("sony_speaker_audio", True)
@@ -250,9 +246,6 @@ def validate(device: dict) -> list[str]:
                         "which reads its power")
     if uses(device, "control", "androidtv_googletv"):
         problems.append(f"{ident}: {NAME} drives its power, volume, mute and keys; androidtv_googletv would too")
-    cap = device.get("volume_max")
-    if cap is not None and not (isinstance(cap, int) and not isinstance(cap, bool) and 0 <= cap <= MAX_VOLUME):
-        problems.append(f"{ident}: volume_max {cap!r} is not a whole number 0-{MAX_VOLUME}")
     if not isinstance(speaker_audio(device), bool):
         problems.append(f"{ident}: sony_speaker_audio must be true or false")
     return problems
@@ -277,8 +270,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         "commandDescription": {"config": {"options": options_text(INPUTS)}}})
     if speaker_audio(device):
         items[f"{ident}_volume"] = _control(ident, "Dimmer", "Volume", ["Control", "SoundVolume"], icon="soundvolume",
-                                            metadata={"stateDescription": {"config": {"min": 0,
-                                                                                      "max": volume_max(device)}}})
+                                            metadata={"stateDescription": {"config": dict(VOLUME)}})
         items[f"{ident}_mute"] = _control(ident, "Switch", "Mute", ["Control", "SoundVolume"], icon="soundvolume_mute")
     items[f"{ident}_key"] = _control(ident, "String", "Remote Key", ["Control"])
     _pairing.render(device, house, out, NAME, label=pairing_label(device), result=pairing_result(device), **PAIRING)
@@ -302,8 +294,9 @@ def problem(device: dict) -> str | None:
 
 
 def table(devices: list[dict]) -> list[dict]:
-    """The rule's device table: address, inputs and optional speaker controls."""
-    return [{"id": d["id"], "address": d["ip"], "inputs": list(HDMI), "max": volume_max(d),
+    """The rule's device table: address, inputs, the speaker's own volume
+    scale and whether the TV has speaker controls."""
+    return [{"id": d["id"], "address": d["ip"], "inputs": list(HDMI), "volume": dict(VOLUME),
              "speakerAudio": speaker_audio(d)} for d in devices]
 
 
@@ -351,7 +344,7 @@ def remote(device: dict) -> dict | None:
     control = {"key": f"{ident}_key", "power": sony_rest.power_item(device)}
     if speaker_audio(device):
         control.update(mute=f"{ident}_mute",
-                       volume={"item": f"{ident}_volume", "max": volume_max(device), "step": 1, "unit": "", "offset": 0})
+                       volume={"item": f"{ident}_volume", **VOLUME})
     return control
 
 

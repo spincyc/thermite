@@ -2,7 +2,7 @@
 
 Only the player's Control readback is linked, display-only. The rule sends
 four fixed transport commands directly to that native channel after fresh
-main-zone ON/NET reports. Power, input, mute and capped volume remain owned
+main-zone ON/NET reports. Power, input, mute and volume remain owned
 by denonmarantz_http. No HEOS account, grouping, queue or media-URL control
 is configured. Native HEOS may fetch artwork reported by a playing source.
 """

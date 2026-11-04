@@ -35,9 +35,9 @@ Items, per device:
   `<id>_android_volume` (Dimmer, 0-100), the TV's volume as it reports it.
   The binding cannot set a volume, so the rule
   (conf/automation/js/androidtv_googletv.js, the .js file beside this one)
-  turns a command into one VOLUME_UP or VOLUME_DOWN press per step, held to
-  the TV's volume_max (devices.yaml; default DEFAULT_VOLUME_MAX). A SHIELD's
-  sound is the room's audio device's.
+  turns a command on the channel's own scale (VOLUME) into one VOLUME_UP or
+  VOLUME_DOWN press per step and drops any other. A SHIELD's sound is the
+  room's audio device's.
 - `<id>_android_app` (String): the app on screen, display-only.
 - `<id>_key` (String): a remote button id of its remote (keys()). The rule
   presses its Android key code (KEYCODES) or opens its app (APP_LINKS); any
@@ -75,13 +75,12 @@ HEADER = (
     "protocol (androidtv binding, TLS port 6466), paired from the Pairing page;",
     "the binding's keystore in userdata holds the pairing. Power and mute are",
     "the binding's own channels; the rule conf/automation/js/androidtv_googletv.js",
-    "presses the remote keys, steps the volume, held to volume_max, and pairs.",
+    "presses the remote keys, steps the volume on its own scale, and pairs.",
     "Items are autoupdate off: they show only what the device reports.",
 )
 ADDONS = (Addon("binding", "androidtv"),
           Addon("automation", "jsscripting", "the Android TV key, volume and pairing rule (androidtv_googletv.js)"))
 ASSETS: dict[str, str] = {}
-DEVICE_KEYS = ("volume_max",)
 PORT = 6466
 #: The remote protocol's port and its pairing port.
 DISCOVER_PORTS = (PORT, 6467)
@@ -97,10 +96,12 @@ RULE = "automation/js/androidtv_googletv.js"
 SOURCE = Path(__file__).resolve().parent / "androidtv_googletv.js"
 DEVICES_MARK = "const DEVICES = null;"
 PRESSES_MARK = "const PRESSES = null;"
-#: The binding reports volume as a percentage of the TV's advertised maximum.
-MAX_VOLUME = 100
-#: Use the full supported range unless devices.yaml explicitly sets volume_max.
-DEFAULT_VOLUME_MAX = MAX_VOLUME
+#: The volume as the binding's googletv volume channel reports it: whole
+#: percent of the TV's own maximum. openHAB androidtv 5.2.3:
+#: GoogleTVConnectionManager.setVolCurr() reports volCurr * 100 / volMax as
+#: a PercentType and exposes neither volMax nor the TV's own level, so the
+#: percentage is the nearest scale thermite has. The binding sets no volume.
+VOLUME = {"min": 0, "max": 100, "step": 1, "unit": "%"}
 TV = "android_tv"
 SHIELD = "nvidia_shield"
 #: The remote layout (web/remote/remotes.js) each kind of device is drawn with.
@@ -203,11 +204,6 @@ def keys(device: dict) -> dict[str, int | str]:
     return {**KEYCODES[remote], **APP_LINKS[remote]}
 
 
-def volume_max(device: dict) -> int:
-    """The highest volume the TV may be stepped to."""
-    return device.get("volume_max", DEFAULT_VOLUME_MAX)
-
-
 def pairing_label(device: dict) -> str:
     """What the Pairing page calls the device."""
     if not is_tv(device):
@@ -217,17 +213,11 @@ def pairing_label(device: dict) -> str:
 
 def validate(device: dict) -> list[str]:
     if not uses(device, PHASE, NAME):
-        # volume_max means another scale to denonmarantz_http, so only a TV's is checked here.
         return []
     problems = []
     if device.get("kind") != "tv" and device.get("make") != "NVIDIA":
         problems.append(f"{device.get('id')}: {NAME} drives a TV or an NVIDIA SHIELD, not a "
                         f"{device.get('make')} {device.get('kind')}")
-    cap = device.get("volume_max")
-    if cap is not None and not is_tv(device):
-        problems.append(f"{device.get('id')}: volume_max is for a TV; a SHIELD's sound is the room's audio device's")
-    elif cap is not None and not (isinstance(cap, int) and not isinstance(cap, bool) and 0 <= cap <= MAX_VOLUME):
-        problems.append(f"{device.get('id')}: volume_max {cap!r} is not a whole number 0-{MAX_VOLUME}")
     return problems
 
 
@@ -279,7 +269,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
                                                   f"{uid}:mute", icon="soundvolume_mute")
         items[f"{ident}_android_volume"] = _control(ident, "Dimmer", "Volume", ["Control", "SoundVolume"],
                                                     f"{uid}:volume", icon="soundvolume",
-                                                    state={"min": 0, "max": volume_max(device)})
+                                                    state={key: VOLUME[key] for key in ("min", "max", "step")})
     items[f"{ident}_android_app"] = point(ident, "String", "App", ["Status", "Info"], f"{uid}:app", guarded=True)
     items[f"{ident}_key"] = {"type": "String", "label": "Remote Key", "groups": [ident], "tags": ["Control"],
                              "autoupdate": False}
@@ -288,10 +278,10 @@ def render(device: dict, house: House, out: YamlFile) -> None:
 
 
 def table(devices: list[dict]) -> list[dict]:
-    """The rule's device table: id, Thing UID, remote, volume limit (null
+    """The rule's device table: id, Thing UID, remote, volume scale (null
     for a device whose volume is not its own) and keystore (under userdata)."""
     return [{"id": d["id"], "thing": thing_uid(d), "remote": remote_of(d),
-             "max": volume_max(d) if is_tv(d) else None, "keystore": KEYSTORE.format(id=d["id"])} for d in devices]
+             "volume": dict(VOLUME) if is_tv(d) else None, "keystore": KEYSTORE.format(id=d["id"])} for d in devices]
 
 
 def _line(name: str, value: object) -> str:
@@ -337,8 +327,7 @@ def remote(device: dict) -> dict | None:
     offered: dict = {"key": f"{ident}_key", "power": f"{ident}_android_power"}
     if is_tv(device):
         offered["mute"] = f"{ident}_android_mute"
-        offered["volume"] = {"item": f"{ident}_android_volume", "max": volume_max(device), "step": 1, "unit": "",
-                             "offset": 0}
+        offered["volume"] = {"item": f"{ident}_android_volume", **VOLUME}
     return offered
 
 

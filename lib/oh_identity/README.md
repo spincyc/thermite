@@ -267,6 +267,10 @@ room list is on show, at the policy status interval.
 
 POST `/api/v1/rooms/<id>/commands` takes `{action,value}`. The immutable server
 contract resolves the action to a known Item and validates enum/range/step.
+A volume's range and step are its device's own scale, as its integration
+declares it (`VOLUME`): every value from the device's minimum to its maximum
+on a step is accepted and anything else refused; no room, policy or house
+setting narrows it, and readback is projected on the same scale.
 The commanded room's lock refuses every ordinary command (`room_locked`). A
 locked room the contract names as affected refuses only what would disturb
 the route it holds (`device_locked`): a source route setting a field that

@@ -15,22 +15,20 @@ Items, per receiver:
 
 Under observe only, every Item is display-only (oh_conf.guard). Under control
 the Items command the receiver, and four links run a transform:JS profile:
-the volume's holds every command to the receiver's volume_max (devices.yaml,
-in the Item's units; default DEFAULT_VOLUME_MAX) and drops INCREASE and
-DECREASE, which the binding would send as MVUP and MVDOWN with no limit; the
-two inputs' send only an INPUTS value; the key's turns a button id into its
-receiver command on the general#command channel and drops any other. A
-room's receiver in the routing is one zone of it (stage()): routing.js
-powers it and sets its input. The binding has no volume
-limit of its own: it fixes mainVolumeMax at 98 and offers no Thing
-parameter for it.
+the volume's sends only a value on the receiver's own scale (VOLUME) and
+drops INCREASE and DECREASE, which the binding would send as MVUP and
+MVDOWN; the two inputs' send only an INPUTS value; the key's turns a button
+id into its receiver command on the general#command channel and drops any
+other. A room's receiver in the routing is one zone of it (stage()):
+routing.js powers it and sets its input. A volume limit set on the receiver
+itself is the receiver's to apply; thermite sets none.
 """
 
 from __future__ import annotations
 
 import json
 
-from oh_conf import GUARD_PROFILE, Addon, House, YamlFile, options_text, point, retarget, uses
+from oh_conf import GUARD_PROFILE, Addon, House, YamlFile, options_text, point, retarget, uses, volume_js
 
 from . import _diagnostics as diag
 
@@ -44,13 +42,13 @@ HEADER = (
     "set explicitly, because an unset value makes the binding auto-detect and",
     "fall back to telnet. Models from 2016 on serve the API on port 8080.",
     "A receiver under control has its main zone commanded: its volume through",
-    "a profile that holds it to volume_max, its input and remote keys",
-    "through profiles that send only known values.",
+    "a profile that sends only values on the receiver's own 0-98 scale, its",
+    "input and remote keys through profiles that send only known values.",
 )
 ADDONS = (Addon("binding", "denonmarantz"), Addon("binding", "http"),
           Addon("automation", "jsscripting", "read-only receiver signal snapshots"))
 ASSETS: dict[str, str] = {}
-DEVICE_KEYS = ("volume_max", "zones")
+DEVICE_KEYS = ("zones",)
 #: Seconds between the binding's polls of the HTTP API, the shortest it
 #: takes (a Thing polling more often goes OFFLINE as a configuration error).
 #: It reads nothing after a command, so a command is read back at the next
@@ -61,11 +59,18 @@ READ_BACK = POLL
 #: The binding's zoneCount: the main zone plus up to three more.
 ZONES = range(1, 5)
 DEFAULT_ZONES = 2
-#: The receiver's volume scale, 0-98 in steps of 0.5; 80 is 0 dB.
-MAX_VOLUME = 98
+#: The main zone's volume as the binding's mainZone#volume channel reports
+#: and takes it: the receiver's own absolute scale, 0-98 in steps of 0.5
+#: (MV00-MV98, MV695 for 69.5), 80 being 0 dB. openHAB denonmarantz 5.2.3:
+#: DenonMarantzConfiguration.MAX_VOLUME = 98, which the HTTP connector sets
+#: as mainVolumeMax because MVMAX is only read over telnet; DenonMarantzState
+#: setMainVolume() reports the scale unchanged; DenonMarantzConnector
+#: percentToDenonValue() rounds to 0.5 and toDenonValue() writes MVnn[5]. A
+#: CINEMA 60 and CINEMA 30 report <Max>980</Max> (tenths) for MainZone in
+#: get_config?type=12 (read 2026-11-04).
+VOLUME = {"min": 0, "max": 98, "step": 0.5}
+#: The relative (dB) display: the absolute value plus DB_OFFSET.
 DB_OFFSET = -80
-#: Use the full supported range unless devices.yaml explicitly sets volume_max.
-DEFAULT_VOLUME_MAX = MAX_VOLUME
 #: (SI source code, label) of every input the remote offers, as the
 #: CINEMA 60 and CINEMA 30 name them (Deviceinfo.xml).
 INPUTS = (
@@ -206,11 +211,6 @@ def thing_uid(device: dict) -> str:
     return f"denonmarantz:avr:{device['id']}"
 
 
-def volume_max(device: dict) -> float:
-    """The highest volume the main zone may be sent, in the Item's units."""
-    return device.get("volume_max", DEFAULT_VOLUME_MAX)
-
-
 def inputs(device: dict, zone: int | None = None) -> list[tuple[str, str]]:
     """(value, label) of the inputs the receiver's remote offers for the
     main zone (zone None), or for zone `zone`: those and ZONE_SOURCE."""
@@ -226,12 +226,6 @@ def validate(device: dict) -> list[str]:
     zones = device.get("zones")
     if zones is not None and (not isinstance(zones, int) or isinstance(zones, bool) or zones not in ZONES):
         problems.append(f"{device.get('id')}: zones {zones!r} is not {ZONES.start}-{ZONES.stop - 1}")
-    # volume_max means another scale to wiim_http, so only a receiver's is checked here.
-    cap = device.get("volume_max")
-    if uses(device, PHASE, NAME) and cap is not None and not (
-            isinstance(cap, (int, float)) and not isinstance(cap, bool)
-            and 0 <= cap <= MAX_VOLUME and float(cap * 2).is_integer()):
-        problems.append(f"{device.get('id')}: volume_max {cap!r} is not 0-{MAX_VOLUME} in steps of 0.5")
     return problems
 
 
@@ -239,12 +233,6 @@ def _lookup_js(table: dict[str, str], otherwise: str = "null") -> str:
     """Inline JS: table[input] for a key of the table, else `otherwise` (JS)."""
     return (f"|(function (table) {{ return Object.prototype.hasOwnProperty.call(table, input) ? table[input] : "
             f"{otherwise}; }})({json.dumps(table, separators=(',', ':'))})")
-
-
-def volume_js(cap: float) -> str:
-    """Inline JS: a volume command held to `cap`; null (nothing sent) for
-    anything but a number, INCREASE and DECREASE among them."""
-    return f"|/^\\d+(\\.\\d+)?$/.test(input) ? String(Math.min(Math.round(Number(input) * 2) / 2, {json.dumps(cap)})) : null"
 
 
 def input_js(device: dict, zone: int | None = None) -> str:
@@ -312,13 +300,12 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         items[f"{ident}_zone2_input"] = point(ident, "String", "Zone 2 Input", ["Status", "Channel"],
                                               f"{uid}:zone2#input", guarded=True)
         return
-    cap = volume_max(device)
     items[f"{ident}_main_power"] = _control(ident, "Switch", "Main Zone Power", ["Control", "Power"],
                                             f"{uid}:mainZone#power", icon="receiver")
     items[f"{ident}_main_volume"] = _control(
         ident, "Dimmer", "Main Zone Volume", ["Control", "SoundVolume"], f"{uid}:mainZone#volume",
-        link={"toItemScript": "|input", "commandFromItemScript": volume_js(cap)}, icon="soundvolume",
-        state={"min": 0, "max": cap, "step": 0.5})
+        link={"toItemScript": "|input", "commandFromItemScript": volume_js(VOLUME)}, icon="soundvolume",
+        state=dict(VOLUME))
     items[f"{ident}_main_mute"] = _control(ident, "Switch", "Main Zone Mute", ["Control", "SoundVolume"],
                                            f"{uid}:mainZone#mute", icon="soundvolume_mute")
     items[f"{ident}_main_input"] = _control(
@@ -359,11 +346,13 @@ def remote(device: dict) -> dict | None:
         "key": f"{ident}_key",
         "power": f"{ident}_main_power",
         "mute": f"{ident}_main_mute",
-        "volume": {"item": f"{ident}_main_volume", "max": volume_max(device), "step": 0.5, "unit": "",
-                   "offset": 0, "precision": 1, "native": {"min": 0, "max": MAX_VOLUME, "step": 0.5},
+        # The number the receiver shows: its absolute scale, or dB when its
+        # own display is set to relative (the volume_scale Item says which).
+        "volume": {"item": f"{ident}_main_volume", **VOLUME,
                    "displayMode": {"item": f"{ident}_volume_scale" if diagnostics(device) else None,
-                       "modes": {"absolute": {"unit": "", "offset": 0},
-                                 "relative": {"unit": "dB", "offset": DB_OFFSET, "minimum": "---.- dB"}}}},
+                       "modes": {"absolute": {},
+                                 "relative": {"unit": "dB", "offset": DB_OFFSET, "precision": 1,
+                                              "minimum": "---.- dB"}}}},
         "input": {"item": f"{ident}_main_input", "options": [list(pair) for pair in inputs(device)]},
     }
     from . import heos

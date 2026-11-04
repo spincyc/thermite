@@ -121,7 +121,7 @@ class Commands(Requests, TestCase):
 
     def test_invalid_commands_are_not_logged(self):
         with self.assertNoLogs("oh_identity.trail", "INFO"):
-            self.assertEqual(self.command("volume", 70.5).status_code, 400)
+            self.assertEqual(self.command("volume", 98.5).status_code, 400)
             self.assertEqual(self.command("no_such_action", "x").status_code, 404)
 
     def test_refusals_name_the_lock_kind_and_room(self):

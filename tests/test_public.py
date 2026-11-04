@@ -46,12 +46,17 @@ class Portable(unittest.TestCase):
             command(["validate", *args])
             data = oh_inventory.load(house)
             data["devices"][0]["name"] = "Renamed example display"
-            data["devices"][0]["volume_max"] = 73
             house.write_text(json.dumps(data))
             command(["generate", *args, "--root", str(root)])
             model = remote_model.literal((root / "conf/html/remote/house.js").read_text())
             self.assertEqual(model["devices"][data["devices"][0]["id"]]["label"], "Renamed example display")
-            self.assertEqual(model["devices"][data["devices"][0]["id"]]["control"]["volume"]["max"], 73)
+            # The TV's own volume scale; the house file can no longer cap it.
+            self.assertEqual(model["devices"][data["devices"][0]["id"]]["control"]["volume"],
+                             {"item": "example_tv_volume", "min": 0, "max": 100, "step": 1})
+            data["devices"][0]["volume_max"] = 73
+            house.write_text(json.dumps(data))
+            with self.assertRaisesRegex(AssertionError, "example_tv: unknown key 'volume_max'"):
+                command(["generate", *args, "--root", str(root)])
             self.assertEqual(set(model["devices"]), {d["id"] for d in data["devices"]})
 
     def test_docs_and_lint(self):

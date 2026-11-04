@@ -56,7 +56,8 @@ def _state(name, item):
     if kind == "Contact":
         return {"kind": "enum", "values": ["OPEN", "CLOSED"]}
     if kind == "Dimmer":
-        return {"kind": "number", "min": 0, "max": 100}
+        # Its declared scale, else openHAB's own Dimmer range; never rescaled.
+        return {"kind": "number", "min": description.get("min", 0), "max": description.get("max", 100)}
     if kind.startswith("Number"):
         return {"kind": "number", "min": description.get("min", -1e13), "max": description.get("max", 1e13)}
     if kind == "DateTime":
@@ -178,12 +179,11 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict
                         continue
                     spec = {"kind": "key", "values": allowed}
                 else:
-                    limit = descriptor["max"]
-                    native_volume = descriptor.get("native") or {}
-                    spec = {"kind": "number", "min": native_volume.get("min", 0), "max": limit,
-                            "step": native_volume.get("step", descriptor["step"])}
-                    states[item] = {"kind": "number", "min": native_volume.get("min", 0),
-                                    "max": native_volume.get("max", getattr(module, "MAX_VOLUME", 100))}
+                    # The device's own scale, as its integration declares it
+                    # (VOLUME): commands and readback alike, never capped or rescaled.
+                    spec = {"kind": "number", "min": descriptor["min"], "max": descriptor["max"],
+                            "step": descriptor["step"]}
+                    states[item] = {"kind": "number", "min": descriptor["min"], "max": descriptor["max"]}
                 spec.update(item=item, resources=["device:" + ident])
                 affected = item_rooms.get(item, set()) | consumers.get(ident, set())
                 if point == "key":

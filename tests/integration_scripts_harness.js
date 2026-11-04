@@ -165,14 +165,30 @@ function android(options = {}) {
     'org.openhab.core.OpenHAB': { getUserDataFolder: () => '/srv/openhab/userdata' },
     'java.lang.System': { getProperty: () => null },
   };
-  const loaded = run(androidSource, { DEVICES: [{ id: 'tv', thing: 'androidtv:googletv:tv', remote: 'android', max: null,
+  const loaded = run(androidSource, { DEVICES: [{ id: 'tv', thing: 'androidtv:googletv:tv', remote: 'android', volume: options.volume || null,
     keystore: 'androidtv/googletv.tv.keystore' }], PRESSES: { android: {} } },
-  { things: { 'androidtv:googletv:tv': tv }, items: { tv_pairing_status: 'NULL', tv_key: 'NULL', tv_pairing: 'NULL' }, java, clock });
+  { things: { 'androidtv:googletv:tv': tv }, items: { tv_pairing_status: 'NULL', tv_key: 'NULL', tv_pairing: 'NULL', ...options.items }, java, clock });
   const status = () => { const rows = loaded.posted.filter(([name]) => name === 'tv_pairing_status'); return rows.length ? rows[rows.length - 1][1] : null; };
   return { clock, files, moves, tv, logs: loaded.logs, status,
     poll: () => loaded.rules.androidtv_googletv_pairing_poll.execute({}),
-    pair: command => loaded.rules.androidtv_googletv_tv_command.execute({ itemName: 'tv_pairing', receivedCommand: command }) };
+    pair: command => loaded.rules.androidtv_googletv_tv_command.execute({ itemName: 'tv_pairing', receivedCommand: command }),
+    volume: command => loaded.rules.androidtv_googletv_tv_command.execute({ itemName: 'tv_android_volume', receivedCommand: command }) };
 }
+
+test('an Android TV volume is stepped anywhere on its own scale and never clamped', () => {
+  const presses = (r, from) => r.tv.handled.slice(from).map(([channel, code]) => channel + ' ' + code);
+  const r = android({ status: 'ONLINE', description: '', volume: { min: 0, max: 100, step: 1, unit: '%' }, items: { tv_android_volume: '98' } });
+  r.volume('100');
+  assert.deepEqual(presses(r, 0), ['androidtv:googletv:tv:keycode 24', 'androidtv:googletv:tv:keycode 24']);
+  for (const command of ['101', '150', '-1', '99.5', 'INCREASE']) {
+    const before = r.tv.handled.length;
+    r.volume(command);
+    assert.equal(r.tv.handled.length, before, command + ' reached the TV');
+  }
+  assert(r.logs.some(([level, message]) => level === 'warn' && message.includes("'101' is not a volume on its scale")));
+  r.clock.now += 10000; r.volume('0');
+  assert.equal(presses(r, 2).length, 98); assert(presses(r, 2).every(press => press === 'androidtv:googletv:tv:keycode 25'));
+});
 
 test('a missing-PIN report right after Thing start is checking until it lasts two minutes', () => {
   const r = android();

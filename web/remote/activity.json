@@ -30,9 +30,9 @@
       "kind": "volume",
       "states": true,
       "commands": true,
-      "commandMax": 40,
-      "offset": 0,
-      "unit": ""
+      "min": 0,
+      "max": 100,
+      "step": 1
     },
     "example_tv_mute": {
       "label": "Mute",
@@ -149,9 +149,9 @@
       "kind": "volume",
       "states": true,
       "commands": true,
-      "commandMax": 40,
-      "offset": 0,
-      "unit": ""
+      "min": 0,
+      "max": 100,
+      "step": 1
     },
     "example_display_mute": {
       "label": "Mute",

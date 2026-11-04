@@ -77,7 +77,7 @@ class Keys(unittest.TestCase):
         # A key nobody declares is refused, with a hint from the declared ones.
         self.assertIn("example_tv: unknown key 'sonos_ud'; did you mean sonos_udn?",
                       self.problems(lambda d: d["devices"][0].update(sonos_ud="x")))
-        with mock.patch.object(integrations.sonos, "DEVICE_KEYS", ("volume_max",)):
+        with mock.patch.object(integrations.sonos, "DEVICE_KEYS", ()):
             self.assertIn("example_tv: unknown key 'sonos_udn'",
                           " ".join(self.problems(lambda d: d["devices"][0].update(sonos_udn="x"))))
         with mock.patch.object(oh_control4, "HOUSE_KEYS", ()):

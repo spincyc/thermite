@@ -478,9 +478,10 @@ does, and check that:
    device shows, and runtime sent them no command while it started;
 3. power, every input, a volume, mute and every remote key reach the
    simulated device as that device&#x27;s own command, and are read back;
-4. a volume above the configured limit is held to it. A full-range Sonos
-   Dimmer reaches 100 and rejects 110 at REST without a device write;
-   an unknown key sends nothing;
+4. a volume reaches the device anywhere on its own scale (VOLUME), its
+   max included; one past that max never reaches it (a Dimmer whose scale
+   ends at 100 rejects it at REST with HTTP 400, a receiver&#x27;s 0-98 profile
+   drops 98.5); an unknown key sends nothing;
 5. each device&#x27;s Mute (Input on a projector), pressed as the page presses
    it, reaches its simulated device within REACH seconds and is read back on the
    page&#x27;s event stream within its integration&#x27;s READ_BACK plus SLACK; the

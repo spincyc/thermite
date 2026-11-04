@@ -420,7 +420,7 @@
     "tests/test_unified_install.py",
     "tests/test_upgrade.py",
     "tests/test_vendor_facts.py",
-    "tests/test_volume_limits.py",
+    "tests/test_volume_native.py",
     "tests/test_web_frame.py",
     "tests/test_yoke_metrics.py",
     "tests/test_zone_sync.py",

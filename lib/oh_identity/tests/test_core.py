@@ -44,11 +44,12 @@ class Policy:
 def adapter():
     contract = RuntimeContract({
         "den": {"source_item": "loc_den_source", "sources": ["player"], "actions": {
-            "volume": {"item": "amp_volume", "kind": "number", "min": 0, "max": 70, "step": .5},
+            # A receiver's own 0-98 scale in steps of 0.5: no cap below its max.
+            "volume": {"item": "amp_volume", "kind": "number", "min": 0, "max": 98, "step": .5},
             "shared_power": {"item": "player_power", "kind": "switch", "values": ["ON", "OFF"], "affected_rooms": ["den", "desk"]}}},
         "desk": {"source_item": "loc_desk_source", "sources": ["player"]}},
         states={"loc_den_source": {"kind": "enum", "values": ["player", "off"]},
-                "amp_volume": {"kind": "number", "max": 98},
+                "amp_volume": {"kind": "number", "min": 0, "max": 98},
                 "tv_pairing": {"kind": "enum"}, "unrelated_secret": {"kind": "enum"}},
         pairings={"tv_pairing": {"value": "sony_ip_control", "config": {"length": 4, "chars": "digits"}}})
     return RuntimeAdapter(contract, FakeRuntime(), Policy())
@@ -130,9 +131,9 @@ class Core(TestCase):
         self.assertNotIn("sentinel", response.content.decode())
         self.assertNotIn("sentinel", str(list(Audit.objects.values())))
 
-    def test_unknown_item_offgrid_cap_and_body_injection_fail_closed(self):
+    def test_unknown_item_offgrid_past_native_max_and_body_injection_fail_closed(self):
         self.signin("operator")
-        for action, value in [("/rest/items/private_pairing", "1234"), ("volume", 70.5), ("volume", 56.25), ("source", "elsewhere")]:
+        for action, value in [("/rest/items/private_pairing", "1234"), ("volume", 98.5), ("volume", 56.25), ("source", "elsewhere")]:
             self.assertGreaterEqual(self.request("post", "/api/v1/rooms/den/commands", {"action": action, "value": value}).status_code, 400)
         self.assertEqual(self.request("get", "/rest/items/tv_pairing/state").status_code, 404)
         self.assertEqual(self.request("get", "/rest/items/unrelated_secret/state").status_code, 404)

@@ -70,9 +70,13 @@ def manifest(house: House, conf: Conf) -> dict:
         if options:
             desc["options"] = options
         if kind == "volume":
+            # The device's own scale (its integration's VOLUME), else the
+            # Item's declared one, else openHAB's Dimmer range; never rescaled.
             volume = volumes.get((device or {}).get("id")) or {}
-            desc.update(commandMax=volume.get("max", state.get("max", 100)), offset=volume.get("offset", 0),
-                        unit=volume.get("unit", ""))
+            scale = volume if volume.get("item") == name else state
+            desc.update(min=scale.get("min", 0), max=scale.get("max", 100), step=scale.get("step", 1))
+            if volume.get("item") == name and volume.get("unit"):
+                desc["unit"] = volume["unit"]
         items[name] = desc
 
     for device in active:

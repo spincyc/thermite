@@ -719,9 +719,6 @@
       if (audio && !volume) caption += " · not connected";
       else if (volume && value === null) caption += state && state.volume === "UNDEF" ? " · not answering" : " · reading…";
       else if (volume) caption += " · " + Remote.volumeText(volume, value, state && state.volumeScale);
-      if (volume && volume.native && volume.max < volume.native.max) {
-        caption += " · limit " + Remote.volumeText(volume, volume.max, state && state.volumeScale);
-      }
       if (volume && isMuted) caption += " · muted";
       return {
         audio: audio,
@@ -730,11 +727,14 @@
         // Mute lit, unlit, or null while there is no mute to show.
         muted: control && control.mute && state ? isMuted : null,
         value: value,
+        // The device's own scale: its min, max and step, nothing rescaled.
         max: volume ? volume.max : 100,
-        min: volume && volume.native ? volume.native.min : 0,
+        min: volume ? volume.min : 0,
         step: volume ? Remote.volumeStep(volume) : 1,
         disabled: value === null,
-        fill: volume ? Math.min(100, ((value === null ? 0 : value) / volume.max) * 100) : 0,
+        // How far along that scale the slider's track is drawn, 0-100.
+        fill: volume && volume.max > volume.min
+          ? Math.min(100, Math.max(0, (((value === null ? volume.min : value) - volume.min) / (volume.max - volume.min)) * 100)) : 0,
         dragging: fader.dragging,
         caption: caption,
         label: "Volume" + (audio ? ", " + audio.short : ""),

@@ -47,11 +47,11 @@
       if (desc.kind === "switch") return value === "ON" || value === "OFF"
         ? { valueKey: value, text: value === "ON" ? "On" : "Off" } : null;
       if (desc.kind === "volume") {
+        // The device's own number on its own scale, for commands and states alike.
         const number = numeric(value);
-        const maximum = command ? desc.commandMax : 100;
-        if (!Number.isFinite(number) || !Number.isFinite(maximum) || number < 0 || number > maximum) return null;
-        const offset = Number.isFinite(desc.offset) ? desc.offset : 0;
-        return { valueKey: String(number), text: String(Math.round((number + offset) * 10) / 10) + (desc.unit === "dB" ? " dB" : "") };
+        if (!Number.isFinite(number) || !Number.isFinite(desc.min) || !Number.isFinite(desc.max)
+          || number < desc.min || number > desc.max) return null;
+        return { valueKey: String(number), text: String(number) + (desc.unit ? " " + clean(desc.unit, 8) : "") };
       }
       if (desc.kind === "enum") {
         const key = own(desc.options || {}, value) ? value : String(numeric(value));
@@ -140,8 +140,9 @@
         if (control[field]) items[control[field]] = { label: field, device: device.label,
           kind: field === "key" ? "key" : "switch", states: field !== "key", commands: true };
       }
-      if (control.volume) items[control.volume.item] = Object.assign({ label: "Volume", device: device.label,
-        kind: "volume", states: true, commands: true, commandMax: control.volume.max }, control.volume);
+      if (control.volume) items[control.volume.item] = { label: "Volume", device: device.label, kind: "volume",
+        states: true, commands: true, min: control.volume.min, max: control.volume.max, step: control.volume.step,
+        unit: control.volume.unit };
       if (control.input) items[control.input.item] = { label: "Input", device: device.label, kind: "enum",
         states: true, commands: true, options: Object.fromEntries(control.input.options) };
     });

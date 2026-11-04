@@ -31,7 +31,8 @@
  *   getDevice(device)     {device, power, volume, mute, input, level} for a device with a control:
  *                         each as openHAB last read it ("NULL" until read, "UNDEF" while the
  *                         device does not answer); level is the volume as a number, or null
- *   setVolume(room, value) sets the room's audio device to value, held to 0..control.volume.max;
+ *   setVolume(room, value) sets the room's audio device to value, on the device's own scale
+ *                         (control.volume min..max, a multiple of its step);
  *                         resolves like press()
  *   setInput(room, device, value)
  *                         chooses one of the device's control.input options; resolves like press()
@@ -57,7 +58,10 @@
  * RemoteBackend.showing(state) is the value the buttons follow: a choice
  * still switching, else what was read back. RemoteBackend.controlOf(house,
  * device) is the device's control, or null; volumeText(spec, value) shows a
- * volume as the device does (-28.0 dB).
+ * volume as the device does (52, or -28.0 dB on a receiver set to show dB).
+ * A control's volume is the device's own scale: {item, min, max, step,
+ * unit?, displayMode?}; nothing is rescaled, and the device's max is the
+ * only limit.
  *
  * create() picks OpenHabBackend when openHAB serves the page (conf/html/ is
  * /static/), and MockBackend otherwise (the page opened from disk or another
@@ -80,7 +84,7 @@
  *   press, setVolume, setInput
  *              POST /rest/items/<Item>, text/plain body: ON or OFF, a volume, an input value, or
  *              the button id for control.key; the device's integration turns it into the
- *              device's own command, and holds the volume to its maximum too
+ *              device's own command, and drops a volume off the device's own scale
  *   allOff     POST /rest/items/house_all_off, text/plain body ON; openHAB's all_off.js then
  *              sends every room's Source Off and every controlled power Item OFF
  */
@@ -292,30 +296,40 @@
     return Number.isFinite(value) ? value : null;
   }
 
+  // The device's own step: what one volume key press moves, and the slider's grain.
   function volumeStep(spec) {
-    const step = Number(spec && spec.native && spec.native.step);
+    const step = Number(spec && spec.step);
     return Number.isFinite(step) && step > 0 ? step : 1;
   }
 
+  // The nearest value on the device's own scale: within min..max, on a step.
   function held(spec, value) {
-    const min = spec.native && Number.isFinite(spec.native.min) ? spec.native.min : 0;
-    const max = Math.min(spec.max, spec.native && Number.isFinite(spec.native.max) ? spec.native.max : spec.max);
+    const min = Number.isFinite(spec.min) ? spec.min : 0;
+    const max = Number.isFinite(spec.max) ? spec.max : min;
     const step = volumeStep(spec);
-    return Math.min(max, Math.max(min, Math.round((Math.min(max, Math.max(min, value)) - min) / step) * step + min));
+    const steps = Math.round((Math.min(max, Math.max(min, value)) - min) / step);
+    return Math.min(max, Math.max(min, Number((min + steps * step).toFixed(decimals(step)))));
   }
 
-  // A volume as the device shows it: -28.0 dB on a receiver, 30 on a WiiM.
+  // How many decimals a step has: 0.5 has 1, 1 has 0.
+  function decimals(step) {
+    const text = String(step);
+    return text.indexOf(".") < 0 ? 0 : text.length - text.indexOf(".") - 1;
+  }
+
+  // A volume as the device shows it: 52 on a WiiM or a receiver's absolute
+  // scale, 69.5 between whole steps, -28.0 dB on a receiver set to show dB.
   function volumeText(spec, value, scale) {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) return "";
     const display = spec.displayMode;
     const mode = display && display.modes && Object.prototype.hasOwnProperty.call(display.modes, scale)
       ? display.modes[scale] : null;
     const format = mode || spec;
-    if (mode && Number(value) === (spec.native ? spec.native.min : 0) && mode.minimum) return mode.minimum;
-    const shown = Math.round((Number(value) + (format.offset || 0)) * 10) / 10;
-    const digits = Number.isInteger(spec.precision) ? spec.precision : format.unit === "dB" ? 1 : 0;
-    return (shown < 0 ? "\u2212" : "") + Math.abs(shown).toFixed(digits)
-      + (format.unit ? " " + format.unit : "") + (display && !mode ? " (native)" : "");
+    if (mode && Number(value) === spec.min && mode.minimum) return mode.minimum;
+    const shown = Number((Number(value) + (format.offset || 0)).toFixed(decimals(volumeStep(spec))));
+    const text = Number.isInteger(format.precision) ? Math.abs(shown).toFixed(format.precision) : String(Math.abs(shown));
+    return (shown < 0 ? "\u2212" : "") + text + (format.unit ? " " + format.unit : "")
+      + (display && !mode ? " (native)" : "");
   }
 
   // What a press sends to a device with a control: {field, item, command,
@@ -328,8 +342,8 @@
       if (!spec) return missing("volume");
       const from = aimed("volume") !== null ? aimed("volume") : level(state.volume);
       if (from === null) throw new Error("The volume of the " + target.label + " is not known yet");
-      const to = held(spec, from + (button === "volume_up" ? spec.step : -spec.step));
-      if (to === from) return { note: (to === spec.max ? "At its limit, " : "At its lowest, ") + volumeText(spec, to, state.volumeScale) };
+      const to = held(spec, from + (button === "volume_up" ? volumeStep(spec) : -volumeStep(spec)));
+      if (to === from) return { note: (to === spec.max ? "At its maximum, " : "At its minimum, ") + volumeText(spec, to, state.volumeScale) };
       return { field: "volume", item: spec.item, command: String(to), volume: to, note: volumeText(spec, to, state.volumeScale) };
     }
     if (button === "mute") {
@@ -601,7 +615,7 @@
       this.matrix[room.id] = route;
       this.items[room.id] = { value: this.answering ? route : UNDEF, pending: null };
     });
-    // Every device with a control starts on, unmuted, at 60% of its limit, on its first input.
+    // Every device with a control starts on, unmuted, 60% of the way up its own scale, on its first input.
     this.aims = {};
     this.problems = Object.assign({}, config.problems);
     this.devices = unread(house);
@@ -609,7 +623,7 @@
       const control = controlOf(house, id);
       const state = this.devices[id];
       if (control.power) state.power = "ON";
-      if (control.volume) state.volume = String(Math.round(control.volume.max * 0.6));
+      if (control.volume) state.volume = String(held(control.volume, control.volume.min + (control.volume.max - control.volume.min) * 0.6));
       if (control.volume && control.volume.displayMode) state.volumeScale = "absolute";
       if (control.mute) state.mute = "OFF";
       if (control.input) state.input = control.input.options[0][0];
