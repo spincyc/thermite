@@ -58,11 +58,11 @@ Pair a device with thermite, as its integration in the house file
 """
 
 EXAMPLES = (
-    ("thermite pair living_room_tv", "have that Sony TV show a PIN, then type it to pair it with production"),
-    ("thermite pair living_room_tv --sandbox", "the same with the sandbox"),
-    ("thermite pair living_room_tv 1234", "send the PIN the TV shows already"),
-    ("thermite pair bedroom_tv --sandbox", "ask an Android TV to show a pairing code"),
-    ("thermite pair bedroom_tv A1B2C3 --sandbox", "send the code it shows; wait for it to come ONLINE"),
+    ("thermite pair example_tv", "have that Sony TV show a PIN, then type it to pair it with production"),
+    ("thermite pair example_tv --sandbox", "the same with the sandbox"),
+    ("thermite pair example_tv 1234", "send the PIN the TV shows already"),
+    ("thermite pair DEVICE --sandbox", "ask an Android TV to show a pairing code"),
+    ("thermite pair DEVICE A1B2C3 --sandbox", "send the code it shows; wait for it to come ONLINE"),
     ("thermite pair --check", "whether every Sony TV is paired with production"),
 )
 

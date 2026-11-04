@@ -1,4 +1,4 @@
-"""Test conf/ on a test runtime on 127.0.0.1:13618, never production.
+"""Test conf/ on a local test runtime, never production.
 
     thermite test [--timeout SECONDS] [--house FILE]
                      boot, routing and controls, one after the other
@@ -12,13 +12,14 @@ import argparse
 import sys
 
 import oh_cli
+import oh_ports
 from oh_testing import boot, controls, routing
 
 #: In the order a bare `thermite test` runs them: they share one instance.
 ACTIONS = {"boot": boot, "routing": routing, "controls": controls}
 
 DESCRIPTION = """\
-Test conf/ on a test runtime, the pinned distribution on 127.0.0.1:13618,
+Test conf/ on a test runtime, the pinned distribution on 127.0.0.1:{boot_http},
 never production: `boot` boots conf/ and reports how it loads (thermite
 deploy installs only a conf/ that passed it); `routing` and `controls`
 generate a conf from the house file that drives simulated matrices and
@@ -29,7 +30,7 @@ Without an action it runs all three, in that order, since they share the
 test runtime, reports each, and exits with the worst status. Then
 --timeout applies to each, and --house to routing and controls (boot tests
 conf/ itself). An action's own switches go after it: thermite help test boot.
-"""
+""".format_map(oh_ports.DEFAULTS)
 
 EXAMPLES = (
     ("thermite test", "boot, routing and controls, one after the other"),

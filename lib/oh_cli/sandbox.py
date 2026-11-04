@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import oh_deploy as deploy
+import oh_ports
 import oh_render as render
 import oh_sandbox as lib
 import oh_cli
@@ -17,18 +18,17 @@ Run a local runtime sandbox from the distribution zip and a Temurin JRE, both
 pinned in versions.json and cached under build/sandbox/. No root, container
 runtime or system Java is needed.
 
-The sandbox binds HTTP to 127.0.0.1:13615 and HTTPS to 127.0.0.1:13616
+The sandbox binds HTTP to 127.0.0.1:{sandbox_http} and HTTPS to 127.0.0.1:{sandbox_https}
 (OPENHAB_HTTP_ADDRESS/OPENHAB_HTTP_PORT/OPENHAB_HTTPS_PORT, honoured by
 runtime/bin/setenv), so the UI is not reachable from the LAN (but see
 --live below). The Karaf
-console listens on 127.0.0.1:13617. Bindings still open UPnP/mDNS sockets on
+console listens on 127.0.0.1:{sandbox_karaf}. Bindings still open UPnP/mDNS sockets on
 the LAN.
 
 It runs on var/sandbox/conf, a copy of conf/ in which every HTTP binding
-channel is READONLY, the receivers' Items are display-only and the
-projector's rule sends nothing (oh_render.read_only): it reads the matrices
-and the devices under control but cannot command them, and every other
-read-write channel is guarded in conf/ itself.
+channel is READONLY, every Item linked to a channel that could command a
+device is display-only and every rule's SEND is off (oh_render.read_only):
+it reads the matrices and the devices under control but cannot command them.
 `reload` refreshes the copy after `thermite generate`; the running sandbox
 picks the change up.
 
@@ -36,7 +36,7 @@ picks the change up.
 is unchanged, so its Source selectors switch the real matrices and its
 remote drives the devices under control (the Apple TVs through thermite
 apple-tv serve; every other control stays guarded in conf/), and HTTP and HTTPS
-listen on every interface, so phones on the LAN reach it on port 13615 of
+listen on every interface, so phones on the LAN reach it on port {sandbox_http} of
 this host. Anyone on the LAN can then do what the runtime's implicit 'user' role
 allows, choosing sources and driving those devices included; administration
 still needs the admin login. `reload` keeps the mode the sandbox was started in;
@@ -49,14 +49,14 @@ make sure none runs before starting one.
 State lives in var/sandbox/: conf/, userdata/ (the runtime's userdata, initialised
 from the distribution template when empty), openhab.pid, console.log,
 api-token and admin-password.
-"""
+""".format_map(oh_ports.DEFAULTS)
 
 NOTES = """\
 REST authentication:
   runtime 5 lets anonymous clients use 'user' endpoints (implicit user role)
   but needs an administrator for others, such as /rest/addons. After the REST
   API answers, `start` logs into the local Karaf console (runtime/bin/client
-  as the distribution's console user openhab/habopen, 127.0.0.1:13617 only)
+  as the distribution's console user openhab/habopen, 127.0.0.1:{sandbox_karaf} only)
   and runs:
       openhab:users add admin <random password> administrator
       openhab:users addApiToken admin automation sandbox
@@ -64,7 +64,7 @@ REST authentication:
   var/sandbox/admin-password, both mode 0600 and gitignored. A token that
   still works is reused on the next start. Send it as
       curl -H "Authorization: Bearer $(cat var/sandbox/api-token)" \\
-           http://127.0.0.1:13615/rest/addons
+           http://127.0.0.1:{sandbox_http}/rest/addons
   and log into the UI as 'admin' with the stored password. --fresh discards
   both together with userdata.
 
@@ -91,7 +91,7 @@ pairing:
   An Android TV pairs with the sandbox through thermite pair DEVICE
   --sandbox; its pairing is kept in userdata/androidtv/, so a --fresh start
   pairs again.
-"""
+""".format_map(oh_ports.DEFAULTS)
 
 EXAMPLES = (
     ("thermite sandbox fetch", "the pinned JRE and distribution, once"),
@@ -266,7 +266,7 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_fetch)
 
     p = oh_cli.action(sub, "start", "start the sandbox in the background and wait for REST", examples=(
-        ("thermite sandbox start", "read-only, on 127.0.0.1:13615"),
+        ("thermite sandbox start", f"read-only, on 127.0.0.1:{oh_ports.DEFAULTS['sandbox_http']}"),
         ("thermite sandbox start --fresh", "on an empty userdata: a first boot"),
         ("thermite sandbox start --live", "a test instance that drives the house, reachable from the LAN"),
     ))

@@ -85,7 +85,7 @@ keys:
 EXAMPLES = (
     ("thermite remote", "thermite landing page on this host; Remotes choices really switch rooms"),
     ("thermite remote --mock", "the page's mock backend, which sends nothing"),
-    ("thermite remote --sandbox --room living_room", "the sandbox, starting in the living room"),
+    ("thermite remote --sandbox --room example_west", "the sandbox, starting in Example West"),
     ("thermite remote --pair", "start on the Pairing screen"),
     ("thermite remote --url http://thermite.example:13601 --light", "thermite on another host, light"),
     ("thermite remote --mock --theme contrast", "in the high-contrast theme"),
