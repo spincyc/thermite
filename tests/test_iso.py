@@ -165,7 +165,7 @@ class InstallerISO(unittest.TestCase):
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_offline_bootstrap_installed_launcher_and_private_site_outside_checkout(self):
+    def test_offline_bootstrap_installed_command_and_private_site_outside_checkout(self):
         media = self.root / "media"; media.mkdir()
         public = oh_package.public_files()
         wheel, release = oh_package.wheel(public, media)
@@ -202,7 +202,9 @@ class InstallerISO(unittest.TestCase):
         self.assertIn("expected a regular file", completed.stderr)
         site = self.root / "private-site"
         self.assertTrue((site / "thermite-site.json").is_file())
-        result = subprocess.run([str(site / "bin/thermite"), "--help"], cwd=outside, env=environment,
+        self.assertFalse((site / "bin").exists())
+        self.assertFalse((site / "Makefile").exists())
+        result = subprocess.run([str(entry), "--config", str(site), "--help"], cwd=outside, env=environment,
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((installed / "instance").exists())

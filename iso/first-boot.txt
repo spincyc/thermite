@@ -12,13 +12,12 @@ Edit instance/devices.yaml and instance/host.yaml for your installation.
 The generated example is fictional; remove it before controlling hardware.
 Then run:
 
-  thermite generate
-  thermite validate
+  thermite check --config "$HOME/thermite-site"
   git init --initial-branch=main
   git add .
   git commit -m 'Initialize private Thermite site'
-  thermite install --dry-run
-  thermite install
+  thermite install --config "$HOME/thermite-site" --dry-run
+  thermite install --config "$HOME/thermite-site"
 
 Install asks before root commands and for the native runtime API token.
 The Arch ISO includes Git. On the optional Ubuntu image, first install Git
