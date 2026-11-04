@@ -20,6 +20,14 @@ turned on in. A room without an `hdmi_output` offers only sources cabled
 to it, and one whose id is not a room's names its room (`room`), as the
 example beside the Office's desk screen does.
 
+A room's Volume and Mute on the remote drive its `audio` device when it
+names one: a soundbar or streaming amplifier in a room it covers
+(covered_rooms(): its own, its display's and, under a Building, every room
+nested in those), or its own receiver or display. Without `audio` they drive
+its receiver, unless that is on a zone of its own (a receiver's volume is its
+main zone's), else its display: the first of those with a volume thermite
+drives, or nothing.
+
 Rooms may take different zones of one receiver (`zone`). A source cabled to
 the receiver is on one of its inputs, which each zone can select, so any of
 those rooms may offer it by listing it under its receiver's `sources` on that
@@ -109,7 +117,7 @@ STAGE_KEYS = {"device", "zone", "input", "input_by_source", "sources", "sync_wit
 #: Off. Not `on` and `off`: YAML reads those as true and false.
 ACTIONS = ("on_actions", "off_actions")
 ROOM_KEYS = {"room", "label", "hdmi_output", "hdmi_audio_output", "hdmi_switch", "usb", "usb_only", "usb_unused", "sources", "sleep_sources", "edid",
-             *STAGES, *ACTIONS}
+             "audio", *STAGES, *ACTIONS}
 
 
 def item_name(room: str) -> str:
@@ -123,6 +131,26 @@ def problem_item_name(room: str) -> str:
 def home(data: dict, room: str) -> str:
     """The inventory room a routed room is in: its `room`, else its id."""
     return data["routing"]["rooms"][room].get("room", room)
+
+
+def covered_rooms(data: dict, room: str) -> set:
+    """The inventory rooms a routed room covers: its own (`home`), its
+    display's and, when its own is a Building, every room nested in those
+    (rooms.<id>.in), however deep. This is inventory containment, not an
+    inference from names: the site contract lets the routed room command
+    their devices, and the remote lists them as the room's."""
+    rooms = data.get("rooms") or {}
+    devices = {d.get("id"): d for d in data.get("devices") or [] if isinstance(d, dict)}
+    entry = data["routing"]["rooms"][room]
+    covered = {home(data, room)}
+    display = entry.get("display") if isinstance(entry.get("display"), dict) else {}
+    if display.get("device") in devices:
+        covered.add(devices[display["device"]].get("room"))
+    if (rooms.get(home(data, room)) or {}).get("tag") == "Building":
+        while additions := {ident for ident, spec in rooms.items()
+                            if isinstance(spec, dict) and spec.get("in") in covered} - covered:
+            covered |= additions
+    return covered
 
 
 def room_label(data: dict, room: str) -> str:
@@ -412,6 +440,8 @@ def validate(data: object) -> list[str]:
                                 f"{routing.get('hdmi_matrix')}")
         if "label" in entry and (not isinstance(entry["label"], str) or not entry["label"].strip()):
             problems.append(f"{where}.label: must be a name")
+        if "audio" in entry:
+            problems += _audio_problems(where, data, room, devices)
         for key in sorted(set(entry) - ROOM_KEYS):
             problems.append(f"{where}: unknown key '{key}'")
     problems += _wiring_problems(rooms_section)
@@ -435,6 +465,30 @@ def validate(data: object) -> list[str]:
                 problems.append(f"routing.sources.{source}.idle: standby requires complete observable consumer coverage; "
                                 + ", ".join(coverage.get("unsupported", [])))
     return problems
+
+
+def _audio_problems(where: str, data: dict, room: str, devices: dict) -> list[str]:
+    """Problems with a room's `audio`: the device its Volume and Mute drive,
+    which must offer a volume thermite controls and be in a room the routed
+    room covers, or be its own receiver or display. A receiver's zone is not
+    the zone its volume moves (the main zone's), so it cannot be one."""
+    from .. import remote_model  # it imports this module
+
+    entry = data["routing"]["rooms"][room]
+    ident = entry["audio"]
+    device = devices.get(ident) if isinstance(ident, str) else None
+    if device is None:
+        return [f"{where}.audio: {ident!r} is not a device id" + inventory.hint(ident, devices)]
+    if "volume" not in (remote_model.provider(device)[1] or {}):
+        return [f"{where}.audio: {ident} offers no volume thermite controls (an integration under controls.control "
+                "that drives one)"]
+    stages = {spec.get("device"): spec for key in STAGES if isinstance(spec := entry.get(key), dict)}
+    if ident in stages and stages[ident].get("zone") is not None:
+        return [f"{where}.audio: {ident} is this room's receiver on zone {stages[ident]['zone']}, and its volume is "
+                "the main zone's"]
+    if ident not in stages and device.get("room") not in covered_rooms(data, room):
+        return [f"{where}.audio: {ident} is in {device.get('room')}, not in a room {room} covers"]
+    return []
 
 
 def _switch_inputs(room: dict) -> dict:

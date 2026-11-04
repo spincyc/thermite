@@ -5,7 +5,11 @@ Home is served at `/`; Remotes at `/remotes/`.
 
 Guests can view remotes and control unlocked rooms without signing in, whether
 authentication is enabled or disabled. A room that is Off selects its Off
-bubble and shows no remote until a device bubble is tapped for its buttons. In
+bubble and shows no remote until a device bubble is tapped for its buttons.
+Volume and Mute drive the room's `audio` device when the house file names
+one (`routing.rooms.<id>.audio`, such as the streaming amplifier beside a
+passive desk monitor); otherwise its receiver, unless that is on a zone of its
+own, else its display. In
 a locked room the bubble for what it shows, Off included, carries a padlock and
 every other bubble is greyed out; tapping the padlocked bubble says why it is
 locked and, for a schedule, until when. The room lists, on Home and in Remotes'

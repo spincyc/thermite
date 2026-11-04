@@ -134,18 +134,10 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict
     for room, entry in room_specs.items():
         actions = {}
         display = entry.get("display") or {}
-        physical = {routing.home(house.data, room)}
-        if display.get("device") in devices:
-            physical.add(devices[display["device"]].get("room"))
         # A building-level routed zone includes its explicitly nested rooms.
-        # This is inventory containment, not an inference from names or UI hints.
-        if house.rooms.get(routing.home(house.data, room), {}).get("tag") == "Building":
-            changed = True
-            while changed:
-                additions = {ident for ident, spec in house.rooms.items() if spec.get("in") in physical}
-                changed = not additions <= physical
-                physical.update(additions)
+        physical = routing.covered_rooms(house.data, room)
         targets = set(entry["sources"])
+        targets.add(entry.get("audio"))
         targets.update(spec.get("device") for stage in routing.STAGES if (spec := entry.get(stage)) and not spec.get("passive"))
         # Only endpoint audio devices join the explicit source/display/receiver roles.
         # An aliased TV screen does not gain the desk amplifier beside it.

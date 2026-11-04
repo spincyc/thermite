@@ -144,9 +144,13 @@ def build(house: House) -> dict:
         physical = entry.get("room", ident)
         sources = list(entry["sources"])
         display = (entry.get("display") or {}).get("device")
-        candidates = [(entry.get("receiver") or {}).get("device"), display]
+        # The room's own `audio`, else its receiver unless on a zone (whose
+        # volume is the main zone's), else its display (routing's docstring).
+        receiver = entry.get("receiver") or {}
+        candidates = [entry.get("audio"), None if receiver.get("zone") else receiver.get("device"), display]
         audio = next((d for d in candidates if d and "volume" in out["devices"][d].get("control", {})), None)
-        members = [d for d, spec in devices.items() if spec["room"] == physical]
+        covered = routing.covered_rooms(data, ident)
+        members = [d for d, spec in devices.items() if spec["room"] in covered]
         row = {"id": ident, "label": routing.room_label(data, ident), "sources": sources,
                "display": display, "audio": audio, "devices": members,
                "routeProblem": routing.problem_item_name(ident)}

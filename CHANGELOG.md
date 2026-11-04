@@ -148,6 +148,17 @@ rollback. The unified deployment workflow uses a separate committed private site
   apply as over HTTPS. `thermite status` lists its addresses and install
   checks them. See [Guest access over plain HTTP](docs/installation.md#guest-access-over-plain-http)
   for the trade-offs.
+- Remotes: `routing.rooms.<id>.audio` names the device a room's Volume and
+  Mute drive, such as the streaming amplifier beside a passive desk monitor or
+  a soundbar in a room nested under a Building. Validation requires one with a
+  volume thermite controls, in a room the room covers or its own receiver or
+  display. Since the remote model came from the house file alone, such rooms
+  showed "No audio", though the gateway accepted the device's volume. Without
+  `audio`, a receiver on a zone of its own no longer gives its room the main
+  zone's volume; its display's is used. A room under a Building lists, and its
+  gateway accepts, the devices in rooms nested in it. The Sonos volume and
+  access callback tests the private site dropped are restored, with fictional
+  devices.
 - Routing: rooms on different zones of one receiver can share a source cabled
   to the receiver itself: list it under each room's `receiver.sources` on its
   input. Each room switches and powers only its own zone, so either can turn
