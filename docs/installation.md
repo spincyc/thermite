@@ -269,6 +269,8 @@ that is Off shows no remote until a device is chosen for its buttons. In a
 locked room the bubble for what it shows, Off included, carries a padlock and
 the others are greyed out; selecting the padlocked bubble explains the lock.
 Room lists, on Home and Remotes, show a padlock after a locked room's source.
+If a room's lock cannot be read, its remote says the status is unknown and
+keeps working; the server still refuses commands to a locked room.
 The Security page enables accounts. Each account is either an administrator
 or an ordinary account, with no other roles or per-account room access.
 Guests control unlocked rooms; ordinary accounts add camera snapshots and live

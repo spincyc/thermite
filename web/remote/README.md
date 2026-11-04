@@ -10,7 +10,11 @@ a locked room the bubble for what it shows, Off included, carries a padlock and
 every other bubble is greyed out; tapping the padlocked bubble says why it is
 locked and, for a schedule, until when. The room lists, on Home and in Remotes'
 sidebar and room sheet, show a padlock after a locked room's source, and a
-screen reader hears how it is locked.
+screen reader hears how it is locked. Only a lock the remote has read greys
+its controls. If a room's lock cannot be read, the remote says “Room lock
+status unknown” and still sends commands: the server checks each one and
+refuses it in a locked room, and the remote then says why and reads the lock
+again.
 
 When authentication is enabled, administrators can use **Lock room**, under
 Info, to hold
