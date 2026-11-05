@@ -334,12 +334,19 @@ def apply(nodes, op):
                 nodes[name] = copy.deepcopy(op[1][name])
 
 
+def boundary(unit):
+    """Whether a unit is a native boundary: outside the target, and loading
+    the native table from the rule file when it starts."""
+    return unit.endswith("boundary.service")
+
+
 class FakeHost(engine.Host):
     """systemctl, nft, apparmor_parser and podman over a MemoryDisk: unit
     activity, the live table, the loaded policies and the image store.
     Enabling and disabling the target add and remove its link on the disk,
     as systemctl does, without syncing it. `failures` maps an argv to the
-    exit status it returns instead of acting."""
+    exit status it returns instead of acting. Like systemctl, it refuses to
+    enable, disable or restart a unit whose file is not installed."""
 
     def __init__(self, disk, *, system="/"):
         self.disk = disk
@@ -361,6 +368,9 @@ class FakeHost(engine.Host):
     def enabled(self):
         return self.target_link in self.disk.nodes
 
+    def installed(self, unit):
+        return self.path(f"{UNITS}/{unit}") in self.disk.nodes
+
     def _start(self, unit):
         if unit == engine.TARGET:
             if self.path(f"{UNITS}/{engine.TARGET}") not in self.disk.nodes:
@@ -380,11 +390,13 @@ class FakeHost(engine.Host):
         if command == "systemctl":
             verb, *names = rest
             if verb == "disable" and names == [engine.TARGET]:
+                if not self.installed(engine.TARGET):
+                    return 1  # Failed to disable unit: Unit file thermite.target does not exist.
                 if self.enabled():
                     self.disk.drop(self.target_link)
                 return 0
             if verb == "enable" and names == [engine.TARGET]:
-                if self.path(f"{UNITS}/{engine.TARGET}") not in self.disk.nodes:
+                if not self.installed(engine.TARGET):
                     return 1
                 if not self.enabled():
                     self.disk.put(self.target_link, "link", target=self.path(f"{UNITS}/{engine.TARGET}"))
@@ -392,17 +404,19 @@ class FakeHost(engine.Host):
             if verb == "stop":
                 if engine.TARGET in names or engine.SLICE in names:
                     # The boundary is outside the target and its slice.
-                    self.active = {unit for unit in self.active if not unit.startswith("thermite") or unit == BOUNDARY}
+                    self.active = {unit for unit in self.active if not unit.startswith("thermite") or boundary(unit)}
                 self.active -= set(names)
                 return 0
             if verb == "start":
                 return max((self._start(name) for name in names), default=0)
-            if verb == "restart" and names == [BOUNDARY]:
+            if verb == "restart" and len(names) == 1:
+                # A boundary unit loads the native table from the rule file.
                 rules = self.disk.nodes.get(self.path(RULES))
-                if rules is None or self.path(f"{UNITS}/{BOUNDARY}") not in self.disk.nodes:
-                    return 5
-                self.table = rules.data.decode()
-                self.active.add(BOUNDARY)
+                if not self.installed(names[0]) or boundary(names[0]) and rules is None:
+                    return 5  # Unit not found, or its ExecStart failed.
+                if boundary(names[0]):
+                    self.table = rules.data.decode()
+                self.active.add(names[0])
                 return 0
             if verb in ("daemon-reload", "reset-failed"):
                 return 0
@@ -429,6 +443,8 @@ class FakeHost(engine.Host):
     def capture(self, argv):
         argv = tuple(str(arg) for arg in argv)
         if argv == ("systemctl", "is-enabled", engine.TARGET):
+            if not self.installed(engine.TARGET):
+                return 4, "not-found\n"
             return (0, "enabled\n") if self.enabled() else (1, "disabled\n")
         if argv == ("systemctl", "is-active", engine.TARGET):
             return (0, "active\n") if engine.TARGET in self.active else (3, "inactive\n")
@@ -439,16 +455,18 @@ class FakeHost(engine.Host):
         raise AssertionError(f"FakeHost does not know {argv}")
 
     def members(self):
-        return {unit for unit in self.active if unit.startswith("thermite") and unit not in (engine.TARGET, BOUNDARY)}
+        return {unit for unit in self.active if unit.startswith("thermite") and unit != engine.TARGET
+                and not boundary(unit)}
 
     def boot(self):
         """Power on after a loss: only what is enabled on disk starts, and
         live state comes back from files."""
         self.active, self.table, self.loaded = set(), None, {}
         nodes = self.disk.nodes
-        if self.path(f"{WANTS}/{BOUNDARY}") in nodes and self.path(RULES) in nodes:
-            self.table = nodes[self.path(RULES)].data.decode()
-            self.active.add(BOUNDARY)
+        for unit in [name.rsplit("/", 1)[1] for name in nodes if name.startswith(self.path(f"{WANTS}/"))]:
+            if boundary(unit) and self.installed(unit) and self.path(RULES) in nodes:
+                self.table = nodes[self.path(RULES)].data.decode()
+                self.active.add(unit)
         flag = nodes.get(self.path(APPARMOR))
         if flag is not None and flag.data.strip() == b"Y":
             self.loaded = {name: node.data for name, node in nodes.items()

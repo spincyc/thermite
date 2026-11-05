@@ -388,6 +388,29 @@ class Verbs(unittest.TestCase):
                                             f"begun by another engine; run {ROOT}/.transaction/{ID}/engine.py"):
                     getattr(other, verb)(ID)
 
+    def test_guard_on_a_host_without_the_boot_target(self):
+        """systemctl refuses to disable a unit whose file does not exist: a
+        fresh install, and a reinstall after an uninstall, have none."""
+        gone = fakes.version("gone", shared=True)
+        gone.files, gone.links = {}, {}
+        uninstall = "20261101T000000Z-000001"
+        self.begin(gone, "uninstall", id=uninstall)
+        self.engine.guard(uninstall)
+        self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
+        self.engine.collect(uninstall)
+        self.engine.commit(uninstall)
+        self.assertNotIn(f"{fakes.UNITS}/{engine.TARGET}", self.disk.nodes)
+        self.assertEqual(self.host.run(("systemctl", "disable", engine.TARGET)), 1)
+        self.begin(kind="install")
+        start = len(self.host.log)
+        self.assertEqual(self.engine.guard(ID).phase, "guarded")
+        self.assertEqual(self.host.log[start:], [], "nothing to disable")
+        self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
+        self.engine.collect(ID)
+        fakes.switch(self.disk, self.host, self.new)
+        self.assertEqual(self.engine.commit(ID, fakes.release(self.new)).phase, "kept")
+        self.assertTrue(self.host.enabled())
+
     def test_collect_needs_thermite_stopped_and_unguarded_boot(self):
         self.begin()
         self.engine.guard(ID)

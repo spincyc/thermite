@@ -927,9 +927,18 @@ class Engine:
         code, state = self.host.capture(("systemctl", "show", "-P", "ActiveState", SLICE))
         return not target and code == 0 and state.strip() == "inactive"
 
+    def _target_installed(self) -> bool:
+        """Whether the boot target's unit file is installed: systemctl
+        refuses to disable (or enable) a unit it cannot find."""
+        if self.disk.lstat(self.system / "etc/systemd/system" / TARGET) is None:
+            return False
+        return self.host.capture(("systemctl", "is-enabled", TARGET))[1].strip() != "not-found"
+
     def guard(self, id) -> Journal:
         """Disable the boot target, so that a power loss from here until the
-        commit boots no Thermite service, and never a mixed set."""
+        commit boots no Thermite service, and never a mixed set. A host
+        without the target (a fresh install, or one after an uninstall) has
+        nothing to boot, so there is nothing to disable."""
         self.check_root()
         with self.disk.lock(self.root):
             journal = self._open(id)
@@ -937,8 +946,9 @@ class Engine:
                 return journal
             if journal.phase != "planned":
                 raise EngineError(f"transaction {id} is {journal.phase}, not planned")
-            self._systemctl("disable", TARGET)
-            self._sync_units()
+            if self._target_installed():
+                self._systemctl("disable", TARGET)
+                self._sync_units()
             self._advance(journal, "guarded")
             return journal
 
