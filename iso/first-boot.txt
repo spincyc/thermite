@@ -16,9 +16,9 @@ Create your private site:
   thermite init "$HOME/thermite-site"
   cd "$HOME/thermite-site"
 
-Edit instance/devices.yaml and instance/host.yaml for your equipment, time
-zone and state directory. The generated inventory is fictional; replace it
-before commissioning real equipment. Then validate and commit the site:
+Edit instance/devices.yaml and instance/host.yaml for your equipment and
+time zone. The generated inventory is fictional; replace it before
+commissioning real equipment. Then validate and commit the site:
 
   thermite check --config "$HOME/thermite-site"
   git init --initial-branch=main

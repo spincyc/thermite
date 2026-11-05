@@ -7,6 +7,9 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The installer ISO's first-boot guide asks for your equipment and time zone
+  in `instance/host.yaml`, not a state directory, which the fixed
+  `/srv/thermite` layout removed.
 - Install and upgrade stop all of Thermite, `systemctl stop thermite.target
   thermite.slice`, before they change anything it runs on (its units,
   openHAB's native state, the native-port firewall or the deployment), check

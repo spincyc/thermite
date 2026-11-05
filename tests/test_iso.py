@@ -54,6 +54,8 @@ class InstallerISO(unittest.TestCase):
         self.assertIn("sudo apt-get install python3-venv git", guide)
         self.assertIn('thermite install --config "$HOME/thermite-site"', guide)
         self.assertNotIn("thermite access", guide)
+        # host.yaml has no state setting since the fixed /srv/thermite layout.
+        self.assertNotIn("state directory", guide)
         self.assertFalse(any("wipefs" in str(item) or "mkfs" in str(item) for item in commands))
 
     def test_boot_seed_patch_preserves_args_and_explicit_confirmation(self):
