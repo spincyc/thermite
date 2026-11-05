@@ -7,11 +7,12 @@ OUT<n> VS IN<m>` routes input m to output n: the line the matrix's own web
 page sends to switch. On connect it lists every output's input and other
 settings unasked. No binding speaks it, so a rule does:
 conf/automation/js/avpro_telnet_<device>.js, avpro_telnet.js beside this file with
-the device table filled in. Every 5 seconds it opens one short connection
-per matrix, waits for that listing to end, asks `GET OUT0 VS` and posts
-each output's input; a matrix that does not answer gets UNDEF. A command to
-an output's Item is sent as SET on a connection of its own, followed by the
-same read.
+the device table filled in. It keeps one connection open per matrix, as
+AVPro's own control drivers do: it waits for that listing to end, and every
+10 seconds asks `GET OUT0 VS` and posts each output's input. A command to
+an output's Item is sent as SET on that connection, followed by the same
+read. A matrix that does not answer, or closes the connection, gets UNDEF
+and is reconnected after 10, 20 and 40 seconds, then every minute.
 
 Items, per matrix:
 
@@ -19,9 +20,12 @@ Items, per matrix:
   with an input number.
 
 A room's HDMI switch in the routing (oh_features.routing) may be one of its
-outputs, as the example TV's is (ports(), switch_item()). The rule
-holds oh_conf.RULE_SENDS, so oh_render.read_only() makes it read the
-matrices and send them nothing.
+outputs, as the example TV's is (ports(), switch_item()). The matrix
+serves few telnet sessions, and Control4 may keep one, so nothing else
+connects to it: the rule holds oh_conf.RULE_SENDS, and the copy
+oh_render.read_only() makes for the sandbox and the boot check, which run
+beside the live runtime, connects to no matrix; the metrics probe no port
+(PROBED). `thermite sandbox start --live` holds a second session.
 """
 
 from __future__ import annotations
@@ -45,6 +49,8 @@ ADDONS = (Addon("automation", "jsscripting", "the HDMI matrix rule (avpro_telnet
 ASSETS: dict[str, str] = {}
 KINDS = {"hdmi_matrix"}
 PORT = 23
+#: A TCP probe of PORT would cost the matrix a session and a listing.
+PROBED = False
 INPUTS = OUTPUTS = 4
 READBACK_INPUTS = tuple(str(number) for number in range(1, INPUTS + 1))
 #: All that the rule ever sends, named as lib/oh_matrix_sim's stand-in

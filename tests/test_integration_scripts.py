@@ -1,4 +1,4 @@
-"""Exercise production HEOS, IR, CEC and Android TV scripts against stub openHAB and Java types."""
+"""Exercise production HEOS, IR, CEC, Android TV and AVPro scripts against stub openHAB and Java types."""
 import json
 from pathlib import Path
 import shutil
@@ -6,7 +6,8 @@ import subprocess
 import unittest
 
 AREA = Path(__file__).resolve().parents[1]
-SCRIPTS = ("heos.js", "globalcache_ir.js", "bk808_cec.js", "androidtv_googletv/androidtv_googletv.js")
+SCRIPTS = ("heos.js", "globalcache_ir.js", "bk808_cec.js", "androidtv_googletv/androidtv_googletv.js",
+           "avpro_telnet/avpro_telnet.js")
 
 
 @unittest.skipUnless(shutil.which("node"), "node is required for the production integration scripts")
@@ -16,4 +17,4 @@ class IntegrationScripts(unittest.TestCase):
                                  *(str(AREA / "lib/oh_integrations" / name) for name in SCRIPTS)],
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 5)
+        self.assertEqual(json.loads(result.stdout)["passed"], 9)

@@ -119,10 +119,11 @@ def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
     the boot check run on this. It fails closed: every HTTP binding channel
     is made READONLY; every Item with a link that is neither to a READONLY
     channel nor a guard is guarded (oh_conf.GUARD_NOTE), whatever its
-    binding; a rule has its SEND declaration turned into RULE_SILENT; and a
-    rule with none (but ITEM_ONLY_RULES), Things or Items in a format it
-    cannot read, or a guard without the add-on that runs it, is a
-    ValueError."""
+    binding; a rule has its SEND declaration turned into RULE_SILENT (and
+    avpro_telnet's then reads nothing either: its matrix serves few
+    sessions, and the live runtime holds one); and a rule with none (but
+    ITEM_ONLY_RULES), Things or Items in a format it cannot read, or a
+    guard without the add-on that runs it, is a ValueError."""
     out = dict(files)
     for path, text in files.items():
         if path.startswith(("things/", "items/")):

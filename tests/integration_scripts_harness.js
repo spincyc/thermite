@@ -1,9 +1,11 @@
 'use strict';
 // Runs production integration scripts against stub openHAB and Java types.
-// argv: heos.js globalcache_ir.js bk808_cec.js androidtv_googletv.js. No
-// device or network access: HTTP and sockets are fixtures.
+// argv: heos.js globalcache_ir.js bk808_cec.js androidtv_googletv.js
+// avpro_telnet.js. No device or network access: HTTP and sockets are
+// fixtures.
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
-const [heosSource, irSource, cecSource, androidSource] = process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
+const [heosSource, irSource, cecSource, androidSource, avproSource] =
+  process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
 
@@ -52,7 +54,7 @@ function thing(status, description = '', extra = {}) {
   return Object.assign(value, extra);
 }
 
-function run(source, table, { things, items, java = {}, clock }) {
+function run(source, table, { things, items, java = {}, clock, globals = {}, runtime = null }) {
   const rules = {}, logs = [];
   const openhab = openhabStub({ things, items, rules });
   const types = Object.assign({
@@ -60,10 +62,14 @@ function run(source, table, { things, items, java = {}, clock }) {
     'org.openhab.core.library.types.StringType': class { constructor(value) { this.value = value; } },
   }, java);
   const context = vm.createContext({
-    require: name => { assert.equal(name, 'openhab'); return openhab.module; },
+    require: name => {
+      if (runtime && name === '@runtime') return runtime;
+      assert.equal(name, 'openhab'); return openhab.module;
+    },
     Java: { type: name => types[name] || assert.fail('unexpected Java type ' + name) },
     console: { info: m => logs.push(['info', m]), warn: m => logs.push(['warn', m]), error: m => logs.push(['error', m]) },
     Date: { now: () => clock.now }, JSON, Map, Set, Object, String, Number, Boolean, Array, Error, Math, RegExp,
+    ...globals,
   });
   let text = source;
   for (const [mark, value] of Object.entries(table)) text = text.replace(`const ${mark} = null;`, `const ${mark} = ${JSON.stringify(value)};`);
@@ -214,6 +220,113 @@ test('a failed restore of the previous keystore stops retrying and shows failed 
   r.pair('CANCEL'); assert.equal(r.moves.length, 2); assert.equal(errors().length, 2); assert.equal(r.status(), 'failed');
   r.files.delete(previous); r.poll();
   assert(r.logs.some(([level, message]) => level === 'info' && message.includes('is gone'))); assert.equal(r.status(), 'paired');
+});
+
+// An AVPro matrix on telnet. On connect it lists its routes and audio
+// levels; it answers GET OUT0 VS with every route, SET with the new route,
+// and a SET it refuses (`error`) with CMD ERR. `refuse` makes it accept a
+// connection and close it at once, `mute` close one at its next request,
+// unanswered; close() closes one while idle. `format` shapes each answer.
+function avpro({ send = true } = {}) {
+  const clock = { now: 0 }, hooks = [];
+  const matrix = { refuse: false, mute: false, error: false, routes: [1, 1, 1, 1], opened: [], requests: [], links: [],
+    format: line => line, close() { for (const link of matrix.links) link.peerClosed = true; } };
+  const listing = () => [...matrix.routes.map((input, i) => `OUT${i + 1} VS IN${input}`),
+    ...matrix.routes.map((_, i) => `OUT${i + 1} EXAUD LEV100`)];
+  const thermiteIO = {
+    deadline: ms => clock.now + ms,
+    remaining: end => { if (end <= clock.now) throw Error('deadline'); return end - clock.now; },
+    open() {
+      matrix.opened.push(clock.now / 10000);
+      const link = { closed: false, peerClosed: matrix.refuse, lines: matrix.refuse ? [] : listing() };
+      matrix.links.push(link);
+      return link;
+    },
+    renew(link, end) { link.deadline = end; },
+    line(link) {
+      if (link.lines.length) return link.lines.shift();
+      if (link.peerClosed) { link.closed = true; return null; }
+      throw Error('quiet');
+    },
+    quietTimeout: () => true,
+    write(link, text) {
+      if (link.closed || link.peerClosed) throw Error('closed');
+      const request = text.replace(/\r\n$/, '');
+      matrix.requests.push(request);
+      if (matrix.mute) { link.peerClosed = true; return; }
+      const set = /^SET OUT(\d+) VS IN(\d+)$/.exec(request);
+      if (set && matrix.error) link.lines.push('CMD ERR');
+      else if (set) { matrix.routes[set[1] - 1] = Number(set[2]); link.lines.push(matrix.format(`SET OUT${set[1]} VS IN${set[2]}`)); }
+      else if (request === 'GET OUT0 VS') link.lines.push(...matrix.routes.map((input, i) => matrix.format(`OUT${i + 1} VS IN${input}`)));
+    },
+    close(link) { link.closed = true; },
+  };
+  const items = {};
+  const source = send ? avproSource : avproSource.replace('const SEND = true;', 'const SEND = false;');
+  const loaded = run(source.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: [{ id: 'matrix', host: '192.0.2.30', port: 23,
+    inputs: 4, outputs: 4 }] }, { items, clock, globals: { thermiteIO },
+    runtime: { lifecycleTracker: { addDisposeHook: hook => hooks.push(hook) } } });
+  const warnings = () => loaded.logs.filter(([level]) => level === 'warn').map(([, message]) => message);
+  return { ...loaded, clock, matrix, items, warnings, unload: () => hooks.forEach(hook => hook()),
+    poll: () => { loaded.rules.avpro_telnet_matrix_poll.execute(); clock.now += 10000; },
+    command: (output, input) => loaded.rules.avpro_telnet_matrix_command.execute({
+      itemName: `matrix_output${output}_input`, receivedCommand: String(input) }) };
+}
+
+test('an AVPro matrix is read every 10 s and switched on one kept connection, closed when the script unloads', () => {
+  const r = avpro();
+  r.poll(); r.poll(); r.poll();
+  assert.deepEqual(r.matrix.opened, [0]); assert.deepEqual(r.matrix.requests, Array(3).fill('GET OUT0 VS'));
+  assert.equal(r.items.matrix_output4_input, '1');
+  r.command(4, 2);
+  assert.deepEqual(r.matrix.opened, [0]); assert.deepEqual(r.matrix.requests.slice(3), ['SET OUT4 VS IN2', 'GET OUT0 VS']);
+  assert.equal(r.items.matrix_output4_input, '2');
+  // A line it sent unasked, since superseded, does not answer the next read.
+  r.matrix.links[0].lines.push('OUT4 VS IN3', 'OUT3 VS IN4'); r.matrix.routes[2] = 4;
+  r.poll();
+  assert.equal(r.items.matrix_output4_input, '2'); assert.equal(r.items.matrix_output3_input, '4');
+  assert.deepEqual(r.warnings(), []);
+  r.unload();
+  assert(r.matrix.links[0].closed);
+});
+
+test('a connection the AVPro closed while idle is replaced in the poll; a refusing one is tried after 10, 20, 40 s, then every minute', () => {
+  const r = avpro();
+  r.poll(); r.matrix.close(); r.poll();
+  assert.deepEqual(r.matrix.opened, [0, 1]); assert.deepEqual(r.warnings(), []); assert.equal(r.items.matrix_output4_input, '1');
+  r.matrix.refuse = true; r.matrix.close();
+  for (let poll = 2; poll < 22; poll++) r.poll();
+  assert.deepEqual(r.matrix.opened.slice(2), [2, 3, 5, 9, 15, 21]);
+  assert.equal(r.items.matrix_output4_input, 'UNDEF');
+  assert.deepEqual(r.warnings(), ['matrix: closed the connection; its Items are UNDEF until it answers']);
+  // A switch connects at once, and ends the backoff.
+  r.matrix.refuse = false; r.command(4, 2);
+  assert.deepEqual(r.matrix.opened.slice(8), [22]); assert.equal(r.items.matrix_output4_input, '2');
+  assert(r.logs.some(([level, message]) => level === 'info' && message === 'matrix: answering over telnet again'));
+  r.poll(); r.poll();
+  assert.deepEqual(r.matrix.opened.slice(8), [22]); assert.deepEqual(r.matrix.requests.slice(-2), ['GET OUT0 VS', 'GET OUT0 VS']);
+});
+
+test('AVPro answers may carry A00, repeat SET or zero-pad; CMD ERR and a matrix that stops answering are failures', () => {
+  const r = avpro();
+  r.matrix.format = line => 'A00 ' + line.replace(/(OUT|IN)(\d)/g, '$10$2');
+  r.command(4, 3);
+  assert.equal(r.items.matrix_output4_input, '3'); assert.deepEqual(r.warnings(), []);
+  r.matrix.error = true; r.command(4, 2);
+  assert.deepEqual(r.warnings(), ['matrix: answered SET OUT4 VS IN2 with CMD ERR', 'matrix: output 4 shows input 3 after SET OUT4 VS IN2']);
+  assert.equal(r.items.matrix_output4_input, '3');
+  r.matrix.mute = true; r.poll();
+  assert.equal(r.items.matrix_output4_input, 'UNDEF'); assert(r.matrix.links[0].closed);
+  assert.equal(r.warnings()[2], 'matrix: closed the connection; its Items are UNDEF until it answers');
+  r.matrix.mute = false; r.poll();
+  assert.deepEqual(r.matrix.opened, [0, 1]); assert.equal(r.items.matrix_output4_input, '3');
+});
+
+test('a read-only copy connects to no AVPro matrix and only logs what it would send', () => {
+  const r = avpro({ send: false });
+  r.poll(); r.poll(); r.command(4, 2);
+  assert.deepEqual(r.matrix.opened, []); assert.deepEqual(r.posted, []);
+  assert(r.logs.some(([level, message]) => level === 'info' && message === 'matrix: SEND is false, not sending SET OUT4 VS IN2'));
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

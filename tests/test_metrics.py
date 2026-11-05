@@ -256,6 +256,16 @@ class Alerting(unittest.TestCase):
             job = next(job for job in prometheus["scrape_configs"] if job["job_name"] == name)
             self.assertEqual(job["metric_relabel_configs"][0]["action"], "drop")
 
+    def test_an_avpro_matrix_is_pinged_not_probed(self):
+        """A TCP probe of its telnet port would cost it a session and a listing."""
+        inventory = copy.deepcopy(INVENTORY)
+        inventory["devices"].append({"id": "example_avpro", "room": "example_east", "kind": "hdmi_matrix",
+                                     "make": "AVPro Edge", "model": "AC-MX-44X", "ip": "192.0.2.30",
+                                     "controls": {"observe": ["network_ping"], "control": ["avpro_telnet"]}})
+        found, unknown = oh_metrics.probes(inventory)
+        self.assertNotIn("example_avpro", [probe.device for probe in found])
+        self.assertIn(("example_avpro", ("network_ping", "avpro_telnet")), unknown)
+
     def test_node_exporter_reads_the_textfiles(self):
         node = next(service for service in oh_metrics.services(HOST) if service.unit == oh_units.NODE_EXPORTER)
         self.assertIn(f"--collector.textfile.directory=/host{oh_deploy.state(HOST).textfile}", node.args)

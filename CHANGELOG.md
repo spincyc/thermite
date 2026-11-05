@@ -7,6 +7,15 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- An AVPro matrix gets one telnet connection, kept open as AVPro's own
+  control drivers keep theirs, instead of a new one every 5 s. Its routing
+  is read on it every 10 s and switches are sent on it. A matrix that stops
+  answering, or closes the connection, is UNDEF and reconnected after 10,
+  20 and 40 s, then every minute; a switch connects at once. Nothing else
+  connects to it: the sandbox and the boot check no longer read it beside
+  the runtime, and the metrics no longer probe its port. The matrix serves
+  few telnet sessions, and Control4 may keep one.
+
 - Volume is each audio device's own number on its own scale, from its minimum
   to the maximum the device itself allows, in its own steps and unit: 0-98 in
   0.5 steps on a Denon or Marantz receiver (or dB as its display is set),
