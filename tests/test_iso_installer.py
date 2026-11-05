@@ -432,6 +432,16 @@ class InstallerCore(unittest.TestCase):
         self.assertIn(["systemctl", "reload-or-restart", "sshd.service"], host.calls)
         self.assertEqual(self.facts(host)["authorized_key"]["fingerprint"], "SHA256:fixture")
 
+    def test_commands_never_read_the_front_ends_request_pipe(self):
+        # The core's stdin is the front end's requests: a child must not
+        # inherit it (iwctl's passphrase agent would wait on it).
+        stdin = "import os, sys; print(os.path.realpath('/proc/self/fd/0'), repr(sys.stdin.read()))"
+        completed = installer.Host().run([sys.executable, "-I", "-c", stdin], timeout=30)
+        self.assertEqual(completed.stdout.split(), ["/dev/null", "''"])
+        completed = installer.Host().run([sys.executable, "-I", "-c", "import sys; print(sys.stdin.read())"],
+                                         timeout=30, input="given\n")
+        self.assertEqual(completed.stdout, "given\n\n")
+
     def test_core_stays_stdlib_only(self):
         import ast
         tree = ast.parse((AREA / "iso/installer.py").read_text())

@@ -91,8 +91,11 @@ class Host:
         return self.root / name.lstrip("/")
 
     def run(self, argv, *, timeout: float = 120, input: str | None = None) -> subprocess.CompletedProcess:
+        """argv to its end, its output captured. Its stdin is input, else
+        /dev/null: never the front end's request pipe, which is the core's."""
         try:
-            return subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout, input=input)
+            return subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout,
+                                  **({"input": input} if input is not None else {"stdin": subprocess.DEVNULL}))
         except (OSError, subprocess.TimeoutExpired) as exc:
             return subprocess.CompletedProcess(list(argv), 127, "", str(exc))
 
