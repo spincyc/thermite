@@ -266,6 +266,16 @@ class Alerting(unittest.TestCase):
         self.assertNotIn("example_avpro", [probe.device for probe in found])
         self.assertIn(("example_avpro", ("network_ping", "avpro_telnet")), unknown)
 
+    def test_a_sony_projector_is_pinged_not_probed(self):
+        """A TCP probe of its ADCP port would cost it a session, reset with its greeting unread."""
+        inventory = copy.deepcopy(INVENTORY)
+        inventory["devices"].append({"id": "example_projector", "room": "example_east", "kind": "projector",
+                                     "make": "Sony", "model": "VPL-VW915ES", "ip": "192.0.2.31",
+                                     "controls": {"observe": ["network_ping", "sony_adcp"], "control": ["sony_adcp"]}})
+        found, unknown = oh_metrics.probes(inventory)
+        self.assertNotIn("example_projector", [probe.device for probe in found])
+        self.assertIn(("example_projector", ("network_ping", "sony_adcp")), unknown)
+
     def test_node_exporter_reads_the_textfiles(self):
         node = next(service for service in oh_metrics.services(HOST) if service.unit == oh_units.NODE_EXPORTER)
         self.assertIn(f"--collector.textfile.directory=/host{oh_deploy.state(HOST).textfile}", node.args)

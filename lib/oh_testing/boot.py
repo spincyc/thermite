@@ -24,7 +24,8 @@ CONF, on 127.0.0.1:13618 (HTTPS 13619, Karaf console 13620) so it can run
 beside the sandbox. It boots on var/boot-check/conf, a copy of CONF in which
 every HTTP binding channel is READONLY (oh_render.read_only), so it polls the
 real matrices but cannot switch them (it leaves the AVPro, which serves few
-telnet sessions, to the runtime). Wait for the add-ons in
+telnet sessions, and the Sony projector, which answers one ADCP request at a
+time, to the runtime). Wait for the add-ons in
 CONF/services/addons.cfg and for Things to settle (none waiting for a
 handler, and no status change for --settle seconds, or 2s once every Thing
 is ONLINE), then report the runtime version, requested vs installed add-ons,

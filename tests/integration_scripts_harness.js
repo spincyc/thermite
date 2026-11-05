@@ -1,10 +1,10 @@
 'use strict';
 // Runs production integration scripts against stub openHAB and Java types.
 // argv: heos.js globalcache_ir.js bk808_cec.js androidtv_googletv.js
-// avpro_telnet.js. No device or network access: HTTP and sockets are
-// fixtures.
+// avpro_telnet.js sony_adcp.js. No device or network access: HTTP and
+// sockets are fixtures.
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
-const [heosSource, irSource, cecSource, androidSource, avproSource] =
+const [heosSource, irSource, cecSource, androidSource, avproSource, adcpSource] =
   process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
@@ -327,6 +327,63 @@ test('a read-only copy connects to no AVPro matrix and only logs what it would s
   r.poll(); r.poll(); r.command(4, 2);
   assert.deepEqual(r.matrix.opened, []); assert.deepEqual(r.posted, []);
   assert(r.logs.some(([level, message]) => level === 'info' && message === 'matrix: SEND is false, not sending SET OUT4 VS IN2'));
+});
+
+// A Sony projector on ADCP. It greets each connection with NOKEY, then
+// answers one request at a time: power_status, input and, while it is on,
+// picture_mode with a quoted value, and a power, input or key line with ok.
+function adcp({ send = true } = {}) {
+  const clock = { now: 0 };
+  const projector = { power: 'on', input: 'hdmi1', mode: 'reference', opened: [], requests: [], links: [] };
+  function answer(request) {
+    const set = /^(power|input|key) "([^"]*)"$/.exec(request);
+    if (set && set[1] === 'power') projector.power = set[2] === 'on' ? 'on' : 'standby';
+    else if (set && set[1] === 'input') projector.input = set[2];
+    if (set) return 'ok';
+    if (request === 'power_status ?') return `"${projector.power}"`;
+    if (request === 'input ?') return `"${projector.input}"`;
+    if (request === 'picture_mode ?') return projector.power === 'on' ? `"${projector.mode}"` : 'err_inactive';
+    return 'err_cmd';
+  }
+  const thermiteIO = {
+    deadline: ms => clock.now + ms,
+    open() {
+      projector.opened.push(clock.now / 15000);
+      const link = { closed: false, lines: ['NOKEY'] };
+      projector.links.push(link);
+      return link;
+    },
+    line(link) {
+      if (link.lines.length) return link.lines.shift();
+      throw Error('quiet');
+    },
+    write(link, text) {
+      if (link.closed) throw Error('closed');
+      const request = text.replace(/\r\n$/, '');
+      projector.requests.push(request);
+      link.lines.push(answer(request));
+    },
+    close(link) { link.closed = true; },
+  };
+  const items = {};
+  const source = send ? adcpSource : adcpSource.replace('const SEND = true;', 'const SEND = false;');
+  const loaded = run(source.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: [{ id: 'projector', host: '192.0.2.31',
+    port: 53595, control: true }], KEYS: { menu: 'menu' }, INPUTS: ['hdmi1', 'hdmi2'] }, { items, clock, globals: { thermiteIO } });
+  return { ...loaded, clock, projector, items,
+    poll: () => { loaded.rules.sony_adcp_projector_poll.execute(); clock.now += 15000; },
+    command: (point, value) => loaded.rules.sony_adcp_projector_command.execute({
+      itemName: `projector_${point}`, receivedCommand: value }) };
+}
+
+test('a read-only copy connects to no Sony projector and only logs what it would send', () => {
+  const live = adcp();
+  live.poll();
+  assert.deepEqual(live.projector.opened, [0]); assert.equal(live.items.projector_power, 'ON');
+  const r = adcp({ send: false });
+  r.poll(); r.poll(); r.command('power', 'OFF'); r.command('key', 'menu');
+  assert.deepEqual(r.projector.opened, []); assert.deepEqual(r.posted, []);
+  assert.deepEqual(r.logs, [['info', 'projector: SEND is false, not sending power "off"'],
+    ['info', 'projector: SEND is false, not sending key "menu"']]);
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

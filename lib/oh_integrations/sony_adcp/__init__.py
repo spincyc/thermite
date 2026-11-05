@@ -23,8 +23,11 @@ Items, per device:
 - `<id>_key` (String, control only): a remote button id (KEYS) to press.
 
 Under observe only, every Item is display-only and the rule listens to none
-of them. The rule holds oh_conf.RULE_SENDS, so oh_render.read_only() makes it
-read the projectors and send them nothing.
+of them. The projector answers one request at a time, across controllers
+too, and Control4 may drive it as well, so nothing else connects to it: the
+rule holds oh_conf.RULE_SENDS, and the copy oh_render.read_only() makes for
+the sandbox and the boot check, which run beside the live runtime, connects
+to no projector; the metrics probe no port (PROBED).
 """
 
 from __future__ import annotations
@@ -49,6 +52,8 @@ ADDONS = (Addon("automation", "jsscripting", "the projector rule (sony_adcp.js)"
 ASSETS: dict[str, str] = {}
 KINDS = {"projector"}
 PORT = 53595
+#: A TCP probe of PORT would cost the projector a session, reset with its greeting unread.
+PROBED = False
 #: Seconds from a command to its read-back: none, the command's own
 #: connection reads the projector again.
 READ_BACK = 0

@@ -29,7 +29,8 @@ It runs on var/sandbox/conf, a copy of conf/ in which every HTTP binding
 channel is READONLY, every Item linked to a channel that could command a
 device is display-only and every rule's SEND is off (oh_render.read_only):
 it reads the matrices and the devices under control but cannot command them,
-and leaves the AVPro, which serves few telnet sessions, to the runtime.
+and leaves the AVPro, which serves few telnet sessions, and the Sony
+projector, which answers one ADCP request at a time, to the runtime.
 `reload` refreshes the copy after `thermite generate`; the running sandbox
 picks the change up.
 
