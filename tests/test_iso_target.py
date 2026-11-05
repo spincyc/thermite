@@ -30,7 +30,7 @@ first_boot = load("iso_first_boot", "iso/first-boot.py")
 ANSWERS = {"hostname": "thermite", "owner": "casey", "timezone": "Europe/Berlin", "locale": "en_US.UTF-8",
            "keymap": "us", "disk": "/dev/sda", "filesystem": "btrfs", "kernel": "linux-lts", "wifi_ssid": "Example Home"}
 HIDDEN = "wifi-secret-1"  # the Wi-Fi passphrase, kept off every record
-WIFI = {"ssid": "Example Home", "passphrase": HIDDEN}
+WIFI = {"ssid": "Example Home", "security": "psk", "hidden": False, "passphrase": HIDDEN}
 KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f casey@example\n"
 ACCOUNTS = "etc/passwd"
 NSSWITCH = ("passwd: files systemd\n"
@@ -156,6 +156,32 @@ class Plugin(Scratch):
             self.assertFalse((other / "opt").exists())
         with self.assertRaisesRegex(ValueError, "mounted target"):
             plugin.finalize(self.target, self.media, self.state)
+
+    def test_wifi_profile_is_read_back_as_written_and_follows_the_joined_security(self):
+        def parsed(text):
+            sections, section = {}, None
+            for line in text.splitlines():
+                if line.startswith("["): section = sections.setdefault(line.strip("[]"), {})
+                elif "=" in line: key, _, value = line.partition("="); section[key] = value
+            return sections
+        profile = parsed(plugin.wifi_profile(WIFI))
+        self.assertEqual((profile["wifi"]["ssid"], profile["connection"]["id"]), ("Example Home", "Example Home"))
+        self.assertEqual(profile["wifi-security"], {"key-mgmt": "wpa-psk", "psk": HIDDEN})
+        self.assertNotIn("hidden", profile["wifi"])
+        # GKeyFile trims the ends and reads backslashes as escapes.
+        tricky = {"ssid": " Café;1 ", "security": "sae", "hidden": True, "passphrase": " " + HIDDEN + "\\ "}
+        profile = parsed(plugin.wifi_profile(tricky))
+        self.assertEqual(profile["wifi-security"]["key-mgmt"], "sae")
+        self.assertEqual(profile["wifi-security"]["psk"], "\\s" + HIDDEN + "\\\\\\s")
+        self.assertEqual(profile["connection"]["id"], "\\sCafé;1\\s")
+        self.assertEqual(profile["wifi"]["ssid"], "".join(f"{byte};" for byte in " Café;1 ".encode()))
+        self.assertEqual(profile["wifi"]["hidden"], "true")
+        # A digits-only name could read as bytes; it is written as bytes.
+        self.assertEqual(plugin.keyfile_ssid("123"), "49;50;51;")
+        key = parsed(plugin.wifi_profile({"ssid": "Example Home", "security": "psk", "hidden": False, "key": "ab" * 32}))
+        self.assertEqual(key["wifi-security"]["psk"], "ab" * 32)
+        open_network = parsed(plugin.wifi_profile({"ssid": "Example Guest", "security": "open", "hidden": False}))
+        self.assertNotIn("wifi-security", open_network)
 
     def test_hosts_line_and_terminal_fallback(self):
         self.assertEqual(plugin.hosts_line("hosts: files dns"), "hosts: mdns_minimal [NOTFOUND=return] files dns")

@@ -50,7 +50,21 @@ IWCTL = ("\x1b[0m                               Available networks\x1b[0m\n"
          "      Network name                      Security            Signal\n"
          "--------------------------------------------------------------------------------\n"
          "  \x1b[1;90m> \x1b[0m Example Home                      psk                 ****\n"
-         "      Example Guest                     open                **  \n")
+         "      Example Guest                     open                **  \n"
+         "      Example  Loft                     psk                 *\x1b[1;90m***\x1b[0m\n"
+         "      Example Office                    8021x               ***\n")
+#: iwctl station wlan0 show, joined; the security is what iwd negotiated.
+STATION = ("                                 Station: wlan0\n"
+           "--------------------------------------------------------------------------------\n"
+           "  Settable  Property              Value\n"
+           "--------------------------------------------------------------------------------\n"
+           "            Scanning              no\n"
+           "            State                 connected\n"
+           "            Connected network     {ssid}\n"
+           "            IPv4 address          192.0.2.30\n"
+           "            Security              {security}\n")
+SECURITY = {"Example Home": "WPA2-Personal", "Example Guest": "Open", "Example  Loft": "WPA3-Personal",
+            "Example Attic": "WPA2-Personal"}
 ARCHINSTALL_LINES = ["Starting device modifications in ", "5...4...3...2...1", "Starting installation...",
                      "Adding bootloader Systemd-boot to /dev/sda1", "Creating user owner",
                      "Setting password for owner", "Activating systemd-timesyncd for time synchronization",
@@ -103,9 +117,11 @@ def installer_media(media: Path) -> None:
 
 
 class FakeHost(installer.Host):
-    def __init__(self, root: Path, *, taken=(), fail=(), archinstall="4.5.1", code=0, lines=ARCHINSTALL_LINES):
+    def __init__(self, root: Path, *, taken=(), fail=(), archinstall="4.5.1", code=0, lines=ARCHINSTALL_LINES,
+                 joined=None):
         super().__init__(root)
         self.taken, self.fail, self.version, self.code, self.lines = set(taken), set(fail), archinstall, code, lines
+        self.joined = joined  # the Wi-Fi network wlan0 is joined to
         self.calls, self.spawned, self.called = [], [], []
 
     def run(self, argv, *, timeout=120, input=None):
@@ -113,10 +129,21 @@ class FakeHost(installer.Host):
         def done(code=0, out="", err=""): return subprocess.CompletedProcess(argv, code, out, err)
         if argv[0] in self.fail: return done(1, "", f"{argv[0]} failed")
         if argv[0] == "lsblk": return done(0, json.dumps(LSBLK))
+        if argv[:2] == ["ip", "-json"] and "route" in argv:
+            return done(0, json.dumps([{"dst": "default", "gateway": "192.0.2.1", "dev": "enp1s0", "metric": 100},
+                                       *([{"dst": "default", "dev": "wlan0", "metric": 600}] if self.joined else [])]))
         if argv[0] == "ip": return done(0, json.dumps(IP))
         if argv[0] == "localectl": return done(0, "de\nus\nuk\n")
         if argv[0] == "resolvectl": return done(0 if argv[-1] in self.taken else 1)
-        if argv[0] == "iwctl": return done(0, IWCTL if argv[-1] == "get-networks" else "")
+        if argv[0] == "iwctl":
+            action = argv[3] if len(argv) > 3 else ""
+            if action == "get-networks": return done(0, IWCTL)
+            if action == "show":
+                return done(0, STATION.format(ssid=self.joined, security=SECURITY[self.joined]) if self.joined
+                            else STATION.split("            State")[0] + "            State                 disconnected\n")
+            if action in ("connect", "connect-hidden"): self.joined = argv[4]
+            if action == "disconnect": self.joined = None
+            return done()
         if argv[0] == sys.executable: return done(0, self.version + "\n")
         return done()
 
@@ -282,6 +309,7 @@ class InstallerCore(unittest.TestCase):
 
     def test_install_preflights_runs_archinstall_unattended_and_keeps_no_secret(self):
         host, events = self.host(), []
+        installer.wifi_connect(host, "wlan0", "Example Home", SECRETS[2])
         result = installer.install({**ANSWERS, "wifi_ssid": "Example Home", "wifi_passphrase": SECRETS[2]},
                                    host, media=self.media, state=self.state, target=self.target, emit=events.append)
         self.assertEqual(result["hostname"], "thermite")
@@ -292,7 +320,8 @@ class InstallerCore(unittest.TestCase):
         self.assertEqual(argv[-1], str(self.media / "arch-plugin.py"))
         self.assertEqual(spawned["creds_mode"], 0o600)
         self.assertEqual(spawned["creds"]["users"][0]["enc_password"], host.hash_password("owner-secret-1"))
-        self.assertEqual(spawned["wifi"], {"ssid": "Example Home", "passphrase": SECRETS[2]})
+        self.assertEqual(spawned["wifi"], {"ssid": "Example Home", "security": "psk", "hidden": False,
+                                           "passphrase": SECRETS[2]})
         # The preflight checks every package before the disk is touched.
         preflight = next(call for call in host.calls if call[:2] == ["pacman", "-Sp"])
         self.assertTrue(set(spawned["config"]["packages"]) <= set(preflight))
@@ -306,7 +335,8 @@ class InstallerCore(unittest.TestCase):
         self.assertIn("Creating user owner", [event.get("text") for event in events])
         log = (self.state / "installer.log").read_text()
         self.assertIn("Installation completed without any errors.", log)
-        self.assertEqual(json.loads((self.state / "answers.json").read_text())["wifi_ssid"], "Example Home")
+        recorded = json.loads((self.state / "answers.json").read_text())
+        self.assertEqual((recorded["wifi_ssid"], recorded["wifi_security"]), ("Example Home", "psk"))
         self.assertFalse((self.state / "creds.json").exists() or (self.state / "wifi.json").exists())
         everything = log + json.dumps(events) + "".join(path.read_text() for path in self.state.iterdir()
                                                          if path.is_file() and path.name != "session.lock")
@@ -334,15 +364,96 @@ class InstallerCore(unittest.TestCase):
         host = self.host()
         networks = installer.wifi_scan(host, "wlan0")
         self.assertEqual(networks, [{"ssid": "Example Home", "security": "psk", "signal": 4, "connected": True},
-                                    {"ssid": "Example Guest", "security": "open", "signal": 2, "connected": False}])
+                                    {"ssid": "Example Guest", "security": "open", "signal": 2, "connected": False},
+                                    {"ssid": "Example  Loft", "security": "psk", "signal": 4, "connected": False},
+                                    {"ssid": "Example Office", "security": "8021x", "signal": 3, "connected": False}])
         with self.assertRaises(installer.Invalid): installer.wifi_scan(host, "enp1s0")
-        with self.assertRaises(installer.Invalid): installer.wifi_connect(host, "wlan0", "Example Home", "short")
-        installer.wifi_connect(host, "wlan0", "Example Home", "wifi-secret-1")
-        stored = self.live / "var/lib/iwd" / ("=" + "Example Home".encode().hex() + ".psk")
+        for ssid, passphrase, security in (("Example Home", "short", "psk"), ("Example Home", "é" * 8, "psk"),
+                                           ("Example Home", "g" * 64, "psk"), ("Example Guest", "secret-1", "open"),
+                                           ("Example Office", "secret-1", "8021x"), ("", "secret-1", "psk"),
+                                           ("x" * 33, "secret-1", "psk")):
+            with self.assertRaises(installer.Invalid, msg=(ssid, security)):
+                installer.wifi_connect(host, "wlan0", ssid, passphrase, security=security)
+        self.assertEqual(host.joined, None)
+        # iwd's own file name: a name with spaces as it is, others in hex.
+        store = self.live / "var/lib/iwd"
+        found = installer.wifi_connect(host, "wlan0", "Example Home", "wifi-secret-1")
+        stored = store / "Example Home.psk"
         self.assertEqual(stored.read_text(), "[Security]\nPassphrase=wifi-secret-1\n")
         self.assertEqual(stored.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(found["wifi"], {"device": "wlan0", "ssid": "Example Home", "security": "psk", "hidden": False,
+                                         "carried": True})
         self.assertEqual(installer.iwd_name("Example_Home-2"), "Example_Home-2")
-        self.assertFalse(any("wifi-secret-1" in " ".join(call) for call in host.calls))
+        self.assertEqual(installer.iwd_name("FRITZ!Box 7590"), "=" + "FRITZ!Box 7590".encode().hex())
+        self.assertEqual(installer.iwd_name("Café"), "=436166c3a9")
+        # A passphrase as ell reads it back, ends and backslashes included.
+        tricky = " wifi\\secret 1 "
+        installer.wifi_connect(host, "wlan0", "Example  Loft", tricky)
+        self.assertEqual((store / "Example  Loft.psk").read_text(),
+                         "[Security]\nPassphrase=\\swifi\\\\secret 1\\s\n")
+        self.assertEqual(installer.iwd_profile(host, "Example  Loft")["passphrase"], tricky)
+        # Joining the joined network again leaves it first.
+        calls = len(host.calls)
+        installer.wifi_connect(host, "wlan0", "Example  Loft", tricky)
+        self.assertEqual([call[3] for call in host.calls[calls:] if call[0] == "iwctl" and call[3] != "show"],
+                         ["disconnect", "connect"])
+        # The key itself, an open network (no file), a hidden network.
+        installer.wifi_connect(host, "wlan0", "Example Home", "AB" * 32)
+        self.assertEqual(stored.read_text(), "[Security]\nPreSharedKey=" + "ab" * 32 + "\n")
+        before = sorted(store.iterdir())
+        found = installer.wifi_connect(host, "wlan0", "Example Guest", "", security="open")
+        self.assertEqual(sorted(store.iterdir()), before)
+        self.assertEqual((found["wifi"]["security"], found["wifi"]["carried"]), ("open", True))
+        found = installer.wifi_connect(host, "wlan0", "Example Attic", "wifi-secret-1", security="open", hidden=True)
+        self.assertIn(["iwctl", "station", "wlan0", "connect-hidden", "Example Attic"], host.calls)
+        self.assertEqual((store / "Example Attic.psk").read_text(),
+                         "[Security]\nPassphrase=wifi-secret-1\n[Settings]\nHidden=true\n")
+        self.assertEqual(found["wifi"]["hidden"], True)
+        self.assertFalse(any("wifi-secret-1" in " ".join(call) or tricky in " ".join(call) for call in host.calls))
+
+    def test_the_installed_host_joins_the_wifi_this_system_joined_however_it_was_joined(self):
+        options, store = installer.choices(self.host()), self.live / "var/lib/iwd"
+        # Joined with iwctl from a shell: iwd's saved passphrase is carried.
+        store.mkdir(parents=True, exist_ok=True)
+        (store / "Example Home.psk").write_text("[Security]\nPassphrase=wifi-secret-1\nPreSharedKey=" + "0" * 64 + "\n")
+        host = self.host(joined="Example Home")
+        found = self.facts(host)
+        self.assertEqual(found["network"]["route"], "enp1s0")
+        self.assertEqual(found["network"]["wifi"]["ssid"], "Example Home")
+        self.assertEqual(installer.check({**ANSWERS, "wifi_ssid": "Example Home"}, found, options)[1], {})
+        # The review must show it: no Wi-Fi, or another network, is refused.
+        self.assertIn("joined to Example Home", installer.check(ANSWERS, found, options)[1]["wifi_ssid"])
+        self.assertIn("not Example Guest",
+                      installer.check({**ANSWERS, "wifi_ssid": "Example Guest"}, found, options)[1]["wifi_ssid"])
+        installer.install({**ANSWERS, "wifi_ssid": "Example Home"}, host, media=self.media, state=self.state,
+                          target=self.target)
+        self.assertEqual(host.spawned[-1]["wifi"], {"ssid": "Example Home", "security": "psk", "hidden": False,
+                                                    "passphrase": SECRETS[2]})
+        # An open network needs nothing, and installs.
+        host = self.host(joined="Example Guest")
+        installer.install({**ANSWERS, "wifi_ssid": "Example Guest"}, host, media=self.media, state=self.state,
+                          target=self.target)
+        self.assertEqual(host.spawned[-1]["wifi"], {"ssid": "Example Guest", "security": "open", "hidden": False})
+        # WPA3 needs the passphrase; iwd's key alone cannot join it.
+        (store / "Example  Loft.psk").write_text("[Security]\nPreSharedKey=" + "0" * 64 + "\n")
+        host = self.host(joined="Example  Loft")
+        found = self.facts(host)
+        self.assertEqual((found["network"]["wifi"]["security"], found["network"]["wifi"]["carried"]), ("sae", False))
+        self.assertIn("join it on the Network step",
+                      installer.check({**ANSWERS, "wifi_ssid": "Example  Loft"}, found, options)[1]["wifi_ssid"])
+        with self.assertRaisesRegex(installer.Invalid, "not saved"):
+            installer.install({**ANSWERS, "wifi_ssid": "Example  Loft"}, host, media=self.media, state=self.state,
+                              target=self.target)
+        installer.wifi_connect(host, "wlan0", "Example  Loft", "wifi-secret-1")
+        installer.install({**ANSWERS, "wifi_ssid": "Example  Loft"}, host, media=self.media, state=self.state,
+                          target=self.target)
+        self.assertEqual(host.spawned[-1]["wifi"], {"ssid": "Example  Loft", "security": "sae", "hidden": False,
+                                                    "passphrase": SECRETS[2]})
+        self.assertEqual(json.loads((self.state / "answers.json").read_text())["wifi_security"], "sae")
+        # Joined with nothing saved (iwd's agent): refused until joined here.
+        (store / "Example Home.psk").unlink()
+        found = self.facts(self.host(joined="Example Home"))
+        self.assertFalse(found["network"]["wifi"]["carried"])
 
     def test_serve_answers_each_request_and_one_session_installs(self):
         first = installer.Session(self.host(), self.media, self.state, self.target)

@@ -213,6 +213,67 @@ async function fails() {
   proof.failureReturnsToReview = controller.step().id === "review" && ui.answers.confirm === "";
 }
 
+// Wi-Fi beyond a listed WPA network: a hidden one, an open one installed
+// end to end, and a review that checks the network the system is joined to.
+async function wifi() {
+  const live = core("wifi");
+  const controller = Controller.create({ core: live, look, label: "tty1", still: true, now: () => 0 });
+  const k = keys(controller), ui = controller.ui, step = () => controller.step().id;
+  const reach = async (id) => {                     // System's two Enters lead to the review
+    ui.step = Controller.STEPS.findIndex((entry) => entry.id === "system");
+    ui.focus = 0;
+    await k.enter(); await k.enter();
+    await until(() => step() === id && !ui.busy, id);
+    await settle();
+  };
+  await controller.start();
+  await k.enter();
+  k.press("r", { full: "C-r", ctrl: true });
+  await until(() => ui.wifi.networks.length && !ui.busy, "a Wi-Fi scan");
+  proof.spacedName = ui.wifi.networks.some((entry) => entry.ssid === "Example  Loft");
+  ["down", "down", "down", "down"].forEach((name) => k.press(name));
+  let text = look_at(controller, "wifi hidden");
+  await k.enter();
+  proof.hiddenAsksName = ui.focus === 1 && text.includes("A hidden network");
+  k.type("Example Attic");
+  look_at(controller, "wifi hidden name");
+  await k.enter();
+  k.type(SECRETS[2]);
+  await k.enter();
+  proof.hiddenJoined = ui.answers.wifi_ssid === "Example Attic" && ui.message.tone === "ok" && !ui.wifi.wifi_passphrase;
+  ui.focus = 0;
+  ["up", "up", "up"].forEach((name) => k.press(name));
+  await k.enter();                                   // open: joined at once
+  text = look_at(controller, "wifi open");
+  proof.openJoined = ui.answers.wifi_ssid === "Example Guest" && ui.message.tone === "ok"
+    && text.includes("joins Example Guest (open)");
+  await k.enter();                                   // Continue
+  proof.openContinues = step() === "hostname";
+  Object.assign(ui.answers, { hostname: "kitchen", owner: "casey", owner_password: SECRETS[0],
+    owner_password_confirm: SECRETS[0], root_password: SECRETS[1], root_password_confirm: SECRETS[1] });
+  await reach("review");
+  text = look_at(controller, "review wifi");
+  proof.reviewShowsWifi = text.includes("Example Guest (open)");
+  // The live system joins another network behind the review's back.
+  await live.request("wifi-connect", { device: "wlan0", ssid: "Example Home", passphrase: SECRETS[2] });
+  k.type("sda");
+  await k.enter();
+  text = look_at(controller, "review wifi changed");
+  proof.reviewChecksWifi = step() === "review" && /joined to Example Home, not Example Guest/.test(ui.errors.wifi_ssid || "")
+    && text.replace(/[│\s]+/g, " ").includes("Esc goes back to Network");
+  while (step() !== "network") k.press("escape");
+  await until(() => ui.network.wifi.ssid === "Example Home", "the network as it is now");
+  ui.focus = 0; ui.wifi.cursor = 1;
+  await k.enter();
+  proof.wifiChangeable = ui.answers.wifi_ssid === "Example Guest";
+  await reach("review");
+  ui.answers.confirm = "";
+  k.type("sda");
+  k.press("enter");
+  await until(() => step() === "done", "the installation over open Wi-Fi");
+  proof.openInstalled = Boolean(ui.result);
+}
+
 async function locked() {
   const first = Controller.create({ core: core("shared"), look, label: "tty1", still: true });
   const second = Controller.create({ core: core("shared"), look, label: "ssh", still: true });
@@ -227,6 +288,7 @@ async function locked() {
 (async () => {
   await installs();
   await fails();
+  await wifi();
   await locked();
   assert.ok(proof.frames > 100);
   fs.writeSync(1, JSON.stringify(proof));  // whole before exit, even to a pipe

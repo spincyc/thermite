@@ -53,7 +53,8 @@ DEFAULTS = {"hostname": "thermite", "timezone": "UTC", "locale": "en_US.UTF-8", 
             "filesystem": "btrfs", "kernel": "linux-lts"}
 #: Answers kept on the target, in the receipt and in the log. Everything else
 #: (the passwords, the Wi-Fi passphrase, the typed confirmation) is secret.
-PUBLIC = ("hostname", "owner", "timezone", "locale", "keymap", "disk", "filesystem", "kernel", "wifi_ssid")
+PUBLIC = ("hostname", "owner", "timezone", "locale", "keymap", "disk", "filesystem", "kernel", "wifi_ssid",
+          "wifi_security")
 HOSTNAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 USERNAME = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
 #: Names the target's packages or Thermite itself use; thermite is the
@@ -167,8 +168,27 @@ def interfaces(host: Host) -> list[dict]:
     return result
 
 
+def default_route(host: Host) -> str | None:
+    """The interface of the preferred default route: the one this live
+    system reaches the Internet through."""
+    completed = host.run(["ip", "-json", "route", "show", "default"], timeout=10)
+    try:
+        routes = json.loads(completed.stdout or "[]") if not completed.returncode else []
+    except ValueError:
+        return None
+    routes = [route for route in routes if isinstance(route, dict) and route.get("dev")]
+    return min(routes, key=lambda route: route.get("metric", 0))["dev"] if routes else None
+
+
 def network(host: Host) -> dict:
-    return {"interfaces": interfaces(host), "online": host.online()}
+    """The interfaces, whether the Internet answers, the route's interface,
+    and the Wi-Fi network this live system is joined to ({ssid, security,
+    hidden, carried}, never its passphrase), which the installed host joins too."""
+    found = interfaces(host)
+    wifi = None
+    for entry in found:
+        if entry["wireless"] and (wifi := wifi_joined(host, entry["name"])): break
+    return {"interfaces": found, "online": host.online(), "route": default_route(host), "wifi": wifi}
 
 
 def facts(host: Host, media: Path = MEDIA) -> dict:
@@ -236,8 +256,17 @@ def hostname_probe(host: Host, name: str) -> dict:
 
 
 # ---- Wi-Fi (iwd on the live system) -----------------------------------------
+#
+# The installed host joins the network this live system is joined to, with
+# the credentials iwd saved for it: joined here, or with iwctl from a shell.
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+#: A WPA passphrase: 8 to 63 printable ASCII characters (IEEE 802.11i).
+PASSPHRASE = re.compile(r"[\x20-\x7e]{8,63}")
+#: Or the key itself, 64 hex digits; WPA2 only, as WPA3 (SAE) needs the passphrase.
+HEX_KEY = re.compile(r"[0-9A-Fa-f]{64}")
+#: iwd's network types the installer joins: open, and WPA/WPA2/WPA3 Personal.
+JOINABLE = ("open", "psk")
 
 
 def wifi_scan(host: Host, device: str) -> list[dict]:
@@ -248,10 +277,15 @@ def wifi_scan(host: Host, device: str) -> list[dict]:
     if completed.returncode: raise RuntimeError(completed.stderr.strip() or "Wi-Fi scan failed")
     networks = []
     for line in ANSI.sub("", completed.stdout).splitlines():
-        connected = line.lstrip().startswith(">")
-        columns = re.split(r"\s{2,}", line.strip().lstrip(">").strip())
-        if len(columns) != 3 or columns[0] == "Network name" or not set(columns[2]) <= {"*"}: continue
-        networks.append({"ssid": columns[0], "security": columns[1], "signal": len(columns[2]), "connected": connected})
+        # From the right: the signal's stars and the security are single
+        # words, so a name keeps its own runs of spaces.
+        columns = line.rstrip().rsplit(None, 2)
+        if len(columns) != 3 or not columns[2] or set(columns[2]) - {"*"}: continue
+        name = columns[0].strip()
+        connected = name.startswith(">")
+        name = name.removeprefix(">").strip() if connected else name
+        if not name or name == "Network name": continue
+        networks.append({"ssid": name, "security": columns[1], "signal": len(columns[2]), "connected": connected})
     return networks
 
 
@@ -262,22 +296,118 @@ def wireless(host: Host, device: str) -> str:
 
 
 def iwd_name(ssid: str) -> str:
-    """iwd's file name for a network: plain names as-is, others hex-encoded."""
-    return ssid if re.fullmatch(r"[A-Za-z0-9_-]+", ssid) else "=" + ssid.encode().hex()
+    """iwd's file name for a network (iwd.network(5)): an SSID of ASCII
+    letters, digits, spaces, - and _ as it is, any other hex-encoded after =."""
+    return ssid if re.fullmatch(r"[A-Za-z0-9 _-]+", ssid) else "=" + ssid.encode().hex()
 
 
-def wifi_connect(host: Host, device: str, ssid: str, passphrase: str) -> dict:
-    """Join a WPA network. The passphrase goes in iwd's own root-only file,
-    never on a command line another process could read."""
-    device = wireless(host, device)
-    if not ssid or len(ssid.encode()) > 32 or any(ch in ssid for ch in "\0\n"): raise Invalid("invalid network name")
-    if passphrase and not 8 <= len(passphrase) <= 63: raise Invalid("a WPA passphrase has 8 to 63 characters")
-    if passphrase:
-        store = host.path("/var/lib/iwd"); store.mkdir(mode=0o700, exist_ok=True)
-        path = store / (iwd_name(ssid) + ".psk")
-        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(handle, "w") as out: out.write(f"[Security]\nPassphrase={passphrase}\n")
-    completed = host.run(["iwctl", "station", device, "connect", ssid], timeout=40)
+def escape(value: str) -> str:
+    """A value as iwd's settings files (ell) read it back: backslashes
+    escaped, and the spaces at either end, which it would trim."""
+    return re.sub(r"^ +| +$", lambda spaces: "\\s" * len(spaces[0]), value.replace("\\", "\\\\"))
+
+
+def unescape(value: str) -> str:
+    escapes = {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
+    return re.sub(r"\\(.)", lambda found: escapes.get(found[1], found[0]), value)
+
+
+def check_ssid(ssid) -> str:
+    if not isinstance(ssid, str) or not ssid or len(ssid.encode()) > 32 or any(ord(ch) < 32 for ch in ssid):
+        raise Invalid("invalid network name")
+    return ssid
+
+
+def check_key(security: str, passphrase: str) -> str:
+    """The credential an iwd network type takes: none for an open network,
+    a WPA passphrase or a 64-hex-digit key for the rest."""
+    if security == "open":
+        if passphrase: raise Invalid("an open network takes no passphrase")
+        return ""
+    if not (PASSPHRASE.fullmatch(passphrase) or HEX_KEY.fullmatch(passphrase)):
+        raise Invalid("a WPA passphrase is 8 to 63 printable ASCII characters, or the key as 64 hex digits")
+    return passphrase
+
+
+def iwd_profile(host: Host, ssid: str) -> dict | None:
+    """What iwd saved for a network on this live system: {kind, passphrase,
+    key, hidden}; None when it saved nothing."""
+    store = host.path("/var/lib/iwd")
+    for kind in ("psk", "open"):
+        path = store / f"{iwd_name(ssid)}.{kind}"
+        if not path.is_file(): continue
+        values = {}
+        for line in path.read_text(errors="replace").splitlines():
+            key, equals, value = line.partition("=")
+            if equals and not line.startswith(("#", "[")): values[key.strip()] = unescape(value.lstrip(" \t"))
+        return {"kind": kind, "passphrase": values.get("Passphrase", ""), "key": values.get("PreSharedKey", ""),
+                "hidden": values.get("Hidden", "").lower() == "true"}
+    return None
+
+
+def station(host: Host, device: str) -> dict:
+    """iwctl station DEVICE show, as {property: value}."""
+    completed = host.run(["iwctl", "station", device, "show"], timeout=15)
+    shown = {}
+    for line in ANSI.sub("", completed.stdout if not completed.returncode else "").splitlines():
+        found = re.match(r"\s*(?:\*\s+)?(State|Connected network|Security)\s{2,}(.*?)\s*$", line)
+        if found: shown[found[1]] = found[2]
+    return shown
+
+
+def wifi_joined(host: Host, device: str) -> dict | None:
+    """The network DEVICE is joined to: {device, ssid, security, hidden,
+    carried}. security is what the installed host's NetworkManager uses:
+    open, psk (WPA/WPA2) or sae (iwd negotiated WPA3); carried says whether
+    iwd saved what the installed host needs to join it."""
+    shown = station(host, device)
+    ssid = shown.get("Connected network")
+    if shown.get("State") != "connected" or not ssid: return None
+    profile = iwd_profile(host, ssid) or {"kind": "", "passphrase": "", "key": "", "hidden": False}
+    negotiated = shown.get("Security", "")
+    security = ("sae" if "WPA3" in negotiated else "open" if negotiated.lower().startswith("open")
+                else "psk" if "Personal" in negotiated or "PSK" in negotiated
+                else None if negotiated or profile["kind"] not in JOINABLE else profile["kind"])
+    carried = (security == "open" or security == "sae" and bool(profile["passphrase"])
+               or security == "psk" and bool(profile["passphrase"] or profile["key"]))
+    return {"device": device, "ssid": ssid, "security": security, "hidden": profile["hidden"], "carried": carried}
+
+
+def wifi_credentials(host: Host, wifi: dict) -> dict:
+    """What the installed host joins with (wifi.json): the joined network
+    and the passphrase or key iwd saved for it."""
+    if not wifi.get("carried"):
+        raise Invalid(f"{wifi['ssid']}'s passphrase is not saved on this live system; join it on the Network step")
+    profile = iwd_profile(host, wifi["ssid"]) or {"passphrase": "", "key": ""}
+    credentials = {"ssid": wifi["ssid"], "security": wifi["security"], "hidden": wifi["hidden"]}
+    if wifi["security"] == "sae": credentials["passphrase"] = profile["passphrase"]
+    elif wifi["security"] == "psk":
+        credentials.update({"passphrase": profile["passphrase"]} if profile["passphrase"] else {"key": profile["key"]})
+    return credentials
+
+
+def wifi_connect(host: Host, device: str, ssid, passphrase: str, *, security: str = "psk",
+                 hidden: bool = False) -> dict:
+    """Join a network. Its passphrase goes in iwd's own root-only file,
+    never on a command line another process could read. A network this
+    device is already joined to is left and joined again, so the
+    passphrase given is the one that works."""
+    device, ssid = wireless(host, device), check_ssid(ssid)
+    if hidden: security = "psk" if passphrase else "open"
+    if security not in JOINABLE:
+        raise Invalid(f"the installer joins open and WPA Personal networks, not {security}; use a cable")
+    passphrase = check_key(security, passphrase or "")
+    store = host.path("/var/lib/iwd"); store.mkdir(mode=0o700, exist_ok=True)
+    path = store / f"{iwd_name(ssid)}.{security}"
+    lines = (["[Security]", "PreSharedKey=" + passphrase.lower() if HEX_KEY.fullmatch(passphrase)
+              else "Passphrase=" + escape(passphrase)] if passphrase else [])
+    lines += ["[Settings]", "Hidden=true"] if hidden else []
+    if lines:
+        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(handle, "w") as out: out.write("\n".join(lines) + "\n")
+    if station(host, device).get("Connected network") == ssid:
+        host.run(["iwctl", "station", device, "disconnect"], timeout=15)
+    completed = host.run(["iwctl", "station", device, "connect-hidden" if hidden else "connect", ssid], timeout=40)
     if completed.returncode: raise RuntimeError(ANSI.sub("", completed.stdout + completed.stderr).strip() or "could not connect")
     for _ in range(15):
         if host.online(): return network(host)
@@ -344,10 +474,17 @@ def check_confirm(value, answers, facts, choices):
 
 
 def check_wifi(value, answers, facts, choices):
-    if value in (None, ""): return None
-    if not isinstance(value, str) or len(value.encode()) > 32 or any(ch in value for ch in "\0\n"):
-        raise Invalid("invalid network name")
-    if not 8 <= len(answers.get("wifi_passphrase") or "") <= 63: raise Invalid("the network's WPA passphrase")
+    """The Wi-Fi network the installed host joins: the one this live system
+    is joined to, as the review showed it, or none."""
+    joined = facts.get("network", {}).get("wifi")
+    if not joined:
+        if value: raise Invalid(f"this live system is no longer joined to {value}; join it on the Network step")
+        return None
+    if value != joined["ssid"]:
+        raise Invalid(f"this live system is joined to {joined['ssid']}, not {value or 'no Wi-Fi'}")
+    if joined["security"] is None: raise Invalid(f"{joined['ssid']} is not an open or WPA Personal network")
+    if not joined["carried"]:
+        raise Invalid(f"{joined['ssid']}'s passphrase is not saved on this live system; join it on the Network step")
     return value
 
 
@@ -496,8 +633,9 @@ def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STA
     found, options = facts(host, media), choices(host)
     values, errors = check(answers, found, options)
     if errors: raise Invalid("; ".join(f"{field}: {message}" for field, message in errors.items()))
-    answers = {**values, "owner_password": answers["owner_password"], "root_password": answers["root_password"],
-               "wifi_passphrase": answers.get("wifi_passphrase")}
+    answers = {**values, "owner_password": answers["owner_password"], "root_password": answers["root_password"]}
+    joined = found["network"]["wifi"]
+    if joined: answers["wifi_security"] = joined["security"]
     document = json.loads((media / "packages.json").read_text())
     run = Run(host, state, emit)
     run.say("answers", answers=public(answers))
@@ -515,9 +653,7 @@ def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STA
         (state / "config.json").write_text(json.dumps(config, indent=2) + "\n")
         (state / "answers.json").write_text(json.dumps(public(answers), indent=2) + "\n")
         private(state / "creds.json", json.dumps(credentials(answers, host.hash_password)) + "\n")
-        if answers.get("wifi_ssid"):
-            private(state / "wifi.json", json.dumps({"ssid": answers["wifi_ssid"],
-                                                     "passphrase": answers["wifi_passphrase"]}) + "\n")
+        if joined: private(state / "wifi.json", json.dumps(wifi_credentials(host, joined)) + "\n")
         run.phase("disk", 3, f"Erasing {answers['disk']}")
         argv = ["archinstall", "--config", str(state / "config.json"), "--creds", str(state / "creds.json"),
                 "--silent", "--skip-wifi-check", "--skip-version-check", "--plugin", str(media / "arch-plugin.py")]
@@ -683,11 +819,17 @@ class Session:
         if op == "choices":
             if self.options is None: self.options = choices(self.host)
             return self.options
-        if op == "network": return network(self.host)
+        if op == "network":
+            found = network(self.host)
+            if self.facts is not None: self.facts["network"] = found
+            return found
         if op == "hostname": return hostname_probe(self.host, check_hostname(request.get("name"), {}, {}, {}))
         if op == "wifi-scan": return wifi_scan(self.host, request.get("device"))
         if op == "wifi-connect":
-            return wifi_connect(self.host, request.get("device"), request.get("ssid"), request.get("passphrase") or "")
+            found = wifi_connect(self.host, request.get("device"), request.get("ssid"), request.get("passphrase") or "",
+                                 security=str(request.get("security") or "psk"), hidden=bool(request.get("hidden")))
+            if self.facts is not None: self.facts["network"] = found
+            return found
         if op == "check":
             if self.facts is None: self.facts = facts(self.host, self.media)
             if self.options is None: self.options = choices(self.host)

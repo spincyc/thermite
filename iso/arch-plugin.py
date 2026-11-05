@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import time
@@ -83,6 +84,33 @@ def hosts_line(line: str) -> str:
     return " ".join([*words[:at], "mdns_minimal", "[NOTFOUND=return]", *words[at:]])
 
 
+def keyfile_value(value: str) -> str:
+    """A string as NetworkManager's keyfile (GKeyFile) reads it back:
+    backslashes escaped, and the spaces at either end, which it trims."""
+    return re.sub(r"^ +| +$", lambda spaces: "\\s" * len(spaces[0]), value.replace("\\", "\\\\"))
+
+
+def keyfile_ssid(ssid: str) -> str:
+    """ssid= as NetworkManager reads it: a plain name as itself, any other
+    as its bytes, keyfile's integer-list form, which nothing can misread."""
+    if re.fullmatch(r"[A-Za-z0-9_.-]+(?: [A-Za-z0-9_.-]+)*", ssid) and re.search("[A-Za-z]", ssid): return ssid
+    return "".join(f"{byte};" for byte in ssid.encode())
+
+
+def wifi_profile(wifi: dict) -> str:
+    """The installed host's NetworkManager profile for the network the
+    installer joined: WPA2 (wpa-psk) or WPA3 (sae) as iwd negotiated it,
+    or open."""
+    security = ""
+    if wifi["security"] in ("psk", "sae"):
+        key = wifi.get("passphrase") or wifi.get("key")
+        security = f"\n[wifi-security]\nkey-mgmt={'sae' if wifi['security'] == 'sae' else 'wpa-psk'}\npsk={keyfile_value(key)}\n"
+    return (f"[connection]\nid={keyfile_value(wifi['ssid'])}\ntype=wifi\nautoconnect=true\n\n"
+            f"[wifi]\nmode=infrastructure\nssid={keyfile_ssid(wifi['ssid'])}\n"
+            + ("hidden=true\n" if wifi.get("hidden") else "")
+            + f"{security}\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n")
+
+
 def configure(target: Path, media: Path, answers: dict, account: dict, wifi: dict | None) -> list[str]:
     """The installed system's settings; the units it kept from being enabled."""
     say("sudo for wheel, SSH without root logins")
@@ -114,11 +142,8 @@ def configure(target: Path, media: Path, answers: dict, account: dict, wifi: dic
         chroot(target, "grub-mkconfig", "-o", "/boot/grub/grub.cfg")
     if wifi:
         say(f"Wi-Fi {wifi['ssid']}")
-        name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in wifi["ssid"])
-        security = (f"\n[wifi-security]\nkey-mgmt=wpa-psk\npsk={wifi['passphrase']}\n" if wifi.get("passphrase") else "")
-        write(target / f"etc/NetworkManager/system-connections/{name}.nmconnection",
-              f"[connection]\nid={wifi['ssid']}\ntype=wifi\nautoconnect=true\n\n[wifi]\nmode=infrastructure\n"
-              f"ssid={wifi['ssid']}\n{security}\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n", 0o600)
+        name = "".join(ch if ch.isascii() and ch.isalnum() or ch in "-_" else "_" for ch in wifi["ssid"])
+        write(target / f"etc/NetworkManager/system-connections/{name}.nmconnection", wifi_profile(wifi), 0o600)
     # Units packages.json keeps disabled stay so, whatever a package did.
     document = json.loads((media / "packages.json").read_text())
     stopped = []

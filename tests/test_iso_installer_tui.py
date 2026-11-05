@@ -54,6 +54,10 @@ class InstallerTerminal(unittest.TestCase):
     def test_network_lists_interfaces_and_joins_wifi_with_its_passphrase(self):
         self.check("network", "wifiListed", "wifiAsks", "wifiJoined")
 
+    def test_hidden_and_open_wifi_join_and_the_review_checks_the_joined_network(self):
+        self.check("spacedName", "hiddenAsksName", "hiddenJoined", "openJoined", "openContinues", "reviewShowsWifi",
+                   "reviewChecksWifi", "wifiChangeable", "openInstalled")
+
     def test_a_taken_host_name_is_replaced_by_a_free_one_or_kept_on_a_second_enter(self):
         self.check("hostnameSuggested", "hostnameSaysWhy", "hostnameRefused", "takenWarns", "takenKept")
 

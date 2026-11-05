@@ -146,7 +146,7 @@ function field(g, y, ctx, name) {
   g.put(2, y, fit(spec.label, LABEL - 1), active ? "strong" : "dim");
   const x = 2 + LABEL;
   if (spec.kind === "text" || spec.kind === "masked") {
-    const value = (name === "wifi_passphrase" ? ui.wifi.wifi_passphrase : ui.answers[name]) || "";
+    const value = (name.startsWith("wifi_") ? ui.wifi[name] : ui.answers[name]) || "";
     const shown = spec.kind === "masked" ? "•".repeat(length(value)) : value;
     const tail = Array.from(shown).slice(-Math.max(1, width - 1)).join("");
     g.put(x, y, fit(tail + (active ? "█" : ""), width), active ? "field.focus" : "field");
@@ -252,17 +252,36 @@ function network(g, ctx) {
     g.put(2, y++, "Wi-Fi", "section");
     const active = ctx.focused === "wifi";
     if (!ui.wifi.networks.length) g.put(4, y++, ui.wifi.scanned ? "No networks found" : "Ctrl-R looks for networks", "dim");
-    ui.wifi.networks.slice(0, 8).forEach((entry, index) => {
-      const on = index === ui.wifi.cursor;
+    const shown = 8;
+    const first = Math.max(0, Math.min(ui.wifi.cursor - shown + 1, ctx.networks.length - shown));
+    ctx.networks.slice(first, first + shown).forEach((entry, index) => {
+      const on = first + index === ui.wifi.cursor;
       const style = on && active ? "row.focus" : on ? "row.current" : "row";
-      g.put(4, y++, fit((entry.connected ? LIT + " " : "  ") + entry.ssid + "  " + entry.security + "  "
-        + "▂▄▆█".slice(0, entry.signal), g.width - 6), style);
+      const joined = state.wifi ? state.wifi.ssid === entry.ssid : entry.connected;
+      g.put(4, y++, fit(entry.hidden ? "  A hidden network…" : (joined ? LIT + " " : "  ") + entry.ssid + "  "
+        + entry.security + "  " + "▂▄▆█".slice(0, entry.signal), g.width - 6), style);
     });
-    y = field(g, y + 1, ctx, "wifi_passphrase");
+    y += 1;
+    if (ctx.current.includes("wifi_name")) y = field(g, y, ctx, "wifi_name");
+    y = field(g, y, ctx, "wifi_passphrase");
+    const wifi = state.wifi;
+    if (wifi) {
+      y = paragraph(g, y, wifi.carried ? "The installed system joins " + wifi.ssid + " (" + security(wifi) + ") too."
+        : "Joined to " + wifi.ssid + " without its passphrase saved here: choose it and enter it.",
+      wifi.carried ? "dim" : "alert");
+    }
   }
   const active = ctx.focused === "continue";
   g.put(2, y + 1, " Continue ", active ? "key.focus" : state.online ? "key" : "key.off");
   return null;
+}
+
+// How the installed system joins: iwd's negotiated security, as NetworkManager's key management.
+const SECURITY = [["open", "open"], ["psk", "WPA2"], ["sae", "WPA3"]];
+
+function security(wifi) {
+  const found = SECURITY.find((entry) => entry[0] === wifi.security);
+  return found ? found[1] : "unsupported security";
 }
 
 function form(intro) {
@@ -305,7 +324,12 @@ function review(g, ctx) {
   y = row(g, y, "Disk", disk ? describeDisk(disk) : answers.disk || "none");
   y = row(g, y, "Filesystem", answers.filesystem === "btrfs" ? "Btrfs with subvolumes" : "ext4");
   y = row(g, y, "Kernel", answers.kernel + ", with " + (answers.kernel === "linux" ? "linux-lts" : "linux") + " as the fallback");
-  if (answers.wifi_ssid) y = row(g, y, "Wi-Fi", answers.wifi_ssid);
+  const wifi = ui.network && ui.network.wifi;
+  if (answers.wifi_ssid || wifi) {
+    y = row(g, y, "Wi-Fi", answers.wifi_ssid ? answers.wifi_ssid + (wifi && wifi.ssid === answers.wifi_ssid
+      ? " (" + security(wifi) + "); the installed system joins it" : "") : "none");
+  }
+  if (ui.errors.wifi_ssid) y = paragraph(g, y, "! Wi-Fi: " + ui.errors.wifi_ssid + ". Esc goes back to Network.", "alert");
   if (ui.facts && ui.facts.authorized_key) y = row(g, y, "SSH key", "installed for " + answers.owner + "; password SSH off");
   y = row(g, y, "First boot", "an empty Thermite house, installed as " + answers.owner);
   y += 1;

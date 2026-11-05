@@ -45,6 +45,7 @@ const FIELDS = {
     ["linux-lts", "linux-lts, long-term support (recommended)"], ["linux", "linux, the latest"]] },
   confirm: { kind: "text", label: "Erase" },
   wifi: { kind: "networks", label: "Wi-Fi network" },
+  wifi_name: { kind: "text", label: "Network name" },
   wifi_passphrase: { kind: "masked", label: "Passphrase" },
   continue: { kind: "button", label: "Continue" }
 };
@@ -98,7 +99,9 @@ function create(options) {
     const step = STEPS[ui.step];
     if (step.id === "network") {
       const wireless = ui.network && ui.network.interfaces.some((entry) => entry.wireless);
-      return (wireless ? ["wifi", "wifi_passphrase"] : []).concat(["continue"]);
+      const chosen = wireless && choices()[ui.wifi.cursor];
+      return (wireless ? ["wifi"].concat(chosen && chosen.hidden ? ["wifi_name"] : [], ["wifi_passphrase"]) : [])
+        .concat(["continue"]);
     }
     return step.fields || [];
   }
@@ -118,6 +121,11 @@ function create(options) {
   function cursorOf(name) {
     if (ui.cursors[name] != null) return ui.cursors[name];
     return Math.max(0, matches(name).indexOf(ui.answers[name]));
+  }
+
+  // The networks a scan found, then an entry for a hidden one.
+  function choices() {
+    return ui.wifi.networks.concat([{ ssid: null, hidden: true, security: "psk" }]);
   }
 
   function disks() {
@@ -160,8 +168,7 @@ function create(options) {
       return true;
     }
     if (field.kind === "networks") {
-      const count = ui.wifi.networks.length;
-      if (count) ui.wifi.cursor = Math.max(0, Math.min(count - 1, ui.wifi.cursor + delta));
+      ui.wifi.cursor = Math.max(0, Math.min(choices().length - 1, ui.wifi.cursor + delta));
       return true;
     }
     return false;
@@ -173,7 +180,7 @@ function create(options) {
       ui.filters[name] = (ui.filters[name] || "") + ch;
       ui.cursors[name] = 0;
     } else if (field.kind === "text" || field.kind === "masked") {
-      const store = name === "wifi_passphrase" ? ui.wifi : ui.answers;
+      const store = name.startsWith("wifi_") ? ui.wifi : ui.answers;
       store[name] = (store[name] || "") + ch;
       delete ui.errors[field.check || name];
     }
@@ -186,7 +193,7 @@ function create(options) {
       if (ui.filters[name]) ui.cursors[name] = 0;
       else delete ui.cursors[name];
     } else if (field.kind === "text" || field.kind === "masked") {
-      const store = name === "wifi_passphrase" ? ui.wifi : ui.answers;
+      const store = name.startsWith("wifi_") ? ui.wifi : ui.answers;
       store[name] = all ? "" : Array.from(store[name] || "").slice(0, -1).join("");
     }
   }
@@ -199,7 +206,7 @@ function create(options) {
     ui.message = null;
     const step = STEPS[index];
     if (step.id === "hostname" && !ui.probe) probe(ui.answers.hostname, true);
-    if (step.id === "network") refreshNetwork();
+    if (step.id === "network" || step.id === "review") refreshNetwork();
     changed();
   }
 
@@ -215,11 +222,18 @@ function create(options) {
     }).catch(() => null);
   }
 
+  // The installed host joins the Wi-Fi network this live system is joined
+  // to; the core reads its passphrase from iwd, so it never comes back here.
+  function joined(network) {
+    ui.network = network;
+    ui.answers.wifi_ssid = network.wifi ? network.wifi.ssid : null;
+  }
+
   function refreshNetwork() {
     return core.request("network").then((network) => {
-      ui.network = network;
+      joined(network);
       const device = wirelessDevice();
-      if (device && !network.online && !ui.wifi.scanned) scan();
+      if (device && !network.online && !ui.wifi.scanned && STEPS[ui.step].id === "network") scan();
       changed();
     }).catch(() => {});
   }
@@ -235,15 +249,15 @@ function create(options) {
   }
 
   function connect() {
-    const chosen = ui.wifi.networks[ui.wifi.cursor];
+    const chosen = choices()[ui.wifi.cursor];
     if (!chosen) return Promise.resolve();
+    const ssid = chosen.hidden ? ui.wifi.wifi_name || "" : chosen.ssid;
     const passphrase = ui.wifi.wifi_passphrase || "";
-    return busy("Joining " + chosen.ssid, core.request("wifi-connect",
-      { device: wirelessDevice(), ssid: chosen.ssid, passphrase: passphrase })).then((network) => {
-      ui.network = network;
-      ui.answers.wifi_ssid = chosen.ssid;
-      ui.answers.wifi_passphrase = passphrase;
-      ui.message = { tone: "ok", text: "Connected to " + chosen.ssid + "; the installed system joins it too." };
+    return busy("Joining " + ssid, core.request("wifi-connect", { device: wirelessDevice(), ssid: ssid,
+      passphrase: passphrase, security: chosen.security, hidden: Boolean(chosen.hidden) })).then((network) => {
+      joined(network);
+      ui.wifi.wifi_passphrase = "";
+      ui.message = { tone: "ok", text: "Connected to " + ssid + "; the installed system joins it too." };
       ui.focus = fields().indexOf("continue");
     }).catch(() => {});
   }
@@ -271,8 +285,18 @@ function create(options) {
       delete ui.cursors[name];
     }
     if (name === "wifi") {
-      const chosen = ui.wifi.networks[ui.wifi.cursor];
-      if (chosen && chosen.security === "open") return connect();
+      const chosen = choices()[ui.wifi.cursor];
+      const wifi = ui.network && ui.network.wifi;
+      if (!chosen.hidden && wifi && wifi.ssid === chosen.ssid && wifi.carried) {
+        ui.message = { tone: "ok", text: "Already connected to " + chosen.ssid + "; the installed system joins it too." };
+        ui.focus = fields().indexOf("continue");
+        return changed();
+      }
+      if (!chosen.hidden && chosen.security === "open") return connect();
+      ui.focus += 1;
+      return changed();
+    }
+    if (name === "wifi_name") {
       ui.focus += 1;
       return changed();
     }
@@ -296,15 +320,23 @@ function create(options) {
       }).catch(() => {});
     }
     if (step.id === "network") {
-      if (ui.network && ui.network.online) return go(ui.step + 1);
       return refreshNetwork().then(() => {
-        if (ui.network && ui.network.online) return go(ui.step + 1);
-        ui.message = { tone: "bad", text: "Not connected to the Internet yet: plug in a cable or join Wi-Fi." };
+        const wifi = ui.network && ui.network.wifi;
+        if (wifi && !wifi.carried) {
+          ui.message = { tone: "bad", text: "Connected to " + wifi.ssid + " without its passphrase saved here: "
+            + "choose it above and enter it, so the installed system can join it too." };
+        } else if (ui.network && ui.network.online) {
+          return go(ui.step + 1);
+        } else {
+          ui.message = { tone: "bad", text: "Not connected to the Internet yet: plug in a cable or join Wi-Fi." };
+        }
         changed();
       });
     }
-    if (step.id === "review") return check(Object.keys(FIELDS).filter((name) => isAnswer(name)).concat(["confirm"]))
-      .then((ok) => (ok ? install() : changed())).catch(() => {});
+    if (step.id === "review") {
+      return check(Object.keys(FIELDS).filter((name) => isAnswer(name)).concat(["wifi_ssid", "confirm"]))
+        .then((ok) => (ok ? install() : changed())).catch(() => {});
+    }
     const names = step.fields.filter((name) => !FIELDS[name].check);
     return check(names).then((ok) => {
       if (!ok) return changed();
@@ -314,7 +346,7 @@ function create(options) {
   }
 
   function isAnswer(name) {
-    return !["confirm", "wifi", "wifi_passphrase", "continue"].includes(name) && !FIELDS[name].check;
+    return !["confirm", "continue"].includes(name) && !name.startsWith("wifi") && !FIELDS[name].check;
   }
 
   // A name another host already answers to is allowed, after a second Enter.
@@ -419,7 +451,8 @@ function create(options) {
 
   function frame(width, height) {
     return View.render({
-      ui, steps: STEPS, fields: FIELDS, current: fields(), focused: focused(), matches, look: controller.look,
+      ui, steps: STEPS, fields: FIELDS, current: fields(), focused: focused(), matches, networks: choices(),
+      look: controller.look,
       cursorOf, now: options.now ? options.now() : Date.now(), still: Boolean(options.still), rows: CHOICE_ROWS
     }, width, height);
   }
