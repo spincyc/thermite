@@ -131,6 +131,7 @@ class FakeHost(installer.Host):
         self.mounts = set(map(str, mounted))  # mount points, as umount leaves them
         self.swapped = swapped  # lsblk reads before the first disk is another
         self.synchronized = synchronized  # the clock, as timedatectl reports it
+        self.archinstall_target = []  # where archinstall copies its logs on the target
         self.taken, self.fail, self.version, self.code, self.lines = set(taken), set(fail), archinstall, code, lines
         self.joined = joined  # the Wi-Fi network wlan0 is joined to
         self.calls, self.spawned, self.called = [], [], []
@@ -178,6 +179,12 @@ class FakeHost(installer.Host):
                              "creds": json.loads((state / "creds.json").read_text()),
                              "creds_mode": (state / "creds.json").stat().st_mode & 0o777,
                              "wifi": json.loads((state / "wifi.json").read_text()) if (state / "wifi.json").exists() else None})
+        # What archinstall may keep: a saved copy, and a log that names a hash.
+        for directory in (self.path("/var/log/archinstall"), *self.archinstall_target):
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "user_credentials.json").write_text((state / "creds.json").read_text())
+            (directory / "install.log").write_text("Installing\nroot hash " + self.spawned[-1]["creds"]["root_enc_password"]
+                                                   + "\nInstalled\n")
         return types.SimpleNamespace(stdout=iter(line + "\n" for line in self.lines), wait=lambda: self.code)
 
     def call(self, argv, env):
@@ -371,6 +378,23 @@ class InstallerCore(unittest.TestCase):
                                                          if path.is_file() and path.name != "session.lock")
         for secret in SECRETS:
             self.assertNotIn(secret, everything)
+
+    def test_no_copy_of_the_password_hashes_stays_with_archinstall(self):
+        host = self.host()
+        host.archinstall_target.append(self.target / "var/log/archinstall")
+        for code in (0, 1):
+            host.code = code
+            try:
+                installer.install(ANSWERS, host, media=self.media, state=self.state, target=self.target)
+            except RuntimeError:
+                self.assertEqual(code, 1)
+            creds = host.spawned[-1]["creds"]
+            for directory in (self.live / "var/log/archinstall", self.target / "var/log/archinstall"):
+                self.assertFalse((directory / "user_credentials.json").exists())
+                log = (directory / "install.log").read_text()
+                self.assertEqual(log, "Installing\nroot hash [password hash removed]\nInstalled\n")
+                self.assertNotIn(creds["users"][0]["enc_password"], log)
+            self.assertIn("Removed archinstall's copy of the password hashes", (self.state / "installer.log").read_text())
 
     def test_failed_preflight_or_wrong_archinstall_never_reaches_the_disk(self):
         for host in (self.host(fail={"pacman"}), self.host(archinstall="4.6.0")):

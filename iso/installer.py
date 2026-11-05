@@ -684,7 +684,12 @@ def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STA
     run = Run(host, state, emit)
     if left: run.say("line", text=f"Unmounted {target}, which an earlier run left mounted")
     run.say("answers", answers=public(answers))
-    secrets = [state / "creds.json", state / "wifi.json"]
+    secrets, hashes = [state / "creds.json", state / "wifi.json"], []
+    def forget() -> None:
+        for path in secrets: path.unlink(missing_ok=True)
+        for path, error in scrub([host.path(f"/{ARCHINSTALL_LOGS}"), target / ARCHINSTALL_LOGS], hashes):
+            run.say("line", text=f"Removed archinstall's copy of the password hashes from {path}" if error is None
+                    else f"Could not remove archinstall's copy of the password hashes from {path}: {error}")
     try:
         run.phase("preflight", 1, "Checking the installer, keyring, clock, mirrors and packages")
         if archinstall_version(host) != ARCHINSTALL:
@@ -698,7 +703,9 @@ def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STA
         config = configuration(answers, found, document)
         (state / "config.json").write_text(json.dumps(config, indent=2) + "\n")
         (state / "answers.json").write_text(json.dumps(public(answers), indent=2) + "\n")
-        private(state / "creds.json", json.dumps(credentials(answers, host.hash_password)) + "\n")
+        creds = credentials(answers, host.hash_password)
+        hashes = [creds["root_enc_password"], *(user["enc_password"] for user in creds["users"])]
+        private(state / "creds.json", json.dumps(creds) + "\n")
         if joined: private(state / "wifi.json", json.dumps(wifi_credentials(host, joined)) + "\n")
         # The disk once more, just before it is wiped: the same one, or nothing.
         now = next((disk for disk in disks(host) if disk["path"] == answers["disk"]), None)
@@ -719,8 +726,10 @@ def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STA
         code = process.wait()
         if code: raise RuntimeError(f"archinstall stopped with status {code}; see the log")
         if run.percent < 100: raise RuntimeError("archinstall ended without reporting a completed installation")
+        forget()
         run.say("done", hostname=answers["hostname"])
     except Exception as exc:
+        forget()
         run.say("failed", error=str(exc))
         raise
     finally:
@@ -728,6 +737,34 @@ def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STA
         keep(run, target)
         run.log.close()
     return {"hostname": answers["hostname"], "log": str(state / "installer.log")}
+
+
+#: archinstall's logs, and any configuration it saves, on the live system
+#: and (copied at its end) on the target.
+ARCHINSTALL_LOGS = "var/log/archinstall"
+
+
+def scrub(directories, hashes) -> list[tuple[Path, str | None]]:
+    """No copy of the credentials archinstall may have kept: a saved
+    user_credentials.json removed, and the run's password hashes cut from
+    any other file there. Each path it changed, or could not, and why."""
+    changed = []
+    for directory in directories:
+        if not directory.is_dir() or directory.is_symlink(): continue
+        for path in sorted(directory.rglob("*")):
+            if path.is_symlink() or not path.is_file(): continue
+            try:
+                if path.name == "user_credentials.json":
+                    path.unlink(); changed.append((path, None))
+                    continue
+                data = path.read_bytes()
+                cut = data
+                for value in hashes: cut = cut.replace(value.encode(), b"[password hash removed]")
+                if cut != data:
+                    path.write_bytes(cut); changed.append((path, None))
+            except OSError as exc:
+                changed.append((path, str(exc)))
+    return changed
 
 
 def keep(run: Run, target: Path) -> None:
