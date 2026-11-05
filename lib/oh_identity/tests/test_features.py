@@ -72,7 +72,10 @@ class Features(TestCase):
             response = self.call("post", "/rest/items/tv_pairing", value, owner=True, content_type="text/plain")
             self.assertEqual(response.status_code, 202)
             self.assertNotIn(value, response.content.decode())
-        self.assertNotIn("1234", str(list(Audit.objects.values())))
+        # Every audit field but its timestamp, whose microseconds may read
+        # 1234, and the peer's keyed hex digest, which may contain it.
+        self.assertNotIn("1234", str(list(Audit.objects.values(*(
+            field.name for field in Audit._meta.concrete_fields if field.name not in {"at", "peer"})))))
         self.assertEqual(self.call("post", "/rest/items/tv_pairing", "bad-private-code", owner=True, content_type="text/plain").status_code, 400)
 
     def test_unauthorized_or_invalid_pairing_never_waits_on_room_locks(self):
