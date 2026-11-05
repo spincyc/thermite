@@ -170,7 +170,7 @@ async function installs() {
   proof.systemAccepted = step() === "review" && ui.answers.filesystem === "btrfs";
 
   text = look_at(controller, "review");
-  proof.reviewSummary = ["thermite", "casey", "Europe/Berlin", "/dev/sda", "Btrfs", "linux-lts", "Example Home"]
+  proof.reviewSummary = ["thermite", "casey", "Europe/Berlin", "/dev/sda", "Btrfs", "linux-lts", "Example Home", "serial EXAMPLE0001"]
     .every((part) => text.includes(part)) && /erase/i.test(text);
   k.type("sdb");
   await k.enter();

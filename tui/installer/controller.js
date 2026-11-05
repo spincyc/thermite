@@ -334,6 +334,9 @@ function create(options) {
       });
     }
     if (step.id === "review") {
+      // The erase is for the disk shown here; the core refuses another under its name.
+      const disk = disks().find((entry) => entry.path === ui.answers.disk);
+      ui.answers.disk_identity = disk ? { serial: disk.serial, wwn: disk.wwn, size: disk.size } : null;
       return check(Object.keys(FIELDS).filter((name) => isAnswer(name)).concat(["wifi_ssid", "confirm"]))
         .then((ok) => (ok ? install() : changed())).catch(() => {});
     }

@@ -26,7 +26,7 @@ spec.loader.exec_module(installer)
 GB = 10 ** 9
 LSBLK = {"blockdevices": [
     {"name": "sda", "path": "/dev/sda", "type": "disk", "size": 128 * GB, "log-sec": 512, "model": "Example SSD ",
-     "serial": "EXAMPLE0001", "tran": "sata", "rm": False, "ro": False, "mountpoints": [None],
+     "serial": "EXAMPLE0001", "wwn": "0x5000000000000001", "tran": "sata", "rm": False, "ro": False, "mountpoints": [None],
      "children": [{"name": "sda1", "path": "/dev/sda1", "type": "part", "size": 100 * GB, "fstype": "ext4",
                    "mountpoints": [None]}]},
     {"name": "sdb", "path": "/dev/sdb", "type": "disk", "size": 64 * GB, "log-sec": 512, "model": "Example Stick",
@@ -73,7 +73,8 @@ ARCHINSTALL_LINES = ["Starting device modifications in ", "5...4...3...2...1", "
 ANSWERS = {"hostname": "Thermite", "owner": "casey", "owner_password": "owner-secret-1",
            "owner_password_confirm": "owner-secret-1", "root_password": "root-secret-1",
            "root_password_confirm": "root-secret-1", "timezone": "Europe/Berlin", "locale": "en_US.UTF-8",
-           "keymap": "us", "disk": "/dev/sda", "filesystem": "btrfs", "kernel": "linux-lts", "confirm": "sda"}
+           "keymap": "us", "disk": "/dev/sda", "filesystem": "btrfs", "kernel": "linux-lts", "confirm": "sda",
+           "disk_identity": {"serial": "EXAMPLE0001", "wwn": "0x5000000000000001", "size": 128 * GB}}
 SECRETS = ("owner-secret-1", "root-secret-1", "wifi-secret-1")
 
 
@@ -118,15 +119,23 @@ def installer_media(media: Path) -> None:
 
 class FakeHost(installer.Host):
     def __init__(self, root: Path, *, taken=(), fail=(), archinstall="4.5.1", code=0, lines=ARCHINSTALL_LINES,
-                 joined=None, mounted=()):
+                 joined=None, mounted=(), swapped=None):
         super().__init__(root)
         self.mounts = set(map(str, mounted))  # mount points, as umount leaves them
+        self.swapped = swapped  # lsblk reads before the first disk is another
         self.taken, self.fail, self.version, self.code, self.lines = set(taken), set(fail), archinstall, code, lines
         self.joined = joined  # the Wi-Fi network wlan0 is joined to
         self.calls, self.spawned, self.called = [], [], []
 
     def run(self, argv, *, timeout=120, input=None):
         argv = list(argv); self.calls.append(argv)
+        if argv[0] == "lsblk" and self.swapped is not None:
+            # A disk that is replaced by another under the same name once read.
+            self.swapped -= 1
+            if self.swapped < 0:
+                swapped = json.loads(json.dumps(LSBLK))
+                swapped["blockdevices"][0]["serial"] = "EXAMPLE0009"
+                return subprocess.CompletedProcess(argv, 0, json.dumps(swapped), "")
         def done(code=0, out="", err=""): return subprocess.CompletedProcess(argv, code, out, err)
         if argv[0] in self.fail: return done(1, "", f"{argv[0]} failed")
         if argv[0] == "umount": self.mounts.discard(argv[-1])
@@ -250,8 +259,13 @@ class InstallerCore(unittest.TestCase):
         self.assertEqual(errors, {"root_password": "use a different password from the owner's"})
         _, errors = installer.check({**ANSWERS, "owner_password_confirm": "owner-secret-2"}, found, options)
         self.assertEqual(errors, {"owner_password": "the two entries differ"})
-        # The destructive confirmation is the selected disk's own name.
+        # The destructive confirmation is the selected disk's own name, for
+        # the very disk the review showed.
         self.assertIn("type sda", installer.check({**ANSWERS, "confirm": "ERASE"}, found, options)[1]["confirm"])
+        for changed in ({}, {**ANSWERS["disk_identity"], "serial": "EXAMPLE0009"},
+                        {**ANSWERS["disk_identity"], "size": 256 * GB}):
+            self.assertIn("not the disk the review showed",
+                          installer.check({**ANSWERS, "disk_identity": changed}, found, options)[1]["confirm"])
         self.assertIn("wifi_ssid", installer.check({**ANSWERS, "wifi_ssid": "Example Home"}, found, options)[1])
 
     def test_hostname_probe_suggests_the_first_free_number(self):
@@ -363,6 +377,16 @@ class InstallerCore(unittest.TestCase):
             self.assertFalse((self.state / "creds.json").exists())
         with self.assertRaises(installer.Invalid):
             installer.install({**ANSWERS, "confirm": "ERASE"}, self.host(), media=self.media, state=self.state)
+
+    def test_a_disk_replaced_after_the_review_is_never_erased(self):
+        # Installed already at the start, or between the checks and the wipe.
+        for reads in (0, 1):
+            host, events = self.host(swapped=reads), []
+            with self.assertRaises((installer.Invalid, RuntimeError)) as caught:
+                installer.install(ANSWERS, host, media=self.media, state=self.state, target=self.target,
+                                  emit=events.append)
+            self.assertIn("not the disk the review showed" if reads == 0 else "nothing was erased", str(caught.exception))
+            self.assertEqual(host.spawned, [])
 
     def test_a_retry_unmounts_what_the_failed_run_left_mounted_first(self):
         host = self.host(mounted={self.target})

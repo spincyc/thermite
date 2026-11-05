@@ -137,7 +137,7 @@ class Host:
 def disks(host: Host) -> list[dict]:
     """Every whole disk, with why it is not offered when it is not."""
     completed = host.run(["lsblk", "--json", "--bytes", "--tree", "--output",
-                          "NAME,PATH,TYPE,SIZE,LOG-SEC,MODEL,SERIAL,TRAN,RM,RO,MOUNTPOINTS,FSTYPE"], timeout=30)
+                          "NAME,PATH,TYPE,SIZE,LOG-SEC,MODEL,SERIAL,WWN,TRAN,RM,RO,MOUNTPOINTS,FSTYPE"], timeout=30)
     if completed.returncode: raise RuntimeError("lsblk failed: " + completed.stderr.strip())
     found = []
     for device in json.loads(completed.stdout).get("blockdevices", []):
@@ -151,6 +151,7 @@ def disks(host: Host) -> list[dict]:
         found.append({"name": device["name"], "path": device["path"], "size": size,
                       "sector_size": int(device.get("log-sec") or 512),
                       "model": (device.get("model") or "").strip(), "serial": (device.get("serial") or "").strip(),
+                      "wwn": (device.get("wwn") or "").strip(),
                       "transport": device.get("tran") or "", "removable": bool(device.get("rm")),
                       "partitions": [{"name": child["name"], "size": int(child.get("size") or 0),
                                       "fstype": child.get("fstype") or ""} for child in device.get("children") or []],
@@ -469,10 +470,20 @@ def check_disk(value, answers, facts, choices):
     return disk["path"]
 
 
+def identity(disk: dict) -> dict:
+    """What tells one physical disk from another under the same name."""
+    return {"serial": disk["serial"], "wwn": disk["wwn"], "size": disk["size"]}
+
+
 def check_confirm(value, answers, facts, choices):
+    """The disk's name typed back, for the very disk the review showed
+    (disk_identity): a disk plugged in since then may have taken its name."""
     disk = next((disk for disk in facts["disks"] if disk["path"] == answers.get("disk")), None)
     if disk is None or str(value or "").strip() != disk["name"]:
         raise Invalid(f"type {disk['name'] if disk else 'the disk name'} to erase it")
+    if answers.get("disk_identity") != identity(disk):
+        raise Invalid(f"{disk['path']} is not the disk the review showed: its serial number, WWN or size differs; "
+                      "go back to the Disk step")
     return True
 
 
@@ -664,6 +675,12 @@ def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STA
         (state / "answers.json").write_text(json.dumps(public(answers), indent=2) + "\n")
         private(state / "creds.json", json.dumps(credentials(answers, host.hash_password)) + "\n")
         if joined: private(state / "wifi.json", json.dumps(wifi_credentials(host, joined)) + "\n")
+        # The disk once more, just before it is wiped: the same one, or nothing.
+        now = next((disk for disk in disks(host) if disk["path"] == answers["disk"]), None)
+        if now is None or identity(now) != identity(next(disk for disk in found["disks"]
+                                                         if disk["path"] == answers["disk"])):
+            raise RuntimeError(f"{answers['disk']} changed while the installer checked the packages; "
+                               "nothing was erased. Go back to the Disk step")
         run.phase("disk", 3, f"Erasing {answers['disk']}")
         argv = ["archinstall", "--config", str(state / "config.json"), "--creds", str(state / "creds.json"),
                 "--silent", "--skip-wifi-check", "--skip-version-check", "--plugin", str(media / "arch-plugin.py")]

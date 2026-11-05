@@ -321,7 +321,7 @@ function review(g, ctx) {
   y = row(g, y, "Owner", answers.owner + ", in wheel; password set");
   y = row(g, y, "Root", "password set; console only, never SSH");
   y = row(g, y, "Region", [answers.timezone, answers.locale, answers.keymap + " keyboard"].join(" · "));
-  y = row(g, y, "Disk", disk ? describeDisk(disk) : answers.disk || "none");
+  y = row(g, y, "Disk", disk ? describeDisk(disk) + (disk.serial ? " · serial " + disk.serial : "") : answers.disk || "none");
   y = row(g, y, "Filesystem", answers.filesystem === "btrfs" ? "Btrfs with subvolumes" : "ext4");
   y = row(g, y, "Kernel", answers.kernel + ", with " + (answers.kernel === "linux" ? "linux-lts" : "linux") + " as the fallback");
   const wifi = ui.network && ui.network.wifi;
