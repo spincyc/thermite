@@ -106,7 +106,8 @@ menu. It checks that the target is a mounted Arch installation with a normal
 owner login, copies the media payload into `/opt/thermite-media`, then runs
 the bootstrap inside that target with `arch-chroot`. Bootstrap verifies the
 application wheel, creates `/opt/thermite/venv`, checks system PyYAML is
-within `>=6,<7`, and adds the `thermite` launcher and login instructions.
+within `>=6,<7`, and adds the `thermite` launcher, login instructions and
+a login profile that puts `~/.local/bin` first on PATH.
 It uses the signed OS `python-yaml` package to match Arch's Python ABI.
 A failed hook fails installation; it must not be treated as a completed
 Thermite image. No runtime services or house are deployed by this hook.
@@ -165,7 +166,12 @@ thermite install --config "$HOME/thermite-site"
 
 Edit `instance/devices.yaml` and `instance/host.yaml` before `thermite check`.
 Installation prints the HTTPS URL and the certificate authority file each
-browser or terminal client must trust once. Keep `~/.local/bin` on your PATH.
+browser or terminal client must trust once. Installation switches
+`~/.local/bin/thermite` to the application it verified; log out and back in
+afterwards. On the Arch image, `/etc/profile.d/thermite.sh` then puts
+`~/.local/bin` first on PATH, as Ubuntu's default `~/.profile` does once that
+directory exists, so `thermite` runs that application rather than the image's
+`/usr/local/bin/thermite`.
 [Installation](installation.md#create-your-private-site) describes each step.
 
 Commissioning creates the non-login `thermite:thermite` service identity,
@@ -186,8 +192,9 @@ and private-site backups.
 
 Offline checks cover input digests, refusal of unsafe outputs, native
 storage/identity defaults, both boot configuration formats, EFI partition
-bounds, owner-account checks, hook-failure propagation, safe wheel extraction
-and the installed launcher outside the source tree. A real remaster also
+bounds, owner-account checks, hook-failure propagation, safe wheel extraction,
+the installed launcher outside the source tree and the login profile's PATH
+order under the available POSIX shells. A real remaster also
 requires the pinned image and the build tools.
 
 A complete acceptance run must boot the image in firmware, inspect the

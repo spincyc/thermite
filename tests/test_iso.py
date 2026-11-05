@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -167,7 +168,24 @@ class InstallerISO(unittest.TestCase):
         self.assertEqual(bootstrap.install(media, root=target), payload)
         environment = target / "opt/thermite/venv"
         self.assertIn("include-system-site-packages = true", (environment / "pyvenv.cfg").read_text())
-        self.assertTrue((target / "etc/profile.d/thermite.sh").is_file())
+        profile = target / "etc/profile.d/thermite.sh"
+        self.assertTrue(profile.is_file())
+        # Login shells source profile.d as POSIX sh: the owner's command, which
+        # thermite install switches, must win over this image's /usr/local/bin.
+        home = self.root / "owner home"
+        shells = [shell for shell in (("sh",), ("dash",), ("bash", "--posix"), ("zsh", "--emulate", "sh"))
+                  if shutil.which(shell[0])]
+        self.assertIn(("sh",), shells)
+        for shell in shells:
+            for before, after in (("/usr/local/bin:/usr/bin", f"{home}/.local/bin:/usr/local/bin:/usr/bin"),
+                                  (f"{home}/.local/bin:/usr/bin", f"{home}/.local/bin:/usr/bin"),
+                                  (f"/usr/bin:{home}/.local/bin", f"{home}/.local/bin:/usr/bin:{home}/.local/bin")):
+                completed = subprocess.run([shutil.which(shell[0]), *shell[1:], "-c",
+                                            '. "$1"; . "$1"; printf %s "$PATH"', "profile", str(profile)],
+                                           env={"HOME": str(home), "PATH": before}, stdin=subprocess.DEVNULL,
+                                           capture_output=True, text=True, timeout=30)
+                self.assertEqual((completed.returncode, completed.stderr), (0, ""), shell)
+                self.assertEqual(completed.stdout, after, (shell, before))
         self.assertFalse((target / "etc/passwd").exists())
         result = subprocess.run([str(target / "usr/local/bin/thermite"), "--version"],
                                 cwd=self.root, env={key: value for key, value in os.environ.items()

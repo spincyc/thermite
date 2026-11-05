@@ -32,8 +32,10 @@ HTTPS gateway, and provisions internal runtime access itself:
   thermite install --config "$HOME/thermite-site" --dry-run
   thermite install --config "$HOME/thermite-site"
 
-Keep ~/.local/bin on your PATH, and log out and back in after installation
-adds you to the thermite group. Installation prints the HTTPS URL and the
+Installation switches ~/.local/bin/thermite to the application it verified.
+Log out and back in afterwards: the new login puts ~/.local/bin first on
+PATH, so thermite runs that application, and applies your new thermite group
+membership. Installation prints the HTTPS URL and the
 certificate authority file each browser or terminal client must trust once.
 Inspect the result with:
 

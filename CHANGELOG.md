@@ -9,7 +9,11 @@ rollback. The unified deployment workflow uses a separate committed private site
 
 - The installer ISO's first-boot guide asks for your equipment and time zone
   in `instance/host.yaml`, not a state directory, which the fixed
-  `/srv/thermite` layout removed.
+  `/srv/thermite` layout removed. The Arch image's login profile puts
+  `~/.local/bin` first on PATH, so after `thermite install` switches
+  `~/.local/bin/thermite`, `thermite` runs that verified application rather
+  than the image's frozen `/usr/local/bin/thermite`, and install no longer
+  warns about the launcher on PATH.
 - Install and upgrade stop all of Thermite, `systemctl stop thermite.target
   thermite.slice`, before they change anything it runs on (its units,
   openHAB's native state, the native-port firewall or the deployment), check

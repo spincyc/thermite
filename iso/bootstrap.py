@@ -17,6 +17,22 @@ import venv
 import zipfile
 
 
+#: Sourced by every login shell (POSIX sh). `thermite install` switches
+#: ~/.local/bin/thermite to the application it verified; putting that
+#: directory first lets it win over this image's frozen /usr/local/bin
+#: launcher. Prepending only when it is not already first keeps re-sourcing
+#: idempotent.
+PROFILE = """\
+if [ -n "${HOME:-}" ]; then
+    case ":${PATH:-}:" in
+        ":$HOME/.local/bin:"*) ;;
+        *) PATH="$HOME/.local/bin${PATH:+:$PATH}"; export PATH ;;
+    esac
+fi
+case "$-" in *i*) cat /opt/thermite/FIRST-BOOT.txt ;; esac
+"""
+
+
 def digest(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -96,12 +112,13 @@ def install(media: Path, *, root: Path = Path("/")) -> dict:
     notice.parent.mkdir(parents=True, exist_ok=True)
     notice.write_text("#!/bin/sh\ncat /opt/thermite/FIRST-BOOT.txt\n")
     notice.chmod(0o755)
-    # Arch does not use Ubuntu's dynamic MOTD directory.
+    # Arch does not use Ubuntu's dynamic MOTD directory, and its default PATH
+    # lacks ~/.local/bin, which Ubuntu's default ~/.profile puts first.
     if system_yaml:
         profile = root / "etc/profile.d/thermite.sh"
         if profile.exists() or profile.is_symlink(): raise ValueError("Thermite login notice already exists")
         profile.parent.mkdir(parents=True, exist_ok=True)
-        profile.write_text('case "$-" in *i*) cat /opt/thermite/FIRST-BOOT.txt ;; esac\n')
+        profile.write_text(PROFILE)
         profile.chmod(0o644)
     (destination / "installation.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print("Thermite application installed. Follow /opt/thermite/FIRST-BOOT.txt after reboot.")
