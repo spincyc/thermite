@@ -8,7 +8,7 @@
  */
 "use strict";
 
-const { Grid, LOCK, fit, fitTail, wrap, length } = require("./grid");
+const { Grid, LOCK, box, fit, fitTail, wrap, length } = require("./grid");
 const { METER } = require("./theme");
 const Cameras = require("./cameras");
 const Topology = require("./topology");
@@ -112,15 +112,6 @@ function focused(ctx, key) {
   return Boolean(ctx.ui.focusVisible && key && ctx.ui.focus === key);
 }
 
-// A label set into a frame's edge at x, as ┤ text ├; returns the column after it.
-function inset(g, x, y, border, parts) {
-  let at = g.put(x, y, "\u2524 ", border);
-  parts.forEach((part) => {
-    at = g.put(at, y, part[0], part[1], part[2]);
-  });
-  return g.put(at, y, " \u251c", border);
-}
-
 // A btop box: a rounded frame, its title in the top edge, hints in the
 // bottom edge, and its content scrolled to keep the focus in sight.
 function panel(frame, ctx, rect, options) {
@@ -136,30 +127,11 @@ function panel(frame, ctx, rect, options) {
     g.fill(x, y, w, h, "base");
     g.hit(x, y, w, h, { kind: "none" }, false);
   }
-  g.put(x, y, "\u256d" + "\u2500".repeat(w - 2) + "\u256e", border);
-  for (let row = y + 1; row < y + h - 1; row += 1) {
-    g.put(x, row, "\u2502", border);
-    g.put(x + w - 1, row, "\u2502", border);
-  }
-  g.put(x, y + h - 1, "\u2570" + "\u2500".repeat(w - 2) + "\u256f", border);
-  const room = w - 8;
-  let at = x + 1;
-  if (options.title && room > 2) {
-    const title = (active ? "\u25b8 " : "") + options.title;
-    at = inset(g, x + 1, y, border, [[fit(title, Math.min(room, length(title))), "title." + options.color + (active ? "+bold" : ""), options.titleHit]]);
-  }
-  if (options.right && x + w - 6 - length(options.right) > at + 1) {
-    inset(g, x + w - 6 - length(options.right), y, border, [[options.right, "dim"]]);
-  }
-  if (options.footer && options.footer.length) {
-    let foot = x + 1;
-    const limit = x + w - 1;
-    options.footer.forEach((segment) => {
-      const size = length(segment[0]) + length(segment[1]) + 5;
-      if (foot + size > limit) return;
-      foot = inset(g, foot, y + h - 1, border, [[segment[0], "hotkey"], [" " + segment[1], "dim"]]) + 1;
-    });
-  }
+  box(g, rect, {
+    border: border, title: options.title && (active ? "\u25b8 " : "") + options.title,
+    titleStyle: "title." + options.color + (active ? "+bold" : ""), titleHit: options.titleHit,
+    right: options.right, footer: options.footer
+  });
   // Keep the position of every focus stop, including rows below the viewport,
   // so keyboard navigation can reveal the next control in this pane.
   const bounds = new Map();

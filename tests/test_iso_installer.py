@@ -94,6 +94,23 @@ class FakeHost(installer.Host):
         return "$y$fixture$" + hashlib.sha256(plaintext.encode()).hexdigest()[:16]
 
 
+def fixture(root: Path) -> tuple[Path, Path]:
+    """A live system's files under root/live and the medium's under root/media."""
+    live = root / "live"
+    for name, text in (("proc/meminfo", "MemTotal:        8000000 kB\n"),
+                       ("proc/cpuinfo", "processor\t: 0\nmodel name\t: Example CPU\n"),
+                       ("usr/share/zoneinfo/Europe/Berlin", "TZif"), ("usr/share/zoneinfo/America/New_York", "TZif"),
+                       ("usr/share/zoneinfo/posix/Europe/Berlin", "TZif"), ("usr/share/zoneinfo/zone.tab", ""),
+                       ("usr/share/i18n/SUPPORTED", "en_US.UTF-8 UTF-8\nen_US ISO-8859-1\nde_DE.UTF-8 UTF-8\n")):
+        (live / name).parent.mkdir(parents=True, exist_ok=True); (live / name).write_text(text)
+    for name in ("sys/firmware/efi", "sys/class/net/wlan0/wireless", "var/lib"):
+        (live / name).mkdir(parents=True)
+    media = root / "media"; media.mkdir()
+    (media / "packages.json").write_bytes((AREA / "iso/packages.json").read_bytes())
+    (media / "payload.json").write_text(json.dumps({"application": "0.1.0.dev0", "release": "f" * 64}))
+    return live, media
+
+
 class InstallerCore(unittest.TestCase):
     def setUp(self):
         scratch = AREA / ".scratch/iso-tests"
@@ -101,19 +118,7 @@ class InstallerCore(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="core-", dir=scratch)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        live = self.root / "live"
-        for name, text in (("proc/meminfo", "MemTotal:        8000000 kB\n"),
-                           ("proc/cpuinfo", "processor\t: 0\nmodel name\t: Example CPU\n"),
-                           ("usr/share/zoneinfo/Europe/Berlin", "TZif"), ("usr/share/zoneinfo/America/New_York", "TZif"),
-                           ("usr/share/zoneinfo/posix/Europe/Berlin", "TZif"), ("usr/share/zoneinfo/zone.tab", ""),
-                           ("usr/share/i18n/SUPPORTED", "en_US.UTF-8 UTF-8\nen_US ISO-8859-1\nde_DE.UTF-8 UTF-8\n")):
-            (live / name).parent.mkdir(parents=True, exist_ok=True); (live / name).write_text(text)
-        for name in ("sys/firmware/efi", "sys/class/net/wlan0/wireless", "var/lib"):
-            (live / name).mkdir(parents=True)
-        self.live = live
-        self.media = self.root / "media"; self.media.mkdir()
-        (self.media / "packages.json").write_bytes((AREA / "iso/packages.json").read_bytes())
-        (self.media / "payload.json").write_text(json.dumps({"application": "0.1.0.dev0", "release": "f" * 64}))
+        self.live, self.media = fixture(self.root)
         self.state = self.root / "state"
         self.target = self.root / "target"
 

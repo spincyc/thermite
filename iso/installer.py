@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -97,8 +98,9 @@ class Host:
             return False
 
     def spawn(self, argv, env: dict) -> subprocess.Popen:
+        # Its own session: a closed SSH login's hangup must not reach it.
         return subprocess.Popen(list(argv), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                text=True, errors="replace", env=env, bufsize=1)
+                                text=True, errors="replace", env=env, bufsize=1, start_new_session=True)
 
     def hash_password(self, plaintext: str) -> str:
         """yescrypt, as archinstall and Arch's PAM hash passwords."""
@@ -597,8 +599,15 @@ class Session:
 
 
 def serve(session: Session, stdin=sys.stdin, stdout=sys.stdout) -> int:
+    """A front end that goes away (a dropped SSH login) stops getting
+    answers; a running install carries on into its log."""
+    gone = []
     def write(message: dict) -> None:
-        stdout.write(json.dumps(message) + "\n"); stdout.flush()
+        if gone: return
+        try:
+            stdout.write(json.dumps(message) + "\n"); stdout.flush()
+        except OSError:
+            gone.append(True)
     for line in stdin:
         if not line.strip(): continue
         try:
@@ -617,6 +626,7 @@ def serve(session: Session, stdin=sys.stdin, stdout=sys.stdout) -> int:
 def main(argv: list[str]) -> int:
     if argv[:1] == ["serve"]:
         if os.geteuid() != 0: raise SystemExit("the installer core runs as root on the live medium")
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
         session = Session(Host())
         try: return serve(session)
         finally: session.close()

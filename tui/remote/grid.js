@@ -133,6 +133,47 @@ function characters(text) {
   return Array.from(String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " "));
 }
 
+// A label set into a frame's edge at x, as \u2524 text \u251c; returns the column after it.
+function inset(g, x, y, border, parts) {
+  let at = g.put(x, y, "\u2524 ", border);
+  parts.forEach((part) => {
+    at = g.put(at, y, part[0], part[1], part[2]);
+  });
+  return g.put(at, y, " \u251c", border);
+}
+
+// A btop box, as both terminal front ends draw their panels: a rounded
+// frame in the border style, the title (titleStyle, titleHit) set into its
+// top edge, a dim note (right) at the top right, and [key, label] hints
+// (footer) in its bottom edge, as many as fit.
+function box(g, rect, options) {
+  const { x, y, w, h } = rect;
+  const border = options.border;
+  g.put(x, y, "\u256d" + "\u2500".repeat(w - 2) + "\u256e", border);
+  for (let row = y + 1; row < y + h - 1; row += 1) {
+    g.put(x, row, "\u2502", border);
+    g.put(x + w - 1, row, "\u2502", border);
+  }
+  g.put(x, y + h - 1, "\u2570" + "\u2500".repeat(w - 2) + "\u256f", border);
+  const room = w - 8;
+  let at = x + 1;
+  if (options.title && room > 2) {
+    at = inset(g, x + 1, y, border, [[fit(options.title, Math.min(room, length(options.title))), options.titleStyle, options.titleHit]]);
+  }
+  if (options.right && x + w - 6 - length(options.right) > at + 1) {
+    inset(g, x + w - 6 - length(options.right), y, border, [[options.right, "dim"]]);
+  }
+  if (options.footer && options.footer.length) {
+    let foot = x + 1;
+    const limit = x + w - 1;
+    options.footer.forEach((segment) => {
+      const size = length(segment[0]) + length(segment[1]) + 5;
+      if (foot + size > limit) return;
+      foot = inset(g, foot, y + h - 1, border, [[segment[0], "hotkey"], [" " + segment[1], "dim"]]) + 1;
+    });
+  }
+}
+
 // Words wrapped to width; a word longer than width is cut.
 function wrap(text, width) {
   const lines = [];
@@ -159,4 +200,4 @@ function wrap(text, width) {
   return lines;
 }
 
-module.exports = { Grid, LOCK, fit, fitTail, wrap, length };
+module.exports = { Grid, LOCK, box, inset, fit, fitTail, wrap, length };
