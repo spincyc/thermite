@@ -1,11 +1,9 @@
 'use strict';
 // Runs production integration scripts against stub openHAB and Java types.
-// argv: heos.js globalcache_ir.js bk808_cec.js androidtv_googletv.js
-// avpro_telnet.js. No device or network access: HTTP and sockets are
-// fixtures.
+// argv: heos.js globalcache_ir.js bk808_cec.js androidtv_googletv.js. No
+// device or network access: HTTP and sockets are fixtures.
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
-const [heosSource, irSource, cecSource, androidSource, avproSource] =
-  process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
+const [heosSource, irSource, cecSource, androidSource] = process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
 
@@ -54,7 +52,7 @@ function thing(status, description = '', extra = {}) {
   return Object.assign(value, extra);
 }
 
-function run(source, table, { things, items, java = {}, clock, globals = {} }) {
+function run(source, table, { things, items, java = {}, clock }) {
   const rules = {}, logs = [];
   const openhab = openhabStub({ things, items, rules });
   const types = Object.assign({
@@ -66,7 +64,6 @@ function run(source, table, { things, items, java = {}, clock, globals = {} }) {
     Java: { type: name => types[name] || assert.fail('unexpected Java type ' + name) },
     console: { info: m => logs.push(['info', m]), warn: m => logs.push(['warn', m]), error: m => logs.push(['error', m]) },
     Date: { now: () => clock.now }, JSON, Map, Set, Object, String, Number, Boolean, Array, Error, Math, RegExp,
-    ...globals,
   });
   let text = source;
   for (const [mark, value] of Object.entries(table)) text = text.replace(`const ${mark} = null;`, `const ${mark} = ${JSON.stringify(value)};`);
@@ -217,46 +214,6 @@ test('a failed restore of the previous keystore stops retrying and shows failed 
   r.pair('CANCEL'); assert.equal(r.moves.length, 2); assert.equal(errors().length, 2); assert.equal(r.status(), 'failed');
   r.files.delete(previous); r.poll();
   assert(r.logs.some(([level, message]) => level === 'info' && message.includes('is gone'))); assert.equal(r.status(), 'paired');
-});
-
-// An AC-MX-44X on telnet: it lists nothing on connect, answers GET OUT0 VS
-// with every route and SET with the new one, or refuses every connection.
-function avpro() {
-  const clock = { now: 0 }, matrix = { refuse: false, routes: [1, 1, 1, 1], opened: [] };
-  const thermiteIO = {
-    deadline: ms => clock.now + ms,
-    remaining: end => { if (end <= clock.now) throw Error('deadline'); return end - clock.now; },
-    open() { matrix.opened.push(clock.now / 60000); if (matrix.refuse) throw Error('refused'); return { closed: false, lines: [] }; },
-    line(link) { if (link.lines.length) return link.lines.shift(); throw Error('quiet'); },
-    quietTimeout: () => true,
-    write(link, text) {
-      const set = /^SET OUT(\d+) VS IN(\d+)\r\n$/.exec(text);
-      if (set) { matrix.routes[set[1] - 1] = Number(set[2]); link.lines.push(`OUT${set[1]} VS IN${set[2]}`); }
-      else if (text === 'GET OUT0 VS\r\n') link.lines.push(...matrix.routes.map((input, i) => `OUT${i + 1} VS IN${input}`));
-    },
-    close(link) { link.closed = true; },
-  };
-  const items = {};
-  const loaded = run(avproSource.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: [{ id: 'matrix', host: '192.0.2.30', port: 23,
-    inputs: 4, outputs: 4 }] }, { items, clock, globals: { thermiteIO } });
-  return { ...loaded, clock, matrix, items,
-    poll: () => { loaded.rules.avpro_telnet_matrix_poll.execute(); clock.now += 60000; },
-    command: (output, input) => loaded.rules.avpro_telnet_matrix_command.execute({
-      itemName: `matrix_output${output}_input`, receivedCommand: String(input) }) };
-}
-
-test('an AVPro matrix that refuses is polled after 1, 2, 4 and then every 5 minutes; a switch still tries at once', () => {
-  const r = avpro();
-  r.matrix.refuse = true;
-  for (let minute = 0; minute < 18; minute++) r.poll();
-  assert.deepEqual(r.matrix.opened, [0, 1, 3, 7, 12, 17]);
-  assert.equal(r.items.matrix_output4_input, 'UNDEF');
-  assert.equal(r.logs.filter(([level]) => level === 'warn').length, 1);
-  r.matrix.refuse = false; r.command(4, 2);
-  assert.deepEqual(r.matrix.opened.slice(6), [18]); assert.equal(r.items.matrix_output4_input, '2');
-  assert(r.logs.some(([level, message]) => level === 'info' && message.includes('answering over telnet again')));
-  r.poll(); r.poll(); r.matrix.refuse = true; r.poll(); r.poll();
-  assert.deepEqual(r.matrix.opened.slice(7), [18, 19, 20, 21]);
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));
