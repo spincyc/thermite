@@ -16,7 +16,7 @@ from pathlib import Path
 import oh_cli
 import oh_deploy as deploy
 from oh_cli import AREA
-from oh_install import runner, steps
+from oh_install import bridge, changeover, manifest, ownership, runner, steps
 from oh_install.system import System
 
 DESCRIPTION = """\
@@ -34,16 +34,30 @@ identity, accounts, certificates and callback routes; a fresh gateway creates
 its TLS certificate and starts with Security off. Enable Security on its page
 to bootstrap the first administrator with owner proof.
 
-The command in ~/.local/bin is switched only after every check passes. Keep
-that directory first on PATH; a successful run warns when it is not. Rerun
-after a failure to resume; prior environments, releases and backups are
-retained. Application setup never changes OS Python. Install refuses to pin a
-release older than the site's committed one unless --allow-downgrade is given,
-after deliberately restoring state that the newer release may have migrated.
+Everything that can be done while Thermite runs is done first. Then the
+host changes as one install transaction: the install engine, as root, keeps
+thermite.target from booting, Thermite stops and the installed version, if
+any, is set aside; the new one is installed and started, and the
+transaction commits once its health passes. Any failure from there rolls
+back in the same run: the version that ran before runs again, and the
+site's pin commit is undone. When nothing differs from the installed
+version, install only checks its health. Thermite's files without
+/etc/thermite/installed.json refuse the install with the recovery steps.
 
---clean deletes the native state and local runtime/monitoring credentials;
-it requires typing the exact state path. Gateway identity/TLS state is retained.
---restart-runtime requests one fresh native start and its readiness checks.
+The command in ~/.local/bin is switched only after the commit. Keep that
+directory first on PATH; a successful run warns when it is not. If a run is
+interrupted, or its rollback cannot finish, the next install, upgrade or
+uninstall first finishes or rolls back that transaction, then stops.
+Application setup never changes OS Python. Install refuses to pin a release
+older than the site's committed one unless --allow-downgrade is given, after
+deliberately restoring state that the newer release may have migrated.
+
+--clean installs inside the same transaction with fresh native state: it
+moves the state trees under runtime/ aside and clears the local
+runtime/monitoring credentials, and deletes them only at the commit; it
+requires typing the exact state path. Logs, history, old backups and the
+gateway's identity/TLS state are retained.
+--restart-runtime installs even when nothing differs, starting everything fresh.
 --native-timeout sets the one native readiness allowance (300-7200 seconds).
 --dry-run fetches, commits and changes nothing. When the site pins the release
 running it, it also prints that release's provisional host plan for this host;
@@ -53,17 +67,23 @@ only use --dry-run; they never run sudo.
 
 NOTES = """\
 exit status:
-  0  complete and verified
-  1  declined or a step failed
-  2  invalid inputs, an older release without --allow-downgrade, or run as root
-  130  interrupted; the running step stopped its own commands first
+  0  committed and verified, or nothing differed and the installed version verified
+  1  declined, refused before anything stopped, a check failed, or an earlier
+     transaction was finished or closed instead of installing
+  2  invalid inputs, an older release without --allow-downgrade, Thermite's
+     files without its installed manifest, or run as root
+  3  rolled back: the version that ran before runs again and its health passes
+     (or nothing was installed before, and nothing is now)
+  4  rolled back, but the reinstated version's health does not pass; it keeps running
+  5  the rollback did not finish: Thermite stays stopped; run thermite install again
+  130  interrupted; the next install rolls the open transaction back first
 """
 
 EXAMPLES = (
     ("thermite install --config /path/to/private-site", "install this site's configuration on the host"),
     ("thermite install --config /path/to/private-site --dry-run", "review the plan without changing services"),
     ("thermite install --dry-run", "each step, and what it would run here; runs nothing"),
-    ("thermite install", "install with one approval for the whole run; safe to rerun"),
+    ("thermite install", "install with one approval for the whole run; rolls back by itself on failure"),
     ("thermite install --clean --dry-run", "review a complete native-state reset and fresh installation"),
 )
 
@@ -86,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="pin a release older than the site's committed one, after restoring compatible state")
     parser.add_argument("--_host-phase", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--_run-approved", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--_site-before", help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
     if os.geteuid() == 0:
         print("thermite install: run it as your user; it asks once before applying the installation", file=sys.stderr)
@@ -95,6 +116,10 @@ def main(argv: list[str] | None = None) -> int:
         if not arguments._host_phase:
             if arguments._run_approved:
                 raise ValueError("run approval is only valid inside the application workflow")
+            if not arguments.dry_run:
+                found = changeover.resolve(AREA, system, "install")
+                if found is not None:
+                    return changeover.REFUSED if found == changeover.COMMITTED else found
             import oh_application_update
             return oh_application_update.install(
                 AREA, source=arguments.source, revision=arguments.revision,
@@ -106,51 +131,51 @@ def main(argv: list[str] | None = None) -> int:
                            if arguments.native_timeout is not None else []) +
                           (["--verbose"] if oh_cli.switches.verbose else []), say=system.say)
         import oh_paths
-        oh_paths.require_compatible()
-        return install(system, arguments.dry_run, clean=arguments.clean, runtime_token_file=arguments.runtime_token_file,
-                       restart_runtime=arguments.restart_runtime, run_approved=arguments._run_approved,
-                       native_timeout=arguments.native_timeout)
+
+        def body() -> int:
+            oh_paths.require_compatible()
+            return install(system, arguments.dry_run, clean=arguments.clean,
+                           runtime_token_file=arguments.runtime_token_file, restart_runtime=arguments.restart_runtime,
+                           run_approved=arguments._run_approved, native_timeout=arguments.native_timeout,
+                           site_before=arguments._site_before)
+        return changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body)
     except subprocess.CalledProcessError as exc:
-        print("thermite install: a deployment step failed; rerun the same command to resume", file=sys.stderr)
+        print("thermite install: a step failed before the install transaction began; nothing of Thermite was "
+              "stopped or changed", file=sys.stderr)
         return exc.returncode if exc.returncode > 0 else 1
     except (deploy.DeployError, ValueError, OSError) as exc:
         print(f"thermite install: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         system.say(f"\nInterrupted. {runner.RERUN}")
-        return 130
+        return changeover.INTERRUPTED
 
 
 def approve(system: System, context: steps.Context, clean: bool) -> bool:
     if context.restart_runtime:
-        system.say("Runtime will restart once after deployment, then pass the normal readiness checks.")
+        system.say("The runtime starts fresh with the rest of Thermite inside the install transaction.")
     if clean:
-        if oh_cli.switches.verbose:
-            system.say(f"This clean install DELETES {context.layout.root}: accounts, pairings, credentials, history, "
-                       "monitoring data, backups and manually installed binding repairs. It also clears "
-                       f"{context.token_file}, {context.grafana_password_file} and {context.runtime_credentials_file}. Source configuration and "
-                       "separately staged access identity/TLS state are retained.")
-        else:
-            system.say(f"Deletes all runtime data in {context.layout.root} and local credentials.")
+        system.say(f"A clean install deletes the state under {context.layout.root} and local credential copies "
+                   "once it commits; it asks you to type that path before it begins.")
     if oh_cli.switches.verbose:
-        system.say("This install run includes packages, service-account setup, permissions, boot checks, systemd units, "
-                   "deployment and its ownership handoff, stopping all of Thermite when anything it runs on changes and "
-                   "starting it again, credential setup and health checks.")
+        system.say("This install run includes packages, service-account setup, permissions, the boot check, then "
+                   "one install transaction: Thermite stops, the installed version is set aside, the new one is "
+                   "installed and started, and it commits once its health passes, or rolls back.")
     return runner.confirm_run(system, "clean install" if clean else "install")
 
 
 def refuse_open(system: System, dry_run: bool) -> bool:
-    """An upgrade's install transaction that has not finished comes first."""
-    from oh_install import changeover
+    """An install transaction that has not finished comes first."""
     pending = changeover.open_transaction(AREA / "var")
     if pending and not dry_run:
-        system.say(f"An upgrade's install transaction, {pending}, has not finished: run "
-                   f"{changeover.upgrade_command(AREA)} first; it commits or rolls it back.")
+        system.say(f"An install transaction, {pending}, has not finished: run "
+                   f"{changeover.pending_command(AREA)} first; it commits or rolls it back.")
     return bool(pending) and not dry_run
 
 
 def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token_file: Path | None = None,
-            restart_runtime: bool = False, run_approved: bool = False, native_timeout: int | None = None) -> int:
+            restart_runtime: bool = False, run_approved: bool = False, native_timeout: int | None = None,
+            site_before: str | None = None) -> int:
     if clean and runtime_token_file is not None:
         system.say("A clean installation creates new runtime credentials; an existing token cannot be imported into it.")
         return 2
@@ -162,47 +187,54 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
         if dry_run:
             runner.run([steps.Packages()], system, AREA, dry_run=True)
         return 2
-    if refuse_open(system, dry_run):
-        return 2
+    if not dry_run:
+        found = changeover.resolve(AREA, system, "install")
+        if found is not None:
+            # This run stopped there and installed nothing: never success.
+            return changeover.REFUSED if found == changeover.COMMITTED else found
     context = steps.committed_context(AREA, system, runtime_token_file)
     if native_timeout is not None:
         context = dataclasses.replace(context, native_timeout=native_timeout)
     if restart_runtime:
         context = dataclasses.replace(context, restart_runtime=True)
-    versions, host = context.versions, context.host
+    try:
+        installed = manifest.installed(system, context.installation.root)
+    except manifest.ManifestError as exc:
+        system.say(f"{exc}. {manifest.missing_recovery(context)}")
+        return 2
+    bridged = installed is None and bridge.needed(system)
+    if installed is None and not bridged and manifest.thermite_present(context, system):
+        system.say(manifest.missing_recovery(context))
+        return 2
+    kind = "clean" if clean else "install"
+    versions = context.versions
     where = f"{context.hostname} ({context.address})" if context.address else context.hostname
     system.say(f"{'What installing' if dry_run else 'Installing'} thermite (runtime {versions['openhab']['version']}) "
                f"on this host, {where}, as {system.login()}, at {context.head[:12]}, "
                f"{'would do' if dry_run else 'step by step'}:")
     preflight = steps.install_preflight(context)
     code = runner.run(preflight, system, AREA, dry_run=dry_run)
-    if code and not dry_run:
+    if dry_run:
+        return changeover.preview(context, system, changeover.install_work(context, None, kind=kind),
+                                  first=len(preflight) + 1) or code
+    if code:
         return code
-    approved = False
-    if not dry_run:
-        if not run_approved and not approve(system, context, clean):
-            return 1
-        approved = True
-    reset = steps.clean_install(context) if clean else []
-    reset_code = runner.run(reset, system, AREA, dry_run=dry_run, first=len(preflight) + 1,
-                            root_confirmed=approved)
-    if reset_code and not dry_run:
-        return reset_code
-    if clean and dry_run:
-        system.say("The remaining checks describe the current host. The actual run rechecks every step after "
-                   "deletion, recreates missing state, and provisions private runtime access automatically.")
-    *install, verify = steps.install(context, preflight=False)
-    first = len(preflight) + len(reset) + 1
-    body_code = runner.run(install, system, AREA, dry_run=dry_run, first=first, root_confirmed=approved)
-    code = code or reset_code or body_code
-    if code and not dry_run:
-        return code
-    if not dry_run:
+    if not clean and not restart_runtime and changeover.unchanged(context, system, installed):
+        system.say(f"Nothing differs from the installed version (transaction {installed['transaction']}); "
+                   "checking its health.")
+        return runner.run([steps.Health(context)], system, AREA, first=len(preflight) + 1)
+    if bridged:
+        system.say("This is the first install transaction here: the installed version is described from "
+                   f"{ownership.MANIFEST} and its fixed paths, and set aside like any other.")
+    if not run_approved and not approve(system, context, clean):
+        return 1
+    code = changeover.run(context, system, lambda id: changeover.install_work(context, id, kind=kind),
+                          installed=installed, bridged=bridged, before=site_before or None, first=len(preflight) + 1)
+    if code == changeover.COMMITTED:
         completion(context, system)
-        if host["gid"] not in system.process_groups():
+        if context.host["gid"] not in system.process_groups():
             system.say("Log out and in again, so that your shell is in the thermite group for later deploys.")
-    return runner.run([verify], system, AREA, dry_run=dry_run, first=first + len(install),
-                      root_confirmed=approved) or code
+    return code
 
 
 def completion(context: steps.Context, system: System) -> None:

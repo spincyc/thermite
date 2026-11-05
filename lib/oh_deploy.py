@@ -2073,7 +2073,10 @@ def deploys(layout: State) -> list[dict]:
             if owner is not None:
                 owner.setdefault("gateway", []).append({key: value.get(key) for key in GATEWAY_EVENT})
         elif value["event"] == "rolled-back":
-            owner = next((entry for entry in reversed(entries) if entry["commit"] == value["commit"]), None)
+            # A transaction that rolled back before its deploy ran has no
+            # entry of its own: it is shown under the deploy that ran then.
+            owner = next((entry for entry in reversed(entries) if entry["commit"] == value["commit"]),
+                         entries[-1] if entries else None)
             if owner is not None:
                 owner.setdefault("rolled_back", []).append({key: value.get(key) for key in ROLLBACK_EVENT})
     now = (record.get("commit"), record.get("deployed_at"))

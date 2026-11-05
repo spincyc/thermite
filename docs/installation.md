@@ -691,17 +691,22 @@ initialize new accounts or replace credentials merely to retry.
 `--dry-run` prints a provisional host plan only when the site pins the release
 that is running it; otherwise the host plan is resolved after approval.
 
-`thermite install` does not run as a transaction yet: when it fails after
-stopping Thermite, it starts `thermite.target` again and says so, and the
-installation remains incomplete until a rerun succeeds.
+`thermite install` runs as the same install transaction, with the same exit
+statuses; on a host without Thermite, a rollback leaves nothing installed.
+`thermite install --clean` is one too: it asks you to type the state path
+before it begins, moves the state trees under `runtime/` aside whole and
+clears the deploy's records and local credential copies inside the
+transaction, and deletes what it moved aside only at the commit. Logs, the
+deploy history, old backups and the gateway's identity stay.
 
 ### An interrupted upgrade
 
 Ctrl-C before the transaction begins changes nothing, and the site's pin
 commit is undone. After it began, the transaction stays open: Thermite may
 be stopped, with `thermite.target` kept from booting. `thermite status`
-reports it as a problem, and `thermite install` and `thermite uninstall`
-refuse to run. Run `thermite upgrade --config DIR` again: it first finishes a
+reports it as a problem, and `thermite uninstall` refuses to run. Run the
+command that began it (`thermite upgrade` or `thermite install`, with
+`--config DIR`) again: it first finishes a
 transaction the engine already committed, closes one that never began, or
 rolls back any other, then stops without upgrading and says so, with that
 outcome's exit status. Run it once more to upgrade.

@@ -128,6 +128,10 @@ class SplitInstaller(unittest.TestCase):
         with patch.object(install_cli, "AREA", self.site), \
                 patch.object(steps, "committed_context", return_value=self.context), \
                 patch.object(steps, "install_preflight", return_value=[]), \
+                patch("oh_install.manifest.installed", return_value=None), \
+                patch("oh_install.bridge.needed", return_value=False), \
+                patch("oh_install.manifest.thermite_present", return_value=[]), \
+                patch("oh_install.changeover.unchanged", return_value=False), \
                 patch.object(runner, "confirm_run", return_value=False) as approval:
             self.assertEqual(install_cli.install(self.system, False), 1)
         approval.assert_called_once()

@@ -770,16 +770,30 @@ identity, accounts, certificates and callback routes; a fresh gateway creates
 its TLS certificate and starts with Security off. Enable Security on its page
 to bootstrap the first administrator with owner proof.
 
-The command in ~/.local/bin is switched only after every check passes. Keep
-that directory first on PATH; a successful run warns when it is not. Rerun
-after a failure to resume; prior environments, releases and backups are
-retained. Application setup never changes OS Python. Install refuses to pin a
-release older than the site&#x27;s committed one unless --allow-downgrade is given,
-after deliberately restoring state that the newer release may have migrated.
+Everything that can be done while Thermite runs is done first. Then the
+host changes as one install transaction: the install engine, as root, keeps
+thermite.target from booting, Thermite stops and the installed version, if
+any, is set aside; the new one is installed and started, and the
+transaction commits once its health passes. Any failure from there rolls
+back in the same run: the version that ran before runs again, and the
+site&#x27;s pin commit is undone. When nothing differs from the installed
+version, install only checks its health. Thermite&#x27;s files without
+/etc/thermite/installed.json refuse the install with the recovery steps.
 
---clean deletes the native state and local runtime/monitoring credentials;
-it requires typing the exact state path. Gateway identity/TLS state is retained.
---restart-runtime requests one fresh native start and its readiness checks.
+The command in ~/.local/bin is switched only after the commit. Keep that
+directory first on PATH; a successful run warns when it is not. If a run is
+interrupted, or its rollback cannot finish, the next install, upgrade or
+uninstall first finishes or rolls back that transaction, then stops.
+Application setup never changes OS Python. Install refuses to pin a release
+older than the site&#x27;s committed one unless --allow-downgrade is given, after
+deliberately restoring state that the newer release may have migrated.
+
+--clean installs inside the same transaction with fresh native state: it
+moves the state trees under runtime/ aside and clears the local
+runtime/monitoring credentials, and deletes them only at the commit; it
+requires typing the exact state path. Logs, history, old backups and the
+gateway&#x27;s identity/TLS state are retained.
+--restart-runtime installs even when nothing differs, starting everything fresh.
 --native-timeout sets the one native readiness allowance (300-7200 seconds).
 --dry-run fetches, commits and changes nothing. When the site pins the release
 running it, it also prints that release&#x27;s provisional host plan for this host;
@@ -812,10 +826,16 @@ switches every verb takes:
   --no-color                    no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
-  0  complete and verified
-  1  declined or a step failed
-  2  invalid inputs, an older release without --allow-downgrade, or run as root
-  130  interrupted; the running step stopped its own commands first
+  0  committed and verified, or nothing differed and the installed version verified
+  1  declined, refused before anything stopped, a check failed, or an earlier
+     transaction was finished or closed instead of installing
+  2  invalid inputs, an older release without --allow-downgrade, Thermite&#x27;s
+     files without its installed manifest, or run as root
+  3  rolled back: the version that ran before runs again and its health passes
+     (or nothing was installed before, and nothing is now)
+  4  rolled back, but the reinstated version&#x27;s health does not pass; it keeps running
+  5  the rollback did not finish: Thermite stays stopped; run thermite install again
+  130  interrupted; the next install rolls the open transaction back first
 
 examples:
   thermite install --config /path/to/private-site
@@ -823,7 +843,7 @@ examples:
   thermite install --config /path/to/private-site --dry-run
                                     review the plan without changing services
   thermite install --dry-run        each step, and what it would run here; runs nothing
-  thermite install                  install with one approval for the whole run; safe to rerun
+  thermite install                  install with one approval for the whole run; rolls back by itself on failure
   thermite install --clean --dry-run
                                     review a complete native-state reset and fresh installation
 </pre>

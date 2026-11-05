@@ -110,7 +110,7 @@ def show_guest(host: dict, report: dict, say) -> None:
 def show_transaction(host: dict, report: dict, say, problems: list[str], *, manifest: Path | None = None) -> None:
     """The install transaction that installed this version, from the
     installed manifest (`manifest`, by default the system's), and an
-    upgrade's transaction that has not finished."""
+    install transaction that has not finished."""
     import json
     from oh_install import changeover, engine
     root = deploy.installation(host).root
@@ -126,8 +126,8 @@ def show_transaction(host: dict, report: dict, say, problems: list[str], *, mani
     pending = changeover.open_transaction(AREA / "var")
     report["open_transaction"] = pending
     if pending:
-        problems.append(f"upgrade transaction {pending} has not finished")
-        say(f"upgrade  transaction {pending} has not finished: {changeover.upgrade_command(AREA)} commits or "
+        problems.append(f"install transaction {pending} has not finished")
+        say(f"install  transaction {pending} has not finished: {changeover.pending_command(AREA)} commits or "
             "rolls it back, then stops")
 
 

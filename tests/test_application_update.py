@@ -57,8 +57,10 @@ class ApplicationUpdate(fixtures.ApplicationFixture):
         self.assertEqual(self.apply("install", program=self.source,
                                     runtime_token_file=token, host_args=("--clean", "--restart-runtime")), 0)
         child = next(args for args in self.calls if args[1:2] == ("install",))
-        self.assertEqual(child[1:], ("install", "--config", str(self.site), "--_host-phase", "--_run-approved",
-                                    "--clean", "--restart-runtime", "--runtime-token-file", str(token)))
+        self.assertEqual(child[1:6], ("install", "--config", str(self.site), "--_host-phase", "--_run-approved"))
+        self.assertEqual(child[6], "--_site-before", "the host phase undoes the pin if nothing commits")
+        self.assertRegex(child[7], "^[0-9a-f]{40}$")
+        self.assertEqual(child[8:], ("--clean", "--restart-runtime", "--runtime-token-file", str(token)))
         self.assertFalse(any("fetch" in args for args in self.calls))
 
     def test_install_current_verified_release_does_not_fetch_or_need_source_git(self):

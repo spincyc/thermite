@@ -218,7 +218,7 @@ class Lifecycle(fixtures.ApplicationFixture):
             self.assertEqual(self.apply(host_args=("--native-timeout", "1200")), 1)
         child = next(args for args in self.calls if args[1:2] == ("upgrade",))
         self.assertEqual(child[-2:], ("--native-timeout", "1200"))
-        self.assertIn(application.Transacted.MESSAGES[1], self.said)
+        self.assertIn(application.Transacted.MESSAGES[1].format(operation="upgrade"), self.said)
         self.assertFalse(any(line.startswith("Resume: ") for line in self.said),
                          "the host phase undid its pin; a rerun upgrades afresh")
 

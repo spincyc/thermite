@@ -69,25 +69,26 @@ print(json.dumps({'root': str(root), 'digest': release['digest'], 'application':
 
 
 class Transacted(Exception):
-    """The upgrade's host phase ran its install transaction to an outcome
-    other than a commit: it said what happened; nothing is resumed."""
+    """The host phase of an install or upgrade ran its install transaction
+    to an outcome other than a commit: it said what happened; nothing is
+    resumed."""
 
     MESSAGES = {
-        1: "The upgrade did not begin, and the previous owner command stays selected.",
+        1: "The {operation} did not begin, and the previous owner command stays selected.",
         2: "Nothing of Thermite was changed; the previous owner command stays selected.",
-        3: "The upgrade rolled back: the previous version runs again, and the previous owner command stays "
-           "selected.",
-        4: "The upgrade rolled back: the previous version runs again, but its health does not pass (above). "
+        3: "The {operation} rolled back: the version that ran before is back, and the previous owner command "
+           "stays selected.",
+        4: "The {operation} rolled back: the previous version runs again, but its health does not pass (above). "
            "The previous owner command stays selected.",
         5: "The rollback did not finish: Thermite stays stopped. Run {command} again to finish it.",
         130: "Interrupted: run {command} again; it rolls back the unfinished transaction first.",
     }
 
-    def __init__(self, code: int, site: Path):
+    def __init__(self, code: int, site: Path, operation: str = "upgrade"):
         super().__init__(code)
         self.code = code
-        command = shlex.join(["thermite", "upgrade", "--config", str(site)])
-        self.message = self.MESSAGES.get(code, self.MESSAGES[1]).format(command=command)
+        command = shlex.join(["thermite", operation, "--config", str(site)])
+        self.message = self.MESSAGES.get(code, self.MESSAGES[1]).format(command=command, operation=operation)
 
 
 class Downgrade(ValueError):
@@ -446,7 +447,7 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
     transaction.git(site_root, "var", "GIT_COMMITTER_IDENT")
     say("This run includes application acquisition, the site release commit, native services, "
         "the access gateway, sudo commands and readiness checks"
-        + (", as one install transaction that commits or rolls back." if operation == "upgrade" else "."))
+        + ", as one install transaction that commits or rolls back.")
     if not approve():
         return 1
     key = None
@@ -471,16 +472,13 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
             command = environment / "bin/thermite"
             transaction.site_update(command, site, expected_head=site_head)
             committed = transaction.clean(site_root)
-            if operation == "upgrade":
-                # The host phase undoes the pin commit itself if its install
-                # transaction rolls back or never begins.
-                try:
-                    host(command, operation, "--config", site, "--_host-phase", "--_run-approved",
-                         "--_site-before", site_head, *forwarded)
-                except subprocess.CalledProcessError as exc:
-                    raise Transacted(exc.returncode, site) from None
-            else:
-                host(command, operation, "--config", site, "--_host-phase", "--_run-approved", *forwarded)
+            # The host phase undoes the pin commit itself if its install
+            # transaction rolls back or never begins.
+            try:
+                host(command, operation, "--config", site, "--_host-phase", "--_run-approved",
+                     "--_site-before", site_head, *forwarded)
+            except subprocess.CalledProcessError as exc:
+                raise Transacted(exc.returncode, site, operation) from None
             if transaction.clean(site_root) != committed:
                 raise ValueError("the site revision changed during host verification")
             unchanged_source(source, source_head, release_digest)
@@ -506,9 +504,9 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
             return outcome.code
         except BaseException:
             from oh_install import changeover
-            if operation == "upgrade" and changeover.open_transaction(site / "var"):
+            if changeover.open_transaction(site / "var"):
                 say("The run stopped with an install transaction open. Run "
-                    + shlex.join(["thermite", "upgrade", "--config", str(site)])
+                    + shlex.join(["thermite", operation, "--config", str(site)])
                     + " again: it rolls the transaction back first, then stops.")
                 raise
             say("The run stopped; the previous owner command and application environments are retained. "

@@ -95,8 +95,10 @@ def details(entry: dict) -> list[str]:
     for event in entry.get("rolled_back", ()):
         at = (event.get("at") or "").replace("T", " ").removesuffix("+00:00")
         restored = event.get("restored")
+        undone = event.get("commit")
         out.append(f"rolled back  {at} transaction {event.get('transaction')}"
-                   + (f", deploying {restored[:12]} again" if restored else ""))
+                   + (f" of {undone[:12]}, which never deployed here" if undone and undone != entry["commit"]
+                      else f", deploying {restored[:12]} again" if restored else ""))
     return out
 
 

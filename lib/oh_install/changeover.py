@@ -1,22 +1,25 @@
-"""thermite upgrade as one install transaction.
+"""Thermite's install transactions: install (and install --clean),
+upgrade, uninstall (and --purge), rollback to an earlier site commit, and
+revert to the version kept before the last one.
 
-The upgrade first prepares everything it can while Thermite keeps running:
-the configuration, packages, the boot test, the pinned images, and the room
-the install engine (lib/oh_install/engine.py, run as root) needs to set the
+Each first prepares everything it can while Thermite keeps running: the
+configuration, packages, the boot test, the pinned images, and the room the
+install engine (lib/oh_install/engine.py, run as root) needs to set the
 installed version aside. Then the engine begins the transaction, guards the
 boot (thermite.target stays disabled), and once Thermite is stopped collects
 the installed version. The new version is switched in by the ordinary
-install steps and verified by its health; only then does the engine commit
-it. A failure from begin on rolls the transaction back in the same run and
-the version that ran before runs again. The runner never compensates inside
-a transaction: the rollback is the only undo.
+install steps (an uninstall switches in nothing; a revert has the engine
+put the kept version back) and verified by its health; only then does the
+engine commit it. A failure from begin on rolls the transaction back in the
+same run and the version that ran before runs again. The runner never
+compensates inside a transaction: the rollback is the only undo.
 
 The operator keeps its own record of each transaction in the site's
 var/transaction/<id>/: record.json, the inputs it handed the engine, the
 operator files it set aside (F3) and the gateway's attempt record.
 var/transaction/open names a transaction that has not finished; the next
-thermite upgrade finishes or rolls it back first, then stops and says so,
-and thermite status names it.
+owner command that runs a transaction finishes or rolls it back first, then
+stops and says so, and thermite status names it.
 """
 from __future__ import annotations
 
@@ -26,6 +29,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+from typing import Callable
 
 import oh_units
 from oh_install import bridge, engine, manifest, ownership, runner, steps
@@ -33,7 +37,8 @@ from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
 from oh_install.model import Check, Command, Step, Task
 from oh_install.system import System
 
-#: thermite upgrade's exit statuses for the transaction's outcomes.
+#: The exit statuses of a transaction's outcomes, for every owner command
+#: that runs one.
 COMMITTED, REFUSED, ROLLED_BACK, UNHEALTHY, STUCK, INTERRUPTED = 0, 1, 3, 4, 5, 130
 #: The interpreter that runs the engine as root: the system's, isolated.
 PYTHON = "/usr/bin/python3"
@@ -48,7 +53,7 @@ def transactions(var: Path) -> Path:
 
 
 def open_transaction(var: Path) -> str | None:
-    """The id of the upgrade transaction that has not finished, if any."""
+    """The id of the install transaction that has not finished, if any."""
     try:
         value = (transactions(var) / OPEN).read_text().strip()
     except FileNotFoundError:
@@ -56,8 +61,33 @@ def open_transaction(var: Path) -> str | None:
     return value or None
 
 
+#: The owner commands that run an install transaction, as their records
+#: name them, and what they are doing.
+DOING = {"install": "installing", "upgrade": "upgrading", "uninstall": "uninstalling",
+         "rollback": "rolling back", "revert": "reverting"}
+#: What the messages call a transaction of these kinds.
+NAMES = {"clean": "Clean install", "purge": "Purge", "revert": "Revert"}
+
+
+def command(site: Path, verb: str = "upgrade") -> str:
+    """The owner command, for this site; each resolves an unfinished
+    transaction before anything else."""
+    return f"thermite {verb} --config {shlex.quote(str(site))}"
+
+
 def upgrade_command(site: Path) -> str:
-    return f"thermite upgrade --config {shlex.quote(str(site))}"
+    return command(site, "upgrade")
+
+
+def pending_command(site: Path) -> str:
+    """The owner command that resolves the open transaction: the one that
+    began it."""
+    var = Path(site) / "var"
+    try:
+        verb = Transaction.load(var, open_transaction(var) or "").record.get("verb")
+    except (OSError, ValueError):
+        verb = None
+    return command(site, verb if verb in DOING else "upgrade")
 
 
 def _write(path: Path, data: bytes) -> None:
@@ -90,7 +120,7 @@ def _allocated(path: Path) -> int:
 
 @dataclasses.dataclass
 class Transaction:
-    """One upgrade's transaction, as the operator records it."""
+    """One install transaction, as the operator records it."""
 
     var: Path
     id: str
@@ -122,6 +152,19 @@ class Transaction:
     def file(self, name: str) -> Path:
         return self.directory / name
 
+    @property
+    def verb(self) -> str:
+        return self.record.get("verb", "upgrade")
+
+    @property
+    def name(self) -> str:
+        """What the messages call it: Upgrade, Install, Clean install..."""
+        return NAMES.get(self.record.get("kind"), self.verb.capitalize())
+
+    @property
+    def rerun(self) -> str:
+        return command(self.site, self.verb)
+
     def argv(self, verb: str, *args) -> tuple[str, ...]:
         named = ("--id", self.id) if verb not in ("plan", "status") else ()
         return (PYTHON, "-I", "-S", str(self.engine), verb, "--root", str(self.root), *named, *map(str, args))
@@ -134,11 +177,15 @@ class Transaction:
         _json(self.file("record.json"), self.record)
 
     @classmethod
-    def create(cls, context: steps.Context, id: str, *, before: str | None, after: str | None,
-               previous: str | None, gid: int) -> Transaction:
+    def create(cls, context: steps.Context, id: str, *, kind: str, verb: str, before: str | None,
+               after: str | None, previous: str | None, gid: int, installed: bool, history: bool) -> Transaction:
+        """`installed`: whether a version of Thermite runs before it, to come
+        back if it rolls back. `history`: whether it deploys a site commit,
+        so that a rollback is recorded in thermite history."""
         transaction = cls(context.var, id, {
-            "version": 1, "id": id, "site": str(context.area), "root": str(context.installation.root),
-            "state": str(context.layout.root), "gid": gid, "head_before": before, "head_after": after,
+            "version": 1, "id": id, "kind": kind, "verb": verb, "site": str(context.area),
+            "root": str(context.installation.root), "state": str(context.layout.root), "gid": gid,
+            "head_before": before, "head_after": after, "installed": installed, "history": history,
             "application": {"current": (context.application or {}).get("digest"), "previous": previous},
             "asides": {}, "phase": "preparing"})
         transaction.directory.mkdir(mode=0o700, parents=True)
@@ -191,13 +238,13 @@ class Transaction:
     # The site pin (F7) ---------------------------------------------------
 
     def unpin(self, system: System) -> None:
-        """Undo the upgrade's pin commit, so the site pins the version that
-        runs; say so when that cannot be done safely."""
+        """Undo the pin commit made for this transaction, so the site pins
+        the version that runs; say so when that cannot be done safely."""
         import oh_source_upgrade
         before, after = self.record.get("head_before"), self.record.get("head_after")
         site = shlex.quote(str(self.site))
         if before is None:
-            system.say("   The site may still pin the new release: its revision before the upgrade is not known. "
+            system.say("   The site may still pin the new release: its revision before the transaction is not known. "
                        f"Review `git -C {site} log -2` and revert the pin commit if it is there.")
             return
         if before == after:
@@ -288,7 +335,7 @@ class Prefetch(Step):
 
 class Room(Step):
     """The inputs the engine reads, and the room it needs, before anything
-    stops; too little refuses the upgrade with the table (9-Q15)."""
+    stops; too little refuses the transaction with the table (9-Q15)."""
 
     title = "Room to set the installed version aside"
     always = True
@@ -387,7 +434,84 @@ class Authorize(Step):
         return [Command(("-v",), root=True, terminal=True)]
 
 
-# The upgrade -----------------------------------------------------------------
+class Confirm(Step):
+    """Typing a path, for a transaction whose commit deletes what is under
+    it: nothing has stopped yet, and declining refuses it."""
+
+    always = True
+    stop_on_failure = True
+
+    def __init__(self, title: str, path: Path, warning: str):
+        self.title = title
+        self.path = Path(path)
+        self.warning = warning
+
+    def check(self, system: System) -> Check:
+        return Check(False, f"type {self.path} to confirm")
+
+    def actions(self, system: System) -> list:
+        return [Task(f"type {self.path} to confirm", self.confirm, interactive=True)]
+
+    def confirm(self, system: System) -> int:
+        system.say("   " + self.warning)
+        typed = system.ask(f"   Type {self.path} to go on: ").strip()
+        if typed != str(self.path):
+            system.say(f"   That is not {self.path}; nothing was changed.")
+            return 1
+        return 0
+
+
+class ClearState(Step):
+    """A clean install's fresh start, inside the transaction: the deploy's
+    records and the operator's credential copies, which collect copied
+    aside and Begin set aside, go; the state trees already moved aside
+    whole. A rollback puts all of it back."""
+
+    title = "Clear the state the clean install replaces"
+    always = True
+    stop_on_failure = True
+
+    def __init__(self, context: steps.Context, files):
+        self.context = context
+        self.files = list(files)
+
+    def check(self, system: System) -> Check:
+        return Check(False, "the deploy records and local credential copies, set aside first")
+
+    def actions(self, system: System) -> list:
+        records = [str(path) for path in self.files]
+        return [*([Command(("rm", "-f", "--", *records), root=True)] if records else []),
+                Command(("rm", "-f", "--", *map(str, operator_files(self.context)[:3])))]
+
+
+# What each transaction does -------------------------------------------------
+
+@dataclasses.dataclass
+class Work:
+    """One transaction's own part: its engine kind, the owner command that
+    runs it, what it prepares while Thermite runs, what it switches in and
+    how it verifies, and what commit records (None: the installed release
+    carries over)."""
+
+    kind: str
+    verb: str
+    preparation: list[Step]
+    switching: list[Step]
+    verification: list[Step]
+    release: dict | None
+    #: The desired items, when not those the switching steps declare.
+    items: Callable[[System], list[manifest.Item]] | None = None
+    #: The steps whose items describe a version 1 installation (the bridge).
+    described: list[Step] | None = None
+    pull: bool = True
+    confirm: Step | None = None
+    #: Whether the engine puts the kept version back (a revert).
+    reinstate: bool = False
+    #: The operator's own side after the commit.
+    after: Callable[[System, Transaction], None] | None = None
+    #: The step whose deferred callback relay needs one more install.
+    gateway: Step | None = None
+
 
 def release(context: steps.Context) -> dict:
     """What commit records about this version."""
@@ -404,17 +528,17 @@ def preparation(context: steps.Context) -> list[Step]:
             steps.AppArmorService(), steps.BootTest(context), steps.Account(context)]
 
 
-def switching(context: steps.Context, transaction: str | None) -> list[Step]:
+def switching(context: steps.Context, transaction: str | None, how: str = "upgrade") -> list[Step]:
     """The new version, installed over the collected one, and started."""
     native = steps.NativeDeadline.of(context)
     deployment = steps.Deploy(context)
-    deployment.how = "upgrade"
+    deployment.how = how
     return [steps.StateDirectories(context), steps.MetricsDirectories(context), steps.Units(context),
             steps.NodeConfinement(context), steps.NativePreparation(context), NativeIngress(context), deployment,
-            steps.Services(context), steps.Answers(context, native), steps.Token(context, native),
-            *steps.gateway_steps(context, native, transaction=transaction), steps.MetricsToken(context),
-            steps.GrafanaPassword(context), steps.MetricsServices(context), steps.StartTarget(context),
-            steps.NativeReady(context, native)]
+            steps.Services(context, restart_runtime=context.restart_runtime), steps.Answers(context, native),
+            steps.Token(context, native), *steps.gateway_steps(context, native, transaction=transaction),
+            steps.MetricsToken(context), steps.GrafanaPassword(context), steps.MetricsServices(context),
+            steps.StartTarget(context), steps.NativeReady(context, native)]
 
 
 def verification(context: steps.Context) -> list[Step]:
@@ -426,10 +550,73 @@ def operator_files(context: steps.Context) -> list[Path]:
             context.area / context.runtime_credentials_file, context.var / "gateway/current.json"]
 
 
+def install_work(context: steps.Context, id: str | None, *, kind: str = "install", verb: str | None = None) -> Work:
+    """Install, upgrade, a clean install or a rollback to an earlier
+    commit: the version `context` describes, installed over the one that
+    runs. A clean install moves the runtime state trees aside whole and
+    clears the deploy's records and local credential copies; the commit
+    deletes what was moved aside."""
+    verb = verb or ("upgrade" if kind == "upgrade" else "install")
+    changes = switching(context, id, "upgrade" if kind == "upgrade" else "rollback" if verb == "rollback"
+                        else "install")
+    gateway = next((step for step in changes if hasattr(step, "deferred")), None)
+    work = Work(kind, verb, preparation(context), changes, verification(context), release(context),
+                described=changes, gateway=gateway)
+    if kind == "clean":
+        root = context.installation.root
+        layout = context.layout
+
+        def items(system: System) -> list[manifest.Item]:
+            declared = manifest.desired(changes, system, root)
+            return [manifest.Item(item.path, "tree-move") if item.cls in ("tree", "shared-pinned")
+                    and engine.below(item.path, layout.root) else item for item in declared]
+
+        files = [item.path for step in changes if isinstance(step, steps.Deploy)
+                 for item in step.desired(None) if item.cls == "file"]
+        work.items = items
+        work.switching = [ClearState(context, files), *changes]
+        work.confirm = Confirm(
+            "Confirm the clean install", layout.root,
+            f"This clean install deletes the state under {layout.root} once it commits: accounts, pairings, "
+            "credentials, the deploy's records, monitoring data and manually installed binding repairs; it "
+            f"also clears {context.token_file}, {context.grafana_password_file} and "
+            f"{context.runtime_credentials_file}. Logs, the deploy history and old backups stay; so do the "
+            "site's configuration and the gateway's identity and TLS state. Until the commit a rollback puts "
+            "all of it back.")
+    return work
+
+
+def uninstall_work(context: steps.Context, id: str | None, *, purge: bool = False) -> Work:
+    """Uninstall: Thermite stopped and its root files, units, filter and
+    confinement set aside; its state stays and is recorded, so a later
+    install finds it. --purge also moves runtime/ and access/ aside whole
+    and, at the commit, removes them with the installed manifest, the
+    images and every transaction."""
+    root = context.installation.root
+    work = Work("purge" if purge else "uninstall", "uninstall", [steps.Account(context)], [], [Authorize()], None,
+                items=lambda system: [], described=switching(context, None), pull=False)
+    if purge:
+        work.items = lambda system: [manifest.Item(root / "access", "tree-move"),
+                                     manifest.Item(root / "runtime", "tree-move")]
+        work.confirm = Confirm(
+            "Confirm the purge", root,
+            f"This purge deletes {root}/runtime and {root}/access once it commits: accounts, pairings, credentials, "
+            "history, monitoring data, backups, and the gateway's identity, TLS state and releases; also Thermite's "
+            "images and the installed manifest. Nothing brings them back but a copy you made.")
+        work.after = purged
+    return work
+
+
+def purged(system: System, transaction: Transaction) -> None:
+    """The operator's side of a purge: its transaction records go too; the
+    gateway's authority stays with the site, as its configuration does."""
+    shutil.rmtree(transactions(transaction.var), ignore_errors=True)
+
+
 def unchanged(context: steps.Context, system: System, installed: dict | None) -> bool:
     """Whether the installed version is this one, as recorded and as found:
-    then the upgrade only verifies it."""
-    if installed is None:
+    then the owner command only verifies it."""
+    if installed is None or not installed.get("installed", True):
         return False
     wanted = release(context)
     if (installed["release"] != wanted["release"] or installed["pins"] != wanted["pins"]
@@ -458,47 +645,65 @@ def previous_application(installed: dict | None, system: System) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def preview(context: steps.Context, system: System, *, first: int) -> int:
+def preview(context: steps.Context, system: System, work: Work, *, first: int) -> int:
     """What a dry run shows: the preparation's checks, then the transaction."""
-    code = runner.run(preparation(context), system, context.area, dry_run=True, first=first)
-    titles = ", ".join(step.title for step in switching(context, None))
-    system.say(f"Then, as one install transaction: pull the pinned images, check the room to set the installed "
-               f"version aside, begin, guard the boot, stop Thermite and set it aside; install and start the new "
-               f"version ({titles}); verify its health and commit. Any failure from begin on rolls back in the "
-               "same run and starts the installed version again.")
+    code = runner.run(work.preparation, system, context.area, dry_run=True, first=first)
+    titles = ", ".join(step.title for step in work.switching)
+    pull = "pull the pinned images, " if work.pull else ""
+    confirm = f"ask you to type {work.confirm.path}, " if work.confirm else ""
+    switch = (f"install and start the new version ({titles}); verify its health" if work.switching and not
+              work.reinstate else "put the kept version back and start it; verify its health" if work.reinstate
+              else "nothing new is installed")
+    system.say(f"Then, as one install transaction: {pull}check the room to set the installed version aside, "
+               f"{confirm}begin, guard the boot, stop Thermite and set it aside; {switch}; and commit. Any failure "
+               "from begin on rolls back in the same run and starts the installed version again.")
     return code
 
 
-def upgrade(context: steps.Context, system: System, *, installed: dict | None, bridged: bool,
-            before: str | None, first: int) -> int:
-    """Prepare, begin, switch, verify and commit; roll back on failure."""
-    after = context.head
-    if before is None and bridged:
+# Running one -------------------------------------------------------------------
+
+def run(context: steps.Context, system: System, build: Callable[[str], Work], *, installed: dict | None,
+        bridged: bool, before: str | None, first: int, after: str | None = None) -> int:
+    """Prepare, begin, switch, verify and commit; roll back on failure.
+
+    `build` makes the transaction's Work for its id. `before`/`after` are
+    the site's revisions around a pin commit made for it (undone when it
+    does not commit); without them the site does not move."""
+    id = manifest.transaction_id()
+    work = build(id)
+    after = after or context.head
+    if before is None and bridged and work.release is not None:
         # bridge: the version 1 wrapper committed the pin without saying so.
         before, after = bridge.site_before(_toplevel(context.area), context.area,
                                            (context.application or {}).get("digest"))
-    transaction = Transaction.create(context, manifest.transaction_id(), before=before, after=after,
-                                     previous=previous_application(installed, system), gid=context.host["gid"])
+    elif before is None and work.release is None:
+        before = after
+    present = bool(installed and installed.get("installed", True)) or bridged
+    transaction = Transaction.create(
+        context, id, kind=work.kind, verb=work.verb, before=before, after=after,
+        previous=previous_application(installed, system), gid=context.host["gid"], installed=present,
+        history=work.release is not None)
     prefetch = Prefetch(context)
     root = context.installation.root
-    changes = switching(context, transaction.id)
 
     def inputs(system: System) -> None:
         tools = manifest.tools(system)
-        items = manifest.desired(changes, system, root)
+        items = work.items(system) if work.items is not None else manifest.desired(work.switching, system, root)
         _json(transaction.file("desired.json"), {
-            "kind": "upgrade", "tools": tools, "items": [item.to_json() for item in items],
-            "pulled": prefetch.pulled, "extra": _allocated(context.program)})
+            "kind": work.kind, "tools": tools, "items": [item.to_json() for item in items],
+            "pulled": prefetch.pulled, "extra": _allocated(context.program) if work.switching else 0})
         if bridged:
-            _json(transaction.file("current.json"),
-                  bridge.describe(context, system, items, tools, engine._now()))
+            described = manifest.desired(work.described or work.switching, system, root)
+            _json(transaction.file("current.json"), bridge.describe(context, system, described, tools, engine._now()))
         _json(transaction.file("operator.json"), {
             "uid": os.getuid(), "site": str(context.area), "record": str(transaction.file("record.json")),
             "head_before": transaction.record["head_before"], "head_after": transaction.record["head_after"]})
-        _json(transaction.file("release.json"), release(context))
+        if work.release is not None:
+            _json(transaction.file("release.json"), work.release)
 
-    opening = [*preparation(context), prefetch, Room(transaction, inputs), Begin(transaction, operator_files(context))]
-    rerun = f"Nothing of Thermite was stopped or changed. Fix that, then run {upgrade_command(context.area)} again."
+    opening = [*work.preparation, *([prefetch] if work.pull else []), Room(transaction, inputs),
+               *([work.confirm] if work.confirm else []), Begin(transaction, operator_files(context))]
+    rerun = f"Nothing of Thermite was stopped or changed. Fix that, then run {transaction.rerun} again."
     try:
         code = runner.run(opening, system, context.area, first=first, rerun=rerun, root_confirmed=True)
     except KeyboardInterrupt:
@@ -508,13 +713,15 @@ def upgrade(context: steps.Context, system: System, *, installed: dict | None, b
         code = REFUSED
     if code:
         return refused(system, transaction)
+    reinstate = [Engine(transaction, "reinstate", "Put the kept version back",
+                        "its files, state and live rules, from the last transaction's asides")] if work.reinstate else []
+    commit = ("--release", transaction.file("release.json")) if work.release is not None else ()
     rest = [Engine(transaction, "guard", "Guard the boot", f"{oh_units.TARGET} stays disabled until the commit"),
             steps.Halt(context),
             Engine(transaction, "collect", "Set the installed version aside", "copies and moves, as the plan says"),
-            *changes, *verification(context),
-            Engine(transaction, "commit", "Commit", "record the new version as installed",
-                   "--release", transaction.file("release.json"))]
-    failed = f"The upgrade rolls back transaction {transaction.id} now."
+            *reinstate, *work.switching, *work.verification,
+            Engine(transaction, "commit", "Commit", "record what is installed now", *commit)]
+    failed = f"The {transaction.verb} rolls back transaction {transaction.id} now."
     try:
         code = runner.run(rest, system, context.area, first=first + len(opening), rerun=failed,
                           root_confirmed=True, transactional=True)
@@ -525,7 +732,27 @@ def upgrade(context: steps.Context, system: System, *, installed: dict | None, b
         code = REFUSED
     if code:
         return roll_back(system, transaction, "a step failed")
-    return committed(system, transaction)
+    code = committed(system, transaction)
+    if work.after is not None:
+        work.after(system, transaction)
+    if work.gateway is not None and getattr(work.gateway, "deferred", False):
+        return relay(context, system, transaction, first=first + len(opening) + len(rest))
+    return code
+
+
+def relay(context: steps.Context, system: System, transaction: Transaction, *, first: int) -> int:
+    """Commissioning found Sonos event callbacks the committed version did
+    not declare a relay for: one more install transaction of the same
+    version activates it. The commit stands whatever that one does."""
+    system.say("Sonos event callbacks were found: one more install transaction activates their relay.")
+    code = run(context, system, lambda id: install_work(context, id, verb=transaction.verb),
+               installed=manifest.installed(system, context.installation.root), bridged=False,
+               before=None, after=context.head, first=first)
+    if code in (ROLLED_BACK, UNHEALTHY, REFUSED):
+        system.say(f"The relay was not activated, but transaction {transaction.id} stays committed: run "
+                   f"{command(context.area, 'install')} to activate it.")
+        return COMMITTED
+    return code
 
 
 def _toplevel(site: Path) -> Path:
@@ -537,18 +764,17 @@ def refused(system: System, transaction: Transaction) -> int:
     """Nothing began: the site goes back to pinning the version that runs."""
     transaction.unpin(system)
     transaction.close("refused")
-    system.say("Upgrade refused: nothing of Thermite was stopped or changed.")
+    system.say(f"{transaction.name} refused: nothing of Thermite was stopped or changed.")
     return REFUSED
 
 
 def _interrupted(system: System, transaction: Transaction) -> int:
-    site = transaction.site
     if open_transaction(transaction.var) == transaction.id:
         system.say(f"\nInterrupted. Transaction {transaction.id} is open: Thermite may be stopped, with "
-                   f"{oh_units.TARGET} kept from booting. Run {upgrade_command(site)} to roll it back.")
+                   f"{oh_units.TARGET} kept from booting. Run {transaction.rerun} to roll it back.")
     else:
         system.say(f"\nInterrupted before the transaction began: nothing of Thermite was stopped or changed. "
-                   f"Run {upgrade_command(site)} again.")
+                   f"Run {transaction.rerun} again.")
         transaction.unpin(system)
         transaction.close("refused")
     return INTERRUPTED
@@ -566,15 +792,27 @@ def committed(system: System, transaction: Transaction) -> int:
                 continue
             if phase in ("committed", "rolled-back", "refused"):
                 shutil.rmtree(found, ignore_errors=True)
-    system.say(f"Upgrade committed: transaction {transaction.id}. The previous version stays set aside under "
-               f"{transaction.root}/.transaction/{transaction.id} until the next upgrade commits.")
+    kind, aside = transaction.record.get("kind"), f"{transaction.root}/.transaction/{transaction.id}"
+    if kind == "purge":
+        system.say(f"Purge committed: Thermite's files, its state under {transaction.root}, its images, the "
+                   "installed manifest and every transaction are removed from this host.")
+    elif kind == "uninstall":
+        system.say(f"Uninstall committed: transaction {transaction.id}. Thermite's units, filter and confinement "
+                   f"are removed; its state stays under {transaction.root}, and the removed version stays set "
+                   f"aside under {aside} until the next transaction commits.")
+    elif transaction.record.get("installed", True):
+        system.say(f"{transaction.name} committed: transaction {transaction.id}. The version that ran before "
+                   f"stays set aside under {aside} until the next transaction commits.")
+    else:
+        system.say(f"{transaction.name} committed: transaction {transaction.id}.")
     return COMMITTED
 
 
 def roll_back(system: System, transaction: Transaction, reason: str) -> int:
     """Put the version that ran before back, in this run, and say how it is."""
-    system.say(f"Rolling back transaction {transaction.id} ({reason}): the installed version is put back and "
-               "started again.")
+    system.say(f"Rolling back transaction {transaction.id} ({reason}): "
+               + ("the installed version is put back and started again." if transaction.record.get("installed", True)
+                  else "what it installed is set aside."))
     site = transaction.site
     try:
         code = runner.perform(Command(("-v",), root=True, terminal=True), system, site, root_confirmed=True)
@@ -597,10 +835,10 @@ def roll_back(system: System, transaction: Transaction, reason: str) -> int:
 
 def _stuck(system: System, transaction: Transaction) -> int:
     system.say(f"The rollback of transaction {transaction.id} did not finish: Thermite stays stopped and "
-               f"{oh_units.TARGET} is kept from booting. Run {upgrade_command(transaction.site)} to try again. "
+               f"{oh_units.TARGET} is kept from booting. Run {transaction.rerun} to try again. "
                f"To roll back by hand instead, print the commands with: sudo {PYTHON} -I -S {transaction.pinned} "
-               f"rollback --root {transaction.root} --id {transaction.id} --print "
-               "(docs/installation.md#a-stuck-rollback)")
+               f"rollback --root {transaction.root} --id {transaction.id} --print, run them, then run "
+               f"{transaction.rerun} so the engine checks and finishes it (docs/installation.md#a-stuck-rollback)")
     return STUCK
 
 
@@ -610,13 +848,17 @@ def rolled_back(system: System, transaction: Transaction) -> int:
     transaction.put_back()
     transaction.unpin(system)
     record = transaction.record
-    if record.get("head_after"):
+    if record.get("head_after") and record.get("history", True):
         event = {"transaction": transaction.id, "commit": record["head_after"], "restored": record.get("head_before")}
         argv = _application(record, "history", "--state", record["state"], "--_record-rollback",
                             json.dumps(event, sort_keys=True))
         if runner.perform(_operator(record, system, argv), system, transaction.site, root_confirmed=True) != 0:
             system.say("   The rollback was not added to thermite history.")
     transaction.close("rolled-back")
+    if not record.get("installed", True):
+        system.say(f"Rolled back: transaction {transaction.id} is undone. Nothing of Thermite was installed "
+                   "before it, and nothing is now.")
+        return ROLLED_BACK
     healthy = health(system, transaction)
     if healthy:
         system.say(f"Rolled back: transaction {transaction.id} is undone and the version that ran before runs "
@@ -631,7 +873,7 @@ def rolled_back(system: System, transaction: Transaction) -> int:
 
 def health(system: System, transaction: Transaction) -> bool:
     """The reinstated version's own health, through the owner command it
-    kept: the upgrade swaps that only after a commit."""
+    kept: the owner command is swapped only after a commit."""
     launcher = Path.home() / ".local/bin/thermite"
     if not os.access(launcher, os.X_OK):
         system.say(f"   Cannot check the reinstated version's health: {launcher} is not its owner command.")
@@ -642,16 +884,17 @@ def health(system: System, transaction: Transaction) -> bool:
     return runner.perform(Command(argv, show_output=True), system, transaction.site, root_confirmed=True) == 0
 
 
-def resolve(site: Path, system: System) -> int | None:
-    """Finish an earlier upgrade's transaction that has not finished, then
-    stop (9-F8b): a committed one is finished, one that never began is
-    closed and its pin commit undone, any other rolled back. None when
-    there is none."""
+def resolve(site: Path, system: System, verb: str = "upgrade") -> int | None:
+    """Finish an earlier transaction that has not finished, then stop
+    (9-F8b): a committed one is finished, one that never began is closed
+    and its pin commit undone, any other rolled back; a rollback finished
+    by hand from rollback --print is checked by the engine and completed.
+    None when there is none."""
     var = Path(site) / "var"
     id = open_transaction(var)
     if id is None:
         return None
-    system.say(f"Transaction {id} of an earlier upgrade did not finish; resolving it first.")
+    system.say(f"Transaction {id} of an earlier run did not finish; resolving it first.")
     try:
         transaction = Transaction.load(var, id)
         found = transaction.journal(system)
@@ -669,7 +912,42 @@ def resolve(site: Path, system: System) -> int | None:
     elif found["phase"] == "rolled-back":
         code = rolled_back(system, transaction)
     else:
-        code = roll_back(system, transaction, "its upgrade did not finish")
+        code = roll_back(system, transaction, f"its {transaction.verb} did not finish")
     if code in (COMMITTED, REFUSED, ROLLED_BACK, UNHEALTHY):
-        system.say(f"Stopped there, without upgrading; run {upgrade_command(transaction.site)} again to upgrade.")
+        system.say(f"Stopped there, without {DOING.get(verb, verb)}; run {command(site, verb)} again to go on.")
     return code
+
+
+def pinned(system: System, site: Path, before: str | None, dry_run: bool, body: Callable[[], int]) -> int:
+    """A host phase the application workflow approved after committing a
+    pin (HEAD, from `before`). When it ends before its install transaction
+    began, that pin commit is undone: the site pins the version that runs.
+    A transaction undoes it itself when it rolls back. An earlier open
+    transaction is resolved first and this run stops, so the pin commit is
+    undone first."""
+    import oh_source_upgrade
+    head = oh_source_upgrade.git(site, "rev-parse", "HEAD") if before else None
+    if head and not dry_run and open_transaction(Path(site) / "var") is not None:
+        _unpin(system, site, head, before)
+        head = None
+    code = 2
+    try:
+        code = body()
+    except KeyboardInterrupt:
+        code = INTERRUPTED
+        raise
+    finally:
+        if head and code in (1, 2, INTERRUPTED) and open_transaction(Path(site) / "var") is None:
+            _unpin(system, site, head, before)
+    return code
+
+
+def _unpin(system: System, site: Path, head: str, before: str) -> None:
+    import subprocess
+    import oh_source_upgrade
+    try:
+        if oh_source_upgrade.reset_pin(site, expected=head, previous=before):
+            system.say(f"Site: back at {before[:12]}; the pin commit {head[:12]} is no longer on its branch.")
+    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+        system.say(f"The site still pins the new release ({exc}); `git -C {site} revert --no-edit "
+                   f"{head[:12]}` pins the installed one.")

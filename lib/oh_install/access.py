@@ -183,6 +183,9 @@ class Gateway(Step):
         #: transaction installs only the units it declared before it began;
         #: a newly found map waits in access/inputs for the next one.
         self.new_relay = transaction is None
+        #: Whether this run found callbacks whose relay waits for the next
+        #: transaction.
+        self.deferred = False
 
     def check(self, system):
         try:
@@ -484,9 +487,11 @@ class Gateway(Step):
         if callback and selected is None:
             raise AccessError("existing callback routes must be preserved during gateway upgrade")
         if selected and not callback and not self.new_relay:
-            # Kept in access/inputs: the next install transaction declares
-            # the relay's unit and activates it.
-            system.say("   Sonos event callbacks were found; the next upgrade activates their relay")
+            # Kept in access/inputs: one more install transaction, right
+            # after this one commits, declares the relay's unit and
+            # activates it (changeover.relay).
+            system.say("   Sonos event callbacks were found; one more install transaction activates their relay")
+            self.deferred = True
             selected = None
         metadata["callback_file"] = str(selected) if selected else None
         metadata["callbacks"] = bool(selected)

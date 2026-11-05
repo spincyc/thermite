@@ -87,7 +87,7 @@ def upgrade(system: System, dry_run: bool, *, runtime_token_file: Path | None = 
     if native_timeout is not None:
         context = dataclasses.replace(context, native_timeout=native_timeout)
     if not dry_run:
-        found = changeover.resolve(AREA, system)
+        found = changeover.resolve(AREA, system, "upgrade")
         if found is not None:
             # This run stopped there and installed nothing, even when it
             # finished an earlier transaction's commit: never success.
@@ -109,7 +109,8 @@ def upgrade(system: System, dry_run: bool, *, runtime_token_file: Path | None = 
     code = runner.run([steps.Preconditions(context), steps.Committed(context)], system, AREA,
                       dry_run=dry_run, rerun=RERUN)
     if dry_run:
-        return changeover.preview(context, system, first=3) or code
+        return changeover.preview(context, system, changeover.install_work(context, None, kind="upgrade"),
+                                  first=3) or code
     if code:
         return code
     if changeover.unchanged(context, system, installed):
@@ -121,46 +122,21 @@ def upgrade(system: System, dry_run: bool, *, runtime_token_file: Path | None = 
                    f"{ownership.MANIFEST} and its fixed paths, and set aside like any other.")
     if not run_approved and not runner.confirm_run(system, "upgrade", RERUN):
         return 1
-    return changeover.upgrade(context, system, installed=installed, bridged=bridged,
-                              before=site_before if site_before else None, first=3)
-
-
-def _unpin(system: System, head: str, before: str) -> None:
-    import oh_source_upgrade
-    try:
-        if oh_source_upgrade.reset_pin(AREA, expected=head, previous=before):
-            system.say(f"Site: back at {before[:12]}; the pin commit {head[:12]} is no longer on its branch.")
-    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
-        system.say(f"The site still pins the new release ({exc}); `git -C {AREA} revert --no-edit "
-                   f"{head[:12]}` pins the installed one.")
+    return changeover.run(context, system, lambda id: changeover.install_work(context, id, kind="upgrade"),
+                          installed=installed, bridged=bridged, before=site_before if site_before else None,
+                          first=3)
 
 
 def host_phase(system: System, arguments) -> int:
-    """The upgrade the application workflow approved. When it ends before
-    its install transaction began, the pin commit the workflow made for it
-    is undone: the site pins the version that runs. A transaction undoes
-    it itself when it rolls back. An earlier upgrade's open transaction is
-    resolved first and this one stops, so its pin commit is undone first."""
+    """The upgrade the application workflow approved (changeover.pinned)."""
     import oh_paths
-    import oh_source_upgrade
-    head = oh_source_upgrade.git(AREA, "rev-parse", "HEAD") if arguments._site_before else None
-    if head and not arguments.dry_run and changeover.open_transaction(AREA / "var") is not None:
-        _unpin(system, head, arguments._site_before)
-        head = None
-    code = 2
-    try:
+
+    def body() -> int:
         oh_paths.require_compatible()
-        code = upgrade(system, arguments.dry_run, runtime_token_file=arguments.runtime_token_file,
+        return upgrade(system, arguments.dry_run, runtime_token_file=arguments.runtime_token_file,
                        run_approved=arguments._run_approved, native_timeout=arguments.native_timeout,
                        site_before=arguments._site_before)
-    except KeyboardInterrupt:
-        code = changeover.INTERRUPTED
-        raise
-    finally:
-        if (head and code in (1, 2, changeover.INTERRUPTED)
-                and changeover.open_transaction(AREA / "var") is None):
-            _unpin(system, head, arguments._site_before)
-    return code
+    return changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -189,9 +165,9 @@ def main(argv: list[str] | None = None) -> int:
             if arguments._run_approved:
                 raise ValueError("run approval is only valid inside the application workflow")
             if not arguments.dry_run:
-                found = changeover.resolve(AREA, system)
+                found = changeover.resolve(AREA, system, "upgrade")
                 if found is not None:
-                    return found
+                    return changeover.REFUSED if found == changeover.COMMITTED else found
             import oh_application_update
             return oh_application_update.upgrade(
                 AREA, source=arguments.source, revision=arguments.revision,

@@ -29,6 +29,8 @@ from tests import txn_fakes  # noqa: E402
 
 BEFORE, AFTER = "1" * 40, "2" * 40
 IMAGE = "registry.example.test/openhab@sha256:" + "e" * 64
+#: The installed manifest, as far as the transaction reads it.
+INSTALLED = {"installed": True, "transaction": "20261101T000000Z-aaaaaa", "application": {"current": "a" * 64}}
 SPACE = {"required": 300 * 1024 * 1024, "available": 4 * 1024 ** 3, "margin": engine.MARGIN, "extra": 0,
          "items": [["runtime/userdata", 40 * 1024 * 1024]]}
 
@@ -138,17 +140,21 @@ class Fixture(unittest.TestCase):
         self.log.append("old health")
         return self.host.health == 0
 
+    def work(self, prepared, switched, verified, kind="upgrade", verb="upgrade"):
+        return changeover.Work(kind, verb, prepared, switched, verified, changeover.release(self.context),
+                               items=lambda system: [])
+
+    def transact(self, work, installed=INSTALLED, before=BEFORE):
+        return changeover.run(self.context, self.host.system, lambda id: work, installed=installed, bridged=False,
+                              before=before, first=3)
+
     def run_upgrade(self, *, prepare=(), switch=(), verify=(), **answers):
         self.host = Host(self, **answers)
         prepared = [Fake(name, self.log, outcome) for name, outcome in (prepare or [("prepare", 0)])]
         switched = [Fake(name, self.log, outcome) for name, outcome in (switch or [("switch", 0)])]
         verified = [changeover.Authorize(), *(Fake(name, self.log, outcome)
                                                for name, outcome in (verify or [("health", 0)]))]
-        with patch.object(changeover, "preparation", return_value=prepared), \
-                patch.object(changeover, "switching", return_value=switched), \
-                patch.object(changeover, "verification", return_value=verified):
-            return changeover.upgrade(self.context, self.host.system, installed=None, bridged=False, before=BEFORE,
-                                      first=3)
+        return self.transact(self.work(prepared, switched, verified))
 
     @property
     def directory(self):
@@ -233,11 +239,7 @@ class RolledBack(Fixture):
         switch = Fake("switch", self.log)
         switch.perform = self.rewrite
         self.host = Host(self)
-        with patch.object(changeover, "preparation", return_value=[]), \
-                patch.object(changeover, "switching", return_value=[switch, Fake("never", self.log)]), \
-                patch.object(changeover, "verification", return_value=[]):
-            code = changeover.upgrade(self.context, self.host.system, installed=None, bridged=False, before=BEFORE,
-                                      first=3)
+        code = self.transact(self.work([], [switch, Fake("never", self.log)], []))
         self.assertEqual(code, changeover.ROLLED_BACK)
         self.assertEqual(self.log[-5:], ["switch", "sudo -v", "rollback", f"history {txn_fakes.ID}", "old health"])
         self.assertEqual(self.token.read_text(), "old token\n", "the operator's files as they were (F3)")
@@ -326,7 +328,7 @@ class Rerun(Fixture):
             status.show_transaction(self.context.host, report, said.append, problems,
                                     manifest=self.site / "no-installed-manifest")
         self.assertEqual(report["open_transaction"], txn_fakes.ID)
-        self.assertEqual(problems, [f"upgrade transaction {txn_fakes.ID} has not finished"])
+        self.assertEqual(problems, [f"install transaction {txn_fakes.ID} has not finished"])
         self.assertIn("commits or rolls it back, then stops", said[-1])
 
 
@@ -430,6 +432,121 @@ class History(unittest.TestCase):
                         {"transaction": txn_fakes.ID, "commit": AFTER}):
                 with self.subTest(event=bad), self.assertRaises(deploy.DeployError):
                     deploy.record_rollback(layout, bad)
+
+
+class Kinds(Fixture):
+    """Install, a clean install, uninstall and purge: the same transaction."""
+
+    def test_a_fresh_install_that_rolls_back_leaves_nothing_and_checks_no_health(self):
+        self.host = Host(self)
+        work = self.work([], [Fake("switch", self.log, 1)], [], kind="install", verb="install")
+        self.assertEqual(self.transact(work, installed=None), changeover.ROLLED_BACK)
+        self.assertNotIn("old health", self.log)
+        self.assertIn("Nothing of Thermite was installed before it, and nothing is now", self.said())
+        self.assertEqual((self.record()["kind"], self.record()["verb"]), ("install", "install"))
+
+    def test_an_uninstall_commits_what_is_installed_and_records_no_deploy(self):
+        self.host = Host(self)
+        work = changeover.uninstall_work(self.context, txn_fakes.ID)
+        self.assertEqual((work.kind, work.release, work.pull, work.switching), ("uninstall", None, False, []))
+        work.preparation = [Fake("account", self.log)]
+        with patch.object(steps.Halt, "check", return_value=Check(True, "fixture")):
+            self.assertEqual(self.transact(work, before=None), changeover.COMMITTED)
+        self.assertFalse((self.directory / "release.json").exists(), "the installed release carries over")
+        self.assertEqual(json.loads((self.directory / "desired.json").read_text())["items"], [])
+        self.assertEqual((self.record()["head_before"], self.record()["head_after"]), (AFTER, AFTER))
+        self.assertIn("its state stays under /srv/thermite-fixture", self.said())
+
+    def test_a_rolled_back_uninstall_starts_thermite_again_without_a_history_line(self):
+        self.host = Host(self)
+        work = self.work([], [], [Fake("fails", self.log, 1)], kind="uninstall", verb="uninstall")
+        work.release = None
+        self.assertEqual(self.transact(work, before=None), changeover.ROLLED_BACK)
+        self.assertFalse(any(entry.startswith("history") for entry in self.log))
+        self.assertEqual(self.log[-1], "old health")
+
+    def test_a_purge_types_the_root_first_and_removes_the_operator_records_at_the_commit(self):
+        self.host = Host(self)
+        work = changeover.uninstall_work(self.context, txn_fakes.ID, purge=True)
+        self.assertEqual([item.to_json() for item in work.items(self.host.system)],
+                         [{"path": "/srv/thermite-fixture/access", "class": "tree-move"},
+                          {"path": "/srv/thermite-fixture/runtime", "class": "tree-move"}])
+        work.preparation = []
+        self.host.system.ask.return_value = "/srv/thermite-fixture/runtime"
+        with patch.object(steps.Halt, "check", return_value=Check(True, "fixture")):
+            self.assertEqual(self.transact(work, before=None), changeover.REFUSED)
+        self.assertNotIn("begin", self.log)
+        self.assertIn("That is not /srv/thermite-fixture; nothing was changed", self.said())
+        self.log.clear()
+        (self.site / "var/transaction" / txn_fakes.ID).rename(self.site / "var/transaction/earlier")
+        self.host.system.ask.return_value = "/srv/thermite-fixture"
+        with patch.object(steps.Halt, "check", return_value=Check(True, "fixture")):
+            self.assertEqual(self.transact(work, before=None), changeover.COMMITTED)
+        self.assertEqual(self.log[-2:], ["sudo -v", "commit"])
+        self.assertFalse((self.site / "var/transaction").exists())
+        self.assertIn("Purge committed", self.said())
+
+    def test_a_clean_install_moves_the_state_trees_aside_and_clears_the_records_first(self):
+        self.context = steps.Context(**{**self.context.__dict__, "host": {**self.context.host, "http_port": 8080,
+                                                                          "https_port": 8443}})
+        with patch.object(steps, "NativeDeadline"):
+            work = changeover.install_work(self.context, txn_fakes.ID, kind="clean")
+        self.assertEqual((work.kind, work.verb), ("clean", "install"))
+        self.assertIsInstance(work.switching[0], changeover.ClearState)
+        self.assertEqual(work.confirm.path, self.context.layout.root)
+        layout = self.context.layout
+        declared = [manifest.Item(layout.userdata, "tree"), manifest.Item(layout.prometheus_data, "shared-pinned",
+                                                                          image="prometheus", value="sha256:" + "f" * 64),
+                    manifest.Item(layout.logs, "shared"), manifest.Item(layout.record, "file"),
+                    manifest.Item(self.context.installation.access / "state", "tree")]
+        with patch.object(manifest, "desired", return_value=declared):
+            items = {str(item.path): item.cls for item in work.items(None)}
+        self.assertEqual(items, {str(layout.userdata): "tree-move", str(layout.prometheus_data): "tree-move",
+                                 str(layout.logs): "shared", str(layout.record): "file",
+                                 str(self.context.installation.access / "state"): "tree"},
+                         "the gateway's identity stays; logs and history stay")
+        clear = work.switching[0].actions(None)
+        self.assertTrue(clear[0].root)
+        self.assertIn(str(layout.record), clear[0].argv)
+        self.assertIn(str(self.site / self.context.token_file), clear[1].argv)
+
+    def test_callbacks_found_by_a_commit_get_one_more_install_transaction(self):
+        self.host = Host(self)
+        gateway = Fake("gateway", self.log)
+        gateway.deferred = True
+        work = self.work([], [gateway], [])
+        work.gateway = gateway
+        with patch.object(changeover, "relay", return_value=changeover.COMMITTED) as relay:
+            self.assertEqual(self.transact(work), changeover.COMMITTED)
+        relay.assert_called_once()
+        with patch.object(changeover, "run", return_value=changeover.ROLLED_BACK) as again, \
+                patch.object(manifest, "installed", return_value=INSTALLED):
+            transaction = changeover.Transaction.load(self.site / "var", txn_fakes.ID)
+            self.assertEqual(changeover.relay(self.context, self.host.system, transaction, first=9),
+                             changeover.COMMITTED, "the commit stands")
+        self.assertEqual(again.call_args.kwargs["before"], None)
+        self.assertEqual(again.call_args.kwargs["after"], AFTER, "the site does not move")
+        self.assertIn("stays committed", self.said())
+
+    def test_the_open_transaction_is_resolved_by_the_command_that_began_it(self):
+        self.host = Host(self)
+        work = self.work([], [Fake("switch", self.log, KeyboardInterrupt())], [], kind="uninstall", verb="uninstall")
+        self.assertEqual(self.transact(work), changeover.INTERRUPTED)
+        self.assertEqual(changeover.pending_command(self.site), f"thermite uninstall --config {self.site}")
+        self.assertIn(f"Run thermite uninstall --config {self.site} to roll it back", self.said())
+
+
+    def test_a_transaction_that_rolled_back_before_its_deploy_is_shown_under_the_one_that_ran(self):
+        from oh_cli import history
+        with tempfile.TemporaryDirectory() as temporary:
+            layout = deploy.State(Path(temporary))
+            layout.history.parent.mkdir(parents=True)
+            layout.history.write_text(json.dumps({"deployed_at": "2026-11-05T10:20:00+00:00", "commit": BEFORE,
+                                                  "by": "owner", "subject": "Pin", "how": "install"}) + "\n")
+            deploy.record_rollback(layout, {"transaction": txn_fakes.ID, "commit": AFTER, "restored": BEFORE})
+            [entry] = deploy.deploys(layout)
+            [line] = [text for text in history.details(entry) if text.startswith("rolled back")]
+            self.assertIn(f"of {AFTER[:12]}, which never deployed here", line)
 
 
 class Runner(unittest.TestCase):
