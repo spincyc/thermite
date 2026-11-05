@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import shlex
 import sys
 
 import oh_cli
@@ -28,10 +27,12 @@ lost: accounts, pairings, credentials, the gateway's identity changes,
 monitoring data. Revert says so and asks you to type the installation root
 before anything stops.
 
-Once the revert commits, the site's branch goes back to the commit before
-the upgrade's pin commit, and ~/.local/bin/thermite selects the previous
-application's command again. Any failure before the commit rolls back in
-the same run, and the version that runs now runs again.
+Inside the transaction, the site's branch goes back to the commit before
+the upgrade's pin commit, so that the previous version checks its health
+with its own application. Once the revert commits, ~/.local/bin/thermite
+selects the previous application's command again. Any failure before the
+commit rolls back in the same run: the version that runs now runs again,
+and the site's branch goes forward to the pin commit again.
 
 A revert needs the site at that upgrade's pin commit with nothing
 uncommitted, and the upgrade's own record in the site's var/transaction. It
@@ -82,8 +83,40 @@ class PutBack(Step):
         return 0
 
 
+class SitePin(Step):
+    """The site's branch back at the commit before the reverted upgrade's
+    pin commit, inside the transaction, so that the previous version's
+    health runs its own application: a site pinning another release
+    re-executes that one (oh_paths.require_compatible). The transaction's
+    rollback puts the pin commit back (Transaction.unpin)."""
+
+    title = "Pin the previous version"
+    always = True
+    stop_on_failure = True
+
+    def __init__(self, site: Path, before: str, after: str):
+        self.site, self.before, self.after = Path(site), before, after
+
+    def check(self, system: System) -> Check:
+        return Check(False, f"the site back at {self.before[:12]}, before the pin commit {self.after[:12]}")
+
+    def actions(self, system: System) -> list:
+        return [Task("move the site's branch and pin files back", self.perform)]
+
+    def perform(self, system: System) -> int:
+        import subprocess
+        import oh_source_upgrade
+        try:
+            oh_source_upgrade.reset_pin(self.site, expected=self.after, previous=self.before)
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            system.say(f"   The site cannot go back to {self.before[:12]}: {exc}")
+            return 1
+        return 0
+
+
 class Healthy(Step):
-    """The previous version's health, through its own command."""
+    """The previous version's health, through its own command, on the site
+    that pins it again."""
 
     title = "Health of the previous version"
     always = True
@@ -169,8 +202,10 @@ def revert(system: System, dry_run: bool) -> int:
                f"{'would do' if dry_run else 'step by step'}:")
     system.say(f"Everything Thermite wrote since transaction {kept.id} committed is lost: the state under {root} "
                "goes back to how it was before that upgrade.")
+    # The site goes back inside the transaction, before the previous
+    # version's health; its commit then selects the previous owner command.
     work = changeover.Work(
-        "revert", "revert", [steps.Account(context)], [PutBack(kept)],
+        "revert", "revert", [steps.Account(context)], [PutBack(kept), SitePin(AREA, before, after)],
         [steps.StartTarget(context), changeover.Authorize(),
          Healthy((str(command), "--site", str(AREA), "health", "--production", "--installation", "--settle",
                   str(changeover.SETTLE), "--revision", before))],
@@ -179,27 +214,13 @@ def revert(system: System, dry_run: bool) -> int:
             "Confirm the revert", root,
             f"This revert loses everything written under {root} since transaction {kept.id}: accounts, pairings, "
             "credentials, history, monitoring data. Until it commits a rollback keeps all of it."),
-        after=lambda system, transaction: reverted(system, transaction, command, before, after))
+        then={"select": str(command)})
     if dry_run:
         return changeover.preview(context, system, work, first=1)
     if not runner.confirm_run(system, "revert", f"Run {changeover.command(AREA, 'revert')} again."):
         return 1
     return changeover.run(context, system, lambda id: work, installed=manifest.installed(system, root),
-                          bridged=False, before=after, after=before, first=1, pinned=False)
-
-
-def reverted(system: System, transaction: changeover.Transaction, command: Path, before: str, after: str) -> None:
-    """The operator's side of a committed revert: the site's pin and the
-    owner command go back with the version."""
-    import oh_application_update
-    changeover.reset_site(system, AREA, expected=after, previous=before,
-                          back=f"git -C {shlex.quote(str(AREA))} revert --no-edit {after[:12]}")
-    try:
-        launcher = oh_application_update.select(Path.home(), command)
-        system.say(f"{launcher} selects the previous application again.")
-    except (OSError, ValueError) as exc:
-        system.say(f"{Path.home() / '.local/bin/thermite'} still selects the reverted application ({exc}); "
-                   f"use {command} directly.")
+                          bridged=False, before=after, after=before, first=1)
 
 
 def main(argv: list[str] | None = None) -> int:

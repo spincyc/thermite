@@ -192,21 +192,24 @@ class Transaction:
     @classmethod
     def create(cls, context: steps.Context, id: str, *, kind: str, verb: str, before: str | None,
                after: str | None, previous: str | None, gid: int, installed: bool, history: bool,
-               pinned: bool = True, bridged: bool = False, gateway: str | None = None) -> Transaction:
+               pinned: bool = True, bridged: bool = False, gateway: str | None = None,
+               then: dict | None = None) -> Transaction:
         """`before`/`after`: the site commits of the version that runs and of
         the one installed. `installed`: whether a version of Thermite runs
         before it, to come back if it rolls back. `history`: whether it
         deploys a site commit, so that a rollback is recorded in thermite
-        history. `pinned`: whether `after` is a pin commit made for it, to
-        undo if it does not commit. `gateway`: the gateway release the
-        bridged version runs, kept until the next commit."""
+        history. `pinned`: whether the site was moved to `after` for it (a
+        pin commit made for it, or a revert's reset back), to undo if it
+        does not commit. `gateway`: the gateway release the
+        bridged version runs, kept until the next commit. `then`: the
+        operator's side of its commit (committed())."""
         transaction = cls(context.var, id, {
             "version": 1, "id": id, "kind": kind, "verb": verb, "site": str(context.area),
             "root": str(context.installation.root), "state": str(context.layout.root), "gid": gid,
             "head_before": before, "head_after": after, "installed": installed, "history": history,
             "pinned": pinned, "bridged": bridged, "gateway_before": gateway,
             "application": {"current": (context.application or {}).get("digest"), "previous": previous},
-            "asides": {}, "phase": "preparing"})
+            "then": dict(then or {}), "asides": {}, "phase": "preparing"})
         transaction.directory.mkdir(mode=0o700, parents=True)
         _write(transaction.directory / "engine.py", Path(engine.__file__).read_bytes())
         transaction.save()
@@ -520,8 +523,10 @@ class Work:
     confirm: Step | None = None
     #: Whether the engine puts the kept version back (a revert).
     reinstate: bool = False
-    #: The operator's own side after the commit.
-    after: Callable[[System, Transaction], None] | None = None
+    #: The operator's own side of the commit, as data the record keeps, so
+    #: that whichever run finishes the commit does it (committed()):
+    #: {"select": the owner command ~/.local/bin/thermite selects then}.
+    then: dict = dataclasses.field(default_factory=dict)
     #: The step whose deferred callback relay needs one more install.
     gateway: Step | None = None
 
@@ -616,14 +621,7 @@ def uninstall_work(context: steps.Context, id: str | None, *, purge: bool = Fals
             f"This purge deletes {root}/runtime and {root}/access once it commits: accounts, pairings, credentials, "
             "history, monitoring data, backups, and the gateway's identity, TLS state and releases; also Thermite's "
             "images and the installed manifest. Nothing brings them back but a copy you made.")
-        work.after = purged
     return work
-
-
-def purged(system: System, transaction: Transaction) -> None:
-    """The operator's side of a purge: its transaction records go too; the
-    gateway's authority stays with the site, as its configuration does."""
-    shutil.rmtree(transactions(transaction.var), ignore_errors=True)
 
 
 def unchanged(context: steps.Context, system: System, installed: dict | None) -> bool:
@@ -665,7 +663,8 @@ def preview(context: steps.Context, system: System, work: Work, *, first: int) -
     pull = "pull the pinned images, " if work.pull else ""
     confirm = f"ask you to type {work.confirm.path}, " if work.confirm else ""
     switch = (f"install and start the new version ({titles}); verify its health" if work.switching and not
-              work.reinstate else "put the kept version back and start it; verify its health" if work.reinstate
+              work.reinstate else "put the kept version back, move the site back to it and start it; verify its health "
+              "with its own application" if work.reinstate
               else "nothing new is installed")
     system.say(f"Then, as one install transaction: {pull}check the room to set the installed version aside, "
                f"{confirm}begin, guard the boot, stop Thermite and set it aside; {switch}; and commit. Any failure "
@@ -697,7 +696,7 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
         context, id, kind=work.kind, verb=work.verb, before=before, after=after,
         previous=previous_application(installed, system), gid=context.host["gid"], installed=present,
         history=work.release is not None and work.kind != "revert", pinned=pinned, bridged=bridged,
-        gateway=_gateway(system) if bridged else None)
+        gateway=_gateway(system) if bridged else None, then=work.then)
     prefetch = Prefetch(context)
     root = context.installation.root
 
@@ -745,29 +744,24 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
     except Exception as exc:  # Every failure rolls back; none leaves a half-installed version.
         system.say(f"   {type(exc).__name__}: {exc}")
         code = REFUSED
-    if code:
-        return roll_back(system, transaction, "a step failed")
-    code = committed(system, transaction)
-    if work.kind not in engine.UNINSTALLING:
-        retain(context, system, transaction)
-    if work.after is not None:
-        work.after(system, transaction)
-    if work.gateway is not None and getattr(work.gateway, "deferred", False):
+    code = roll_back(system, transaction, "a step failed") if code else committed(system, transaction)
+    if code == COMMITTED and work.gateway is not None and getattr(work.gateway, "deferred", False):
         return relay(context, system, transaction, first=first + len(opening) + len(rest))
     return code
 
 
-def retain(context: steps.Context, system: System, transaction: Transaction) -> None:
+def retain(system: System, transaction: Transaction) -> None:
     """Retention after a commit (Q13 aside): the gateway releases the
     installed manifest names as current and previous stay, as does, until
     the next commit, the one a bridged version ran; the engine prunes
     older recorded ones, and this removes those staged before the engine,
     which no manifest records. Old runtime/backups tars stay untouched."""
+    import oh_deploy
     try:
-        installed = manifest.installed(system, context.installation.root)
+        installed = manifest.installed(system, transaction.root)
     except manifest.ManifestError:
         return
-    releases = context.installation.access / "releases"
+    releases = oh_deploy.Installation(transaction.root).access / "releases"
     item = next((item for item in (installed or {}).get("items", []) if item["path"] == str(releases)), None)
     names = system.directory_entries(releases) if item is not None else None
     if not names:
@@ -779,7 +773,7 @@ def retain(context: steps.Context, system: System, transaction: Transaction) -> 
     if not older:
         return
     code = runner.perform(Command(("rm", "-rf", "--one-file-system", "--", *map(str, older)), root=True),
-                          system, context.area, root_confirmed=True)
+                          system, transaction.site, root_confirmed=True)
     if code == 0:
         system.say(f"   Removed {len(older)} older gateway release(s) from {releases}.")
     else:
@@ -838,6 +832,23 @@ def _interrupted(system: System, transaction: Transaction) -> int:
 
 
 def committed(system: System, transaction: Transaction) -> int:
+    """The operator's side of a commit, whichever run reached it (straight
+    through, a rollback that found it committed, or a later run resolving
+    it): say so, prune the older gateway releases, select the owner command
+    the record names, then close it. Rerunning it after a crash is
+    harmless. A purge removes the site's transaction records instead."""
+    kind = transaction.record.get("kind")
+    say_committed(system, transaction)
+    if kind not in engine.UNINSTALLING:
+        retain(system, transaction)
+    command = transaction.record.get("then", {}).get("select")
+    if command:
+        select(system, Path(command))
+    if kind == "purge":
+        # Its records go too; the gateway's authority stays with the site,
+        # as its configuration does.
+        shutil.rmtree(transactions(transaction.var), ignore_errors=True)
+        return COMMITTED
     transaction.close("committed")
     # Earlier transactions' operator records are finished; the engine
     # removed their root side at this commit.
@@ -849,6 +860,23 @@ def committed(system: System, transaction: Transaction) -> int:
                 continue
             if phase in ("committed", "rolled-back", "refused"):
                 shutil.rmtree(found, ignore_errors=True)
+    return COMMITTED
+
+
+def select(system: System, command: Path) -> None:
+    """Point ~/.local/bin/thermite at `command` (a revert's previous
+    application)."""
+    import oh_application_update
+    try:
+        launcher = oh_application_update.select(Path.home(), command)
+    except (OSError, ValueError) as exc:
+        system.say(f"   {Path.home() / '.local/bin/thermite'} still selects the application before ({exc}); "
+                   f"use {command} directly.")
+        return
+    system.say(f"   {launcher} selects {command.parent.parent.name} again.")
+
+
+def say_committed(system: System, transaction: Transaction) -> None:
     kind, aside = transaction.record.get("kind"), f"{transaction.root}/.transaction/{transaction.id}"
     if kind == "purge":
         system.say(f"Purge committed: Thermite's files, its state under {transaction.root}, its images, the "
@@ -862,7 +890,6 @@ def committed(system: System, transaction: Transaction) -> int:
                    f"stays set aside under {aside} until the next transaction commits.")
     else:
         system.say(f"{transaction.name} committed: transaction {transaction.id}.")
-    return COMMITTED
 
 
 def roll_back(system: System, transaction: Transaction, reason: str) -> int:

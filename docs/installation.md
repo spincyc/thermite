@@ -746,11 +746,13 @@ Grafana password, runtime credentials and gateway profile in the site's
 `var/`. Everything Thermite wrote since that commit is lost: accounts,
 pairings, credentials, history and monitoring data. Revert says so and asks
 you to type the installation root before anything stops; until it commits, a
-rollback keeps all of it. The previous version must pass its own health
-check, through its own application environment, before the revert commits.
-Then the site's branch goes back to the commit before the upgrade's pin
-commit, and `~/.local/bin/thermite` selects the previous application again.
-A revert writes no deploy-history entry.
+rollback keeps all of it. Inside the transaction, the site's branch goes
+back to the commit before the upgrade's pin commit, so that the previous
+version checks its health with its own application environment; that check
+must pass before the revert commits, and a rollback puts the pin commit
+back. Once the revert commits, `~/.local/bin/thermite` selects the previous
+application again, even when its rollback or the next run finishes the
+commit. A revert writes no deploy-history entry.
 
 A revert is refused with exit status 2 after an uninstall, a clean install
 or another revert, when the site is not at the commit that transaction

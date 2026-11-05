@@ -10,6 +10,7 @@ from __future__ import annotations
 from contextlib import ExitStack
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -627,6 +628,47 @@ class Kinds(Fixture):
         self.assertFalse((self.site / "var/transaction").exists())
         self.assertIn("Purge committed", self.said())
 
+    def purge(self, **answers):
+        self.host = Host(self, **answers)
+        work = changeover.uninstall_work(self.context, txn_fakes.ID, purge=True)
+        work.preparation = []
+        self.host.system.ask.return_value = "/srv/thermite-fixture"
+        with patch.object(steps.Halt, "check", return_value=Check(True, "fixture")):
+            return self.transact(work, before=None)
+
+    def test_a_purge_its_rollback_finishes_still_removes_the_operator_records(self):
+        self.assertEqual(self.purge(commit=1, rollback=0, phase="kept"), changeover.COMMITTED)
+        self.assertEqual(self.log[-3:], ["rollback", "sudo -v", "status"])
+        self.assertFalse((self.site / "var/transaction").exists(), "the token and credentials set aside go too")
+        self.assertIn("Purge committed", self.said())
+
+    def test_a_purge_a_later_run_resolves_still_removes_the_operator_records(self):
+        with patch.object(changeover, "Authorize", side_effect=lambda: Fake("authorize", self.log,
+                                                                             KeyboardInterrupt())):
+            self.assertEqual(self.purge(), changeover.INTERRUPTED)
+        self.assertTrue((self.directory / "operator").is_dir() or (self.directory / "record.json").exists())
+        self.host = Host(self, phase="committed", rollback=0)
+        self.assertEqual(changeover.resolve(self.site, self.host.system, "uninstall"), changeover.COMMITTED)
+        self.assertFalse((self.site / "var/transaction").exists())
+
+    def test_retention_runs_once_on_every_path_to_a_commit(self):
+        with patch.object(changeover, "retain") as retain:
+            self.assertEqual(self.run_upgrade(), changeover.COMMITTED)
+            self.assertEqual(retain.call_count, 1, "straight through")
+            retain.reset_mock()
+            shutil.rmtree(self.directory)
+            self.assertEqual(self.run_upgrade(commit=1, rollback=0, phase="kept"), changeover.COMMITTED)
+            self.assertEqual(retain.call_count, 1, "finished by its rollback")
+            retain.reset_mock()
+            shutil.rmtree(self.directory)
+            self.assertEqual(self.run_upgrade(switch=[("switch", KeyboardInterrupt())]), changeover.INTERRUPTED)
+            retain.assert_not_called()
+            self.host = Host(self, phase="committed", rollback=0)
+            self.assertEqual(changeover.resolve(self.site, self.host.system), changeover.COMMITTED)
+            self.assertEqual(retain.call_count, 1, "finished by a later run")
+            transaction = retain.call_args.args[1]
+            self.assertEqual((transaction.id, transaction.root), (txn_fakes.ID, Path("/srv/thermite-fixture")))
+
     def test_a_clean_install_moves_the_state_trees_aside_and_clears_the_records_first(self):
         self.context = steps.Context(**{**self.context.__dict__, "host": {**self.context.host, "http_port": 8080,
                                                                           "https_port": 8443}})
@@ -683,20 +725,21 @@ class Kinds(Fixture):
                                              "current": txn_fakes.ID, "previous": txn_fakes.OLD}]}
         self.host.system.directory_entries.return_value = [txn_fakes.OLD, txn_fakes.ID, "20250101-staged",
                                                             "fixture-v1"]
-        transaction = changeover.Transaction(self.site / "var", txn_fakes.ID, {"gateway_before": "fixture-v1"})
+        transaction = changeover.Transaction(self.site / "var", txn_fakes.ID, {
+            "gateway_before": "fixture-v1", "root": "/srv/thermite-fixture", "site": str(self.site)})
         with patch.object(manifest, "installed", return_value=installed):
-            changeover.retain(self.context, self.host.system, transaction)
+            changeover.retain(self.host.system, transaction)
         self.assertEqual(self.log, [f"sudo rm -rf --one-file-system -- {releases}/20250101-staged"],
                          "the release the bridged version ran stays until the next commit")
         self.log.clear()
         transaction.record["gateway_before"] = None
         with patch.object(manifest, "installed", return_value=installed):
-            changeover.retain(self.context, self.host.system, transaction)
+            changeover.retain(self.host.system, transaction)
         self.assertEqual(self.log, [f"sudo rm -rf --one-file-system -- {releases}/20250101-staged {releases}/fixture-v1"])
         self.log.clear()
         transaction.record["bridged"] = True
         with patch.object(manifest, "installed", return_value=installed):
-            changeover.retain(self.context, self.host.system, transaction)
+            changeover.retain(self.host.system, transaction)
         self.assertEqual(self.log, [], "a bridged version's own release unknown: nothing is removed")
 
     def test_a_transaction_that_rolled_back_before_its_deploy_is_shown_under_the_one_that_ran(self):

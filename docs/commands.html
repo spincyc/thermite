@@ -1075,10 +1075,12 @@ lost: accounts, pairings, credentials, the gateway&#x27;s identity changes,
 monitoring data. Revert says so and asks you to type the installation root
 before anything stops.
 
-Once the revert commits, the site&#x27;s branch goes back to the commit before
-the upgrade&#x27;s pin commit, and ~/.local/bin/thermite selects the previous
-application&#x27;s command again. Any failure before the commit rolls back in
-the same run, and the version that runs now runs again.
+Inside the transaction, the site&#x27;s branch goes back to the commit before
+the upgrade&#x27;s pin commit, so that the previous version checks its health
+with its own application. Once the revert commits, ~/.local/bin/thermite
+selects the previous application&#x27;s command again. Any failure before the
+commit rolls back in the same run: the version that runs now runs again,
+and the site&#x27;s branch goes forward to the pin commit again.
 
 A revert needs the site at that upgrade&#x27;s pin commit with nothing
 uncommitted, and the upgrade&#x27;s own record in the site&#x27;s var/transaction. It
