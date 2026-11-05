@@ -148,6 +148,25 @@ def retain_launcher(store: Path, previous: tuple[bytes, int]) -> Path:
     return backup
 
 
+def select(home: Path, command: Path) -> Path:
+    """Point the owner command at `command`, an environment's own launcher,
+    in one replacement (thermite revert selects the previous one). A
+    launcher that is not a symlink is refused, as an update refuses it."""
+    launcher = home / ".local/bin/thermite"
+    previous = launcher_state(launcher)
+    if isinstance(previous, tuple):
+        raise ValueError(f"{launcher} is not a symlink to an application environment")
+    if previous != str(command):
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        temporary = launcher.with_name(".thermite-" + command.parent.parent.name)
+        try:
+            temporary.symlink_to(command)
+            os.replace(temporary, launcher)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return launcher
+
+
 def verify(environment: Path) -> dict:
     safe_directory(environment / "bin")
     command = environment / "bin/thermite"
