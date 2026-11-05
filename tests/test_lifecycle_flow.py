@@ -471,31 +471,8 @@ class Compensation(unittest.TestCase):
         self.assertLessEqual({"thermite.target", "thermite-grafana.service", "thermite-atv.service"}, stopped)
         self.assertEqual(preparation[-1].argv[-1], "--receipt")
 
-    def test_preparation_moves_old_logs_before_the_repair_and_the_updater(self):
-        layout, program = context().layout, context().program
-        for receipt in (False, True):
-            with self.subTest(full_repair=not receipt):
-                system = mock.Mock(spec=System)
-                system.unit.return_value = Unit("active", "enabled", 0, 1)
-                with self.owned_everything(), mock.patch.object(steps, "service_receipt", return_value=receipt), \
-                        mock.patch.object(steps.StateDirectories, "wrong", return_value=[]), \
-                        mock.patch.object(steps.Account, "missing", return_value=[]), \
-                        mock.patch.object(deploy, "prepare_openhab_argv", return_value=("fixture-prepare",)):
-                    preparation = steps.NativePreparation(context()).actions(system)
-                argvs = [action.argv for action in preparation]
-                move = next(index for index, argv in enumerate(argvs) if "--relocate" in argv)
-                self.assertEqual(argvs[move], ("python3", str(program / "lib/oh_logging.py"), str(layout.userdata),
-                                               "--http-port", "13601", "--relocate", str(layout.logs)))
-                self.assertTrue(preparation[move].root)
-                repair = next(index for index, argv in enumerate(argvs) if argv[1:2] == (str(program / "lib/oh_service.py"),))
-                stops = [index for index, argv in enumerate(argvs) if argv[:2] == ("systemctl", "stop")]
-                self.assertLess(max(stops), move, "openHAB is stopped first")
-                self.assertLess(move, repair, "the repair makes the moved logs 0640")
-                self.assertLess(repair, argvs.index(("fixture-prepare",)), "the updater writes update.log to logs/")
-                self.assertEqual(sum("--relocate" in argv for argv in argvs), 1)
-
     def test_a_receipt_of_the_previous_policy_reruns_the_full_preparation(self):
-        # The upgrade that moves the logs: a v4 receipt is no longer a full repair's.
+        # The upgrade that moves the logs: a v4 receipt no longer stands for a full repair.
         root = context().layout.root
         system = mock.Mock(spec=System)
         receipt = {"version": 1, "uid": 9001, "gid": 9001, "policy": "thermite-service-v4"}

@@ -1131,15 +1131,11 @@ class NativePreparation(Step):
         # Only a full repair may record the receipt; openHAB's own repair keeps it.
         repair, final = (helper, (*helper, "--receipt")) if custody else ((*helper, "--runtime"),) * 2
         userdata = str(self.context.layout.userdata)
-        logging = ("python3", str(PROGRAM / "lib/oh_logging.py"), userdata, "--http-port", str(host["http_port"]))
         return [*([Command(("systemctl", "stop", *paths), root=True, stops=_restartable(paths))] if paths else []),
                 *([Command(("systemctl", "stop", *running), root=True, stops=_restartable(running))] if running else []),
-                # Before the updater writes the new logs/, and before the
-                # repair makes what moved group-readable.
-                Command((*logging, "--relocate", str(self.context.layout.logs)), root=True),
                 Command(repair, root=True),
                 Command(deploy.prepare_openhab_argv(self.context.versions, host), root=True),
-                Command(logging, root=True),
+                Command(("python3", str(PROGRAM / "lib/oh_logging.py"), userdata, "--http-port", str(host["http_port"])), root=True),
                 Command(("python3", str(PROGRAM / "lib/oh_ports.py"), userdata, "--http-port", str(host["http_port"]),
                          "--uid", str(host["uid"]), "--gid", str(host["gid"])), root=True),
                 Command((*helper, "--check-pairing-logging"), root=True),
@@ -2214,12 +2210,18 @@ def native_steps(context: Context, restart: bool = False) -> list[Step]:
             *metrics_steps(context, restart=restart), Target(context), NativeReady(context, native)]
 
 
+def directory_steps(context: Context) -> list[Step]:
+    """The account and every directory a unit bind-mounts. They precede
+    Units: a failed run starts what it stopped again, and systemd restarts
+    a crashed service, on whichever units are installed by then."""
+    return [Account(context), StateDirectories(context), MetricsDirectories(context)]
+
+
 def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     """The upgrade's steps after its preconditions, in order. A host where
     openHAB runs without the metrics gets them here."""
     return [WhatChanges(plan_), Preconditions(context), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
-            Units(context), Account(context), StateDirectories(context), MetricsDirectories(context),
-            NativePreparation(context), NativeIngress(context), Deploy(context), Restart(context, restart_runtime=plan_.restart_runtime),
+            *directory_steps(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context), Restart(context, restart_runtime=plan_.restart_runtime),
             *native_steps(context, restart=True), MetricsAnswer(context), Verify(context)]
 
 
@@ -2405,6 +2407,5 @@ def install_preflight(context: Context) -> list[Step]:
 def install(context: Context, *, preflight: bool = True) -> list[Step]:
     """Every step, in order."""
     return [*(install_preflight(context) if preflight else []), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context),
-            Units(context), Account(context), StateDirectories(context),
-            MetricsDirectories(context), NativePreparation(context), NativeIngress(context), Deploy(context), Services(context, restart_runtime=context.restart_runtime),
+            *directory_steps(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context), Services(context, restart_runtime=context.restart_runtime),
             *native_steps(context), MetricsAnswer(context), Verify(context)]

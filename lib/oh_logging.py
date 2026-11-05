@@ -15,13 +15,15 @@ as a whole (jsondb users, API tokens and Thing credentials; pairing
 material), and the group needs no traversal into it. Every file appender
 gets filePermissions FILE_PERMISSIONS, so Log4j2 chmods each log it opens or
 creates, and each compressed rotation, to 0640 despite the runtime's 0077
-umask; the container's own gid is group thermite. oh_service keeps logs/
-2750 and its files 0640 (rotations made before, and the updater's own file),
-and native preparation moves what an older install wrote to userdata/logs
-there (relocate). The group reads the household's activity in events.log
-too: it is the operators' group, who already change the deployed
-configuration. The pairing guard on every logger filters what reaches each
-file, as before.
+umask; the container's own gid is group thermite. Only FILE_APPENDERS take
+the attribute in log4j-core 2.25.4: a configuration with another
+file-writing appender is not readable(). oh_service keeps logs/ 2750 and
+the log files it names (oh_service.LOG_NAME) 0640, the updater's included,
+and anything else there private. Logs an older install wrote to
+userdata/logs stay there, private. The group reads the household's
+activity in events.log too: it is the operators' group, who already change
+the deployed configuration. The pairing guard on every logger filters what
+reaches each file, as before.
 
 What openhab.log gets (the Root logger's routes: bindings, rule engines, the
 JavaScript rules' console lines) also goes to the JOURNAL Console appender,
@@ -41,7 +43,6 @@ payload: protected() and journaled() check both.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import os
 import re
 import socket
@@ -65,12 +66,13 @@ PAIRING_RULES = frozenset(f"automation/js/{name}.js" for name in
 #: name, so rules' lines can be found (org.openhab.automation.jsscripting.file.<script>).
 JOURNAL = "THERMITE_JOURNAL"
 JOURNAL_PATTERN = "[%-5.5p] [%c] - %m%n"
-#: Log4j2's file appenders (plugin names match case-insensitively), and the
-#: mode each sets on the files it opens, creates and compresses: 0640.
-FILE_APPENDERS = ("file", "randomaccessfile", "rollingfile", "rollingrandomaccessfile", "memorymappedfile")
+#: The file appenders whose log4j-core 2.25.4 builders accept filePermissions
+#: (plugin names match case-insensitively), and the mode each then sets on
+#: the files it opens, creates and compresses: 0640. RandomAccessFile and
+#: MemoryMappedFile reject the attribute and leave their files 0600.
+FILE_APPENDERS = ("file", "rollingfile", "rollingrandomaccessfile")
+OTHER_FILE_APPENDERS = ("randomaccessfile", "memorymappedfile")
 FILE_PERMISSIONS = "rw-r-----"
-#: openHAB's own log directory below userdata, before logs/ replaced it.
-USERDATA_LOGS = "logs"
 
 
 def pairing_conf(files: dict) -> bool:
@@ -206,22 +208,28 @@ def journaled(data: bytes) -> bool:
             and len(refs) == 1 and _shape(refs[0]) == ("AppenderRef", [("ref", JOURNAL)], []))
 
 
-def _file_appenders(root: ET.Element) -> list[ET.Element]:
-    """Every file appender, including one nested in a Routing or Failover appender."""
+def _appenders(root: ET.Element, kinds: tuple[str, ...]) -> list[ET.Element]:
+    """Appenders of these kinds, including one nested in a Routing or Failover appender."""
     return [element for container in _containers(root) for element in container.iter()
-            if isinstance(element.tag, str) and element.tag.lower() in FILE_APPENDERS]
+            if isinstance(element.tag, str) and element.tag.lower() in kinds]
 
 
 def _permissions(appender: ET.Element) -> list[str]:
     return [value for key, value in appender.attrib.items() if key.lower() == "filepermissions"]
 
 
+def _unreadable(root: ET.Element) -> list[ET.Element]:
+    return [appender for appender in _appenders(root, FILE_APPENDERS) if _permissions(appender) != [FILE_PERMISSIONS]]
+
+
 def readable(data: bytes) -> bool:
-    """Every file appender writes its files, rotations included, 0640."""
+    """Every file appender writes its files, rotations included, 0640, and
+    none is of a kind that cannot."""
     try:
-        return all(_permissions(appender) == [FILE_PERMISSIONS] for appender in _file_appenders(document(data)))
+        root = document(data)
     except (ValueError, ET.ParseError):
         return False
+    return not _unreadable(root) and not _appenders(root, OTHER_FILE_APPENDERS)
 
 
 def configured(data: bytes) -> bool:
@@ -260,17 +268,16 @@ def guarded(data: bytes, *, journal: bool = True) -> bytes:
     """Prepend DENY at every native route without replacing existing
     configuration, and make every file appender's files 0640; with
     `journal`, also route openhab.log to the journal."""
-    if protected(data) and readable(data) and (not journal or journaled(data)):
-        return data
     root = document(data)
+    if protected(data) and not _unreadable(root) and (not journal or journaled(data)):
+        return data
     for scope in scopes(root):
         if not scope_protected(scope):
             guard_scope(scope)
-    for appender in _file_appenders(root):
-        if _permissions(appender) != [FILE_PERMISSIONS]:
-            for key in [key for key in appender.attrib if key.lower() == "filepermissions"]:
-                del appender.attrib[key]
-            appender.set("filePermissions", FILE_PERMISSIONS)
+    for appender in _unreadable(root):
+        for key in [key for key in appender.attrib if key.lower() == "filepermissions"]:
+            del appender.attrib[key]
+        appender.set("filePermissions", FILE_PERMISSIONS)
     if journal and not journaled(ET.tostring(root)):
         journal_route(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
@@ -304,41 +311,6 @@ def ready(userdata: Path) -> bool:
             return configured(read_regular(etc, RELATIVE.name)[0])
     except (OSError, ValueError):
         return False
-
-
-def relocate(userdata: Path, logs: Path, *, anchored: bool = False) -> tuple[int, list[str]]:
-    """Move the log files openHAB wrote to userdata/logs into logs/, once.
-
-    Run while openHAB is stopped; oh_service then makes the moved files
-    0640. A name logs/ already has, and anything but a single-link regular
-    file, stays where it is, still private behind userdata: nothing is
-    overwritten or followed. The emptied directory is removed. Returns how
-    many files moved and the names that stayed.
-    """
-    with contextlib.ExitStack() as stack:
-        parent = open_directory(userdata, anchored=anchored)
-        stack.callback(os.close, parent)
-        try:
-            source = os.open(USERDATA_LOGS, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
-        except FileNotFoundError:
-            return 0, []
-        stack.callback(os.close, source)
-        target = open_directory(logs, anchored=anchored)
-        stack.callback(os.close, target)
-        moved, kept = 0, []
-        for name in sorted(os.listdir(source)):
-            info = os.stat(name, dir_fd=source, follow_symlinks=False)
-            try:
-                os.stat(name, dir_fd=target, follow_symlinks=False)
-            except FileNotFoundError:
-                if stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
-                    os.rename(name, name, src_dir_fd=source, dst_dir_fd=target)
-                    moved += 1
-                    continue
-            kept.append(name)
-        if not kept:
-            os.rmdir(USERDATA_LOGS, dir_fd=parent)
-        return moved, kept
 
 
 def _seed(source: Path, directory: int, uid: int, gid: int) -> None:
@@ -432,29 +404,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--template", type=Path, help="seed complete pinned userdata on an empty first install")
     parser.add_argument("--uid", type=int, help="owner of newly seeded userdata")
     parser.add_argument("--gid", type=int, help="group of newly seeded userdata")
-    parser.add_argument("--relocate", type=Path, metavar="LOGS",
-                        help="only move the log files openHAB wrote to USERDATA/logs into LOGS")
     args = parser.parse_args(argv)
     if args.template is not None and (args.uid is None or args.gid is None):
         parser.error("--template requires --uid and --gid")
-    if args.relocate is not None and args.template is not None:
-        parser.error("--relocate only moves logs; it takes no --template")
     try:
         with socket.create_connection(("127.0.0.1", args.http_port), timeout=1):
             parser.exit(2, "openHAB still answers on its HTTP port; stop it before changing its logging configuration\n")
     except OSError:
         pass
-    if args.relocate is not None:
-        source = args.userdata / USERDATA_LOGS
-        try:
-            moved, kept = relocate(args.userdata, args.relocate, anchored=True)
-        except OSError as exc:
-            parser.exit(2, f"could not move {source} to {args.relocate}: {exc}\n")
-        print(f"moved {moved} log file(s) from {source} to {args.relocate}" if moved or kept
-              else f"{source} holds no logs to move")
-        if kept:
-            print(f"left in {source}, private: {', '.join(kept)}")
-        return 0
     try:
         # Root runs this inside service-writable state: never follow a link.
         created = (initialize(args.userdata, args.template, args.uid, args.gid, anchored=True)

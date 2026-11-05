@@ -312,6 +312,18 @@ class FilePermissions(unittest.TestCase):
                 self.assertTrue(oh_logging.configured(repaired))
                 self.assertEqual(self.permissions(repaired)["LOGFILE"], ["rw-r-----"])
 
+    def test_an_appender_that_rejects_the_mode_is_never_reported_readable(self):
+        # log4j-core 2.25.4 refuses filePermissions on these and writes 0600.
+        for kind in ("RandomAccessFile", "MemoryMappedFile", "randomaccessfile"):
+            with self.subTest(kind=kind):
+                extra = f'<{kind} fileName="other.log" name="OTHER"><PatternLayout pattern="%m%n"/></{kind}><PaxOsgi'
+                data = oh_logging.guarded(TEMPLATE.replace(b"<PaxOsgi", extra.encode()))
+                self.assertTrue(oh_logging.protected(data))
+                self.assertFalse(oh_logging.readable(data))
+                self.assertFalse(oh_logging.configured(data))
+                found = self.permissions(data)
+                self.assertEqual((found["LOGFILE"], found["EVENT"], found["OTHER"]), (["rw-r-----"], ["rw-r-----"], []))
+
     def test_a_nested_file_appender_is_covered(self):
         routing = (b'<Routing name="ROUTED"><Routes pattern="$${ctx:x}"><Route>'
                    b'<File fileName="routed.log" name="ROUTED_FILE"><PatternLayout pattern="%m%n"/></File>'
@@ -321,91 +333,6 @@ class FilePermissions(unittest.TestCase):
         data = oh_logging.guarded(unreadable)
         self.assertTrue(oh_logging.configured(data))
         self.assertEqual((self.permissions(data)["ROUTED_FILE"], self.permissions(data)["ROUTED"]), (["rw-r-----"], []))
-
-
-class Relocation(Scratch):
-    """Root moves an older install's logs out of userdata, never through a link."""
-
-    def setUp(self):
-        super().setUp()
-        self.old = self.userdata / "logs"
-        self.old.mkdir()
-        self.logs = self.root / "logs"
-        self.logs.mkdir()
-
-    def log(self, name, data=b"line\n", mode=0o600):
-        path = self.old / name
-        path.write_bytes(data)
-        path.chmod(mode)
-        return path
-
-    def test_moves_every_log_and_rotation_and_removes_the_emptied_directory(self):
-        names = ("events.log", "events.log.1.gz", "openhab.log", "openhab.log.7.gz", "update.log")
-        inodes = {name: self.log(name, name.encode()).stat().st_ino for name in names}
-        self.assertEqual(oh_logging.relocate(self.userdata, self.logs, anchored=True), (len(names), []))
-        self.assertFalse(self.old.exists())
-        for name in names:
-            info = (self.logs / name).stat()
-            self.assertEqual(((self.logs / name).read_bytes(), info.st_ino), (name.encode(), inodes[name]))
-        self.assertEqual(oh_logging.relocate(self.userdata, self.logs, anchored=True), (0, []), "a rerun moves nothing")
-
-    def test_overwrites_nothing_and_moves_no_link_or_directory(self):
-        (self.logs / "openhab.log").write_bytes(b"current\n")
-        self.log("openhab.log", b"older\n")
-        self.log("events.log")
-        (self.old / "link").symlink_to(self.victim)
-        os.link(self.victim, self.old / "hardlink")
-        (self.old / "nested").mkdir()
-        kept = ["hardlink", "link", "nested", "openhab.log"]
-        self.assertEqual(oh_logging.relocate(self.userdata, self.logs, anchored=True), (1, kept))
-        self.assertEqual((self.logs / "openhab.log").read_bytes(), b"current\n")
-        self.assertEqual(sorted(path.name for path in self.old.iterdir()), kept)
-        self.assertEqual(sorted(path.name for path in self.logs.iterdir()), ["events.log", "openhab.log"])
-        self.assertVictimUntouched()
-        self.assertEqual(oh_logging.relocate(self.userdata, self.logs, anchored=True), (0, kept))
-
-    def test_refuses_a_linked_source_or_target(self):
-        self.log("openhab.log")
-        elsewhere = self.outside / "logs"
-        elsewhere.mkdir()
-        self.logs.rmdir()
-        self.logs.symlink_to(elsewhere, target_is_directory=True)
-        with self.assertRaises(OSError):
-            oh_logging.relocate(self.userdata, self.logs, anchored=True)
-        self.assertEqual((list(elsewhere.iterdir()), [path.name for path in self.old.iterdir()]), ([], ["openhab.log"]))
-        self.logs.unlink()
-        self.logs.mkdir()
-        (self.old / "openhab.log").unlink()
-        self.old.rmdir()
-        self.old.symlink_to(self.outside, target_is_directory=True)
-        with self.assertRaises(OSError):
-            oh_logging.relocate(self.userdata, self.logs, anchored=True)
-        self.assertEqual(list(self.logs.iterdir()), [])
-        self.assertVictimUntouched()
-
-    def test_nothing_to_move_without_the_old_directory(self):
-        self.old.rmdir()
-        self.assertEqual(oh_logging.relocate(self.userdata, self.logs, anchored=True), (0, []))
-
-    def test_root_helper_moves_only_while_openhab_is_stopped_and_changes_no_configuration(self):
-        self.log("openhab.log")
-        configuration = (self.etc / oh_logging.RELATIVE.name).read_bytes()
-        argv = [str(self.userdata), "--http-port", "13601", "--relocate", str(self.logs)]
-        with mock.patch.object(oh_logging.socket, "create_connection"), \
-                mock.patch("sys.stderr", new_callable=io.StringIO) as errors, self.assertRaises(SystemExit) as stopped:
-            oh_logging.main(argv)
-        self.assertEqual(stopped.exception.code, 2)
-        self.assertIn("still answers", errors.getvalue())
-        self.assertEqual([path.name for path in self.old.iterdir()], ["openhab.log"])
-        with mock.patch.object(oh_logging.socket, "create_connection", side_effect=ConnectionRefusedError), \
-                mock.patch("sys.stdout", new_callable=io.StringIO) as output:
-            self.assertEqual(oh_logging.main(argv), 0)
-        self.assertIn("moved 1 log file(s)", output.getvalue())
-        self.assertEqual([path.name for path in self.logs.iterdir()], ["openhab.log"])
-        self.assertEqual((self.etc / oh_logging.RELATIVE.name).read_bytes(), configuration)
-        with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit) as refused:
-            oh_logging.main([*argv, "--template", str(self.root), "--uid", "9001", "--gid", "9001"])
-        self.assertEqual(refused.exception.code, 2)
 
 
 class Seeding(Scratch):

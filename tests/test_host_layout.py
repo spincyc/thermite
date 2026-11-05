@@ -170,6 +170,25 @@ class StateDirectories(unittest.TestCase):
         self.assertEqual(check.detail, "to create or fix: runtime/conf")
 
 
+class Mounts(unittest.TestCase):
+    def test_openhab_bind_mounts_exist_before_its_quadlet_is_installed(self):
+        # A failed run starts openHAB again, and systemd restarts it, on
+        # whatever Quadlet is installed: never one whose source is missing.
+        layout = deploy.state(context().host)
+        made = {path for _, paths in layout.directories() for path in paths}
+        sources = {Path(line.split("=", 1)[1].split(":", 1)[0])
+                   for line in deploy.render_quadlet(VERSIONS, context().host).splitlines() if line.startswith("Volume=")}
+        self.assertIn(layout.logs, sources)
+        self.assertLessEqual(sources, made)
+        plan = steps.Plan((), "5.2.3", "5.2.3", None, "fixture", ())
+        for name, sequence in (("install", steps.install(context())),
+                               ("upgrade", steps.upgrade(context(), plan, "fixture"))):
+            types = [type(step) for step in sequence]
+            for maker in (steps.Account, steps.StateDirectories, steps.MetricsDirectories):
+                with self.subTest(sequence=name, step=maker.__name__):
+                    self.assertLess(types.index(maker), types.index(steps.Units))
+
+
 class Ownership(unittest.TestCase):
     def test_the_root_may_hold_only_runtime_and_access(self):
         for names, owned in ((["access", "runtime"], True), (["runtime"], True), ([], True),

@@ -119,13 +119,14 @@ rollback. The unified deployment workflow uses a separate committed private site
   or upgrade reruns native preparation once to route the log, restarting
   openHAB.
 - openHAB's logs leave its private userdata for `runtime/logs/`
-  (`/srv/thermite/runtime/logs`): directory 2750 and every log 0640, group
+  (`/srv/thermite/runtime/logs`): directory 2750 and its logs 0640, group
   `thermite`, so the group reads openhab.log, events.log and their rotations
   without sudo, and nothing else in `runtime/` gains access. Every Log4j2 file
   appender sets `filePermissions`, which also covers rotations, and the
   pairing filter still drops pairing codes on every logger. The next install
-  or upgrade stops openHAB, moves its existing logs there and makes them
-  group-readable once. Upgrade backups no longer include the logs.
+  or upgrade reruns native preparation once to apply it, restarting
+  openHAB; logs written before it stay where they were (see the installation
+  guide's host layout). Upgrade backups no longer include the logs.
 - Live updates: each page holds one event stream, `/api/v1/events/remote`,
   `/home` or `/pair`, whose first message is a snapshot of what the page
   shows, so opening or reconnecting a page no longer reads every room, control

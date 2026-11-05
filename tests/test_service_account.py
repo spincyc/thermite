@@ -63,24 +63,25 @@ class Permissions(unittest.TestCase):
         self.assertEqual(stat.S_IMODE((self.root / "conf/legacy-secret").stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o2700)
 
-    def test_openhab_logs_alone_become_group_readable(self):
-        # Rotations made before filePermissions, the updater's own file, and
-        # private userdata files a group traversal would have exposed.
+    def test_only_openhab_logs_become_group_readable(self):
+        # Rotations as the pinned log4j2.xml names them (renamed, then
+        # compressed), the updater's file, and anything else in logs/.
         logs = [self.file("logs/openhab.log", 0o600), self.file("logs/events.log.3.gz", 0o600),
-                self.file("logs/update.log", 0o664), self.file("logs/odd", 0o4755)]
-        private = [self.file("userdata/jsondb/users.json", 0o644), self.file("userdata/sony_ip_control/cookie", 0o644),
-                   self.file("userdata/logs/openhab.log", 0o640)]
+                self.file("logs/events.log.4", 0o600), self.file("logs/audit.log", 0o644),
+                self.file("logs/update.log", 0o664), self.file("logs/openhab.log.2.gz", 0o4755)]
+        others = [self.file("logs/odd", 0o644), self.file("logs/openhab.log.bak", 0o640),
+                  self.file("logs/events.log.gz", 0o640), self.file("logs/nested/openhab.log", 0o644),
+                  self.file("userdata/jsondb/users.json", 0o644), self.file("userdata/logs/openhab.log", 0o640)]
         (self.root / "logs").chmod(0o700)
-        before = {path: path.read_bytes() for path in [*logs, *private]}
+        before = {path: path.read_bytes() for path in [*logs, *others]}
         service.normalize_state(self.root, self.uid, self.gid)
-        self.assertEqual(stat.S_IMODE((self.root / "logs").stat().st_mode), 0o2750)
-        self.assertEqual(stat.S_IMODE((self.root / "userdata").stat().st_mode), 0o700)
-        for path in logs:
-            with self.subTest(path=path.name):
-                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o640)
-        for path in private:
-            with self.subTest(path=path.name):
-                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        for name, mode in (("logs", 0o2750), ("logs/nested", 0o700), ("userdata", 0o700)):
+            with self.subTest(name=name):
+                self.assertEqual(stat.S_IMODE((self.root / name).stat().st_mode), mode)
+        for paths, mode in ((logs, 0o640), (others, 0o600)):
+            for path in paths:
+                with self.subTest(path=path.relative_to(self.root)):
+                    self.assertEqual(stat.S_IMODE(path.stat().st_mode), mode)
         self.assertEqual({path: path.read_bytes() for path in before}, before)
         self.assertEqual(service.audit_state(self.root, self.uid, self.gid), [])
         self.assertEqual(service.audit_state(self.root, self.uid, self.gid, runtime=True), [])

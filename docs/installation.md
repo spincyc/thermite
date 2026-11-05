@@ -199,10 +199,13 @@ openHAB's logs are in `runtime/logs/`, `/srv/thermite/runtime/logs` by
 default: `openhab.log`, `events.log`, their compressed rotations
 (`events.log.1.gz` up to `.7.gz`, the highest number the newest) and the
 updater's `update.log`. The directory belongs to `thermite`, mode 2750, and
-every log in it is 0640, so members of the `thermite` group read them without
-sudo; they write nothing there, and the rest of `runtime/` gains no access.
-The pairing filter drops pairing codes on every logger before a line reaches
-a file.
+those logs are 0640, so members of the `thermite` group read them without
+sudo; they write nothing there, anything else in it stays private, and the
+rest of `runtime/` gains no access. The pairing filter drops pairing codes on
+every logger before a line reaches a file. An installation upgraded from a
+release that logged inside userdata keeps those older logs in
+`runtime/userdata/logs`, readable only with sudo; the upgrade's backup holds
+them too, so they can be deleted.
 
 ```sh
 tail -F /srv/thermite/runtime/logs/openhab.log

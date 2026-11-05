@@ -22,8 +22,8 @@ ACCOUNT = GROUP = "thermite"
 UID = GID = 9001
 RECEIPT_VERSION = 1
 #: v4: native preparation also routes openhab.log to the journal (oh_logging.JOURNAL).
-#: v5: openHAB logs to the group-readable logs/ (LOGS), and native preparation
-#: moves what it wrote to userdata/logs there (oh_logging.relocate).
+#: v5: openHAB logs to the group-readable logs/ (LOGS), with filePermissions
+#: on each file appender (oh_logging.FILE_PERMISSIONS).
 POLICY = "thermite-service-v5"
 RECEIPT = "deploy/service-account.json"
 SHARED_DIR = 0o2770
@@ -38,6 +38,10 @@ PRIVATE_FILE = 0o600
 LOGS = "logs"
 LOG_DIR = 0o2750
 LOG_FILE = 0o640
+#: The logs the group reads: openHAB's, its updater's, and their rotations
+#: as the pinned log4j2.xml names them (openhab.log.%i.gz, renamed to
+#: openhab.log.%i before it is compressed).
+LOG_NAME = re.compile(LOGS + r"/(?:openhab|events|audit|update)\.log(?:\.\d+(?:\.gz)?)?\Z")
 # A completed check found missing protection. Exit 1/2 from sudo or the
 # helper instead means verification could not run, not that logging is unsafe.
 PAIRING_LOGGING_UNPROTECTED = 3
@@ -103,9 +107,12 @@ def desired_mode(relative: str, mode: int, directory: bool, *, private_cache: bo
         return RUNTIME_DIR if directory else PRIVATE_FILE
     if _under(relative, (LOGS,)):
         # openHAB's logs, written behind the pairing guard (oh_logging), which
-        # openHAB makes group-readable itself: a file it or a move left
-        # private is widened, never made group-writable or executable.
-        return LOG_DIR if directory else LOG_FILE
+        # openHAB makes group-readable itself: a log it left private is
+        # widened, never made group-writable or executable. Anything else
+        # here stays private.
+        if directory:
+            return LOG_DIR if relative == LOGS else PRIVATE_DIR
+        return LOG_FILE if LOG_NAME.fullmatch(relative) else PRIVATE_FILE
     if _under(relative, SHARED):
         if directory:
             return 0o2700 if relative not in SHARED and not mode & 0o070 else SHARED_DIR
