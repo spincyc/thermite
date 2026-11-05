@@ -132,12 +132,12 @@ def main(argv: list[str] | None = None) -> int:
                           (["--verbose"] if oh_cli.switches.verbose else []), say=system.say)
         import oh_paths
 
-        def body() -> int:
+        def body(before: str | None) -> int:
             oh_paths.require_compatible()
             return install(system, arguments.dry_run, clean=arguments.clean,
                            runtime_token_file=arguments.runtime_token_file, restart_runtime=arguments.restart_runtime,
                            run_approved=arguments._run_approved, native_timeout=arguments.native_timeout,
-                           site_before=arguments._site_before)
+                           site_before=before)
         return changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body)
     except subprocess.CalledProcessError as exc:
         print(f"thermite install: {changeover.escaped(AREA, 'install', exc)}", file=sys.stderr)

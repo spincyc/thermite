@@ -131,11 +131,11 @@ def host_phase(system: System, arguments) -> int:
     """The upgrade the application workflow approved (changeover.pinned)."""
     import oh_paths
 
-    def body() -> int:
+    def body(before: str | None) -> int:
         oh_paths.require_compatible()
         return upgrade(system, arguments.dry_run, runtime_token_file=arguments.runtime_token_file,
                        run_approved=arguments._run_approved, native_timeout=arguments.native_timeout,
-                       site_before=arguments._site_before)
+                       site_before=before)
     return changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body)
 
 

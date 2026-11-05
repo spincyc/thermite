@@ -196,8 +196,8 @@ class Proof(unittest.TestCase):
                 self.prove(**changes)
 
 
-class SiteBefore(unittest.TestCase):
-    """The version 1 wrapper commits the site pin before the host phase runs."""
+class PinnedSite(unittest.TestCase):
+    """A site in a temporary Git repository, pinning one release."""
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -221,6 +221,10 @@ class SiteBefore(unittest.TestCase):
         self.git("add", "-A")
         self.git("commit", "-q", "-m", subject)
 
+
+class SiteBefore(PinnedSite):
+    """The version 1 wrapper commits the site pin before the host phase runs."""
+
     def test_the_wrappers_pin_commit_is_recognized(self):
         self.pin(RELEASE, bridge.PIN_SUBJECT)
         self.assertEqual(bridge.site_before(self.root, self.site, RELEASE), (self.before, self.git("rev-parse", "HEAD")))
@@ -237,6 +241,65 @@ class SiteBefore(unittest.TestCase):
         self.assertEqual(bridge.site_before(self.root, self.site, "c" * 64), (None, None),
                          "HEAD is not a pin commit")
         self.assertEqual(bridge.site_before(self.root, self.site, None), (None, None))
+
+
+class WrapperPin(PinnedSite):
+    """The version 1 wrapper names no commit before its pin: on a host it
+    installed, a host phase that ends before its transaction begins undoes
+    the pin it recognizes, as it undoes one the wrapper names."""
+
+    def setUp(self):
+        super().setUp()
+        self.pin(RELEASE, bridge.PIN_SUBJECT)
+        self.after = self.git("rev-parse", "HEAD")
+        self.system = Mock(spec=System)
+        needed = patch.object(bridge, "needed", return_value=True)
+        self.needed = needed.start()
+        self.addCleanup(needed.stop)
+
+    def phase(self, outcome, dry_run=False):
+        """The host phase's outcome, and the commit before it was given."""
+        given = []
+
+        def body(before):
+            given.append(before)
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
+        return changeover.pinned(self.system, self.site, None, dry_run, body), given
+
+    def pins(self):
+        return json.loads((self.site / "thermite-site.json").read_text())["release"]
+
+    def test_a_refusal_before_the_transaction_undoes_it(self):
+        for code in (1, 2, changeover.INTERRUPTED):
+            with self.subTest(code=code):
+                self.git("reset", "-q", "--hard", self.after)
+                self.assertEqual(self.phase(code), (code, [self.before]))
+                self.assertEqual((self.git("rev-parse", "HEAD"), self.pins()), (self.before, "c" * 64))
+
+    def test_an_error_before_the_transaction_undoes_it(self):
+        with self.assertRaises(deploy.DeployError):
+            self.phase(deploy.DeployError("the committed site did not produce a complete configuration"))
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.before)
+
+    def test_a_transaction_s_outcome_leaves_it_to_the_transaction(self):
+        for code in (changeover.COMMITTED, changeover.ROLLED_BACK):
+            with self.subTest(code=code):
+                self.assertEqual(self.phase(code), (code, [self.before]))
+                self.assertEqual(self.git("rev-parse", "HEAD"), self.after)
+
+    def test_only_on_a_host_the_version_1_wrapper_installed_and_never_in_a_dry_run(self):
+        self.assertEqual(self.phase(1, dry_run=True), (1, [None]))
+        self.needed.return_value = False
+        self.assertEqual(self.phase(1), (1, [None]))
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.after)
+
+    def test_a_head_that_is_no_wrapper_pin_is_left_alone(self):
+        self.pin("e" * 64, "Pin a reviewed application")
+        head = self.git("rev-parse", "HEAD")
+        self.assertEqual(self.phase(1), (1, [None]))
+        self.assertEqual(self.git("rev-parse", "HEAD"), head)
 
 
 if __name__ == "__main__":

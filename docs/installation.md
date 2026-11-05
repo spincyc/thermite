@@ -677,7 +677,9 @@ native deadline; writes are never repeated, and credentials are not replaced.
 
 Preparation or validation failures restore the bounded site edits when safe;
 concurrent user edits are preserved. A failure before the transaction begins
-also undoes the site's pin commit, so the site pins the version that runs.
+also undoes the site's pin commit, so the site pins the version that runs;
+on the first upgrade too, where the owner command from before the install
+engine made that commit without naming it.
 
 Any failure from begin on, in a step, the health check or the commit, rolls
 the transaction back in the same run. The engine puts the set-aside version

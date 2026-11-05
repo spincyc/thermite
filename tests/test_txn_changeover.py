@@ -23,7 +23,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_deploy as deploy  # noqa: E402
 import oh_source_upgrade  # noqa: E402
 import oh_units  # noqa: E402
-from oh_install import changeover, engine, manifest, runner, steps  # noqa: E402
+from oh_install import bridge, changeover, engine, manifest, runner, steps  # noqa: E402
 from oh_install.model import Check, Command, Step, Task  # noqa: E402
 from oh_install.system import Stat, System, Unit, UnitOrigin  # noqa: E402
 from tests import txn_fakes  # noqa: E402
@@ -587,6 +587,22 @@ class Kinds(Fixture):
         self.assertNotIn("old health", self.log)
         self.assertIn("Nothing of Thermite was installed before it, and nothing is now", self.said())
         self.assertEqual((self.record()["kind"], self.record()["verb"]), ("install", "install"))
+
+    def bridged(self, **answers):
+        """The first transaction on a host installed before the engine,
+        rolled back by its switch."""
+        self.host = Host(self, **answers)
+        work = self.work([], [Fake("switch", self.log, 1)], [])
+        with patch.object(bridge, "describe", return_value={}), patch.object(changeover, "_gateway", return_value=None):
+            return changeover.run(self.context, self.host.system, lambda id: work, installed=None, bridged=True,
+                                  before=None, first=3)
+
+    def test_a_bridged_run_given_no_pin_commit_still_records_the_head_it_installs(self):
+        # changeover.pinned recognizes the version 1 wrapper's pin commit;
+        # run itself never guesses, so `after` stays the head.
+        self.assertEqual(self.bridged(), changeover.ROLLED_BACK)
+        self.assertEqual((self.record()["head_before"], self.record()["head_after"], self.record()["bridged"]),
+                         (None, AFTER, True))
 
     def test_an_uninstall_commits_what_is_installed_and_records_no_deploy(self):
         self.host = Host(self)

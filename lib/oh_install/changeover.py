@@ -686,11 +686,7 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
     id = manifest.transaction_id()
     work = build(id)
     after = after or context.head
-    if before is None and bridged and pinned and work.release is not None:
-        # bridge: the version 1 wrapper committed the pin without saying so.
-        before, after = bridge.site_before(_toplevel(context.area), context.area,
-                                           (context.application or {}).get("digest"))
-    elif before is None and not pinned:
+    if before is None and not pinned:
         before = after
     present = bool(installed and installed.get("installed", True)) or bridged
     transaction = Transaction.create(
@@ -948,12 +944,12 @@ def rolled_back(system: System, transaction: Transaction) -> int:
     if healthy:
         system.say(f"Rolled back: transaction {transaction.id} is undone and the version that ran before runs "
                    "again, healthy.")
-        return ROLLED_BACK
-    system.say(f"Rolled back: transaction {transaction.id} is undone and the version that ran before is back, "
-               "but its health check does not pass (above); the engine says so above when it did not even start. "
-               f"It is left as it is: fix what health reports (systemctl start {oh_units.TARGET} if it did not "
-               "start), then run thermite health --production --installation to check again.")
-    return UNHEALTHY
+    else:
+        system.say(f"Rolled back: transaction {transaction.id} is undone and the version that ran before is back, "
+                   "but its health check does not pass (above); the engine says so above when it did not even "
+                   f"start. It is left as it is: fix what health reports (systemctl start {oh_units.TARGET} if it "
+                   "did not start), then run thermite health --production --installation to check again.")
+    return ROLLED_BACK if healthy else UNHEALTHY
 
 
 def health(system: System, transaction: Transaction) -> bool:
@@ -1003,21 +999,28 @@ def resolve(site: Path, system: System, verb: str = "upgrade") -> int | None:
     return code
 
 
-def pinned(system: System, site: Path, before: str | None, dry_run: bool, body: Callable[[], int]) -> int:
+def pinned(system: System, site: Path, before: str | None, dry_run: bool,
+           body: Callable[[str | None], int]) -> int:
     """A host phase the application workflow approved after committing a
     pin (HEAD, from `before`). When it ends before its install transaction
     began, that pin commit is undone: the site pins the version that runs.
     A transaction undoes it itself when it rolls back. An earlier open
     transaction is resolved first and this run stops, so the pin commit is
-    undone first."""
+    undone first.
+
+    The version 1 wrapper commits its pin without naming `before`: on a
+    host it installed, its pin commit is recognized instead (wrapper_pin).
+    `body` runs the phase from `before`."""
     import oh_source_upgrade
+    if before is None and not dry_run and bridge.needed(system):
+        before = wrapper_pin(site)
     head = oh_source_upgrade.git(site, "rev-parse", "HEAD") if before else None
     if head and not dry_run and open_transaction(Path(site) / "var") is not None:
         _unpin(system, site, head, before)
         head = None
     code = 2
     try:
-        code = body()
+        code = body(before)
     except KeyboardInterrupt:
         code = INTERRUPTED
         raise
@@ -1025,6 +1028,18 @@ def pinned(system: System, site: Path, before: str | None, dry_run: bool, body: 
         if head and code in (1, 2, INTERRUPTED) and open_transaction(Path(site) / "var") is None:
             _unpin(system, site, head, before)
     return code
+
+
+def wrapper_pin(site: Path) -> str | None:
+    """The commit before the version 1 wrapper's pin commit, when the
+    site's HEAD is one for the release the site pins (bridge.site_before)."""
+    import subprocess
+    from oh_paths import descriptor
+    try:
+        found = descriptor(site)
+        return bridge.site_before(_toplevel(site), site, (found or {}).get("release"))[0]
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return None
 
 
 def _unpin(system: System, site: Path, head: str, before: str) -> None:
