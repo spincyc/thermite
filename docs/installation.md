@@ -272,8 +272,10 @@ change existing firewall tables.
 
 The gateway uses the same verified application and generated client assets as
 the native deployment. Existing household identities, authentication settings,
-TLS material and callback routes are preserved across redeployment. Internal
-runtime credentials remain separate from household identities.
+TLS material and callback routes are preserved across redeployment; the names
+it answers to, its listening address and its timezone come from this host and
+`instance/host.yaml` on every run. Internal runtime credentials remain separate
+from household identities.
 
 ### Open the controls
 
@@ -332,19 +334,20 @@ path to its trust certificate, `tls-cert.pem` in the gateway root (`/srv/thermit
 default; see [host layout](#host-layout)). The installer creates a private certificate authority
 for the site once, in `var/gateway/authority/` (directory mode 0700, key
 0600, valid for 10 years), and serves an 825-day server certificate it signed
-for the hostnames and addresses the installer selected. The trust file is the
-authority's certificate: add it once to each browser or terminal client's
-trust configuration. Client trust is local to each client; installing the
-server cannot install trust in your other devices.
+for this host's name and LAN address, `localhost` and `127.0.0.1`, as found on
+each run. The trust file is the authority's certificate: add it once to each
+browser or terminal client's trust configuration. Client trust is local to
+each client; installing the server cannot install trust in your other devices.
 
-Each install or upgrade reissues the server certificate from the same
-authority when fewer than 90 days remain, and clients need no change. Run an
-upgrade at least every two years so the certificate does not expire.
-An installation that still serves an older self-signed certificate replaces it
-once, at its next install or upgrade, and prints a notice to trust the new
-authority file on every client. Back up `var/gateway/authority/` with the
-site's other private state: if it is lost, the next run creates a new
-authority and every client must trust it again.
+Each install or upgrade reissues the server certificate from the same authority
+when fewer than 90 days remain, or when the host's name or address no longer
+matches the names it lists, and clients need no change. Run an upgrade at least
+every two years so the certificate does not expire. An installation that still
+serves an older self-signed certificate replaces it once, at its next install
+or upgrade, and prints a notice to trust the new authority file on every
+client. Back up `var/gateway/authority/` with the site's other private state:
+if it is lost, the next run creates a new authority and every client must trust
+it again.
 
 A new identity starts with authentication **off**. Ordinary house controls
 remain available through HTTPS without a household login when authentication
@@ -559,15 +562,20 @@ pip, site-pin, native-runtime or access-release update sequence. For a reviewed
 local checkout or an explicit Git revision, use `--source DIR` or `--revision REV`;
 see [application releases](packaging.md#update-and-roll-back).
 
-An upgrade restarts only the services whose generated unit files changed. A
-change to openHAB's own unit stops openHAB alone for its offline preparation,
-and the ownership repair then covers only openHAB's trees; the HTTPS gateway,
-the Apple TV helper and monitoring keep running. Grafana stops only while the
-pre-upgrade backup copies its database and starts again straight after. A
-missing service-account receipt, account or state directory still stops every
-service for a full ownership repair. Reapplying the native-port boundary does
-not restart openHAB: openHAB's unit wants the boundary and loads the same rules
-itself before every start, so it never starts without them.
+When a run changes anything Thermite runs on (its units, openHAB's native
+state, the native-port firewall or the deployment), it first stops all of
+Thermite, `systemctl stop thermite.target thermite.slice`, and checks that
+nothing in the slice still runs; none of it ever runs beside a changed part.
+Then an upgrade takes its state backup, the run installs, prepares and deploys,
+and starts every service again, the HTTPS gateway after a fresh identity
+backup. A rerun with nothing to change stops nothing. Every unit Thermite
+installs is part of `thermite.target`, runs in `thermite.slice` and is wanted
+by the target alone. The native-port boundary is the exception: it only loads
+the firewall rules, so stopping Thermite leaves them loaded, and reapplying
+them does not restart openHAB, whose unit wants the boundary and loads the same
+rules itself before every start, so it never starts without them. The ownership
+repair covers only openHAB's trees unless the service-account receipt, account
+or a state directory is missing.
 
 The site's committed `versions.json` still selects native component versions.
 Updating Thermite does not silently replace those pins. Keep the private
@@ -584,12 +592,12 @@ names the fetched commit with `--revision <commit>`. Rerun that command after
 fixing the cause. Until then, the installed `thermite` runs site commands with
 the site's pinned release from `var/application-releases/<digest>` and says so.
 
-If a run fails after stopping services, it starts them again and says so;
-the installation remains incomplete until a rerun succeeds. Ctrl-C lets the
-running host step stop its own commands and then prints the command that
-restarts any stopped services, without running it. Before commissioning
-replaces a native service configuration, it saves the original privately in
-the gateway deployment directory.
+If a run fails after stopping Thermite, it starts `thermite.target` again,
+which starts every service, and says so; the installation remains incomplete
+until a rerun succeeds. Ctrl-C lets the running host step stop its own commands
+and then prints the command that starts Thermite again, without running it.
+Before commissioning replaces a native service configuration, it saves the
+original privately in the gateway deployment directory.
 
 The launcher staying on its previous application does **not** undo services
 already changed, and does not restore native data or an identity database.

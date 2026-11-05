@@ -7,6 +7,26 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Install and upgrade stop all of Thermite, `systemctl stop thermite.target
+  thermite.slice`, before they change anything it runs on (its units,
+  openHAB's native state, the native-port firewall or the deployment), check
+  that nothing in the slice still runs, and then start every service again.
+  A rerun with nothing to change stops nothing. This replaces restarting only
+  the services whose units changed, and the listener record: nothing reads
+  the site's `var/listeners.json` any more; delete it. The upgrade's backup
+  and openHAB's offline preparation no longer stop services themselves, so
+  every upgrade that changes anything takes the backup and prepares openHAB
+  offline, and Grafana stays stopped until monitoring starts. A run that fails
+  after the stop starts `thermite.target` again. A test holds every unit
+  Thermite installs to `PartOf=thermite.target`, `Slice=thermite.slice` and
+  being wanted by the target alone; the native-port boundary, which only
+  loads the firewall rules, stays outside both.
+- The gateway's allowed hosts, listening address and timezone come from the
+  host and `instance/host.yaml` on every run. An upgrade adopted them from the
+  release it replaced, so a renamed or readdressed host kept its first names
+  and a changed timezone never reached the gateway. When the host's name or
+  LAN address no longer matches the served certificate, the run reissues it
+  from the same private authority, and clients need no change.
 - Sonos events keep reaching openHAB after an install or upgrade. jUPnP's
   callback proxy port, the relay's 13615, is now generated configuration:
   `conf/services/upnp.cfg` sets it for a house with Sonos devices, so
@@ -20,9 +40,8 @@ rollback. The unified deployment workflow uses a separate committed private site
   HTTP/HTTPS 13602/13603, Grafana 13611, the Sonos callback relay 13615
   (docs/ports.md). A site's `instance/host.yaml`
   sets `http_port: 13602` and `https_port: 13603` before upgrading. When any
-  listener port changes, install and upgrade stop every Thermite service
-  before installing the new units, so none starts on a port another still
-  holds, and record the allocation in the site's `var/listeners.json`. The
+  listener port changes, install and upgrade stop all of Thermite before
+  installing the new units, so none starts on a port another still holds. The
   managed firewall's rule file is recognized by the ports it lists, so one
   an earlier allocation wrote is replaced, and an adopted Sonos callback map
   keeps its verified routes on the new callback port and native upstream.
@@ -168,12 +187,9 @@ rollback. The unified deployment workflow uses a separate committed private site
   unknown state. These Things send about a fifth of the events they did.
 - The room policy worker compiles each room's route for a choice once and
   reuses it, instead of compiling it again on every step and boundary check.
-- An upgrade restarts only the services whose generated unit files changed. An
-  openHAB-only change stops openHAB alone and repairs ownership of only its
-  trees, so the HTTPS gateway, the Apple TV helper and monitoring keep running;
-  Grafana starts again straight after the pre-upgrade backup. A missing
-  service-account receipt, account or state directory still stops everything
-  for a full repair. openHAB's unit wants the native-port boundary instead of
+- An openHAB-only change repairs ownership of only openHAB's trees; a missing
+  service-account receipt, account or state directory still repairs them all.
+  openHAB's unit wants the native-port boundary instead of
   requiring it, so reapplying the boundary no longer restarts openHAB; openHAB
   still loads the same rules before every start and never starts without them.
   The metrics exporter and notifications run under an init (`catatonit`, now

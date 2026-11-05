@@ -13,11 +13,11 @@ frees may be taken by another override. Commit changes and run
 `thermite install --config DIR` or `thermite upgrade --config DIR`; the same
 workflow updates the native boundary and gateway together. Gateway and callback
 listeners are checked against the complete allocation and native upstream.
-When any listener port changes, the workflow stops every Thermite service
-before it installs the new units, since one service's new port may be
-another's old one, then starts each on its new port. It records the
-allocation in the site's `var/listeners.json` once all of them answer, so a
-run that stops early stops them all again next time.
+When any listener port changes, as whenever anything Thermite runs on
+changes, the workflow stops all of Thermite (`thermite.target` and
+`thermite.slice`) before it installs the new units, since one service's new
+port may be another's old one, then starts each on its new port. A run that
+fails before starting them starts `thermite.target`, and so every service.
 
 | Port | Listener | Binding / use |
 | --- | --- | --- |

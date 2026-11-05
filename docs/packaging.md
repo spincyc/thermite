@@ -151,7 +151,9 @@ native backups when required, deployment and service readiness, gateway
 staging, a complete stopped-state identity backup, schema migration, activation,
 native authentication and callback configuration, and live HTTPS verification.
 Existing identity, security settings, certificates and callback routes are
-adopted. A fresh gateway has authentication off until owner-authorized first
+adopted. The gateway's hosts, listening address and timezone come from the
+host on every run, and a certificate whose names no longer match is reissued
+by the same authority. A fresh gateway has authentication off until owner-authorized first
 administrator setup on Security; it prints its HTTPS URL and the path of its
 private certificate authority's certificate, which each client trusts once.
 The authority lives in the site's `var/gateway/authority/`; see
