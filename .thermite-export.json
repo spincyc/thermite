@@ -410,6 +410,7 @@
     "tests/test_native_gateway_lifecycle.py",
     "tests/test_native_ingress.py",
     "tests/test_native_prepare.py",
+    "tests/test_owner_imports.py",
     "tests/test_packaging.py",
     "tests/test_pep517_backend.py",
     "tests/test_ports.py",
