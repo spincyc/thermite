@@ -380,6 +380,16 @@ function done(g, ctx) {
     g.line(2, y++, [[LIT, "led.ok"], [" Thermite is installed on " + answers.hostname + ".", "strong"]]);
     y += 1;
     y = paragraph(g, y, "Remove the installation medium, then press Enter to restart.", "base") + 1;
+    y = row(g, y, "Name", answers.hostname + ".local");
+    const via = ui.network && ui.network.interfaces.find((entry) => entry.name === ui.network.route);
+    if (via) {
+      y = row(g, y, "Address now", via.addresses.map((entry) => entry.split("/")[0]).join(", ") || "none");
+      y = row(g, y, "MAC", via.mac + " (" + via.name + (via.wireless ? ", Wi-Fi" : ", wired") + ")");
+      y = paragraph(g, y, "The installed host may get another address from DHCP: find it by its name, or by this MAC "
+        + "on your router.") + 1;
+    } else {
+      y += 1;
+    }
     y = paragraph(g, y, "On its first boot the host initializes an empty Thermite house and installs it as "
       + answers.owner + ". That takes a while and needs the Internet. Log in as " + answers.owner
       + " on the console or with ssh " + answers.owner + "@" + answers.hostname + ".local: the login shows its "

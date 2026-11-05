@@ -73,7 +73,8 @@ class InstallerTerminal(unittest.TestCase):
         self.check("reviewSummary", "confirmRefused")
 
     def test_progress_runs_to_done_and_cannot_be_quit(self):
-        self.check("quitRefusedWhileInstalling", "progress", "installDrawn", "done", "doneStays", "reboots", "quits")
+        self.check("quitRefusedWhileInstalling", "progress", "installDrawn", "done", "doneAddress", "doneStays",
+                   "reboots", "quits")
 
     def test_a_failed_installation_says_why_and_returns_to_review(self):
         self.check("failureShown", "failureReturnsToReview")

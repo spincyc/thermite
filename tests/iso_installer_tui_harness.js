@@ -187,6 +187,8 @@ async function installs() {
   proof.installDrawn = /Installing|%/.test(proof.texts.install || "");
   text = look_at(controller, "done");
   proof.done = Boolean(ui.result) && /restart/i.test(text);
+  const mac = ["02", "00", "00", "00", "00", "10"].join(":");  // the fixture's demo MAC, no literal
+  proof.doneAddress = text.includes("thermite.local") && text.includes("192.0.2.10") && text.includes(mac + " (enp1s0");
   k.press("escape");
   proof.doneStays = step() === "done";
   await k.enter();
