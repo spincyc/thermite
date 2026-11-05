@@ -1,0 +1,627 @@
+"""The Thermite installer's core, on the Arch live medium; stdlib only.
+
+The terminal front end (tui/installer) asks the questions. This checks the
+answers, writes archinstall 4.5's configuration and credentials, runs it
+without its menus, streams progress as JSON lines and keeps a log. It never
+chooses a disk itself: install needs the disk's name typed back.
+
+    python3 -I -B installer.py serve      JSON-lines requests on stdin
+
+Every request is one line, {"id": N, "op": NAME, ...}; every answer is one
+line with the same id, {"ok": true, "result": ...} or {"ok": false,
+"error": TEXT}. install also sends {"id": N, "event": {...}} lines before
+its answer. Passwords arrive only on stdin; they are hashed for the
+credentials file, which is deleted after the run, and are never logged.
+"""
+from __future__ import annotations
+
+import ctypes
+import fcntl
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import socket
+import subprocess
+import sys
+import time
+import uuid
+
+MEDIA = Path("/run/archiso/bootmnt/thermite")
+STATE = Path("/run/thermite-installer")
+TARGET = Path("/mnt")
+MiB = 1024 ** 2
+#: Disks smaller than this are not offered; smaller than WARN_DISK warns.
+MIN_DISK = 32 * 10 ** 9
+WARN_DISK = 64 * 10 ** 9
+WARN_MEMORY = 4 * 1024 ** 3
+BOOT_MIB = 1024
+FILESYSTEMS = ("btrfs", "ext4")
+KERNELS = ("linux-lts", "linux")
+#: Btrfs subvolumes, as archinstall's default layout makes them. Thermite
+#: makes /srv/thermite its own subvolume when it installs.
+SUBVOLUMES = (("@", "/"), ("@home", "/home"), ("@log", "/var/log"), ("@pkg", "/var/cache/pacman/pkg"))
+DEFAULTS = {"hostname": "thermite", "timezone": "UTC", "locale": "en_US.UTF-8", "keymap": "us",
+            "filesystem": "btrfs", "kernel": "linux-lts"}
+#: Answers kept on the target, in the receipt and in the log. Everything else
+#: (the passwords, the Wi-Fi passphrase, the typed confirmation) is secret.
+PUBLIC = ("hostname", "owner", "timezone", "locale", "keymap", "disk", "filesystem", "kernel", "wifi_ssid")
+HOSTNAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+USERNAME = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
+#: Names the target's packages or Thermite itself use; thermite is the
+#: service account (UID 9001) that thermite install creates.
+RESERVED = frozenset({"thermite", "root", "bin", "daemon", "mail", "ftp", "http", "nobody", "dbus", "uuidd",
+                      "dhcpcd", "git", "avahi", "polkitd", "rtkit", "tss", "alpm", "named", "ntp", "rpc",
+                      "openvpn", "nm-openconnect", "tcpdump", "wheel", "users", "admin", "owner"})
+ARCHINSTALL = (4, 5)
+#: What archinstall straps besides the packages file; the preflight checks
+#: them too, so a missing package fails before the disk is touched.
+BASE = ("base", "linux-firmware", "mkinitcpio")
+#: Lines of archinstall's output that start a phase, and its share of the run.
+PHASES = (("Starting device modifications", "disk", 5, "Partitioning and formatting the disk"),
+          ("Starting installation", "base", 10, "Installing the base system"),
+          ("Setting up swap on zram", "swap", 40, "Setting up zram swap"),
+          ("Adding bootloader", "bootloader", 45, "Installing the boot loader"),
+          ("Creating user", "accounts", 55, "Creating the owner"),
+          ("Setting password for", "packages", 60, "Installing Thermite's packages"),
+          ("Activating systemd-timesyncd", "services", 80, "Enabling services"),
+          ("Thermite:", "thermite", 85, "Installing Thermite"),
+          ("Installation completed without any errors", "finished", 100, "Installed"))
+
+
+class Invalid(ValueError):
+    """An answer the installer refuses, with the message to show."""
+
+
+class Host:
+    """The live system as the core reads and changes it; tests pass a fake."""
+
+    def __init__(self, root: Path = Path("/")):
+        self.root = Path(root)
+
+    def path(self, name: str) -> Path:
+        return self.root / name.lstrip("/")
+
+    def run(self, argv, *, timeout: float = 120, input: str | None = None) -> subprocess.CompletedProcess:
+        try:
+            return subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout, input=input)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return subprocess.CompletedProcess(list(argv), 127, "", str(exc))
+
+    def online(self) -> bool:
+        try:
+            with socket.create_connection(("archlinux.org", 443), timeout=5):
+                return True
+        except OSError:
+            return False
+
+    def spawn(self, argv, env: dict) -> subprocess.Popen:
+        return subprocess.Popen(list(argv), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                text=True, errors="replace", env=env, bufsize=1)
+
+    def hash_password(self, plaintext: str) -> str:
+        """yescrypt, as archinstall and Arch's PAM hash passwords."""
+        libcrypt = ctypes.CDLL("libcrypt.so.2")
+        libcrypt.crypt_gensalt.argtypes = [ctypes.c_char_p, ctypes.c_ulong, ctypes.c_char_p, ctypes.c_int]
+        libcrypt.crypt_gensalt.restype = ctypes.c_char_p
+        libcrypt.crypt.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+        libcrypt.crypt.restype = ctypes.c_char_p
+        setting = libcrypt.crypt_gensalt(b"$y$", 5, None, 0)
+        hashed = libcrypt.crypt(plaintext.encode(), setting) if setting else None
+        if not hashed or not hashed.startswith(b"$y$"): raise RuntimeError("could not hash the password")
+        return hashed.decode()
+
+
+# ---- facts ------------------------------------------------------------------
+
+def disks(host: Host) -> list[dict]:
+    """Every whole disk, with why it is not offered when it is not."""
+    completed = host.run(["lsblk", "--json", "--bytes", "--tree", "--output",
+                          "NAME,PATH,TYPE,SIZE,LOG-SEC,MODEL,SERIAL,TRAN,RM,RO,MOUNTPOINTS,FSTYPE"], timeout=30)
+    if completed.returncode: raise RuntimeError("lsblk failed: " + completed.stderr.strip())
+    found = []
+    for device in json.loads(completed.stdout).get("blockdevices", []):
+        if device.get("type") != "disk" or str(device.get("name", "")).startswith(("zram", "loop")): continue
+        tree = [device, *(device.get("children") or [])]
+        mounts = [point for node in tree for point in (node.get("mountpoints") or []) if point]
+        size = int(device.get("size") or 0)
+        reason = ("holds the installation medium" if any(point.startswith("/run/archiso") for point in mounts)
+                  else "read-only" if device.get("ro") else "in use" if mounts
+                  else f"smaller than {MIN_DISK // 10 ** 9} GB" if size < MIN_DISK else None)
+        found.append({"name": device["name"], "path": device["path"], "size": size,
+                      "sector_size": int(device.get("log-sec") or 512),
+                      "model": (device.get("model") or "").strip(), "serial": (device.get("serial") or "").strip(),
+                      "transport": device.get("tran") or "", "removable": bool(device.get("rm")),
+                      "partitions": [{"name": child["name"], "size": int(child.get("size") or 0),
+                                      "fstype": child.get("fstype") or ""} for child in device.get("children") or []],
+                      "eligible": reason is None, "reason": reason})
+    return found
+
+
+def interfaces(host: Host) -> list[dict]:
+    completed = host.run(["ip", "-json", "address", "show"], timeout=10)
+    result = []
+    for link in json.loads(completed.stdout or "[]") if not completed.returncode else []:
+        if link.get("ifname") == "lo" or "LOOPBACK" in link.get("flags", []): continue
+        name = link["ifname"]
+        result.append({"name": name, "mac": link.get("address", ""), "up": "LOWER_UP" in link.get("flags", []),
+                       "wireless": host.path(f"/sys/class/net/{name}/wireless").is_dir(),
+                       "addresses": [f"{entry['local']}/{entry['prefixlen']}" for entry in link.get("addr_info", [])
+                                     if entry.get("family") == "inet"]})
+    return result
+
+
+def network(host: Host) -> dict:
+    return {"interfaces": interfaces(host), "online": host.online()}
+
+
+def facts(host: Host, media: Path = MEDIA) -> dict:
+    memory = 0
+    for line in host.path("/proc/meminfo").read_text().splitlines():
+        if line.startswith("MemTotal:"): memory = int(line.split()[1]) * 1024
+    cpu = next((line.split(":", 1)[1].strip() for line in host.path("/proc/cpuinfo").read_text().splitlines()
+                if line.startswith("model name")), "")
+    found = disks(host)
+    machine = platform.machine()
+    warnings = []
+    if machine != "x86_64": warnings.append(f"Thermite needs an x86_64 host; this is {machine}.")
+    if memory < WARN_MEMORY: warnings.append("Less than 4 GiB of memory: openHAB and monitoring may not fit.")
+    if not any(disk["eligible"] for disk in found): warnings.append("No disk of at least 32 GB is free to install on.")
+    elif not any(disk["eligible"] and disk["size"] >= WARN_DISK for disk in found):
+        warnings.append("Thermite's history wants a disk of at least 64 GB.")
+    payload = media / "payload.json"
+    release = json.loads(payload.read_text()) if payload.is_file() else {}
+    return {"machine": machine, "uefi": host.path("/sys/firmware/efi").is_dir(), "memory": memory, "cpu": cpu,
+            "disks": found, "network": network(host), "warnings": warnings,
+            "application": release.get("application", ""), "release": release.get("release", ""),
+            "authorized_key": authorized_key(host, media)}
+
+
+def authorized_key(host: Host, media: Path) -> dict | None:
+    """The public key the image was built with, as its fingerprint shows."""
+    key = media / "authorized_keys"
+    if not key.is_file(): return None
+    completed = host.run(["ssh-keygen", "-l", "-f", str(key)], timeout=10)
+    return {"fingerprint": completed.stdout.strip() if not completed.returncode else "",
+            "type": key.read_text().split()[0]}
+
+
+def choices(host: Host) -> dict:
+    """Timezones, UTF-8 locales and console keymaps the live system knows."""
+    zones = host.path("/usr/share/zoneinfo")
+    timezones = sorted(str(path.relative_to(zones)) for path in zones.rglob("*")
+                       if path.is_file() and path.relative_to(zones).parts[0] not in ("posix", "right", "Etc")
+                       and path.name[:1].isupper() and "." not in path.name) + ["UTC"]
+    supported = host.path("/usr/share/i18n/SUPPORTED")
+    locales = sorted({line.split()[0] for line in supported.read_text().splitlines()
+                      if line.strip() and line.split()[-1] == "UTF-8"}) if supported.is_file() else ["en_US.UTF-8"]
+    completed = host.run(["localectl", "list-keymaps"], timeout=10)
+    keymaps = sorted(set(completed.stdout.split())) if not completed.returncode else ["us"]
+    return {"timezones": sorted(set(timezones)), "locales": locales, "keymaps": keymaps}
+
+
+def taken(host: Host, name: str) -> bool | None:
+    """Whether NAME.local answers on this network: true, false, or unknown."""
+    completed = host.run(["resolvectl", "query", "--legend=no", "--protocol=mdns", f"{name}.local"], timeout=8)
+    if completed.returncode == 0: return True
+    if completed.returncode == 127: return None
+    return False
+
+
+def hostname_probe(host: Host, name: str) -> dict:
+    """The name's state on the LAN, and the first free thermite-N if taken."""
+    found = taken(host, name)
+    suggestion = None
+    if found:
+        stem = re.sub(r"-[0-9]+$", "", name)
+        for number in range(2, 10):
+            candidate = f"{stem}-{number}"
+            if taken(host, candidate) is False:
+                suggestion = candidate
+                break
+    return {"name": name, "taken": found, "suggestion": suggestion}
+
+
+# ---- Wi-Fi (iwd on the live system) -----------------------------------------
+
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def wifi_scan(host: Host, device: str) -> list[dict]:
+    device = wireless(host, device)
+    host.run(["iwctl", "station", device, "scan"], timeout=15)
+    time.sleep(2)
+    completed = host.run(["iwctl", "station", device, "get-networks"], timeout=15)
+    if completed.returncode: raise RuntimeError(completed.stderr.strip() or "Wi-Fi scan failed")
+    networks = []
+    for line in ANSI.sub("", completed.stdout).splitlines():
+        connected = line.lstrip().startswith(">")
+        columns = re.split(r"\s{2,}", line.strip().lstrip(">").strip())
+        if len(columns) != 3 or columns[0] == "Network name" or not set(columns[2]) <= {"*"}: continue
+        networks.append({"ssid": columns[0], "security": columns[1], "signal": len(columns[2]), "connected": connected})
+    return networks
+
+
+def wireless(host: Host, device: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", device or "") or not host.path(f"/sys/class/net/{device}/wireless").is_dir():
+        raise Invalid("not a Wi-Fi device")
+    return device
+
+
+def iwd_name(ssid: str) -> str:
+    """iwd's file name for a network: plain names as-is, others hex-encoded."""
+    return ssid if re.fullmatch(r"[A-Za-z0-9_-]+", ssid) else "=" + ssid.encode().hex()
+
+
+def wifi_connect(host: Host, device: str, ssid: str, passphrase: str) -> dict:
+    """Join a WPA network. The passphrase goes in iwd's own root-only file,
+    never on a command line another process could read."""
+    device = wireless(host, device)
+    if not ssid or len(ssid.encode()) > 32 or any(ch in ssid for ch in "\0\n"): raise Invalid("invalid network name")
+    if passphrase and not 8 <= len(passphrase) <= 63: raise Invalid("a WPA passphrase has 8 to 63 characters")
+    if passphrase:
+        store = host.path("/var/lib/iwd"); store.mkdir(mode=0o700, exist_ok=True)
+        path = store / (iwd_name(ssid) + ".psk")
+        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(handle, "w") as out: out.write(f"[Security]\nPassphrase={passphrase}\n")
+    completed = host.run(["iwctl", "station", device, "connect", ssid], timeout=40)
+    if completed.returncode: raise RuntimeError(ANSI.sub("", completed.stdout + completed.stderr).strip() or "could not connect")
+    for _ in range(15):
+        if host.online(): return network(host)
+        time.sleep(2)
+    raise RuntimeError(f"joined {ssid} but the Internet is not reachable")
+
+
+# ---- answers ------------------------------------------------------------------
+
+def check_hostname(value, answers, facts, choices):
+    value = str(value or "").strip().lower()
+    if not HOSTNAME.fullmatch(value):
+        raise Invalid("1-63 lowercase letters, digits and hyphens, not starting or ending with a hyphen")
+    return value
+
+
+def check_owner(value, answers, facts, choices):
+    value = str(value or "").strip()
+    if value == "thermite": raise Invalid("thermite is the service account Thermite creates; choose your own name")
+    if not USERNAME.fullmatch(value): raise Invalid("lowercase letters, digits, - and _, starting with a letter")
+    if value in RESERVED or value.startswith("systemd-"): raise Invalid(f"{value} is a system account name")
+    return value
+
+
+def password(name: str, confirm: str):
+    def check(value, answers, facts, choices):
+        value = value if isinstance(value, str) else ""
+        if len(value) < 8: raise Invalid("at least 8 characters")
+        if any(ch in value for ch in "\0\n\r"): raise Invalid("no line breaks")
+        if answers.get(confirm) != value: raise Invalid("the two entries differ")
+        if name == "root_password" and value == answers.get("owner_password"):
+            raise Invalid("use a different password from the owner's")
+        return value
+    return check
+
+
+def listed(name: str, key: str):
+    def check(value, answers, facts, choices):
+        value = str(value or "").strip()
+        if value not in choices[key]: raise Invalid(f"not a known {name}")
+        return value
+    return check
+
+
+def one_of(options):
+    def check(value, answers, facts, choices):
+        if value not in options: raise Invalid("choose one of " + ", ".join(options))
+        return value
+    return check
+
+
+def check_disk(value, answers, facts, choices):
+    disk = next((disk for disk in facts["disks"] if disk["path"] == value), None)
+    if disk is None: raise Invalid("choose one of the disks shown")
+    if not disk["eligible"]: raise Invalid(f"{disk['path']} {disk['reason']}")
+    return disk["path"]
+
+
+def check_confirm(value, answers, facts, choices):
+    disk = next((disk for disk in facts["disks"] if disk["path"] == answers.get("disk")), None)
+    if disk is None or str(value or "").strip() != disk["name"]:
+        raise Invalid(f"type {disk['name'] if disk else 'the disk name'} to erase it")
+    return True
+
+
+def check_wifi(value, answers, facts, choices):
+    if value in (None, ""): return None
+    if not isinstance(value, str) or len(value.encode()) > 32 or any(ch in value for ch in "\0\n"):
+        raise Invalid("invalid network name")
+    if not 8 <= len(answers.get("wifi_passphrase") or "") <= 63: raise Invalid("the network's WPA passphrase")
+    return value
+
+
+CHECKS = {"hostname": check_hostname, "owner": check_owner,
+          "owner_password": password("owner_password", "owner_password_confirm"),
+          "root_password": password("root_password", "root_password_confirm"),
+          "timezone": listed("timezone", "timezones"), "locale": listed("locale", "locales"),
+          "keymap": listed("keymap", "keymaps"), "disk": check_disk, "filesystem": one_of(FILESYSTEMS),
+          "kernel": one_of(KERNELS), "wifi_ssid": check_wifi, "confirm": check_confirm}
+
+
+def check(answers: dict, facts: dict, choices: dict, fields=None) -> tuple[dict, dict]:
+    """The named fields (all by default), normalized, and an error per bad field."""
+    values, errors = {}, {}
+    for field in fields or CHECKS:
+        if field not in CHECKS: raise Invalid(f"unknown answer {field}")
+        try: values[field] = CHECKS[field](answers.get(field, DEFAULTS.get(field)), answers, facts, choices)
+        except Invalid as exc: errors[field] = str(exc)
+    return values, errors
+
+
+def public(answers: dict) -> dict:
+    return {key: answers[key] for key in PUBLIC if answers.get(key) is not None}
+
+
+# ---- archinstall's files ------------------------------------------------------
+
+def size(mib: int, sector: int) -> dict:
+    return {"value": mib, "unit": "MiB", "sector_size": {"value": sector, "unit": "B"}}
+
+
+def layout(disk: dict, filesystem: str, uefi: bool) -> dict:
+    """archinstall's default layout for one disk: a 1 GiB FAT32 /boot, then
+    the root filesystem to the end, less the last MiB GPT keeps for its
+    backup header. Btrfs gets the default subvolumes and zstd compression."""
+    sector, total = disk["sector_size"], disk["size"] // MiB
+    root_start = 1 + BOOT_MIB
+    root_size = total - 1 - root_start
+    if root_size * MiB < MIN_DISK // 2: raise Invalid("the disk is too small")
+    def identity(index): return str(uuid.uuid5(uuid.NAMESPACE_URL, f"thermite-installer:{disk['path']}:{index}"))
+    boot = {"obj_id": identity(0), "status": "create", "type": "primary", "start": size(1, sector),
+            "size": size(BOOT_MIB, sector), "fs_type": "fat32", "mountpoint": "/boot", "mount_options": [],
+            "flags": ["boot", "esp"] if uefi else ["boot"], "dev_path": None, "btrfs": []}
+    btrfs = filesystem == "btrfs"
+    root = {"obj_id": identity(1), "status": "create", "type": "primary", "start": size(root_start, sector),
+            "size": size(root_size, sector), "fs_type": filesystem, "mountpoint": None if btrfs else "/",
+            "mount_options": ["compress=zstd"] if btrfs else [], "flags": [], "dev_path": None,
+            "btrfs": [{"name": name, "mountpoint": point} for name, point in SUBVOLUMES] if btrfs else []}
+    return {"config_type": "default_layout",
+            "device_modifications": [{"device": disk["path"], "wipe": True, "partitions": [boot, root]}]}
+
+
+def selected_packages(document: dict, filesystem: str) -> list[str]:
+    """packages.json's tiers in order; a filesystem's own tier only with it."""
+    return [name for tier in document["tiers"] if tier.get("filesystem") in (None, filesystem)
+            for name in tier["packages"]]
+
+
+def kernels(answers: dict) -> list[str]:
+    """The chosen kernel first (the boot default), the other as the fallback entry."""
+    return [answers["kernel"], *(kernel for kernel in KERNELS if kernel != answers["kernel"])]
+
+
+def configuration(answers: dict, facts: dict, document: dict) -> dict:
+    """archinstall 4.5's --config: everything but the credentials."""
+    disk = next(disk for disk in facts["disks"] if disk["path"] == answers["disk"])
+    return {
+        "script": "guided",
+        "archinstall-language": "English",
+        "hostname": answers["hostname"],
+        "kernels": kernels(answers),
+        "timezone": answers["timezone"],
+        "ntp": True,
+        "locale_config": {"kb_layout": answers["keymap"], "sys_lang": answers["locale"], "sys_enc": "UTF-8"},
+        # systemd-boot's default entry is the first kernel; BIOS needs GRUB,
+        # whose default the Thermite plugin sets.
+        "bootloader_config": {"bootloader": "Systemd-boot" if facts["uefi"] else "Grub", "uki": False,
+                              "removable": False},
+        "disk_config": layout(disk, answers["filesystem"], facts["uefi"]),
+        "network_config": {"type": "nm"},
+        "packages": selected_packages(document, answers["filesystem"]),
+        "services": list(document["enable"]),
+        "swap": {"enabled": True, "algorithm": "zstd"},
+        "pacman_config": {"parallel_downloads": 5, "color": False},
+    }
+
+
+def credentials(answers: dict, hasher) -> dict:
+    """archinstall 4.5's --creds: crypt hashes only. The owner joins wheel,
+    whose sudo rule the Thermite plugin enables."""
+    return {"root_enc_password": hasher(answers["root_password"]),
+            "users": [{"username": answers["owner"], "enc_password": hasher(answers["owner_password"]),
+                       "sudo": False, "groups": ["wheel"]}]}
+
+
+def preflight_packages(answers: dict, facts: dict, document: dict) -> list[str]:
+    boot = () if facts["uefi"] else ("grub",)
+    btrfs = ("btrfs-progs",) if answers["filesystem"] == "btrfs" else ()
+    return [*BASE, *kernels(answers), *boot, *btrfs, *selected_packages(document, answers["filesystem"])]
+
+
+# ---- the run ------------------------------------------------------------------
+
+def private(path: Path, text: str) -> None:
+    handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(handle, "w") as out: out.write(text)
+
+
+class Run:
+    """One installation: its log, its progress and its files in STATE."""
+
+    def __init__(self, host: Host, state: Path, emit):
+        self.host, self.state, self.emit = host, Path(state), emit
+        self.state.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.log = (self.state / "installer.log").open("a", encoding="utf-8")
+        self.percent = 0
+
+    def say(self, kind: str, **fields) -> None:
+        event = {"kind": kind, "time": time.strftime("%Y-%m-%dT%H:%M:%S"), **fields}
+        self.log.write(json.dumps(event) + "\n"); self.log.flush()
+        self.emit(event)
+
+    def phase(self, phase: str, percent: int, label: str) -> None:
+        if percent < self.percent: return
+        self.percent = percent
+        self.say("phase", phase=phase, percent=percent, label=label)
+
+    def command(self, argv, label: str, timeout: float = 600) -> None:
+        self.say("line", text="$ " + " ".join(argv[:3]) + (" …" if len(argv) > 3 else ""))
+        completed = self.host.run(argv, timeout=timeout)
+        for line in (completed.stdout + completed.stderr).splitlines()[-20:]:
+            self.say("line", text=line)
+        if completed.returncode: raise RuntimeError(f"{label} failed; see the log")
+
+
+def archinstall_version(host: Host) -> tuple[int, int] | None:
+    completed = host.run([sys.executable, "-I", "-c",
+                          "from importlib.metadata import version; print(version('archinstall'))"], timeout=30)
+    found = re.match(r"(\d+)\.(\d+)", completed.stdout.strip()) if not completed.returncode else None
+    return (int(found[1]), int(found[2])) if found else None
+
+
+def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STATE, target: Path = TARGET,
+            emit=lambda event: None) -> dict:
+    """Check everything again, preflight, then run archinstall unattended."""
+    found, options = facts(host, media), choices(host)
+    values, errors = check(answers, found, options)
+    if errors: raise Invalid("; ".join(f"{field}: {message}" for field, message in errors.items()))
+    answers = {**values, "owner_password": answers["owner_password"], "root_password": answers["root_password"],
+               "wifi_passphrase": answers.get("wifi_passphrase")}
+    document = json.loads((media / "packages.json").read_text())
+    run = Run(host, state, emit)
+    run.say("answers", answers=public(answers))
+    secrets = [state / "creds.json", state / "wifi.json"]
+    try:
+        run.phase("preflight", 1, "Checking the installer, keyring, mirrors and packages")
+        if archinstall_version(host) != ARCHINSTALL:
+            raise RuntimeError("this medium needs its bundled archinstall 4.5; do not upgrade it")
+        run.command(["systemctl", "start", "pacman-init.service"], "the package keyring")
+        run.command(["pacman", "-Sy", "--noconfirm"], "the package database refresh")
+        # Every package the run will strap, checked before the disk is wiped.
+        run.command(["pacman", "-Sp", "--noconfirm", *preflight_packages(answers, found, document)],
+                    "the package check")
+        config = configuration(answers, found, document)
+        (state / "config.json").write_text(json.dumps(config, indent=2) + "\n")
+        (state / "answers.json").write_text(json.dumps(public(answers), indent=2) + "\n")
+        private(state / "creds.json", json.dumps(credentials(answers, host.hash_password)) + "\n")
+        if answers.get("wifi_ssid"):
+            private(state / "wifi.json", json.dumps({"ssid": answers["wifi_ssid"],
+                                                     "passphrase": answers["wifi_passphrase"]}) + "\n")
+        run.phase("disk", 3, f"Erasing {answers['disk']}")
+        argv = ["archinstall", "--config", str(state / "config.json"), "--creds", str(state / "creds.json"),
+                "--silent", "--skip-wifi-check", "--skip-version-check", "--plugin", str(media / "arch-plugin.py")]
+        run.say("line", text="$ " + " ".join(argv))
+        process = host.spawn(argv, {**os.environ, "THERMITE_INSTALLER_STATE": str(state), "TERM": "dumb"})
+        for line in process.stdout:
+            line = ANSI.sub("", line.rstrip("\n"))
+            run.say("line", text=line)
+            for marker, phase, percent, label in PHASES:
+                if marker in line: run.phase(phase, percent, label)
+        code = process.wait()
+        if code: raise RuntimeError(f"archinstall stopped with status {code}; see the log")
+        if run.percent < 100: raise RuntimeError("archinstall ended without reporting a completed installation")
+        run.say("done", hostname=answers["hostname"])
+    except Exception as exc:
+        run.say("failed", error=str(exc))
+        raise
+    finally:
+        for path in secrets: path.unlink(missing_ok=True)
+        keep(run, target)
+        run.log.close()
+    return {"hostname": answers["hostname"], "log": str(state / "installer.log")}
+
+
+def keep(run: Run, target: Path) -> None:
+    """The run's own log, on the target beside archinstall's, while it is mounted."""
+    destination = target / "var/log/thermite-install"
+    if not target.is_mount() or not destination.is_dir(): return
+    run.log.flush()
+    (destination / "installer.log").write_bytes((run.state / "installer.log").read_bytes())
+
+
+# ---- serve ----------------------------------------------------------------------
+
+class Session:
+    """One front end's requests. Only one session may install at a time:
+    claim takes a lock the console and an SSH login share."""
+
+    def __init__(self, host: Host, media: Path = MEDIA, state: Path = STATE, target: Path = TARGET):
+        self.host, self.media, self.state, self.target = host, Path(media), Path(state), Path(target)
+        self.facts = self.options = self.lock = None
+
+    def handle(self, request: dict, write) -> object:
+        op = request.get("op")
+        if op == "facts":
+            if self.facts is None or request.get("refresh"): self.facts = facts(self.host, self.media)
+            return self.facts
+        if op == "choices":
+            if self.options is None: self.options = choices(self.host)
+            return self.options
+        if op == "network": return network(self.host)
+        if op == "hostname": return hostname_probe(self.host, check_hostname(request.get("name"), {}, {}, {}))
+        if op == "wifi-scan": return wifi_scan(self.host, request.get("device"))
+        if op == "wifi-connect":
+            return wifi_connect(self.host, request.get("device"), request.get("ssid"), request.get("passphrase") or "")
+        if op == "check":
+            if self.facts is None: self.facts = facts(self.host, self.media)
+            if self.options is None: self.options = choices(self.host)
+            values, errors = check(request.get("answers") or {}, self.facts, self.options, request.get("fields"))
+            return {"values": public(values), "errors": errors}
+        if op == "claim": return self.claim(str(request.get("label") or "console"))
+        if op == "install":
+            if self.lock is None: raise Invalid("another session is installing")
+            return install(request.get("answers") or {}, self.host, media=self.media, state=self.state,
+                           target=self.target, emit=lambda event: write({"id": request.get("id"), "event": event}))
+        if op == "reboot":
+            self.host.run(["systemctl", "reboot"], timeout=30)
+            return True
+        raise Invalid(f"unknown request {op!r}")
+
+    def close(self) -> None:
+        if self.lock is not None: self.lock.close()
+        self.lock = None
+
+    def claim(self, label: str) -> dict:
+        if self.lock is not None: return {"claimed": True}
+        self.state.mkdir(mode=0o700, parents=True, exist_ok=True)
+        handle = open(self.state / "session.lock", "a+")
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.seek(0)
+            holder = handle.read().strip()
+            handle.close()
+            return {"claimed": False, "holder": holder or "another session"}
+        handle.truncate(0); handle.write(f"{label} since {time.strftime('%H:%M')}\n"); handle.flush()
+        self.lock = handle
+        return {"claimed": True}
+
+
+def serve(session: Session, stdin=sys.stdin, stdout=sys.stdout) -> int:
+    def write(message: dict) -> None:
+        stdout.write(json.dumps(message) + "\n"); stdout.flush()
+    for line in stdin:
+        if not line.strip(): continue
+        try:
+            request = json.loads(line)
+            if not isinstance(request, dict): raise Invalid("a request is a JSON object")
+        except ValueError as exc:
+            write({"id": None, "ok": False, "error": f"unreadable request: {exc}"})
+            continue
+        try:
+            write({"id": request.get("id"), "ok": True, "result": session.handle(request, write)})
+        except (Invalid, RuntimeError, OSError, ValueError, KeyError) as exc:
+            write({"id": request.get("id"), "ok": False, "error": str(exc) or type(exc).__name__})
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["serve"]:
+        if os.geteuid() != 0: raise SystemExit("the installer core runs as root on the live medium")
+        session = Session(Host())
+        try: return serve(session)
+        finally: session.close()
+    raise SystemExit(__doc__)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
