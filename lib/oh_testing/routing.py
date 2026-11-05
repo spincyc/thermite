@@ -48,7 +48,8 @@ and check that:
    nothing for any of them;
 4. with two rooms on one source, the last to choose it wins, the first
    gets it back when that room turns off, and the idle EDID follows once
-   neither shows it;
+   neither shows it; a room whose receiver zone follows the other's
+   (sync_with) takes the other's zone input instead of its own;
 5. the rooms go UNDEF while the HDMI matrix, or their HDMI switch, does not
    answer, and recover without a write;
 6. the remote page (web/remote) is served at /static/remote/ and, with no
@@ -241,6 +242,8 @@ class Check:
                 for item, _ in steps:
                     self.stand_in_items.setdefault(item, "String")
         self.remote_files: dict[str, bytes] = {}
+        #: each room's last choice, as routing.js remembers it for zone sync
+        self.chosen: dict[str, str] = {}
         self.failures: list[str] = []
         self.http: lib.Http | None = None
         #: the instance's events.log, once it boots
@@ -421,11 +424,24 @@ class Check:
         self.http.request("PUT", f"/rest/items/{urllib.parse.quote(item)}/state", value.encode(),
                           {"Content-Type": "text/plain"})
 
+    def synced(self, room: str, choice: str) -> dict | None:
+        """The synced route `choice` takes in a follower room while its
+        leader's last choice is the same source (routing.js syncs()), else
+        None. Rooms chosen together end synced: the follower syncs once the
+        leader's output reads back."""
+        sync = self.table[room].get("sync")
+        if not sync or choice not in sync["choices"] or self.chosen.get(sync["leader"]) != choice:
+            return None
+        return sync["choices"][choice]
+
     def expect_routed(self, what: str, choices: dict[str, str]) -> bool:
+        self.chosen.update(choices)
         want = {item: value for room, choice in choices.items() for item, value in self.table[room]["choices"][choice]}
         routed = self.wait(f"{what}: matrix ports", want, self.matrices)
-        sent = {item: str(value) for room, choice in choices.items()
-                for key in ("power", "inputs", "after") for item, value in self.table[room][key][choice]}
+        synced = {room: self.synced(room, choice) for room, choice in choices.items()}
+        sent = {item: str(value) for room, choice in choices.items() for key in ("power", "inputs", "after")
+                for item, value in (synced[room]["inputs"] if key == "inputs" and synced[room]
+                                    else self.table[room][key][choice])}
         devices = self.wait(f"{what}: receivers, displays and actions", sent, self.states)
         return self.sources(choices) and routed and devices and self.expect_edids(what)
 
@@ -470,12 +486,23 @@ class Check:
         def selected(choice):
             return choice if all(reported(item) == str(value) for item, value in self.table[room]["inputs"].get(choice, [])) else "UNDEF"
 
+        sync = self.table[room].get("sync")
         for stage in stages:
             value = reported(stage["input"])
             if value is None:
                 return "UNDEF"
             if value in stage["readback"]:
                 return selected(stage["readback"][value])
+            if sync and stage["input"] == sync["input"] and value in {s["value"] for s in sync["choices"].values()}:
+                # A follower's zone on its leader's input shows what the
+                # leader's output does (routing.js syncedShown()).
+                ident, port = self.ports[sync["hdmi"]]
+                current = None if ident in silent else self.sims[ident].get(port)
+                choice = self.table[room]["readback"].get(str(current), "")
+                route = sync["choices"].get(choice)
+                if route is None or route["value"] != value:
+                    return "UNDEF"
+                return choice if all(reported(item) == str(v) for item, v in route["inputs"]) else "UNDEF"
             if value != stage["feed"] and value not in stage.get("bySource", {}).values():
                 return "UNDEF"
         switch = self.table[room]["switch"]
@@ -680,10 +707,17 @@ class Check:
             writes = {ident: self._writes(ident) for ident in self.sims}
             sent = dict(entry["inputs"][choice])
             commands = self.device_commands()
+            sync = entry.get("sync")
             for stage in entry["stages"]:
                 for value, source in stage["readback"].items():
                     self.external_source(room, stage["input"], value, source)
                 known = {*stage["readback"], stage["feed"]}
+                if sync and stage["input"] == sync["input"]:
+                    # A follower's zone switched to its leader's input.
+                    for value in dict.fromkeys(route["value"] for route in sync["choices"].values()):
+                        self.update(stage["input"], value)
+                        self.sources({room: self.readback_choice(room)})
+                        known.add(value)
                 other = next((v for v in self.inputs[stage["input"]] if v not in known), None)
                 if other is not None:
                     self.update(stage["input"], other)
@@ -733,7 +767,8 @@ class Check:
     def step_hand_over(self) -> None:
         """Two rooms on one source: the last to choose it wins; when it
         turns off, the source gets the first room's EDID back, and once
-        neither shows it, the idle EDID."""
+        neither shows it, the idle EDID. A second room whose zone follows
+        the first's takes the first's zone input (expect_routed)."""
         pairs = ((a, b, s) for a in self.table for b in self.table if a != b
                  for s in self.table[a]["choices"]
                  if s != routing.OFF and s in self.table[b]["choices"] and self.number(s) is not None)

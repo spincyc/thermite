@@ -17,6 +17,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import types
 import unittest
 
 AREA = Path(__file__).resolve().parents[1]
@@ -24,6 +25,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_render  # noqa: E402
 from oh_features import routing  # noqa: E402
+from oh_testing import routing as routing_check  # noqa: E402
 from oh_room_policy import Field, Observation, PolicyError, conflicts, expected_plan, repair_plan, verify  # noqa: E402
 from oh_access.worker import NativeCache, observed_fields  # noqa: E402
 from tests.test_room_policy_worker import Harness, at, policy  # noqa: E402
@@ -176,6 +178,49 @@ class Table(unittest.TestCase):
         plain = routing.table(house(lambda rooms, _: rooms[LOUNGE]["receiver"].pop("sync_with")))
         for rooms in (example["rooms"], plain["rooms"]):
             self.assertFalse(any({"sync", "followers"} & set(raw) for raw in rooms.values()))
+
+
+class RoutingCheck(unittest.TestCase):
+    """thermite test routing expects of a follower what routing.js does."""
+
+    def setUp(self):
+        data = house()
+        self.outputs = {1: 1, 2: 1}
+        check = self.check = object.__new__(routing_check.Check)
+        check.table, check.routing, check.chosen = routing.table(data)["rooms"], data["routing"], {}
+        check.ports = {OUT1: ("example_matrix", 1), OUT2: ("example_matrix", 2)}
+        check.sims = {"example_matrix": types.SimpleNamespace(get=self.outputs.get)}
+
+    def test_a_follower_on_its_leaders_input_reads_the_leaders_source(self):
+        states = {"example_tv_power": "ON", "example_tv_input": "hdmi2", "example_avr_zone2_power": "ON",
+                  ZONE2: "BD"}
+        self.assertEqual(self.check.readback_choice(LOUNGE, states=states), COMPUTER)
+        self.assertEqual(self.check.readback_choice(LOUNGE, frozenset({"example_matrix"}), states), "UNDEF")
+        # The leader on the game, which its zone takes on GAME1, not BD.
+        self.outputs[1] = 3
+        self.assertEqual(self.check.readback_choice(LOUNGE, states=states), "UNDEF")
+        self.assertEqual(self.check.readback_choice(LOUNGE, states={**states, ZONE2: "GAME1"}), GAME)
+        self.outputs[1] = 8
+        self.assertEqual(self.check.readback_choice(LOUNGE, states=states), "UNDEF")
+        self.assertEqual(self.check.readback_choice(LOUNGE, states={**states, ZONE2: "AUX2"}), COMPUTER)
+
+    def test_a_follower_takes_its_leaders_input_once_the_leader_chose_the_source(self):
+        expected = []
+        check = self.check
+        check.wait = lambda what, want, actual, timeout=None: expected.append(want) or True
+        check.matrices = check.states = dict
+        check.sources = check.expect_edids = lambda _: True
+
+        def sent(choices):
+            expected.clear()
+            check.expect_routed("a choice", choices)
+            return expected[1]
+        self.assertEqual(sent({LOUNGE: COMPUTER})[ZONE2], "AUX2")
+        self.assertEqual(sent({CINEMA: COMPUTER})[MAIN], "BD")
+        self.assertEqual(sent({LOUNGE: COMPUTER})[ZONE2], "BD")
+        self.assertEqual(sent({LOUNGE: DISC})[ZONE2], "AUX2")
+        self.assertEqual(sent({CINEMA: DISC, LOUNGE: DISC})[ZONE2], "BD")
+        self.assertNotIn(ZONE2, sent({LOUNGE: routing.OFF}))
 
 
 class Descriptor(unittest.TestCase):
