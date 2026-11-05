@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import errno
 import json
 from pathlib import Path
 import sys
@@ -359,6 +360,26 @@ class Verbs(unittest.TestCase):
         self.disk.put(f"{ROOT}/access", "link", target=f"{ROOT}/elsewhere")
         with self.assertRaisesRegex(engine.EngineError, "is not a directory \\(a symlink is never followed\\)"):
             self.begin()
+
+    def test_a_directory_swapped_for_a_symlink_mid_collect_is_never_followed(self):
+        """access/ belongs to the operator: swapped for a symlink after the
+        checks, the copy fails instead of reading through it."""
+        self.disk.put("/home/owner/elsewhere/state/identity.sqlite3", data=b"someone else's")
+        outside = self.disk.walk("/home/owner")
+        self.begin()
+        self.engine.guard(ID)
+        self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
+
+        def swap(call):
+            if call[:2] == ("copy", f"{ROOT}/access/state") and self.disk.nodes[f"{ROOT}/access"].kind == "dir":
+                for path in sorted(path for path in self.disk.nodes if inside(path, f"{ROOT}/access")):
+                    self.disk.nodes.pop(path)
+                self.disk.put(f"{ROOT}/access", "link", target="/home/owner/elsewhere")
+        self.disk.on_tick = swap
+        with self.assertRaises(OSError) as raised:
+            self.engine.collect(ID)
+        self.assertEqual(raised.exception.errno, errno.ELOOP)
+        self.assertEqual(self.disk.walk("/home/owner"), outside)
 
     def test_one_transaction_at_a_time(self):
         self.begin()

@@ -20,6 +20,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import resource
 import shlex
 import stat
 import subprocess
@@ -1594,14 +1595,17 @@ class OsDisk(Disk):
         return sorted(os.listdir(path))
 
     def allocated(self, path):
-        """Allocated blocks, as `cp -a` keeps sparse files sparse."""
+        """Allocated blocks, as `cp -a` keeps sparse files sparse. Walked
+        with a list, not recursion, however deep the tree."""
         info = os.lstat(path)
         total = info.st_blocks * 512
-        if stat.S_ISDIR(info.st_mode):
-            with os.scandir(path) as entries:
+        pending = [path] if stat.S_ISDIR(info.st_mode) else []
+        while pending:
+            with os.scandir(pending.pop()) as entries:
                 for entry in entries:
-                    total += (self.allocated(entry.path) if entry.is_dir(follow_symlinks=False)
-                              else entry.stat(follow_symlinks=False).st_blocks * 512)
+                    total += entry.stat(follow_symlinks=False).st_blocks * 512
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
         return total
 
     def available(self, path):
@@ -1623,34 +1627,70 @@ class OsDisk(Disk):
         os.replace(temporary, path)
         self.fsync_dir(path.parent)
 
+    # Every change below goes through descriptors for the directories it
+    # changes, each reached from / without following a symlink: runtime/
+    # and access/ belong to other users, who could otherwise swap a
+    # directory on the way for a symlink between a check and the change.
+
     def mkdir(self, path, mode):
-        os.mkdir(path, mode)
-        os.chmod(path, mode)  # Whatever the umask; only root can reach it.
+        path = Path(path)
+        with _directory(path.parent) as parent:
+            os.mkdir(path.name, mode, dir_fd=parent)
+            made = os.open(path.name, _DIRECTORY, dir_fd=parent)
+            try:
+                os.fchmod(made, mode)  # Whatever the umask.
+            finally:
+                os.close(made)
 
     def rename(self, source, destination):
-        if os.path.lexists(destination):
-            raise FileExistsError(errno.EEXIST, "the engine never renames onto a path", str(destination))
-        os.rename(source, destination)
+        source, destination = Path(source), Path(destination)
+        with _directory(source.parent) as old, _directory(destination.parent) as new:
+            if _exists(new, destination.name):
+                raise FileExistsError(errno.EEXIST, "the engine never renames onto a path", str(destination))
+            os.rename(source.name, destination.name, src_dir_fd=old, dst_dir_fd=new)
 
-    def _tool(self, name, *argv):
+    def _tool(self, name, *argv, shown=None, descriptors=()):
         if not self.tools.get(name):
             raise EngineError(f"no {name} tool is configured")
         result = subprocess.run([self.tools[name], *map(str, argv)], stdin=subprocess.DEVNULL, cwd="/",
-                                capture_output=True, text=True, env=ENVIRONMENT, check=False)
+                                capture_output=True, text=True, env=ENVIRONMENT, pass_fds=descriptors, check=False)
         if result.returncode:
-            raise EngineError(f"{name} {shlex.join(map(str, argv))} failed: {result.stderr.strip()}")
+            raise EngineError(f"{name} {shlex.join(map(str, shown or argv))} failed: {result.stderr.strip()}")
 
     def copy(self, source, destination):
-        self._tool("cp", "-a", "--reflink=auto", "--no-target-directory", "--", source, destination)
+        """cp into a directory root has just made, private to root, in the
+        destination's directory, then a rename out of it: cp never writes
+        through a path anyone else could have planted."""
+        source, destination = Path(source), Path(destination)
+        flags = ("-a", "--reflink=auto", "--no-target-directory", "--")
+        with _directory(source.parent) as old, _directory(destination.parent) as new:
+            if _exists(new, destination.name):
+                raise FileExistsError(errno.EEXIST, "the engine never copies onto a path", str(destination))
+            work = f".{destination.name}.cp"
+            if _exists(new, work):
+                _remove(new, work, _device(new))  # What a crash left.
+            os.mkdir(work, 0o700, dir_fd=new)
+            made = os.open(work, _DIRECTORY, dir_fd=new)
+            try:
+                found = os.fstat(made)
+                if found.st_uid != os.geteuid() or found.st_mode & 0o077:
+                    raise EngineError(f"{destination.parent / work} is not the directory the engine just made")
+                self._tool("cp", *flags, f"/proc/self/fd/{old}/{source.name}",
+                           f"/proc/self/fd/{made}/{destination.name}", descriptors=(old, made),
+                           shown=(*flags, source, destination))
+                if _exists(new, destination.name):
+                    raise FileExistsError(errno.EEXIST, "the engine never copies onto a path", str(destination))
+                os.rename(destination.name, destination.name, src_dir_fd=made, dst_dir_fd=new)
+            finally:
+                os.close(made)
+                with contextlib.suppress(OSError, EngineError):
+                    _remove(new, work, _device(new))
 
     def remove_tree(self, path):
         path = Path(path)
         with _directory(path.parent) as parent:
-            try:
-                device = os.stat(path.name, dir_fd=parent, follow_symlinks=False).st_dev
-            except FileNotFoundError:
-                return
-            _remove(parent, path.name, device)
+            if _exists(parent, path.name):
+                _remove(parent, path.name, _device(parent))
 
     def sync_fs(self, path):
         self._tool("sync", "--file-system", "--", path)
@@ -1679,13 +1719,17 @@ class OsDisk(Disk):
 ENVIRONMENT = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}
 
 
+_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
 @contextlib.contextmanager
 def _directory(path):
-    """A descriptor for a directory, reached without following symlinks."""
+    """A descriptor for a directory, reached from / without following a
+    symlink at any step."""
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
         for part in Path(path).parts[1:]:
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=descriptor)
+            child = os.open(part, _DIRECTORY, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child
         yield descriptor
@@ -1693,22 +1737,51 @@ def _directory(path):
         os.close(descriptor)
 
 
+def _exists(directory, name) -> bool:
+    try:
+        os.stat(name, dir_fd=directory, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _device(directory) -> int:
+    return os.fstat(directory).st_dev
+
+
 def _remove(parent, name, device):
     """rm -rf --one-file-system, by descriptor: a symlink is removed, never
-    followed, and a mount point below is refused."""
-    info = os.stat(name, dir_fd=parent, follow_symlinks=False)
-    if not stat.S_ISDIR(info.st_mode):
+    followed, and anything on another filesystem than `device` (the
+    parent's), the path itself included when it is a mount point, is
+    refused. Walked with a stack of open directories, not recursion."""
+    def checked(directory, entry):
+        info = os.stat(entry, dir_fd=directory, follow_symlinks=False)
+        if info.st_dev != device:
+            raise EngineError(f"{entry} is another filesystem, mounted inside what is removed")
+        return info
+
+    if not stat.S_ISDIR(checked(parent, name).st_mode):
         os.unlink(name, dir_fd=parent)
         return
-    if info.st_dev != device:
-        raise EngineError(f"{name} is another filesystem mounted below what is removed")
-    child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+    top = os.open(name, _DIRECTORY, dir_fd=parent)
+    stack = [(top, parent, name, os.listdir(top))]
     try:
-        for entry in os.listdir(child):
-            _remove(child, entry, device)
+        while stack:
+            directory, above, here, entries = stack[-1]
+            if not entries:
+                stack.pop()
+                os.close(directory)
+                os.rmdir(here, dir_fd=above)
+                continue
+            entry = entries.pop()
+            if stat.S_ISDIR(checked(directory, entry).st_mode):
+                child = os.open(entry, _DIRECTORY, dir_fd=directory)
+                stack.append((child, directory, entry, os.listdir(child)))
+            else:
+                os.unlink(entry, dir_fd=directory)
     finally:
-        os.close(child)
-    os.rmdir(name, dir_fd=parent)
+        for directory, *_ in stack:
+            os.close(directory)
 
 
 class SubprocessHost(Host):
@@ -1820,6 +1893,10 @@ def main(argv=None) -> int:
     here = Path(__file__).resolve()
     # Nothing root runs may find a program or file in the caller's directory.
     os.chdir("/")
+    # Removing a tree holds a descriptor for each level of it.
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft != resource.RLIM_INFINITY and (hard == resource.RLIM_INFINITY or soft < hard):
+        resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
     try:
         return _main(args, argv, here)
     except SpaceShort as error:

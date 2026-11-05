@@ -145,6 +145,71 @@ class RealDisk(unittest.TestCase):
         self.assertEqual((outside / "keep").read_text(), "kept")
         self.disk.remove_tree(tree)  # Absent is done.
 
+    def test_changes_never_pass_through_a_symlinked_directory(self):
+        real = self.base / "real"
+        (real / "dir").mkdir(parents=True)
+        (real / "dir/file").write_text("kept")
+        (self.base / "link").symlink_to(real)
+        for change in (lambda: self.disk.rename(self.base / "link/dir/file", self.base / "moved"),
+                       lambda: self.disk.rename(self.base / "file", self.base / "link/dir/moved"),
+                       lambda: self.disk.copy(self.base / "link/dir", self.base / "copied"),
+                       lambda: self.disk.copy(self.base / "real/dir", self.base / "link/copied"),
+                       lambda: self.disk.mkdir(self.base / "link/made", 0o700),
+                       lambda: self.disk.remove_tree(self.base / "link/dir")):
+            with self.subTest():
+                (self.base / "file").write_text("mine")
+                with self.assertRaises(OSError):
+                    change()
+        self.assertEqual(sorted(path.name for path in real.rglob("*")), ["dir", "file"])
+        self.assertFalse((self.base / "copied").exists() or (self.base / "moved").exists())
+
+    def test_a_copy_never_writes_through_a_planted_path(self):
+        """cp writes only into a directory root has just made: one planted
+        in its place, or at the destination, is never written through."""
+        source = self.base / "aside"
+        (source / "jsondb").mkdir(parents=True)
+        (source / "jsondb/things.json").write_text("things")
+        outside = self.base / "outside"
+        outside.mkdir()
+        live = self.base / "live"
+        live.mkdir()
+        (live / ".userdata.cp").symlink_to(outside)
+        self.disk.copy(source, live / "userdata")
+        self.assertEqual((live / "userdata/jsondb/things.json").read_text(), "things")
+        self.assertEqual(sorted(path.name for path in live.iterdir()), ["userdata"])
+        self.assertEqual(list(outside.iterdir()), [])
+        (live / "planted").symlink_to(outside)
+        with self.assertRaises(FileExistsError):
+            self.disk.copy(source, live / "planted")
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_a_mount_point_is_never_removed(self):
+        tree = self.base / "runtime"
+        (tree / "userdata").mkdir(parents=True)
+        (tree / "userdata/things.json").write_text("things")
+        with mock.patch.object(engine, "_device", return_value=-1):
+            with self.assertRaisesRegex(engine.EngineError, "runtime is another filesystem"):
+                self.disk.remove_tree(tree)
+        self.assertEqual((tree / "userdata/things.json").read_text(), "things")
+
+    def test_deep_trees_are_sized_and_removed(self):
+        """Deeper than Python's recursion limit."""
+        deep = self.base / "deep"
+        deep.mkdir()
+        directory = os.open(deep, os.O_RDONLY | os.O_DIRECTORY)
+        for _ in range(sys.getrecursionlimit() + 200):
+            os.mkdir("d", dir_fd=directory)
+            child = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        made = os.open("file", os.O_WRONLY | os.O_CREAT, 0o600, dir_fd=directory)
+        os.write(made, b"x" * 8192)
+        os.close(made)
+        os.close(directory)
+        self.assertGreaterEqual(self.disk.allocated(deep), 8192)
+        self.disk.remove_tree(deep)
+        self.assertFalse(deep.exists())
+
     def test_the_lock_is_exclusive_and_renames_never_replace(self):
         with self.disk.lock(self.base):
             with self.assertRaisesRegex(engine.EngineError, "another engine verb is running"):

@@ -143,6 +143,15 @@ class MemoryDisk(engine.Disk):
 
     # Disk ----------------------------------------------------------------
 
+    def _reached(self, *paths):
+        """OsDisk reaches every directory it changes from / without
+        following a symlink: a symlink on the way fails as ELOOP does."""
+        for path in paths:
+            for ancestor in PurePosixPath(path).parents:
+                node = self.nodes.get(str(ancestor))
+                if node is not None and node.kind == "link":
+                    raise OSError(errno.ELOOP, "Too many levels of symbolic links", str(path))
+
     def _need_dir(self, path):
         node = self.nodes.get(path)
         if node is None or node.kind != "dir":
@@ -184,6 +193,7 @@ class MemoryDisk(engine.Disk):
     def write_atomic(self, path, data, mode):
         path = str(path)
         self.tick("write_atomic", path)
+        self._reached(path)
         self._need_dir(parent(path))
         old = self.nodes.get(path)
         self._room(path, len(data) - (len(old.data) if old and old.kind == "file" else 0))
@@ -194,6 +204,7 @@ class MemoryDisk(engine.Disk):
     def mkdir(self, path, mode):
         path = str(path)
         self.tick("mkdir", path)
+        self._reached(path)
         self._need_dir(parent(path))
         if path in self.nodes:
             raise FileExistsError(errno.EEXIST, "File exists", path)
@@ -204,6 +215,7 @@ class MemoryDisk(engine.Disk):
     def rename(self, source, destination):
         source, destination = str(source), str(destination)
         self.tick("rename", source, destination)
+        self._reached(source, destination)
         if source not in self.nodes:
             raise FileNotFoundError(errno.ENOENT, "No such file", source)
         if self.fs(source) != self.fs(destination):
@@ -218,6 +230,7 @@ class MemoryDisk(engine.Disk):
     def copy(self, source, destination):
         source, destination = str(source), str(destination)
         self.tick("copy", source, destination)
+        self._reached(source, destination)
         if source not in self.nodes:
             raise FileNotFoundError(errno.ENOENT, "No such file", source)
         self._need_dir(parent(destination))
@@ -236,6 +249,7 @@ class MemoryDisk(engine.Disk):
     def remove_tree(self, path):
         path = str(path)
         self.tick("remove_tree", path)
+        self._reached(path)
         op = ("remove", path)
         apply(self.nodes, op)
         self._record(op)
