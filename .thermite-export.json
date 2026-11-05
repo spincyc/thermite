@@ -452,6 +452,7 @@
     "tests/test_system_ui.py",
     "tests/test_tui_verb.py",
     "tests/test_unified_install.py",
+    "tests/test_unit_invariants.py",
     "tests/test_upgrade.py",
     "tests/test_vendor_facts.py",
     "tests/test_volume_native.py",
