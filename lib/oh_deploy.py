@@ -98,6 +98,9 @@ MONITORING_MODE = oh_service.RUNTIME_DIR
 SECRET_FILE_MODE = oh_service.PRIVATE_FILE
 #: Where the openHAB container sees the secrets directory, as $OPENHAB_SECRETS.
 SECRETS_MOUNT = "/secrets"
+#: openHAB's log directory: the group-readable State.logs, its $OPENHAB_LOGDIR.
+LOGS_MODE = oh_service.LOG_DIR
+LOGS_MOUNT = "/openhab/logs"
 #: Ports besides HTTP and HTTPS that openHAB or the helper listen on.
 HELPER_PORT = oh_ports.HELPER_PORT
 KARAF_PORT = oh_ports.KARAF_PORT
@@ -235,6 +238,13 @@ class State:
         return self.root / "userdata"
 
     @property
+    def logs(self) -> Path:
+        """openHAB's logs (openhab.log, events.log and their rotations),
+        mounted at LOGS_MOUNT: outside the private userdata, so the thermite
+        group reads them without traversing it (oh_logging)."""
+        return self.root / oh_service.LOGS
+
+    @property
     def addons(self) -> Path:
         return self.root / "addons"
 
@@ -344,6 +354,7 @@ class State:
             (DIR_MODE, [self.conf, self.records, self.atv_app]),
             (0o700, [self.userdata, self.atv_secrets]),
             (SECRETS_MODE, [self.secrets]),
+            (LOGS_MODE, [self.logs]),
         ]
 
     def metrics_directories(self) -> list[tuple[int, list[Path]]]:
@@ -619,6 +630,8 @@ def prepare_openhab_argv(versions: dict, host: dict) -> tuple[str, ...]:
             "--volume", f"{root}/conf:/openhab/conf:Z",
             "--volume", f"{root}/userdata:/openhab/userdata:Z",
             "--volume", f"{root}/addons:/openhab/addons:Z",
+            "--volume", f"{state(host).logs}:{LOGS_MOUNT}:Z",
+            "--env", f"OPENHAB_LOGDIR={LOGS_MOUNT}",
             image(versions), "-ec", openhab_prepare())
 
 
@@ -668,6 +681,9 @@ def render_quadlet(versions: dict, host: dict) -> str:
         f"Volume={root}/conf:/openhab/conf:Z",
         f"Volume={root}/userdata:/openhab/userdata:Z",
         f"Volume={root}/addons:/openhab/addons:Z",
+        "# Logs outside userdata, readable by the thermite group.",
+        f"Volume={state(host).logs}:{LOGS_MOUNT}:Z",
+        f"Environment=OPENHAB_LOGDIR={LOGS_MOUNT}",
         "# Credentials remain outside shared configuration.",
         f"Volume={root}/secrets:{SECRETS_MOUNT}:ro,Z",
         f"Environment=OPENHAB_SECRETS={SECRETS_MOUNT}",

@@ -64,6 +64,17 @@ class Units(unittest.TestCase):
         self.assertIn("Network=host", text)
         self.assertIn("Volume=/srv/thermite/runtime/userdata:/openhab/userdata:Z", text)
 
+    def test_openhab_logs_to_the_group_readable_directory_outside_userdata(self):
+        layout = deploy.state(HOST)
+        self.assertIn((0o2750, [layout.logs]), layout.directories())
+        self.assertEqual(layout.logs, Path("/srv/thermite/runtime/logs"))
+        text = deploy.render_quadlet(VERSIONS, HOST)
+        self.assertIn("Volume=/srv/thermite/runtime/logs:/openhab/logs:Z\nEnvironment=OPENHAB_LOGDIR=/openhab/logs\n", text)
+        self.assertNotIn("userdata/logs", text)
+        argv = deploy.prepare_openhab_argv(VERSIONS, HOST)
+        self.assertEqual(argv[argv.index("/srv/thermite/runtime/logs:/openhab/logs:Z") - 1], "--volume")
+        self.assertEqual(argv[argv.index("OPENHAB_LOGDIR=/openhab/logs") - 1], "--env")
+
     def test_tag_is_refused(self):
         versions = {"openhab": {"version": "5.2.3", "image": {"ref": "x:5", "digest": "latest"}}}
         with self.assertRaises(ValueError):

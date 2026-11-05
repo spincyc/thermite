@@ -63,6 +63,28 @@ class Permissions(unittest.TestCase):
         self.assertEqual(stat.S_IMODE((self.root / "conf/legacy-secret").stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o2700)
 
+    def test_openhab_logs_alone_become_group_readable(self):
+        # Rotations made before filePermissions, the updater's own file, and
+        # private userdata files a group traversal would have exposed.
+        logs = [self.file("logs/openhab.log", 0o600), self.file("logs/events.log.3.gz", 0o600),
+                self.file("logs/update.log", 0o664), self.file("logs/odd", 0o4755)]
+        private = [self.file("userdata/jsondb/users.json", 0o644), self.file("userdata/sony_ip_control/cookie", 0o644),
+                   self.file("userdata/logs/openhab.log", 0o640)]
+        (self.root / "logs").chmod(0o700)
+        before = {path: path.read_bytes() for path in [*logs, *private]}
+        service.normalize_state(self.root, self.uid, self.gid)
+        self.assertEqual(stat.S_IMODE((self.root / "logs").stat().st_mode), 0o2750)
+        self.assertEqual(stat.S_IMODE((self.root / "userdata").stat().st_mode), 0o700)
+        for path in logs:
+            with self.subTest(path=path.name):
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o640)
+        for path in private:
+            with self.subTest(path=path.name):
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual({path: path.read_bytes() for path in before}, before)
+        self.assertEqual(service.audit_state(self.root, self.uid, self.gid), [])
+        self.assertEqual(service.audit_state(self.root, self.uid, self.gid, runtime=True), [])
+
     def test_backup_completion_witnesses_keep_group_read_access_without_widening_private_files(self):
         receipt = self.file("backups/finished.tar.gz.complete.json", 0o640)
         private = [self.file("backups/finished.tar.gz", 0o640),
@@ -351,7 +373,7 @@ class Permissions(unittest.TestCase):
 
     def test_runtime_scope_repairs_openhab_trees_and_leaves_other_stores_running(self):
         native = [self.file("conf/yaml/site.yaml"), self.file("userdata/etc/logging.xml"),
-                  self.file("addons/fixture.jar"), self.file("secrets/fixture")]
+                  self.file("logs/openhab.log", 0o600), self.file("addons/fixture.jar"), self.file("secrets/fixture")]
         # The live stores of running services: an entry a whole-tree walk
         # refuses, and modes it would otherwise narrow.
         sample = self.file("monitoring/prometheus/chunks/sample", 0o644)

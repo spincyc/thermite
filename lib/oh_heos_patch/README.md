@@ -245,7 +245,7 @@ directories you own.
 4. Root: start, refresh once and verify.
 
    ```sh
-   LOG="$STATE/userdata/logs/openhab.log"; N=$(wc -l < "$LOG")
+   LOG="$STATE/logs/openhab.log"; N=$(wc -l < "$LOG")
    systemctl start thermite-openhab.service
    install -m 0644 -o "$U" -g "$G" "apply-thermite_heos_patch_probe.js" \
      "$STATE/conf/automation/js/thermite_heos_patch_probe.js"

@@ -186,14 +186,29 @@ installation root:
 └── access/       you, 0755: the HTTPS gateway root
 ```
 
-`runtime/` holds the native runtime's configuration and userdata, add-ons,
-the Apple TV helper, secrets, the deploy records, upgrade backups and the
-monitoring data. `access/` holds the gateway's `releases/`, its identity
+`runtime/` holds the native runtime's configuration, userdata, logs and
+add-ons, the Apple TV helper, secrets, the deploy records, upgrade backups and
+the monitoring data. `access/` holds the gateway's `releases/`, its identity
 `state/` (thermite, 0700), its identity `backups/` (root, 0700) and the
 clients' trust certificate `tls-cert.pem`. Neither directory is inside the
 other, so the gateway's custody checks see only root- and operator-owned
 parents. On btrfs the installation root is the one subvolume to snapshot or
 back up: `sudo btrfs subvolume snapshot -r /srv/thermite /srv/thermite-$(date +%F)`.
+
+openHAB's logs are in `runtime/logs/`, `/srv/thermite/runtime/logs` by
+default: `openhab.log`, `events.log`, their compressed rotations
+(`events.log.1.gz` up to `.7.gz`, the highest number the newest) and the
+updater's `update.log`. The directory belongs to `thermite`, mode 2750, and
+every log in it is 0640, so members of the `thermite` group read them without
+sudo; they write nothing there, and the rest of `runtime/` gains no access.
+The pairing filter drops pairing codes on every logger before a line reaches
+a file.
+
+```sh
+tail -F /srv/thermite/runtime/logs/openhab.log
+grep -h 'received command' /srv/thermite/runtime/logs/events.log | tail -n 20
+zgrep -h 1a2b3c4d /srv/thermite/runtime/logs/events.log.*.gz
+```
 
 The installer creates this layout. A host that needs another location sets
 `root: /absolute/path` in `instance/host.yaml`; `runtime/` and `access/` are
@@ -446,10 +461,11 @@ Every command gets an 8-character ID, such as `1a2b3c4d`. The gateway
 receives it as the command's event source, `thermite.<origin>:<id>`; and the
 routing rule logs the route and each device step it caused with
 `route=<id>` in `thermite-openhab.service`'s journal, which carries
-openhab.log (events.log stays a file in openHAB's userdata). One search
-therefore follows a command from the client to the devices. Reading the
-system journal needs membership in the `systemd-journal` group (or `adm`,
-`wheel` where the distribution grants it, or sudo).
+openhab.log (events.log is only a file, in [openHAB's logs](#host-layout)).
+One search therefore follows a command from the client to the devices.
+Reading the system journal needs membership in the `systemd-journal` group
+(or `adm`, `wheel` where the distribution grants it, or sudo); the log files
+need only the `thermite` group.
 
 Who turned the den off around 18:00, and from where:
 
@@ -476,6 +492,7 @@ Why a switch failed or was slow:
 journalctl -u thermite-access.service -g 'cmd .*outcome=runtime_unavailable'
 journalctl -u thermite-access.service -g 'cmd .* ms=[0-9]{4,}'
 journalctl -u thermite-access.service -u thermite-openhab.service -g 1a2b3c4d
+grep -h 1a2b3c4d /srv/thermite/runtime/logs/events.log
 ```
 
 `outcome` is `accepted` (openHAB took the command), a refusal (`room_locked`,

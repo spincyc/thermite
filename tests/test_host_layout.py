@@ -153,6 +153,15 @@ class StateDirectories(unittest.TestCase):
         self.assertEqual(check.detail, f"to create or fix: {TOP} (root, 0755)")
         self.assertEqual(self.actions(host), [("install", "-d", "-o", "root", "-g", "root", "-m", "00755", str(TOP))])
 
+    def test_an_install_without_logs_gets_the_setgid_group_directory(self):
+        layout = deploy.state({})
+        stats = {TOP: directory(0, 0, 0o755), **runtime_directories(layout)}
+        del stats[layout.logs]
+        check = steps.StateDirectories(context()).check(Host(stats))
+        self.assertEqual(check.detail, "to create or fix: runtime/logs")
+        self.assertEqual(self.actions(Host(stats)),
+                         [("install", "-d", "-o", "9001", "-g", "9001", "-m", "02750", str(layout.logs))])
+
     def test_wrong_runtime_directories_are_named_below_the_root(self):
         layout = deploy.state({})
         stats = {TOP: directory(0, 0, 0o755), **runtime_directories(layout)}

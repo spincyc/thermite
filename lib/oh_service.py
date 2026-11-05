@@ -22,7 +22,9 @@ ACCOUNT = GROUP = "thermite"
 UID = GID = 9001
 RECEIPT_VERSION = 1
 #: v4: native preparation also routes openhab.log to the journal (oh_logging.JOURNAL).
-POLICY = "thermite-service-v4"
+#: v5: openHAB logs to the group-readable logs/ (LOGS), and native preparation
+#: moves what it wrote to userdata/logs there (oh_logging.relocate).
+POLICY = "thermite-service-v5"
 RECEIPT = "deploy/service-account.json"
 SHARED_DIR = 0o2770
 SHARED_FILE = 0o660
@@ -31,6 +33,11 @@ RUNTIME_DIR = 0o750
 RUNTIME_FILE = 0o640
 PRIVATE_DIR = 0o700
 PRIVATE_FILE = 0o600
+#: openHAB's log directory, outside userdata: the group reads the logs and
+#: never writes them, and new files there take group thermite.
+LOGS = "logs"
+LOG_DIR = 0o2750
+LOG_FILE = 0o640
 # A completed check found missing protection. Exit 1/2 from sudo or the
 # helper instead means verification could not run, not that logging is unsafe.
 PAIRING_LOGGING_UNPROTECTED = 3
@@ -44,11 +51,12 @@ PRIVATE_CACHE_PROGRAM = re.compile(
 
 SHARED = ("conf", "metrics", "atv/app", "exporter/app", "deploy")
 PRIVATE = ("secrets", "atv/secrets", "monitoring/secrets", "userdata")
-NATIVE_ROOTS = ("conf", "userdata", "addons", "atv", "deploy", "secrets", "metrics", "monitoring", "exporter", "backups")
+NATIVE_ROOTS = ("conf", "userdata", LOGS, "addons", "atv", "deploy", "secrets", "metrics", "monitoring", "exporter",
+                "backups")
 #: The openHAB container's own trees, its volumes. A deploy that changes only
 #: openHAB repairs just these while openHAB alone is stopped: the gateway,
 #: the Apple TV helper and monitoring keep running on their own stores.
-RUNTIME_STORES = ("conf", "userdata", "addons", "secrets")
+RUNTIME_STORES = ("conf", "userdata", LOGS, "addons", "secrets")
 RUNTIME_ROOTS = ("", "addons", "atv", "atv/venv", "monitoring", "monitoring/prometheus", "monitoring/grafana",
                  "monitoring/alertmanager", "monitoring/ntfy", "exporter")
 DEPLOY_RECORDS = ("deploy/history", "deploy/deployed.json", "deploy/atv-restart", "deploy/metrics-restart", RECEIPT)
@@ -93,6 +101,11 @@ def desired_mode(relative: str, mode: int, directory: bool, *, private_cache: bo
                 and relative.endswith(".tar.gz.complete.json")):
             return RUNTIME_FILE
         return RUNTIME_DIR if directory else PRIVATE_FILE
+    if _under(relative, (LOGS,)):
+        # openHAB's logs, written behind the pairing guard (oh_logging), which
+        # openHAB makes group-readable itself: a file it or a move left
+        # private is widened, never made group-writable or executable.
+        return LOG_DIR if directory else LOG_FILE
     if _under(relative, SHARED):
         if directory:
             return 0o2700 if relative not in SHARED and not mode & 0o070 else SHARED_DIR
@@ -193,7 +206,7 @@ def _selected_entries(root: Path, deployment: bool, runtime: bool = False):
                     for child, descriptor, info in entries:
                         yield relative + ("/" + child if child else ""), descriptor, info
             except FileNotFoundError:
-                # Older installs do not yet have metrics/exporter directories.
+                # Older installs do not yet have metrics/exporter or logs directories.
                 continue
 
     walk = selected()

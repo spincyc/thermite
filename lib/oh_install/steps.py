@@ -777,7 +777,8 @@ class PairingLogging(Step):
         data = system.read_bytes(self.context.layout.userdata / oh_logging.RELATIVE)
         selector = system.read_bytes(self.context.layout.userdata / oh_logging.SELECTOR)
         if data is not None and selector is not None and oh_logging.selected_default(selector) and oh_logging.configured(data):
-            return Check(True, "native logger filters drop pairing command payloads; openhab.log also reaches the journal")
+            return Check(True, "native logger filters drop pairing command payloads; the log files are group-readable "
+                               "and openhab.log also reaches the journal")
         if data is None and _opaque(system, self.context, self.context.layout.userdata / oh_logging.RELATIVE) and (self.applied or service_receipt(self.context, system)):
             return Check(True, "pairing logging protection verified under private service custody")
         return Check(False, "install the pairing filter before deploying its Items; an existing service is stopped "
@@ -1130,11 +1131,15 @@ class NativePreparation(Step):
         # Only a full repair may record the receipt; openHAB's own repair keeps it.
         repair, final = (helper, (*helper, "--receipt")) if custody else ((*helper, "--runtime"),) * 2
         userdata = str(self.context.layout.userdata)
+        logging = ("python3", str(PROGRAM / "lib/oh_logging.py"), userdata, "--http-port", str(host["http_port"]))
         return [*([Command(("systemctl", "stop", *paths), root=True, stops=_restartable(paths))] if paths else []),
                 *([Command(("systemctl", "stop", *running), root=True, stops=_restartable(running))] if running else []),
+                # Before the updater writes the new logs/, and before the
+                # repair makes what moved group-readable.
+                Command((*logging, "--relocate", str(self.context.layout.logs)), root=True),
                 Command(repair, root=True),
                 Command(deploy.prepare_openhab_argv(self.context.versions, host), root=True),
-                Command(("python3", str(PROGRAM / "lib/oh_logging.py"), userdata, "--http-port", str(host["http_port"])), root=True),
+                Command(logging, root=True),
                 Command(("python3", str(PROGRAM / "lib/oh_ports.py"), userdata, "--http-port", str(host["http_port"]),
                          "--uid", str(host["uid"]), "--gid", str(host["gid"])), root=True),
                 Command((*helper, "--check-pairing-logging"), root=True),
@@ -2331,7 +2336,7 @@ class Purge(Step):
                 return found
         if system.stat(root) is None:
             return Check(True, f"{root} does not exist")
-        return Check(False, f"to delete {root}: conf, userdata (users, tokens, pairings), secrets, the deploy "
+        return Check(False, f"to delete {root}: conf, userdata (users, tokens, pairings), openHAB's logs, secrets, the deploy "
                             "records, the backups and the metrics (Prometheus' samples, Grafana's data and the "
                             "metrics secrets)")
 

@@ -33,6 +33,7 @@ preserves the runtime's permissions:
 | Helper environments and monitoring stores | `0750` | `0640`; executable programs `0750` |
 | Backup archives | `0750` | `0600` |
 | Native userdata, credentials, pairings and access-service identity state | `0700` | `0600` |
+| openHAB's logs, `runtime/logs` | `2750` | `0640` |
 
 The leading `2` on shared directories makes new files inherit group
 `thermite`. Service credentials are private to the service account; an
@@ -53,6 +54,9 @@ the helper cannot reconstruct it from an API token.
 
 More restrictive existing configuration modes are retained. Native userdata
 is private as a whole because it also contains identities and pairing keys.
+openHAB therefore writes its logs outside it, to `runtime/logs`, where the
+group reads but never writes them and where permission maintenance makes every
+file 0640; see [host layout](installation.md#host-layout).
 The recognized, versioned Graal attach executable may retain its producer's
 `0775` mode only when every parent inside userdata is service-owned `0700`.
 Those directories deny access to other identities. An existing `0700` mode

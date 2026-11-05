@@ -276,6 +276,138 @@ class JournalRoute(unittest.TestCase):
         self.assertFalse(oh_logging.configured(unguarded.encode()))
 
 
+class FilePermissions(unittest.TestCase):
+    """Every file appender writes group-readable logs, rotations included."""
+
+    def permissions(self, data):
+        root = oh_logging.document(data)
+        return {element.get("name"): [value for key, value in element.attrib.items() if key.lower() == "filepermissions"]
+                for container in root if container.tag == "Appenders" for element in container.iter()
+                if element.get("name")}
+
+    def test_both_template_files_become_0640_and_nothing_else_changes(self):
+        self.assertFalse(oh_logging.readable(TEMPLATE))
+        for journal in (True, False):
+            with self.subTest(journal=journal):
+                data = oh_logging.guarded(TEMPLATE, journal=journal)
+                self.assertTrue(oh_logging.readable(data))
+                self.assertEqual(oh_logging.guarded(data, journal=journal), data, "idempotent")
+                found = self.permissions(data)
+                self.assertEqual((found["LOGFILE"], found["EVENT"]), (["rw-r-----"], ["rw-r-----"]))
+                self.assertEqual((found["STDOUT"], found["OSGI"]), ([], []))
+        self.assertTrue(oh_logging.configured(oh_logging.guarded(TEMPLATE)))
+
+    def test_a_wider_duplicate_or_missing_mode_is_replaced_and_not_configured(self):
+        data = oh_logging.guarded(TEMPLATE).decode()
+        mode = 'filePermissions="rw-r-----"'
+        for case, altered in (("world-readable", data.replace(mode, 'filePermissions="rw-r--r--"', 1)),
+                              ("missing", data.replace(" " + mode, "", 1)),
+                              ("second spelling", data.replace(mode, mode + ' filepermissions="rw-rw-rw-"', 1))):
+            with self.subTest(case=case):
+                self.assertTrue(oh_logging.protected(altered.encode()))
+                self.assertTrue(oh_logging.journaled(altered.encode()))
+                self.assertFalse(oh_logging.readable(altered.encode()))
+                self.assertFalse(oh_logging.configured(altered.encode()))
+                repaired = oh_logging.guarded(altered.encode())
+                self.assertTrue(oh_logging.configured(repaired))
+                self.assertEqual(self.permissions(repaired)["LOGFILE"], ["rw-r-----"])
+
+    def test_a_nested_file_appender_is_covered(self):
+        routing = (b'<Routing name="ROUTED"><Routes pattern="$${ctx:x}"><Route>'
+                   b'<File fileName="routed.log" name="ROUTED_FILE"><PatternLayout pattern="%m%n"/></File>'
+                   b"</Route></Routes></Routing><PaxOsgi")
+        unreadable = oh_logging.guarded(TEMPLATE).replace(b"<PaxOsgi", routing)
+        self.assertFalse(oh_logging.readable(unreadable))
+        data = oh_logging.guarded(unreadable)
+        self.assertTrue(oh_logging.configured(data))
+        self.assertEqual((self.permissions(data)["ROUTED_FILE"], self.permissions(data)["ROUTED"]), (["rw-r-----"], []))
+
+
+class Relocation(Scratch):
+    """Root moves an older install's logs out of userdata, never through a link."""
+
+    def setUp(self):
+        super().setUp()
+        self.old = self.userdata / "logs"
+        self.old.mkdir()
+        self.logs = self.root / "logs"
+        self.logs.mkdir()
+
+    def log(self, name, data=b"line\n", mode=0o600):
+        path = self.old / name
+        path.write_bytes(data)
+        path.chmod(mode)
+        return path
+
+    def test_moves_every_log_and_rotation_and_removes_the_emptied_directory(self):
+        names = ("events.log", "events.log.1.gz", "openhab.log", "openhab.log.7.gz", "update.log")
+        inodes = {name: self.log(name, name.encode()).stat().st_ino for name in names}
+        self.assertEqual(oh_logging.relocate(self.userdata, self.logs, anchored=True), (len(names), []))
+        self.assertFalse(self.old.exists())
+        for name in names:
+            info = (self.logs / name).stat()
+            self.assertEqual(((self.logs / name).read_bytes(), info.st_ino), (name.encode(), inodes[name]))
+        self.assertEqual(oh_logging.relocate(self.userdata, self.logs, anchored=True), (0, []), "a rerun moves nothing")
+
+    def test_overwrites_nothing_and_moves_no_link_or_directory(self):
+        (self.logs / "openhab.log").write_bytes(b"current\n")
+        self.log("openhab.log", b"older\n")
+        self.log("events.log")
+        (self.old / "link").symlink_to(self.victim)
+        os.link(self.victim, self.old / "hardlink")
+        (self.old / "nested").mkdir()
+        kept = ["hardlink", "link", "nested", "openhab.log"]
+        self.assertEqual(oh_logging.relocate(self.userdata, self.logs, anchored=True), (1, kept))
+        self.assertEqual((self.logs / "openhab.log").read_bytes(), b"current\n")
+        self.assertEqual(sorted(path.name for path in self.old.iterdir()), kept)
+        self.assertEqual(sorted(path.name for path in self.logs.iterdir()), ["events.log", "openhab.log"])
+        self.assertVictimUntouched()
+        self.assertEqual(oh_logging.relocate(self.userdata, self.logs, anchored=True), (0, kept))
+
+    def test_refuses_a_linked_source_or_target(self):
+        self.log("openhab.log")
+        elsewhere = self.outside / "logs"
+        elsewhere.mkdir()
+        self.logs.rmdir()
+        self.logs.symlink_to(elsewhere, target_is_directory=True)
+        with self.assertRaises(OSError):
+            oh_logging.relocate(self.userdata, self.logs, anchored=True)
+        self.assertEqual((list(elsewhere.iterdir()), [path.name for path in self.old.iterdir()]), ([], ["openhab.log"]))
+        self.logs.unlink()
+        self.logs.mkdir()
+        (self.old / "openhab.log").unlink()
+        self.old.rmdir()
+        self.old.symlink_to(self.outside, target_is_directory=True)
+        with self.assertRaises(OSError):
+            oh_logging.relocate(self.userdata, self.logs, anchored=True)
+        self.assertEqual(list(self.logs.iterdir()), [])
+        self.assertVictimUntouched()
+
+    def test_nothing_to_move_without_the_old_directory(self):
+        self.old.rmdir()
+        self.assertEqual(oh_logging.relocate(self.userdata, self.logs, anchored=True), (0, []))
+
+    def test_root_helper_moves_only_while_openhab_is_stopped_and_changes_no_configuration(self):
+        self.log("openhab.log")
+        configuration = (self.etc / oh_logging.RELATIVE.name).read_bytes()
+        argv = [str(self.userdata), "--http-port", "13601", "--relocate", str(self.logs)]
+        with mock.patch.object(oh_logging.socket, "create_connection"), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as errors, self.assertRaises(SystemExit) as stopped:
+            oh_logging.main(argv)
+        self.assertEqual(stopped.exception.code, 2)
+        self.assertIn("still answers", errors.getvalue())
+        self.assertEqual([path.name for path in self.old.iterdir()], ["openhab.log"])
+        with mock.patch.object(oh_logging.socket, "create_connection", side_effect=ConnectionRefusedError), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(oh_logging.main(argv), 0)
+        self.assertIn("moved 1 log file(s)", output.getvalue())
+        self.assertEqual([path.name for path in self.logs.iterdir()], ["openhab.log"])
+        self.assertEqual((self.etc / oh_logging.RELATIVE.name).read_bytes(), configuration)
+        with mock.patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit) as refused:
+            oh_logging.main([*argv, "--template", str(self.root), "--uid", "9001", "--gid", "9001"])
+        self.assertEqual(refused.exception.code, 2)
+
+
 class Seeding(Scratch):
     def template(self):
         template = self.root / "template"
