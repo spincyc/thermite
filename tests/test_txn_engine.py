@@ -91,6 +91,14 @@ class Manifest(unittest.TestCase):
                 with self.assertRaisesRegex(engine.EngineError, expected):
                     engine.validate_manifest(data, root=ROOT)
 
+    def test_paths_and_ids_are_plain(self):
+        for value in ("//etc/thermite-native.nft", f"/{ROOT}/runtime/x"):
+            with self.assertRaisesRegex(engine.EngineError, "must start with a single /"):
+                engine.check_item({"path": value, "class": "tree"}, ROOT, recorded=False)
+        self.assertIsNone(engine.ID.fullmatch("\u0662\u0660\u0662\u0666\u0661\u0661\u0660\u0665T"
+                                              "\u0661\u0660\u0661\u0665\u0660\u0660Z-3f9a2c"))
+        self.assertIsNotNone(engine.ID.fullmatch(ID))
+
     def test_not_json(self):
         with self.assertRaisesRegex(engine.EngineError, "not JSON"):
             engine.parse_manifest(b"{", root=ROOT)
@@ -103,6 +111,11 @@ class Manifest(unittest.TestCase):
             ("/etc/systemd/system/thermite.target.wants/thermite-atv-restart.path", "link", True),
             ("/etc/systemd/system/multi-user.target.wants/thermite-native-boundary.service", "link", True),
             ("/etc/systemd/system/multi-user.target.wants/sshd.service", "link", False),
+            # The boot guard's own link is never an item.
+            ("/etc/systemd/system/multi-user.target.wants/thermite.target", "link", False),
+            ("/etc/systemd/system/thermite.target.wants/thermite.target", "link", False),
+            ("//etc/thermite-native.nft", "nft", False),
+            (f"/{ROOT}/runtime/userdata", "tree", False),
             ("/etc/systemd/system/thermite.target.wants/thermite-atv-restart.path", "unit", False),
             ("/etc/containers/systemd/thermite-openhab.container", "unit", True),
             ("/etc/containers/systemd/other.container", "unit", False),
@@ -642,7 +655,8 @@ class Verbs(unittest.TestCase):
         self.engine.commit(ID)
         data = engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data, root=ROOT)
         self.assertFalse(data["installed"])
-        self.assertEqual({item["class"] for item in data["items"]}, {"shared"})
+        self.assertEqual({item["path"]: item["class"] for item in data["items"]},
+                         {**dict.fromkeys(gone.trees, "shared"), f"{ROOT}/runtime/deploy/deployed.json": "file"})
         self.assertFalse(self.host.enabled())
         self.assertNotIn(fakes.RULES, self.disk.nodes)
         self.assertIsNone(self.host.table)
@@ -662,7 +676,11 @@ class Verbs(unittest.TestCase):
         self.engine.commit(ID)
         data = engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data, root=ROOT)
         self.assertFalse(data["installed"])
-        self.assertEqual(data["items"], [{"path": path, "class": "shared"} for path in state])
+        deployed = self.old.files[f"{ROOT}/runtime/deploy/deployed.json"][1]
+        self.assertEqual(data["items"], [
+            {"path": path, "class": "shared"} if not path.endswith(".json") else
+            {"path": path, "class": "file", "sha256": fakes.digest(deployed), "mode": 0o644, "uid": 0, "gid": 0}
+            for path in state])
         self.assertEqual({path: self.disk.walk(path) for path in state}, found)
         # A reinstall finds the state, and its commit prunes the uninstall
         # transaction without losing any of it.
@@ -696,6 +714,41 @@ class Verbs(unittest.TestCase):
         self.assertEqual(self.host.images, set())
         self.assertEqual(self.host.state(), {"enabled": False, "target": False, "members": [], "table": None,
                                              "loaded": {}})
+
+    def test_a_file_that_becomes_a_tree_is_set_aside_as_the_file(self):
+        """The new release turns deployed.json into a directory of records:
+        what is on disk is still the file, collected and put back as one."""
+        path = f"{ROOT}/runtime/deploy/deployed.json"
+        new = fakes.version("new")
+        del new.files[path]
+        new.trees[path] = ("tree", {"records/1.json": b'{"version": "new"}'}, {})
+        before = fakes.world(self.disk, self.host, fakes.managed_paths(self.old, new))
+        for verdict in ("rollback", "commit"):
+            with self.subTest(verdict):
+                self.setUp()
+                journal = self.begin(new)
+                entry = next(entry for entry in journal.entries if entry.path == path)
+                self.assertEqual((entry.cls, entry.action, entry.aside), ("file", "copy", f"files/{entry.n}"))
+                self.engine.guard(ID)
+                self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
+                self.engine.collect(ID)
+                self.disk.drop(path)
+                fakes.switch(self.disk, self.host, new)
+                if verdict == "rollback":
+                    self.assertEqual(self.engine.rollback(ID).phase, "rolled-back")
+                    self.assertEqual(fakes.world(self.disk, self.host, fakes.managed_paths(self.old, new)), before)
+                else:
+                    self.engine.commit(ID, fakes.release(new))
+                    data = engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data, root=ROOT)
+                    self.assertIn({"path": path, "class": "tree"}, data["items"])
+
+    def test_commit_refuses_a_release_whose_pins_are_not_the_desired_ones(self):
+        self.through_switch()
+        release = {**fakes.release(self.new), "pins": {PROMETHEUS: "sha256:other"}}
+        with self.assertRaisesRegex(engine.EngineError, "the release pins prometheus to 'sha256:other', "
+                                                        "but the desired set to 'sha256:one'"):
+            self.engine.commit(ID, release)
+        self.assertEqual(self.engine.read(ID).phase, "switching")
 
     def test_a_clean_install_records_its_new_trees(self):
         clean = fakes.version("new", tree_class="tree-move")

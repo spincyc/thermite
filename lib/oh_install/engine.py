@@ -62,7 +62,7 @@ TOOL_DIRS = ("/usr/bin", "/usr/sbin", "/bin", "/sbin")
 KINDS = ("install", "upgrade", "clean", "revert", "uninstall", "purge")
 UNINSTALLING = ("uninstall", "purge")
 
-ID = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{6}")
+ID = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}")
 UNIT = re.compile(r"thermite[A-Za-z0-9@._:-]*")
 PIN = re.compile(r"[a-z0-9_]{1,64}")
 IMAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,511}")
@@ -166,6 +166,9 @@ def checked_path(value, what="path") -> PurePosixPath:
     """An absolute, normalised path other than /, or EngineError."""
     if not isinstance(value, str) or not value.startswith("/") or "\0" in value:
         raise EngineError(f"{what} must be an absolute path: {value!r}")
+    if value.startswith("//"):
+        # POSIX leaves a leading // to the system; PurePosixPath keeps it.
+        raise EngineError(f"{what} must start with a single /: {value!r}")
     path = PurePosixPath(value)
     if str(path) != value or ".." in path.parts or "." in path.parts or path == PurePosixPath("/"):
         raise EngineError(f"{what} must be normalised, without . or ..: {value!r}")
@@ -195,6 +198,8 @@ def allowed(root, path, cls, system=SYSTEM) -> bool:
     System paths are Thermite-named entries in the directories its units,
     rules, policies and documentation go to. Below the installation root
     only runtime/ and access/ hold items."""
+    if str(path).startswith("//"):
+        return False
     path, root, system = PurePosixPath(path), PurePosixPath(root), PurePosixPath(system)
     place = CLASSES[cls].place
     if path == root or below(path, root):
@@ -209,8 +214,10 @@ def allowed(root, path, cls, system=SYSTEM) -> bool:
         return cls in ("file", "nft")
     if parts[:3] == ("etc", "systemd", "system") and len(parts) > 3:
         if parts[3].endswith(".wants") and len(parts) == 5:
+            # The target's own enablement link is the boot guard: only the
+            # guard and commit touch it, through systemctl.
             return (parts[3] in ("thermite.target.wants", "multi-user.target.wants")
-                    and parts[4].startswith("thermite") and cls == "link")
+                    and parts[4].startswith("thermite") and parts[4] != TARGET and cls == "link")
         return parts[3].startswith("thermite") and cls in ("unit", "file")
     if parts[:3] == ("etc", "containers", "systemd") and len(parts) == 4:
         return parts[3].startswith("thermite") and cls in ("unit", "file")
@@ -478,7 +485,7 @@ class Entry:
         if data["class"] not in CLASSES or data["action"] not in ACTIONS or data["state"] not in STATES:
             raise EngineError(f"journal entry {data.get('n')!r} is not valid")
         checked_path(data["path"], "journal entry path")
-        if data["aside"] is not None and not re.fullmatch(r"(files|links|trees)/\d+", data["aside"]):
+        if data["aside"] is not None and not re.fullmatch(r"(files|links|trees)/[0-9]+", data["aside"]):
             raise EngineError(f"journal entry {data['n']!r} aside is not valid")
         fields = {**data}
         fields["cls"] = fields.pop("class")
@@ -856,7 +863,11 @@ class Engine:
             if kind == "uninstall" and old and not new and not managed(self.root, path):
                 action = "leave"
             cls = (new or old)["class"]
-            if action == "move" and not new:
+            if old and exists and action in ("copy", "move") and (
+                    not new or CLASSES[old["class"]].shape != CLASSES[new["class"]].shape):
+                # What is on disk is the old version: one the new version
+                # drops, or gives another shape (a file that becomes a tree),
+                # is set aside and put back by its own class.
                 cls = old["class"]
             if exists and action in ("copy", "move"):
                 self._meta(path, cls)  # The shape the class needs.
@@ -1136,6 +1147,10 @@ class Engine:
                            "images": current.get("images", {}).get("current", []),
                            "application": current.get("application", {}).get("current")}
             release = validate_release(release)
+            for item in journal.desired:
+                if item["class"] == "shared-pinned" and release["pins"].get(item["pin"]) != item["value"]:
+                    raise EngineError(f"the release pins {item['pin']} to {release['pins'].get(item['pin'])!r}, "
+                                      f"but the desired set to {item['value']!r}")
             items, devices = [], {}
             installed = {item["path"]: item for item in current.get("items", [])}
             for item in journal.desired:
@@ -1164,12 +1179,20 @@ class Engine:
                 items.append(record)
                 devices.setdefault(found.dev, path)
             if journal.kind == "uninstall":
-                # All state stays, recorded as shared so a reinstall finds it.
+                # All state stays, recorded so a reinstall finds it: a
+                # directory as shared, a file as the file it is now.
                 listed = [item["path"] for item in journal.desired]
                 for path in installed:
-                    if not managed(self.root, path) and not any(
+                    found = self.disk.lstat(path)
+                    if managed(self.root, path) or found is None or any(
                             path == other or below(path, other) or below(other, path) for other in listed):
+                        continue
+                    if found.kind == "dir":
                         items.append({"path": path, "class": "shared"})
+                    else:
+                        meta = self._meta(path, "file")
+                        items.append({"path": path, "class": "file", **{key: meta[key] for key in FILE_META}})
+                        devices.setdefault(found.dev, path)
             old_images = current.get("images", {"current": [], "previous": []})
             old_application = current.get("application", {"current": None, "previous": None})
             manifest = {
@@ -1982,6 +2005,9 @@ def _main(args, argv, here) -> int:
                   f"rerun, or roll back by hand: {sys.executable} -I -S {pinned} rollback --root {engine.root} "
                   f"--id {id} --print", file=sys.stderr)
             return STUCK
+        if journal.phase == "rolled-back" and journal.outcome["error"]:
+            print(f"Rolled back, but the previous version did not start: {journal.outcome['error']}. "
+                  f"Its files are back; start it with systemctl start {TARGET} and check its logs.", file=sys.stderr)
         return 0 if journal.phase == "kept" else ROLLED_BACK
     if args.verb == "commit":
         journal = engine.commit(id, _input(engine.disk, args.release) if args.release else None)

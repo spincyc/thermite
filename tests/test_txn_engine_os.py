@@ -310,7 +310,7 @@ case "$1" in
   disable) rm -f "$wants/thermite.target" ;;
   enable) [ -e "$units/thermite.target" ] || exit 1; ln -sfn "$units/thermite.target" "$wants/thermite.target" ;;
   stop) rm -f "$state/active" ;;
-  start) [ -e "$units/thermite.target" ] || exit 5; touch "$state/active" ;;
+  start) [ -e "$units/thermite.target" ] && [ ! -e "$state/fail-start" ] || exit 5; touch "$state/active" ;;
   restart) cp "{self.system}/etc/thermite-native.nft" "$state/table" ;;
   daemon-reload|reset-failed) ;;
   *) exit 64 ;;
@@ -505,6 +505,15 @@ esac
         self.assertEqual(snapshot(self.state, skip={self.state / "log", self.state / "cwd"}), state)
         self.run_engine("rollback", status=engine.ROLLED_BACK)
         self.assertEqual(snapshot(self.system, self.root, skip={self.root / ".transaction"}), before)
+
+    def test_a_rollback_whose_start_fails_says_so(self):
+        self.run_engine("begin", "--id", ID, "--desired", str(self.inputs["desired"]),
+                        "--operator", str(self.inputs["operator"]))
+        self.run_engine("guard", "--id", ID)
+        (self.state / "fail-start").touch()
+        stderr = self.run_engine("rollback", status=engine.ROLLED_BACK).stderr
+        self.assertIn("Rolled back, but the previous version did not start: systemctl start thermite.target "
+                      "failed. Its files are back; start it with systemctl start thermite.target", stderr)
 
     def test_each_verb_checks_only_the_tools_it_runs(self):
         self.run_engine("begin", "--id", ID, "--desired", str(self.inputs["desired"]),
