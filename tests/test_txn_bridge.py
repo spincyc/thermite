@@ -20,7 +20,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_apparmor  # noqa: E402
 import oh_deploy as deploy  # noqa: E402
-from oh_install import bridge, changeover, engine, ingress, manifest, ownership, steps  # noqa: E402
+from oh_install import bridge, changeover, engine, ingress, manifest, ownership, runner, steps  # noqa: E402
 from oh_install.system import System, UnitFile  # noqa: E402
 from tests import txn_fakes  # noqa: E402
 from tests.test_install_manifest import ROOT, context  # noqa: E402
@@ -300,6 +300,46 @@ class WrapperPin(PinnedSite):
         head = self.git("rev-parse", "HEAD")
         self.assertEqual(self.phase(1), (1, [None]))
         self.assertEqual(self.git("rev-parse", "HEAD"), head)
+
+    def opened(self, pin):
+        """The first bridged upgrade left open, its record naming `pin`
+        as the pin commit it installs."""
+        transaction = changeover.Transaction(self.site / "var", txn_fakes.ID, {
+            "version": 1, "id": txn_fakes.ID, "kind": "upgrade", "verb": "upgrade", "site": str(self.site),
+            "root": "/srv/thermite-fixture", "state": "/srv/thermite-fixture/runtime", "gid": 9001,
+            "head_before": self.before, "head_after": pin, "installed": True, "history": True, "pinned": True,
+            "bridged": True, "gateway_before": "v1-release", "then": {},
+            "application": {"current": RELEASE, "previous": None}, "asides": {}, "phase": "open"})
+        transaction.directory.mkdir(parents=True)
+        transaction.save()
+        transaction.open()
+
+    def test_a_rerun_on_the_open_transaction_s_own_pin_commit_leaves_it_to_that_transaction(self):
+        # The engine committed it, but the run was gone before the
+        # operator's side closed it. The wrapper reruns with the same
+        # release, so it makes no new pin commit: HEAD is that one.
+        self.opened(self.after)
+
+        def body(before):
+            self.assertEqual(self.git("rev-parse", "HEAD"), self.after, "nothing moved before it resolves")
+            found = changeover.resolve(self.site, self.system, "upgrade")
+            return changeover.REFUSED if found == changeover.COMMITTED else found
+        with patch.object(changeover.Transaction, "journal", return_value={"id": txn_fakes.ID, "phase": "committed"}), \
+                patch.object(runner, "perform", return_value=0), patch.object(changeover, "retain"):
+            self.assertEqual(changeover.pinned(self.system, self.site, None, False, body), changeover.REFUSED)
+        self.assertEqual(changeover.Transaction.load(self.site / "var", txn_fakes.ID).record["phase"], "committed")
+        self.assertEqual((self.git("rev-parse", "HEAD"), self.pins()), (self.after, RELEASE),
+                         "the site pins the version that committed")
+        said = "\n".join(str(call.args[0]) for call in self.system.say.call_args_list)
+        self.assertNotIn("Site: back", said)
+
+    def test_a_new_pin_commit_beside_an_open_transaction_is_undone_before_it_resolves(self):
+        self.pin("e" * 64, bridge.PIN_SUBJECT)
+        self.opened(self.after)
+        head = []
+        self.assertEqual(changeover.pinned(self.system, self.site, None, False,
+                                           lambda before: head.append(self.git("rev-parse", "HEAD")) or 1), 1)
+        self.assertEqual(head, [self.after], "back at the open transaction's own pin commit")
 
 
 if __name__ == "__main__":

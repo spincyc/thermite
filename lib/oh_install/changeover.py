@@ -1016,7 +1016,9 @@ def pinned(system: System, site: Path, before: str | None, dry_run: bool,
     began, that pin commit is undone: the site pins the version that runs.
     A transaction undoes it itself when it rolls back. An earlier open
     transaction is resolved first and this run stops, so the pin commit is
-    undone first.
+    undone first, unless it is that transaction's own: a rerun that made no
+    new pin commit leaves it to the resolution, which keeps it if that
+    transaction commits.
 
     The version 1 wrapper commits its pin without naming `before`: on a
     host it installed, its pin commit is recognized instead (wrapper_pin).
@@ -1025,8 +1027,14 @@ def pinned(system: System, site: Path, before: str | None, dry_run: bool,
     if before is None and not dry_run and bridge.needed(system):
         before = wrapper_pin(site)
     head = oh_source_upgrade.git(site, "rev-parse", "HEAD") if before else None
-    if head and not dry_run and open_transaction(Path(site) / "var") is not None:
-        _unpin(system, site, head, before)
+    found = open_transaction(Path(site) / "var") if head and not dry_run else None
+    if found is not None:
+        try:
+            own = Transaction.load(Path(site) / "var", found).record.get("head_after")
+        except (OSError, ValueError):
+            own = None
+        if head != own:
+            _unpin(system, site, head, before)
         head = None
     code = 2
     try:
