@@ -1,10 +1,12 @@
-"""Application-only upgrades use the same checked runtime workflow.
+"""thermite upgrade's host phase, and the checks its steps make.
 
 The host and deployment are in-memory fixtures; no native commands run.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager, ExitStack
+from argparse import Namespace
+from contextlib import contextmanager, ExitStack, redirect_stderr
+import io
 import json
 from pathlib import Path
 import sys
@@ -17,9 +19,8 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_deploy as deploy  # noqa: E402
 import oh_units  # noqa: E402
 from oh_cli import upgrade as upgrade_cli  # noqa: E402
-from oh_install import ownership, runner, steps  # noqa: E402
-from oh_install.model import Check, Task  # noqa: E402
-from oh_install.model import Command  # noqa: E402
+from oh_install import bridge, changeover, manifest, ownership, runner, steps  # noqa: E402
+from oh_install.model import Check  # noqa: E402
 from oh_install.system import Stat, System, Unit, UnitOrigin  # noqa: E402
 
 
@@ -66,42 +67,6 @@ class Upgrade(unittest.TestCase):
     def plan(self):
         with self.planning():
             return steps.plan(self.context, self.system)
-
-    def test_current_native_deployment_still_verifies_gateway_and_ingress(self):
-        plan = self.plan()
-        self.assertTrue(plan.current)
-        self.assertIsNone(plan.deployment)
-        self.assertFalse(plan.restart_runtime)
-        with self.planning(), patch.object(upgrade_cli, "AREA", self.site), \
-                patch.object(steps, "committed_context", return_value=self.context), \
-                patch.object(upgrade_cli, "installed", return_value=True), \
-                patch.object(runner, "run", return_value=0) as run, \
-                patch.object(runner, "confirm_run") as confirm:
-            self.assertEqual(upgrade_cli.upgrade(self.system, False), 0)
-        self.assertEqual(run.call_count, 2, "preflight and complete host verification are required")
-        sequence = run.call_args.args[0]
-        self.assertTrue(any(isinstance(step, steps.Gateway) for step in sequence))
-        self.assertTrue(any(isinstance(step, steps.NativeIngress) for step in sequence))
-        self.assertIsInstance(sequence[-1], steps.Verify)
-        self.assertTrue(run.call_args.kwargs["root_confirmed"])
-        confirm.assert_called_once()
-        self.system.run.assert_not_called()
-        deployment = next(step for step in sequence if isinstance(step, steps.Deploy))
-        self.assertEqual((deployment.how, deployment.backup),
-                         ("upgrade", next(step for step in sequence if isinstance(step, steps.Backup))),
-                         "the history records an upgrade with the state backup it took")
-
-    def test_current_native_deployment_propagates_gateway_failure(self):
-        with self.planning(), patch.object(upgrade_cli, "AREA", self.site), \
-                patch.object(steps, "committed_context", return_value=self.context), \
-                patch.object(upgrade_cli, "installed", return_value=True), \
-                patch.object(runner, "run", side_effect=[0, 7]) as run, \
-                patch.object(upgrade_cli, "going_back"), \
-                patch.object(runner, "confirm_run", return_value=True) as confirm:
-            self.assertEqual(upgrade_cli.upgrade(self.system, False), 7)
-        self.assertTrue(any(isinstance(step, steps.Gateway) for step in run.call_args.args[0]))
-        confirm.assert_called_once()
-        self.system.run.assert_not_called()
 
     def test_current_verification_needs_no_build_cache_and_preserves_group_approval(self):
         import oh_release
@@ -217,93 +182,92 @@ class Upgrade(unittest.TestCase):
         self.record = []
         self.assertFalse(steps.Deploy(self.context).check(self.system).done)
 
-    def workflow(self, *, dry_run=False, fail=None):
-        self.record["commit"] = "d" * 40
-        plan = self.plan()
-        sequence = steps.upgrade(self.context, plan, "fixture-stamp")
-        visited, completed = [], set()
 
-        def work(name):
-            visited.append(name)
-            if fail == name:
-                return 7
-            completed.add(name)
-            if name == "deploy":
-                self.record["commit"] = self.context.head
-                self.record_time = 30
-            return 0
+class HostPhase(unittest.TestCase):
+    """thermite upgrade's host phase: what it resolves, refuses, or hands
+    the install transaction (tests/test_txn_changeover.py runs that)."""
 
-        def run(argv, area):
-            self.assertEqual(area, self.site)
-            self.assertEqual(argv, ("sudo", "systemctl", "restart", oh_units.RUNTIME))
-            result = work("restart")
-            if not result:
-                self.runtime_time = 40
-            return result
+    def setUp(self):
+        self.site = AREA / ".scratch/update-site/fictional-site"
+        self.context = steps.Context(self.site, {"openhab": {"version": "5.2.3"}},
+                                     {"uid": 9001, "gid": 9001, "root": "/srv/thermite-fixture"},
+                                     "b" * 40, "c" * 64, "fixture-host", None,
+                                     application={"version": "0.1.0.dev0", "digest": "a" * 64})
+        self.system = Mock(spec=System)
+        self.installed = {"transaction": "20261105T101500Z-3f9a2c"}
+        scope = ExitStack()
+        self.addCleanup(scope.close)
+        scope.enter_context(patch.object(upgrade_cli, "AREA", self.site))
+        scope.enter_context(patch.object(steps, "committed_context", return_value=self.context))
+        self.resolve = scope.enter_context(patch.object(changeover, "resolve", return_value=None))
+        self.manifest = scope.enter_context(patch.object(manifest, "installed", return_value=self.installed))
+        self.bridge = scope.enter_context(patch.object(bridge, "needed", return_value=False))
+        self.run = scope.enter_context(patch.object(runner, "run", return_value=0))
+        self.confirm = scope.enter_context(patch.object(runner, "confirm_run", return_value=True))
+        self.unchanged = scope.enter_context(patch.object(changeover, "unchanged", return_value=False))
+        self.transaction = scope.enter_context(patch.object(changeover, "upgrade", return_value=0))
 
-        self.system.run.side_effect = run
-        with ExitStack() as scope:
-            scope.enter_context(patch.object(upgrade_cli, "AREA", self.site))
-            scope.enter_context(patch.object(steps, "committed_context", return_value=self.context))
-            scope.enter_context(patch.object(ownership, "inspect", return_value=ownership.Owned(recorded=True)))
-            scope.enter_context(patch.object(upgrade_cli, "installed", return_value=True))
-            scope.enter_context(patch.object(steps, "plan", return_value=plan))
-            scope.enter_context(patch.object(steps, "upgrade", return_value=sequence))
-            scope.enter_context(patch.object(steps.Preconditions, "check", return_value=Check(True, "fixture")))
-            scope.enter_context(patch.object(steps.Committed, "check", return_value=Check(True, "fixture")))
-            confirm = scope.enter_context(patch.object(runner, "confirm_run", return_value=True))
-            scope.enter_context(patch.object(upgrade_cli, "going_back"))
-            for step in sequence:
-                if isinstance(step, steps.Restart):
-                    scope.enter_context(patch.object(step, "prefetch", return_value=[]))
-                    restart = step
-                    continue
-                if isinstance(step, steps.Backup):
-                    scope.enter_context(patch.object(step, "completed", return_value=False))
-                name = {steps.BootTest: "boot", steps.Deploy: "deploy", steps.NativeReady: "readiness",
-                        steps.Verify: "verify"}.get(type(step))
-                if name:
-                    scope.enter_context(patch.object(step, "check", side_effect=lambda _, name=name:
-                                                    Check(name in completed, "fixture " + name)))
-                    scope.enter_context(patch.object(step, "actions", side_effect=lambda _, name=name:
-                                                    [Task("fixture " + name, lambda _: work(name))]))
-                else:
-                    scope.enter_context(patch.object(step, "check", return_value=Check(True, "fixture current")))
-                    scope.enter_context(patch.object(step, "actions", return_value=[]))
-            code = upgrade_cli.upgrade(self.system, dry_run, when="fixture-stamp")
-        return code, visited, restart, confirm
+    def upgrade(self, dry_run=False, **kwargs):
+        with redirect_stderr(io.StringIO()) as stderr:
+            code = upgrade_cli.upgrade(self.system, dry_run, **kwargs)
+        return code, stderr.getvalue()
 
-    def test_application_only_upgrade_boots_deploys_restarts_once_and_checks_readiness(self):
-        code, visited, restart, confirm = self.workflow()
-        self.assertEqual(code, 0)
-        self.assertEqual(visited, ["boot", "deploy", "restart", "readiness", "verify"])
-        confirm.assert_called_once()
-        self.system.run.assert_called_once()
-        self.assertTrue(restart.runtime_restarted)
-        self.assertTrue(restart.check(self.system).done)
-        self.assertTrue(self.plan().current)
+    def test_a_change_is_one_install_transaction(self):
+        self.assertEqual(self.upgrade(site_before="1" * 40), (0, ""))
+        self.confirm.assert_called_once()
+        self.transaction.assert_called_once_with(self.context, self.system, installed=self.installed,
+                                                 bridged=False, before="1" * 40, first=3)
 
-    def test_dry_run_does_not_deploy_restart_or_request_approval(self):
-        code, visited, restart, confirm = self.workflow(dry_run=True)
-        self.assertEqual(code, 0)
-        self.assertEqual(visited, [])
-        self.assertEqual(self.record["commit"], "d" * 40)
-        self.assertFalse(restart.runtime_restarted)
-        confirm.assert_not_called()
-        self.system.run.assert_not_called()
-        self.assertTrue(any("would" in call.args[0] for call in self.system.say.call_args_list))
+    def test_an_unchanged_version_is_only_checked(self):
+        self.unchanged.return_value = True
+        self.assertEqual(self.upgrade()[0], 0)
+        self.transaction.assert_not_called()
+        self.assertIsInstance(self.run.call_args.args[0][0], steps.Health)
 
-    def test_failed_stage_stops_before_later_deploy_restart_or_readiness(self):
-        order = ["boot", "deploy", "restart", "readiness"]
-        for failed in order:
-            with self.subTest(failed=failed):
-                self.setUp()
-                code, visited, restart, _ = self.workflow(fail=failed)
-                self.assertEqual(code, 7)
-                self.assertEqual(visited, order[:order.index(failed) + 1])
-                if failed == "restart":
-                    self.assertFalse(restart.runtime_restarted)
-                    self.assertTrue(self.plan().restart_runtime, "retry must finish the interrupted restart")
+    def test_an_open_transaction_is_resolved_first_and_nothing_else_runs(self):
+        self.resolve.return_value = changeover.ROLLED_BACK
+        self.assertEqual(self.upgrade()[0], changeover.ROLLED_BACK)
+        self.manifest.assert_not_called()
+        self.transaction.assert_not_called()
+        self.resolve.return_value = None
+        self.upgrade(dry_run=True)
+        self.assertEqual(self.resolve.call_count, 1, "a dry run resolves nothing")
+
+    def test_without_an_installed_manifest_it_refuses(self):
+        self.manifest.return_value = None
+        with patch.object(manifest, "thermite_present", return_value=[deploy.QUADLET]):
+            code, said = self.upgrade()
+        self.assertEqual(code, 2)
+        self.assertIn(manifest.missing_recovery(self.context), said)
+        with patch.object(manifest, "thermite_present", return_value=[]):
+            code, said = self.upgrade()
+        self.assertEqual((code, said), (2, "thermite upgrade: Thermite is not installed on this host yet: "
+                                           "thermite install\n"))
+        self.manifest.side_effect = manifest.ManifestError("/etc/thermite/installed.json is damaged")
+        code, said = self.upgrade()
+        self.assertEqual(code, 2)
+        self.assertIn("is damaged", said)
+        self.transaction.assert_not_called()
+
+    def test_units_json_alone_is_bridged(self):
+        self.manifest.return_value = None
+        self.bridge.return_value = True
+        self.assertEqual(self.upgrade()[0], 0)
+        self.assertTrue(self.transaction.call_args.kwargs["bridged"])
+
+    def test_a_rerun_that_resolves_undoes_its_own_pin_commit_first(self):
+        import oh_source_upgrade
+        arguments = Namespace(dry_run=False, runtime_token_file=None, _run_approved=True, native_timeout=None,
+                              _site_before="1" * 40)
+        order = []
+        self.resolve.side_effect = lambda *args: order.append("resolve") or changeover.ROLLED_BACK
+        with patch.object(oh_source_upgrade, "git", return_value="2" * 40), \
+                patch.object(oh_source_upgrade, "reset_pin",
+                             side_effect=lambda *args, **kwargs: order.append(kwargs) or True), \
+                patch.object(changeover, "open_transaction", return_value="20261105T101500Z-3f9a2c"), \
+                patch("oh_paths.require_compatible"):
+            self.assertEqual(upgrade_cli.host_phase(self.system, arguments), changeover.ROLLED_BACK)
+        self.assertEqual(order, [{"expected": "2" * 40, "previous": "1" * 40}, "resolve"])
 
 
 if __name__ == "__main__":

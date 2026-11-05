@@ -99,7 +99,9 @@ def site_update(command: Path, site: Path, *, expected_head: str | None = None) 
             run("git", "-C", root, "commit", "--only", "-m", "Upgrade Thermite application", "--", *paths)
         clean(root)
     except BaseException:
-        # A completed commit is a recovery point, never history to undo.
+        # Restore our own edits before a commit. A completed commit is
+        # undone only by an install transaction that rolls back
+        # (reset_pin), never here.
         if git(root, "rev-parse", "HEAD") == head:
             for name, previous in saved.items():
                 path = root / name
@@ -123,6 +125,33 @@ def site_update(command: Path, site: Path, *, expected_head: str | None = None) 
                 else:
                     run("git", "-C", root, "rm", "--cached", "--ignore-unmatch", "--", f":(literal){name}")
         raise
+
+
+class PinMoved(ValueError):
+    """The site is no longer at the pin commit a rollback would undo."""
+
+
+def reset_pin(site: Path, *, expected: str, previous: str) -> bool:
+    """Undo the upgrade's pin commit after its install transaction rolled
+    back: move HEAD from `expected` back to `previous` (compare and swap),
+    then put the files that commit changed back as `previous` has them.
+    False when the site is already at `previous`; PinMoved, changing
+    nothing, when anyone else moved it or changed files since."""
+    root = Path(git(site, "rev-parse", "--show-toplevel"))
+    head = git(root, "rev-parse", "HEAD")
+    if head == previous:
+        return False
+    if head != expected:
+        raise PinMoved(f"the site is at {head[:12]}, not the upgrade's pin commit {expected[:12]}")
+    if git(root, "status", "--porcelain", "--untracked-files=no"):
+        raise PinMoved("the site has uncommitted changes")
+    paths = [f":(literal){name}" for name in filter(None, run(
+        "git", "-C", root, "diff", "--name-only", "--no-renames", "-z", previous, expected, capture=True).split("\0"))]
+    run("git", "-C", root, "update-ref", "-m", "thermite upgrade: roll back the application pin",
+        "HEAD", previous, expected)
+    if paths:
+        run("git", "-C", root, "restore", "--source", previous, "--staged", "--worktree", "--", *paths)
+    return True
 
 
 @contextlib.contextmanager

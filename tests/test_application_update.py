@@ -124,8 +124,7 @@ class ApplicationUpdate(fixtures.ApplicationFixture):
 
     def test_damaged_retained_candidate_is_never_reused_or_selected(self):
         self.fail = "upgrade"
-        with self.assertRaises(subprocess.CalledProcessError):
-            self.apply(source=self.source)
+        self.assertEqual(self.apply(source=self.source), 1, "the host phase's outcome is the exit status")
         environment = next((self.home / ".local/share/thermite/application").glob("environment-*"))
         (environment / "runtime/bin/thermite").write_text("changed after staging\n")
         self.fail = None
@@ -199,8 +198,7 @@ class ApplicationUpdate(fixtures.ApplicationFixture):
         self.launcher.write_bytes(content)
         self.launcher.chmod(0o755)
         self.fail = "upgrade"
-        with self.assertRaises(subprocess.CalledProcessError):
-            self.apply(source=self.source)
+        self.assertEqual(self.apply(source=self.source), 1, "the host phase's outcome is the exit status")
         self.assertFalse(self.launcher.is_symlink())
         self.assertEqual(self.launcher.read_bytes(), content)
 

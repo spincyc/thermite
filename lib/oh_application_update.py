@@ -68,6 +68,28 @@ print(json.dumps({'root': str(root), 'digest': release['digest'], 'application':
 """
 
 
+class Transacted(Exception):
+    """The upgrade's host phase ran its install transaction to an outcome
+    other than a commit: it said what happened; nothing is resumed."""
+
+    MESSAGES = {
+        1: "Nothing of Thermite was changed; the previous owner command stays selected.",
+        2: "Nothing of Thermite was changed; the previous owner command stays selected.",
+        3: "The upgrade rolled back: the previous version runs again, and the previous owner command stays "
+           "selected.",
+        4: "The upgrade rolled back: the previous version runs again, but its health does not pass (above). "
+           "The previous owner command stays selected.",
+        5: "The rollback did not finish: Thermite stays stopped. Run {command} again to finish it.",
+        130: "Interrupted: run {command} again; it rolls back the unfinished transaction first.",
+    }
+
+    def __init__(self, code: int, site: Path):
+        super().__init__(code)
+        self.code = code
+        command = shlex.join(["thermite", "upgrade", "--config", str(site)])
+        self.message = self.MESSAGES.get(code, self.MESSAGES[1]).format(command=command)
+
+
 class Downgrade(ValueError):
     """The selected release is older than the one the site already pins."""
 
@@ -448,7 +470,16 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
             command = environment / "bin/thermite"
             transaction.site_update(command, site, expected_head=site_head)
             committed = transaction.clean(site_root)
-            host(command, operation, "--config", site, "--_host-phase", "--_run-approved", *forwarded)
+            if operation == "upgrade":
+                # The host phase undoes the pin commit itself if its install
+                # transaction rolls back or never begins.
+                try:
+                    host(command, operation, "--config", site, "--_host-phase", "--_run-approved",
+                         "--_site-before", site_head, *forwarded)
+                except subprocess.CalledProcessError as exc:
+                    raise Transacted(exc.returncode, site) from None
+            else:
+                host(command, operation, "--config", site, "--_host-phase", "--_run-approved", *forwarded)
             if transaction.clean(site_root) != committed:
                 raise ValueError("the site revision changed during host verification")
             unchanged_source(source, source_head, release_digest)
@@ -469,7 +500,16 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
                     temporary.unlink(missing_ok=True)
         except Downgrade:
             raise
+        except Transacted as outcome:
+            say(outcome.message)
+            return outcome.code
         except BaseException:
+            from oh_install import changeover
+            if operation == "upgrade" and changeover.open_transaction(site / "var"):
+                say("The run stopped with an install transaction open. Run "
+                    + shlex.join(["thermite", "upgrade", "--config", str(site)])
+                    + " again: it rolls the transaction back first, then stops.")
+                raise
             say("The run stopped; the previous owner command and application environments are retained. "
                 "A completed site release commit is retained so the same command can resume.")
             resume = ["thermite", operation, "--config", str(site)]

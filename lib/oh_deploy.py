@@ -1897,6 +1897,11 @@ HISTORY_DETAILS = ("conf_digest", "application", "changes", "metrics_kept", "rel
 #: A completed gateway activation's line, written by the install or upgrade
 #: that activated it (oh_install.access.Gateway): {"event": "gateway", ...}.
 GATEWAY_EVENT = ("at", "by", "commit", "application", "release", "previous_release", "backup")
+#: An install transaction that rolled back, written by the upgrade that
+#: rolled it back (oh_install.changeover): {"event": "rolled-back", ...}.
+#: `commit` is the site commit the transaction deployed, `restored` the
+#: one deployed again.
+ROLLBACK_EVENT = ("at", "by", "transaction", "commit", "restored")
 #: The journal identifier of a deploy's start and end lines: journalctl -t thermite-deploy.
 JOURNAL_TAG = "thermite-deploy"
 
@@ -2001,6 +2006,20 @@ def record_gateway(layout: State, event: dict) -> dict:
     return line
 
 
+def record_rollback(layout: State, event: dict) -> dict:
+    """Append an install transaction that rolled back to the history:
+    thermite history shows it with the deploy it undid."""
+    if set(event) != {"transaction", "commit", "restored"}:
+        raise DeployError("a rollback history event names the transaction, its commit and the commit restored")
+    if (not re.fullmatch(r"\d{8}T\d{6}Z-[0-9a-f]{6}", str(event["transaction"]))
+            or not _COMMIT.match(str(event["commit"]))
+            or event["restored"] is not None and not _COMMIT.match(str(event["restored"]))):
+        raise DeployError("a rollback history event names a transaction id and full site commits")
+    line = {"event": "rolled-back", "at": _now(), "by": getpass.getuser(), **event}
+    _shared_write(layout.history, json.dumps(line, sort_keys=True) + "\n", append=True)
+    return line
+
+
 def history(layout: State, count: int = 10) -> list[str]:
     try:
         return layout.history.read_text(encoding="utf-8").splitlines()[-count:]
@@ -2043,7 +2062,8 @@ def deploys(layout: State) -> list[dict]:
     say and deployed.json is not about that deploy), how (deploy, install,
     upgrade or rollback), subject, current: the one deployed now, and what
     newer lines recorded: HISTORY_DETAILS, and gateway, the gateway
-    activations (GATEWAY_EVENT) recorded after that commit's deploy."""
+    activations (GATEWAY_EVENT) recorded after that commit's deploy, and
+    rolled_back, the install transactions (ROLLBACK_EVENT) that undid it."""
     try:
         lines = layout.history.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
@@ -2057,6 +2077,10 @@ def deploys(layout: State) -> list[dict]:
             owner = next((entry for entry in reversed(entries) if entry["commit"] == value["commit"]), None)
             if owner is not None:
                 owner.setdefault("gateway", []).append({key: value.get(key) for key in GATEWAY_EVENT})
+        elif value["event"] == "rolled-back":
+            owner = next((entry for entry in reversed(entries) if entry["commit"] == value["commit"]), None)
+            if owner is not None:
+                owner.setdefault("rolled_back", []).append({key: value.get(key) for key in ROLLBACK_EVENT})
     now = (record.get("commit"), record.get("deployed_at"))
     current = next((i for i in range(len(entries) - 1, -1, -1)
                     if (entries[i]["commit"], entries[i]["deployed_at"]) == now), None)

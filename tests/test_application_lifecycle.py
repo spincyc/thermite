@@ -6,13 +6,11 @@ import io
 import json
 import os
 from pathlib import Path
-import shlex
 import signal
 import subprocess
 import sys
 import tarfile
 import time
-from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -25,7 +23,7 @@ import oh_package  # noqa: E402
 import oh_release  # noqa: E402
 import oh_source_upgrade as transaction  # noqa: E402
 from oh_cli import install as install_cli, upgrade as upgrade_cli  # noqa: E402
-from oh_install import ownership, steps  # noqa: E402
+from oh_install import manifest, ownership, steps  # noqa: E402
 
 #: The release the owner runs now; its launcher drives the next upgrade.
 INSTALLED = "feac59d"
@@ -213,17 +211,16 @@ class Lifecycle(fixtures.ApplicationFixture):
                 if warned:
                     self.assertIn(str(self.launcher.parent), warning[0])
 
-    def test_resume_names_the_fetched_commit_and_forwarded_options(self):
+    def test_a_failed_upgrade_says_its_outcome_and_forwards_options(self):
         transaction.git(self.source, "branch", "-m", "main")
-        commit = transaction.clean(self.source)
         self.fail = "upgrade"
-        with patch.object(application, "OFFICIAL_SOURCE", str(self.source)), \
-                self.assertRaises(subprocess.CalledProcessError):
-            self.apply(host_args=("--native-timeout", "1200"))
+        with patch.object(application, "OFFICIAL_SOURCE", str(self.source)):
+            self.assertEqual(self.apply(host_args=("--native-timeout", "1200")), 1)
         child = next(args for args in self.calls if args[1:2] == ("upgrade",))
         self.assertEqual(child[-2:], ("--native-timeout", "1200"))
-        resume = next(line for line in self.said if line.startswith("Resume: "))
-        self.assertEqual(resume.split()[-4:], ["--revision", commit, "--native-timeout", "1200"])
+        self.assertIn(application.Transacted.MESSAGES[1], self.said)
+        self.assertFalse(any(line.startswith("Resume: ") for line in self.said),
+                         "the host phase undid its pin; a rerun upgrades afresh")
 
     def test_old_launcher_cannot_silently_repin_an_older_release(self):
         old = oh_release.manifest(self.old)["digest"]
@@ -337,31 +334,6 @@ class Lifecycle(fixtures.ApplicationFixture):
             self.assertTrue(any(line.startswith("No host plan is shown") for line in self.said))
         self.assertFalse((self.home / ".local/share").exists())
 
-    def test_failed_upgrade_recovery_returns_the_pin_and_runs_the_previous_cached_release(self):
-        previous = json.loads((self.site / "thermite-site.json").read_text())["release"]
-        current = oh_release.manifest(self.new)
-        (self.site / "thermite-site.json").write_text(json.dumps(
-            {"version": 2, "application": current["application"], "release": current["digest"]}))
-        transaction.git(self.repo, "commit", "-qam", "Upgrade Thermite application")
-        pin = transaction.clean(self.repo)
-        said = []
-        system = Mock()
-        system.say.side_effect = said.append
-        backup = Mock()
-        backup.completed.return_value = False
-        context = SimpleNamespace(area=self.site, application={"digest": current["digest"]}, var=self.site / "var")
-        upgrade_cli.going_back(system, context, backup, self.before, "fixture")
-        text = "\n".join(said)
-        site = shlex.quote(str(self.site))
-        self.assertIn(f"git -C {site} revert --no-edit {pin[:12]}", text)
-        self.assertIn(f"python3 {shlex.quote(str(self.site / 'var/application-releases' / previous / 'bin/thermite'))} "
-                      f"install --config {site}", text)
-        self.assertNotIn("git switch", text)
-        self.assertIn("docs/installation.md#update-or-remove", text)
-        said.clear()
-        upgrade_cli.going_back(system, context, backup, pin, "fixture")
-        self.assertIn(f"revert --no-edit {pin[:12]}..HEAD", "\n".join(said))
-
 
 class Commands(unittest.TestCase):
     def test_native_timeout_and_downgrade_reach_the_outer_and_host_phases(self):
@@ -398,9 +370,11 @@ class Commands(unittest.TestCase):
         system.login.return_value = "fixture"
         with patch.object(steps, "committed_context", return_value=context), \
                 patch.object(steps, "install_preflight", side_effect=capture), \
-                patch.object(ownership, "inspect", side_effect=capture):
+                patch.object(ownership, "inspect", side_effect=capture), \
+                patch.object(manifest, "installed", return_value={"transaction": "fixture"}), \
+                patch.object(steps, "Preconditions", side_effect=capture):
             for call in (lambda: install_cli.install(system, True, native_timeout=1200),
-                         lambda: upgrade_cli.upgrade(system, True, "fixture", native_timeout=1500),
+                         lambda: upgrade_cli.upgrade(system, True, native_timeout=1500),
                          lambda: install_cli.install(system, True)):
                 with self.assertRaises(Seen):
                     call()

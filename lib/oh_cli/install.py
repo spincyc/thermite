@@ -139,6 +139,16 @@ def approve(system: System, context: steps.Context, clean: bool) -> bool:
     return runner.confirm_run(system, "clean install" if clean else "install")
 
 
+def refuse_open(system: System, dry_run: bool) -> bool:
+    """An upgrade's install transaction that has not finished comes first."""
+    from oh_install import changeover
+    pending = changeover.open_transaction(AREA / "var")
+    if pending and not dry_run:
+        system.say(f"An upgrade's install transaction, {pending}, has not finished: run "
+                   f"{changeover.upgrade_command(AREA)} first; it commits or rolls it back.")
+    return bool(pending) and not dry_run
+
+
 def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token_file: Path | None = None,
             restart_runtime: bool = False, run_approved: bool = False, native_timeout: int | None = None) -> int:
     if clean and runtime_token_file is not None:
@@ -151,6 +161,8 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
                    "then rerun: the site must be validated before any host changes.")
         if dry_run:
             runner.run([steps.Packages()], system, AREA, dry_run=True)
+        return 2
+    if refuse_open(system, dry_run):
         return 2
     context = steps.committed_context(AREA, system, runtime_token_file)
     if native_timeout is not None:

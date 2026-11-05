@@ -155,10 +155,13 @@ class SourceUpgrade(ApplicationFixture):
                 self.assertEqual(self.launcher.resolve(), self.old / "bin/thermite")
                 self.assertFalse(any(args[1:2] == ("upgrade",) for args in self.calls))
 
-    def test_runtime_failure_retains_candidate_and_same_command_can_resume(self):
+    def test_a_failed_host_phase_keeps_the_candidate_and_the_same_command_reuses_it(self):
+        # The host phase's install transaction undoes its own pin commit when
+        # it rolls back; this fixture's host phase only fails.
         self.fail = "upgrade"
-        with self.assertRaises(subprocess.CalledProcessError):
-            self.execute()
+        self.assertEqual(self.execute(), 1)
+        host = next(args for args in self.calls if args[1:2] == ("upgrade",))
+        self.assertEqual(host[host.index("--_site-before") + 1], self.before)
         committed = update.clean(self.repo)
         self.assertNotEqual(committed, self.before)
         self.assertEqual(self.launcher.resolve(), self.old / "bin/thermite")

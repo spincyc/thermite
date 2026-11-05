@@ -76,6 +76,9 @@ def kept(context: steps.Context, purge: bool) -> str:
 
 
 def uninstall(system: System, dry_run: bool, purge: bool) -> int:
+    from oh_cli.install import refuse_open
+    if refuse_open(system, dry_run):
+        return 2
     versions, host = deploy.load(AREA)
     context = steps.Context(AREA, versions, host, "", "", system.hostname(), system.address())
     what = "uninstalling and purging" if purge else "uninstalling"

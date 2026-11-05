@@ -27,7 +27,9 @@ runtime answers, the HTTPS application's address on the port
 instance/host.yaml sets (and whether the installed gateway still serves
 another), the plain-HTTP Guest addresses instance/host.yaml opens,
 Grafana's address on the LAN and whether it answers, Prometheus' scrape
-targets (up of all), and the last deploys (thermite history lists more).
+targets (up of all), the install transaction that installed this version
+and any upgrade transaction that has not finished, and the last deploys
+(thermite history lists more).
 """
 
 EXAMPLES = (
@@ -42,7 +44,8 @@ exit status:
      its services and runtime are up
   1  nothing is deployed, HEAD is not what is deployed, a deployed file or
      unit differs or is missing, a service is not active, runtime does not
-     answer, or the installed gateway serves HTTPS on another port
+     answer, the installed gateway serves HTTPS on another port, or an
+     upgrade's install transaction has not finished
   2  a wrong switch, or the host file or deploy record cannot be read
 """
 
@@ -102,6 +105,30 @@ def show_guest(host: dict, report: dict, say) -> None:
     report["guest_http"] = [url + "/" for url in guest.origins(settings)] if settings else []
     for url in report["guest_http"]:
         say(f"guest    {url}: Guest controls over plain HTTP, for {', '.join(settings['clients'])}")
+
+
+def show_transaction(host: dict, report: dict, say, problems: list[str], *, manifest: Path | None = None) -> None:
+    """The install transaction that installed this version, from the
+    installed manifest (`manifest`, by default the system's), and an
+    upgrade's transaction that has not finished."""
+    import json
+    from oh_install import changeover, engine
+    root = deploy.installation(host).root
+    try:
+        installed = json.loads((manifest or Path("/") / engine.MANIFEST).read_text())
+    except (OSError, ValueError):
+        installed = None
+    if isinstance(installed, dict) and isinstance(installed.get("transaction"), str):
+        report["transaction"] = {"installed": installed["transaction"], "at": installed.get("committed_at"),
+                                 "kept": f"{root}/.transaction/{installed.get('kept')}"}
+        say(f"install  transaction {installed['transaction']} committed {installed.get('committed_at')}; "
+            f"the version before it is set aside in {root}/.transaction/{installed.get('kept')}")
+    pending = changeover.open_transaction(AREA / "var")
+    report["open_transaction"] = pending
+    if pending:
+        problems.append(f"upgrade transaction {pending} has not finished")
+        say(f"upgrade  transaction {pending} has not finished: {changeover.upgrade_command(AREA)} commits or "
+            "rolls it back, then stops")
 
 
 def _quiet(*_args, **_kwargs) -> None:
@@ -179,6 +206,7 @@ def show(args, host: dict) -> int:
     say(f"runtime  {url}: " + (f"runtime {version} answers; from the LAN: {lan}" if version else "not answering"))
     show_gateway(host, report, say, problems)
     show_guest(host, report, say)
+    show_transaction(host, report, say, problems)
     show_metrics(host, report=report if as_json else None)
     entries = deploy.deploys(layout)
     report["deploys"] = len(entries)

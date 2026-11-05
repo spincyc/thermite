@@ -92,7 +92,7 @@ def compensate(system: System, area: Path, stopped: dict[str, None], rerun: str,
 
 
 def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = False, first: int = 1,
-        rerun: str = RERUN, root_confirmed: bool = False) -> int:
+        rerun: str = RERUN, root_confirmed: bool = False, transactional: bool = False) -> int:
     """0 once every step is done. A dry run only reads: it reports each
     step and lists what it would run. Steps are numbered from `first`;
     `rerun` tells the owner how to go on after a stop. `root_confirmed` is
@@ -100,8 +100,13 @@ def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = Fa
 
     Units a command stopped (Command.stops) and no later command started
     again (Command.starts) are started once more when the run fails, and
-    named when it is interrupted."""
+    named when it is interrupted. Inside an install transaction
+    (`transactional`) nothing is started again: the transaction's rollback
+    puts the previous version back and starts it."""
     stopped: dict[str, None] = {}
+    if transactional:
+        return _run(steps, system, area, dry_run=dry_run, first=first, rerun=rerun,
+                    root_confirmed=root_confirmed, stopped=stopped)
     try:
         status = _run(steps, system, area, dry_run=dry_run, first=first, rerun=rerun,
                       root_confirmed=root_confirmed, stopped=stopped)

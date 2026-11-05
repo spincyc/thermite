@@ -841,21 +841,29 @@ versions.json; commit desired changes there before running this command.
 
 One approval covers fetching and validating the application, preparing its
 private Python environment, validating and committing the site release pin,
-then updating native runtime and helper services, monitoring, the HTTPS gateway,
-policy worker, verified callbacks and identity schema. No pip, manual pin commit,
-access staging or separate migration command is needed. Existing authority,
-accounts, credentials and TLS certificates are preserved. Gateway and worker
-are stopped before the complete identity backup and any schema migration.
+then installing the new version as one install transaction: native runtime
+and helper services, monitoring, the HTTPS gateway, policy worker, verified
+callbacks and identity schema. Existing authority, accounts, credentials and
+TLS certificates are preserved.
 
-The previous owner command remains selected until every readiness check passes.
-An interrupted run retains its candidate, site commit, prior release and backup;
-rerun the printed Resume command, which names the fetched commit. Ctrl-C lets
-the running step stop its own commands first. Meanwhile the previous owner
-command runs site commands with the site&#x27;s pinned release, verified from its
-var/application-releases. Previous releases do not undo schema changes, and
-upgrade refuses to pin a release older than the site&#x27;s unless --allow-downgrade
-is given after deliberate recovery. --native-timeout sets the one native
-readiness allowance (300-7200 seconds).
+Everything that can be done while Thermite runs is done first: configuration,
+packages, the boot test, pulling the pinned images and checking there is room
+to set the installed version aside; too little room refuses before anything
+stops. Then the install engine, as root, keeps thermite.target from booting,
+Thermite stops and the installed version is set aside. The new version is
+installed and started; only when its health passes does the transaction
+commit. Any failure from there rolls back in the same run: the installed
+version, its files and state as they were, runs again, and the site&#x27;s pin
+commit is undone. The previous version stays set aside until the next
+upgrade commits.
+
+The previous owner command remains selected until the transaction commits.
+If a run is interrupted, or its rollback cannot finish, the next thermite
+upgrade first finishes or rolls back that transaction, then stops and says
+so; thermite status names it. Previous releases do not undo schema changes,
+and upgrade refuses to pin a release older than the site&#x27;s unless
+--allow-downgrade is given after deliberate recovery. --native-timeout sets
+the one native readiness allowance (300-7200 seconds).
 
 --dry-run changes nothing and does not fetch: the remote revision and its exact
 host differences remain unknown until an approved run. When the site pins the
@@ -885,15 +893,18 @@ switches every verb takes:
   --no-color                    no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
-  0  complete and verified
-  1  declined or a step failed
+  0  committed and verified, or nothing differed and the installed version verified
+  1  declined, refused before anything stopped, or a check failed
   2  invalid inputs, an older release without --allow-downgrade, missing
-     installation, or run as root
-  130  interrupted; the running step stopped its own commands first
+     installation or manifest, or run as root
+  3  rolled back: the installed version runs again and its health passes
+  4  rolled back, but the reinstated version&#x27;s health does not pass; it keeps running
+  5  the rollback did not finish: Thermite stays stopped; run thermite upgrade again
+  130  interrupted; thermite upgrade rolls the open transaction back first
 
 examples:
   thermite upgrade -n               what upgrading would do here; runs nothing
-  thermite upgrade                  upgrade, asking once for the whole run; safe to rerun
+  thermite upgrade                  upgrade, asking once for the whole run; rolls back by itself on failure
 </pre>
 </section>
 <section class="verb" id="uninstall"><h3><code>thermite uninstall</code></h3><p>Stop thermite here and remove its units; --purge deletes its state.</p><pre class="help">usage: thermite uninstall [-h] [--config DIR] [-n] [--purge]
@@ -1039,7 +1050,9 @@ runtime answers, the HTTPS application&#x27;s address on the port
 instance/host.yaml sets (and whether the installed gateway still serves
 another), the plain-HTTP Guest addresses instance/host.yaml opens,
 Grafana&#x27;s address on the LAN and whether it answers, Prometheus&#x27; scrape
-targets (up of all), and the last deploys (thermite history lists more).
+targets (up of all), the install transaction that installed this version
+and any upgrade transaction that has not finished, and the last deploys
+(thermite history lists more).
 
 options:
   -h, --help            show this help message and exit
@@ -1058,7 +1071,8 @@ exit status:
      its services and runtime are up
   1  nothing is deployed, HEAD is not what is deployed, a deployed file or
      unit differs or is missing, a service is not active, runtime does not
-     answer, or the installed gateway serves HTTPS on another port
+     answer, the installed gateway serves HTTPS on another port, or an
+     upgrade&#x27;s install transaction has not finished
   2  a wrong switch, or the host file or deploy record cannot be read
 
 examples:
@@ -1083,8 +1097,9 @@ thermite rollback deploys the one before it.
 (~) and removed (-) in each tree, what became of the reloads and restarts
 they asked for, the state backup an upgrade took first, and each HTTPS
 gateway release an install or upgrade then activated, with the release it
-replaced and the identity backup taken before migrating. --json has all of
-it, with up to 50 paths of each kind per tree and exact counts.
+replaced and the identity backup taken before migrating, and each upgrade
+that rolled it back. --json has all of it, with up to 50 paths of each kind
+per tree and exact counts.
 
 Deploys from before the history recorded the boot test show ? there,
 except the one deployed now, which deployed.json describes; older deploys

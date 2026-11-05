@@ -152,6 +152,8 @@ class UnitWatch:
             return f"{self.name} restarted {restarted} times during this wait (crash loop); {hint}"
         return None
 ACTIVE = ("active", "activating", "reloading", "deactivating")
+#: The install engine's transactions, in the installation root.
+TRANSACTIONS = ".transaction"
 #: Ends the name of a backup that holds Grafana's data, before .tar.gz.
 GRAFANA_TAG = "-grafana"
 
@@ -1155,12 +1157,13 @@ def service_receipt(context: Context, system: System) -> bool:
 
 
 def installation_owned(context: Context, system: System) -> bool:
-    """The installation root holds nothing but its two fixed children."""
+    """The installation root holds nothing but its two fixed children and
+    the install engine's transactions."""
     top = context.installation.root
     if system.stat(top) is None:
         return not system.lexists(top)
     names = system.directory_entries(top)
-    return names is not None and set(names) <= {deploy.RUNTIME, deploy.ACCESS}
+    return names is not None and set(names) <= {deploy.RUNTIME, deploy.ACCESS, TRANSACTIONS}
 
 
 def state_owned(context: Context, system: System) -> bool:
@@ -2301,6 +2304,62 @@ def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
 
 # --------------------------------------------------------------------------
 # thermite uninstall
+
+
+class AppArmorService(Step):
+    """AppArmor's own service, enabled before an install transaction
+    begins: it is the host's, never one of the transaction's items."""
+
+    title = "AppArmor service"
+
+    def check(self, system: System) -> Check:
+        if not oh_apparmor.enabled(system):
+            return Check(True, "kernel AppArmor disabled")
+        unit = system.unit("apparmor.service")
+        return Check(unit.active == "active" and unit.enabled == "enabled", "apparmor.service enabled and running")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Command(("systemctl", "enable", "--now", "apparmor.service"), root=True)]
+
+
+class Halt(Quiesce):
+    """Stop all of Thermite inside an install transaction, whatever changes:
+    the engine sets the version aside only once nothing of it runs."""
+
+    title = "Stop Thermite"
+
+    def check(self, system: System) -> Check:
+        running = self.running(system)
+        if not running:
+            return Check(True, f"nothing in {oh_units.SLICE} runs")
+        return Check(False, f"to stop {oh_units.TARGET} and {oh_units.SLICE} ({', '.join(running)})")
+
+
+class StartTarget(Step):
+    """Start thermite.target inside an install transaction. The boot guard
+    keeps it disabled; the commit enables it."""
+
+    title = "Start Thermite"
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def check(self, system: System) -> Check:
+        return Check(system.unit(oh_units.TARGET).active == "active", f"{oh_units.TARGET} running")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Command(("systemctl", "start", oh_units.TARGET), root=True)]
+
+
+class Health(Verify):
+    """The gate an install transaction commits on: health --production
+    --installation, whose exit status counts configuration errors, missing
+    add-ons and failed monitoring or entry points, never device warnings."""
+
+    title = "Health of the new version"
+
+    def actions(self, system: System) -> list[Action]:
+        return super().actions(system)[:1]
 
 
 def boundary_owned(system: System) -> bool | None:
