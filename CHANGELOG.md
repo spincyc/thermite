@@ -18,16 +18,17 @@ rollback. The unified deployment workflow uses a separate committed private site
   failure from begin on rolls back in the same run: the previous version runs
   again, the site's pin commit is undone, `thermite history` shows "rolled
   back", and the owner command is switched only after a commit. Exit statuses
-  say how it ended: 0 committed, 1 refused, 3 rolled back, 4 rolled back but
-  unhealthy, 5 rollback stuck, 130 interrupted. Any command that runs a
-  transaction first finishes or rolls back an unfinished one, then stops
-  and says so; `thermite status` reports one and names the command. The
-  first transaction describes an installation from before the engine from
-  `/etc/thermite/units.json`; Thermite's files without either manifest are
-  refused, before anything stops, with the recovery steps
-  (docs/installation.md#a-missing-manifest). A rollback stuck after the
-  engine's commands were run by hand (`rollback --print`) is closed by
-  rerunning the command, which checks what is back.
+  say how it ended: 0 committed, 1 refused, 2 not started (Thermite's files
+  without a manifest, nothing to roll back or revert to, invalid
+  arguments), 3 rolled back, 4 rolled back but unhealthy, 5 rollback stuck,
+  130 interrupted. Any command that runs a transaction first finishes or
+  rolls back an unfinished one, then stops and says so; `thermite status`
+  reports one and names the command. The first transaction describes an
+  installation from before the engine from `/etc/thermite/units.json`;
+  Thermite's files without either manifest are refused, before anything
+  stops, with the recovery steps (docs/installation.md#a-missing-manifest).
+  A rollback stuck after the engine's commands were run by hand (`rollback
+  --print`) is closed by rerunning the command, which checks what is back.
 - `thermite install` is the same install transaction, and so is `install
   --clean`: after you type the state path, it moves the state trees under
   `runtime/` aside whole and clears the deploy records and local credential
