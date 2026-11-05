@@ -16,7 +16,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_apparmor  # noqa: E402
 import oh_deploy as deploy  # noqa: E402
 import oh_units  # noqa: E402
-from oh_install import engine, ingress, manifest, ownership, steps  # noqa: E402
+from oh_install import changeover, engine, ingress, manifest, ownership, steps  # noqa: E402
 from oh_install.model import Step  # noqa: E402
 from oh_install.system import Stat, System  # noqa: E402
 from tests.test_deploy import HOST, VERSIONS  # noqa: E402
@@ -42,7 +42,7 @@ def system(*, apparmor=True, present=()):
 
 def declared(apparmor=True, present=()):
     ctx = context()
-    return {item.path: item for item in manifest.desired(steps.install(ctx, preflight=False),
+    return {item.path: item for item in manifest.desired(changeover.switching(ctx, None),
                                                          system(apparmor=apparmor, present=present), ROOT)}
 
 

@@ -61,78 +61,16 @@ def perform(action: Action, system: System, area: Path, rerun: str = RERUN, *,
         _TASK_APPROVAL.reset(approval)
 
 
-def compensate(system: System, area: Path, stopped: dict[str, None], rerun: str, *,
-               root_confirmed: bool, interrupted: bool = False) -> None:
-    """Start what this run stopped, after a failure before its own restart.
-
-    The install stops all of Thermite before it changes anything, and
-    records thermite.target as stopped until the step that starts it again;
-    a failure between them would otherwise leave the house without
-    automation until a rerun. Starting the target starts every member. An
-    interruption runs nothing more: it names the command instead.
-    """
-    names = list(stopped)
-    if not names:
-        return
-    command = Command(("systemctl", "start", *names), root=True)
-    them = "it" if len(names) == 1 else "them"
-    if interrupted:
-        system.say(f"This run stopped {', '.join(names)} and did not start {them} again. "
-                   f"To restore service before rerunning: {command.shown()}")
-        return
-    system.say(f"This run stopped {', '.join(names)} and failed before starting {them} again; "
-               f"starting {them} now so the house keeps its automation.")
-    code = perform(command, system, area, rerun, root_confirmed=root_confirmed)
-    if code == 0:
-        stopped.clear()
-        system.say(f"Started {', '.join(names)} again. The installation is still incomplete. " + rerun)
-    else:
-        system.say(f"Could not start {them} again (exit status {code}); fix the reported cause, then run "
-                   f"{command.shown()} or rerun.")
-
-
 def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = False, first: int = 1,
-        rerun: str = RERUN, root_confirmed: bool = False, transactional: bool = False) -> int:
+        rerun: str = RERUN, root_confirmed: bool = False) -> int:
     """0 once every step is done. A dry run only reads: it reports each
     step and lists what it would run. Steps are numbered from `first`;
     `rerun` tells the owner how to go on after a stop. `root_confirmed` is
     only for a caller that already obtained approval for this run.
 
-    Units a command stopped (Command.stops) and no later command started
-    again (Command.starts) are started once more when the run fails, and
-    named when it is interrupted. Inside an install transaction
-    (`transactional`) nothing is started again: the transaction's rollback
-    puts the previous version back and starts it."""
-    stopped: dict[str, None] = {}
-    if transactional:
-        return _run(steps, system, area, dry_run=dry_run, first=first, rerun=rerun,
-                    root_confirmed=root_confirmed, stopped=stopped)
-    try:
-        status = _run(steps, system, area, dry_run=dry_run, first=first, rerun=rerun,
-                      root_confirmed=root_confirmed, stopped=stopped)
-    except KeyboardInterrupt:
-        compensate(system, area, stopped, rerun, root_confirmed=root_confirmed, interrupted=True)
-        raise
-    except BaseException:
-        compensate(system, area, stopped, rerun, root_confirmed=root_confirmed)
-        raise
-    if status:
-        compensate(system, area, stopped, rerun, root_confirmed=root_confirmed)
-    return status
-
-
-def _record(action: Action, code: int | None, stopped: dict[str, None]) -> None:
-    if not isinstance(action, Command):
-        return
-    # A failed stop may still have stopped some units; starting is idempotent.
-    stopped.update(dict.fromkeys(action.stops))
-    if code == 0:
-        for name in action.starts:
-            stopped.pop(name, None)
-
-
-def _run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool, first: int,
-         rerun: str, root_confirmed: bool, stopped: dict[str, None]) -> int:
+    Nothing is started again after a failure: every step that stops
+    Thermite runs inside an install transaction, whose rollback puts the
+    previous version back and starts it."""
     status = 0
     for number, step in enumerate(steps, first):
         label = f"{number}. {step.title}"
@@ -161,7 +99,6 @@ def _run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool, fi
             failed = 0
             for action in step.actions(system):
                 code = perform(action, system, area, rerun, root_confirmed=root_confirmed)
-                _record(action, code, stopped)
                 if code is None:
                     display.finish("STOP", "owner input required or declined")
                     return 1

@@ -22,7 +22,6 @@ import oh_ports
 import oh_metrics as metrics
 from oh_install import manifest, ownership, progress
 from oh_install.access import Gateway
-from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
 from oh_install.model import Action, Check, Command, ReadinessStep, Step, Task
 from oh_install.system import System
 
@@ -777,14 +776,12 @@ class NativeListeners(Step):
         running = system.unit("thermite-openhab.service").active not in ("inactive", "failed", "unknown")
         actions: list[Action] = []
         if running:
-            actions.append(Command(("systemctl", "stop", "thermite-openhab.service"), root=True,
-                                   stops=("thermite-openhab.service",)))
+            actions.append(Command(("systemctl", "stop", "thermite-openhab.service"), root=True))
         actions.append(Command(("python3", str(PROGRAM / "lib/oh_ports.py"),
                                 str(self.context.layout.userdata), "--http-port", str(self.context.host["http_port"]),
                                 "--uid", str(self.context.host["uid"]), "--gid", str(self.context.host["gid"])), root=True))
         if running:
-            actions.append(Command(("systemctl", "start", "thermite-openhab.service"), root=True,
-                                   starts=("thermite-openhab.service",)))
+            actions.append(Command(("systemctl", "start", "thermite-openhab.service"), root=True))
         return actions
 
 
@@ -819,16 +816,14 @@ class PairingLogging(Step):
             actions.append(Command(application(self.context, "sandbox", "fetch")))
         running = system.unit("thermite-openhab.service").active not in ("inactive", "failed", "unknown")
         if running:
-            actions.append(Command(("systemctl", "stop", "thermite-openhab.service"), root=True,
-                                   stops=("thermite-openhab.service",)))
+            actions.append(Command(("systemctl", "stop", "thermite-openhab.service"), root=True))
         PROGRAM = self.context.program
         actions.append(Command(("python3", str(PROGRAM / "lib" / "oh_logging.py"),
                                 str(self.context.layout.userdata), "--http-port", str(self.context.host["http_port"]),
                                 "--template", str(self.template), "--uid", str(self.context.host["uid"]),
                                 "--gid", str(self.context.host["gid"])), root=True))
         if running:
-            actions.append(Command(("systemctl", "start", "thermite-openhab.service"), root=True,
-                                   starts=("thermite-openhab.service",)))
+            actions.append(Command(("systemctl", "start", "thermite-openhab.service"), root=True))
         return actions
 
 
@@ -955,72 +950,6 @@ class Units(Step):
         return 0
 
 
-class Quiesce(Step):
-    """Stop all of Thermite before anything it runs on changes.
-
-    Every service then starts on the new units, state and listener ports,
-    never beside an old one that still holds a port or a file it needs. A
-    run that changes none of them stops nothing. The later steps start each
-    service again and the target last; a failed run starts the target.
-    """
-    title = "Stop Thermite before changes"
-    #: What runs while Thermite does. The slice holds every service, so it
-    #: is the authority; the names say what still runs.
-    UNITS = (oh_units.TARGET, oh_units.SLICE, *oh_units.DAEMONS, *oh_units.RESTART_PATHS,
-             *oh_units.RESTART_SERVICES)
-
-    def __init__(self, context: Context):
-        self.context = context
-
-    def changes(self, system: System) -> list[str]:
-        """What this run changes that a running service uses or holds.
-
-        Starting a stopped service, enabling a path unit or the target, an
-        explicit fresh runtime start and the gateway's own restaging (new
-        certificate, credential or repair) change nothing the others run on.
-        """
-        changes = []
-        if Units(self.context).stale(system):
-            changes.append("service units")
-        if not NativePreparation(self.context).check(system).done:
-            changes.append("openHAB's native state")
-        if not NativeIngress(self.context).current(system):
-            changes.append("the native-port firewall")
-        if not Deploy(self.context).check(system).done:
-            changes.append("the deployment")
-        if any(step.plan(system)[1] for step in (Services(self.context), MetricsServices(self.context))):
-            changes.append("services started before their units changed")
-        return changes
-
-    def running(self, system: System) -> list[str]:
-        """What of Thermite runs, or cannot be shown not to."""
-        return [f"{name} ({origin.active})" for name, origin in system.unit_origins(self.UNITS).items()
-                if not origin.known or origin.active in ACTIVE]
-
-    def check(self, system: System) -> Check:
-        changes = self.changes(system)
-        if not changes:
-            return Check(True, "nothing Thermite runs on changes, so it keeps running")
-        running = self.running(system)
-        if not running:
-            return Check(True, f"nothing of Thermite runs; this run changes {', '.join(changes)}")
-        return Check(False, f"this run changes {', '.join(changes)}: to stop {oh_units.TARGET} and "
-                            f"{oh_units.SLICE} first ({', '.join(running)})")
-
-    def actions(self, system: System) -> list[Action]:
-        return [Command(("systemctl", "stop", oh_units.TARGET, oh_units.SLICE), root=True, stops=(oh_units.TARGET,)),
-                Task(f"confirm nothing in {oh_units.SLICE} still runs", self.stopped)]
-
-    def stopped(self, system: System) -> int:
-        running = self.running(system)
-        if running:
-            system.say(f"   still running after the stop: {', '.join(running)}; no unit, state or deployment changed. "
-                       f"`systemctl status {oh_units.SLICE}` shows what runs in it; find out why it did not "
-                       "stop, then rerun.")
-            return 1
-        return 0
-
-
 class Services(Step):
     title = "Runtime and Apple TV helper"
     restarts = RESTARTS
@@ -1075,13 +1004,13 @@ class Services(Step):
         services = [unit for unit in start if unit != self.path_unit]
         actions = self.prefetch(system, [*services, *restart])
         if services:
-            actions.append(Command(("systemctl", "start", *services), root=True, starts=tuple(services)))
+            actions.append(Command(("systemctl", "start", *services), root=True))
         if restart:
-            actions.append(Command(("systemctl", "restart", *restart), root=True, starts=tuple(restart)))
+            actions.append(Command(("systemctl", "restart", *restart), root=True))
         if self.force_runtime and oh_units.RUNTIME in (*services, *restart) and not self.runtime_restarted:
             actions.append(Task("record the requested fresh runtime start", self.record_runtime_restart))
         if enable or self.path_unit in start:
-            actions.append(Command(("systemctl", "enable", "--now", self.path_unit), root=True, starts=(self.path_unit,)))
+            actions.append(Command(("systemctl", "enable", "--now", self.path_unit), root=True))
         return actions
 
     def record_runtime_restart(self, system: System) -> int:
@@ -1111,20 +1040,6 @@ class MetricsServices(Services):
     title = "Monitoring and notifications"
     restarts = METRICS_RESTARTS
     path_unit = METRICS_PATH_UNIT
-
-
-class Target(Step):
-    title = "Enable Thermite at boot"
-
-    def __init__(self, context: Context):
-        self.context = context
-
-    def check(self, system: System) -> Check:
-        state = system.unit(oh_units.TARGET)
-        return Check(state.active == "active" and state.enabled == "enabled", oh_units.TARGET)
-
-    def actions(self, system: System) -> list[Action]:
-        return [Command(("systemctl", "enable", "--now", oh_units.TARGET), root=True, starts=(oh_units.TARGET,))]
 
 
 def _opaque(system: System, context: Context, path: Path) -> bool:
@@ -1200,8 +1115,7 @@ class NativePreparation(Step):
     """Offline openHAB preparation, in one of two scopes. Custody (a missing
     receipt, account or directory) repairs the whole state tree, which every
     service writes. Otherwise only openHAB's own trees are repaired. Either
-    way Quiesce has stopped all of Thermite first: this step acting is one
-    of the changes it stops for."""
+    way Halt has stopped all of Thermite first."""
     title = "Native state and ownership"
 
     def __init__(self, context: Context):
@@ -2050,29 +1964,6 @@ class Committed(Step):
         return Check(True, f"{detail}; HEAD, {self.context.head[:12]}, has every change")
 
 
-def metrics_steps(context: Context) -> list[Step]:
-    """Activate monitoring; readiness follows the final native lifecycle wait."""
-    return [MetricsToken(context), GrafanaPassword(context), MetricsServices(context)]
-
-
-def native_steps(context: Context) -> list[Step]:
-    """Runtime readiness through final native settlement, on one native deadline."""
-    native = NativeDeadline.of(context)
-    return [Answers(context, native), Token(context, native), *gateway_steps(context, native),
-            *metrics_steps(context), Target(context), NativeReady(context, native)]
-
-
-def directory_steps(context: Context) -> list[Step]:
-    """The account and every directory a unit bind-mounts. They precede
-    Units: a failed run starts thermite.target again, and systemd restarts
-    a crashed service, on whichever units are installed by then."""
-    return [Account(context), StateDirectories(context), MetricsDirectories(context)]
-
-
-# --------------------------------------------------------------------------
-# thermite uninstall
-
-
 class AppArmorService(Step):
     """AppArmor's own service, enabled before an install transaction
     begins: it is the host's, never one of the transaction's items."""
@@ -2089,17 +1980,43 @@ class AppArmorService(Step):
         return [Command(("systemctl", "enable", "--now", "apparmor.service"), root=True)]
 
 
-class Halt(Quiesce):
+class Halt(Step):
     """Stop all of Thermite inside an install transaction, whatever changes:
-    the engine sets the version aside only once nothing of it runs."""
+    the engine sets the version aside only once nothing of it runs. The
+    transaction's rollback starts the previous version again."""
 
     title = "Stop Thermite"
+    #: What runs while Thermite does. The slice holds every service, so it
+    #: is the authority; the names say what still runs.
+    UNITS = (oh_units.TARGET, oh_units.SLICE, *oh_units.DAEMONS, *oh_units.RESTART_PATHS,
+             *oh_units.RESTART_SERVICES)
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def running(self, system: System) -> list[str]:
+        """What of Thermite runs, or cannot be shown not to."""
+        return [f"{name} ({origin.active})" for name, origin in system.unit_origins(self.UNITS).items()
+                if not origin.known or origin.active in ACTIVE]
 
     def check(self, system: System) -> Check:
         running = self.running(system)
         if not running:
             return Check(True, f"nothing in {oh_units.SLICE} runs")
         return Check(False, f"to stop {oh_units.TARGET} and {oh_units.SLICE} ({', '.join(running)})")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Command(("systemctl", "stop", oh_units.TARGET, oh_units.SLICE), root=True),
+                Task(f"confirm nothing in {oh_units.SLICE} still runs", self.stopped)]
+
+    def stopped(self, system: System) -> int:
+        running = self.running(system)
+        if running:
+            system.say(f"   still running after the stop: {', '.join(running)}; nothing was set aside. "
+                       f"`systemctl status {oh_units.SLICE}` shows what runs in it; find out why it did not "
+                       "stop, then rerun.")
+            return 1
+        return 0
 
 
 class StartTarget(Step):
@@ -2140,173 +2057,5 @@ def boundary_owned(system: System) -> bool | None:
             and recognized_unit(file.content))
 
 
-class Stop(Step):
-    title = "Stop services and restart paths"
-    SERVICES = ("thermite-openhab.service", "thermite-atv.service", "thermite-atv-restart.service", *metrics.SERVICE_UNITS,
-                Path(deploy.METRICS_RESTART_SERVICE).name)
-    PATHS = (oh_units.TARGET, PATH_UNIT, METRICS_PATH_UNIT)
-
-    def __init__(self, context: Context):
-        self.context = context
-
-    def running(self, system: System) -> list[str]:
-        return [name for name in ownership.inspect(self.context, system).units(self.SERVICES)
-                if system.unit(name).active in ACTIVE]
-
-    def paths_on(self, system: System) -> list[str]:
-        from oh_install.ingress import UNIT
-        # The boundary unit is a boot-time oneshot without ExecStop: disabling
-        # it leaves the loaded filter in place until removed or rebooted.
-        boundary = [UNIT] if boundary_owned(system) else []
-        return [name for name in (*ownership.inspect(self.context, system).units(self.PATHS), *boundary)
-                if system.unit(name).enabled == "enabled" or system.unit(name).active in ACTIVE]
-
-    def check(self, system: System) -> Check:
-        problems = ownership.inspect(self.context, system).problems
-        if problems:
-            return Check(False, "", "; ".join(problems))
-        running, paths = self.running(system), self.paths_on(system)
-        if not running and not paths:
-            return Check(True, "nothing runs")
-        parts = (["to stop: " + ", ".join(running)] if running else []) + \
-            ([f"to disable and stop: {', '.join(paths)}"] if paths else [])
-        return Check(False, "; ".join(parts))
-
-    def actions(self, system: System) -> list[Action]:
-        actions: list[Action] = []
-        paths = self.paths_on(system)
-        if paths:
-            actions.append(Command(("systemctl", "disable", "--now", *paths), root=True))
-        running = self.running(system)
-        if running:
-            actions.append(Command(("systemctl", "stop", *running), root=True))
-        return actions
-
-
-class RemoveUnits(Step):
-    title = "Remove service units"
-
-    def __init__(self, context: Context):
-        self.context = context
-
-    def present(self, system: System) -> list[Path]:
-        from oh_install.ingress import UNIT_FILE
-        owned = ownership.inspect(self.context, system)
-        manifest = system.unit_file(ownership.MANIFEST)
-        extra = [*([UNIT_FILE] if boundary_owned(system) else []),
-                 *([ownership.MANIFEST] if manifest is not None and manifest.uid == 0 else [])]
-        return sorted(path for _, _, path in owned.entries) + extra
-
-    def check(self, system: System) -> Check:
-        problems = ownership.inspect(self.context, system).problems
-        if problems:
-            return Check(False, "", "; ".join(problems))
-        present = self.present(system)
-        if present:
-            return Check(False, "to remove: " + ", ".join(map(str, present)))
-        return Check(True, f"none of the {len(deploy.INSTALLED)} unit files is installed")
-
-    def actions(self, system: System) -> list[Action]:
-        return [Command(("rm", "--", *map(str, self.present(system))), root=True),
-                Command(("systemctl", "daemon-reload"), root=True)]
-
-
-class Purge(Step):
-    title = "Delete the runtime state (--purge)"
-
-    def __init__(self, context: Context):
-        self.context = context
-        self.owned = False
-
-    def ownership(self, system: System) -> Check:
-        root = self.context.layout.root
-        if not system.safe_directory(root):
-            return Check(False, "", f"cannot safely resolve {root} without symlinks; refusing to purge it")
-        owned = ownership.inspect(self.context, system)
-        if owned.problems:
-            return Check(False, "", "; ".join(owned.problems))
-        self.owned = (not system.lexists(root) or owned.runtime_bound
-                      or service_receipt(self.context, system))
-        return Check(self.owned, "Thermite state ownership verified" if self.owned else "",
-                     None if self.owned else f"cannot prove {root} is Thermite state; refusing to purge it")
-
-    def check(self, system: System) -> Check:
-        root = self.context.layout.root
-        if not self.owned:
-            found = self.ownership(system)
-            if found.problem:
-                return found
-        if system.stat(root) is None:
-            return Check(True, f"{root} does not exist")
-        return Check(False, f"to delete {root}: conf, userdata (users, tokens, pairings), openHAB's logs, secrets, the deploy "
-                            "records, the backups and the metrics (Prometheus' samples, Grafana's data and the "
-                            "metrics secrets)")
-
-    def actions(self, system: System) -> list[Action]:
-        # A plain directory inside the installation root, never a subvolume:
-        # the root and the gateway's access/ beside it stay (uninstall.kept).
-        root = self.context.layout.root
-        delete = ("rm", "-rf", "--one-file-system", "--", str(root))
-        return [Task(f"type {root} to confirm", self.confirm, interactive=True), Command(delete, root=True)]
-
-    def confirm(self, system: System) -> int:
-        root = str(self.context.layout.root)
-        system.say(f"   This deletes {root} and everything in it; nothing brings it back but a copy you made.")
-        typed = system.ask(f"   Type {root} to delete it: ").strip()
-        if typed != root:
-            system.say(f"   That is not {root}; nothing was deleted.")
-            return 1
-        return 0
-
-
-def uninstall(context: Context, purge: bool = False) -> list[Step]:
-    if not purge:
-        return [Stop(context), RemoveUnits(context)]
-    deletion = Purge(context)
-    return [PurgeOwnership(deletion), Stop(context), RemoveUnits(context), deletion]
-
-
-class PurgeOwnership(Step):
-    title = "Verify state ownership before deletion"
-
-    def __init__(self, deletion: Purge):
-        self.deletion = deletion
-
-    def check(self, system: System) -> Check:
-        return self.deletion.ownership(system)
-
-
-class OperatorCredentialsReset(Step):
-    title = "Clear local credential copies"
-
-    def __init__(self, context: Context):
-        self.context = context
-
-    def paths(self) -> tuple[Path, ...]:
-        return (self.context.area / self.context.token_file, self.context.area / self.context.grafana_password_file,
-                self.context.area / self.context.runtime_credentials_file)
-
-    def check(self, system: System) -> Check:
-        present = [str(path) for path in self.paths() if system.stat(path) is not None]
-        return Check(not present, "to clear: " + ", ".join(present) if present else "local credential copies absent")
-
-    def actions(self, system: System) -> list[Action]:
-        return [Command(("rm", "-f", "--", *map(str, self.paths())))]
-
-
-def clean_install(context: Context) -> list[Step]:
-    # Complete prerequisites before deleting otherwise recoverable state.
-    # The normal install rechecks these steps and reuses the boot receipt.
-    return [*configuration_steps(context), Packages(), NativeIngressPrerequisites(context), BootTest(context), *uninstall(context, purge=True), OperatorCredentialsReset(context)]
-
-
 def install_preflight(context: Context) -> list[Step]:
     return [Preconditions(context), Committed(context)]
-
-
-def install(context: Context, *, preflight: bool = True) -> list[Step]:
-    """Every step, in order."""
-    return [*(install_preflight(context) if preflight else []), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context),
-            Quiesce(context), *directory_steps(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context),
-            Services(context, restart_runtime=context.restart_runtime), *native_steps(context), MetricsAnswer(context),
-            Verify(context)]

@@ -24,7 +24,7 @@ import oh_sandbox
 from oh_access import AccessError
 from oh_access.service import CONFIG_VERSION, load_config
 from oh_cli import docs
-from oh_install import steps
+from oh_install import changeover, steps
 from oh_metrics import exporter
 
 
@@ -363,7 +363,7 @@ with mock.patch.object(oh_ports.socket, 'create_connection', side_effect=Connect
         host = oh_public.demo_host()
         versions = json.loads((AREA / "versions.json").read_text())
         context = steps.Context(AREA, versions, host, "c" * 40, "d" * 64, "example", "192.0.2.5")
-        sequence = [type(step) for step in steps.install(context)]
+        sequence = [type(step) for step in (*changeover.preparation(context), *changeover.switching(context, None))]
         self.assertLess(sequence.index(steps.NativePreparation), sequence.index(steps.Deploy))
         self.assertLess(sequence.index(steps.NativePreparation), sequence.index(steps.Services))
         system = mock.Mock()

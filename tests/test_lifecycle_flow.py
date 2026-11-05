@@ -1,5 +1,5 @@
 """Installer lifecycle flow: one transient rule, one native deadline, one Thing
-predicate, compensation for stopped services and recorded unit ownership."""
+predicate, the native preparation's scope and recorded unit ownership."""
 from __future__ import annotations
 
 import contextlib
@@ -27,9 +27,9 @@ import oh_http  # noqa: E402
 import oh_sandbox as sandbox  # noqa: E402
 from oh_access import deployment, native_boundary as boundary  # noqa: E402
 from oh_cli import health, uninstall  # noqa: E402
-from oh_install import native_auth, ownership, progress, runner, steps  # noqa: E402
+from oh_install import native_auth, ownership, progress, steps  # noqa: E402
 from oh_install.access import Gateway  # noqa: E402
-from oh_install.model import Check, Command, Step, Task  # noqa: E402
+from oh_install.model import Check, Task  # noqa: E402
 from oh_install.system import NativeProbe, System, Unit, UnitFile, UnitOrigin  # noqa: E402
 from tests.test_access_boundary import Native, ORIGIN  # noqa: E402
 
@@ -220,7 +220,7 @@ class NativeDeadlinePolicy(unittest.TestCase):
 
     def test_one_policy_object_spans_startup_commissioning_and_final_readiness(self):
         from oh_install import changeover
-        for sequence in (steps.install(context()), changeover.switching(context(), "20261105T101500Z-3f9a2c")):
+        for sequence in (changeover.switching(context(), "20261105T101500Z-3f9a2c"),):
             types = [type(step) for step in sequence]
             settle, gateway = sequence[types.index(steps.NativeSettle)], sequence[types.index(Gateway)]
             self.assertEqual(types.index(steps.Token) + 1, types.index(steps.NativeSettle))
@@ -366,67 +366,10 @@ class UnitFailures(unittest.TestCase):
         self.assertIn("is not ready", shown[0])
 
 
-class Compensation(unittest.TestCase):
-    """L8: a failure after stopping Thermite starts thermite.target again."""
+class NativePreparationScope(unittest.TestCase):
+    """What the native preparation repairs, once Halt has stopped Thermite."""
 
-    class Stage(Step):
-        def __init__(self, title, *actions):
-            self.title, self._actions = title, list(actions)
-
-        def check(self, system):
-            return Check(False, "fixture")
-
-        def actions(self, system):
-            return self._actions
-
-        def after_actions(self, system):
-            return Check(True, "fixture")
-
-    def run_steps(self, *stages, interrupt=False):
-        system = mock.Mock(spec=System)
-        system.interactive.return_value = True
-        codes = {("sudo", "fixture-fails"): 1}
-        system.run.side_effect = lambda argv, area, **kwargs: codes.get(tuple(argv), 0)
-        with contextlib.redirect_stdout(io.StringIO()), mock.patch.object(oh_cli, "switches", oh_cli.Switches()):
-            if interrupt:
-                with self.assertRaises(KeyboardInterrupt):
-                    runner.run(stages, system, AREA, root_confirmed=True)
-                code = None
-            else:
-                code = runner.run(stages, system, AREA, root_confirmed=True)
-        return code, system
-
-    STOP = Command(("systemctl", "stop", "thermite.target", "thermite.slice"), root=True, stops=("thermite.target",))
-
-    def test_failure_before_restart_starts_the_whole_target(self):
-        start = Command(("systemctl", "start", "thermite-openhab.service"), root=True, starts=("thermite-openhab.service",))
-        fail = Command(("fixture-fails",), root=True)
-        code, system = self.run_steps(self.Stage("Stop", self.STOP), self.Stage("Services", start), self.Stage("Later", fail))
-        self.assertEqual(code, 1)
-        self.assertEqual(system.run.call_args.args[0], ("sudo", "systemctl", "start", "thermite.target"),
-                         "the target starts every member, not only those this run started")
-        said = " ".join(call.args[0] for call in system.say.call_args_list)
-        self.assertIn("starting it now", said)
-
-    def test_success_or_a_started_target_needs_no_compensation(self):
-        start = Command(("systemctl", "enable", "--now", "thermite.target"), root=True, starts=("thermite.target",))
-        code, system = self.run_steps(self.Stage("Stop", self.STOP), self.Stage("Target", start))
-        self.assertEqual(code, 0)
-        self.assertEqual(system.run.call_count, 2)
-        target = steps.Target(context()).actions(mock.Mock(spec=System))
-        self.assertEqual([action.starts for action in target], [("thermite.target",)])
-
-    def test_interruption_names_the_command_without_running_it(self):
-        def interrupted(system):
-            raise KeyboardInterrupt
-
-        _, system = self.run_steps(self.Stage("Stop", self.STOP), self.Stage("Later", Task("fixture", interrupted)),
-                                   interrupt=True)
-        self.assertEqual(system.run.call_count, 1)
-        said = " ".join(call.args[0] for call in system.say.call_args_list)
-        self.assertIn("sudo systemctl start thermite.target", said)
-
-    def test_only_the_stop_before_changes_stops_anything(self):
+    def test_the_preparation_stops_and_starts_nothing(self):
         system = mock.Mock(spec=System)
         system.unit.return_value = Unit("active", "enabled", 0, 1)
         system.stat.return_value = SimpleNamespace(uid=9001, gid=9001, mode=0o750, is_dir=True)
@@ -436,8 +379,7 @@ class Compensation(unittest.TestCase):
                     for step in (steps.NativePreparation(context()),):
                         with self.subTest(step=type(step).__name__, receipt=receipt):
                             self.assertFalse([action for action in step.actions(system) if action.argv[0] == "systemctl"],
-                                             "Quiesce stopped all of Thermite before this step")
-                            self.assertFalse(any(action.stops or action.starts for action in step.actions(system)))
+                                             "Halt stopped all of Thermite before this step")
 
     def owned_everything(self):
         names = ("thermite-openhab.service", "thermite-atv.service", "thermite-grafana.service",
@@ -644,20 +586,6 @@ class UnitOwnership(unittest.TestCase):
 
 class Uninstall(unittest.TestCase):
     """D8: uninstall names what it keeps."""
-
-    def test_boundary_unit_is_removed_only_when_exact(self):
-        from oh_install.ingress import UNIT, UNIT_FILE, unit_text
-        system = mock.Mock(spec=System)
-        system.lexists.return_value = True
-        system.unit.return_value = Unit("active", "enabled")
-        files = {UNIT_FILE: UnitFile(unit_text().encode(), 0, 0o644)}
-        system.unit_file.side_effect = lambda path: files.get(Path(path))
-        with mock.patch.object(ownership, "inspect", return_value=ownership.Owned()):
-            self.assertIn(UNIT, steps.Stop(context()).paths_on(system))
-            self.assertIn(UNIT_FILE, steps.RemoveUnits(context()).present(system))
-            files[UNIT_FILE] = UnitFile(unit_text().encode() + b"# local edit\n", 0, 0o644)
-            self.assertNotIn(UNIT, steps.Stop(context()).paths_on(system))
-            self.assertNotIn(UNIT_FILE, steps.RemoveUnits(context()).present(system))
 
     def test_kept_names_the_state_an_uninstall_keeps_and_a_purge_removes(self):
         text = uninstall.kept(context(), purge=False)

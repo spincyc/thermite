@@ -572,7 +572,8 @@ class Kinds(Fixture):
 
 
 class Runner(unittest.TestCase):
-    def test_inside_a_transaction_nothing_is_started_again(self):
+    def test_a_failed_run_starts_nothing_again(self):
+        # The transaction's rollback is the only undo.
         system = Mock(spec=System)
         system.interactive.return_value = True
         system.run.side_effect = lambda argv, cwd: 0
@@ -585,16 +586,12 @@ class Runner(unittest.TestCase):
                 return Check(False, "fixture")
 
             def actions(self, system):
-                return [Command(("systemctl", "stop", oh_units.TARGET), root=True, stops=(oh_units.TARGET,))]
+                return [Command(("systemctl", "stop", oh_units.TARGET), root=True)]
 
-        failing = Fake("fails", [], 1)
-        for transactional, started in ((False, True), (True, False)):
-            with self.subTest(transactional=transactional):
-                system.run.reset_mock()
-                runner.run([Stops(), failing], system, Path("/home/owner/fixture-site"), root_confirmed=True,
-                           transactional=transactional)
-                commands = [call.args[0] for call in system.run.call_args_list]
-                self.assertEqual(("sudo", "systemctl", "start", oh_units.TARGET) in commands, started)
+        self.assertEqual(runner.run([Stops(), Fake("fails", [], 1)], system, Path("/home/owner/fixture-site"),
+                                    root_confirmed=True), 1)
+        self.assertEqual([call.args[0] for call in system.run.call_args_list],
+                         [("sudo", "systemctl", "stop", oh_units.TARGET)])
 
 
 if __name__ == "__main__":

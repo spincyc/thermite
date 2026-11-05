@@ -24,7 +24,7 @@ import oh_deploy as deploy  # noqa: E402
 import oh_paths  # noqa: E402
 import oh_release  # noqa: E402
 from oh_cli import deploy as deploy_cli, install as install_cli, health, status  # noqa: E402
-from oh_install import runner, steps  # noqa: E402
+from oh_install import changeover, runner, steps  # noqa: E402
 from oh_testing import boot  # noqa: E402
 
 
@@ -211,7 +211,7 @@ class SplitInstaller(unittest.TestCase):
         self.assertEqual(verification.argv[-2:], ("--revision", self.context.head))
         self.assertEqual(steps.Verify(self.context).actions(self.system)[1].argv[-2:], ("--revision", self.context.head))
         self.assertTrue(verification.show_output)
-        sequence = steps.install(self.context, preflight=False)
+        sequence = [*changeover.preparation(self.context), *changeover.switching(self.context, None)]
         self.assertIsInstance(sequence[0], steps.DerivedConfiguration)
         self.assertLess(next(i for i, step in enumerate(sequence) if isinstance(step, steps.DerivedConfiguration)),
                         next(i for i, step in enumerate(sequence) if isinstance(step, steps.BootTest)))
@@ -337,12 +337,13 @@ class SplitInstaller(unittest.TestCase):
             self.assertTrue(service.check(self.system).done)
             self.assertEqual(service.actions(self.system), [])
             self.system.ask.assert_not_called()
-        sequence = steps.install(context, preflight=False)
+        sequence = [*changeover.preparation(context), *changeover.switching(context, None),
+                    *changeover.verification(context)]
         location = lambda kind: next(i for i, step in enumerate(sequence) if type(step) is kind)
         self.assertLess(location(steps.Deploy), location(steps.Services))
         self.assertLess(location(steps.Services), location(steps.Answers))
         self.assertLess(location(steps.Services), location(steps.NativeReady))
-        self.assertLess(location(steps.Services), location(steps.Verify))
+        self.assertLess(location(steps.Services), location(steps.Health))
         with patch.object(install_cli.os, "geteuid", return_value=1000), \
                 patch.object(install_cli, "install", return_value=0) as run, patch.object(oh_paths, "require_compatible"):
             self.assertEqual(install_cli.main(["--restart-runtime", "--dry-run", "--_host-phase"]), 0)

@@ -152,12 +152,11 @@ class NativeIngress(Step):
                        "A reboot alone does not complete an interrupted deployment.")
 
     def perform(self, system, *, probe=False):
-        from oh_access.files import atomic_private, private_directory, read_private
+        from oh_access.files import atomic_private, private_directory
         from oh_access.native_boundary import firewall_ports, verify_firewall
         from oh_install import runner
         directory = private_directory(self.context.var / "native-boundary")
         rules, unit = directory / RULE_FILE.name, directory / UNIT
-        previous_path = directory / "previous.nft"
         # Authenticate sudo through the normal runner before read-only capture.
         code = runner.perform(Command(("-v",), root=True, terminal=True), system, self.context.area)
         if code is None or code:
@@ -173,22 +172,13 @@ class NativeIngress(Step):
                 raise ValueError("an existing thermite_native firewall table has no managed boundary files; preserve it for review")
             if occupied:
                 code, current = system.capture(("sudo", "-n", "nft", "--json", "list", "table", "inet", "thermite_native"), diagnostics=True)
-                previous = system.unit_file(RULE_FILE)
-                if code or previous is None:
-                    raise ValueError("cannot inspect previous native firewall policy")
-                try:
-                    verify_firewall(current, rule_ports(previous.content))
-                except ValueError:
-                    # Installation can stop after publishing the new file but
-                    # before applying it. Only our retained exact prior policy
-                    # can explain that live state; extra rules still fail.
-                    verify_firewall(current, rule_ports(read_private(previous_path)))
-                else:
-                    # A completed apply may have been interrupted before
-                    # removing an older journal. Snapshot the policy actually
-                    # running now before starting the next port transition.
-                    if not probe:
-                        atomic_private(previous_path, previous.content)
+                installed = system.unit_file(RULE_FILE)
+                if code or installed is None:
+                    raise ValueError("cannot inspect the installed native firewall policy")
+                # Inside an install transaction the installed file and the
+                # live table agree: a rollback restores the file and reloads
+                # the table. Any difference is someone else's rule.
+                verify_firewall(current, rule_ports(installed.content))
         except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
             system.say(str(exc))
             return 1
@@ -221,7 +211,6 @@ class NativeIngress(Step):
         except ValueError as exc:
             system.say(str(exc))
             return 1
-        previous_path.unlink(missing_ok=True)
         return 0
 
 

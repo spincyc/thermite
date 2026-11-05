@@ -135,52 +135,41 @@ class UnifiedInstall(unittest.TestCase):
                 args = ["access", action, "--config", "/fictional/service/config.json"]
                 self.assertEqual(oh_paths.select_args(args), args)
 
-    def test_both_workflows_apply_ingress_before_native_and_gateway_before_completion(self):
+    def test_the_transaction_applies_ingress_before_native_and_gateway_before_completion(self):
         import oh_deploy
         context = steps.Context(AREA, {"openhab": {"version": "5.2.3"}},
                                 {"root": "/srv/fictional", "uid": 9001, "gid": 9001},
                                 "a" * 40, "b" * 64, "fixture", None,
                                 prepared={"conf/services/addons.cfg": oh_deploy.Blob(b"binding = http\n")},
                                 application={"version": "0.1.0.dev0", "digest": "c" * 64})
-        for sequence in (steps.install(context), upgrade_sequence(context)):
-            types = [type(step) for step in sequence]
-            target = steps.Target if steps.Target in types else steps.StartTarget
-            self.assertLess(types.index(NativeIngress), types.index(steps.Services))
-            self.assertLess(types.index(steps.Answers), types.index(Gateway))
-            self.assertLess(types.index(steps.Token), types.index(Gateway))
-            self.assertLess(types.index(Gateway), types.index(steps.NativeReady))
-            self.assertLess(types.index(target), types.index(steps.NativeReady))
-            self.assertEqual(types.count(steps.NativeReady), 1, "one authoritative wait owns the deadline and recovery budget")
-            self.assertLess(types.index(steps.NativeReady), types.index(steps.MetricsAnswer))
-            self.assertIsInstance(sequence[-1], steps.Verify)
-            self.assertTrue(sequence[types.index(Gateway)].stop_on_failure)
-        # Everything that needs no stop comes first; everything that changes
-        # what Thermite runs on, or starts it, comes after. The upgrade stops
-        # Thermite inside its install transaction, after its preparation.
-        types = [type(step) for step in steps.install(context)]
-        quiesce = types.index(steps.Quiesce)
-        self.assertEqual(types.count(steps.Quiesce), 1)
-        self.assertEqual(types.index(steps.BootTest) + 1, quiesce)
-        for changing in (steps.Account, steps.StateDirectories, steps.MetricsDirectories, steps.Units,
-                         steps.NativePreparation, NativeIngress, steps.Deploy, steps.Services, Gateway, steps.Target):
-            self.assertLess(quiesce, types.index(changing), changing)
-        upgrade = [*changeover.preparation(context), *upgrade_sequence(context)]
-        for sequence in (steps.install(context), upgrade, steps.clean_install(context)):
-            types = [type(step) for step in sequence]
-            probe = types.index(NativeIngressPrerequisites)
-            self.assertLess(types.index(steps.Packages), probe)
-            for disruptive in (steps.BootTest, steps.Quiesce, steps.Units, steps.NativePreparation,
-                               steps.Stop, steps.RemoveUnits, steps.Purge, steps.OperatorCredentialsReset):
-                if disruptive in types:
-                    self.assertLess(probe, types.index(disruptive))
-            self.assertTrue(sequence[probe].stop_on_failure)
+        sequence = upgrade_sequence(context)
+        types = [type(step) for step in sequence]
+        self.assertLess(types.index(NativeIngress), types.index(steps.Services))
+        self.assertLess(types.index(steps.Answers), types.index(Gateway))
+        self.assertLess(types.index(steps.Token), types.index(Gateway))
+        self.assertLess(types.index(Gateway), types.index(steps.NativeReady))
+        self.assertLess(types.index(steps.StartTarget), types.index(steps.NativeReady))
+        self.assertEqual(types.count(steps.NativeReady), 1, "one authoritative wait owns the deadline and recovery budget")
+        self.assertLess(types.index(steps.NativeReady), types.index(steps.MetricsAnswer))
+        self.assertIsInstance(sequence[-1], steps.Verify)
+        self.assertTrue(sequence[types.index(Gateway)].stop_on_failure)
+        # Everything that needs no stop comes first, while Thermite runs;
+        # the firewall probe fails before anything disruptive.
+        types = [type(step) for step in changeover.preparation(context)]
+        probe = types.index(NativeIngressPrerequisites)
+        self.assertLess(types.index(steps.Packages), probe)
+        self.assertLess(probe, types.index(steps.BootTest))
+        self.assertTrue(changeover.preparation(context)[probe].stop_on_failure)
+        for changing in (steps.StateDirectories, steps.Units, steps.NativePreparation, NativeIngress, steps.Deploy,
+                         steps.Services, steps.Halt):
+            self.assertNotIn(changing, types)
         unit = unit_text()
         self.assertIn("Before=thermite-openhab.service", unit)
         self.assertNotIn("ExecStop=", unit, "stopping services must retain the native filter")
 
 
 class GatewayReadinessLifecycle(unittest.TestCase):
-    def workflow(self, operation, *, terminal=False, persistent=False, resumed=False):
+    def workflow(self, *, terminal=False, persistent=False, resumed=False):
         import oh_deploy
         import oh_sandbox
         context = steps.Context(AREA, {"openhab": {"version": "5.2.3"}},
@@ -237,7 +226,7 @@ class GatewayReadinessLifecycle(unittest.TestCase):
             return 0
 
         system.native_probe.side_effect = probe
-        sequence = steps.install(context) if operation == "install" else upgrade_sequence(context)
+        sequence = upgrade_sequence(context)
         with ExitStack() as scope:
             scope.enter_context(patch.object(steps, "WAIT", 90))
             for step in sequence:
@@ -249,28 +238,27 @@ class GatewayReadinessLifecycle(unittest.TestCase):
             result = runner.run(sequence, system, AREA, root_confirmed=True)
         return result, now[0], events, system
 
-    def test_gateway_reload_settles_before_install_upgrade_or_resume_can_complete(self):
-        for operation in ("install", "upgrade"):
-            for resumed in (False, True):
-                with self.subTest(operation=operation, resumed=resumed):
-                    result, elapsed, events, system = self.workflow(operation, resumed=resumed)
-                    self.assertEqual(result, 0)
-                    self.assertEqual(elapsed, 30, "the initial ready response must not hide a delayed handler reload")
-                    self.assertEqual(events[-1], (30, "final-verification"))
-                    self.assertIn((5, "UNINITIALIZED", "HANDLER_MISSING_ERROR"), events)
-                    self.assertIn((10, "UNINITIALIZED", "NONE"), events)
-                    self.assertIn((15, "INITIALIZING", "NONE"), events)
-                    system.run.assert_not_called()
+    def test_gateway_reload_settles_before_the_transaction_or_resume_can_complete(self):
+        for resumed in (False, True):
+            with self.subTest(resumed=resumed):
+                result, elapsed, events, system = self.workflow(resumed=resumed)
+                self.assertEqual(result, 0)
+                self.assertEqual(elapsed, 30, "the initial ready response must not hide a delayed handler reload")
+                self.assertEqual(events[-1], (30, "final-verification"))
+                self.assertIn((5, "UNINITIALIZED", "HANDLER_MISSING_ERROR"), events)
+                self.assertIn((10, "UNINITIALIZED", "NONE"), events)
+                self.assertIn((15, "INITIALIZING", "NONE"), events)
+                system.run.assert_not_called()
 
     def test_terminal_configuration_error_blocks_final_verification_without_restart(self):
-        result, elapsed, events, system = self.workflow("upgrade", terminal=True)
+        result, elapsed, events, system = self.workflow(terminal=True)
         self.assertEqual(result, 1)
         self.assertEqual(elapsed, 5)
         self.assertFalse(any(event[-1] == "final-verification" for event in events))
         system.run.assert_not_called()
 
     def test_persistent_missing_handler_has_one_recovery_and_one_deadline(self):
-        result, elapsed, events, system = self.workflow("upgrade", persistent=True)
+        result, elapsed, events, system = self.workflow(persistent=True)
         self.assertEqual(result, 1)
         self.assertEqual(elapsed, 90)
         self.assertFalse(any(event[-1] == "final-verification" for event in events))

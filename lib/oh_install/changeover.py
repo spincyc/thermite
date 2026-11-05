@@ -11,8 +11,8 @@ the installed version. The new version is switched in by the ordinary
 install steps (an uninstall switches in nothing; a revert has the engine
 put the kept version back) and verified by its health; only then does the
 engine commit it. A failure from begin on rolls the transaction back in the
-same run and the version that ran before runs again. The runner never
-compensates inside a transaction: the rollback is the only undo.
+same run and the version that ran before runs again: the rollback is the
+only undo.
 
 The operator keeps its own record of each transaction in the site's
 var/transaction/<id>/: record.json, the inputs it handed the engine, the
@@ -734,7 +734,7 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
     failed = f"The {transaction.verb} rolls back transaction {transaction.id} now."
     try:
         code = runner.run(rest, system, context.area, first=first + len(opening), rerun=failed,
-                          root_confirmed=True, transactional=True)
+                          root_confirmed=True)
     except KeyboardInterrupt:
         return _interrupted(system, transaction)
     except Exception as exc:  # Every failure rolls back; none leaves a half-installed version.

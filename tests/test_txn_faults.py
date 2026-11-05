@@ -115,7 +115,7 @@ def transaction(disk, host, case, *, gate=True):
     run = engine_on(disk, host)
     run.begin(ID, case.desired(), fakes.OPERATOR, current=case.current if case.bridge else None)
     run.guard(ID)
-    assert host.run(("systemctl", "stop", engine.TARGET, engine.SLICE)) == 0  # Quiesce
+    assert host.run(("systemctl", "stop", engine.TARGET, engine.SLICE)) == 0  # Halt
     run.collect(ID)
     if case.switch:
         fakes.switch(disk, host, case.new)

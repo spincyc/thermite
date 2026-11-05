@@ -5,7 +5,7 @@ The host and deployment are in-memory fixtures; no native commands run.
 from __future__ import annotations
 
 from argparse import Namespace
-from contextlib import contextmanager, ExitStack, redirect_stderr
+from contextlib import ExitStack, redirect_stderr
 import io
 import json
 from pathlib import Path
@@ -20,7 +20,6 @@ import oh_deploy as deploy  # noqa: E402
 import oh_units  # noqa: E402
 from oh_cli import upgrade as upgrade_cli  # noqa: E402
 from oh_install import bridge, changeover, manifest, runner, steps  # noqa: E402
-from oh_install.model import Check  # noqa: E402
 from oh_install.system import Stat, System, Unit, UnitOrigin  # noqa: E402
 
 
@@ -69,65 +68,41 @@ class Upgrade(unittest.TestCase):
         self.assertIsNone(runner.perform(status, self.system, self.site))
         self.system.run.assert_not_called()
 
-    @contextmanager
-    def quiescing(self, *, change=None, running=True):
-        """A host where Thermite runs (or not) and this run changes `change` (or nothing)."""
-        changes = {"units": patch.object(steps.Units, "stale", return_value=[deploy.QUADLET] if change == "units" else []),
-                   "native": patch.object(steps.NativePreparation, "check",
-                                          return_value=Check(change != "native", "fixture")),
-                   "ingress": patch.object(steps.NativeIngress, "current", return_value=change != "ingress"),
-                   "services": patch.object(steps.Services, "plan", side_effect=lambda system: (
-                       [], [oh_units.ATV] if change == "services" else [], False))}
-        if change == "deploy":
-            self.record["commit"] = "d" * 40
+    def halting(self, *, running=True):
+        """Halt on a host where Thermite runs (or not)."""
         self.system.unit_origins.side_effect = lambda names: {
             name: UnitOrigin(active="active" if running else "inactive") for name in names}
-        with ExitStack() as scope:
-            for patcher in changes.values():
-                scope.enter_context(patcher)
-            yield steps.Quiesce(self.context)
+        return steps.Halt(self.context)
 
-    def test_an_up_to_date_rerun_stops_nothing(self):
-        with self.quiescing() as quiesce:
-            found = quiesce.check(self.system)
+    def test_nothing_running_stops_nothing(self):
+        found = self.halting(running=False).check(self.system)
         self.assertTrue(found.done)
-        self.assertIn("keeps running", found.detail)
+        self.assertIn(f"nothing in {oh_units.SLICE} runs", found.detail)
 
-    def test_any_change_stops_all_of_thermite_then_confirms_the_slice_is_empty(self):
-        for change, words in (("units", "service units"), ("native", "openHAB's native state"),
-                              ("ingress", "native-port firewall"), ("deploy", "the deployment"),
-                              ("services", "started before their units changed")):
-            with self.subTest(change=change):
-                self.setUp()
-                with self.quiescing(change=change) as quiesce:
-                    found = quiesce.check(self.system)
-                    self.assertFalse(found.done)
-                    self.assertIn(words, found.detail)
-                    stop, confirm = quiesce.actions(self.system)
-                    self.assertEqual(stop.argv, ("systemctl", "stop", oh_units.TARGET, oh_units.SLICE))
-                    self.assertTrue(stop.root)
-                    self.assertEqual(stop.stops, (oh_units.TARGET,), "a failed run starts the target as a whole")
-                    self.system.unit_origins.side_effect = lambda names: {
-                        name: UnitOrigin(active="inactive") for name in names}
-                    self.assertEqual(confirm.perform(self.system), 0)
-                    self.assertTrue(quiesce.after_actions(self.system).done)
-                self.assertIn(oh_units.SLICE, self.system.unit_origins.call_args.args[0])
-
-    def test_a_change_with_nothing_running_stops_nothing(self):
-        with self.quiescing(change="deploy", running=False) as quiesce:
-            self.assertTrue(quiesce.check(self.system).done)
+    def test_the_halt_stops_all_of_thermite_then_confirms_the_slice_is_empty(self):
+        halt = self.halting()
+        found = halt.check(self.system)
+        self.assertFalse(found.done)
+        self.assertIn(f"to stop {oh_units.TARGET} and {oh_units.SLICE}", found.detail)
+        stop, confirm = halt.actions(self.system)
+        self.assertEqual(stop.argv, ("systemctl", "stop", oh_units.TARGET, oh_units.SLICE))
+        self.assertTrue(stop.root)
+        self.system.unit_origins.side_effect = lambda names: {name: UnitOrigin(active="inactive") for name in names}
+        self.assertEqual(confirm.perform(self.system), 0)
+        self.assertTrue(halt.after_actions(self.system).done)
+        self.assertIn(oh_units.SLICE, self.system.unit_origins.call_args.args[0])
 
     def test_anything_still_in_the_slice_after_the_stop_fails_clearly(self):
-        with self.quiescing(change="units") as quiesce:
-            self.system.unit_origins.side_effect = lambda names: {
-                name: UnitOrigin(active="deactivating" if name == oh_units.SLICE else "inactive") for name in names}
-            self.assertEqual(quiesce.stopped(self.system), 1)
-            said = self.system.say.call_args.args[0]
-            self.assertIn(f"{oh_units.SLICE} (deactivating)", said)
-            self.assertIn(f"systemctl status {oh_units.SLICE}", said)
-            self.system.unit_origins.side_effect = lambda names: {
-                name: UnitOrigin(known=False, load_state="", active="unknown") for name in names}
-            self.assertEqual(quiesce.stopped(self.system), 1, "an unknown state is never proof of a stop")
+        halt = self.halting()
+        self.system.unit_origins.side_effect = lambda names: {
+            name: UnitOrigin(active="deactivating" if name == oh_units.SLICE else "inactive") for name in names}
+        self.assertEqual(halt.stopped(self.system), 1)
+        said = self.system.say.call_args.args[0]
+        self.assertIn(f"{oh_units.SLICE} (deactivating)", said)
+        self.assertIn(f"systemctl status {oh_units.SLICE}", said)
+        self.system.unit_origins.side_effect = lambda names: {
+            name: UnitOrigin(known=False, load_state="", active="unknown") for name in names}
+        self.assertEqual(halt.stopped(self.system), 1, "an unknown state is never proof of a stop")
 
     def test_invalid_deployment_record_requires_redeployment(self):
         self.record = []

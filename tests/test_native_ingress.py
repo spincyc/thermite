@@ -118,20 +118,13 @@ class NativeIngress(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.context = SimpleNamespace(area=self.root, var=self.root / "var", host=NEW)
         self.step = ingress.NativeIngress(self.context)
-        self.previous = self.context.var / "native-boundary/previous.nft"
 
     def perform(self, system, *, probe=False):
         with patch("oh_install.runner.perform", side_effect=system.perform):
             return self.step.perform(system, probe=probe)
 
-    def save_previous(self, host=OLD):
-        from oh_access.files import atomic_private, private_directory
-        private_directory(self.previous.parent)
-        atomic_private(self.previous, ingress.rule_text(host).encode())
-
     def assert_no_install(self, system):
         self.assertEqual(system.commands, [("-v",)])
-        self.assertFalse(self.previous.exists())
 
     def test_first_apply_checks_then_installs_and_verifies_only_owned_table(self):
         system = System()
@@ -141,7 +134,6 @@ class NativeIngress(unittest.TestCase):
         self.assertEqual(system.commands[-1], ("systemctl", "restart", ingress.UNIT))
         self.assertEqual(ingress.rule_ports(system.files[ingress.RULE_FILE].content), firewall_ports(NEW))
         self.assertEqual(system.live, live_policy(NEW))
-        self.assertFalse(self.previous.exists())
         self.assertEqual(system.captures[-1][-4:], ("list", "table", "inet", "thermite_native"))
 
     def test_unrecognized_existing_table_refuses_before_install(self):
@@ -159,31 +151,19 @@ class NativeIngress(unittest.TestCase):
         self.assert_no_install(system)
         self.assertEqual(system.live, original)
 
-    def test_extra_live_rule_is_not_accepted_with_retained_prior_policy(self):
-        self.save_previous()
+    def test_a_live_table_other_than_the_installed_file_is_refused(self):
+        # A transaction's rollback restores the file and reloads the table,
+        # so a difference is a rule someone else loaded.
         system = System(installed=NEW, live=OLD)
-        system.live["nftables"].append(copy.deepcopy(system.live["nftables"][-1]))
         self.assertEqual(self.perform(system), 1)
-        self.assertEqual(system.commands, [("-v",)])
-        self.assertEqual(self.previous.read_bytes(), ingress.rule_text(OLD).encode())
+        self.assert_no_install(system)
+        self.assertEqual(system.live, live_policy(OLD))
 
-    def test_retained_policy_recovers_new_file_with_old_live_ports(self):
-        self.save_previous()
-        system = System(installed=NEW, live=OLD)
-        self.assertEqual(self.perform(system), 0)
-        self.assertEqual(system.live, live_policy(NEW))
-        self.assertFalse(self.previous.exists())
-
-    def test_failed_restart_retains_original_then_rerun_completes(self):
+    def test_a_failed_restart_fails_the_step(self):
         system = System(installed=OLD, live=OLD)
         system.fail = ("systemctl", "restart")
         self.assertEqual(self.perform(system), 7)
-        self.assertEqual(self.previous.read_bytes(), ingress.rule_text(OLD).encode())
-        self.assertEqual(ingress.rule_ports(system.files[ingress.RULE_FILE].content), firewall_ports(NEW))
         self.assertEqual(system.live, live_policy(OLD))
-        self.assertEqual(self.perform(system), 0)
-        self.assertEqual(system.live, live_policy(NEW))
-        self.assertFalse(self.previous.exists())
 
     def test_a_file_from_an_earlier_allocation_is_recognized_and_replaced(self):
         system = System(live=EARLIER)
@@ -199,30 +179,10 @@ class NativeIngress(unittest.TestCase):
             with self.subTest(edited=edited.splitlines()[1]), self.assertRaises(ValueError):
                 ingress.rule_ports(edited.encode())
 
-    def test_post_apply_verification_failure_preserves_recovery_record(self):
+    def test_post_apply_verification_failure_fails_the_step(self):
         system = System(installed=OLD, live=OLD)
         system.corrupt_after_restart = True
         self.assertEqual(self.perform(system), 1)
-        self.assertEqual(self.previous.read_bytes(), ingress.rule_text(OLD).encode())
-
-    def test_stale_success_journal_is_refreshed_before_next_failed_transition(self):
-        self.save_previous(OLD)
-        self.context.host = {"http_port": 15601, "https_port": 15602}
-        system = System(installed=NEW, live=NEW)
-        system.fail = ("systemctl", "restart")
-        self.assertEqual(self.perform(system), 7)
-        self.assertEqual(self.previous.read_bytes(), ingress.rule_text(NEW).encode())
-        self.assertEqual(self.perform(system), 0)
-        self.assertEqual(system.live, live_policy(self.context.host))
-        self.assertFalse(self.previous.exists())
-
-    def test_bad_retained_policy_does_not_authorize_replacing_live_table(self):
-        self.save_previous()
-        self.previous.write_bytes(ingress.rule_text(OLD).encode() + b"# customized\n")
-        system = System(installed=NEW, live=OLD)
-        self.assertEqual(self.perform(system), 1)
-        self.assertEqual(system.commands, [("-v",)])
-        self.assertEqual(system.live, live_policy(OLD))
 
     def test_malformed_table_listing_fails_before_any_firewall_mutation(self):
         for output in ("", "{", "null", "{}", '{"nftables":null}', '{"nftables":[null]}',
@@ -240,10 +200,8 @@ class NativeIngress(unittest.TestCase):
         self.assertEqual(self.perform(system), 1)
         self.assert_no_install(system)
 
-    def test_prerequisites_preserve_live_policy_root_files_and_recovery_record(self):
-        self.save_previous()
-        before = self.previous.read_bytes()
-        system = System(installed=NEW, live=OLD)
+    def test_prerequisites_preserve_live_policy_and_root_files(self):
+        system = System(installed=OLD, live=OLD)
         files, live = copy.deepcopy(system.files), copy.deepcopy(system.live)
         self.assertEqual(self.perform(system, probe=True), 0)
         self.assertEqual(system.commands[0], ("-v",))
@@ -251,7 +209,6 @@ class NativeIngress(unittest.TestCase):
         self.assertEqual(len(system.commands), 2)
         self.assertEqual(system.files, files)
         self.assertEqual(system.live, live)
-        self.assertEqual(self.previous.read_bytes(), before)
 
     def test_missing_modules_hint_follows_failed_probe_only(self):
         system = System()
@@ -273,7 +230,6 @@ class NativeIngress(unittest.TestCase):
         self.assertEqual(self.perform(system, probe=True), 7)
         self.assertEqual(system.files, files)
         self.assertEqual(system.live, live)
-        self.assertFalse(self.previous.exists())
         self.assertEqual(len(system.commands), 2)
 
     def test_interrupted_install_with_missing_boundary_can_resume_after_probe(self):
@@ -324,7 +280,6 @@ class NativeIngress(unittest.TestCase):
         system = System(installed=OLD, live=OLD)
         system.files[ingress.UNIT_FILE] = UnitFile(ingress.PREVIOUS_UNIT_TEXT.encode(), 0, 0o644)
         self.assertIsNone(self.step.check(system).problem, "an upgrade adopts the unit an earlier install wrote")
-        self.save_previous()
         self.assertEqual(self.perform(system), 0)
         self.assertEqual(system.files[ingress.UNIT_FILE].content, ingress.unit_text().encode())
         from oh_install import steps

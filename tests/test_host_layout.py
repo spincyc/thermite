@@ -181,12 +181,11 @@ class Mounts(unittest.TestCase):
         self.assertIn(layout.logs, sources)
         self.assertLessEqual(sources, made)
         from oh_install import changeover
-        upgrade = [*changeover.preparation(context()), *changeover.switching(context(), "20261105T101500Z-3f9a2c")]
-        for name, sequence in (("install", steps.install(context())), ("upgrade", upgrade)):
-            types = [type(step) for step in sequence]
-            for maker in (steps.Account, steps.StateDirectories, steps.MetricsDirectories):
-                with self.subTest(sequence=name, step=maker.__name__):
-                    self.assertLess(types.index(maker), types.index(steps.Units))
+        types = [type(step) for step in (*changeover.preparation(context()),
+                                         *changeover.switching(context(), "20261105T101500Z-3f9a2c"))]
+        for maker in (steps.Account, steps.StateDirectories, steps.MetricsDirectories):
+            with self.subTest(step=maker.__name__):
+                self.assertLess(types.index(maker), types.index(steps.Units))
 
 
 class Ownership(unittest.TestCase):
@@ -213,17 +212,6 @@ class Account(unittest.TestCase):
                          [("usermod", "-d", str(RUNTIME), "-s", "/usr/bin/nologin", "thermite")])
         home = User("thermite", 9001, 9001, str(RUNTIME), "/usr/bin/nologin")
         self.assertEqual(steps.Account(context()).missing(Host(users={"thermite": home, 9001: home})), [])
-
-
-class Purge(unittest.TestCase):
-    def test_purge_deletes_only_the_runtime_directory_even_on_btrfs(self):
-        for fstype in ("btrfs", "ext4"):
-            with self.subTest(fstype=fstype):
-                actions = steps.Purge(context()).actions(Host(fstype=fstype))
-                self.assertEqual(actions[1].argv, ("rm", "-rf", "--one-file-system", "--", str(RUNTIME)))
-                self.assertTrue(actions[1].root)
-                self.assertNotIn("subvolume", " ".join(word for action in actions
-                                                       for word in getattr(action, "argv", ())))
 
 
 class GatewayRoot(unittest.TestCase):

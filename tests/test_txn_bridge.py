@@ -20,7 +20,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_apparmor  # noqa: E402
 import oh_deploy as deploy  # noqa: E402
-from oh_install import bridge, engine, ingress, manifest, ownership, steps  # noqa: E402
+from oh_install import bridge, changeover, engine, ingress, manifest, ownership, steps  # noqa: E402
 from oh_install.system import System, UnitFile  # noqa: E402
 from tests import txn_fakes  # noqa: E402
 from tests.test_install_manifest import ROOT, context  # noqa: E402
@@ -73,7 +73,7 @@ def host_system(world, *, record=b'{"commit": "' + b"a" * 40 + b'"}'):
 
 def describe(ctx, world, **kwargs):
     system = host_system(world, **kwargs)
-    items = manifest.desired(steps.install(ctx, preflight=False), system, ROOT)
+    items = manifest.desired(changeover.switching(ctx, None), system, ROOT)
     with patch.object(bridge, "_prove"):
         return bridge.describe(ctx, system, items, TOOLS, txn_fakes.CLOCK), items
 

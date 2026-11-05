@@ -26,10 +26,6 @@ class Command:
     # Keep successful diagnostics visible through bounded, noninteractive
     # capture. Quiet mode still suppresses successful output.
     show_output: bool = False
-    # Units this command stops for a later step to start again, and units it
-    # starts. A run that fails between them starts the stopped units again.
-    stops: tuple[str, ...] = ()
-    starts: tuple[str, ...] = ()
 
     @property
     def full(self) -> tuple[str, ...]:
