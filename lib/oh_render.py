@@ -181,6 +181,41 @@ def silenced(path: str, text: str) -> str:
     return "\n".join(lines)
 
 
+#: Where a test copy addresses what it must not reach. A TCP connection to the
+#: limited broadcast address fails in the kernel (ENETUNREACH), and a datagram
+#: or ping to it is refused without SO_BROADCAST (EACCES), so nothing leaves
+#: the host; a documentation or reserved address would still go to the router.
+NOWHERE = "255.255.255.255"
+#: A Sonos UDN no player has (an all-zero MAC): the binding finds its players
+#: by UDN.
+NO_SONOS = "RINCON_00000000000001400"
+IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+SONOS_UDN = re.compile(r"RINCON_[0-9A-F]{12}01400")
+#: jupnp never uses a loopback interface, so naming only lo leaves it no
+#: network and its router off: it neither hears devices announce themselves
+#: nor fetches their descriptions.
+UPNP_CFG = "services/upnp.cfg"
+NO_UPNP = "org.jupnp:interfaces=lo\n"
+#: The files of the integrations that keep a session open with each device
+#: (SESSIONS), which the sandbox leaves to the runtime.
+SESSION_FILES = frozenset(m.FILE for m in integrations.REGISTRY if getattr(m, "SESSIONS", False))
+
+
+def unaddressed(files: dict[str, str | bytes], paths: frozenset[str] | None = None) -> dict[str, str | bytes]:
+    """conf files that reach no device: every IPv4 address in the files
+    openHAB reads (all but html/, which a browser runs), or in `paths` only,
+    is NOWHERE, every Sonos UDN NO_SONOS, and jupnp has no network. Loopback
+    goes too: the Apple TV helper there talks to Apple TVs. The boot check
+    runs on this over read_only(); the sandbox, which still reads the other
+    devices, over read_only() with paths SESSION_FILES."""
+    out = dict(files)
+    for path, text in files.items():
+        if isinstance(text, str) and not path.startswith("html/") and (paths is None or path in paths):
+            out[path] = SONOS_UDN.sub(NO_SONOS, IPV4.sub(NOWHERE, text))
+    out[UPNP_CFG] = NO_UPNP
+    return out
+
+
 def on_disk(conf: Path) -> set[str]:
     conf = Path(conf)
     return {p.relative_to(conf).as_posix() for p in conf.rglob("*") if p.is_file()} if conf.is_dir() else set()

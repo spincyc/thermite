@@ -86,6 +86,8 @@ addresses. The computer has no integration or listener. There are no Sonos
 devices or callback routes.
 
 Start the protocol stand-ins, then test the real generated configuration.
+The boot check reaches no device, stand-ins included; the installed runtime
+below must reach them.
 
 The [simulator launcher](dummy-tv.py) uses the existing Sony and BK-808 protocol
 implementations on guest-loopback HTTP port 80. Run it as the guest owner with
@@ -99,7 +101,7 @@ sudo systemd-run --collect --unit=thermite-e2e-devices \
   --property=NoNewPrivileges=yes \
   "$APP_PYTHON" "$PROGRAM/tests/e2e/dummy-tv.py" "$PROGRAM"
 sudo systemctl status thermite-e2e-devices.service
-thermite test boot --timeout 1800 --require-online
+thermite test boot --timeout 1800
 ```
 
 This unit is **test infrastructure**, deliberately owned by the operator; it is

@@ -29,6 +29,9 @@ DEVICE_KEYS = ("heos_pid",)
 #: connection does not fail a routed source's working power/input path.
 ROUTE_OPTIONAL = True
 DISCOVER_MDNS = ("_heos",)
+#: The binding keeps a session open with each receiver, which serves few;
+#: the sandbox leaves it to the runtime.
+SESSIONS = True
 RULE = "automation/js/heos.js"
 SOURCE = Path(__file__).with_name("heos.js")
 KEYS = {"previous": "PREVIOUS", "play": "PLAY", "pause": "PAUSE", "next": "NEXT"}

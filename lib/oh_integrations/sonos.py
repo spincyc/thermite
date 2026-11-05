@@ -34,6 +34,9 @@ REMOTE_LAYOUT = "sonos"
 PROBE_PORTS = (1400,)
 DISCOVER_PORTS = (1400,)
 DISCOVER_MDNS = ("_sonos",)
+#: The binding subscribes to each player's UPnP events, which the sandbox
+#: leaves to the runtime.
+SESSIONS = True
 #: Inventory model -> the binding's Thing type.
 THING_TYPES = {"Arc": "Arc", "Amp": "Amp"}
 #: A zone player's master volume as the binding's volume channel reports and

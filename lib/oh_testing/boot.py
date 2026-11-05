@@ -21,11 +21,11 @@ SUMMARY = "boot conf/ on a test runtime and report how it loads"
 DESCRIPTION = """\
 Boot a test runtime (the pinned distribution, see thermite sandbox) on
 CONF, on 127.0.0.1:13618 (HTTPS 13619, Karaf console 13620) so it can run
-beside the sandbox. It boots on var/boot-check/conf, a copy of CONF in which
-every HTTP binding channel is READONLY (oh_render.read_only), so it polls the
-real matrices but cannot switch them (it leaves the AVPro, which serves few
-telnet sessions, and the Sony projector, which answers one ADCP request at a
-time, to the runtime). Wait for the add-ons in
+beside the sandbox. It boots on var/boot-check/conf, a copy of CONF that
+commands nothing (oh_render.read_only) and reaches no device
+(oh_render.unaddressed): every address in it is the limited broadcast
+address, which the kernel refuses before a packet leaves, every Sonos UDN is
+one no player has, and UPnP has no network. Wait for the add-ons in
 CONF/services/addons.cfg and for Things to settle (none waiting for a
 handler, and no status change for --settle seconds, or 2s once every Thing
 is ONLINE), then report the runtime version, requested vs installed add-ons,
@@ -37,14 +37,9 @@ If Things still wait for a handler and neither they nor the start level
 change for --stall seconds, stop waiting and fail on them.
 
 The check proves conf/ loads and every Thing gets a handler without a
-configuration error. An online, account-free HEOS bridge's optional-login
-diagnostic remains a warning; local transport does not require an account.
-A Thing still INITIALIZING/UNKNOWN waits for its device
-and only warns; with --require-online the check also waits for devices and
-fails on any Thing not ONLINE. Device reachability is thermite health's job:
-the sandbox's web server is bound to 127.0.0.1, so UPnP event callbacks from
-speakers cannot reach it and they may only report at the binding's
-60s poll.
+configuration error. With no device answering, a Thing OFFLINE,
+INITIALIZING or UNKNOWN only warns. Device reachability is thermite
+health's job.
 
 Each run starts from a copy of a warmed userdata in var/boot-check/template/
 (OSGi cache built, add-ons installed, admin user and API token created), so
@@ -61,7 +56,6 @@ disposable copy, so it is killed if it has not stopped within 3s.
 
 EXAMPLES = (
     ("thermite test boot", "boot conf/ on a test runtime and report how it loads"),
-    ("thermite test boot --require-online", "also wait for every device, and fail on any Thing not ONLINE"),
     ("thermite test boot --json --keep", "the report as JSON; leave the instance running"),
 )
 
@@ -70,7 +64,7 @@ exit status:
   0  clean
   1  model problems in openhab.log, requested add-ons not installed, or a
      Thing UNINITIALIZED or in HANDLER_CONFIGURATION_PENDING /
-     CONFIGURATION_ERROR (with --require-online: any Thing not ONLINE)
+     CONFIGURATION_ERROR
   2  the instance could not be booted or queried
 """
 
@@ -181,7 +175,7 @@ def metrics(http: lib.Http) -> dict:
             "not_yet": [name for name in absent if name in later]}
 
 
-def collect(inst: lib.Instance, http: lib.Http, requested: dict, require_online: bool) -> dict:
+def collect(inst: lib.Instance, http: lib.Http, requested: dict) -> dict:
     root = http.get_json("/rest/")
     sysinfo = http.get_json("/rest/systeminfo")
     addons = http.get_json("/rest/addons?serviceId=all")
@@ -203,7 +197,7 @@ def collect(inst: lib.Instance, http: lib.Http, requested: dict, require_online:
             "missing": [uid for uid in wanted if uid not in installed],
             "unrequested": [uid for uid in installed if uid not in wanted],
         },
-        "things": lib.summarize_things(things, require_online=require_online),
+        "things": lib.summarize_things(things),
         "items": {"count": len(items), "by_type": _count(i.get("type", "?") for i in items)},
         "metrics": metrics(http),
         "log": {
@@ -318,7 +312,7 @@ def run_check(args, rt: lib.Runtime, inst: lib.Instance, log) -> dict:
         timings, restarted = booted.timings, booted.restarted
         http = ReportHttp(inst.url, booted.token, deadline)
 
-        settler = lib.Settler(args.settle, stall=args.stall, devices=args.require_online)
+        settler = lib.Settler(args.settle, stall=args.stall)
         outcome = None
         while True:
             http.remaining(THINGS_PATH)
@@ -333,7 +327,7 @@ def run_check(args, rt: lib.Runtime, inst: lib.Instance, log) -> dict:
                     if outcome:
                         timings[f"things {outcome}"] = time.monotonic() - started
                 if outcome:
-                    report = collect(inst, http, requested, args.require_online)
+                    report = collect(inst, http, requested)
                     http.remaining(METRICS_PATH)
                     break
             except ReportUnavailable:
@@ -342,7 +336,7 @@ def run_check(args, rt: lib.Runtime, inst: lib.Instance, log) -> dict:
                 if outcome != "stalled":
                     timings.pop("things settled", None)
                     outcome = None
-                    settler = lib.Settler(args.settle, stall=args.stall, devices=args.require_online)
+                    settler = lib.Settler(args.settle, stall=args.stall)
             time.sleep(min(1, http.remaining(THINGS_PATH)))
         report["start_level"] = lib.start_level(inst)
         report["restarted_after_first_boot"] = restarted
@@ -384,7 +378,6 @@ def add_arguments(parser) -> None:
                         help="stop waiting once Things without a handler and the start level stay unchanged "
                              "this long (default: 30)")
     parser.add_argument("--rebuild", action="store_true", help="rebuild the warmed userdata template first")
-    parser.add_argument("--require-online", action="store_true", help="fail on any Thing that is not ONLINE")
     oh_cli.add_json(parser)
     parser.add_argument("--keep", action="store_true", help="leave the instance running afterwards")
 
@@ -402,7 +395,7 @@ def run(args) -> int:
                 raise lib.SandboxError(f"a kept test instance is still running (pid file {inst.pid_file}); "
                                        f"stop it with kill -TERM -- -$(cat {inst.pid_file})")
             digest = deploy.tree_digest(deploy.read_tree(args.conf))
-            lib.mirror_conf(args.conf, conf, render.read_only)
+            lib.mirror_conf(args.conf, conf, lambda files: render.unaddressed(render.read_only(files)))
             rt = lib.fetch(versions, log=log)
             report = run_check(args, rt, inst, log)
     except (lib.SandboxError, deploy.DeployError) as exc:

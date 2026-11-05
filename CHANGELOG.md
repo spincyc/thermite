@@ -7,6 +7,15 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite test boot` reaches no device: its copy of conf/ addresses every
+  device and the Apple TV helper at the limited broadcast address, which
+  the kernel refuses before a packet leaves, gives every Sonos Thing a
+  UDN no player has, and leaves UPnP no network. It still proves conf/
+  loads and every Thing gets a handler; `--require-online`, which could no
+  longer pass, is gone (`thermite health` checks devices). The sandbox
+  still reads the matrices and the devices' HTTP APIs but holds no HEOS,
+  Cast, Android TV remote or Sonos session, and runs without UPnP.
+
 - A Denon or Marantz receiver is polled every 15 s instead of every 5 s,
   and its signal and volume-display readings every 30 s instead of 10 s;
   the receiver closes every HTTP connection, so each poll's requests were

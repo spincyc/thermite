@@ -326,18 +326,17 @@ examples:
                                     the remote page&#x27;s controls; give a slow host longer to boot
 </pre>
 <details id="test-boot"><summary><code>thermite test boot</code></summary><pre class="help">usage: thermite test boot [-h] [--conf DIR] [--timeout SECONDS] [--settle SECONDS]
-                          [--stall SECONDS] [--rebuild] [--require-online] [--json]
-                          [--keep]
+                          [--stall SECONDS] [--rebuild] [--json] [--keep]
 
 Boot conf/ on a test runtime and report how it loads.
 
 Boot a test runtime (the pinned distribution, see thermite sandbox) on
 CONF, on 127.0.0.1:13618 (HTTPS 13619, Karaf console 13620) so it can run
-beside the sandbox. It boots on var/boot-check/conf, a copy of CONF in which
-every HTTP binding channel is READONLY (oh_render.read_only), so it polls the
-real matrices but cannot switch them (it leaves the AVPro, which serves few
-telnet sessions, and the Sony projector, which answers one ADCP request at a
-time, to the runtime). Wait for the add-ons in
+beside the sandbox. It boots on var/boot-check/conf, a copy of CONF that
+commands nothing (oh_render.read_only) and reaches no device
+(oh_render.unaddressed): every address in it is the limited broadcast
+address, which the kernel refuses before a packet leaves, every Sonos UDN is
+one no player has, and UPnP has no network. Wait for the add-ons in
 CONF/services/addons.cfg and for Things to settle (none waiting for a
 handler, and no status change for --settle seconds, or 2s once every Thing
 is ONLINE), then report the runtime version, requested vs installed add-ons,
@@ -349,14 +348,9 @@ If Things still wait for a handler and neither they nor the start level
 change for --stall seconds, stop waiting and fail on them.
 
 The check proves conf/ loads and every Thing gets a handler without a
-configuration error. An online, account-free HEOS bridge&#x27;s optional-login
-diagnostic remains a warning; local transport does not require an account.
-A Thing still INITIALIZING/UNKNOWN waits for its device
-and only warns; with --require-online the check also waits for devices and
-fails on any Thing not ONLINE. Device reachability is thermite health&#x27;s job:
-the sandbox&#x27;s web server is bound to 127.0.0.1, so UPnP event callbacks from
-speakers cannot reach it and they may only report at the binding&#x27;s
-60s poll.
+configuration error. With no device answering, a Thing OFFLINE,
+INITIALIZING or UNKNOWN only warns. Device reachability is thermite
+health&#x27;s job.
 
 Each run starts from a copy of a warmed userdata in var/boot-check/template/
 (OSGi cache built, add-ons installed, admin user and API token created), so
@@ -378,7 +372,6 @@ options:
   --stall SECONDS    stop waiting once Things without a handler and the start level stay
                      unchanged this long (default: 30)
   --rebuild          rebuild the warmed userdata template first
-  --require-online   fail on any Thing that is not ONLINE
   --json             print the report as JSON
   --keep             leave the instance running afterwards
 
@@ -391,13 +384,11 @@ exit status:
   0  clean
   1  model problems in openhab.log, requested add-ons not installed, or a
      Thing UNINITIALIZED or in HANDLER_CONFIGURATION_PENDING /
-     CONFIGURATION_ERROR (with --require-online: any Thing not ONLINE)
+     CONFIGURATION_ERROR
   2  the instance could not be booted or queried
 
 examples:
   thermite test boot                boot conf/ on a test runtime and report how it loads
-  thermite test boot --require-online
-                                    also wait for every device, and fail on any Thing not ONLINE
   thermite test boot --json --keep  the report as JSON; leave the instance running
 </pre></details>
 <details id="test-routing"><summary><code>thermite test routing</code></summary><pre class="help">usage: thermite test routing [-h] [--timeout SECONDS] [--house FILE]
@@ -545,15 +536,17 @@ The sandbox binds HTTP to 127.0.0.1:13615 and HTTPS to 127.0.0.1:13616
 (OPENHAB_HTTP_ADDRESS/OPENHAB_HTTP_PORT/OPENHAB_HTTPS_PORT, honoured by
 runtime/bin/setenv), so the UI is not reachable from the LAN (but see
 --live below). The Karaf
-console listens on 127.0.0.1:13617. Bindings still open UPnP/mDNS sockets on
+console listens on 127.0.0.1:13617. Bindings still open mDNS sockets on
 the LAN.
 
 It runs on var/sandbox/conf, a copy of conf/ in which every HTTP binding
 channel is READONLY, every Item linked to a channel that could command a
 device is display-only and every rule&#x27;s SEND is off (oh_render.read_only):
-it reads the matrices and the devices under control but cannot command them,
-and leaves the AVPro, which serves few telnet sessions, and the Sony
-projector, which answers one ADCP request at a time, to the runtime.
+it reads the matrices and the devices under control but cannot command them.
+It leaves every session to the runtime: the AVPro, which serves few telnet
+sessions, and the Sony projector, which answers one ADCP request at a time,
+because SEND is off; and HEOS, Cast, the Android TV remote and Sonos, whose
+Things are addressed nowhere, with UPnP off (oh_render.unaddressed).
 `reload` refreshes the copy after `thermite generate`; the running sandbox
 picks the change up.
 

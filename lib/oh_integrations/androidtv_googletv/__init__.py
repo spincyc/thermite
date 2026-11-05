@@ -85,6 +85,9 @@ PORT = 6466
 #: A TCP probe of PORT would cost the device a TLS handshake it never gets;
 #: its Thing's status shows it reachable.
 PROBED = False
+#: The binding keeps a TLS session open with each device, which the sandbox
+#: leaves to the runtime.
+SESSIONS = True
 #: The remote protocol's port and its pairing port.
 DISCOVER_PORTS = (PORT, 6467)
 DISCOVER_MDNS = ("_androidtvremote2",)

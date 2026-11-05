@@ -22,15 +22,17 @@ The sandbox binds HTTP to 127.0.0.1:{sandbox_http} and HTTPS to 127.0.0.1:{sandb
 (OPENHAB_HTTP_ADDRESS/OPENHAB_HTTP_PORT/OPENHAB_HTTPS_PORT, honoured by
 runtime/bin/setenv), so the UI is not reachable from the LAN (but see
 --live below). The Karaf
-console listens on 127.0.0.1:{sandbox_karaf}. Bindings still open UPnP/mDNS sockets on
+console listens on 127.0.0.1:{sandbox_karaf}. Bindings still open mDNS sockets on
 the LAN.
 
 It runs on var/sandbox/conf, a copy of conf/ in which every HTTP binding
 channel is READONLY, every Item linked to a channel that could command a
 device is display-only and every rule's SEND is off (oh_render.read_only):
-it reads the matrices and the devices under control but cannot command them,
-and leaves the AVPro, which serves few telnet sessions, and the Sony
-projector, which answers one ADCP request at a time, to the runtime.
+it reads the matrices and the devices under control but cannot command them.
+It leaves every session to the runtime: the AVPro, which serves few telnet
+sessions, and the Sony projector, which answers one ADCP request at a time,
+because SEND is off; and HEOS, Cast, the Android TV remote and Sonos, whose
+Things are addressed nowhere, with UPnP off (oh_render.unaddressed).
 `reload` refreshes the copy after `thermite generate`; the running sandbox
 picks the change up.
 
@@ -113,13 +115,17 @@ SANDBOX_CONF = lib.VAR / "sandbox" / "conf"
 
 
 def mirror(source: Path | None, live: bool) -> Path:
-    return lib.mirror_conf(source or render.CONF, SANDBOX_CONF, dict if live else render.read_only)
+    return lib.mirror_conf(source or render.CONF, SANDBOX_CONF, dict if live else read_only)
+
+
+def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
+    return render.unaddressed(render.read_only(files), render.SESSION_FILES)
 
 
 def describe(mode: str) -> str:
     return ("live: the matrices, receivers, WiiM, projector, TVs, SHIELDs and Apple TVs are driven"
             if mode == lib.LIVE
-            else "read-only: no device is commanded")
+            else "read-only: no device is commanded, and none holds a session with it")
 
 
 def refuse_beside_production() -> None:

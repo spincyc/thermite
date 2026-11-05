@@ -126,6 +126,11 @@ integration.
                   metrics never probes its devices: it has no fixed port,
                   or a connection costs the device a session or a TLS
                   handshake
+    SESSIONS = True
+                  it keeps a session or subscription open with each device:
+                  the sandbox, which still reads the other devices, addresses
+                  its Things nowhere (oh_render.unaddressed) and leaves the
+                  sessions to the runtime
     PROBLEM_CLEAR_STATE
                   the state its <id>_problem Item holds for "nothing wrong"
     ROUTE_OPTIONAL = True

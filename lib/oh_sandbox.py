@@ -56,10 +56,6 @@ TOKEN_SCOPE = "sandbox"
 
 ADDON_CATEGORIES = ("automation", "binding", "misc", "persistence", "transformation", "ui", "voice")
 
-# Statuses a handler holds while it waits for its device. In the sandbox a
-# Sonos can sit in INITIALIZING until the binding's 60s poll, because the
-# speakers' UPnP event callbacks cannot reach a web server bound to 127.0.0.1.
-PENDING_STATUSES = frozenset({"INITIALIZING", "UNKNOWN"})
 # UNINITIALIZED details that mean the handler itself has not arrived yet.
 HANDLER_PENDING_DETAILS = ("HANDLER_MISSING_ERROR", "NOT_YET_READY")
 FAIL_DETAILS = frozenset({"HANDLER_CONFIGURATION_PENDING", "CONFIGURATION_ERROR"})
@@ -451,16 +447,14 @@ def installation_thing_verdict(thing: dict) -> str:
     return thing_readiness(thing)
 
 
-def thing_pending(thing: dict, devices: bool = True) -> bool:
-    """Still waiting for its handler (or start level 30), or with devices=True for its device too."""
+def thing_pending(thing: dict) -> bool:
+    """Still waiting for its handler (or start level 30)."""
     info = thing.get("statusInfo", {})
-    if devices and info.get("status") in PENDING_STATUSES:
-        return True
     return info.get("status") == "UNINITIALIZED" and info.get("statusDetail") in HANDLER_PENDING_DETAILS
 
 
-def things_pending(things: list[dict], devices: bool = True) -> list[str]:
-    return [t.get("UID", "?") for t in things if thing_pending(t, devices)]
+def things_pending(things: list[dict]) -> list[str]:
+    return [t.get("UID", "?") for t in things if thing_pending(t)]
 
 
 def things_snapshot(things: list[dict]) -> tuple:
@@ -480,15 +474,14 @@ class Settler:
 
     Settled: none pending and none changed for `window` seconds (ONLINE_WINDOW
     when every Thing is ONLINE). Stalled: some still pending while neither a
-    Thing nor the start level changed for `stall` seconds. With
-    devices=False only a missing handler counts as pending, so a Thing left
-    INITIALIZING/UNKNOWN by its device does not hold the result back.
+    Thing nor the start level changed for `stall` seconds. Only a missing
+    handler counts as pending, so a Thing left INITIALIZING/UNKNOWN by its
+    device does not hold the result back.
     """
 
-    def __init__(self, window: float, stall: float | None = None, devices: bool = True):
+    def __init__(self, window: float, stall: float | None = None):
         self.window = window
         self.stall = stall
-        self.devices = devices
         self.snapshot = None
         self.since = None
         self.progress = None
@@ -497,7 +490,7 @@ class Settler:
 
     def observe(self, things: list[dict], now: float, level: int | None = None) -> bool:
         snap = things_snapshot(things)
-        self.pending = bool(things_pending(things, self.devices))
+        self.pending = bool(things_pending(things))
         if (snap, level) != self.progress:
             self.progress = (snap, level)
             self.progressed = now

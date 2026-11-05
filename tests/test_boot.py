@@ -50,7 +50,7 @@ class BootReadiness(unittest.TestCase):
         self.inst.userdata.mkdir(parents=True)
         self.rt = lib.Runtime("5.2.3", root / "distribution", root / "jre")
         self.args = argparse.Namespace(conf=self.conf, rebuild=False, timeout=20, settle=2, stall=5,
-                                       require_online=True, keep=False, json=False)
+                                       keep=False, json=False)
         self.reset()
         stack = contextlib.ExitStack()
         self.addCleanup(stack.close)
@@ -198,7 +198,7 @@ class BootReadiness(unittest.TestCase):
             with self.subTest(failure=failure):
                 self.reset()
                 if failure == "thing":
-                    self.payloads[THINGS] = [thing("OFFLINE", "COMMUNICATION_ERROR")]
+                    self.payloads[THINGS] = [thing("OFFLINE", "CONFIGURATION_ERROR")]
                 elif failure == "addons":
                     self.payloads[ADDONS] = []
                 elif failure == "metrics":
@@ -212,15 +212,16 @@ class BootReadiness(unittest.TestCase):
                 self.assertEqual(self.calls[boot.METRICS_PATH], 1)
                 self.assertEqual(self.now, 2)
 
-    def test_default_pending_device_warning_and_strict_online_failure_are_preserved(self):
-        for required in (False, True):
-            self.reset()
-            self.args.require_online = required
-            self.args.stall = 2
-            self.payloads[THINGS] = [thing("INITIALIZING")]
-            report = self.run_check()
-            self.assertEqual(bool(report["things"]["failed"]), required)
-            self.assertEqual(bool(report["failures"]), required)
+    def test_a_thing_waiting_for_its_device_only_warns(self):
+        for status in ("INITIALIZING", "UNKNOWN", "OFFLINE"):
+            with self.subTest(status=status):
+                self.reset()
+                self.args.stall = 2
+                self.payloads[THINGS] = [thing(status)]
+                report = self.run_check()
+                self.assertEqual(report["things_outcome"], "settled")
+                self.assertEqual(report["things"]["failed"], [])
+                self.assertEqual(report["failures"], [])
 
     def test_stalled_outcome_never_resumes_settling_after_snapshot_outage(self):
         self.args.stall, self.args.settle = 2, 100

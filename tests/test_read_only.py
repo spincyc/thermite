@@ -1,5 +1,7 @@
 """The sandbox's and the boot check's read-only conf (oh_render.read_only)
-commands nothing, for every integration in every phase it may be listed in."""
+commands nothing, for every integration in every phase it may be listed in;
+the boot check's reaches no device, and the sandbox's holds no session
+(oh_render.unaddressed)."""
 import copy
 import sys
 import unittest
@@ -168,6 +170,45 @@ class FailsClosed(unittest.TestCase):
         for path in ("things/x.things", "items/x.items", "automation/x.rules"):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 render.read_only({path: "Switch x {channel=\"sonos:Arc:x:power\"}\n"})
+
+
+def addresses(files: dict) -> set[str]:
+    """Every IPv4 address and Sonos UDN in the files openHAB reads."""
+    return {found for path, text in files.items() if isinstance(text, str) and not path.startswith("html/")
+            for found in render.IPV4.findall(text) + render.SONOS_UDN.findall(text)}
+
+
+class Unaddressed(unittest.TestCase):
+    def test_every_integration_in_every_phase_reaches_nothing_in_the_boot_check(self):
+        for name, phase in sorted(HOUSES):
+            with self.subTest(integration=name, phase=phase):
+                files = render.read_only(render.render(house(name, phase)))
+                unaddressed = render.unaddressed(files)
+                self.assertLessEqual(addresses(unaddressed), {render.NOWHERE, render.NO_SONOS})
+                self.assertEqual(unaddressed[render.UPNP_CFG], render.NO_UPNP)
+                self.assertEqual(commanding(unaddressed), [])
+
+    def test_the_sandbox_leaves_only_sessions_to_the_runtime(self):
+        self.assertEqual(render.SESSION_FILES,
+                         {"yaml/cast.yaml", "yaml/googletv.yaml", "yaml/heos.yaml", "yaml/sonos.yaml"})
+        data = house("androidtv_googletv", "control")
+        data["devices"][0]["controls"]["observe"] = ["network_ping", "sony_rest", "cast"]
+        self.assertEqual(render.validate(data), [])
+        files = render.unaddressed(render.read_only(render.render(data)), render.SESSION_FILES)
+        for path in ("yaml/cast.yaml", "yaml/googletv.yaml"):
+            self.assertNotIn("192.0.2.10", files[path])
+            self.assertIn(render.NOWHERE, files[path])
+        for path in ("yaml/network.yaml", "yaml/sony.yaml"):
+            self.assertIn("192.0.2.10", files[path])
+        self.assertEqual(files[render.UPNP_CFG], render.NO_UPNP)
+
+    def test_only_whole_addresses_change_and_the_remote_keeps_its_own(self):
+        files = {"yaml/x.yaml": "url: http://192.0.2.10:8080/x v1.2.3.4.5 udn: RINCON_0123456789AB01400\n",
+                 "html/remote/x.js": "const HOST = '127.0.0.1';\n", "icon.png": b"\x89PNG 192.0.2.10"}
+        out = render.unaddressed(files)
+        self.assertEqual(out["yaml/x.yaml"], f"url: http://{render.NOWHERE}:8080/x v1.2.3.4.5 udn: {render.NO_SONOS}\n")
+        self.assertEqual(out["html/remote/x.js"], files["html/remote/x.js"])
+        self.assertEqual(out["icon.png"], files["icon.png"])
 
 
 if __name__ == "__main__":
