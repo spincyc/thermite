@@ -1807,5 +1807,82 @@ class CliApproval(unittest.TestCase):
             self.assertIn("complete install workflow", error.getvalue())
 
 
+class CliSummary(unittest.TestCase):
+    """What thermite deploy's configuration phase prints about a deploy."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.layout = deploy.State(Path(temporary.name))
+        self.result = deploy.Deployed(
+            "d" * 40, "Pin the fixture release",
+            deploy.Changes(added=["items/new.items"], changed=["rules/a.rules"], removed=["things/old.things"],
+                           unchanged=4),
+            deploy.Changes(changed=["oh_atv.py"], unchanged=2),
+            {"boot_checked": False}, False, with_metrics=True,
+            metrics=deploy.Changes(changed=["prometheus/prometheus.yml"], unchanged=3),
+            exporter_app=deploy.Changes(unchanged=5),
+            reloads=["prometheus reloaded", "grafana restarted"])
+
+    def apply(self, *, dry_run=False, pushed=False, units=()):
+        args = argparse.Namespace(state=self.layout.root, rev="d" * 40, force=True, dry_run=dry_run, yes=False,
+                                  _how="install")
+        with mock.patch.object(deploy, "deploy", return_value=self.result) as run, \
+                mock.patch.object(deploy, "pushed", return_value=pushed), \
+                mock.patch.object(deploy, "installed_units", return_value=list(units)), \
+                contextlib.redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(deploy_cli.apply(args, HOST), 0)
+        self.assertEqual(run.call_args.args[1].root, self.layout.root)
+        return printed.getvalue().splitlines()
+
+    def test_the_summary_lists_each_change_and_the_notes(self):
+        lines = self.apply(units=[("deploy/thermite-openhab.container", Path("/etc/fixture"), "differs"),
+                                  ("deploy/thermite-atv.container", Path("/etc/fixture-atv"), "current")])
+        self.assertEqual(lines[:12], [
+            f"deploy  {'d' * 12} Pin the fixture release",
+            "conf    1 added, 1 changed, 1 removed, 4 unchanged",
+            "          added   items/new.items",
+            "          changed rules/a.rules",
+            "          removed things/old.things",
+            "helper  0 added, 1 changed, 0 removed, 2 unchanged",
+            "          changed oh_atv.py",
+            "metrics 0 added, 1 changed, 0 removed, 3 unchanged",
+            "          changed prometheus/prometheus.yml",
+            "exporter0 added, 0 changed, 0 removed, 5 unchanged",
+            "metrics prometheus reloaded",
+            "metrics grafana restarted"])
+        notes = "\n".join(lines[12:])
+        self.assertIn(f"--userdata {self.layout.userdata}", lines[12])
+        self.assertIn(f"helper  changed: thermite-atv-restart.path restarts thermite-atv.service "
+                      f"({self.layout.atv_restart})", notes)
+        self.assertIn("note    installed without passing thermite test boot (--force)", notes)
+        self.assertIn(f"note    {'d' * 12} is not on a remote branch", notes)
+        self.assertIn("note    the installed deploy/thermite-openhab.container differ", notes)
+        self.assertNotIn("thermite-atv.container", notes)
+
+    def test_a_checked_pushed_deploy_without_changes_has_no_notes(self):
+        self.result.conf, self.result.atv_app = deploy.Changes(unchanged=4), deploy.Changes(unchanged=2)
+        self.result.record = {"boot_checked": True}
+        lines = self.apply(pushed=True)
+        self.assertFalse([line for line in lines if line.startswith(("note", "helper  changed", "runtime"))])
+
+    def test_a_dry_run_prints_the_changes_and_no_notes(self):
+        self.result.dry_run = True
+        lines = self.apply(dry_run=True)
+        self.assertEqual(lines[0], f"dry run {'d' * 12} Pin the fixture release")
+        self.assertEqual(lines[-1], "metrics grafana restarted")
+
+    def test_missing_or_kept_metrics_say_so_instead_of_their_changes(self):
+        self.result.with_metrics = False
+        printed = "\n".join(self.apply(dry_run=True))
+        self.assertIn(f"metrics not installed yet ({self.layout.metrics} is missing)", printed)
+        self.assertNotIn("exporter", printed)
+        self.result.with_metrics, self.result.metrics_kept = True, True
+        printed = "\n".join(self.apply(dry_run=True))
+        self.assertIn(f"metrics kept as deployed: {'d' * 12} predates the installed metrics/notification stack, "
+                      f"so {self.layout.metrics} and {self.layout.exporter_app} keep", printed)
+        self.assertNotIn("reloaded", printed)
+
+
 if __name__ == "__main__":
     unittest.main()
