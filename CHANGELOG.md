@@ -7,6 +7,11 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- An AVPro matrix is read over telnet once a minute, not every 5 s, and a
+  matrix that refuses is tried after 1, 2 and 4 minutes, then every 5, until
+  it answers. A switch still connects at once and reads its result. Polled
+  every 5 s, an AC-MX-44X stopped answering on every port.
+
 - Volume is each audio device's own number on its own scale, from its minimum
   to the maximum the device itself allows, in its own steps and unit: 0-98 in
   0.5 steps on a Denon or Marantz receiver (or dB as its display is set),

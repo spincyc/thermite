@@ -7,11 +7,13 @@ OUT<n> VS IN<m>` routes input m to output n: the line the matrix's own web
 page sends to switch. On connect it lists every output's input and other
 settings unasked. No binding speaks it, so a rule does:
 conf/automation/js/avpro_telnet_<device>.js, avpro_telnet.js beside this file with
-the device table filled in. Every 5 seconds it opens one short connection
+the device table filled in. Once a minute it opens one short connection
 per matrix, waits for that listing to end, asks `GET OUT0 VS` and posts
-each output's input; a matrix that does not answer gets UNDEF. A command to
+each output's input; a matrix that does not answer gets UNDEF and is polled
+less often, down to every 5 minutes, until it answers again. A command to
 an output's Item is sent as SET on a connection of its own, followed by the
-same read.
+same read. Polled every 5 seconds, the house's AC-MX-44X stopped answering
+on every port.
 
 Items, per matrix:
 
