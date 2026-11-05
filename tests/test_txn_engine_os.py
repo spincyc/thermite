@@ -57,7 +57,7 @@ class RealDisk(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name)
-        self.disk = engine.OsDisk({"cp": engine.trusted_tool(CP), "sync": engine.trusted_tool(SYNC)})
+        self.disk = engine.OsDisk({"cp": engine.trusted_tool("cp", CP), "sync": engine.trusted_tool("sync", SYNC)})
 
     def test_copies_keep_links_hard_links_modes_and_times(self):
         source = self.base / "userdata"
@@ -104,10 +104,21 @@ class RealDisk(unittest.TestCase):
 
     def test_sync_runs_sync_on_the_files_filesystem(self):
         record = self.base / "sync.log"
-        tool = script(self.base / "sync", f'echo "$@" >> {record}\n')
-        disk = engine.OsDisk({"sync": engine.trusted_tool(tool)})
+        tool = script(self.base / "sync", f'echo "$(pwd) $*" >> {record}\n')
+        with mock.patch.object(engine, "TOOL_DIRS", (str(self.base),)):
+            disk = engine.OsDisk({"sync": engine.trusted_tool("sync", tool)})
         disk.sync_fs(self.base / "files/.3.partial")
-        self.assertEqual(record.read_text(), f"--file-system -- {self.base}/files/.3.partial\n")
+        self.assertEqual(record.read_text(), f"/ --file-system -- {self.base}/files/.3.partial\n")
+
+    def test_tools_run_from_the_root_directory(self):
+        """A tool never finds a program or file in the caller's directory."""
+        planted = self.base / "is-enabled"
+        planted.write_text("echo planted\n")
+        tool = script(self.base / "systemctl", 'pwd; [ ! -e ./is-enabled ] || echo "found ./is-enabled"\n')
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.base)
+        host = engine.SubprocessHost({"systemctl": tool})
+        self.assertEqual(host.capture(("systemctl", "is-enabled", engine.TARGET)), (0, "/\n"))
 
     def test_sizes_are_allocated_blocks(self):
         tree = self.base / "tree"
@@ -157,24 +168,34 @@ class RealDisk(unittest.TestCase):
             self.disk.read_bytes(self.base / "link", 5)
 
     def test_only_tools_root_alone_can_change_are_run(self):
-        self.assertEqual(engine.trusted_tool(CP), os.path.realpath(CP))
+        self.assertEqual(engine.trusted_tool("cp", CP), os.path.realpath(CP))
+        # Any root-owned program is not any tool: a shell named as systemctl.
+        for name, value in (("systemctl", "/usr/bin/sh"), ("systemctl", CP), ("cp", "/usr/local/bin/cp"),
+                            ("cp", "/usr/bin/../bin/cp"), ("python3", "/usr/bin/python3")):
+            with self.subTest(name=name, value=value):
+                with self.assertRaises(engine.EngineError):
+                    engine.trusted_tool(name, value)
+        with self.assertRaisesRegex(engine.EngineError, "must be a program named systemctl"):
+            engine.trusted_tools({"systemctl": "/usr/bin/sh", "cp": CP, "sync": SYNC, "nft": None,
+                                  "apparmor_parser": None, "podman": None})
         tools = self.base / "tools"
         tools.mkdir(mode=0o700)
-        loose = script(tools / "loose", "exit 0\n")
-        os.chmod(loose, 0o775)
-        with self.assertRaisesRegex(engine.EngineError, "must be an executable file only root can change"):
-            engine.trusted_tool(loose)
         shared = tools / "shared"
         shared.mkdir()
-        tool = script(shared / "tool", "exit 0\n")
-        shared.chmod(0o777)
-        with self.assertRaisesRegex(engine.EngineError, "could be changed by someone other than root"):
-            engine.trusted_tool(tool)
-        shared.chmod(0o755)
-        self.assertEqual(engine.trusted_tool(tool), tool)
-        if os.geteuid():  # A tool the caller owns is not root's when root is the only owner.
-            with self.assertRaisesRegex(engine.EngineError, "someone other than root"):
-                engine.trusted_tool(tool, owner=0)
+        with mock.patch.object(engine, "TOOL_DIRS", (str(tools), str(shared))):
+            loose = script(tools / "nft", "exit 0\n")
+            os.chmod(loose, 0o775)
+            with self.assertRaisesRegex(engine.EngineError, "must be an executable file only root can change"):
+                engine.trusted_tool("nft", loose)
+            tool = script(shared / "podman", "exit 0\n")
+            shared.chmod(0o777)
+            with self.assertRaisesRegex(engine.EngineError, "could be changed by someone other than root"):
+                engine.trusted_tool("podman", tool)
+            shared.chmod(0o755)
+            self.assertEqual(engine.trusted_tool("podman", tool), tool)
+            if os.geteuid():  # A tool the caller owns is not root's when root is the only owner.
+                with self.assertRaisesRegex(engine.EngineError, "someone other than root"):
+                    engine.trusted_tool("podman", tool, owner=0)
 
 
 def snapshot(*tops, skip=()):
@@ -216,6 +237,7 @@ class CommandLine(unittest.TestCase):
             "systemctl": script(tools / "systemctl", f"""\
 state={self.state} units={units} wants={wants}
 echo "$*" >> "$state/log"
+pwd >> "$state/cwd"
 case "$1" in
   is-enabled) [ -L "$wants/thermite.target" ] && {{ echo enabled; exit 0; }}; echo disabled; exit 1 ;;
   is-active) [ -e "$state/active" ] && {{ echo active; exit 0; }}; echo inactive; exit 3 ;;
@@ -240,9 +262,11 @@ esac
             "cp": CP, "sync": SYNC, "apparmor_parser": None, "podman": None,
         }
         source = (AREA / "lib/oh_install/engine.py").read_text()
-        self.assertEqual(source.count('SYSTEM = Path("/")\n'), 1)
+        dirs = 'TOOL_DIRS = ("/usr/bin", "/usr/sbin", "/bin", "/sbin")\n'
+        self.assertEqual((source.count('SYSTEM = Path("/")\n'), source.count(dirs)), (1, 1))
         self.copy = self.site / "engine.py"
-        self.copy.write_text(source.replace('SYSTEM = Path("/")\n', f"SYSTEM = Path({str(self.system)!r})\n"))
+        self.copy.write_text(source.replace('SYSTEM = Path("/")\n', f"SYSTEM = Path({str(self.system)!r})\n")
+                             .replace(dirs, f'TOOL_DIRS = ("/usr/bin", "/bin", {str(tools)!r})\n'))
         self.copy.chmod(0o600)
         self.install_old()
 
@@ -305,12 +329,12 @@ esac
             path.write_bytes(data)
         self.write(self.root / "runtime/userdata/jsondb/things.json", b"migrated things", 0o640)
         self.write(self.root / f"access/releases/{id}/config.json", b'{"new": true}')
-        subprocess.run([self.tools["systemctl"], "restart", BOUNDARY], check=True)
-        subprocess.run([self.tools["systemctl"], "start", "thermite.target"], check=True)
+        subprocess.run([self.tools["systemctl"], "restart", BOUNDARY], check=True, cwd="/")
+        subprocess.run([self.tools["systemctl"], "start", "thermite.target"], check=True, cwd="/")
 
     def test_a_rolled_back_and_a_committed_transaction(self):
         before = snapshot(self.system, self.root, skip={self.root / ".transaction"})
-        state = snapshot(self.state, skip={self.state / "log"})
+        state = snapshot(self.state, skip={self.state / "log", self.state / "cwd"})
         plan = json.loads(self.run_engine("plan", "--desired", str(self.inputs["desired"])).stdout)
         self.assertEqual(plan["required"], plan["margin"] + sum(count for _, count in plan["items"]))
         begun = json.loads(self.run_engine("begin", "--id", ID, "--desired", str(self.inputs["desired"]),
@@ -328,14 +352,14 @@ esac
         self.assertIn("collect: ", self.run_engine("collect", "--id", ID, status=1).stderr.replace(
             "thermite install engine: thermite.target must be disabled and thermite.slice stopped before collecting",
             "collect: "))
-        subprocess.run([self.tools["systemctl"], "stop", "thermite.target", "thermite.slice"], check=True)
+        subprocess.run([self.tools["systemctl"], "stop", "thermite.target", "thermite.slice"], check=True, cwd="/")
         self.run_engine("collect", "--id", ID)
         self.switch(ID)
         printed = self.run_engine("rollback", "--print").stdout
         self.assertIn(f"mv -T {self.root}/.transaction/{ID}/files/", printed)
         self.run_engine("rollback", status=engine.ROLLED_BACK)
         self.assertEqual(snapshot(self.system, self.root, skip={self.root / ".transaction"}), before)
-        self.assertEqual(snapshot(self.state, skip={self.state / "log"}), state)
+        self.assertEqual(snapshot(self.state, skip={self.state / "log", self.state / "cwd"}), state)
         self.assertEqual(self.run_engine("rollback").stdout, "No transaction is open.\n")
         journal = json.loads((self.root / f".transaction/{ID}/journal.json").read_bytes())
         self.assertEqual((journal["phase"], journal["outcome"]["started"]), ("rolled-back", True))
@@ -344,7 +368,7 @@ esac
         self.run_engine("begin", "--id", SECOND, "--desired", str(self.inputs["desired"]),
                         "--operator", str(self.inputs["operator"]))
         self.run_engine("guard", "--id", SECOND)
-        subprocess.run([self.tools["systemctl"], "stop", "thermite.target", "thermite.slice"], check=True)
+        subprocess.run([self.tools["systemctl"], "stop", "thermite.target", "thermite.slice"], check=True, cwd="/")
         self.run_engine("collect", "--id", SECOND)
         self.switch(SECOND)
         self.assertEqual(json.loads(self.run_engine("commit", "--id", SECOND, "--release",
@@ -359,6 +383,7 @@ esac
         status = json.loads(self.run_engine("status", "--json").stdout)
         self.assertEqual([(each["id"], each["phase"]) for each in status], [(SECOND, "kept")])
         self.assertIn(f"{SECOND}: upgrade kept, the kept backup (", self.run_engine("status").stdout)
+        self.assertEqual(set((self.state / "cwd").read_text().split()), {"/"}, "every tool ran from /")
 
     def test_a_journal_of_another_format_needs_the_engine_that_wrote_it(self):
         self.run_engine("begin", "--id", ID, "--desired", str(self.inputs["desired"]),

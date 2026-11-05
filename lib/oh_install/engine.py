@@ -49,6 +49,9 @@ SLICE = "thermite.slice"
 #: program. Those that may be null are only needed when an item uses them.
 TOOLS = ("systemctl", "cp", "sync", "nft", "apparmor_parser", "podman")
 OPTIONAL_TOOLS = ("nft", "apparmor_parser", "podman")
+#: The directories a tool may be named in, by its own name. Tests run a copy
+#: with a scratch directory added.
+TOOL_DIRS = ("/usr/bin", "/usr/sbin", "/bin", "/sbin")
 #: install | upgrade | clean | uninstall | purge | revert. Only the last
 #: three differ: uninstall and purge record installed=false and leave the
 #: boot target disabled.
@@ -258,6 +261,10 @@ def check_item(item, root, system=SYSTEM, *, recorded) -> dict:
     for key in ("unit", "apply_unit"):
         if key in item:
             _string(item[key], f"{what} {key}", UNIT)
+    if "apply_unit" in item and not item["apply_unit"].endswith(".service"):
+        # Restarting it reloads the table; the target and slice are never
+        # restarted, only the guard and commit touch the target.
+        raise EngineError(f"{what} apply_unit must be a Thermite service: {item['apply_unit']!r}")
     if "target" in item:
         checked_path(item["target"], f"{what} target")
     if "pin" in item:
@@ -310,7 +317,8 @@ def check_tools(value) -> dict:
     for name in TOOLS:
         if value[name] is None and name in OPTIONAL_TOOLS:
             continue
-        checked_path(value[name], f"tool {name}")
+        if checked_path(value[name], f"tool {name}").name != name:
+            raise EngineError(f"tool {name} must be a program named {name}: {value[name]!r}")
     return dict(value)
 
 
@@ -1375,12 +1383,16 @@ class Engine:
 
 # The real host ----------------------------------------------------------------
 
-def trusted_tool(value, owner=None) -> str:
-    """The tool's resolved path, if root (or, in tests, the caller) owns it
-    and every directory on the way, and no one else can change any of them;
-    a sticky world-writable directory such as /tmp is allowed on the way."""
+def trusted_tool(name, value, owner=None) -> str:
+    """The resolved path of tool `name`, if it is the program of that name
+    in one of the system's program directories, and root (or, in tests, the
+    caller) owns it and every directory on the way, and no one else can
+    change any of them; a sticky world-writable directory such as /tmp is
+    allowed on the way."""
     owners = {0, os.geteuid() if owner is None else owner}
-    path = Path(str(checked_path(value, "tool")))
+    path = Path(str(checked_path(value, f"tool {name}")))
+    if name not in TOOLS or path.name != name or str(path.parent) not in TOOL_DIRS:
+        raise EngineError(f"tool {name} must be the {name} program in {', '.join(TOOL_DIRS)}, not {path}")
     real = Path(os.path.realpath(path))
     for each in (path, real):
         for ancestor in each.parents:
@@ -1394,7 +1406,7 @@ def trusted_tool(value, owner=None) -> str:
 
 
 def trusted_tools(tools) -> dict:
-    return {name: trusted_tool(path) for name, path in check_tools(tools).items() if path is not None}
+    return {name: trusted_tool(name, path) for name, path in check_tools(tools).items() if path is not None}
 
 
 class OsDisk(Disk):
@@ -1473,7 +1485,7 @@ class OsDisk(Disk):
     def _tool(self, name, *argv):
         if not self.tools.get(name):
             raise EngineError(f"no {name} tool is configured")
-        result = subprocess.run([self.tools[name], *map(str, argv)], stdin=subprocess.DEVNULL,
+        result = subprocess.run([self.tools[name], *map(str, argv)], stdin=subprocess.DEVNULL, cwd="/",
                                 capture_output=True, text=True, env=ENVIRONMENT, check=False)
         if result.returncode:
             raise EngineError(f"{name} {shlex.join(map(str, argv))} failed: {result.stderr.strip()}")
@@ -1562,11 +1574,11 @@ class SubprocessHost(Host):
         return [self.tools[argv[0]], *map(str, argv[1:])]
 
     def run(self, argv):
-        return subprocess.run(self._argv(argv), stdin=subprocess.DEVNULL, stdout=sys.stderr, env=ENVIRONMENT,
+        return subprocess.run(self._argv(argv), stdin=subprocess.DEVNULL, stdout=sys.stderr, env=ENVIRONMENT, cwd="/",
                               check=False).returncode
 
     def capture(self, argv):
-        result = subprocess.run(self._argv(argv), stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        result = subprocess.run(self._argv(argv), stdin=subprocess.DEVNULL, capture_output=True, text=True, cwd="/",
                                 env=ENVIRONMENT, check=False)
         return result.returncode, result.stdout
 
@@ -1654,8 +1666,11 @@ def parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parser().parse_args(argv)
+    here = Path(__file__).resolve()
+    # Nothing root runs may find a program or file in the caller's directory.
+    os.chdir("/")
     try:
-        return _main(args, argv)
+        return _main(args, argv, here)
     except SpaceShort as error:
         print(error, file=sys.stderr)
         return SHORT
@@ -1664,8 +1679,7 @@ def main(argv=None) -> int:
         return FAILED
 
 
-def _main(args, argv) -> int:
-    here = Path(__file__).resolve()
+def _main(args, argv, here) -> int:
     engine = Engine(OsDisk(), SubprocessHost(), args.root, source=here.read_bytes(), say=lambda text: print(
         text, file=sys.stderr))
     engine.check_root()

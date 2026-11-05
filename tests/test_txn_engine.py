@@ -150,6 +150,12 @@ class Desired(unittest.TestCase):
             engine.validate_desired({**data, "kind": "recover"}, ROOT)
         with self.assertRaisesRegex(engine.EngineError, "pulled images"):
             engine.validate_desired({**data, "pulled": ["--all"]}, ROOT)
+        # Restarting apply_unit reloads the table: never the target or slice.
+        for unit in (engine.TARGET, engine.SLICE, "thermite-native-boundary.path"):
+            with self.assertRaisesRegex(engine.EngineError, "apply_unit must be a Thermite service"):
+                engine.validate_desired({**data, "items": [{**data["items"][0], "apply_unit": unit}]}, ROOT)
+        with self.assertRaisesRegex(engine.EngineError, "tool systemctl must be a program named systemctl"):
+            engine.validate_desired({**data, "tools": {**TOOLS, "systemctl": "/usr/bin/sh"}}, ROOT)
 
     def test_release_and_operator(self):
         release = engine.validate_release({"release": {"site": "c" * 40}, "pins": {"openhab": "x"},
