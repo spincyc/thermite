@@ -119,16 +119,19 @@ Admin, or have an Admin change your role in Users and sign in again. Terminal
 elevation uses `thermite access login --url https://… --user …` and reopening
 the remote. No application role grants host sudo privileges.
 
-Before upgrading an existing identity schema, stop both access services, make
-a private backup of the entire persistent state directory, and use the new
-release's interpreter and program:
+`thermite upgrade` sets the entire persistent state directory aside after
+stopping both access services and before migrating, and puts it back if the
+upgrade rolls back (docs/installation.md). By hand, before upgrading an
+existing identity schema, stop both access services, copy the entire
+persistent state directory aside privately, and use the new release's
+interpreter and program:
 
 ```sh
 sudo systemctl stop thermite-access.service thermite-access-worker.service
 sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access migrate --config "$RELEASE/config.json"
 ```
 
-Take the backup after stopping services and before the migration command.
+Copy the state after stopping services and before the migration command.
 Then activate the new release using its reviewed plan. `serve` and `worker`
 refuse pending migrations; they never silently upgrade existing authority.
 The security-state migration preserves existing accounts as authentication
@@ -136,7 +139,7 @@ enabled. The principals migration replaces roles and room grants with one
 `admin` flag: accounts holding the reserved Admin role become admins and all
 others become Members; custom roles, Viewer and room grants are dropped.
 For rollback across a schema change, stop both services and restore the whole
-matching backup before activating the prior release. Do not mix an older
+matching copy before activating the prior release. Do not mix an older
 database with newer signing keys or a different site identity.
 
 `serve --config …` loads a private compiled contract and explicit host list,

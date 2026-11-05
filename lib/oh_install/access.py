@@ -136,22 +136,32 @@ def installed_release(system):
 
 
 class Gateway(Step):
-    """Prepare, migrate and activate a release, retaining complete rollback data.
+    """Stage, migrate and activate a new release of the HTTPS gateway.
 
-    ``boundary`` is an optional installer hook called after inputs are adopted.
-    It receives (system, metadata, existing_callback_path) and returns a private
-    callback configuration path or None. Existing callbacks cannot be discarded.
+    Every run stages a release beside the installed ones, named by its
+    install transaction (or, outside one, by a new id of the same form).
+    Its inputs live at fixed paths: the identity state in access/state, and
+    the served TLS leaf and key and the verified callback map in
+    access/inputs; the private authority stays in the site's
+    var/gateway/authority. An install transaction sets all of them aside
+    before anything changes and puts them back if it rolls back, so the
+    gateway keeps no journal of its own to resume from and takes no backup.
+
+    ``boundary`` is an optional installer hook called after the inputs are
+    read. It receives (system, metadata, existing_callback_path) and returns
+    a private callback configuration path or None. Existing callbacks cannot
+    be discarded.
 
     ``record`` is an optional installer hook called once per completed
-    activation with {commit, application, release, previous_release, backup};
-    it returns whether the runtime deploy history (thermite history) took it.
+    activation with {commit, application, release, previous_release}; it
+    returns whether the runtime deploy history (thermite history) took it.
     """
 
     title = "HTTPS gateway and identity state"
     always = True
     stop_on_failure = True
 
-    def __init__(self, context, *, boundary=None, callbacks=None, options=None, record=None):
+    def __init__(self, context, *, boundary=None, callbacks=None, options=None, record=None, transaction=None):
         self.context = context
         self.boundary = boundary
         self.callbacks = callbacks
@@ -160,12 +170,19 @@ class Gateway(Step):
         import oh_release
         application = context.application or {"version": oh_release.VERSION, "source_commit": context.head}
         self.versions = {"site": context.head, "application": application}
-        identifier = hashlib.sha256(json.dumps({**self.versions, "configuration": context.conf_digest}, sort_keys=True).encode()).hexdigest()[:24]
-        self.identifier = identifier
+        self.transaction = transaction
+        self.id = transaction or manifest.transaction_id()
         self.root = Path(self.options.get("root", context.installation.access))
-        self.directory = context.var / "gateway" / identifier
+        self.inputs = self.root / "inputs"
+        self.release = self.root / "releases" / self.id
+        self.directory = (context.var / "transaction" / self.id / "gateway" if transaction
+                          else context.var / "gateway" / self.id)
         self.journal_path = self.directory / "deployment.json"
         self.helper = self.directory / "deployment.py"
+        #: Whether this run may activate a callback relay it finds new. A
+        #: transaction installs only the units it declared before it began;
+        #: a newly found map waits in access/inputs for the next one.
+        self.new_relay = transaction is None
 
     def check(self, system):
         try:
@@ -176,7 +193,7 @@ class Gateway(Step):
             return Check(False, "", str(exc))
 
     def actions(self, system):
-        return [Task("prepare gateway, stop writers, back up identity, migrate, activate and verify HTTPS", self.perform)]
+        return [Task("stage the gateway, stop writers, migrate identity state, activate and verify HTTPS", self.perform)]
 
     def relays(self, system):
         """Whether the callback relay runs: once its map exists, in the fixed
@@ -200,49 +217,24 @@ class Gateway(Step):
         root = argv[0] == "sudo"
         code = perform(Command(argv[1:] if root else argv, root=root, terminal=root), system, self.context.area)
         if code is None or code:
-            raise AccessError("gateway deployment command failed; rerun the same command to resume")
+            raise AccessError("gateway deployment command failed")
 
     def _helper(self, system, *argv):
         staging._trusted_ancestors(self.directory, "Gateway plan")
         self._run(system, "sudo", "/usr/bin/python3", "-I", "-S", self.helper, *argv)
 
-    def _save(self, journal, **changes):
-        journal.update(changes)
-        json_private(self.journal_path, journal)
+    def _save(self, record, **changes):
+        """This attempt's record, for the owner to read; nothing resumes from it."""
+        record.update(changes)
+        json_private(self.journal_path, record)
 
-    def _load(self):
-        try:
-            result = json.loads(read_private(self.journal_path))
-        except FileNotFoundError:
-            return None
-        if not isinstance(result, dict) or result.get("version") != 1 or result.get("versions") != self.versions:
-            raise AccessError("gateway deployment journal does not match this application and site")
-        return result
-
-    def _credentials(self, system, journal):
-        """Pin staging to the current token, independently of Git revisions."""
+    def _credentials(self, record):
+        """Pin staging to the runtime token as it is now."""
         content = read_private(self.context.area / self.context.token_file, 16384)
-        fingerprint = hashlib.sha256(content).hexdigest()
-        if journal.get("runtime_credential_sha256") == fingerprint and journal.get("runtime_token_file"):
-            try:
-                previous = read_private(journal["runtime_token_file"], 16384)
-            except FileNotFoundError:
-                previous = None
-            if previous is not None and hashlib.sha256(previous).hexdigest() == fingerprint:
-                return
-        # Retain every earlier receipt and rollback location. Neither a token
-        # rotation nor adopting a pre-fingerprint journal can reuse its release.
-        json_private(self.directory / ("history-" + secrets.token_hex(8) + ".json"), journal)
-        current = installed_release(system)
-        previous = str(current) if current else journal.get("previous_release")
-        metadata = journal.get("metadata")
-        snapshot = self.directory / ("runtime-input-" + secrets.token_hex(8)) / "bearer"
+        snapshot = self.directory / "runtime-input" / "bearer"
         atomic_private(snapshot, content)
-        journal.clear()
-        self._save(journal, version=1, versions=self.versions, previous_release=previous,
-                   **({"metadata": metadata} if metadata else {}), phase="inputs" if metadata else "planned",
-                   runtime_credential_sha256=fingerprint, runtime_token_file=str(snapshot),
-                   backup_suffix="-" + secrets.token_hex(6))
+        self._save(record, runtime_credential_sha256=hashlib.sha256(content).hexdigest(),
+                   runtime_token_file=str(snapshot))
 
     def _hosts(self):
         """The names clients reach the gateway by: this host's name and LAN
@@ -259,42 +251,53 @@ class Gateway(Step):
         return {"allowed_hosts": self._hosts(), "bind_host": "0.0.0.0",
                 "port": oh_ports.gateway_port(self.context.host), "timezone": self.context.host["timezone"]}
 
-    def _metadata(self, system, journal):
-        if journal.get("metadata"):
-            return journal["metadata"]
-        previous = journal["previous_release"]
-        if previous:
-            destination = self.directory / ("adopted-" + secrets.token_hex(6))
-            uid, _ = service_identity(required=True)
-            self._helper(system, "adopt", Path(previous) / "config.json", destination,
-                         "--uid", os.geteuid(), "--gid", os.getegid(), "--service-uid", uid)
-            metadata = json.loads(read_private(destination / "adopted.json"))
-            # Only identity state, TLS material and callbacks are adopted.
-            # The HTTPS port, hosts and timezone are this host's, as
-            # guest_http is, never the replaced release's: an upgrade can
-            # move the port, and the host can change its name or address.
-            derived = self._derived()
-            if metadata["port"] != derived["port"]:
-                system.say(f"   Gateway HTTPS moves from port {metadata['port']} to {derived['port']}: "
-                           "update bookmarks, home-screen apps and terminal --url")
-            metadata.update(derived)
-            metadata["callback_file"] = str(destination / "callbacks.json") if metadata["callbacks"] else None
-            if metadata["callback_file"]:
-                self._relocate_callbacks(system, Path(metadata["callback_file"]))
-            origin = system.unit_origin("thermite-access-callbacks.service")
-            if not origin.known or origin.load_state != "not-found" and not metadata["callbacks"]:
-                raise AccessError("installed callback service has no recoverable exact callback map; refusing to retire it")
+    def _metadata(self, system, old):
+        """The identity state and served TLS material at their fixed paths,
+        and the hosts, bind address, port and timezone derived from this
+        host. The first run on a gateway installed before the inputs had
+        fixed paths takes them from the release it runs (_adopt)."""
+        inputs = private_directory(self.inputs)
+        derived = self._derived()
+        certificate, key, callbacks = inputs / "tls-cert.pem", inputs / "tls-key.pem", inputs / "callbacks.json"
+        authority = self._authority(system, derived["allowed_hosts"][0])
+        state = self.root / "state"
+        if not key.exists() and old is not None:
+            state = self._adopt(system, old, derived)
+        elif not key.exists() or not certificate.exists():
+            self._replace_leaf(system, derived["allowed_hosts"], authority)
+        if callbacks.exists():
+            self._relocate_callbacks(system, callbacks)
         else:
-            inputs = private_directory(self.directory / "inputs")
-            derived = self._derived()
-            certificate, key = inputs / "tls-cert.pem", inputs / "tls-key.pem"
-            authority = self._authority(system, derived["allowed_hosts"][0])
-            if not certificate.exists() or not key.exists():
-                self._issue(system, inputs, derived["allowed_hosts"], authority)
-            metadata = {"state": str(self.root / "state"), **derived, "tls_cert": str(certificate),
-                        "tls_key": str(key), "tls_ca": str(authority[0]), "callbacks": False, "callback_file": None}
-        self._save(journal, metadata=metadata, phase="inputs")
-        return metadata
+            origin = system.unit_origin(staging.ACCESS_UNITS[2])
+            if not origin.known or origin.load_state != "not-found":
+                raise AccessError("installed callback service has no recoverable exact callback map; refusing to retire it")
+        if Path(state) != self.root / "state":
+            raise AccessError(f"the installed gateway keeps its identity state in {state}, not {self.root / 'state'}; "
+                              "move it there before upgrading")
+        return {"state": str(state), **derived, "tls_cert": str(certificate), "tls_key": str(key),
+                "tls_ca": str(authority[0]), "callbacks": callbacks.exists(),
+                "callback_file": str(callbacks) if callbacks.exists() else None}
+
+    def _adopt(self, system, old, derived):
+        """Once, for a gateway installed before its inputs had fixed paths:
+        copy its TLS leaf and key and its callback map out of the release it
+        runs (deployment.py adopt, as root) into access/inputs. Only those
+        and the identity state's path are adopted; the port, hosts and
+        timezone are this host's. Deleted with oh_install.bridge once every
+        installation has run a release with fixed inputs."""
+        destination = self.directory / ("adopted-" + secrets.token_hex(6))
+        uid, _ = service_identity(required=True)
+        self._helper(system, "adopt", Path(old) / "config.json", destination,
+                     "--uid", os.geteuid(), "--gid", os.getegid(), "--service-uid", uid)
+        adopted = json.loads(read_private(destination / "adopted.json"))
+        if adopted["port"] != derived["port"]:
+            system.say(f"   Gateway HTTPS moves from port {adopted['port']} to {derived['port']}: "
+                       "update bookmarks, home-screen apps and terminal --url")
+        if adopted["callbacks"]:
+            atomic_private(self.inputs / "callbacks.json", read_private(destination / "callbacks.json", 256 * 1024))
+        atomic_private(self.inputs / "tls-key.pem", read_private(adopted["tls_key"], 65536))
+        atomic_private(self.inputs / "tls-cert.pem", read_private(adopted["tls_cert"], 65536))
+        return adopted["state"]
 
     def _relocate_callbacks(self, system, path):
         """Keep the adopted map's verified routes; take its listener port and
@@ -385,27 +388,21 @@ class Gateway(Step):
             return "names"
         return None
 
-    def _certificate(self, system, journal, metadata):
-        """Serve only a current leaf of the private authority for this host's
-        names, reissuing when due or when the names changed.
+    def _replace_leaf(self, system, hosts, authority):
+        """Issue a leaf for `hosts` and put it in access/inputs, key first."""
+        fresh = self._issue(system, self.directory / ("tls-" + secrets.token_hex(6)), hosts, authority)
+        for source, name in zip(reversed(fresh), ("tls-key.pem", "tls-cert.pem")):
+            os.replace(source, self.inputs / name)
 
-        A staging attempt already under way keeps the certificate it copied;
-        the next run reissues. A completed deployment is restaged, retaining
-        its rollback data, exactly like a rotated runtime credential.
-        """
-        if (journal.get("plan") or journal.get("stage")) and journal.get("phase") != "complete":
-            return metadata
+    def _certificate(self, system, metadata):
+        """Serve only a current leaf of the private authority for this host's
+        names, reissuing when due or when the names changed."""
         hosts = self._hosts()
         authority = self._authority(system, hosts[0])
         reason = self._served(system, metadata, authority, hosts)
         if reason is None:
-            if metadata.get("tls_ca") != str(authority[0]):
-                metadata = {**metadata, "tls_ca": str(authority[0])}
-                self._save(journal, metadata=metadata)
-            return metadata
-        certificate, key = self._issue(system, self.directory / ("tls-" + secrets.token_hex(6)), hosts, authority)
-        metadata = {**metadata, "allowed_hosts": hosts, "tls_cert": str(certificate), "tls_key": str(key),
-                    "tls_ca": str(authority[0])}
+            return {**metadata, "tls_ca": str(authority[0])}
+        self._replace_leaf(system, hosts, authority)
         trust = self.root / "tls-cert.pem"
         if reason == "renew":
             system.say(f"   Gateway TLS certificate renewed by its private authority; clients trusting {trust} need no change")
@@ -415,44 +412,18 @@ class Gateway(Step):
         else:
             system.say(f"   Gateway TLS now uses a new private certificate authority: trust {trust} once on every "
                        "browser and terminal client")
-        if journal.get("stage"):
-            json_private(self.directory / ("history-" + secrets.token_hex(8) + ".json"), journal)
-            current = installed_release(system)
-            previous = str(current) if current else journal.get("previous_release")
-            kept = {name: journal[name] for name in ("runtime_credential_sha256", "runtime_token_file") if name in journal}
-            journal.clear()
-            self._save(journal, version=1, versions=self.versions, previous_release=previous, metadata=metadata,
-                       phase="inputs", backup_suffix="-" + secrets.token_hex(6), **kept)
-        else:
-            self._save(journal, metadata=metadata)
-        return metadata
+        return {**metadata, "allowed_hosts": hosts, "tls_ca": str(authority[0])}
 
-    def _stage(self, system, journal, metadata):
-        if journal.get("stage"):
-            return journal["stage"]
-        # A completed plan survives interruption immediately after stage().
-        if journal.get("plan"):
-            try:
-                receipt = json.loads(read_private(Path(journal["plan"]) / "stage.json"))
-            except FileNotFoundError:
-                receipt = None
-            if receipt and receipt.get("destination") == journal["release"] and receipt.get("persistent_state") == metadata["state"]:
-                self._save(journal, stage=receipt, phase="staged")
-                return receipt
-        attempt = self.identifier + "-" + secrets.token_hex(6)
-        release, plan = self.root / "releases" / attempt, self.directory / ("plan-" + attempt)
-        # Parent authority remains with the operator. Only the finite staged
-        # release/state inventory passes to the service account.
-        self._run(system, "sudo", "install", "-d", "-o", os.geteuid(), "-g", os.getegid(), "-m", "0755", self.root, self.root / "releases")
-        self._run(system, "sudo", "install", "-d", "-o", "root", "-g", "root", "-m", "0700", self.root / "backups")
-        self._save(journal, release=str(release), plan=str(plan), phase="preparing")
+    def _stage(self, system, record, metadata):
+        plan = self.directory / "plan"
+        self._save(record, plan=str(plan), phase="preparing")
         callback = metadata["callback_file"] or self.callbacks
         house = Path(self.options.get("house", self.context.configuration / "instance/devices.yaml"))
         assets = Path(self.options.get("assets", self.context.configuration / "conf/html/remote"))
         assets = self._assets(assets)
         with site_inputs(self.context.configuration):
-            receipt = staging.stage(release, state=metadata["state"], house=house, assets=assets,
-                                    runtime_url=self.context.url, runtime_token_file=journal["runtime_token_file"],
+            receipt = staging.stage(self.release, state=metadata["state"], house=house, assets=assets,
+                                    runtime_url=self.context.url, runtime_token_file=record["runtime_token_file"],
                                     tls_cert=metadata["tls_cert"], tls_key=metadata["tls_key"],
                                     allowed_hosts=metadata["allowed_hosts"], bind_host=metadata["bind_host"],
                                     port=metadata["port"], timezone=metadata["timezone"],
@@ -460,7 +431,7 @@ class Gateway(Step):
                                     wheelhouse=self.options.get("wheelhouse"), host_ports=oh_ports.effective(self.context.host),
                                     guest_http=self.context.host.get("guest_http"),
                                     textfile=self.context.installation.state.textfile)
-        self._save(journal, stage=receipt, phase="staged")
+        self._save(record, stage=receipt, phase="staged")
         return receipt
 
     def _assets(self, source):
@@ -495,7 +466,7 @@ class Gateway(Step):
             atomic_private(destination / name, value)
         return destination
 
-    def _boundary(self, system, journal, metadata):
+    def _boundary(self, system, record, metadata):
         callback = metadata["callback_file"] or self.callbacks
         if self.boundary:
             selected = self.boundary(system, metadata, Path(callback) if callback else None)
@@ -508,24 +479,31 @@ class Gateway(Step):
                                existing_callbacks=Path(callback) if callback else None)
             selected = None
             if result["callbacks"] is not None:
-                selected = self.directory / "callbacks.json"
+                selected = self.inputs / "callbacks.json"
                 json_private(selected, result["callbacks"])
         if callback and selected is None:
             raise AccessError("existing callback routes must be preserved during gateway upgrade")
+        if selected and not callback and not self.new_relay:
+            # Kept in access/inputs: the next install transaction declares
+            # the relay's unit and activates it.
+            system.say("   Sonos event callbacks were found; the next upgrade activates their relay")
+            selected = None
         metadata["callback_file"] = str(selected) if selected else None
         metadata["callbacks"] = bool(selected)
-        self._save(journal, metadata=metadata)
+        self._save(record, metadata=metadata)
 
     def _stop(self, system):
+        """Outside a transaction nothing else has stopped the gateway's
+        writers; inside one, everything already is."""
         origins = system.unit_origins(staging.ACCESS_UNITS)
         for name, origin in origins.items():
             if not origin.known:
                 raise AccessError("cannot determine whether every gateway writer is stopped")
-            if origin.load_state != "not-found":
+            if origin.load_state != "not-found" and origin.active not in {"inactive", "failed"}:
                 self._run(system, "sudo", "systemctl", "stop", name)
         for name, origin in system.unit_origins(staging.ACCESS_UNITS).items():
             if not origin.known or origin.load_state != "not-found" and origin.active not in {"inactive", "failed"}:
-                raise AccessError("gateway and worker must both be stopped before identity backup")
+                raise AccessError("gateway and worker must both be stopped before migrating identity state")
 
     def _live(self, system, receipt):
         expected = {Path(command[-1]).name: (Path(command[-2]), Path(command[-1]))
@@ -629,91 +607,72 @@ class Gateway(Step):
         verify_native_listeners(snapshot, http_port=self.context.host["http_port"],
                                 https_port=self.context.host["https_port"], filtered=True)
 
-    def _upstream(self, system, journal, receipt):
+    def _upstream(self, system, record, receipt):
         current = read_private(self.context.area / self.context.token_file, 16384)
-        if hashlib.sha256(current).hexdigest() != journal["runtime_credential_sha256"]:
+        if hashlib.sha256(current).hexdigest() != record["runtime_credential_sha256"]:
             raise AccessError("runtime credential changed during gateway deployment; rerun to stage its current value")
         expectations = self.directory / "upstream-check.json"
         json_private(expectations, {"runtime_url": self.context.url,
-                                    "runtime_credential_sha256": journal["runtime_credential_sha256"]})
+                                    "runtime_credential_sha256": record["runtime_credential_sha256"]})
         self._helper(system, "upstream", receipt["config"], expectations)
 
-    def _profile(self, journal, metadata, receipt, url):
+    def _profile(self, metadata, receipt, url):
         json_private(self.context.var / "gateway/current.json",
                      {"version": 1, "url": url, "ca_file": str(self.root / "tls-cert.pem"),
                       "release": receipt["destination"], "state": metadata["state"],
                       "versions": self.versions, "journal": str(self.journal_path)})
 
-    def _history(self, system, journal, receipt):
-        """Add a completed activation to the deploy history once, and retry a
-        missed one on the next run; the gateway never fails over it."""
-        if self.record is None or journal.get("recorded") == [receipt["destination"], journal.get("backup")]:
+    def _history(self, system, record, receipt):
+        """Add the activation to the deploy history; the gateway never fails over it."""
+        if self.record is None:
             return
         event = {"commit": self.context.head, "application": self.versions["application"],
-                 "release": receipt["destination"], "previous_release": journal.get("previous_release"),
-                 "backup": journal.get("backup")}
+                 "release": receipt["destination"], "previous_release": record.get("previous_release")}
         try:
             recorded = self.record(system, event)
         except (OSError, ValueError):
             recorded = False
-        if recorded:
-            self._save(journal, recorded=[event["release"], event["backup"]])
-        else:
+        if not recorded:
             system.say("   The gateway release was not added to thermite history; "
                        "its record stays in " + str(self.journal_path))
 
     def perform(self, system):
-        journal = None
+        record = None
         try:
             private_directory(self.directory)
             staging._trusted_ancestors(self.directory, "Gateway plan")
             atomic_private(self.helper, Path(staging.__file__).with_name("deployment.py").read_bytes())
-            journal = self._load()
-            if journal is None:
-                old = installed_release(system)
-                journal = {"version": 1, "versions": self.versions, "previous_release": str(old) if old else None}
-                self._save(journal, phase="planned")
-            self._credentials(system, journal)
-            metadata = self._certificate(system, journal, self._metadata(system, journal))
-            self._boundary(system, journal, metadata)
+            old = installed_release(system)
+            record = {"version": 1, "versions": self.versions, "release": str(self.release),
+                      "previous_release": str(old) if old else None}
+            self._save(record, phase="planned")
+            # Parent authority remains with the operator. Only the finite staged
+            # release/state inventory passes to the service account.
+            self._run(system, "sudo", "install", "-d", "-o", os.geteuid(), "-g", os.getegid(), "-m", "0755",
+                      self.root, self.root / "releases")
+            self._credentials(record)
+            metadata = self._certificate(system, self._metadata(system, old))
+            self._save(record, metadata=metadata, phase="inputs")
+            self._boundary(system, record, metadata)
             self._verify_boundary(system)
-            receipt = self._stage(system, journal, metadata)
+            receipt = self._stage(system, record, metadata)
             public_cert = self.root / "tls-cert.pem"
             # Clients trust the private authority, never an individual leaf.
             self._run(system, "sudo", "install", "-o", "root", "-g", "root", "-m", "0644", metadata["tls_ca"], public_cert)
-            if journal.get("phase") == "complete":
-                try:
-                    self._upstream(system, journal, receipt)
-                    self._live(system, receipt)
-                    url = self._https(metadata)
-                    self._guest_http()
-                    self._profile(journal, metadata, receipt, url)
-                    self._history(system, journal, receipt)
-                    return 0
-                except _UnitAuthorityError:
-                    raise
-                except (OSError, ValueError, http.client.HTTPException):
-                    # Repair a stopped/unhealthy completed deployment. Its old
-                    # rollback copy stays intact; this repair takes a new one.
-                    self._save(journal, phase="repairing", backup_suffix="-" + secrets.token_hex(6))
             for command in receipt["ownership_commands"]:
                 self._run(system, *command)
             self._run(system, *receipt["verification_command"])
-            self._upstream(system, journal, receipt)
+            self._upstream(system, record, receipt)
             self._stop(system)
-            backup_path = self.root / "backups" / (self.identifier + journal.get("backup_suffix", "") + ".tar.gz")
-            self._helper(system, "backup", metadata["state"], backup_path)
-            self._save(journal, backup=str(backup_path), phase="backed-up")
-            # Never initialize Django before the complete stopped-state backup.
             command = receipt["verification_command"]
             migrate = [*command[:-3], "migrate", "--config", receipt["config"]]
             self._run(system, *migrate)
-            self._save(journal, phase="migrated")
+            self._save(record, phase="migrated")
             for command in receipt["unit_install_commands"]:
                 self._run(system, *command)
             self._run(system, "sudo", "systemctl", "daemon-reload")
             self._run(system, "sudo", "systemctl", "enable", "--now", *receipt["units"])
-            self._save(journal, phase="activated")
+            self._save(record, phase="activated")
             last = None
             for attempt in range(30):
                 try:
@@ -729,21 +688,21 @@ class Gateway(Step):
                         raise AccessError("gateway did not verify after activation: " + str(last)) from None
                     system.sleep(1)
             self._verify_boundary(system)
-            self._upstream(system, journal, receipt)
-            self._save(journal, phase="complete", url=url)
-            self._profile(journal, metadata, receipt, url)
-            self._history(system, journal, receipt)
+            self._upstream(system, record, receipt)
+            self._save(record, phase="complete", url=url)
+            self._profile(metadata, receipt, url)
+            self._history(system, record, receipt)
             system.say("   Gateway verified: " + url)
             for line in guest_report:
                 system.say(line)
             system.say("   TLS trust certificate: " + str(public_cert))
-            system.say("   Complete identity backup: " + str(backup_path))
             return 0
         except (OSError, ValueError, http.client.HTTPException) as exc:
             system.say("   " + str(exc))
-            system.say("   Gateway deployment is incomplete; rerun the same install or upgrade command to resume.")
-            if journal and journal.get("previous_release"):
-                system.say("   Previous gateway release retained: " + journal["previous_release"])
-            if journal and journal.get("backup"):
-                system.say("   Complete identity backup retained: " + journal["backup"])
+            if self.transaction:
+                system.say("   Gateway deployment is incomplete; the install transaction puts the previous gateway back.")
+            else:
+                system.say("   Gateway deployment is incomplete; rerun the same install command to stage it again.")
+                if record and record.get("previous_release"):
+                    system.say("   Previous gateway release retained: " + record["previous_release"])
             return 1

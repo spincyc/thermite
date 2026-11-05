@@ -231,7 +231,7 @@ class NativeDeadlinePolicy(unittest.TestCase):
             natives.add(id(gateway.boundary.native))
             self.assertEqual(len(natives), 1)
 
-    def test_commissioning_uses_the_remaining_allowance_and_records_originals(self):
+    def test_commissioning_uses_the_remaining_allowance_and_keeps_callbacks_in_the_fixed_inputs(self):
         temporary = tempfile.TemporaryDirectory(dir=scratch())
         self.addCleanup(temporary.cleanup)
         system = mock.Mock(spec=System)
@@ -241,22 +241,23 @@ class NativeDeadlinePolicy(unittest.TestCase):
         now[0] = 450
         native.stop(system)
         hook = steps.Commissioning(context(), native)
-        hook.gateway = SimpleNamespace(directory=Path(temporary.name), options={"house": "/fictional/devices.yaml"})
-        calls = []
+        hook.gateway = SimpleNamespace(inputs=Path(temporary.name), options={"house": "/fictional/devices.yaml"})
+        calls, callbacks = [], {"version": 1, "routes": {}}
 
         def configure(*args, **kwargs):
             calls.append(kwargs)
-            kwargs["record"](boundary.AUTH_CONFIG, {"implicitUserRole": True})
-            kwargs["record"](boundary.AUTH_CONFIG, {"implicitUserRole": False})
-            return {"native_security": True, "callbacks": None}
+            return {"native_security": True, "callbacks": callbacks if len(calls) > 1 else None}
 
         with mock.patch.object(boundary, "configure", side_effect=configure), \
                 mock.patch("oh_inventory.load", return_value={"devices": []}):
             self.assertIsNone(hook(system, {}, None))
-        self.assertEqual(calls[0]["timeout"], 150)
-        saved = json.loads((Path(temporary.name) / "native-original-org.openhab.restauth.json").read_text())
-        self.assertEqual(saved["original"], {"implicitUserRole": True}, "a rerun keeps the first original")
-        self.assertEqual(native.deadline, None)
+            self.assertNotIn("record", calls[0], "userdata, set aside by the transaction, keeps the originals")
+            self.assertEqual(calls[0]["timeout"], 150)
+            self.assertEqual(native.deadline, None)
+            native.start(system)
+            selected = hook(system, {}, None)
+        self.assertEqual(selected, Path(temporary.name) / "callbacks.json")
+        self.assertEqual(json.loads(selected.read_text()), callbacks)
         native.spent = 600
         with mock.patch.object(boundary, "configure") as never, self.assertRaises(Exception) as error:
             hook(system, {}, None)

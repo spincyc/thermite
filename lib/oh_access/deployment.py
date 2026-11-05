@@ -2,7 +2,8 @@
 
 Execute the operator-owned copy with system Python, never a service-owned
 interpreter. Reading old configuration does not import Django or initialize
-site authority. State backups include every file, including SQLite journals.
+site authority. The install engine sets the identity state aside before a
+migration; nothing here archives it.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from pathlib import Path
 import pwd
 import stat
 import sys
-import tarfile
 import time
 from urllib.parse import urlsplit
 
@@ -131,103 +131,6 @@ def adopt(config, destination, *, uid, gid, service_uid):
     return result
 
 
-def _tree(archive, descriptor, relative, device):
-    info = os.fstat(descriptor)
-    if info.st_dev != device:
-        raise DeploymentError("state backup must not cross filesystem mounts")
-    entry = tarfile.TarInfo(relative)
-    entry.uid, entry.gid = info.st_uid, info.st_gid
-    entry.mtime = info.st_mtime
-    if stat.S_ISDIR(info.st_mode):
-        entry.type, entry.mode = tarfile.DIRTYPE, 0o700
-        archive.addfile(entry)
-        for name in sorted(os.listdir(descriptor)):
-            child = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=descriptor)
-            try:
-                _tree(archive, child, relative + "/" + name, device)
-            finally:
-                os.close(child)
-    elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
-        entry.size, entry.mode = info.st_size, 0o600
-        with os.fdopen(os.dup(descriptor), "rb") as content:
-            archive.addfile(entry, content)
-        after = os.fstat(descriptor)
-        if (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns):
-            raise DeploymentError("state changed while backing up; stop every writer")
-    else:
-        raise DeploymentError("state backup accepts only directories and unlinked regular files")
-
-
-def _digest(path):
-    with directory(path.parent) as parent:
-        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
-        with os.fdopen(descriptor, "rb") as source:
-            info = os.fstat(source.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:
-                raise DeploymentError("backup archive must retain private administrative custody")
-            digest = hashlib.sha256()
-            while chunk := source.read(1024 * 1024):
-                digest.update(chunk)
-            return digest.hexdigest()
-
-
-def backup(state, destination):
-    """Publish a whole-state archive once, retaining incomplete output on error.
-
-    A matching digest receipt is the only authority to reuse a previous backup.
-    The caller must stop both the gateway and worker before every invocation.
-    """
-    state, destination = absolute(state), absolute(destination)
-    if destination == state or state in destination.parents:
-        raise DeploymentError("backup must be outside persistent state")
-    witness = destination.with_name(destination.name + ".complete.json")
-    with directory(destination.parent) as parent:
-        info = os.fstat(parent)
-        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
-            raise DeploymentError("backup parent must be private to its administrative owner")
-        try:
-            previous = json.loads(read(witness, maximum=65536, owner=os.geteuid()))
-        except FileNotFoundError:
-            previous = None
-        if previous is not None:
-            digest = _digest(destination)
-            if previous != {"version": 1, "state": str(state), "sha256": digest}:
-                raise DeploymentError("completed state backup does not match its receipt")
-            return previous
-        try:
-            os.stat(destination.name, dir_fd=parent, follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        else:
-            # An interrupted publication is evidence, never a completed backup.
-            # Keep it and retry from the still-stopped state without overwriting.
-            abandoned = "." + destination.name + "." + os.urandom(12).hex() + ".unverified"
-            os.rename(destination.name, abandoned, src_dir_fd=parent, dst_dir_fd=parent)
-            os.fsync(parent)
-        temporary = "." + destination.name + "." + os.urandom(12).hex() + ".unfinished"
-        descriptor = os.open(temporary, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
-        try:
-            os.fchmod(descriptor, 0o600)
-            with os.fdopen(os.dup(descriptor), "wb") as output, directory(state) as source:
-                with tarfile.open(fileobj=output, mode="w:gz") as archive:
-                    _tree(archive, source, "state", os.fstat(source).st_dev)
-                output.flush()
-                os.fsync(output.fileno())
-            os.lseek(descriptor, 0, os.SEEK_SET)
-            digest = hashlib.sha256()
-            while chunk := os.read(descriptor, 1024 * 1024):
-                digest.update(chunk)
-            result = {"version": 1, "state": str(state), "sha256": digest.hexdigest()}
-            os.link(temporary, destination.name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
-            os.unlink(temporary, dir_fd=parent)
-            os.fsync(parent)
-            _write(parent, witness.name, (json.dumps(result) + "\n").encode(), os.geteuid(), os.getegid())
-            os.fsync(parent)
-            return result
-        finally:
-            os.close(descriptor)
-
-
 def live(release, pids):
     expected = str(absolute(release))
     for pid in pids:
@@ -316,9 +219,6 @@ def main(argv=None):
     command.add_argument("destination")
     for name in ("uid", "gid", "service-uid"):
         command.add_argument("--" + name, type=int, required=True)
-    command = sub.add_parser("backup")
-    command.add_argument("state")
-    command.add_argument("destination")
     command = sub.add_parser("live")
     command.add_argument("release")
     command.add_argument("pids", nargs="+")
@@ -330,7 +230,7 @@ def main(argv=None):
     try:
         globals()[action](**args)
         return 0
-    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError) as exc:
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         print("thermite gateway deployment: " + str(exc), file=sys.stderr)
         return 2
 

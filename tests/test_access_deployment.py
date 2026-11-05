@@ -2,16 +2,13 @@
 
 import json
 import hashlib
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 import http.server
 import os
 from pathlib import Path
-import shutil
 import ssl
-import sqlite3
 import subprocess
 import sys
-import tarfile
 import tempfile
 import threading
 import unittest
@@ -95,81 +92,6 @@ class PrivateFixture(unittest.TestCase):
         path = self.root / name
         atomic_private(path, content.encode() if isinstance(content, str) else content)
         return path
-
-
-class Backup(PrivateFixture):
-    def test_whole_state_includes_identity_keys_sqlite_and_worker_state(self):
-        state = private_directory(self.root / "state")
-        originals = {"site-id": "original-site", "secret-key": "original-key", "identity.sqlite3-wal": "journal",
-                     "locks/room-bedroom": "", "worker/reconcile.json": '{"revision":7}'}
-        connection = sqlite3.connect(state / "identity.sqlite3")
-        connection.execute("CREATE TABLE preserved(value TEXT)")
-        connection.execute("INSERT INTO preserved VALUES('original administrator')")
-        connection.commit()
-        connection.close()
-        for name, content in originals.items():
-            self.private("state/" + name, content)
-        parent = private_directory(self.root / "backups")
-        archive = parent / "before.tar.gz"
-        witness = deployment.backup(state, archive)
-        self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
-        with tarfile.open(archive) as saved:
-            for name, content in originals.items():
-                self.assertEqual(saved.extractfile("state/" + name).read(), content.encode())
-            database = self.root / "restored.sqlite3"
-            database.write_bytes(saved.extractfile("state/identity.sqlite3").read())
-        with closing(sqlite3.connect(database)) as connection:
-            self.assertEqual(connection.execute("SELECT value FROM preserved").fetchone(), ("original administrator",))
-        self.private("state/site-id", "new state must not replace the rollback copy")
-        self.assertEqual(deployment.backup(state, archive), witness)
-        with tarfile.open(archive) as saved:
-            self.assertEqual(saved.extractfile("state/site-id").read(), b"original-site")
-
-    def test_incomplete_publication_is_retained_and_retried(self):
-        state = private_directory(self.root / "state")
-        self.private("state/site-id", "original")
-        archive = self.private("backups/before.tar.gz", "interrupted")
-        deployment.backup(state, archive)
-        self.assertEqual(len(list(archive.parent.glob("*.unverified"))), 1)
-        with tarfile.open(archive) as saved:
-            self.assertEqual(saved.extractfile("state/site-id").read(), b"original")
-
-    def test_corrupted_completed_backup_and_links_fail_closed(self):
-        state = private_directory(self.root / "state")
-        self.private("state/site-id", "original")
-        parent = private_directory(self.root / "backups")
-        archive = parent / "before.tar.gz"
-        deployment.backup(state, archive)
-        archive.write_bytes(b"corrupted")
-        with self.assertRaisesRegex(deployment.DeploymentError, "receipt"):
-            deployment.backup(state, archive)
-        (state / "escape").symlink_to(self.root / "outside")
-        with self.assertRaises(OSError):
-            deployment.backup(state, parent / "another.tar.gz")
-        self.assertFalse((parent / "another.tar.gz.complete.json").exists())
-
-    def test_sqlite_schema_upgrade_retains_original_snapshot(self):
-        try:
-            import django  # noqa: F401
-        except ImportError:
-            self.skipTest("identity dependencies are required for real migration")
-        state = private_directory(self.root / "state")
-        program = "from oh_identity.composition import setup; setup(%r); from django.core.management import call_command; call_command('migrate', 'oh_identity', %r, verbosity=0)"
-        environment = {**os.environ, "PYTHONPATH": str(AREA / "lib"), "DJANGO_SETTINGS_MODULE": "oh_identity.settings"}
-        environment.pop("THERMITE_IDENTITY_STATE", None)
-        subprocess.run([sys.executable, "-c", program % (str(state), "0001")], env=environment, check=True, capture_output=True)
-        keys = {name: (state / name).read_bytes() for name in ("site-id", "secret-key")}
-        backup = private_directory(self.root / "backups") / "before.tar.gz"
-        deployment.backup(state, backup)
-        subprocess.run([sys.executable, "-c", program % (str(state), "0002")], env=environment, check=True, capture_output=True)
-        self.assertEqual({name: (state / name).read_bytes() for name in keys}, keys)
-        with closing(sqlite3.connect(state / "identity.sqlite3")) as connection:
-            self.assertEqual(connection.execute("SELECT enabled FROM oh_identity_securitystate").fetchone(), (0,))
-        with tarfile.open(backup) as saved:
-            before = self.root / "before.sqlite3"
-            before.write_bytes(saved.extractfile("state/identity.sqlite3").read())
-        with closing(sqlite3.connect(before)) as connection:
-            self.assertIsNone(connection.execute("SELECT name FROM sqlite_master WHERE name='oh_identity_securitystate'").fetchone())
 
 
 class Adoption(PrivateFixture):
@@ -299,7 +221,8 @@ class Host:
         self.fail_upstream = False
         self.installed = None
         self.unit_bytes = {}
-        self.overrides = {}
+        # No callback relay is installed unless a test installs one.
+        self.overrides = {staging.ACCESS_UNITS[2]: UnitOrigin(load_state="not-found", active="inactive")}
 
     def say(self, text):
         self.messages.append(text)
@@ -372,20 +295,16 @@ def real_openssl(system):
     return system
 
 
-class Lifecycle(PrivateFixture):
-    def test_partial_unit_set_is_never_treated_as_a_new_identity(self):
-        for name in staging.ACCESS_UNITS[1:]:
-            system = Host()
-            system.overrides[name] = UnitOrigin(fragment="/etc/systemd/system/" + name, active="active")
-            with self.subTest(unit=name), self.assertRaisesRegex(AccessError, "related access units remain"):
-                installed_release(system)
-            self.assertEqual(system.commands, [])
-
+class GatewayFixture(PrivateFixture):
     def setUp(self):
         super().setUp()
         from oh_install.runner import _TASK_APPROVAL
         token = _TASK_APPROVAL.set(True)
         self.addCleanup(_TASK_APPROVAL.reset, token)
+        self.staged = []
+        staged = patch.object(staging, "stage", side_effect=self.stage)
+        staged.start()
+        self.addCleanup(staged.stop)
 
     def unit_commands(self, gateway, release):
         commands = []
@@ -395,42 +314,54 @@ class Lifecycle(PrivateFixture):
             commands.append(["sudo", "install", str(path), "/etc/systemd/system/" + name])
         return commands
 
-    def gateway(self):
-        area = private_directory(self.root / "site")
-        context = SimpleNamespace(area=area, var=area / "var", head="a" * 40, conf_digest="c" * 64,
-                                  application={"version": "1.2.3", "digest": "b" * 64},
-                                  installation=SimpleNamespace(
-                                      access=self.root / "production" / "access",
-                                      state=SimpleNamespace(textfile=self.root / "production" / "runtime" / "textfile")),
-                                  hostname="house.example.test",
-                                  address="192.0.2.10", host={"timezone": "UTC"}, configuration=area,
-                                  url="http://127.0.0.1:13602", token_file=Path("var/token"))
-        gateway = Gateway(context, boundary=lambda system, metadata, callback: callback)
-        verification = patch.object(gateway, "_verify_boundary")
-        verification.start()
-        self.addCleanup(verification.stop)
-        private_directory(gateway.directory)
-        token = os.urandom(32).hex().encode()
-        atomic_private(context.area / context.token_file, token)
-        snapshot = gateway.directory / "test-runtime-token"
-        atomic_private(snapshot, token)
-        system = real_openssl(Host())
-        authority = gateway._authority(system, "house.example.test")
-        cert, key = gateway._issue(system, self.root / "tls", HOSTS, authority)
-        metadata = {"state": str(self.root / "state"), "tls_cert": str(cert), "tls_key": str(key),
-                    "tls_ca": str(authority[0]), "allowed_hosts": HOSTS, "bind_host": "0.0.0.0",
-                    "port": 13601, "timezone": "UTC", "callback_file": None, "callbacks": False}
-        release = str(self.root / "release")
-        command = ["sudo", "-u", "thermite", "-g", "thermite", release + "/env/bin/python", release + "/program/bin/thermite", "access"]
-        receipt = {"destination": release, "persistent_state": metadata["state"], "config": release + "/config.json",
-                   "units": ["thermite-access.service", "thermite-access-worker.service"],
-                   "ownership_commands": [["sudo", "/usr/bin/python3", "-I", "-S", str(gateway.directory / "custody.py"), "custody.json"]],
-                   "verification_command": [*command, "verify", "--config", release + "/config.json"],
-                   "unit_install_commands": self.unit_commands(gateway, release)}
-        journal = {"version": 1, "versions": gateway.versions, "previous_release": "/srv/old-release", "metadata": metadata, "stage": receipt, "phase": "staged",
-                   "runtime_credential_sha256": hashlib.sha256(token).hexdigest(), "runtime_token_file": str(snapshot)}
-        json_private(gateway.journal_path, journal)
+    def stage(self, release, **kwargs):
+        """staging.stage's receipt for `release`, as the gateway runs it."""
+        self.staged.append({"release": release, **kwargs})
+        command = ["sudo", "-u", "thermite", "-g", "thermite", str(release / "env/bin/python"),
+                   str(release / "program/bin/thermite"), "access"]
+        return {"destination": str(release), "persistent_state": kwargs["state"], "config": str(release / "config.json"),
+                "units": ["thermite-access.service", "thermite-access-worker.service"],
+                "ownership_commands": [["sudo", "/usr/bin/python3", "-I", "-S", str(self.root / "custody.py"), "custody.json"]],
+                "verification_command": [*command, "verify", "--config", str(release / "config.json")],
+                "unit_install_commands": self.unit_commands(self.current, release)}
+
+    def gateway(self, *, inputs=True, transaction=None, context=None):
+        """A gateway for a fictional site; with `inputs`, the private
+        authority and a served leaf already in access/inputs."""
+        if context is None:
+            area = private_directory(self.root / "site")
+            context = SimpleNamespace(area=area, var=area / "var", head="a" * 40, conf_digest="c" * 64,
+                                      application={"version": "1.2.3", "digest": "b" * 64},
+                                      installation=SimpleNamespace(
+                                          access=self.root / "production" / "access",
+                                          state=SimpleNamespace(textfile=self.root / "production" / "runtime" / "textfile")),
+                                      hostname="house.example.test",
+                                      address="192.0.2.10", host={"timezone": "UTC"}, configuration=area,
+                                      url="http://127.0.0.1:13602", token_file=Path("var/token"))
+            atomic_private(context.area / context.token_file, os.urandom(32).hex().encode())
+        gateway = Gateway(context, boundary=lambda system, metadata, callback: callback, transaction=transaction)
+        self.current = gateway
+        for name, value in (("_verify_boundary", None), ("_assets", self.root / "managed-assets")):
+            replaced = patch.object(gateway, name, return_value=value)
+            replaced.start()
+            self.addCleanup(replaced.stop)
+        if inputs and not (gateway.inputs / "tls-key.pem").exists():
+            system = real_openssl(Host())
+            gateway._issue(system, gateway.inputs, HOSTS, gateway._authority(system, "house.example.test"))
         return gateway
+
+    def journal(self, gateway):
+        return json.loads(gateway.journal_path.read_bytes())
+
+
+class Lifecycle(GatewayFixture):
+    def test_partial_unit_set_is_never_treated_as_a_new_identity(self):
+        for name in staging.ACCESS_UNITS[1:]:
+            system = Host()
+            system.overrides[name] = UnitOrigin(fragment="/etc/systemd/system/" + name, active="active")
+            with self.subTest(unit=name), self.assertRaisesRegex(AccessError, "related access units remain"):
+                installed_release(system)
+            self.assertEqual(system.commands, [])
 
     def test_every_access_unit_logs_under_its_own_name_not_env(self):
         units = staging.units(self.root / "release", state=self.root / "state", callbacks=True)
@@ -442,51 +373,55 @@ class Lifecycle(PrivateFixture):
                 self.assertEqual([line for line in service if line.startswith("SyslogIdentifier=")],
                                  ["SyslogIdentifier=" + name.removesuffix(".service")])
 
-    def test_failed_migration_never_activates_and_retry_reuses_backup_and_release(self):
+    def test_failed_migration_never_activates_and_a_rerun_stages_a_new_release(self):
         gateway, system = self.gateway(), Host()
         system.installed = Path("/srv/old-release")
         system.active = True
         system.fail_migration = True
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
+        with patch.object(Gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 1)
             self.assertFalse(any("--now" in command for command in system.commands))
-            journal = json.loads(gateway.journal_path.read_bytes())
-            self.assertEqual(journal["phase"], "backed-up")
-            self.assertIn("   Complete identity backup retained: " + journal["backup"], system.messages)
-            backup = next(command for command in system.commands if "backup" in command)
-            migration_index = next(index for index, command in enumerate(system.commands) if "migrate" in command)
-            backup_index = system.commands.index(backup)
+            self.assertEqual(self.journal(gateway)["phase"], "staged")
+            migration = next(index for index, command in enumerate(system.commands) if "migrate" in command)
             stops = [index for index, command in enumerate(system.commands) if "stop" in command]
-            self.assertEqual(len(stops), 3)
-            self.assertLess(max(stops), backup_index)
-            self.assertLess(backup_index, migration_index)
+            self.assertEqual(len(stops), 2)
+            self.assertLess(max(stops), migration)
+            self.assertFalse(any("backup" in " ".join(command) for command in system.commands),
+                             "the install transaction sets the identity state aside")
+            self.assertIn("   Gateway deployment is incomplete; rerun the same install command to stage it again.",
+                          system.messages)
+            self.assertIn("   Previous gateway release retained: /srv/old-release", system.messages)
             system.fail_migration = False
-            self.assertEqual(gateway.perform(system), 0)
-            journal = json.loads(gateway.journal_path.read_bytes())
-            self.assertEqual(journal["phase"], "complete")
-            self.assertEqual(journal["previous_release"], "/srv/old-release")
-            self.assertEqual(journal["versions"], gateway.versions)
-            self.assertEqual([command for command in system.commands if "backup" in command], [backup, backup])
-            before = len(system.commands)
-            self.assertEqual(gateway.perform(system), 0)
-            self.assertFalse(any("stop" in command or "migrate" in command or "--now" in command for command in system.commands[before:]))
+            again = self.gateway(context=gateway.context)
+            self.assertEqual(again.perform(system), 0, system.messages)
+        journal = self.journal(again)
+        self.assertEqual((journal["phase"], journal["previous_release"]), ("complete", "/srv/old-release"))
+        self.assertEqual([entry["release"] for entry in self.staged], [gateway.release, again.release])
+        self.assertNotEqual(gateway.release, again.release)
+
+    def test_a_transaction_names_the_release_and_its_record_after_itself(self):
+        gateway, system = self.gateway(transaction="20261105T101500Z-0a1b2c"), Host()
+        self.assertEqual(gateway.release, gateway.root / "releases/20261105T101500Z-0a1b2c")
+        self.assertEqual(gateway.directory, gateway.context.var / "transaction/20261105T101500Z-0a1b2c/gateway")
+        system.fail_migration = True
+        self.assertEqual(gateway.perform(system), 1)
+        self.assertIn("   Gateway deployment is incomplete; the install transaction puts the previous gateway back.",
+                      system.messages)
+        self.assertFalse(any("rerun" in message for message in system.messages))
 
     def test_upgrade_moves_https_to_the_host_files_port_and_checks_readiness_there(self):
-        gateway, system = self.gateway(), real_openssl(Host())
-        journal = json.loads(gateway.journal_path.read_bytes())
-        served = journal["metadata"]
-        # The installed version 2 release serves HTTPS on 13601.
+        gateway, system = self.gateway(inputs=False), real_openssl(Host())
+        # The installed version 2 release serves HTTPS on 13601, with TLS
+        # material in its own release: the inputs had no fixed paths then.
         old = private_directory(self.root / "old-release")
+        authority = gateway._authority(system, "house.example.test")
+        cert, key = gateway._issue(system, old / "tls", HOSTS, authority)
         json_private(old / "config.json", {
-            "version": 2, "state": served["state"], "contract_file": str(old / "contract.json"),
+            "version": 2, "state": str(gateway.root / "state"), "contract_file": str(old / "contract.json"),
             "runtime_url": "http://127.0.0.1:13602", "runtime_token_file": str(old / "runtime-bearer"),
-            "allowed_hosts": served["allowed_hosts"], "bind_host": "0.0.0.0", "port": 13601,
-            "tls_cert": served["tls_cert"], "tls_key": served["tls_key"], "timezone": "UTC", "guest_http": None})
-        json_private(gateway.journal_path, {**{key: journal[key] for key in (
-            "version", "versions", "runtime_credential_sha256", "runtime_token_file")},
-            "previous_release": str(old), "phase": "planned"})
+            "allowed_hosts": HOSTS, "bind_host": "0.0.0.0", "port": 13601,
+            "tls_cert": str(cert), "tls_key": str(key), "timezone": "UTC", "guest_http": None})
         system.installed, system.active = old, True
-        system.overrides["thermite-access-callbacks.service"] = UnitOrigin(load_state="not-found", active="inactive")
         helper = gateway._helper
 
         def adopt_or_helper(system, *argv):
@@ -494,25 +429,18 @@ class Lifecycle(PrivateFixture):
                 return helper(system, *argv)
             deployment.adopt(argv[1], argv[2], uid=os.geteuid(), gid=os.getegid(), service_uid=os.geteuid())
 
-        def stage(release, **kwargs):
-            self.assertEqual((kwargs["port"], kwargs["host_ports"]["access"]), (port, port))
-            command = ["sudo", "-u", "thermite", "-g", "thermite", str(release / "env/bin/python"),
-                       str(release / "program/bin/thermite"), "access"]
-            return {"destination": str(release), "persistent_state": kwargs["state"], "config": str(release / "config.json"),
-                    "units": ["thermite-access.service", "thermite-access-worker.service"], "ownership_commands": [],
-                    "verification_command": [*command, "verify", "--config", str(release / "config.json")],
-                    "unit_install_commands": self.unit_commands(gateway, release)}
-
-        with https_security(Path(served["tls_cert"]), Path(served["tls_key"])) as (port, requests), \
+        with https_security(cert, key) as (port, requests), \
                 patch.object(gateway, "_helper", side_effect=adopt_or_helper), \
-                patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())), \
-                patch.object(staging, "stage", side_effect=stage) as staged, \
-                patch.object(gateway, "_assets", return_value=self.root / "managed-assets"):
+                patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())):
             gateway.context.host = {"timezone": "UTC", "gateway": {"port": port}}
             self.assertEqual(gateway.perform(system), 0, system.messages)
-            staged.assert_called_once()
-        metadata = json.loads(gateway.journal_path.read_bytes())["metadata"]
-        self.assertEqual((metadata["port"], metadata["previous_release"]), (port, str(old)))
+        [staged] = self.staged
+        self.assertEqual((staged["port"], staged["host_ports"]["access"]), (port, port))
+        self.assertEqual((staged["tls_cert"], staged["tls_key"]),
+                         (str(gateway.inputs / "tls-cert.pem"), str(gateway.inputs / "tls-key.pem")))
+        self.assertEqual((gateway.inputs / "tls-key.pem").read_bytes(), key.read_bytes(), "the served key is kept")
+        journal = self.journal(gateway)
+        self.assertEqual((journal["metadata"]["port"], journal["previous_release"]), (port, str(old)))
         self.assertIn(f"   Gateway HTTPS moves from port 13601 to {port}: update bookmarks, home-screen apps "
                       "and terminal --url", system.messages)
         # The old listener's process stops before the new release starts, and
@@ -527,39 +455,66 @@ class Lifecycle(PrivateFixture):
         self.assertEqual(profile["url"], f"https://house.example.test:{port}")
 
     def test_an_adopted_callback_map_moves_to_this_allocations_port_and_runtime(self):
-        gateway, system = self.gateway(), Host()
-        served = json.loads(gateway.journal_path.read_bytes())["metadata"]
+        gateway, system = self.gateway(inputs=False), real_openssl(Host())
+        authority = gateway._authority(system, "house.example.test")
         # Installed when the native runtime had 13601 and the relay 13614.
         old = private_directory(self.root / "old-release")
+        cert, key = gateway._issue(system, old / "tls", HOSTS, authority)
         # Its hosts, bind address and timezone are another host's.
         json_private(old / "config.json", {
-            "version": 2, "state": served["state"], "contract_file": str(old / "contract.json"),
+            "version": 2, "state": str(gateway.root / "state"), "contract_file": str(old / "contract.json"),
             "runtime_url": "http://127.0.0.1:13601", "runtime_token_file": str(old / "runtime-bearer"),
             "allowed_hosts": ["old-name.example.test", "192.0.2.5"], "bind_host": "192.0.2.5", "port": 13600,
-            "tls_cert": served["tls_cert"], "tls_key": served["tls_key"], "timezone": "America/Chicago",
+            "tls_cert": str(cert), "tls_key": str(key), "timezone": "America/Chicago",
             "guest_http": None})
         routes = {"/upnpcallback/dev/RINCON_02000000000101400_MR/svc/upnp-org/RenderingControl/event/cb": "192.0.2.40"}
         json_private(old / "callbacks.json", {"version": 1, "routes": routes, "upstream": "http://127.0.0.1:13601",
                                               "hosts": ["192.0.2.10:13614"], "bind_host": "192.0.2.10", "port": 13614})
         system.installed = old
+        adopted = []
 
         def adopt(system, *argv):
             self.assertEqual(argv[0], "adopt")
+            adopted.append(argv)
             deployment.adopt(argv[1], argv[2], uid=os.geteuid(), gid=os.getegid(), service_uid=os.geteuid())
 
+        private_directory(gateway.directory)
         with patch.object(gateway, "_helper", side_effect=adopt), \
                 patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())):
-            metadata = gateway._metadata(system, {"previous_release": str(old)})
+            metadata = gateway._metadata(system, old)
+            self.assertEqual(gateway._metadata(system, old)["callback_file"], metadata["callback_file"])
+        self.assertEqual(len(adopted), 1, "inputs at their fixed paths are adopted once")
         self.assertEqual((metadata["port"], metadata["callbacks"]), (oh_ports.ACCESS_PORT, True))
         self.assertEqual((metadata["allowed_hosts"], metadata["bind_host"], metadata["timezone"]),
                          (HOSTS, "0.0.0.0", "UTC"), "derived from this host, never adopted")
-        self.assertEqual(metadata["state"], served["state"], "identity state is adopted")
+        self.assertEqual(metadata["state"], str(gateway.root / "state"), "identity state is adopted")
+        self.assertEqual(metadata["callback_file"], str(gateway.inputs / "callbacks.json"))
         self.assertEqual(json.loads(Path(metadata["callback_file"]).read_bytes()), {
             "version": 1, "routes": routes, "upstream": "http://127.0.0.1:13602",
             "hosts": [f"192.0.2.10:{oh_ports.CALLBACK_PORT}"], "bind_host": "192.0.2.10", "port": oh_ports.CALLBACK_PORT})
         self.assertIn(f"   Sonos event callbacks move from port 13614 to {oh_ports.CALLBACK_PORT}", system.messages)
         self.assertIn(f"   Gateway HTTPS moves from port 13600 to {oh_ports.ACCESS_PORT}: update bookmarks, "
                       "home-screen apps and terminal --url", system.messages)
+
+    def test_identity_state_elsewhere_is_refused_before_anything_stops(self):
+        gateway, system = self.gateway(inputs=False), real_openssl(Host())
+        old = private_directory(self.root / "old-release")
+        system.installed = old
+
+        def adopt(system, *argv):
+            destination = private_directory(argv[2])
+            for name in ("tls-cert.pem", "tls-key.pem"):
+                atomic_private(destination / name, b"fixture")
+            json_private(destination / "adopted.json", {
+                "state": str(self.root / "elsewhere"), "runtime_url": "http://127.0.0.1:13602",
+                "port": oh_ports.ACCESS_PORT, "previous_release": str(old), "callbacks": False,
+                "tls_cert": str(destination / "tls-cert.pem"), "tls_key": str(destination / "tls-key.pem")})
+
+        with patch.object(gateway, "_helper", side_effect=adopt), \
+                patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())):
+            self.assertEqual(gateway.perform(system), 1)
+        self.assertTrue(any("keeps its identity state in" in message for message in system.messages), system.messages)
+        self.assertFalse(any("stop" in command or "migrate" in command for command in system.commands))
 
     def test_not_found_units_do_not_block_fresh_deployment(self):
         gateway, system = self.gateway(), Host()
@@ -568,13 +523,13 @@ class Lifecycle(PrivateFixture):
         self.assertTrue(any("migrate" in command for command in system.commands))
         self.assertFalse(any("stop" in command for command in system.commands))
 
-    def test_commissioning_failure_does_not_claim_an_identity_backup_exists(self):
+    def test_commissioning_failure_stops_before_staging_or_migration(self):
         gateway, system = self.gateway(), Host()
         with patch.object(gateway, "_boundary", side_effect=ValueError("native commissioning failed")):
             self.assertEqual(gateway.perform(system), 1)
-        self.assertFalse(any("identity backup" in message.lower() for message in system.messages))
-        self.assertTrue(any("same install or upgrade command" in message for message in system.messages))
-        self.assertFalse(any("backup" in command or "migrate" in command or "--now" in command for command in system.commands))
+        self.assertIn("   native commissioning failed", system.messages)
+        self.assertEqual(self.staged, [])
+        self.assertFalse(any("migrate" in command or "--now" in command for command in system.commands))
 
     def test_installed_private_release_is_discovered_from_unit_not_readability(self):
         system = Host()
@@ -605,14 +560,13 @@ class Lifecycle(PrivateFixture):
         gateway, system = self.gateway(), Host()
         with patch.object(gateway, "_https", side_effect=ValueError("certificate validation failed")):
             self.assertEqual(gateway.perform(system), 1)
-        self.assertEqual(json.loads(gateway.journal_path.read_bytes())["phase"], "activated")
+        self.assertEqual(self.journal(gateway)["phase"], "activated")
         self.assertFalse((gateway.context.var / "gateway/current.json").exists())
         self.assertFalse(any("Gateway verified" in message for message in system.messages))
 
     def test_legacy_native_assets_use_gateway_transport_with_current_hashes(self):
         from oh_features.remote import FILES
-        import hashlib
-        gateway = self.gateway()
+        gateway = self.gateway(inputs=False)
         assets = private_directory(self.root / "legacy-assets")
         for name in FILES:
             value = b"unchanged source"
@@ -623,110 +577,58 @@ class Lifecycle(PrivateFixture):
             elif name == "system.json":
                 value = b'{"version":1,"tools":[{"id":"openhab","localOnly":false}]}'
             atomic_private(assets / name, value)
-        built = gateway._assets(assets)
+        built = Gateway._assets(gateway, assets)
         script = (built / "access-config.js").read_bytes()
         self.assertIn(b'"mode":"authenticated"', script)
         self.assertIn(hashlib.sha256(script).hexdigest()[:16], (built / "index.html").read_text())
         self.assertTrue(json.loads((built / "system.json").read_bytes())["tools"][0]["localOnly"])
         self.assertIn('"mode":"native"', (assets / "access-config.js").read_text())
 
-    def test_completed_but_unhealthy_service_repairs_with_an_additional_backup(self):
+    def test_each_activation_is_offered_to_the_deploy_history(self):
         gateway, system = self.gateway(), Host()
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
-            self.assertEqual(gateway.perform(system), 0)
-        original = json.loads(gateway.journal_path.read_bytes())["backup"]
-        with patch.object(gateway, "_https", side_effect=[ValueError("stopped"), "https://house.example.test:13601"]):
-            self.assertEqual(gateway.perform(system), 0)
-        self.assertNotEqual(json.loads(gateway.journal_path.read_bytes())["backup"], original)
-
-    def test_each_activation_reaches_the_deploy_history_once_and_a_missed_one_is_retried(self):
-        gateway, system = self.gateway(), Host()
-        events, answers = [], [False, True, True]
+        events = []
 
         def record(seen, event):
             self.assertIs(seen, system)
             events.append(event)
-            return answers.pop(0)
+            return False
 
         gateway.record = record
         with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 0, "an unrecorded activation still succeeds")
-            journal = json.loads(gateway.journal_path.read_bytes())
-            self.assertEqual(events, [{"commit": "a" * 40, "application": {"version": "1.2.3", "digest": "b" * 64},
-                                       "release": str(self.root / "release"), "previous_release": "/srv/old-release",
-                                       "backup": journal["backup"]}])
-            self.assertIn("   The gateway release was not added to thermite history; its record stays in "
-                          + str(gateway.journal_path), system.messages)
-            self.assertEqual(gateway.perform(system), 0)
-            self.assertEqual(events[1], events[0], "the next run records the activation it missed")
-            self.assertEqual(gateway.perform(system), 0)
-            self.assertEqual(len(events), 2, "a recorded activation is not recorded again")
-        with patch.object(gateway, "_https", side_effect=[ValueError("stopped"), "https://house.example.test:13601"]):
-            self.assertEqual(gateway.perform(system), 0)
-        self.assertEqual(len(events), 3, "a repair is a new activation with its own backup")
-        self.assertNotEqual(events[2]["backup"], events[0]["backup"])
+        self.assertEqual(events, [{"commit": "a" * 40, "application": {"version": "1.2.3", "digest": "b" * 64},
+                                   "release": str(gateway.release), "previous_release": None}])
+        self.assertIn("   The gateway release was not added to thermite history; its record stays in "
+                      + str(gateway.journal_path), system.messages)
 
-    def test_completed_release_repairs_changed_protected_unit_before_success(self):
+    def test_an_unknown_worker_override_fails_verification_without_a_profile(self):
         gateway, system = self.gateway(), Host()
+        system.installed = Path("/srv/old-release")
+        name = "thermite-access-worker.service"
+        system.overrides[name] = UnitOrigin(fragment="/etc/systemd/system/" + name,
+                                           drop_ins="/etc/systemd/system/thermite-access-worker.service.d/custom.conf")
         with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
-            self.assertEqual(gateway.perform(system), 0)
-            destination = "/etc/systemd/system/thermite-access.service"
-            expected = system.unit_bytes[destination]
-            system.unit_bytes[destination] = expected + b"\nExecStart=/changed-command\n"
-            before = len(system.commands)
-            self.assertEqual(gateway.perform(system), 0)
-        self.assertEqual(system.unit_bytes[destination], expected)
-        self.assertTrue(any("install" in command and command[-1] == destination for command in system.commands[before:]))
-        self.assertTrue(any("--now" in command for command in system.commands[before:]))
-
-    def test_completed_release_rejects_unknown_worker_override_without_repair(self):
-        gateway, system = self.gateway(), Host()
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
-            self.assertEqual(gateway.perform(system), 0)
-            profile = (gateway.context.var / "gateway/current.json").read_bytes()
-            name = "thermite-access-worker.service"
-            system.overrides[name] = UnitOrigin(fragment="/etc/systemd/system/" + name,
-                                               drop_ins="/etc/systemd/system/thermite-access-worker.service.d/custom.conf")
-            before = len(system.commands)
             self.assertEqual(gateway.perform(system), 1)
-        self.assertFalse(any("stop" in command or "migrate" in command or "--now" in command for command in system.commands[before:]))
-        self.assertEqual((gateway.context.var / "gateway/current.json").read_bytes(), profile)
+        self.assertTrue(any("unknown unit provenance or overrides" in message for message in system.messages), system.messages)
+        self.assertFalse((gateway.context.var / "gateway/current.json").exists())
 
-    def test_non_mapping_journal_is_a_controlled_failure(self):
+    def test_a_rotated_runtime_token_is_staged_with_the_same_identity_and_tls(self):
         gateway, system = self.gateway(), Host()
-        json_private(gateway.journal_path, [])
-        self.assertEqual(gateway.perform(system), 1)
-        self.assertTrue(any("journal does not match" in message for message in system.messages))
-
-    def test_rotated_runtime_token_restages_same_site_without_changing_identity_or_tls(self):
-        gateway, system = self.gateway(), Host()
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
+        with patch.object(Gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 0)
-        original = json.loads(gateway.journal_path.read_bytes())
-        system.installed = Path(original["stage"]["destination"])
-        system.active = True
-        atomic_private(gateway.context.area / gateway.context.token_file, b"new-runtime-credential")
-        def stage(release, **kwargs):
-            self.assertEqual(Path(kwargs["runtime_token_file"]).read_bytes(), b"new-runtime-credential")
-            self.assertEqual(kwargs["state"], original["metadata"]["state"])
-            self.assertEqual(kwargs["tls_key"], original["metadata"]["tls_key"])
-            self.assertEqual(kwargs["tls_cert"], original["metadata"]["tls_cert"])
-            receipt = {**original["stage"], "destination": str(release), "config": str(release / "config.json")}
-            receipt["verification_command"] = [part.replace(original["stage"]["destination"], str(release)) for part in receipt["verification_command"]]
-            return receipt
-        with patch.object(staging, "stage", side_effect=stage) as staged, \
-                patch.object(gateway, "_assets", return_value=self.root / "assets"), \
-                patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
-            self.assertEqual(gateway.perform(system), 0, system.messages)
-            self.assertEqual(gateway.perform(system), 0, system.messages)
-            staged.assert_called_once()
-        current = json.loads(gateway.journal_path.read_bytes())
-        self.assertNotEqual(current["stage"]["destination"], original["stage"]["destination"])
-        self.assertEqual(current["previous_release"], original["stage"]["destination"])
-        self.assertNotEqual(current["backup"], original["backup"])
-        self.assertEqual(current["runtime_credential_sha256"], hashlib.sha256(b"new-runtime-credential").hexdigest())
-        self.assertTrue(list(gateway.directory.glob("history-*.json")))
-        self.assertFalse(any("new-runtime-credential" in message or current["runtime_credential_sha256"] in message for message in system.messages))
+            system.installed, system.active = gateway.release, True
+            atomic_private(gateway.context.area / gateway.context.token_file, b"new-runtime-credential")
+            again = self.gateway(context=gateway.context)
+            self.assertEqual(again.perform(system), 0, system.messages)
+        first, second = self.staged
+        self.assertEqual(Path(second["runtime_token_file"]).read_bytes(), b"new-runtime-credential")
+        for key in ("state", "tls_cert", "tls_key"):
+            self.assertEqual(second[key], first[key])
+        journal = self.journal(again)
+        self.assertEqual(journal["previous_release"], str(gateway.release))
+        self.assertEqual(journal["runtime_credential_sha256"], hashlib.sha256(b"new-runtime-credential").hexdigest())
+        self.assertFalse(any("new-runtime-credential" in message or journal["runtime_credential_sha256"] in message
+                             for message in system.messages))
 
     def test_staged_auth_failure_stops_before_migration_or_activation(self):
         gateway, system = self.gateway(), Host()
@@ -734,46 +636,36 @@ class Lifecycle(PrivateFixture):
         with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 1)
         self.assertFalse(any("migrate" in command or "--now" in command or "stop" in command for command in system.commands))
-        self.assertNotEqual(json.loads(gateway.journal_path.read_bytes())["phase"], "complete")
+        self.assertNotEqual(self.journal(gateway)["phase"], "complete")
         self.assertFalse((gateway.context.var / "gateway/current.json").exists())
 
     def test_fresh_install_prepares_tls_and_release_without_manual_staging(self):
-        gateway, system = self.gateway(), real_openssl(Host())
-        gateway.journal_path.unlink()
-        shutil.rmtree(gateway.context.var / "gateway/authority")
+        gateway, system = self.gateway(inputs=False), real_openssl(Host())
         guest_http = {"listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"]}
         gateway.context.host = {**gateway.context.host, "guest_http": guest_http}
-        def stage(release, **kwargs):
-            self.assertEqual(kwargs["guest_http"], guest_http)
-            self.assertEqual(kwargs["host_ports"]["guest_http"], 13600)
-            self.assertEqual(kwargs["state"], str(gateway.root / "state"))
-            self.assertEqual(kwargs["house"], gateway.context.configuration / "instance/devices.yaml")
-            self.assertEqual(kwargs["assets"], self.root / "managed-assets")
-            self.assertEqual(kwargs["runtime_url"], gateway.context.url)
-            self.assertIn("127.0.0.1", kwargs["allowed_hosts"])
-            self.assertFalse((Path(kwargs["state"]) / "site-id").exists())
-            command = ["sudo", "-u", "thermite", "-g", "thermite", str(release / "env/bin/python"), str(release / "program/bin/thermite"), "access"]
-            return {"destination": str(release), "persistent_state": kwargs["state"], "config": str(release / "config.json"),
-                    "units": ["thermite-access.service", "thermite-access-worker.service"],
-                    "ownership_commands": [], "verification_command": [*command, "verify", "--config", str(release / "config.json")],
-                    "unit_install_commands": self.unit_commands(gateway, release)}
-        with patch.object(staging, "stage", side_effect=stage) as staged, \
-                patch.object(gateway, "_assets", return_value=self.root / "managed-assets"), \
-                patch.object(gateway, "_https", return_value="https://house.example.test:13601"), \
+        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"), \
                 patch.object(gateway, "_guest_http", return_value=["   Guest HTTP verified: http://192.0.2.10:13600/"]):
             self.assertEqual(gateway.perform(system), 0, system.messages)
-            staged.assert_called_once()
+        [staged] = self.staged
+        self.assertEqual(staged["guest_http"], guest_http)
+        self.assertEqual(staged["host_ports"]["guest_http"], 13600)
+        self.assertEqual(staged["state"], str(gateway.root / "state"))
+        self.assertEqual(staged["house"], gateway.context.configuration / "instance/devices.yaml")
+        self.assertEqual(staged["assets"], self.root / "managed-assets")
+        self.assertEqual(staged["runtime_url"], gateway.context.url)
+        self.assertIn("127.0.0.1", staged["allowed_hosts"])
         self.assertIn("   Guest HTTP verified: http://192.0.2.10:13600/", system.messages)
         self.assertTrue(any(command[0] == "openssl" for command in system.commands))
-        metadata = json.loads(gateway.journal_path.read_bytes())["metadata"]
+        metadata = self.journal(gateway)["metadata"]
         authority = gateway.context.var / "gateway/authority/ca-cert.pem"
         self.assertEqual(metadata["tls_ca"], str(authority))
+        self.assertEqual(metadata["tls_cert"], str(gateway.inputs / "tls-cert.pem"))
         self.assertIn(("sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(authority),
                        str(gateway.root / "tls-cert.pem")), system.commands)
         handshake(Path(metadata["tls_cert"]), Path(metadata["tls_key"]), authority, "house.example.test")
         self.assertTrue(any("migrate" in command for command in system.commands))
         self.assertTrue(any("--now" in command for command in system.commands))
-        self.assertEqual(json.loads(gateway.journal_path.read_bytes())["phase"], "complete")
+        self.assertEqual(self.journal(gateway)["phase"], "complete")
         profile = json.loads((gateway.context.var / "gateway/current.json").read_bytes())
         self.assertEqual(profile["url"], "https://house.example.test:13601")
         self.assertEqual(profile["ca_file"], str(gateway.root / "tls-cert.pem"))
@@ -806,16 +698,8 @@ class Lifecycle(PrivateFixture):
             self.assertEqual(globalcache_ir.INSTANCE, dirty / "instance")
 
 
-class CertificateProfile(PrivateFixture):
+class CertificateProfile(GatewayFixture):
     """New private authority + leaf; renewal; replacing the former self-signed profile."""
-
-    gateway, unit_commands = Lifecycle.gateway, Lifecycle.unit_commands
-
-    def setUp(self):
-        super().setUp()
-        from oh_install.runner import _TASK_APPROVAL
-        token = _TASK_APPROVAL.set(True)
-        self.addCleanup(_TASK_APPROVAL.reset, token)
 
     def text(self, path):
         return subprocess.run(["openssl", "x509", "-noout", "-text", "-in", str(path)], capture_output=True,
@@ -827,18 +711,14 @@ class CertificateProfile(PrivateFixture):
         values = dict(line.split("=", 1) for line in dates.splitlines())
         return (ssl.cert_time_to_seconds(values["notAfter"]) - ssl.cert_time_to_seconds(values["notBefore"])) / 86400
 
-    def adopted(self, gateway, system, **changes):
-        """A completed journal whose metadata came from an existing gateway."""
-        journal = json.loads(gateway.journal_path.read_bytes())
-        journal["metadata"].update(changes)
-        journal.update(phase="complete", plan=str(gateway.directory / "plan-old"))
-        json_private(gateway.journal_path, journal)
-        system.installed = Path(journal["stage"]["destination"])
-        return journal
+    def served(self, system):
+        """The gateway and the inputs it serves now."""
+        gateway = self.gateway()
+        return gateway, gateway._metadata(system, None)
 
     def test_authority_signs_only_a_short_lived_server_leaf(self):
-        gateway, system = self.gateway(), real_openssl(Host())
-        metadata = json.loads(gateway.journal_path.read_bytes())["metadata"]
+        system = real_openssl(Host())
+        gateway, metadata = self.served(system)
         authority = Path(metadata["tls_ca"])
         self.assertEqual(oct(authority.parent.stat().st_mode & 0o777), oct(0o700))
         self.assertEqual(oct((authority.parent / "ca-key.pem").stat().st_mode & 0o777), oct(0o600))
@@ -859,64 +739,53 @@ class CertificateProfile(PrivateFixture):
         self.assertEqual(sorted(path.name for path in cert.parent.iterdir()), ["tls-cert.pem", "tls-key.pem"])
 
     def test_former_self_signed_profile_is_replaced_once_with_a_trust_notice(self):
-        gateway, system = self.gateway(), real_openssl(Host())
-        legacy = private_directory(self.root / "adopted")
+        system = real_openssl(Host())
+        gateway, metadata = self.served(system)
         subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
                         "-sha256", "-nodes", "-days", "3650", "-subj", "/CN=house.example.test",
                         "-addext", "subjectAltName=DNS:house.example.test",
-                        "-keyout", str(legacy / "tls-key.pem"), "-out", str(legacy / "tls-cert.pem")],
+                        "-keyout", metadata["tls_key"], "-out", metadata["tls_cert"]],
                        check=True, capture_output=True)
-        journal = self.adopted(gateway, system, tls_cert=str(legacy / "tls-cert.pem"),
-                               tls_key=str(legacy / "tls-key.pem"))
-        journal["metadata"].pop("tls_ca")
-        metadata = gateway._certificate(system, journal, journal["metadata"])
-        self.assertNotEqual(metadata["tls_cert"], str(legacy / "tls-cert.pem"))
+        legacy = Path(metadata["tls_cert"]).read_bytes()
+        metadata = gateway._certificate(system, metadata)
+        self.assertNotEqual(Path(metadata["tls_cert"]).read_bytes(), legacy)
+        self.assertEqual(metadata["tls_cert"], str(gateway.inputs / "tls-cert.pem"), "served from the fixed inputs")
         authority = gateway.context.var / "gateway/authority/ca-cert.pem"
         self.assertEqual(metadata["tls_ca"], str(authority))
         handshake(Path(metadata["tls_cert"]), Path(metadata["tls_key"]), authority, "house.example.test")
         notices = [message for message in system.messages if "Gateway TLS" in message]
         self.assertEqual(notices, ["   Gateway TLS now uses a new private certificate authority: trust "
                                    + str(gateway.root / "tls-cert.pem") + " once on every browser and terminal client"])
-        # A completed deployment restages with its rollback data retained.
-        saved = json.loads(gateway.journal_path.read_bytes())
-        self.assertEqual((saved["phase"], saved["metadata"]), ("inputs", metadata))
-        self.assertNotIn("stage", saved)
-        self.assertEqual(saved["previous_release"], str(system.installed))
-        self.assertEqual(saved["runtime_token_file"], journal["runtime_token_file"])
-        self.assertTrue(list(gateway.directory.glob("history-*.json")))
         system.messages.clear()
-        self.assertEqual(gateway._certificate(system, saved, saved["metadata"]), metadata)
+        self.assertEqual(gateway._certificate(system, metadata), metadata)
         self.assertEqual(system.messages, [])
 
     def test_leaf_near_expiry_is_renewed_by_the_same_authority(self):
-        gateway, system = self.gateway(), real_openssl(Host())
-        journal = json.loads(gateway.journal_path.read_bytes())
-        authority = Path(journal["metadata"]["tls_ca"])
-        cert, key = gateway._issue(system, self.root / "short", ["house.example.test"],
-                                   (authority, authority.parent / "ca-key.pem"), days=30)
-        journal = self.adopted(gateway, system, tls_cert=str(cert), tls_key=str(key))
-        before = authority.read_bytes()
-        metadata = gateway._certificate(system, journal, journal["metadata"])
-        self.assertNotEqual(metadata["tls_cert"], str(cert))
+        system = real_openssl(Host())
+        gateway, metadata = self.served(system)
+        authority = Path(metadata["tls_ca"])
+        gateway._issue(system, gateway.inputs, ["house.example.test"], (authority, authority.parent / "ca-key.pem"), days=30)
+        short, before = Path(metadata["tls_cert"]).read_bytes(), authority.read_bytes()
+        metadata = gateway._certificate(system, metadata)
+        self.assertNotEqual(Path(metadata["tls_cert"]).read_bytes(), short)
         self.assertEqual(authority.read_bytes(), before)
         self.assertGreater(self.days(metadata["tls_cert"]), 800)
         self.assertTrue(any("renewed by its private authority" in message and "need no change" in message
                             for message in system.messages))
 
     def test_a_name_change_reissues_the_leaf_from_the_same_authority(self):
-        gateway, system = self.gateway(), real_openssl(Host())
-        journal = self.adopted(gateway, system)
-        authority = Path(journal["metadata"]["tls_ca"])
+        system = real_openssl(Host())
+        gateway, metadata = self.served(system)
+        authority = Path(metadata["tls_ca"])
         before = authority.read_bytes()
-        self.assertEqual(gateway._certificate(system, journal, journal["metadata"]), journal["metadata"],
-                         "the same names need no new certificate")
+        self.assertEqual(gateway._certificate(system, metadata), metadata, "the same names need no new certificate")
         self.assertEqual(system.messages, [])
         gateway.context.hostname, gateway.context.address = "kitchen.example.test", "192.0.2.11"
         hosts = ["kitchen.example.test", "192.0.2.11", "localhost", "127.0.0.1"]
-        served = journal["metadata"]["tls_cert"]
-        metadata = gateway._certificate(system, journal, journal["metadata"])
+        served = Path(metadata["tls_cert"]).read_bytes()
+        metadata = gateway._certificate(system, metadata)
         self.assertEqual(metadata["allowed_hosts"], hosts)
-        self.assertNotEqual(metadata["tls_cert"], served)
+        self.assertNotEqual(Path(metadata["tls_cert"]).read_bytes(), served)
         self.assertEqual((authority.read_bytes(), metadata["tls_ca"]), (before, str(authority)),
                          "clients keep trusting the same authority")
         listed = subprocess.run(["openssl", "x509", "-noout", "-ext", "subjectAltName", "-in", metadata["tls_cert"]],
@@ -926,12 +795,8 @@ class CertificateProfile(PrivateFixture):
         self.assertEqual([message for message in system.messages if "Gateway TLS" in message], [
             "   Gateway TLS certificate reissued by its private authority for " + ", ".join(hosts)
             + "; clients trusting " + str(gateway.root / "tls-cert.pem") + " need no change"])
-        # A completed deployment restages with its rollback data retained.
-        saved = json.loads(gateway.journal_path.read_bytes())
-        self.assertEqual((saved["phase"], saved["metadata"]), ("inputs", metadata))
-        self.assertEqual(saved["previous_release"], str(system.installed))
         system.messages.clear()
-        self.assertEqual(gateway._certificate(system, saved, saved["metadata"]), metadata)
+        self.assertEqual(gateway._certificate(system, metadata), metadata)
         self.assertEqual(system.messages, [])
 
     def test_served_names_compare_addresses_canonically_and_names_without_case(self):
@@ -940,14 +805,6 @@ class CertificateProfile(PrivateFixture):
         self.assertEqual(served_names(listed), subject_names(["house.example.test", "192.0.2.10", "2001:db8::1", "localhost"]))
         self.assertEqual(served_names("No extensions in certificate\n"), set())
         self.assertNotEqual(served_names(listed), subject_names(["house.example.test", "192.0.2.10", "localhost"]))
-
-    def test_staging_under_way_keeps_its_certificate_until_the_next_run(self):
-        gateway, system = self.gateway(), real_openssl(Host())
-        journal = json.loads(gateway.journal_path.read_bytes())
-        journal["metadata"]["tls_cert"] = str(self.root / "missing.pem")
-        before = dict(journal["metadata"])
-        self.assertEqual(gateway._certificate(system, journal, journal["metadata"]), before)
-        self.assertFalse(any(command[0] == "openssl" for command in system.commands))
 
     def test_names_cannot_inject_openssl_configuration(self):
         for host in ("house.example.test\nbasicConstraints = CA:TRUE", "house example", "house/x", ""):

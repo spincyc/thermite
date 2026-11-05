@@ -1918,29 +1918,13 @@ class NativeSettle(NativeReadiness):
 
 class Commissioning:
     """Gateway boundary hook: commission native security within the run's
-    native deadline, keeping each replaced native configuration's original.
-
-    Before replacing a native service configuration, its complete original
-    mapping is saved privately in the gateway deployment directory, once, as
-    native-original-<service>.json. A rerun keeps the first original.
-    """
+    native deadline. The native configurations it replaces live in userdata,
+    which an install transaction sets aside and puts back."""
 
     def __init__(self, context: Context, native: NativeDeadline):
         self.context = context
         self.native = native
         self.gateway = None
-
-    def original(self, path: str) -> Path:
-        service = path.removeprefix("/rest/services/").removesuffix("/config")
-        if not re.fullmatch(r"[A-Za-z0-9._-]+", service):
-            raise ValueError("unexpected native configuration service")
-        return self.gateway.directory / f"native-original-{service}.json"
-
-    def record(self, path: str, original: dict) -> None:
-        from oh_access.files import json_private
-        target = self.original(path)
-        if not target.exists():
-            json_private(target, {"version": 1, "service": path, "original": original})
 
     def __call__(self, system: System, metadata: dict, callback: Path | None) -> Path | None:
         import oh_inventory
@@ -1955,13 +1939,12 @@ class Commissioning:
             house = Path(self.gateway.options.get("house", self.context.configuration / "instance/devices.yaml"))
             result = configure(self.context.url, self.context.area / self.context.token_file,
                                oh_inventory.load(house), self.context.address, existing_callbacks=callback,
-                               timeout=min(remaining, MAX_DEADLINE), clock=system.clock, sleep=system.sleep,
-                               record=self.record)
+                               timeout=min(remaining, MAX_DEADLINE), clock=system.clock, sleep=system.sleep)
         finally:
             self.native.stop(system)
         if result["callbacks"] is None:
             return None
-        selected = self.gateway.directory / "callbacks.json"
+        selected = self.gateway.inputs / "callbacks.json"
         json_private(selected, result["callbacks"])
         return selected
 
@@ -1977,10 +1960,10 @@ def gateway_history(context: Context):
     return record
 
 
-def gateway_steps(context: Context, native: NativeDeadline) -> list[Step]:
+def gateway_steps(context: Context, native: NativeDeadline, transaction: str | None = None) -> list[Step]:
     """Settle native REST, then commission and activate the HTTPS gateway."""
     hook = Commissioning(context, native)
-    hook.gateway = Gateway(context, boundary=hook, record=gateway_history(context))
+    hook.gateway = Gateway(context, boundary=hook, record=gateway_history(context), transaction=transaction)
     return [NativeSettle(context, native), hook.gateway]
 
 
