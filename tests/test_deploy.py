@@ -184,14 +184,14 @@ class Units(unittest.TestCase):
             # Offline verification loads real systemd drop-in/reset semantics;
             # it neither contacts the running manager nor executes commands.
             merged = subprocess.run(["systemd-analyze", "--generators=no", "--man=no", "verify",
-                                     *(str(generated / unit) for unit in oh_units.DAEMONS)],
+                                     *(str(generated / unit) for unit in oh_units.CONTAINED)],
                                     env={**os.environ, "SYSTEMD_LOG_LEVEL": "debug", "LANG": "C",
                                          "SYSTEMD_UNIT_PATH": str(generated) + ":"},
                                     capture_output=True, text=True)
             self.assertEqual(merged.returncode, 0, merged.stderr)
         commands = [shlex.split(line.split("Command Line: ", 1)[1])
                     for line in merged.stdout.splitlines() if "Command Line: " in line]
-        expected = {f"/run/{unit.removesuffix('.service')}.cid" for unit in oh_units.DAEMONS}
+        expected = {f"/run/{unit.removesuffix('.service')}.cid" for unit in oh_units.CONTAINED}
         starts = [argv for argv in commands if argv[:2] == ["/usr/bin/podman", "run"]]
         self.assertEqual(len(starts), 10)
         self.assertEqual({word.removeprefix("--cidfile=") for argv in starts for word in argv
@@ -1117,8 +1117,9 @@ class MetricsDeploy(Install):
         return self.status
 
     def install(self, files=None, **options):
-        # Never the real http_post: it would reach whatever Prometheus answers on this machine.
-        host = {**HOST, "uid": os.geteuid(), "gid": os.getegid()}
+        # Never the real http_post: it would reach whatever Prometheus answers on this machine,
+        # nor the real installation root, whose gateway authority a deploy would install.
+        host = {**HOST, "uid": os.geteuid(), "gid": os.getegid(), "root": str(Path(self.tmp.name) / "installation")}
         return super().install(files, **{"host": host, "post": self.post, **options})
 
     def deploy(self, **changes):
@@ -1164,6 +1165,15 @@ class MetricsDeploy(Install):
         self.assertTrue(self.layout.metrics_restart.exists())
         self.assertEqual(result.reloads[:2], ["Prometheus reloaded its configuration",
                                               "blackbox_exporter reloaded its configuration"])
+
+    def test_the_gateway_authority_is_installed_for_the_https_probe(self):
+        access = Path(self.tmp.name) / "installation" / "access"
+        access.mkdir(parents=True)
+        pem = b"-----BEGIN CERTIFICATE-----\nexample\n-----END CERTIFICATE-----\n"
+        (access / deploy.ACCESS_TRUST).write_bytes(pem)
+        self.deploy()
+        self.assertEqual(deploy.read_tree(self.layout.metrics)["blackbox/gateway-ca.pem"].data, pem)
+        self.assertIn("http://127.0.0.1:13608/-/reload", self.posted)
 
     def test_rollback_before_notifications_preserves_installed_stack(self):
         additions = {"metrics/notifications/catalog.json": "{}\n", "metrics/ntfy/server.yml": "listen-http: 127.0.0.1:13612\n",

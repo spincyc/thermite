@@ -19,7 +19,7 @@ import oh_deploy
 import oh_metrics
 import oh_public
 from oh_cli import generate
-from oh_metrics import dashboards, yoke
+from oh_metrics import alerts, dashboards, yoke
 
 
 class Targets(unittest.TestCase):
@@ -92,7 +92,9 @@ class Integration(unittest.TestCase):
         host["metrics"]["yoke_targets"] = ["192.0.2.20:9754", "127.0.0.1:9754"]
         rendered = oh_metrics.render(self.inventory, host)
         changed = {path for path in rendered if rendered[path] != self.baseline.get(path)}
-        self.assertEqual(changed, {oh_metrics.PROMETHEUS_YML, "grafana/dashboards/yoke.json"})
+        # The Host board counts the scrape targets, the observers among them.
+        self.assertEqual(changed, {oh_metrics.PROMETHEUS_YML, "grafana/dashboards/yoke.json",
+                                   "grafana/dashboards/host.json"})
         document = yaml.safe_load(rendered[oh_metrics.PROMETHEUS_YML])
         jobs = document["scrape_configs"]
         self.assertEqual([job for job in jobs if job["job_name"] == "yoke"], [{
@@ -123,7 +125,7 @@ class Integration(unittest.TestCase):
         options = state["transformations"][0]["options"]
         self.assertTrue(options["includeByName"]["instance"])
         self.assertFalse(options["excludeByName"]["instance"])
-        self.assertNotIn("yoke", dashboards.control_health())
+        self.assertNotIn("yoke", json.dumps(alerts.rules({})))
 
     def test_host_loader_rejects_bad_targets_before_generation_writes(self):
         scratch = AREA / ".scratch/yoke-metrics-integration"

@@ -28,14 +28,19 @@ ROOM_KEYS = {"label", "tag", "in"}
 #: module that reads each key validates what is under it.
 TOP_KEYS = frozenset({"version", "rooms", "devices", "routing", "later", "services", "access", "theme",
                       "diagnostics"})
-#: The keys any device may have: its identity, address and controls, and
-#: owner documentation no program reads: notes, and the Control4 driver name
-#: `thermite control4 summary` suggests. Integrations and Control4 declare
-#: the fields they read (DEVICE_KEYS, keys()) and validate them.
+#: The keys any device may have: its identity, address and controls, how
+#: closely monitoring watches it (monitor), and owner documentation no
+#: program reads: notes, and the Control4 driver name `thermite control4
+#: summary` suggests. Integrations and Control4 declare the fields they read
+#: (DEVICE_KEYS, keys()) and validate them.
 DEVICE_KEYS = frozenset({"id", "room", "kind", "name", "make", "model", "ip", "mac", "via", "controls", "notes",
-                         "control4"})
+                         "control4", "monitor"})
 #: Device keys whose value is text.
-TEXT_KEYS = ("id", "room", "kind", "name", "make", "model", "ip", "mac", "via", "notes", "control4")
+TEXT_KEYS = ("id", "room", "kind", "name", "make", "model", "ip", "mac", "via", "notes", "control4", "monitor")
+#: monitor: required (the default) lets a device's failed control checks
+#: count against control health and alert; optional still shows them on the
+#: dashboards but never counts them, for a device known to be broken.
+MONITOR = ("required", "optional")
 
 DSL_THING = re.compile(
     r"^\s*(?:Thing|Bridge)\s+([\w-]+:[\w-]+(?::[\w-]+)+)(.*)$", re.MULTILINE)
@@ -227,6 +232,8 @@ def validate(data: object) -> list[str]:
                 problems.append(
                     f"{where}: mac '{device['mac']}' is not lowercase aa:bb:..")
             unique("mac", device["mac"], where)
+        if device.get("monitor") is not None and device["monitor"] not in MONITOR:
+            problems.append(f"{where}: monitor must be {' or '.join(MONITOR)}")
         controls = device.get("controls")
         if controls is None:
             controls = {}

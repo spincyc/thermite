@@ -20,6 +20,14 @@ import urllib.parse
 import urllib.request
 
 LIMIT = 131072
+#: Its own series: (name, type, help), in the order /metrics serves them.
+METRICS = (
+    ("thermite_notification_delivered_total", "counter", "Notifications ntfy acknowledged."),
+    ("thermite_notification_errors_total", "counter", "Webhook batches the adapter could not deliver to ntfy."),
+    ("thermite_notification_last_success_timestamp_seconds", "gauge", "When ntfy last acknowledged a notification; 0 before the first."),
+    ("thermite_notification_last_heartbeat_timestamp_seconds", "gauge", "When the firing watchdog heartbeat was last delivered; 0 when none is current."),
+    ("thermite_notification_heartbeat_age_seconds", "gauge", "Seconds since the last delivered heartbeat, or since the adapter started."),
+)
 
 
 def loopback_url(value):
@@ -92,7 +100,7 @@ class Relay:
                       "thermite_notification_last_success_timestamp_seconds": self.success,
                       "thermite_notification_last_heartbeat_timestamp_seconds": self.heartbeat,
                       "thermite_notification_heartbeat_age_seconds": max(0, self.now() - (self.heartbeat or self.started))}
-        return "".join(f"{name} {value}\n" for name, value in values.items())
+        return "".join(f"# HELP {name} {text}\n# TYPE {name} {kind}\n{name} {values[name]}\n" for name, kind, text in METRICS)
 
 
 def server(address, relay):

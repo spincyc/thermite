@@ -398,6 +398,7 @@
     "tests/test_lifecycle_flow.py",
     "tests/test_lifecycle_io.py",
     "tests/test_lifecycle_planner.py",
+    "tests/test_metrics.py",
     "tests/test_native_auth.py",
     "tests/test_native_auth_storage.py",
     "tests/test_native_file_custody.py",

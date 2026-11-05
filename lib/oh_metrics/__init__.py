@@ -68,6 +68,9 @@ STATE_GRAFANA = f"{STATE_DATA}/grafana"
 STATE_ALERTMANAGER = f"{STATE_DATA}/alertmanager"
 STATE_NTFY = f"{STATE_DATA}/ntfy"
 STATE_SECRETS = f"{STATE_DATA}/secrets"
+#: The access services' metrics (oh_access.metrics), which node_exporter's
+#: textfile collector serves; the services write it as the state's owner.
+STATE_TEXTFILE = "textfile"
 #: The exporter's code, as the last deploy installed it (EXPORTER_APP).
 STATE_EXPORTER_APP = "exporter/app"
 #: The area's files the exporter's container runs, below STATE_EXPORTER_APP.
@@ -110,6 +113,14 @@ HTTP_2XX = "http_2xx"
 #: An HTTP server answering at all: the helper serves only /devices/<id> and
 #: answers 404 elsewhere, which shows it is up.
 HTTP_ANSWERS = "http_answers"
+#: The gateway's HTTPS listener, verified against its private authority:
+#: the certificate a deploy installs beside blackbox.yml (oh_deploy.gateway_trust).
+HTTPS_GATEWAY = "https_gateway"
+GATEWAY_TRUST_FILE = "gateway-ca.pem"
+GATEWAY_TRUST = f"blackbox/{GATEWAY_TRUST_FILE}"
+#: What the probe asks for: who a request is, which any Guest may ask.
+GATEWAY_PROBE_PATH = "/api/v1/me"
+GATEWAY_JOB = "gateway_https"
 
 # ---------------------------------------------------------------- the host
 
@@ -133,6 +144,13 @@ def systemd_units(host: dict) -> str:
     return rf"({'|'.join(names)})\.(service|path)"
 
 
+def textfile_directory(host: dict) -> str:
+    """The host path of the access services' metrics textfiles."""
+    import oh_deploy  # Here: oh_deploy imports this package.
+
+    return str(oh_deploy.state(host).textfile)
+
+
 def openhab_address(host: dict) -> str:
     return f"{LOOPBACK}:{host['http_port']}"
 
@@ -141,6 +159,12 @@ def gateway_address(host: dict) -> str:
     """The HTTPS gateway (the application) as this host reaches it, on
     host.yaml's gateway.port; a probe of it speaks TLS."""
     return f"{LOOPBACK}:{oh_ports.gateway_port(host)}"
+
+
+def gateway_probe_url(host: dict) -> str:
+    """The URL the HTTPS probe reads: a Guest-readable answer from the
+    gateway's loopback address, which its certificate names."""
+    return f"https://{gateway_address(host)}{GATEWAY_PROBE_PATH}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -220,6 +244,7 @@ def services(host: dict) -> list[Service]:
             f"{LOOPBACK}:{port['node_exporter']}",
             ("--path.rootfs=/host",
              f"--web.listen-address={LOOPBACK}:{port['node_exporter']}",
+             f"--collector.textfile.directory=/host{textfile_directory(host)}",
              "--collector.systemd",
              f"--collector.systemd.unit-include={systemd_units(host)}",
              "--collector.systemd.enable-restarts-metrics",
@@ -233,7 +258,9 @@ def services(host: dict) -> list[Service]:
                    "/host, and systemd over the D-Bus system socket for the units' states.",
                    "Neither host mount is relabelled: that would relabel the host. The bus",
                    "address is explicit: D-Bus' default is below /var/run, which the image",
-                   "need not link to /run."),
+                   "need not link to /run. The textfile collector reads the access services'",
+                   f"metrics from {textfile_directory(host)} (mode 0750, the state's",
+                   "owner), as the same uid; its AppArmor profile allows file reads."),
         ),
         Service(
             oh_units.BLACKBOX, oh_units.CONTAINERS[oh_units.BLACKBOX], "blackbox_exporter", "Device probes for openHAB",
@@ -385,19 +412,18 @@ def _options(item: dict) -> list[str] | None:
 def select_point(name: str, item: dict) -> tuple[str, str] | None:
     """(point, conversion) of an Item of a device worth keeping, else None.
 
-    Kept: the device's reachability (`<id>_online`), its problem text
-    (`<id>_problem`, as 0/1), and every Item tagged with the property Power,
-    SoundVolume or Channel (power, power state, volume, mute, input), plus
-    the Number Items a matrix or switch is commanded with (routing, EDID).
-    Titles, artists, apps, keys and pairing Items are not: they are free text
-    or carry no state worth a history.
+    Kept: the device's problem text (`<id>_problem`, as 0/1), and every
+    Item tagged with the property Power, SoundVolume or Channel (power,
+    power state, volume, mute, input), plus the Number Items a matrix or
+    switch is commanded with (routing). Not kept: `<id>_online` (its Thing's
+    status says the same), EDID selections (fixed settings), and titles,
+    artists, apps, keys and pairing Items (free text, or no state worth a
+    history).
     """
     kind = str(item.get("type") or "").split(":")[0]
     tags = set(item.get("tags") or [])
     if kind == "String" and name.endswith("_problem"):
         return "problem", "problem"
-    if kind == "Switch" and name.endswith("_online"):
-        return "reachable", "switch"
     if "Power" in tags:
         return {"Switch": ("power", "switch"), "String": ("power_state", "enum")}.get(kind)
     if "SoundVolume" in tags:
@@ -406,7 +432,7 @@ def select_point(name: str, item: dict) -> tuple[str, str] | None:
     if "Channel" in tags:
         return {"String": ("input", "enum"), "Number": ("input", "number")}.get(kind)
     if kind == "Number" and "Control" in tags:
-        return ("edid", "number") if name.endswith("_edid") else ("routing", "number")
+        return None if name.endswith("_edid") else ("routing", "number")
     return None
 
 
@@ -460,17 +486,40 @@ def exporter_map(inventory: dict, conf=None) -> dict:
     from oh_features import threadpools
     if threadpools.enabled(house):
         result["handler_pool"] = dict(threadpools.ITEM_NAMES)
+    routing = routing_map(conf, items)
+    if routing:
+        result["routing"] = routing
     return result
+
+
+def routing_map(conf, items: dict) -> dict:
+    """The routing executor's status Item and the routing telemetry Item,
+    when the house has them, with each routing zone's room: the exporter
+    turns their JSON into thermite_routing_* and thermite_route_seconds."""
+    from oh_features import routing
+    from oh_features.routing import lifecycle_io
+
+    present = {name for file in conf.yaml.values() for name in file.items}
+    zones = {name.removeprefix("loc_").removesuffix("_source"): spec["room"] for name, spec in items.items()
+             if spec.get("point") == "source" and name.startswith("loc_") and name.endswith("_source")}
+    found = {key: name for key, name in (("status", lifecycle_io.STATUS_ITEM), ("metrics", routing.METRICS_ITEM))
+             if name in present}
+    return {**found, "zones": dict(sorted(zones.items()))} if found else {}
 
 
 def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
     """Required control checks from the same physical paths as Signal / Audio.
 
     Membership is per source, not room: local display sources bypass the
-    receiver and matrices. Only control integrations supply availability
-    checks; an optional Cast observer cannot invalidate working Sony control.
+    receiver and matrices, and a room's `audio` device (the one its Volume
+    and Mute drive) joins every source. Only control integrations supply
+    availability checks; an optional Cast observer cannot invalidate working
+    Sony control.
     Infrastructure serving routing is monitored even when every zone is Off.
-    The exporter ignores these additive map fields; no new metrics or reads.
+    Each check names its device and what it checks (CHECKS); a device marked
+    `monitor: optional` in the house file is shown but never required. The
+    exporter ignores these map fields: alerts.rules() records them as
+    thermite:check.
     """
     import oh_integrations
     from oh_conf import House
@@ -482,10 +531,11 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
     found, _ = probes(inventory, conf)
     checks: dict[tuple, dict] = {}
 
-    def add(metric: str, labels: dict, bad: int, demand: dict | None) -> None:
+    def add(name: str, device: str, metric: str, labels: dict, bad: int, demand: dict | None) -> None:
         key = (metric, tuple(sorted(labels.items())), bad)
-        check = checks.setdefault(key, {"metric": metric, "labels": labels, "bad": bad,
-                                       "always": False, "required": []})
+        check = checks.setdefault(key, {"metric": metric, "labels": labels, "bad": bad, "device": device,
+                                       "check": name, "always": False, "required": [],
+                                       "optional": devices[device].get("monitor") == "optional"})
         if demand is None:
             check["always"] = True
         elif demand not in check["required"]:
@@ -503,14 +553,15 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
             file = conf.yaml.get(module.FILE)
             for uid in (file.things if file else {}):
                 if uid.split(":")[-1] == ident:
-                    add("thermite_thing_online", {"thing": uid}, 0, demand)
+                    add("thing", ident, "thermite_thing_online", {"thing": uid}, 0, demand)
         for probe in found:
             if probe.device == ident and set(controls).intersection(probe.integrations):
-                add("probe_success", {"job": "device_tcp", "device": ident, "port": str(probe.port)}, 0, demand)
+                add("port", ident, "probe_success", {"job": "device_tcp", "device": ident, "port": str(probe.port)}, 0,
+                    demand)
         if demand is None:
             return
         if any(s.get("device") == ident and s.get("point") == "problem" for s in items.values()):
-            add("thermite_device_problem", {"device": ident}, 1, demand)
+            add("problem", ident, "thermite_device_problem", {"device": ident}, 1, demand)
         power = []
         if node and node["role"] in ("receiver", "display") and (module := routing.stager(device)):
             zone = node.get("zone")
@@ -520,17 +571,24 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
             power = [name for name, s in items.items() if s.get("device") == ident and s.get("point") == "power"]
         for name in power:
             if name in items:
-                add("thermite_item_value", {"item": name, "point": "power"}, 0, demand)
+                add("power", ident, "thermite_item_value", {"item": name, "point": "power"}, 0, demand)
 
+    routed = (inventory.get("routing") or {}).get("rooms") or {}
     paths = {}
     for zone, entry in physical.items():
         name = routing.item_name(zone)
         paths[name] = {"label": entry["label"], "sources": {}}
+        # The device the room's Volume and Mute drive (routing.rooms.<id>.audio)
+        # is in use with every source, though no signal passes through it.
+        audio = (routed.get(zone) or {}).get("audio")
         for source, path in entry["sources"].items():
             nodes = path["nodes"] + path.get("audioNodes", [])
-            paths[name]["sources"][source] = list(dict.fromkeys(n["device"] for n in nodes))
+            used = paths[name]["sources"][source] = list(dict.fromkeys(n["device"] for n in nodes))
             for node in nodes:
                 device_checks(node["device"], {"item": name, "source": source}, node)
+            if audio in devices and audio not in used:
+                used.append(audio)
+                device_checks(audio, {"item": name, "source": source})
     for ident, device in devices.items():
         if device.get("kind") in ("hdmi_matrix", "usb_matrix", "hdmi_switch"):
             device_checks(ident, None)
@@ -545,6 +603,11 @@ def _yaml(header: list[str], document: dict) -> str:
 
     body = yaml.safe_dump(document, sort_keys=False, default_flow_style=False, allow_unicode=True, width=1000)
     return "".join(f"# {line}\n" if line else "#\n" for line in header) + body
+
+
+#: Prometheus' and Alertmanager's own latency histograms are about 40% of
+#: the samples a scrape takes and no dashboard or alert reads them.
+SELF_BUCKETS = [{"source_labels": ["__name__"], "regex": ".+_bucket", "action": "drop"}]
 
 
 def _blackbox_job(name: str, targets: list[dict], port: int) -> dict:
@@ -583,9 +646,12 @@ def prometheus_yml(inventory: dict, host: dict, conf=None) -> str:
         "rule_files": ["/etc/prometheus/alerts.yml"],
         "alerting": {"alertmanagers": [{"static_configs": [{"targets": [f"{LOOPBACK}:{port['alertmanager']}"]}]}]},
         "scrape_configs": [
-            *[{"job_name": name, "static_configs": [{"targets": [f"{LOOPBACK}:{port[name]}"]}]} for name in ("alertmanager", "ntfy", "notifications")],
+            *[{"job_name": name, "static_configs": [{"targets": [f"{LOOPBACK}:{port[name]}"]}],
+               **({"metric_relabel_configs": SELF_BUCKETS} if name == "alertmanager" else {})}
+              for name in ("alertmanager", "ntfy", "notifications")],
             _blackbox_job("alerting_http", [{"targets": [url], "labels": {"__param_module": HTTP_2XX, "service": name}} for name, url in (("alertmanager", f"http://{LOOPBACK}:{port['alertmanager']}/-/ready"), ("ntfy", f"http://{LOOPBACK}:{port['ntfy']}/v1/health"), ("notifications", f"http://{LOOPBACK}:{port['notifications']}/health"))], port["blackbox"]),
-            {"job_name": "prometheus", "static_configs": [{"targets": [f"{LOOPBACK}:{port['prometheus']}"]}]},
+            {"job_name": "prometheus", "static_configs": [{"targets": [f"{LOOPBACK}:{port['prometheus']}"]}],
+             "metric_relabel_configs": SELF_BUCKETS},
             {"job_name": "node", "static_configs": [{"targets": [f"{LOOPBACK}:{port['node_exporter']}"]}]},
             {"job_name": "blackbox", "static_configs": [{"targets": [f"{LOOPBACK}:{port['blackbox']}"]}]},
             {"job_name": "openhab",
@@ -595,6 +661,9 @@ def prometheus_yml(inventory: dict, host: dict, conf=None) -> str:
             {"job_name": "thermite", "static_configs": [{"targets": [f"{LOOPBACK}:{port['exporter']}"]}]},
             _blackbox_job("device_tcp", device_targets, port["blackbox"]),
             _blackbox_job("service_http", service_targets, port["blackbox"]),
+            _blackbox_job(GATEWAY_JOB, [{"targets": [gateway_probe_url(host)],
+                                         "labels": {"__param_module": HTTPS_GATEWAY, "service": "gateway"}}],
+                          port["blackbox"]),
             *([yoke_job] if yoke_job is not None else []),
         ],
     }
@@ -620,9 +689,17 @@ def blackbox_yml() -> str:
                        "http": {"method": "GET", "valid_status_codes": [200, 404],
                                 "preferred_ip_protocol": "ip4", "ip_protocol_fallback": False,
                                 "follow_redirects": False}},
+        HTTPS_GATEWAY: {"prober": "http", "timeout": timeout,
+                        "http": {"method": "GET", "valid_status_codes": [200], "fail_if_not_ssl": True,
+                                 "preferred_ip_protocol": "ip4", "ip_protocol_fallback": False,
+                                 "follow_redirects": False,
+                                 "tls_config": {"ca_file": f"{BLACKBOX_CONFIG_DIR}/{GATEWAY_TRUST_FILE}",
+                                                "insecure_skip_verify": False}}},
     }}
-    return _yaml([RENDERED, "", "blackbox_exporter modules: TCP connects to device control ports and",
-                  "HTTP checks of openHAB, the Apple TV helper and Grafana."], document)
+    return _yaml([RENDERED, "", "blackbox_exporter modules: TCP connects to device control ports,",
+                  "HTTP checks of openHAB, the Apple TV helper and Grafana, and an HTTPS check of",
+                  "the gateway against its private authority, which a deploy installs as",
+                  f"{GATEWAY_TRUST_FILE} beside this file once the gateway is installed."], document)
 
 
 #: Bundled Grafana data source backends that no provisioned data source uses.
@@ -693,6 +770,15 @@ def grafana_provider() -> str:
                  document)
 
 
+def scrape_targets(text: str) -> int:
+    """How many scrape targets a prometheus.yml has."""
+    import yaml
+
+    document = yaml.safe_load(text)
+    return sum(len(group.get("targets") or []) for job in document.get("scrape_configs") or []
+               for group in job.get("static_configs") or [])
+
+
 def _json(document: dict) -> str:
     return json.dumps(document, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
 
@@ -703,8 +789,9 @@ def render(inventory: dict, host: dict, versions: dict | None = None, *, conf=No
     conf = conf if conf is not None else _build(inventory)
     mapping = exporter_map(inventory, conf)
     found, _ = probes(inventory, conf)
+    prometheus = prometheus_yml(inventory, host, conf)
     files = {
-        PROMETHEUS_YML: prometheus_yml(inventory, host, conf),
+        PROMETHEUS_YML: prometheus,
         BLACKBOX_YML: blackbox_yml(),
         "prometheus/alerts.yml": _yaml([RENDERED], alerts.rules(mapping)),
         "alertmanager/alertmanager.yml": _yaml([RENDERED], alerts.alertmanager(ports(host)["notifications"])),
@@ -716,7 +803,8 @@ def render(inventory: dict, host: dict, versions: dict | None = None, *, conf=No
         EXPORTER_MAP: _json(mapping),
     }
     for name, board in dashboards.render(mapping, [dataclasses.asdict(p) for p in found],
-                                         yoke_enabled=bool(yoke_targets(host))).items():
+                                         yoke_enabled=bool(yoke_targets(host)),
+                                         targets=scrape_targets(prometheus)).items():
         files[f"{GRAFANA_DASHBOARDS}/{name}.json"] = _json(board)
     return dict(sorted(files.items()))
 

@@ -89,7 +89,30 @@ FAMILIES = {
     "thermite_handler_pool_core_threads": ("gauge", "Configured thingHandler worker capacity."),
     "thermite_handler_pool_queued_tasks": ("gauge", "Queued thingHandler tasks, including future scheduled work."),
     "thermite_handler_pool_probe_overdue_seconds": ("gauge", "Seconds a ready harmless thingHandler probe has waited to dispatch."),
+    "thermite_routing_executor_up": ("gauge", "1 when the routing executor's status Item holds a valid status."),
+    "thermite_routing_pending": ("gauge", "Routing operations waiting for a device, across every device."),
+    "thermite_routing_active": ("gauge", "Routing operations the executor is running now."),
+    "thermite_routing_quarantined": ("gauge", "Quarantined routing devices, and 1 more while the event queue overflowed."),
+    "thermite_routing_events_queued": ("gauge", "Executor outcome events not yet handled."),
+    "thermite_routing_device_quarantined": ("gauge", "1 for each device whose routing commands are quarantined."),
+    "thermite_routing_metrics_up": ("gauge", "1 when the routing telemetry Item holds valid counts."),
+    "thermite_route_seconds": ("histogram", "Seconds from a room's source choice until its readback confirmed it, "
+                               "its 15 s deadline passed, or a newer choice superseded it."),
+    "thermite_routing_operations_total": ("counter", "Routing executor operations by final outcome, since the routing script loaded."),
+    "thermite_routing_endpoint_failures_total": ("counter", "Routing operations that failed at a device, by reason, since the routing script loaded."),
+    "thermite_routing_resends_total": ("counter", "Resend rounds that sent a room's commands again, since the routing script loaded."),
 }
+#: The routing telemetry's fixed names (oh_features/routing/routing.js and
+#: lifecycle_io.js); anything else is ignored, never turned into a label.
+ROUTE_OUTCOMES = ("confirmed", "deadline", "superseded")
+ROUTE_BUCKETS = (1, 2, 4, 8, 15, 30, 60)
+OPERATION_OUTCOMES = ("applied", "sampled", "probe_failed", "unsent", "refused", "unknown", "quarantined",
+                      "superseded", "revoked", "journal_failed", "read_only", "other")
+FAILURE_REASONS = ("unsent", "refused", "unknown", "quarantined", "probe_failed", "journal_failed", "recovery_failed")
+#: Bytes of a routing Item's JSON the exporter reads; anything longer is invalid.
+ROUTING_BYTES = 262144
+#: The suffixes of a histogram family's samples.
+HISTOGRAM_SUFFIXES = ("_bucket", "_sum", "_count")
 
 
 # ---------------------------------------------------------------- exposition
@@ -121,17 +144,27 @@ def exposition(samples: list[Sample]) -> str:
     its HELP and TYPE, its samples in the order given."""
     grouped: dict[str, list[Sample]] = {}
     for sample in samples:
-        grouped.setdefault(sample[0], []).append(sample)
+        grouped.setdefault(_family(sample[0]), []).append(sample)
     lines: list[str] = []
     for name in [*FAMILIES, *sorted(set(grouped) - set(FAMILIES))]:
         if name not in grouped:
             continue
         kind, text = FAMILIES.get(name, ("untyped", ""))
         lines += [f"# HELP {name} {escape_help(text)}", f"# TYPE {name} {kind}"]
-        for _, labels, value in grouped[name]:
+        for sample, labels, value in grouped[name]:
             body = ",".join(f'{key}="{escape_label(str(labels[key]))}"' for key in labels)
-            lines.append(f"{name}{{{body}}} {format_value(value)}" if body else f"{name} {format_value(value)}")
+            lines.append(f"{sample}{{{body}}} {format_value(value)}" if body else f"{sample} {format_value(value)}")
     return "\n".join(lines) + "\n"
+
+
+def _family(name: str) -> str:
+    """The family a sample belongs to: a histogram's _bucket, _sum and _count
+    samples belong to the histogram's name."""
+    for suffix in HISTOGRAM_SUFFIXES:
+        base = name.removesuffix(suffix)
+        if base != name and FAMILIES.get(base, ("",))[0] == "histogram":
+            return base
+    return name
 
 
 # ---------------------------------------------------------------- conversions
@@ -254,6 +287,8 @@ def collect(mapping: dict, fetch: Fetch, clock: Callable[[], float] = time.monot
     if "items" in answers:
         samples += _items(mapping, answers["items"])
     samples += _handler_pool(mapping, answers.get("items", []))
+    if "items" in answers:
+        samples += _routing(mapping, answers["items"])
     return samples
 
 
@@ -275,6 +310,112 @@ def _handler_pool(mapping: dict, answer: list, now: float | None = None) -> list
         samples.append(("thermite_handler_pool_observation_age_seconds", labels, max(0, age)))
     if valid:
         samples += [(f"thermite_handler_pool_{suffix}", labels, values[key]) for key, suffix in fields.items()]
+    return samples
+
+
+def _json_state(state: object) -> object:
+    if not isinstance(state, str) or not 0 < len(state) <= ROUTING_BYTES:
+        return None
+    try:
+        return json.loads(state)
+    except ValueError:
+        return None
+
+
+def _count(value: object) -> float | None:
+    """A non-negative finite count, else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        return None
+    return float(value)
+
+
+def _routing_status(spec: dict, row: object) -> list[Sample]:
+    fields = {"pending": "pending", "active": "active", "quarantined": "quarantined", "eventsQueued": "events_queued"}
+    valid = (isinstance(row, dict) and set(fields) <= set(row) <= {*fields, "quarantinedKeys"}
+             and all(_count(row[key]) is not None for key in fields))
+    keys = row.get("quarantinedKeys", []) if valid else None
+    if valid and (not isinstance(keys, list) or not all(isinstance(key, str) for key in keys)):
+        valid = False
+    samples: list[Sample] = [("thermite_routing_executor_up", {}, 1.0 if valid else 0.0)]
+    if not valid:
+        return samples
+    samples += [(f"thermite_routing_{name}", {}, float(row[key])) for key, name in fields.items()]
+    devices = spec.get("devices") or {}
+    for key in sorted(set(keys)):
+        # Only the house's own devices become labels.
+        if key in devices:
+            samples.append(("thermite_routing_device_quarantined",
+                            {"device": key, "room": str(devices[key].get("room", "")),
+                             "kind": str(devices[key].get("kind", ""))}, 1.0))
+    return samples
+
+
+def _histogram(value: object) -> tuple[list[float], float, float] | None:
+    if not isinstance(value, dict):
+        return None
+    buckets, count, total = value.get("buckets"), _count(value.get("count")), _count(value.get("sum"))
+    if (count is None or total is None or not isinstance(buckets, list) or len(buckets) != len(ROUTE_BUCKETS)):
+        return None
+    counts = [_count(bucket) for bucket in buckets]
+    if any(bucket is None for bucket in counts) or counts != sorted(counts) or counts[-1] > count:
+        return None
+    return counts, total, count
+
+
+def _routing_metrics(spec: dict, data: object) -> list[Sample]:
+    if not isinstance(data, dict) or data.get("version") != 1:
+        return [("thermite_routing_metrics_up", {}, 0.0)]
+    samples: list[Sample] = [("thermite_routing_metrics_up", {}, 1.0)]
+    zones = spec.get("zones") or {}
+    devices = spec.get("devices") or {}
+    route = data.get("route") if isinstance(data.get("route"), dict) else {}
+    for zone in sorted(set(route) & set(zones)):
+        outcomes = route[zone] if isinstance(route[zone], dict) else {}
+        for outcome in ROUTE_OUTCOMES:
+            parsed = _histogram(outcomes.get(outcome))
+            if parsed is None:
+                continue
+            counts, total, count = parsed
+            labels = {"room": str(zones[zone]), "zone": zone, "outcome": outcome}
+            samples += [("thermite_route_seconds_bucket", {**labels, "le": format_value(le)}, bucket)
+                        for le, bucket in zip(ROUTE_BUCKETS, counts)]
+            samples += [("thermite_route_seconds_bucket", {**labels, "le": "+Inf"}, count),
+                        ("thermite_route_seconds_sum", labels, total),
+                        ("thermite_route_seconds_count", labels, count)]
+    operations = data.get("operations") if isinstance(data.get("operations"), dict) else {}
+    for outcome in OPERATION_OUTCOMES:
+        value = _count(operations.get(outcome, 0))
+        if value is not None:
+            samples.append(("thermite_routing_operations_total", {"outcome": outcome}, value))
+    failures = data.get("failures") if isinstance(data.get("failures"), dict) else {}
+    for device in sorted(set(failures) & set(devices)):
+        reasons = failures[device] if isinstance(failures[device], dict) else {}
+        for reason in FAILURE_REASONS:
+            value = _count(reasons.get(reason))
+            if value is not None:
+                samples.append(("thermite_routing_endpoint_failures_total",
+                                {"device": device, "room": str(devices[device].get("room", "")),
+                                 "kind": str(devices[device].get("kind", "")), "reason": reason}, value))
+    resends = data.get("resends") if isinstance(data.get("resends"), dict) else {}
+    for zone in sorted(zones):
+        value = _count(resends.get(zone, 0))
+        if value is not None:
+            samples.append(("thermite_routing_resends_total", {"room": str(zones[zone]), "zone": zone}, value))
+    return samples
+
+
+def _routing(mapping: dict, answer: list) -> list[Sample]:
+    """The routing executor's status and the routing telemetry (map "routing")."""
+    spec = mapping.get("routing")
+    if not isinstance(spec, dict):
+        return []
+    states = {item["name"]: item.get("state") for item in answer if isinstance(item, dict) and "name" in item}
+    spec = {**spec, "devices": mapping.get("devices") or {}}
+    samples: list[Sample] = []
+    if spec.get("status"):
+        samples += _routing_status(spec, _json_state(states.get(spec["status"])))
+    if spec.get("metrics"):
+        samples += _routing_metrics(spec, _json_state(states.get(spec["metrics"])))
     return samples
 
 

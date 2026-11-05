@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -58,7 +59,7 @@ METRICS_RESTART_PATH = f"deploy/{oh_units.METRICS_RESTART_PATH}"
 METRICS_RESTART_SERVICE = f"deploy/{oh_units.METRICS_RESTART_SERVICE}"
 TARGET = f"deploy/{oh_units.TARGET}"
 SLICE = f"deploy/{oh_units.SLICE}"
-CONTAINER_DROPINS = {unit: f"deploy/{unit}.d/50-container-lifecycle.conf" for unit in oh_units.DAEMONS}
+CONTAINER_DROPINS = {unit: f"deploy/{unit}.d/50-container-lifecycle.conf" for unit in oh_units.CONTAINED}
 #: What thermite-metrics-restart.service restarts: the services a deploy
 #: cannot reload over HTTP.
 METRICS_RESTARTED = (oh_units.EXPORTER, oh_units.GRAFANA, oh_units.NOTIFICATIONS, oh_units.NTFY)
@@ -324,6 +325,13 @@ class State:
         return self.root / metrics.STATE_EXPORTER_APP
 
     @property
+    def textfile(self) -> Path:
+        """node_exporter's textfile directory: each access service (running as
+        thermite) rewrites its own <unit>.prom here (oh_access.metrics), and
+        a deploy, through the group, its DEPLOY_TEXTFILE."""
+        return self.root / metrics.STATE_TEXTFILE
+
+    @property
     def metrics_restart(self) -> Path:
         """Written by a deploy that changes the exporter's code or Grafana's
         settings; thermite-metrics-restart.path watches it."""
@@ -344,7 +352,7 @@ class State:
         and the secrets are the services' own, which the group only reads."""
         return [
             (MONITORING_MODE, [self.monitoring, self.exporter]),
-            (DIR_MODE, [self.metrics, self.exporter_app]),
+            (DIR_MODE, [self.metrics, self.exporter_app, self.textfile]),
             (MONITORING_MODE, [self.prometheus_data, self.grafana_data, self.root / metrics.STATE_ALERTMANAGER,
                                self.root / metrics.STATE_NTFY]),
             (SECRETS_MODE, [self.monitoring_secrets]),
@@ -1669,6 +1677,54 @@ def prepared_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob],
     return files, {"version": release["application"], "digest": release["digest"]}
 
 
+#: The deploy's own metrics, for the dashboards' deploy annotations.
+DEPLOY_TEXTFILE = "thermite-deploy.prom"
+
+
+def deploy_metrics(layout: State, how: str, clock=time.time) -> bool:
+    """Tell node_exporter's textfile collector when the last deploy or
+    rollback finished; a metrics failure never fails a deploy."""
+    directory = layout.textfile
+    text = ("# HELP thermite_deploy_timestamp_seconds When the last thermite deploy or rollback finished.\n"
+            "# TYPE thermite_deploy_timestamp_seconds gauge\n"
+            f'thermite_deploy_timestamp_seconds{{how="{"rollback" if how == "rollback" else "deploy"}"}} '
+            f"{clock():.3f}\n")
+    temporary = directory / f".{DEPLOY_TEXTFILE}.{os.getpid()}.tmp"
+    try:
+        if not directory.is_dir() or directory.is_symlink():
+            return False
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, FILE_MODE)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            os.fchmod(output.fileno(), FILE_MODE)
+            output.write(text)
+        os.replace(temporary, directory / DEPLOY_TEXTFILE)
+        return True
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        return False
+
+
+#: The gateway's public trust certificate in its root (oh_install.access).
+ACCESS_TRUST = "tls-cert.pem"
+TRUST_BYTES = 65536
+
+
+def gateway_trust(host: dict | None) -> Blob | None:
+    """The gateway's private authority certificate, which every client
+    trusts, when this host's gateway is installed: a deploy installs it with
+    metrics/ as oh_metrics.GATEWAY_TRUST for the HTTPS probe. It is public."""
+    if host is None:
+        return None
+    path = installation(host).access / ACCESS_TRUST
+    try:
+        if not path.is_file() or path.is_symlink() or path.stat().st_size > TRUST_BYTES:
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return Blob(data) if data.startswith(b"-----BEGIN CERTIFICATE-----") else None
+
+
 def install(files: dict[str, Blob], commit: str, title: str, layout: State, var: Path, *,
             force: bool = False, dry_run: bool = False, how: str = "deploy",
             host: dict | None = None, post=None, application: dict | None = None,
@@ -1689,6 +1745,10 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
         previous = read_record(layout)
         pending = read_pending(layout)
         tree = {path[len("metrics/"):]: blob for path, blob in files.items() if path.startswith("metrics/")}
+        trust = gateway_trust(host) if tree else None
+        if trust is not None:
+            # blackbox_exporter's gateway probe checks the gateway's certificate against it.
+            tree[metrics.GATEWAY_TRUST] = trust
         exporter = {path: files[path] for path in metrics.EXPORTER_APP if path in files}
         with_metrics = layout.with_metrics()
         # A commit from before the metrics (rolling back past them) has neither: syncing its nothing would delete
@@ -1755,6 +1815,7 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
                 # of them; and even when one failed, since deployed.json
                 # already names this commit.
                 _shared_write(layout.history, json.dumps(entry, sort_keys=True) + "\n", append=True)
+                deploy_metrics(layout, how)
         return Deployed(commit, record["subject"], conf_changes, app_changes, record, dry_run, with_metrics,
                         metrics_changes, exporter_changes, reloads, kept, entry)
 
