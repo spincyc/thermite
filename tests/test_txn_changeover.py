@@ -365,8 +365,8 @@ class Health(unittest.TestCase):
 _health = changeover.health
 
 
-class SitePin(unittest.TestCase):
-    """F7: a rolled-back upgrade's pin commit is undone, compare and swap."""
+class GitSite(unittest.TestCase):
+    """A site whose last commit pins a new release."""
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -389,6 +389,16 @@ class SitePin(unittest.TestCase):
         return subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True,
                               text=True).stdout.strip()
 
+    def locked(self):
+        """Another git process holds the index, as an editor's may."""
+        lock = self.root / ".git/index.lock"
+        lock.write_text("")
+        return lock
+
+
+class SitePin(GitSite):
+    """F7: a rolled-back upgrade's pin commit is undone, compare and swap."""
+
     def test_the_pin_commit_is_undone_with_its_files(self):
         self.assertTrue(oh_source_upgrade.reset_pin(self.root, expected=self.after, previous=self.before))
         self.assertEqual(self.git("rev-parse", "HEAD"), self.before)
@@ -403,7 +413,7 @@ class SitePin(unittest.TestCase):
         self.git("add", "-A")
         self.git("commit", "-q", "-m", "Owner")
         moved = self.git("rev-parse", "HEAD")
-        with self.assertRaisesRegex(oh_source_upgrade.PinMoved, "not the upgrade's pin commit"):
+        with self.assertRaisesRegex(oh_source_upgrade.PinMoved, "not the pin commit"):
             oh_source_upgrade.reset_pin(self.root, expected=self.after, previous=self.before)
         self.assertEqual(self.git("rev-parse", "HEAD"), moved)
         self.git("reset", "-q", "--hard", self.after)
@@ -411,6 +421,137 @@ class SitePin(unittest.TestCase):
         with self.assertRaisesRegex(oh_source_upgrade.PinMoved, "uncommitted"):
             oh_source_upgrade.reset_pin(self.root, expected=self.after, previous=self.before)
         self.assertEqual((self.root / "thermite-site.json").read_text(), "edited\n")
+
+    def test_a_reset_whose_files_could_not_follow_is_finished_by_a_rerun(self):
+        lock = self.locked()
+        with self.assertRaises(oh_source_upgrade.PinUnfinished) as raised:
+            oh_source_upgrade.reset_pin(self.root, expected=self.after, previous=self.before)
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.before)
+        self.assertEqual((self.root / "thermite-site.json").read_text(), '{"release": "new"}\n')
+        self.assertIn(f"restore --source {self.before} --staged --worktree -- .gitignore thermite-site.json",
+                      raised.exception.command)
+        lock.unlink()
+        self.assertTrue(oh_source_upgrade.reset_pin(self.root, expected=self.after, previous=self.before))
+        self.assertEqual((self.root / "thermite-site.json").read_text(), '{"release": "old"}\n')
+        self.assertFalse((self.root / ".gitignore").exists())
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        self.assertFalse(oh_source_upgrade.reset_pin(self.root, expected=self.after, previous=self.before))
+
+    def test_the_printed_command_finishes_it_too(self):
+        lock = self.locked()
+        with self.assertRaises(oh_source_upgrade.PinUnfinished) as raised:
+            oh_source_upgrade.reset_pin(self.root, expected=self.after, previous=self.before)
+        lock.unlink()
+        subprocess.run(raised.exception.command, shell=True, check=True, capture_output=True)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        self.assertEqual((self.root / "thermite-site.json").read_text(), '{"release": "old"}\n')
+
+    def test_files_already_back_with_head_still_at_the_pin_commit_only_move_head(self):
+        self.git("restore", "--source", self.before, "--staged", "--worktree", "--", ".gitignore",
+                 "thermite-site.json")
+        self.assertTrue(oh_source_upgrade.reset_pin(self.root, expected=self.after, previous=self.before))
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.before)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+
+    def test_other_changes_beside_a_half_done_reset_are_left_alone(self):
+        self.git("update-ref", "HEAD", self.before, self.after)
+        (self.root / "notes.txt").write_text("owner's file\n")
+        self.git("add", "notes.txt")
+        with self.assertRaisesRegex(oh_source_upgrade.PinMoved, "uncommitted"):
+            oh_source_upgrade.reset_pin(self.root, expected=self.after, previous=self.before)
+        self.assertEqual((self.root / "thermite-site.json").read_text(), '{"release": "new"}\n')
+
+
+class Unpin(GitSite):
+    """Transaction.unpin over a real site: it never raises, and says how to
+    finish what it could not."""
+
+    def setUp(self):
+        super().setUp()
+        self.system = Mock(spec=System)
+        self.transaction = changeover.Transaction(
+            self.root / "var", txn_fakes.ID, {"site": str(self.root), "head_before": self.before,
+                                              "head_after": self.after, "pinned": True, "kind": "upgrade"})
+
+    def said(self):
+        return "\n".join(str(call.args[0]) for call in self.system.say.call_args_list)
+
+    def test_a_rolled_back_transaction_puts_the_site_back(self):
+        self.transaction.unpin(self.system)
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.before)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        self.assertIn(f"Site: back at {self.before[:12]}", self.said())
+
+    def test_a_failed_restore_is_said_with_its_command_and_a_rerun_finishes_it(self):
+        lock = self.locked()
+        self.transaction.unpin(self.system)
+        self.assertIn(f"The site's branch is back at {self.before[:12]}, but its files could not be put back",
+                      self.said())
+        self.assertIn(f"git -C {self.root} restore --source {self.before}", self.said())
+        lock.unlink()
+        self.transaction.unpin(self.system)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        self.assertEqual((self.root / "thermite-site.json").read_text(), '{"release": "old"}\n')
+
+    def test_the_next_run_finishes_a_reset_a_crash_cut_short(self):
+        # The run that rolled back was killed between moving HEAD and
+        # putting the files back, so its transaction is still open.
+        self.git("update-ref", "HEAD", self.before, self.after)
+        self.transaction.record.update(id=txn_fakes.ID, verb="upgrade", history=False, installed=True)
+        self.transaction.save(phase="open")
+        self.transaction.open()
+        with patch.object(changeover.Transaction, "journal", return_value={"id": txn_fakes.ID, "phase": "rolled-back"}), \
+                patch.object(changeover, "health", return_value=True):
+            self.assertEqual(changeover.resolve(self.root, self.system), changeover.ROLLED_BACK)
+        self.assertEqual(self.git("status", "--porcelain", "--untracked-files=no"), "")
+        self.assertEqual((self.root / "thermite-site.json").read_text(), '{"release": "old"}\n')
+        self.assertIsNone(changeover.open_transaction(self.root / "var"))
+
+    def test_a_site_that_moved_on_gets_the_revert_to_run(self):
+        (self.root / "thermite-site.json").write_text("edited\n")
+        self.transaction.unpin(self.system)
+        self.assertIn(f"To pin it: git -C {self.root} revert --no-edit {self.after[:12]}", self.said())
+        self.assertEqual((self.root / "thermite-site.json").read_text(), "edited\n")
+
+    def test_a_site_that_is_no_repository_is_said_not_raised(self):
+        self.transaction.record["site"] = str(self.root / "var")
+        (self.root / "var").mkdir()
+        with patch.dict("os.environ", {"GIT_CEILING_DIRECTORIES": str(self.root)}):
+            self.transaction.unpin(self.system)
+        self.assertIn("The site does not pin the version that runs", self.said())
+
+    def test_a_revert_that_rolls_back_goes_forward_again(self):
+        # A revert's transaction reset the site from the pin commit to the
+        # one before; its rollback puts the pin commit back.
+        self.git("reset", "-q", "--hard", self.before)
+        revert = changeover.Transaction(self.root / "var", txn_fakes.ID, {
+            "site": str(self.root), "head_before": self.after, "head_after": self.before, "pinned": True,
+            "kind": "revert"})
+        revert.unpin(self.system)
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.after)
+        self.assertEqual((self.root / "thermite-site.json").read_text(), '{"release": "new"}\n')
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        self.git("reset", "-q", "--hard", self.before)
+        (self.root / "notes.txt").write_text("owner's file\n")
+        self.git("add", "notes.txt")
+        revert.unpin(self.system)
+        self.assertIn(f"To pin it: git -C {self.root} merge --ff-only {self.after[:12]}", self.said())
+
+
+class Escaped(unittest.TestCase):
+    def test_a_failed_command_never_says_nothing_changed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            site = Path(temporary)
+            failure = subprocess.CalledProcessError(128, ["git", "-C", str(site), "rev-parse", "HEAD"])
+            said = changeover.escaped(site, "upgrade", failure)
+            self.assertEqual(said, f"a step failed (git exited 128); no install transaction is open: run "
+                                   f"thermite upgrade --config {site} again to go on")
+            (site / "var/transaction").mkdir(parents=True)
+            (site / "var/transaction/open").write_text(txn_fakes.ID + "\n")
+            said = changeover.escaped(site, "install", failure)
+            self.assertIn(f"install transaction {txn_fakes.ID} has not finished: run thermite upgrade "
+                          f"--config {site} to finish or roll it back", said)
+            self.assertNotIn("nothing", said)
 
 
 class History(unittest.TestCase):

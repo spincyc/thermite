@@ -140,8 +140,7 @@ def main(argv: list[str] | None = None) -> int:
                            site_before=arguments._site_before)
         return changeover.pinned(system, AREA, arguments._site_before, arguments.dry_run, body)
     except subprocess.CalledProcessError as exc:
-        print("thermite install: a step failed before the install transaction began; nothing of Thermite was "
-              "stopped or changed", file=sys.stderr)
+        print(f"thermite install: {changeover.escaped(AREA, 'install', exc)}", file=sys.stderr)
         return exc.returncode if exc.returncode > 0 else 1
     except (deploy.DeployError, ValueError, OSError) as exc:
         print(f"thermite install: {exc}", file=sys.stderr)

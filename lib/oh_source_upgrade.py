@@ -5,6 +5,7 @@ import contextlib
 import fcntl
 import os
 from pathlib import Path
+import shlex
 import signal
 import stat
 import subprocess
@@ -131,26 +132,61 @@ class PinMoved(ValueError):
     """The site is no longer at the pin commit a rollback would undo."""
 
 
+class PinUnfinished(ValueError):
+    """The site's branch moved back, but the files the pin commit changed
+    could not follow; `command` puts them back, as rerunning reset_pin does."""
+
+    def __init__(self, message: str, command: str):
+        super().__init__(message)
+        self.command = command
+
+
+def _same(root: Path, revision: str, paths: list[str], *options: str) -> bool:
+    """Whether the working tree (or, with --cached, the index) holds
+    `paths` as `revision` has them."""
+    code = subprocess.run(["git", "-C", str(root), "diff", "--quiet", *options, revision, "--", *paths],
+                          env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"}).returncode
+    if code not in (0, 1):
+        raise subprocess.CalledProcessError(code, ["git", "diff", "--quiet", *options, revision])
+    return code == 0
+
+
 def reset_pin(site: Path, *, expected: str, previous: str) -> bool:
-    """Undo the upgrade's pin commit after its install transaction rolled
-    back: move HEAD from `expected` back to `previous` (compare and swap),
-    then put the files that commit changed back as `previous` has them.
+    """Undo a pin commit: move HEAD from `expected` back to `previous`
+    (compare and swap), then put the files that commit changed back as
+    `previous` has them. A reset that stopped between the two, HEAD at one
+    commit with exactly those files as the other has them, is finished.
     False when the site is already at `previous`; PinMoved, changing
-    nothing, when anyone else moved it or changed files since."""
+    nothing, when anyone else moved it or changed files since;
+    PinUnfinished when HEAD moved but the files could not follow."""
     root = Path(git(site, "rev-parse", "--show-toplevel"))
     head = git(root, "rev-parse", "HEAD")
-    if head == previous:
-        return False
-    if head != expected:
-        raise PinMoved(f"the site is at {head[:12]}, not the upgrade's pin commit {expected[:12]}")
+    if head not in (expected, previous):
+        raise PinMoved(f"the site is at {head[:12]}, not the pin commit {expected[:12]}")
+    names = [name for name in run("git", "-C", root, "diff", "--name-only", "--no-renames", "-z", previous,
+                                  expected, capture=True).split("\0") if name]
+    paths = [f":(literal){name}" for name in names]
+    files = head
     if git(root, "status", "--porcelain", "--untracked-files=no"):
-        raise PinMoved("the site has uncommitted changes")
-    paths = [f":(literal){name}" for name in filter(None, run(
-        "git", "-C", root, "diff", "--name-only", "--no-renames", "-z", previous, expected, capture=True).split("\0"))]
-    run("git", "-C", root, "update-ref", "-m", "thermite upgrade: roll back the application pin",
-        "HEAD", previous, expected)
-    if paths:
-        run("git", "-C", root, "restore", "--source", previous, "--staged", "--worktree", "--", *paths)
+        changed = {name for options in ((), ("--cached",)) for name in run(
+            "git", "-C", root, "diff", "--name-only", "--no-renames", "-z", *options, "HEAD", capture=True).split("\0")
+            if name}
+        files = expected if head == previous else previous
+        if not changed <= set(names) or not (_same(root, files, paths) and _same(root, files, paths, "--cached")):
+            raise PinMoved("the site has uncommitted changes")
+    if head == previous and files == previous:
+        return False
+    if head == expected:
+        run("git", "-C", root, "update-ref", "-m", "thermite: undo the application pin commit", "HEAD", previous,
+            expected)
+    if files == expected and paths:
+        try:
+            run("git", "-C", root, "restore", "--source", previous, "--staged", "--worktree", "--", *paths)
+        except subprocess.CalledProcessError as exc:
+            command = shlex.join(["git", "-C", str(root), "restore", "--source", previous, "--staged", "--worktree",
+                                  "--", *names])
+            raise PinUnfinished(f"its files could not be put back (git restore exited {exc.returncode})",
+                                command) from None
     return True
 
 

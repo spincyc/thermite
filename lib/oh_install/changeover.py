@@ -79,6 +79,19 @@ def upgrade_command(site: Path) -> str:
     return command(site, "upgrade")
 
 
+def escaped(site: Path, verb: str, exc) -> str:
+    """What to say of a failed command no step handled (a
+    CalledProcessError): never that nothing changed, since an install
+    transaction may have begun."""
+    program = Path(str(exc.cmd[0] if isinstance(exc.cmd, (list, tuple)) and exc.cmd else exc.cmd)).name
+    id = open_transaction(Path(site) / "var")
+    if id:
+        return (f"a step failed ({program} exited {exc.returncode}); install transaction {id} has not finished: "
+                f"run {pending_command(site)} to finish or roll it back")
+    return f"a step failed ({program} exited {exc.returncode}); no install transaction is open: run " \
+           f"{command(site, verb)} again to go on"
+
+
 def pending_command(site: Path) -> str:
     """The owner command that resolves the open transaction: the one that
     began it."""
@@ -245,8 +258,8 @@ class Transaction:
 
     def unpin(self, system: System) -> None:
         """Undo the pin commit made for this transaction, so the site pins
-        the version that runs; say so when that cannot be done safely."""
-        import oh_source_upgrade
+        the version that runs; say how when that cannot be done safely.
+        Rerunning it finishes a reset that stopped partway."""
         before, after = self.record.get("head_before"), self.record.get("head_after")
         site = shlex.quote(str(self.site))
         if not self.record.get("pinned", True):
@@ -257,18 +270,10 @@ class Transaction:
             return
         if before == after:
             return
-        try:
-            moved = oh_source_upgrade.reset_pin(self.site, expected=after, previous=before)
-        except oh_source_upgrade.PinMoved as exc:
-            system.say(f"   The site still pins the new release: {exc}. To pin the version that runs: "
-                       f"git -C {site} revert --no-edit {after[:12]}")
-            return
-        except (OSError, ValueError) as exc:
-            system.say(f"   The site still pins the new release ({exc}). To pin the version that runs: "
-                       f"git -C {site} revert --no-edit {after[:12]}")
-            return
-        if moved:
-            system.say(f"   Site: back at {before[:12]}; the pin commit {after[:12]} is no longer on its branch.")
+        # A revert's pin reset went back to an ancestor; undoing it goes forward.
+        back = (f"git -C {site} merge --ff-only {before[:12]}" if self.record.get("kind") == "revert"
+                else f"git -C {site} revert --no-edit {after[:12]}")
+        reset_site(system, self.site, expected=after, previous=before, back=back, indent="   ")
 
     # What root's engine says ---------------------------------------------
 
@@ -995,11 +1000,26 @@ def pinned(system: System, site: Path, before: str | None, dry_run: bool, body: 
 
 
 def _unpin(system: System, site: Path, head: str, before: str) -> None:
+    reset_site(system, site, expected=head, previous=before,
+               back=f"git -C {shlex.quote(str(site))} revert --no-edit {head[:12]}")
+
+
+def reset_site(system: System, site: Path, *, expected: str, previous: str, back: str, indent: str = "") -> bool:
+    """Move the site from the pin commit `expected` back to `previous` and
+    say so; when that cannot be done safely, say how to finish (`back`:
+    the git command that pins the version that runs instead). Whether the
+    site pins `previous` now."""
     import subprocess
     import oh_source_upgrade
     try:
-        if oh_source_upgrade.reset_pin(site, expected=head, previous=before):
-            system.say(f"Site: back at {before[:12]}; the pin commit {head[:12]} is no longer on its branch.")
-    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
-        system.say(f"The site still pins the new release ({exc}); `git -C {site} revert --no-edit "
-                   f"{head[:12]}` pins the installed one.")
+        moved = oh_source_upgrade.reset_pin(site, expected=expected, previous=previous)
+    except oh_source_upgrade.PinUnfinished as exc:
+        system.say(f"{indent}The site's branch is back at {previous[:12]}, but {exc}; once nothing else uses its "
+                   f"Git repository, finish with: {exc.command}")
+        return False
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+        system.say(f"{indent}The site does not pin the version that runs ({exc}). To pin it: {back}")
+        return False
+    if moved:
+        system.say(f"{indent}Site: back at {previous[:12]}, which pins the version that runs.")
+    return True

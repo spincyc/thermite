@@ -192,14 +192,8 @@ def reverted(system: System, transaction: changeover.Transaction, command: Path,
     """The operator's side of a committed revert: the site's pin and the
     owner command go back with the version."""
     import oh_application_update
-    import oh_source_upgrade
-    site = shlex.quote(str(AREA))
-    try:
-        if oh_source_upgrade.reset_pin(AREA, expected=after, previous=before):
-            system.say(f"Site: back at {before[:12]}; the pin commit {after[:12]} is no longer on its branch.")
-    except (OSError, ValueError) as exc:
-        system.say(f"The site still pins the reverted release ({exc}). To pin the version that runs: "
-                   f"git -C {site} revert --no-edit {after[:12]}")
+    changeover.reset_site(system, AREA, expected=after, previous=before,
+                          back=f"git -C {shlex.quote(str(AREA))} revert --no-edit {after[:12]}")
     try:
         launcher = oh_application_update.select(Path.home(), command)
         system.say(f"{launcher} selects the previous application again.")

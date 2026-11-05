@@ -178,8 +178,7 @@ def main(argv: list[str] | None = None) -> int:
                           (["--verbose"] if oh_cli.switches.verbose else []), say=system.say)
         return host_phase(system, arguments)
     except subprocess.CalledProcessError as exc:
-        print("thermite upgrade: an upgrade step failed before the install transaction began; nothing of "
-              "Thermite was stopped or changed", file=sys.stderr)
+        print(f"thermite upgrade: {changeover.escaped(AREA, 'upgrade', exc)}", file=sys.stderr)
         return exc.returncode if exc.returncode > 0 else 1
     except (deploy.DeployError, ValueError, OSError) as exc:
         print(f"thermite upgrade: {exc}", file=sys.stderr)
