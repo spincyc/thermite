@@ -11,6 +11,7 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 from oh_install import engine
+from tests import txn_fakes as fakes
 
 ROOT = "/srv/thermite"
 ID = "20261105T101500Z-3f9a2c"
@@ -67,7 +68,7 @@ class Manifest(unittest.TestCase):
             "format": manifest(format=1),
             "is for /srv/other": manifest(installation="/srv/other"),
             "unknown extra": {**manifest(), "extra": 1},
-            "never recorded": manifest(items=[recorded(f"{ROOT}/runtime", "tree-move")]),
+            "is recorded as a tree": manifest(items=[recorded(f"{ROOT}/runtime", "tree-move")]),
             "unknown item class": manifest(items=[{"path": f"{ROOT}/runtime/x", "class": "script"}]),
             "outside what Thermite may own": manifest(items=[recorded("/etc/passwd", "file")]),
             "normalised": manifest(items=[recorded(f"{ROOT}/runtime/../access", "tree")]),
@@ -183,6 +184,7 @@ class CollectRule(unittest.TestCase):
             (None, "tree-move", False, False, "add"),
             ("versioned", "versioned", True, False, "leave"),
             ("versioned", None, True, False, "move"),
+            (None, "versioned", False, False, "add"),
             ("shared", "shared", True, False, "leave"),
             ("shared", None, True, False, "leave"),
             ("tree", "shared", True, False, "leave"),
@@ -258,6 +260,266 @@ class JournalModel(unittest.TestCase):
             with self.subTest(expected):
                 with self.assertRaisesRegex(engine.EngineError, expected):
                     engine.Journal.parse(json.dumps(damaged).encode())
+
+
+class Verbs(unittest.TestCase):
+    """begin, guard, collect, commit, rollback, status and prune on fakes."""
+
+    def setUp(self):
+        self.disk = fakes.MemoryDisk()
+        self.host = fakes.FakeHost(self.disk)
+        self.old = fakes.version("old")
+        self.new = fakes.version("new")
+        self.installed = fakes.install(self.disk, self.host, self.old)
+        self.messages = []
+        self.engine = self.make()
+
+    def make(self, source=fakes.SOURCE):
+        return engine.Engine(self.disk, self.host, ROOT, source=source, clock=lambda: fakes.CLOCK,
+                             say=self.messages.append)
+
+    def desired(self, new=None, kind="upgrade"):
+        return {"kind": kind, "tools": fakes.TOOLS, "items": fakes.desired_items(new or self.new),
+                "pulled": (new or self.new).images}
+
+    def begin(self, new=None, kind="upgrade", id=ID):
+        return self.engine.begin(id, self.desired(new, kind), fakes.OPERATOR)
+
+    def through_switch(self, new=None, kind="upgrade", id=ID):
+        self.begin(new, kind, id)
+        self.engine.guard(id)
+        self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
+        self.engine.collect(id)
+        fakes.switch(self.disk, self.host, new or self.new, id)
+
+    def test_begin_records_the_collect_rule_and_pins_the_engine(self):
+        journal = self.begin()
+        directory = f"{ROOT}/.transaction/{ID}"
+        actions = {entry.path: entry.action for entry in journal.entries}
+        self.assertEqual(actions[f"{fakes.UNITS}/thermite.target"], "copy")
+        self.assertEqual(actions[f"{ROOT}/runtime/userdata"], "copy")
+        self.assertEqual(actions[f"{ROOT}/runtime/logs"], "leave")
+        self.assertEqual(actions[f"{ROOT}/runtime/monitoring/prometheus"], "leave")
+        self.assertEqual(actions[f"{ROOT}/access/releases/{ID}"], "add")
+        self.assertEqual(self.disk.nodes[f"{directory}/engine.py"].data, fakes.SOURCE)
+        self.assertEqual(self.disk.nodes[f"{directory}/engine.py"].mode, 0o600)
+        self.assertEqual(self.disk.nodes[f"{directory}/manifest"].data,
+                         self.disk.nodes["/etc/thermite/installed.json"].data)
+        self.assertEqual(journal.engine_path, f"{directory}/engine.py")
+        self.assertEqual(journal.before["target"], {"enabled": True, "active": True})
+        self.assertEqual((journal.phase, journal.phases), ("planned", [["planned", fakes.CLOCK]]))
+        self.assertEqual(self.engine.read(ID), journal)
+        self.assertEqual(self.host.log, [], "begin changes nothing live")
+
+    def test_a_pin_change_copies_shared_samples(self):
+        journal = self.begin(fakes.version("new", prometheus="two"))
+        entry = next(entry for entry in journal.entries if entry.path.endswith("prometheus"))
+        self.assertEqual((entry.action, entry.aside), ("copy", f"trees/{entry.n}"))
+
+    def test_begin_refuses_drifted_missing_and_foreign_root_files(self):
+        unit = f"{fakes.UNITS}/{fakes.BOUNDARY}"
+        cases = {
+            "changed since it was installed \\(sha256\\)": lambda: setattr(self.disk.nodes[unit], "data", b"edited"),
+            "changed since it was installed \\(mode\\)": lambda: setattr(self.disk.nodes[unit], "mode", 0o664),
+            "is installed but missing": lambda: self.disk.drop(unit),
+            "the installed manifest does not list it": lambda: self.disk.put(
+                f"{fakes.UNITS}/thermite-stray.service", data=b"stray"),
+        }
+        for expected, damage in cases.items():
+            with self.subTest(expected):
+                self.setUp()
+                damage()
+                new = fakes.version("new")
+                if "list it" in expected:
+                    new.files[f"{fakes.UNITS}/thermite-stray.service"] = ("unit", b"x", {"unit": "thermite-stray.service"})
+                with self.assertRaisesRegex(engine.EngineError, expected):
+                    self.begin(new)
+                self.assertNotIn(f"{ROOT}/.transaction", self.disk.nodes)
+
+    def test_state_files_are_set_aside_as_found(self):
+        self.disk.nodes[f"{ROOT}/runtime/deploy/deployed.json"].data = b'{"redeployed": true}'
+        journal = self.begin()
+        self.assertEqual(next(entry.action for entry in journal.entries if entry.path.endswith("deployed.json")),
+                         "copy")
+
+    def test_a_symlinked_ancestor_refuses(self):
+        self.disk.drop(f"{ROOT}/access/state")
+        self.disk.put(f"{ROOT}/elsewhere", "dir")
+        self.disk.put(f"{ROOT}/access/state", "link", target=f"{ROOT}/elsewhere")
+        with self.assertRaisesRegex(engine.EngineError, "is not a dir as its tree class needs"):
+            self.begin()
+        self.disk.drop(f"{ROOT}/access")
+        self.disk.put(f"{ROOT}/access", "link", target=f"{ROOT}/elsewhere")
+        with self.assertRaisesRegex(engine.EngineError, "is not a directory \\(a symlink is never followed\\)"):
+            self.begin()
+
+    def test_one_transaction_at_a_time(self):
+        self.begin()
+        with self.assertRaisesRegex(engine.EngineError, f"transaction {ID} is planned; finish or roll it back"):
+            self.begin(id="20261105T111500Z-000001")
+
+    def test_plan_reports_room_for_a_full_copy(self):
+        self.disk.put(f"{ROOT}/runtime/userdata/cache.bin", data=b"u" * (40 << 20))
+        self.disk.budget["root"] = self.disk.used("root") + (300 << 20)
+        space = self.engine.plan(self.desired())
+        trees = dict(space["items"])
+        self.assertEqual(trees["runtime/userdata"],
+                         (40 << 20) + sum(map(len, self.old.trees[f"{ROOT}/runtime/userdata"][1].values())))
+        self.assertEqual(space["required"], sum(trees.values()) + engine.MARGIN)
+        self.assertEqual(engine.describe_space(space, ROOT).splitlines(), [
+            "Room to set aside the current version, on /srv/thermite (free 300.0 MiB):",
+            "  access/state                            <1 MiB",
+            "  runtime/deploy/deployed.json            <1 MiB",
+            "  runtime/userdata                      40.0 MiB",
+            "  8 root files and links                  <1 MiB",
+            "  margin                               256.0 MiB",
+            "  needed                               296.0 MiB  (a full copy; cloning may use less)",
+        ])
+        self.disk.budget["root"] -= 10 << 20
+        self.assertEqual(engine.describe_space(self.engine.plan(self.desired()), ROOT).splitlines()[-1],
+                         "Not enough space: nothing was stopped or changed. Free 6.0 MiB, then rerun.")
+
+    def test_every_later_verb_refuses_another_engine(self):
+        self.begin()
+        other = self.make(source=b"# a different release's engine\n")
+        for verb in ("guard", "collect", "commit", "rollback"):
+            with self.subTest(verb):
+                with self.assertRaisesRegex(engine.EngineError,
+                                            f"begun by another engine; run {ROOT}/.transaction/{ID}/engine.py"):
+                    getattr(other, verb)(ID)
+
+    def test_collect_needs_thermite_stopped_and_unguarded_boot(self):
+        self.begin()
+        self.engine.guard(ID)
+        with self.assertRaisesRegex(engine.EngineError, "must be disabled and thermite.slice stopped"):
+            self.engine.collect(ID)
+        self.assertEqual(self.engine.read(ID).phase, "guarded")
+
+    def test_commit_records_what_is_on_disk_and_lifts_the_guard(self):
+        self.through_switch()
+        journal = self.engine.commit(ID, fakes.release(self.new))
+        self.assertEqual(journal.phase, "kept")
+        data = engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data, root=ROOT)
+        items = {item["path"]: item for item in data["items"]}
+        rules = self.new.files[fakes.RULES][1]
+        self.assertEqual(items[fakes.RULES], {"path": fakes.RULES, "class": "nft", "sha256": fakes.digest(rules),
+                                              "mode": 0o644, "uid": 0, "gid": 0, "apply_unit": fakes.BOUNDARY})
+        self.assertEqual(items[f"{ROOT}/access/releases"]["current"], ID)
+        self.assertEqual(items[f"{ROOT}/access/releases"]["previous"], fakes.OLD)
+        self.assertEqual(items[f"{ROOT}/runtime/monitoring/prometheus"],
+                         {"path": f"{ROOT}/runtime/monitoring/prometheus", "class": "shared-pinned",
+                          "pin": PROMETHEUS})
+        self.assertEqual(data["application"], {"current": "sha256:new", "previous": "sha256:old"})
+        self.assertTrue(data["installed"])
+        self.assertTrue(self.host.enabled())
+        self.assertEqual(self.engine.status(), [{"id": ID, "kind": "upgrade", "phase": "kept", "open": False,
+                                                 "engine": f"{ROOT}/.transaction/{ID}/engine.py", "outcome": None,
+                                                 "bytes": self.disk.allocated(f"{ROOT}/.transaction/{ID}")}])
+
+    def test_commit_prunes_beyond_the_previous_version(self):
+        two = fakes.version("new", prometheus="two")
+        self.through_switch(two)
+        self.engine.commit(ID, fakes.release(two))
+        failed_id, third = "20261105T120000Z-0000aa", "20261105T130000Z-0000bb"
+        newer = fakes.version("newer", prometheus="three")
+        # A rolled-back attempt that pulled an image, then a committed one.
+        self.through_switch(newer, id=failed_id)
+        self.engine.rollback(failed_id)
+        self.assertTrue(self.disk.lstat(f"{ROOT}/.transaction/{failed_id}/failed"))
+        self.host.images |= {*newer.images, "docker.io/fictional/kept@sha256:1"}
+        stuck = "20261101T000000Z-0000cc"
+        self.disk.put(f"{ROOT}/.transaction/{stuck}/journal.json", data=b"{}", mode=0o600)
+        self.disk.nodes[f"{ROOT}/.transaction/{stuck}"].mode = 0o700
+        newest = fakes.version("newest", prometheus="four")
+        try:
+            self.through_switch(newest, id=third)
+        except engine.EngineError as error:
+            self.assertIn(f"transaction {stuck} cannot be read", str(error))
+        else:
+            self.fail("an unreadable transaction must refuse begin")
+        self.disk.drop(f"{ROOT}/.transaction/{stuck}")
+        self.through_switch(newest, id=third)
+        self.engine.commit(third, fakes.release(newest))
+        self.assertEqual(self.engine.ids(), [third])
+        self.assertEqual(sorted(self.disk.listdir(f"{ROOT}/access/releases")), [ID, third])
+        # The first version's image is now beyond the previous one; the
+        # rolled-back attempt's pull was kept for a retry until now.
+        removed = [argv[-1] for argv in self.host.log if argv[:3] == ("podman", "image", "rm")]
+        self.assertEqual(removed, sorted({newer.images[0], self.old.images[0]}))
+        self.assertEqual(self.messages, [])
+
+    def test_rollback_puts_the_old_version_back(self):
+        before = fakes.world(self.disk, self.host, fakes.managed_paths(self.old, self.new))
+        self.through_switch()
+        journal = self.engine.rollback(ID)
+        self.assertEqual((journal.phase, journal.rollback_from), ("rolled-back", "switching"))
+        self.assertEqual(journal.outcome, {"at": fakes.CLOCK, "result": "rolled-back", "started": True, "error": None})
+        self.assertEqual(fakes.world(self.disk, self.host, fakes.managed_paths(self.old, self.new)), before)
+        self.assertEqual(self.disk.listdir(f"{ROOT}/.transaction/{ID}/failed"),
+                         sorted(str(entry.n) for entry in journal.entries if entry.state == "restored"))
+        calls = len(self.host.log)
+        self.assertEqual(self.engine.rollback(ID).phase, "rolled-back")
+        self.assertEqual(len(self.host.log), calls, "a finished rollback runs nothing")
+
+    def test_a_committed_transaction_is_finished_not_undone(self):
+        self.through_switch()
+        commit = self.engine.commit
+        journal = self.engine.read(ID)
+        # Stop right after the commit point.
+        self.engine._finish = lambda journal: journal
+        commit(ID, fakes.release(self.new))
+        self.assertEqual(self.engine.read(ID).phase, "committed")
+        self.assertFalse(self.host.enabled())
+        del self.engine._finish
+        self.assertEqual(self.engine.rollback(ID).phase, "kept")
+        self.assertTrue(self.host.enabled())
+        self.assertEqual(engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data,
+                                               root=ROOT)["transaction"], ID)
+        self.assertNotEqual(journal.phase, "kept")
+
+    def test_uninstall_records_kept_state_and_leaves_the_boot_target_off(self):
+        gone = fakes.version("gone", shared=True)
+        gone.files, gone.links = {}, {}
+        self.begin(gone, "uninstall")
+        self.engine.guard(ID)
+        self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
+        self.engine.collect(ID)
+        self.engine.commit(ID)
+        data = engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data, root=ROOT)
+        self.assertFalse(data["installed"])
+        self.assertEqual({item["class"] for item in data["items"]}, {"shared"})
+        self.assertFalse(self.host.enabled())
+        self.assertNotIn(fakes.RULES, self.disk.nodes)
+        self.assertIsNone(self.host.table)
+        self.assertEqual(self.host.loaded, {})
+
+    def test_a_clean_install_records_its_new_trees(self):
+        clean = fakes.version("new", tree_class="tree-move")
+        self.through_switch(clean, "clean")
+        journal = self.engine.commit(ID, fakes.release(clean))
+        moved = [entry for entry in journal.entries if entry.cls == "tree-move"]
+        self.assertEqual([entry.action for entry in moved], ["move", "move"])
+        for entry in moved:
+            self.assertIsNone(self.disk.lstat(f"{ROOT}/.transaction/{ID}/{entry.aside}"))
+        data = engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data, root=ROOT)
+        self.assertEqual({item["class"] for item in data["items"] if item["path"].endswith(("userdata", "state"))},
+                         {"tree"})
+
+    def test_rollback_print_lists_the_manual_commands(self):
+        self.through_switch()
+        journal = self.engine.read(ID)
+        lines = self.engine.manual(journal)
+        unit = next(entry for entry in journal.entries if entry.path.endswith("thermite.target"))
+        directory = f"{ROOT}/.transaction/{ID}"
+        self.assertEqual(lines[:2], [f"# Roll back transaction {ID} (upgrade, switching) by hand, as root.",
+                                     "systemctl stop thermite.target thermite.slice"])
+        self.assertIn(f"test ! -e {unit.path} || mv -T {unit.path} {directory}/failed/{unit.n}", lines)
+        self.assertIn(f"mv -T {directory}/{unit.aside} {unit.path}", lines)
+        self.assertIn(f"test ! -e {ROOT}/access/releases/{ID} || mv -T {ROOT}/access/releases/{ID} "
+                      f"{directory}/failed/{next(e.n for e in journal.entries if e.path.endswith(ID))}", lines)
+        self.assertEqual(lines[-6:], ["systemctl daemon-reload", f"systemctl restart {fakes.BOUNDARY}",
+                                      f"apparmor_parser -r {fakes.POLICY}", "systemctl reset-failed 'thermite*'",
+                                      "systemctl enable thermite.target", "systemctl start thermite.target"])
 
 
 if __name__ == "__main__":
