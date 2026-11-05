@@ -399,6 +399,17 @@ esac
         self.assertIn("run the engine that wrote it", refused)
         self.assertTrue((self.wants / "thermite.target").is_symlink(), "nothing was rolled back")
 
+    def test_each_verb_checks_only_the_tools_it_runs(self):
+        self.run_engine("begin", "--id", ID, "--desired", str(self.inputs["desired"]),
+                        "--operator", str(self.inputs["operator"]))
+        Path(self.tools["nft"]).chmod(0o777)
+        self.run_engine("guard", "--id", ID)  # systemctl and sync only.
+        Path(self.tools["systemctl"]).chmod(0o777)
+        self.assertIn("must be an executable file only root can change",
+                      self.run_engine("rollback", status=engine.FAILED).stderr)
+        # Printing the manual commands runs nothing, so it checks nothing.
+        self.assertIn("systemctl enable thermite.target", self.run_engine("rollback", "--print").stdout)
+
     def test_an_unsafe_pinned_copy_is_never_run(self):
         self.run_engine("begin", "--id", ID, "--desired", str(self.inputs["desired"]),
                         "--operator", str(self.inputs["operator"]))

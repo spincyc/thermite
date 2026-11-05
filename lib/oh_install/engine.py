@@ -400,6 +400,18 @@ def validate_operator(data) -> dict:
     return {"head_before": None, "head_after": None, **data}
 
 
+def needed_tools(entries, apparmor) -> set[str]:
+    """The tools a transaction's entries need: an nft item's live table is
+    snapshotted and reloaded, and a policy is loaded or removed while
+    AppArmor is enabled."""
+    needed = {"systemctl", "cp", "sync"}
+    if any(entry.cls == "nft" and entry.action != "leave" for entry in entries):
+        needed.add("nft")
+    if apparmor and any(entry.cls == "apparmor" and entry.action != "leave" for entry in entries):
+        needed.add("apparmor_parser")
+    return needed
+
+
 def collect_action(current, desired, exists, pin_changed=False) -> str:
     """What collect does with one path: `current` and `desired` are its class
     in the installed manifest and the desired set (None when absent there),
@@ -891,6 +903,12 @@ class Engine:
             desired = validate_desired(desired, self.root, self.system)
             operator = validate_operator(operator)
             entries = self.entries(installed, desired["items"], id)
+            apparmor = self._apparmor()
+            for tool in sorted(needed_tools(entries, apparmor)):
+                if not desired["tools"][tool]:
+                    path = next(entry.path for entry in entries if entry.action != "leave" and entry.cls == (
+                        "nft" if tool == "nft" else "apparmor"))
+                    raise EngineError(f"{path} needs the {tool} tool, which the desired set leaves null")
             space = self.space(entries, desired["extra"])
             if space["required"] > space["available"]:
                 raise SpaceShort(space, self.root)
@@ -912,7 +930,7 @@ class Engine:
                 engine_sha256=hashlib.sha256(self.source).hexdigest(), engine_path=str(directory / "engine.py"),
                 tools=desired["tools"], operator=operator, space=space, entries=entries, pulled=desired["pulled"],
                 before={"manifest": "manifest" if raw is not None else None, "source": source, "target": target,
-                        "apparmor": self._apparmor()},
+                        "apparmor": apparmor},
                 current=installed, desired=desired["items"], phases=[["planned", self.clock()]])
             self.save(journal)
             return journal
@@ -1183,8 +1201,7 @@ class Engine:
         old = current.get("images", {}).get("previous", [])
         if journal.tools.get("podman"):
             for ref in sorted((set(old) | set(pulled)) - keep):
-                if self.host.run(("podman", "image", "rm", "--ignore", "--", ref)):
-                    self.say(f"warning: podman image rm {ref} failed")
+                attempt(f"image {ref}", lambda ref=ref: self._run("podman", "image", "rm", "--ignore", "--", ref))
 
     def rollback(self, id) -> Journal:
         """Put the version that ran before the transaction back, from what is
@@ -1723,14 +1740,25 @@ def _main(args, argv, here) -> int:
     journal = engine.read(id)
     if journal is None:
         raise EngineError(f"transaction {id} has no journal; begin did not finish")
-    tools = trusted_tools(journal.tools)
-    engine.disk.tools = engine.host.tools = tools
     if args.verb == "rollback" and (args.print or args.dry_run):
+        # Printing runs nothing, so no tool is checked: this is the way out
+        # when one can no longer be trusted.
         engine._open(id)
         if args.dry_run:
             print(f"Rolling back transaction {id} ({journal.kind}, {journal.phase}) would run:")
         print("\n".join(engine.manual(journal)))
         return 0
+    # Only the tools the verb runs are checked; pruning images is best
+    # effort, so podman going missing never blocks a commit or rollback.
+    needed = ({"systemctl", "sync"} if args.verb in ("guard", "commit")
+              else needed_tools(journal.entries, journal.before["apparmor"]))
+    tools = {name: trusted_tool(name, journal.tools[name]) for name in sorted(needed)}
+    if args.verb in ("commit", "rollback") and journal.tools["podman"]:
+        try:
+            tools["podman"] = trusted_tool("podman", journal.tools["podman"])
+        except EngineError as error:
+            engine.say(f"warning: images will not be pruned: {error}")
+    engine.disk.tools = engine.host.tools = tools
     if args.verb == "rollback":
         if journal.phase in TERMINAL:
             return 0

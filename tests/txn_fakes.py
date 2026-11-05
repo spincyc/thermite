@@ -346,10 +346,12 @@ class FakeHost(engine.Host):
     Enabling and disabling the target add and remove its link on the disk,
     as systemctl does, without syncing it. `failures` maps an argv to the
     exit status it returns instead of acting. Like systemctl, it refuses to
-    enable, disable or restart a unit whose file is not installed."""
+    enable, disable or restart a unit whose file is not installed. Like
+    SubprocessHost, it runs only the tools `tools` names."""
 
-    def __init__(self, disk, *, system="/"):
+    def __init__(self, disk, *, system="/", tools=None):
         self.disk = disk
+        self.tools = dict(TOOLS if tools is None else tools)
         self.system = system.rstrip("/")
         self.active = set()
         self.table = None
@@ -380,8 +382,13 @@ class FakeHost(engine.Host):
             self.active.add(unit)
         return 0
 
+    def _configured(self, argv):
+        if not self.tools.get(argv[0]):
+            raise engine.EngineError(f"no {argv[0]} tool is configured")
+
     def run(self, argv):
         argv = tuple(str(arg) for arg in argv)
+        self._configured(argv)
         self.disk.tick("host", *argv)
         self.log.append(argv)
         if argv in self.failures:
@@ -442,6 +449,7 @@ class FakeHost(engine.Host):
 
     def capture(self, argv):
         argv = tuple(str(arg) for arg in argv)
+        self._configured(argv)
         if argv == ("systemctl", "is-enabled", engine.TARGET):
             if not self.installed(engine.TARGET):
                 return 4, "not-found\n"

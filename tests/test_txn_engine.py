@@ -417,6 +417,31 @@ class Verbs(unittest.TestCase):
         self.assertEqual(self.engine.commit(ID, fakes.release(self.new)).phase, "kept")
         self.assertTrue(self.host.enabled())
 
+    def test_begin_refuses_a_null_tool_an_item_needs(self):
+        """A rollback that needs a tool the journal left null could never
+        finish; begin refuses instead."""
+        for tool, expected in (("apparmor_parser", fakes.POLICY), ("nft", fakes.RULES)):
+            with self.subTest(tool):
+                desired = {**self.desired(), "tools": {**fakes.TOOLS, tool: None}}
+                with self.assertRaisesRegex(engine.EngineError,
+                                            f"{expected} needs the {tool} tool, which the desired set leaves null"):
+                    self.engine.begin(ID, desired, fakes.OPERATOR)
+                self.assertNotIn(f"{ROOT}/.transaction", self.disk.nodes)
+
+    def test_without_apparmor_a_null_apparmor_parser_is_never_run(self):
+        self.disk.drop(fakes.APPARMOR)
+        self.host.loaded = {}
+        before = fakes.world(self.disk, self.host, fakes.managed_paths(self.old, self.new))
+        tools = {**fakes.TOOLS, "apparmor_parser": None}
+        self.host.tools = tools
+        self.engine.begin(ID, {**self.desired(), "tools": tools}, fakes.OPERATOR)
+        self.engine.guard(ID)
+        self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
+        self.engine.collect(ID)
+        fakes.switch(self.disk, self.host, self.new)
+        self.assertEqual(self.engine.rollback(ID).phase, "rolled-back")
+        self.assertEqual(fakes.world(self.disk, self.host, fakes.managed_paths(self.old, self.new)), before)
+
     def test_collect_needs_thermite_stopped_and_unguarded_boot(self):
         self.begin()
         self.engine.guard(ID)
