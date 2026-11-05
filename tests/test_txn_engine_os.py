@@ -494,7 +494,7 @@ esac
         # Only the fake tools and plain file utilities can be found.
         bin = self.base / "bin"
         bin.mkdir()
-        for name in ("mv", "rm", "cat", "cp", "ln", "touch"):
+        for name in ("mv", "rm", "rmdir", "cat", "cp", "ln", "touch"):
             (bin / name).symlink_to(shutil.which(name, path="/usr/bin:/bin"))
         for name in ("systemctl", "nft"):
             (bin / name).symlink_to(self.tools[name])

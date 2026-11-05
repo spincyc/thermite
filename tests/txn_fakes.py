@@ -6,6 +6,10 @@ change becomes durable only once an fsync of its directory, or a sync of its
 filesystem, covers it, and crash() keeps only what was covered, replayed in
 order. Every mutating call, of the disk or the host, counts; `fail_at` kills
 the run (raises Crash) just before that call.
+
+crash(rng) is harsher than any real filesystem: besides what was covered,
+each uncovered change survives or not at random, out of order, and a copy
+or a tree removal may survive in part.
 """
 from __future__ import annotations
 
@@ -133,12 +137,16 @@ class MemoryDisk(engine.Disk):
             item[1] = True
         self._fold()
 
-    def crash(self):
-        """Power loss: keep only what a sync covered, replayed in order."""
+    def crash(self, rng=None):
+        """Power loss: keep what a sync covered, replayed in order. With
+        `rng`, each uncovered change also survives at random, and a copy or
+        removal may survive only in part."""
         nodes = copy.deepcopy(self.base)
         for op, covered in self.pending:
             if covered:
                 apply(nodes, op)
+            elif rng is not None and rng.random() < 0.5:
+                apply(nodes, torn(op, nodes, rng))
         self.nodes, self.base, self.pending = nodes, copy.deepcopy(nodes), []
 
     # Disk ----------------------------------------------------------------
@@ -319,6 +327,21 @@ def kill_points(disk, host, run):
     return points
 
 
+def torn(op, nodes, rng):
+    """Part of a copy (some of its nodes) or of a removal (some leaves,
+    and a directory only once all below it went); other changes whole."""
+    if op[0] == "copy":
+        return ("copy", {name: node for name, node in op[1].items() if rng.random() < 0.5})
+    if op[0] == "remove":
+        gone = set()
+        for name in sorted((name for name in nodes if inside(name, op[1])), key=len, reverse=True):
+            below = [other for other in nodes if other != name and inside(other, name)]
+            if all(other in gone for other in below) and rng.random() < 0.5:
+                gone.add(name)
+        return ("removed", sorted(gone))
+    return op
+
+
 def op_path(op):
     if op[0] == "rename":
         return op[2]
@@ -346,6 +369,9 @@ def apply(nodes, op):
         for name in sorted(op[1]):
             if parent(name) in nodes:
                 nodes[name] = copy.deepcopy(op[1][name])
+    elif kind == "removed":
+        for name in op[1]:
+            nodes.pop(name, None)
 
 
 def boundary(unit):
@@ -530,7 +556,7 @@ class Version:
 
 
 def version(label, *, units=("thermite-openhab.container",), extra_units=(), apparmor=True, prometheus="one",
-            tree_class="tree", shared=False):
+            tree_class="tree", shared=False, dropins=()):
     files = {
         f"{UNITS}/{engine.TARGET}": ("unit", unit_text(engine.TARGET, label), {"unit": engine.TARGET}),
         f"{UNITS}/{engine.SLICE}": ("unit", unit_text(engine.SLICE, label), {"unit": engine.SLICE}),
@@ -544,6 +570,8 @@ def version(label, *, units=("thermite-openhab.container",), extra_units=(), app
                                                     {"unit": name.replace(".container", ".service")})
     for name in extra_units:
         files[f"{UNITS}/{name}"] = ("unit", unit_text(name, label), {"unit": name})
+    for name in dropins:  # In a directory the version creates: thermite-x.service.d/50-y.conf
+        files[f"{UNITS}/{name}"] = ("unit", unit_text(name, label), {"unit": name.split("/")[0][:-2]})
     if apparmor:
         files[POLICY] = ("apparmor", f"profile thermite-node-exporter {{ # {label} }}\n".encode(), {})
     links = {f"{WANTS}/{BOUNDARY}": f"{UNITS}/{BOUNDARY}"}
@@ -668,9 +696,17 @@ def managed_paths(*versions, id=ID, pinned=False):
     return sorted(paths - shared)
 
 
+#: Where Thermite writes: anything appearing or vanishing here shows.
+TOPS = (UNITS, "/etc/containers/systemd", "/etc/thermite", "/etc/apparmor.d", "/usr/share/doc/thermite", ROOT)
+
+
 def world(disk, host, paths):
-    """The managed set, byte for byte, and the live state Thermite runs on."""
+    """The managed set, byte for byte; what exists where Thermite writes
+    (outside its transactions), so that a directory left behind shows; and
+    the live state Thermite runs on."""
     found = {}
     for path in paths:
         found.update(disk.walk(path))
-    return {"files": found, "host": host.state()}
+    layout = {name: node.kind for name, node in disk.nodes.items()
+              if any(inside(name, top) for top in TOPS) and not inside(name, f"{ROOT}/.transaction")}
+    return {"files": found, "layout": layout, "host": host.state()}

@@ -442,10 +442,12 @@ def collect_action(current, desired, exists, pin_changed=False) -> str:
         if current in (None, "shared"):
             return "leave"
         return "move" if exists else "leave"
+    if desired in ("shared", "shared-pinned") and not exists:
+        return "add"  # The new version creates it: rollback takes it away.
     if desired == "shared":
         return "leave"
     if desired == "shared-pinned":
-        return "copy" if exists and current is not None and pin_changed else "leave"
+        return "copy" if current is not None and pin_changed else "leave"
     if desired == "versioned":
         # The child named by the transaction id is the entry, unless the
         # whole directory is new.
@@ -874,12 +876,13 @@ class Engine:
             # Rollback reloads the old rules with the old version's unit.
             entries.append(Entry(len(entries), path, cls, action, exists, removed=action == "move" and not new,
                                  aside=f"{CLASSES[cls].aside}/{len(entries)}" if action in ("copy", "move") else None,
-                                 apply_unit=(old or new).get("apply_unit")))
+                                 apply_unit=(old or new).get("apply_unit"),
+                                 meta={"absent": self._absent(path)} if action == "add" else None))
             if new and new["class"] == "versioned" and exists and id is not None:
                 child = f"{path}/{id}"
                 if self.disk.lstat(child) is not None:
                     raise EngineError(f"{child} already exists")
-                entries.append(Entry(len(entries), child, "versioned", "add", False))
+                entries.append(Entry(len(entries), child, "versioned", "add", False, meta={"absent": []}))
         active = [entry.path for entry in entries if entry.action != "leave"]
         for path in active:
             inside = [other for other in active if below(path, other)]
@@ -887,6 +890,17 @@ class Engine:
                 raise EngineError(f"{path} lies inside {inside[0]} across the two versions; "
                                   "items never nest")
         return entries
+
+    def _absent(self, path) -> list[str]:
+        """The directories above `path` that do not exist yet, outermost
+        first: the new version makes them for an added path, and rollback
+        takes away those it leaves empty."""
+        absent = []
+        for ancestor in Path(path).parents:
+            if self.disk.lstat(ancestor) is not None:
+                break
+            absent.insert(0, str(ancestor))
+        return absent
 
     def space(self, entries, extra=0) -> dict:
         """Room for a full, uncloned copy of everything copied aside, and of
@@ -1421,6 +1435,10 @@ class Engine:
                 self._unload(live)
             if self.disk.lstat(live) is not None:
                 self._move(live, failed)
+            for made in reversed((entry.meta or {}).get("absent", [])):
+                found = self.disk.lstat(made)
+                if found is not None and found.kind == "dir" and not self.disk.listdir(made):
+                    self._discard(made)
             entry.state = "restored"
             self.save(journal)
             return
@@ -1506,6 +1524,8 @@ class Engine:
             if entry.cls == "apparmor" and journal.before["apparmor"]:
                 lines.append(f"if {_present(live)}; then {shlex.join(['apparmor_parser', '-R', live])}; fi")
             lines.append(f"if {_present(live)}; then {shlex.join(['mv', '-T', live, failed])}; fi")
+            lines += [f"rmdir -- {shlex.quote(made)} 2>/dev/null || true"
+                      for made in reversed((entry.meta or {}).get("absent", []))]
             return lines
         aside = str(directory / entry.aside)
         if entry.state == "partial" or entry.action == "copy" and source == "collecting":

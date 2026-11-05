@@ -212,6 +212,9 @@ class CollectRule(unittest.TestCase):
             ("shared-pinned", "shared-pinned", True, False, "leave"),
             ("shared-pinned", "shared-pinned", True, True, "copy"),
             (None, "shared-pinned", True, True, "leave"),
+            (None, "shared-pinned", False, False, "add"),
+            (None, "shared", False, False, "add"),
+            ("shared", "shared", False, False, "add"),
             ("shared-pinned", None, True, False, "move"),
             ("tree", None, False, False, "leave"),
         ]

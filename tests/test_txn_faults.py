@@ -5,7 +5,9 @@ version's install and commit (or a failed gate's rollback) on a MemoryDisk
 and FakeHost. The run is then killed before each of its mutating calls in
 turn: every journal write, every disk change or sync, every host command and
 every write of the new version. After a kill the process is simply gone;
-after a power cut, only what was synced survives and the host boots. The
+after a power cut, only what was synced survives and the host boots; after a
+torn power cut, any of the unsynced changes may survive too, copies and
+removals in part. The
 rerun is what changeover's recovery does: `rollback`, which finishes a
 committed transaction and undoes any other. The managed set must then be
 byte for byte the version before or the committed one, never a mix.
@@ -15,6 +17,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import errno
+import random
 from pathlib import Path
 import sys
 import unittest
@@ -74,7 +77,8 @@ CASES = {
     "upgrade_prometheus_pin": Case(fakes.version("old"), fakes.version("new", prometheus="two")),
     "upgrade_removes_unit_and_adds_unit": Case(
         fakes.version("old", extra_units=("thermite-old.service", "thermite-old.path")),
-        fakes.version("new", extra_units=("thermite-fresh.service",))),
+        fakes.version("new", extra_units=("thermite-fresh.service",),
+                      dropins=("thermite-openhab.service.d/50-lifecycle.conf",))),
     "upgrade_apparmor_disabled": Case(fakes.version("old"), fakes.version("new"), apparmor=False),
     "upgrade_across_filesystems": Case(
         fakes.version("old", extra_units=("thermite-old.service", "thermite-old.path"), apparmor=True),
@@ -153,7 +157,8 @@ class Harness(unittest.TestCase):
             files = sorted(set(found["files"]) ^ set(expected["files"]) | {
                 path for path in set(found["files"]) & set(expected["files"])
                 if found["files"][path] != expected["files"][path]})
-            self.fail(f"{what}: durable phase {phase}: differs in {files[:6]} "
+            layout = sorted(set(found["layout"].items()) ^ set(expected["layout"].items()))
+            self.fail(f"{what}: durable phase {phase}: differs in {files[:6]} layout {layout[:6]} "
                       f"host {found['host'] if found['host'] != expected['host'] else 'same'}")
         self.assertEqual([path for path in disk.nodes if path.endswith(".partial")], [], what)
         journal = engine_on(disk, host).read(ID)
@@ -180,11 +185,12 @@ class CrashAnywhere(Harness):
         self.assertEqual(len(points), total)
         first = {}
         for k, (call, killed, killed_host) in enumerate(points, 1):
-            for power in (False, True):
+            for power in (False, True, "torn"):
                 disk, host = fakes.fork(killed, killed_host)
                 what = f"{name}: killed before call {k} {call}{' and power lost' if power else ''}"
                 if power:
-                    disk.crash()
+                    # Torn: unsynced changes survive at random (seeded by k).
+                    disk.crash(random.Random(k) if power == "torn" else None)
                     host.boot()
                 phase = durable_phase(disk, host, case)
                 if power and phase in ("guarded", "collecting", "switching"):
