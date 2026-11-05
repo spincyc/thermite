@@ -46,6 +46,11 @@ the device itself is the device's to apply.
 Source previews use the fictional sample. Add `?backend=mock` to simulate
 controls without sending commands.
 
+When a page gives up waiting on the gateway (a lock read, a room command, an
+event stream or its first snapshot), it counts that and reports the counts, never
+their content, to the gateway after its next answered request, or as the page
+is hidden. Pages opened with `?backend=mock` or in native mode report nothing.
+
 Below 1180 pixels a bar runs across the top: ☰ opens every view and the
 light/dark switch, followed by the page title, the page's actions and the
 thermite mark. On Remotes the title is the room, which opens the room list, and

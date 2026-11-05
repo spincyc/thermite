@@ -959,7 +959,11 @@
         this.syncWaiters = this.syncWaiters.filter((entry) => entry !== waiter);
         resolve();
       };
-      const timer = setTimeout(waiter, this.snapshotTimeout);
+      // A give-up the gateway never sees: client telemetry counts it.
+      const timer = setTimeout(() => {
+        if (!this.native()) this.access?.record?.("snapshot_timeout", this.snapshotTimeout / 1000, this.eventsUrl());
+        waiter();
+      }, this.snapshotTimeout);
       this.syncWaiters.push(waiter);
     });
   };

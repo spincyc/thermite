@@ -23,6 +23,7 @@
     setup_required: "Generate a setup code on the thermite host before creating the first administrator.",
     invalid_setup_code: "The setup code was not accepted or has expired. Generate a new code on the thermite host.",
     access_not_configured: "Access is not configured at this address.", invalid_response: "The access service could not answer.",
+    client_timeout: "thermite did not answer in time. Try again in a moment.",
     origin_mismatch: "The terminal credential belongs to a different address.", secure_connection_required: "Use your site’s HTTPS address to sign in.", connection_failed: "Could not reach thermite."
   };
   function problem(code, status) {
@@ -113,6 +114,73 @@
         }
       };
     }
+    // Client telemetry: what this client gave up on (timeouts, failed or
+    // refused event streams), which the gateway never sees. Counted here
+    // (1000 a kind, the latest 16 waits in seconds) and posted to
+    // /api/v1/telemetry after the next answered request, at most every 15 s
+    // and one at a time, or as a beacon when the page hides. 204 clears what
+    // was sent, other 4xx drop it, 408/429/5xx and network failures keep it
+    // for later. A telemetry POST's own failure is never recorded.
+    const TELEMETRY = "/api/v1/telemetry", KINDS = ["policy_timeout", "locks_timeout", "command_timeout", "stream_error", "stream_refused", "snapshot_timeout"];
+    const telemetryClient = config.client || (typeof document === "undefined" ? "tui" : "web"), now = config.now || Date.now;
+    let telemetry = Object.create(null), hopProtocol = "unknown", reporting = false, reportAfter = 0, throttledUntil = 0;
+    const normalHop = (value) => { const hop = String(value || "").toLowerCase();
+      return ["h2", "h2c"].includes(hop) ? "h2" : /^http\/1\.[01]$/.test(hop) ? "http/1.1" : /^h3(-|$)/.test(hop) ? "h3" : "unknown"; };
+    // The request's own PerformanceResourceTiming, else the latest same-origin one.
+    function nextHop(url) {
+      const latest = (entries) => entries.filter((entry) => entry.nextHopProtocol).pop()?.nextHopProtocol;
+      try {
+        const timing = global.performance;
+        return normalHop(url && latest(timing.getEntriesByName(new URL(url, origin + "/").href))
+          || latest(timing.getEntriesByType("resource").filter((entry) => String(entry.name).startsWith(origin + "/"))));
+      } catch (_) { return "unknown"; }
+    }
+    // seconds: from starting the request (queueing included) until giving up; omitted when meaningless.
+    function record(kind, seconds, url, protocol) {
+      if (legacy || mock || !KINDS.includes(kind)) return;
+      const entry = telemetry[kind] || (telemetry[kind] = { count: 0, waits: [] });
+      entry.count = Math.min(1000, entry.count + 1);
+      if (Number.isFinite(seconds)) entry.waits = entry.waits.concat(Math.round(Math.min(600, Math.max(0, seconds)) * 1000) / 1000).slice(-16);
+      hopProtocol = protocol ? normalHop(protocol) : nextHop(url);
+    }
+    // Counts kind once if promise is still unsettled after ms; never cancels it.
+    function overdue(kind, path, promise, ms) {
+      const started = now(), timer = setTimeout(() => record(kind, (now() - started) / 1000, path), ms);
+      if (timer.unref) timer.unref();
+      return promise.finally(() => clearTimeout(timer));
+    }
+    function restore(events) {
+      for (const [kind, sent] of Object.entries(events)) {
+        const entry = telemetry[kind] || { count: 0, waits: [] };
+        telemetry[kind] = { count: Math.min(1000, sent.count + entry.count), waits: sent.waits.concat(entry.waits).slice(-16) };
+      }
+    }
+    async function flushTelemetry(leaving) {
+      if (legacy || mock || !Object.keys(telemetry).length || now() < throttledUntil || !leaving && (reporting || now() < reportAfter)) return false;
+      const events = telemetry, report = { client: telemetryClient, protocol: hopProtocol, events };
+      telemetry = Object.create(null);
+      // ASCII only, and about 1.1 KB at most (six kinds of 1000 with 16 waits
+      // of 600 s), inside the gateway's 2048 bytes; the tests hold it there.
+      const body = JSON.stringify(report);
+      if (leaving) {
+        try { if (global.navigator.sendBeacon(new URL(TELEMETRY, origin).href, new Blob([body], { type: "application/json" })) === true) return true; } catch (_) { /* fetch below */ }
+      } else { reporting = true; reportAfter = now() + 15000; }
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      const timer = setTimeout(() => controller?.abort(), 10000);
+      if (timer.unref) timer.unref();
+      try {
+        const response = await raw(TELEMETRY, { method: "POST", keepalive: leaving === true, headers: { "Content-Type": "application/json" }, body,
+          ...(controller ? { signal: controller.signal } : {}) }).catch(() => null);
+        if (response && response.status < 400) return true;
+        if (response && response.status < 500 && ![408, 429].includes(response.status)) return false;
+        restore(events);
+        if (response?.status === 429) {
+          const wait = Number(response.headers?.get?.("Retry-After"));
+          throttledUntil = now() + (Number.isFinite(wait) ? Math.min(3600, Math.max(15, wait)) : 60) * 1000;
+        }
+        return false;
+      } finally { clearTimeout(timer); if (!leaving) reporting = false; }
+    }
     const demo = { users: [{ id: 1, username: "Demo", admin: true, active: true }], policies: {} };
     function demoRequest(path, method, value) {
       const policy = /^\/api\/v1\/rooms\/([^/]+)\/policy$/.exec(path);
@@ -162,6 +230,7 @@
       request.headers = headers;
       let response;
       try { response = await rawFetch(target.href, request); } catch (_) { throw problem("connection_failed"); }
+      if (response.ok && target.pathname !== TELEMETRY) flushTelemetry().catch(() => {});
       if (!global.location && ["/api/v1/security", "/api/v1/session"].includes(target.pathname)) {
         const cookies = response.headers?.getSetCookie?.() || [];
         for (const cookie of cookies.slice(0, 8)) {
@@ -254,17 +323,21 @@
       if (value !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(value); }
       return data(path, init, true);
     }
-    // A lock read that gives up after policyTimeout, so one hung request cannot stall its poll.
-    function timedGet(path) {
-      const controller = typeof AbortController === "function" ? new AbortController() : null;
+    // A lock read that gives up after policyTimeout, so one hung request cannot
+    // stall its poll. Giving up is client_timeout with status 0, no server
+    // answer, and is counted as kind; the caller shows the lock as unavailable.
+    function timedGet(path, kind) {
+      const controller = typeof AbortController === "function" ? new AbortController() : null, started = now();
       let timer;
       return Promise.race([
         json(path, "GET", undefined, controller ? { signal: controller.signal } : {}),
-        new Promise((_, reject) => { timer = setTimeout(() => { controller?.abort(); reject(problem("policy_unavailable", 503)); }, config.policyTimeout || 8000); })
+        new Promise((_, reject) => { timer = setTimeout(() => {
+          controller?.abort(); record(kind, (now() - started) / 1000, path); reject(problem("client_timeout"));
+        }, config.policyTimeout || 8000); })
       ]).finally(() => clearTimeout(timer));
     }
     const client = {
-      native: legacy, mock, guestOnly, base, origin, ready, fetch: fetchAuth, json, loadSecurity,
+      native: legacy, mock, guestOnly, base, origin, ready, fetch: fetchAuth, json, loadSecurity, record, flushTelemetry,
       // The HTTPS site's origin, which the Guest listener names; else null.
       secureSite: () => secure,
       security: () => security,
@@ -287,7 +360,7 @@
       async loadPolicy(room) {
         const sequence = policyReads[room] = (policyReads[room] || 0) + 1, authority = authRevision;
         try {
-          const value = await timedGet("/api/v1/rooms/" + encodeURIComponent(room) + "/policy");
+          const value = await timedGet("/api/v1/rooms/" + encodeURIComponent(room) + "/policy", "policy_timeout");
           stale(authority);
           if (sequence !== policyReads[room] || policyWrites.has(room)) return policies[room] || null;
           if (value.room !== room || !Number.isInteger(value.revision) || typeof value.effective?.allowed !== "boolean"
@@ -312,7 +385,7 @@
       async loadLocks() {
         const sequence = ++lockReads, authority = authRevision;
         try {
-          const value = await timedGet("/api/v1/locks");
+          const value = await timedGet("/api/v1/locks", "locks_timeout");
           stale(authority);
           if (sequence !== lockReads) return lockRooms;
           const rooms = value?.rooms, next = Object.create(null);
@@ -373,7 +446,8 @@
         await ready();
         if (!client.canControl(room)) throw problem(policies[room]?.effective?.reason === "policy_unavailable" ? "policy_unavailable" : "room_locked", 403);
         // A refusal means the lock shown may be out of date: read it again.
-        try { return await json("/api/v1/rooms/" + encodeURIComponent(room) + "/commands", "POST", { action, value }); }
+        const path = "/api/v1/rooms/" + encodeURIComponent(room) + "/commands";
+        try { return await overdue("command_timeout", path, json(path, "POST", { action, value }), config.commandTimeout || 8000); }
         catch (error) { if ([403, 423].includes(error.status) || error.code === "policy_unavailable") client.loadPolicy(room).catch(() => {}); throw error; }
       },
       watchRoom(room) { policyRoom = room; return policyPoll.start(); },
@@ -418,10 +492,15 @@
               if (target.origin !== origin) throw problem("origin_mismatch");
               const source = new Source(url, token ? { headers: { Authorization: "Bearer " + token } } : undefined);  // lint: allow — Bearer scheme prefix; token comes from private custody
               this.source = source;
-              source.onopen = (event) => { this.readyState = 1; if (this.onopen) this.onopen(event); };
+              let started = now(), opened = false;
+              source.onopen = (event) => { this.readyState = 1; opened = true; if (this.onopen) this.onopen(event); };
               source.onmessage = (event) => { if (this.onmessage) this.onmessage(event); };
               source.onerror = (event) => {
                 this.readyState = source.readyState;
+                // Only the terminal's EventSource sees a status: 429 is too_many_streams.
+                if (!this.closed && active) record(event?.status === 429 ? "stream_refused" : "stream_error",
+                  opened || event?.status === 429 ? undefined : (now() - started) / 1000, url, source.protocol);
+                started = now(); opened = false;
                 if (event && [401, 403].includes(event.status)) lost("session_expired");
                 // One credential probe per outage, however many streams report it.
                 else if (!token && !probing) probing = data("/api/v1/me", null, true).catch(() => {}).finally(() => { probing = null; });
@@ -455,7 +534,10 @@
       if (!client.guestOnly && document.body && document.body.dataset.thermitePage !== "access") location.replace("/account/?next=" + encodeURIComponent(returnTo(location.href, location.origin)));
     } });
   if (!client.native && !client.mock) { global.fetch = client.fetch; if (NativeEvents) global.EventSource = client.eventSource(NativeEvents); }
-  document.addEventListener("visibilitychange", () => client.setActive(document.visibilityState !== "hidden"));
+  document.addEventListener("visibilitychange", () => {
+    client.setActive(document.visibilityState !== "hidden");
+    if (document.visibilityState === "hidden") client.flushTelemetry(true).catch(() => {});
+  });
   global.addEventListener("pagehide", () => client.setActive(false));
   global.addEventListener("pageshow", () => client.setActive(document.visibilityState !== "hidden"));
 })(globalThis);

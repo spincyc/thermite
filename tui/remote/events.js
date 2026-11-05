@@ -26,6 +26,8 @@ class EventSource {
     this.url = String(url);
     this.headers = Object.assign({}, init && init.headers);
     this.httpStatus = null;
+    // node's http and https modules speak HTTP/1.1 only; client telemetry reports it.
+    this.protocol = "http/1.1";
     this.readyState = CONNECTING;
     this.onopen = null;
     this.onmessage = null;
@@ -60,6 +62,8 @@ class EventSource {
   connect() {
     this.timer = null;
     if (this.readyState === CLOSED) return;
+    // A failure without an answer must not repeat an earlier attempt's status.
+    this.httpStatus = null;
     const target = new URL(this.url);
     const client = target.protocol === "https:" ? https : http;
     const headers = { ...this.headers, Accept: "text/event-stream", "Cache-Control": "no-cache" };

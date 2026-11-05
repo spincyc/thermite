@@ -45,7 +45,7 @@ function client(options = {}) {
   vm.runInContext(read("web/remote/diagnostics.js"), context);
   if (options.activity) vm.runInContext(read("web/remote/activity.js"), context);
   context.REMOTE_LAYOUTS = { buttons: { power: { label: "Power" } }, remotes: { tv: { label: "TV", keys: ["power"] } } };
-  const reads = [], writes = [], streams = [], authorized = [], events = [];
+  const reads = [], writes = [], streams = [], authorized = [], events = [], recorded = [];
   let active = 0, peak = 0;
   class Events {
     constructor(url) { this.url = url; this.closed = false; this.readyState = 0; streams.push(this); }
@@ -54,7 +54,7 @@ function client(options = {}) {
     send(value) { this.onmessage({ data: JSON.stringify(value) }); }
   }
   const access = options.native ? undefined : {
-    native: false, subscribe() {}, stop() {},
+    native: false, subscribe() {}, stop() {}, record(...report) { recorded.push(report); },
     command(room, action, value) { authorized.push({ room, action, value }); return Promise.resolve({ accepted: true }); },
   };
   const backend = new context.RemoteBackend.OpenHabBackend(house, {
@@ -102,7 +102,7 @@ function client(options = {}) {
     timers.delete(entry[0]); entry[1].fn();
     return true;
   }
-  return { backend, reads, writes, authorized, streams, events, timers, live, pending, event, itemReads, fire,
+  return { backend, reads, writes, authorized, streams, events, recorded, timers, live, pending, event, itemReads, fire,
     active: () => active, peak: () => peak,
     async stop() { backend.stop(); pending().forEach(request => request.finish("UNDEF")); await tick(); assert.equal(timers.size, 0, "stop clears every timer"); } };
 }
@@ -219,6 +219,7 @@ async function probe(name, run, options) {
     const waiting = c.backend.getState("room_0");
     assert(c.fire(8000), "getState waits at most SNAPSHOT_TIMEOUT");
     assert.equal((await waiting).status, "unknown");
+    assert.deepEqual(c.recorded, [["snapshot_timeout", 8, "/api/v1/events/remote"]], "client telemetry counts the give-up");
     return { waited_ms: 8000 };
   });
 

@@ -176,12 +176,18 @@ function main(argv) {
   console.log = console.info = () => {};
   let app = null;
   let parts = null;
+  let finishing = false;
   const finish = (status) => {
+    // A second request, or a failure while finishing, exits at once.
+    if (finishing) process.exit(status);
+    finishing = true;
     if (parts) parts.controller.stop();
     if (parts && parts.backend.stop) parts.backend.stop();
     if (app) app.destroy();
     if (kept.length) process.stderr.write(kept.slice(-20).join("\n") + "\n");
-    process.exit(status);
+    // What the remote gave up on since its last report gets a second to leave.
+    const report = parts && parts.access && parts.access.flushTelemetry ? parts.access.flushTelemetry(true).catch(() => null) : null;
+    Promise.race([report, new Promise((resolve) => setTimeout(resolve, 1000))]).then(() => process.exit(status));
   };
   process.on("uncaughtException", (error) => {
     kept.push(String((error && error.stack) || error));
