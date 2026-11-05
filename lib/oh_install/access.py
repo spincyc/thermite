@@ -139,13 +139,13 @@ class Gateway(Step):
     """Stage, migrate and activate a new release of the HTTPS gateway.
 
     Every run stages a release beside the installed ones, named by its
-    install transaction (or, outside one, by a new id of the same form).
-    Its inputs live at fixed paths: the identity state in access/state, and
-    the served TLS leaf and key and the verified callback map in
-    access/inputs; the private authority stays in the site's
-    var/gateway/authority. An install transaction sets all of them aside
+    install transaction. Its inputs live at fixed paths: the identity state
+    in access/state, and the served TLS leaf and key and the verified
+    callback map in access/inputs; the private authority stays in the
+    site's var/gateway/authority. The transaction sets all of them aside
     before anything changes and puts them back if it rolls back, so the
     gateway keeps no journal of its own to resume from and takes no backup.
+    What it cannot carry over refuses the run while it prepares (prove).
 
     ``boundary`` is an optional installer hook called after the inputs are
     read. It receives (system, metadata, existing_callback_path) and returns
@@ -170,22 +170,20 @@ class Gateway(Step):
         import oh_release
         application = context.application or {"version": oh_release.VERSION, "source_commit": context.head}
         self.versions = {"site": context.head, "application": application}
-        self.transaction = transaction
+        # A dry run's work names no transaction; it never performs.
         self.id = transaction or manifest.transaction_id()
         self.root = Path(self.options.get("root", context.installation.access))
         self.inputs = self.root / "inputs"
         self.release = self.root / "releases" / self.id
-        self.directory = (context.var / "transaction" / self.id / "gateway" if transaction
-                          else context.var / "gateway" / self.id)
+        self.directory = context.var / "transaction" / self.id / "gateway"
         self.journal_path = self.directory / "deployment.json"
         self.helper = self.directory / "deployment.py"
-        #: Whether this run may activate a callback relay it finds new. A
-        #: transaction installs only the units it declared before it began;
-        #: a newly found map waits in access/inputs for the next one.
-        self.new_relay = transaction is None
         #: Whether this run found callbacks whose relay waits for the next
-        #: transaction.
+        #: transaction: one installs only the units it declared before it
+        #: began, so a newly found map waits in access/inputs.
         self.deferred = False
+        #: The installed release's adoption export (_exported), once made.
+        self.adopted = None
 
     def check(self, system):
         try:
@@ -222,6 +220,12 @@ class Gateway(Step):
         if code is None or code:
             raise AccessError("gateway deployment command failed")
 
+    def _workspace(self):
+        """This run's private directory, with the root helper in it."""
+        private_directory(self.directory)
+        staging._trusted_ancestors(self.directory, "Gateway plan")
+        atomic_private(self.helper, Path(staging.__file__).with_name("deployment.py").read_bytes())
+
     def _helper(self, system, *argv):
         staging._trusted_ancestors(self.directory, "Gateway plan")
         self._run(system, "sudo", "/usr/bin/python3", "-I", "-S", self.helper, *argv)
@@ -254,6 +258,22 @@ class Gateway(Step):
         return {"allowed_hosts": self._hosts(), "bind_host": "0.0.0.0",
                 "port": oh_ports.gateway_port(self.context.host), "timezone": self.context.host["timezone"]}
 
+    def prove(self, system):
+        """Refuse, before the transaction begins, what this run could not
+        carry over from the installed gateway: identity state anywhere but
+        access/state, or a callback relay without its exact map. Root reads
+        the release a gateway installed before its inputs had fixed paths
+        runs (_exported); nothing of Thermite's is written."""
+        old = installed_release(system)
+        if old is not None and not (self.inputs / "tls-key.pem").exists():
+            mapped = self._exported(system, old)[1]["callbacks"]
+        else:
+            mapped = (self.inputs / "callbacks.json").exists()
+        if not mapped:
+            origin = system.unit_origin(staging.ACCESS_UNITS[2])
+            if not origin.known or origin.load_state != "not-found":
+                raise AccessError("installed callback service has no recoverable exact callback map; refusing to retire it")
+
     def _metadata(self, system, old):
         """The identity state and served TLS material at their fixed paths,
         and the hosts, bind address, port and timezone derived from this
@@ -263,36 +283,41 @@ class Gateway(Step):
         derived = self._derived()
         certificate, key, callbacks = inputs / "tls-cert.pem", inputs / "tls-key.pem", inputs / "callbacks.json"
         authority = self._authority(system, derived["allowed_hosts"][0])
-        state = self.root / "state"
         if not key.exists() and old is not None:
-            state = self._adopt(system, old, derived)
+            self._adopt(system, old, derived)
         elif not key.exists() or not certificate.exists():
             self._replace_leaf(system, derived["allowed_hosts"], authority)
         if callbacks.exists():
             self._relocate_callbacks(system, callbacks)
-        else:
-            origin = system.unit_origin(staging.ACCESS_UNITS[2])
-            if not origin.known or origin.load_state != "not-found":
-                raise AccessError("installed callback service has no recoverable exact callback map; refusing to retire it")
-        if Path(state) != self.root / "state":
-            raise AccessError(f"the installed gateway keeps its identity state in {state}, not {self.root / 'state'}; "
-                              "move it there before upgrading")
-        return {"state": str(state), **derived, "tls_cert": str(certificate), "tls_key": str(key),
+        return {"state": str(self.root / "state"), **derived, "tls_cert": str(certificate), "tls_key": str(key),
                 "tls_ca": str(authority[0]), "callbacks": callbacks.exists(),
                 "callback_file": str(callbacks) if callbacks.exists() else None}
+
+    def _exported(self, system, old):
+        """The release `old`'s adoption export (deployment.py adopt, as
+        root, into this run's own directory) and what it says, made once:
+        its identity state must already be access/state."""
+        if self.adopted is None:
+            self._workspace()
+            destination = self.directory / ("adopted-" + secrets.token_hex(6))
+            uid, _ = service_identity(required=True)
+            self._helper(system, "adopt", Path(old) / "config.json", destination,
+                         "--uid", os.geteuid(), "--gid", os.getegid(), "--service-uid", uid)
+            adopted = json.loads(read_private(destination / "adopted.json"))
+            if Path(adopted["state"]) != self.root / "state":
+                raise AccessError(f"the installed gateway keeps its identity state in {adopted['state']}, not "
+                                  f"{self.root / 'state'}; move it there before upgrading")
+            self.adopted = destination, adopted
+        return self.adopted
 
     def _adopt(self, system, old, derived):
         """Once, for a gateway installed before its inputs had fixed paths:
         copy its TLS leaf and key and its callback map out of the release it
-        runs (deployment.py adopt, as root) into access/inputs. Only those
-        and the identity state's path are adopted; the port, hosts and
-        timezone are this host's. Deleted with oh_install.bridge once every
-        installation has run a release with fixed inputs."""
-        destination = self.directory / ("adopted-" + secrets.token_hex(6))
-        uid, _ = service_identity(required=True)
-        self._helper(system, "adopt", Path(old) / "config.json", destination,
-                     "--uid", os.geteuid(), "--gid", os.getegid(), "--service-uid", uid)
-        adopted = json.loads(read_private(destination / "adopted.json"))
+        runs (_exported) into access/inputs. Only those are adopted; the
+        port, hosts and timezone are this host's. Deleted with
+        oh_install.bridge once every installation has run a release with
+        fixed inputs."""
+        destination, adopted = self._exported(system, old)
         if adopted["port"] != derived["port"]:
             system.say(f"   Gateway HTTPS moves from port {adopted['port']} to {derived['port']}: "
                        "update bookmarks, home-screen apps and terminal --url")
@@ -300,7 +325,6 @@ class Gateway(Step):
             atomic_private(self.inputs / "callbacks.json", read_private(destination / "callbacks.json", 256 * 1024))
         atomic_private(self.inputs / "tls-key.pem", read_private(adopted["tls_key"], 65536))
         atomic_private(self.inputs / "tls-cert.pem", read_private(adopted["tls_cert"], 65536))
-        return adopted["state"]
 
     def _relocate_callbacks(self, system, path):
         """Keep the adopted map's verified routes; take its listener port and
@@ -486,7 +510,7 @@ class Gateway(Step):
                 json_private(selected, result["callbacks"])
         if callback and selected is None:
             raise AccessError("existing callback routes must be preserved during gateway upgrade")
-        if selected and not callback and not self.new_relay:
+        if selected and not callback:
             # Kept in access/inputs: one more install transaction, right
             # after this one commits, declares the relay's unit and
             # activates it (changeover.relay).
@@ -498,8 +522,9 @@ class Gateway(Step):
         self._save(record, metadata=metadata)
 
     def _stop(self, system):
-        """Outside a transaction nothing else has stopped the gateway's
-        writers; inside one, everything already is."""
+        """The gateway's writers stopped before its identity state migrates:
+        the transaction stopped all of Thermite, and a writer found running
+        again is stopped here."""
         origins = system.unit_origins(staging.ACCESS_UNITS)
         for name, origin in origins.items():
             if not origin.known:
@@ -642,11 +667,8 @@ class Gateway(Step):
                        "its record stays in " + str(self.journal_path))
 
     def perform(self, system):
-        record = None
         try:
-            private_directory(self.directory)
-            staging._trusted_ancestors(self.directory, "Gateway plan")
-            atomic_private(self.helper, Path(staging.__file__).with_name("deployment.py").read_bytes())
+            self._workspace()
             old = installed_release(system)
             record = {"version": 1, "versions": self.versions, "release": str(self.release),
                       "previous_release": str(old) if old else None}
@@ -704,10 +726,33 @@ class Gateway(Step):
             return 0
         except (OSError, ValueError, http.client.HTTPException) as exc:
             system.say("   " + str(exc))
-            if self.transaction:
-                system.say("   Gateway deployment is incomplete; the install transaction puts the previous gateway back.")
-            else:
-                system.say("   Gateway deployment is incomplete; rerun the same install command to stage it again.")
-                if record and record.get("previous_release"):
-                    system.say("   Previous gateway release retained: " + record["previous_release"])
+            system.say("   Gateway deployment is incomplete; the install transaction puts the previous gateway back.")
             return 1
+
+
+class GatewayInputs(Step):
+    """Before the transaction begins, what the gateway carries over from the
+    installed one (Gateway.prove): a gateway it cannot carry over refuses
+    the run before anything stops."""
+
+    title = "Gateway identity state and callbacks"
+    always = True
+    stop_on_failure = True
+
+    def __init__(self, gateway: Gateway):
+        self.gateway = gateway
+
+    def check(self, system):
+        return Check(False, f"the installed gateway's identity state in {self.gateway.root / 'state'}, and its "
+                            "callback map")
+
+    def actions(self, system):
+        return [Task("check what the installed gateway keeps", self.perform)]
+
+    def perform(self, system):
+        try:
+            self.gateway.prove(system)
+        except (OSError, ValueError) as exc:
+            system.say("   " + str(exc))
+            return 1
+        return 0

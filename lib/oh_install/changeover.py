@@ -32,7 +32,7 @@ import shutil
 from typing import Callable
 
 import oh_units
-from oh_install import bridge, engine, manifest, ownership, runner, steps
+from oh_install import access, bridge, engine, manifest, ownership, runner, steps
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
 from oh_install.model import Check, Command, Step, Task
 from oh_install.system import System
@@ -579,7 +579,8 @@ def install_work(context: steps.Context, id: str | None, *, kind: str = "install
     changes = switching(context, id, "upgrade" if kind == "upgrade" else "rollback" if verb == "rollback"
                         else "install")
     gateway = next((step for step in changes if hasattr(step, "deferred")), None)
-    work = Work(kind, verb, preparation(context), changes, verification(context), release(context),
+    proof = [access.GatewayInputs(gateway)] if gateway is not None else []
+    work = Work(kind, verb, [*preparation(context), *proof], changes, verification(context), release(context),
                 described=changes, gateway=gateway)
     if kind == "clean":
         root = context.installation.root
@@ -780,7 +781,6 @@ def retain(system: System, transaction: Transaction) -> None:
 def _gateway(system: System) -> str | None:
     """The release the installed gateway runs, by name; None when unknown."""
     from oh_access import AccessError
-    from oh_install import access
     try:
         found = access.installed_release(system)
     except (OSError, ValueError, AccessError):

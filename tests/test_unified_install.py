@@ -26,7 +26,7 @@ import oh_application_update
 import oh_paths
 from oh_cli import deploy, install, upgrade
 from oh_install import changeover, runner, steps
-from oh_install.access import Gateway
+from oh_install.access import Gateway, GatewayInputs
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites, unit_text
 from oh_install.model import Check, Task
 from oh_install.system import NativeProbe, System, Unit
@@ -163,6 +163,13 @@ class UnifiedInstall(unittest.TestCase):
         for changing in (steps.StateDirectories, steps.Units, steps.NativePreparation, NativeIngress, steps.Deploy,
                          steps.Services, steps.Halt):
             self.assertNotIn(changing, types)
+        # What the gateway carries over is proven last, with the switch's
+        # own gateway: a refusal comes before the transaction begins.
+        with patch.object(changeover, "release", return_value={}):
+            work = changeover.install_work(context, TRANSACTION)
+        self.assertIsInstance(work.preparation[-1], GatewayInputs)
+        self.assertIs(work.preparation[-1].gateway, work.gateway)
+        self.assertIn(work.gateway, work.switching)
         unit = unit_text()
         self.assertIn("Before=thermite-openhab.service", unit)
         self.assertNotIn("ExecStop=", unit, "stopping services must retain the native filter")

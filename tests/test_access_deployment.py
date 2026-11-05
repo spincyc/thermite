@@ -2,7 +2,7 @@
 
 import json
 import hashlib
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import http.server
 import os
 from pathlib import Path
@@ -21,7 +21,8 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_ports
 from oh_access import AccessError, deployment, staging
 from oh_access.files import json_private, private_directory, atomic_private
-from oh_install.access import Gateway, installed_release, openssl_config, served_names, site_inputs, subject_names
+from oh_install.access import (Gateway, GatewayInputs, installed_release, openssl_config, served_names, site_inputs,
+                               subject_names)
 from oh_install.system import UnitFile, UnitOrigin
 
 
@@ -211,6 +212,8 @@ class StagedUpstream(PrivateFixture):
 
 #: The names the fixture host's gateway derives: hostname, address, loopback.
 HOSTS = ["house.example.test", "192.0.2.10", "localhost", "127.0.0.1"]
+#: The install transaction a gateway fixture runs in, and the next one.
+TRANSACTION, NEXT = "20261105T101500Z-0a1b2c", "20261105T111500Z-4d5e6f"
 
 
 class Host:
@@ -325,9 +328,10 @@ class GatewayFixture(PrivateFixture):
                 "verification_command": [*command, "verify", "--config", str(release / "config.json")],
                 "unit_install_commands": self.unit_commands(self.current, release)}
 
-    def gateway(self, *, inputs=True, transaction=None, context=None):
-        """A gateway for a fictional site; with `inputs`, the private
-        authority and a served leaf already in access/inputs."""
+    def gateway(self, *, inputs=True, transaction=TRANSACTION, context=None):
+        """A gateway for a fictional site, inside install transaction
+        `transaction`; with `inputs`, the private authority and a served
+        leaf already in access/inputs."""
         if context is None:
             area = private_directory(self.root / "site")
             context = SimpleNamespace(area=area, var=area / "var", head="a" * 40, conf_digest="c" * 64,
@@ -373,7 +377,7 @@ class Lifecycle(GatewayFixture):
                 self.assertEqual([line for line in service if line.startswith("SyslogIdentifier=")],
                                  ["SyslogIdentifier=" + name.removesuffix(".service")])
 
-    def test_failed_migration_never_activates_and_a_rerun_stages_a_new_release(self):
+    def test_failed_migration_never_activates_and_the_next_transaction_stages_a_new_release(self):
         gateway, system = self.gateway(), Host()
         system.installed = Path("/srv/old-release")
         system.active = True
@@ -388,11 +392,10 @@ class Lifecycle(GatewayFixture):
             self.assertLess(max(stops), migration)
             self.assertFalse(any("backup" in " ".join(command) for command in system.commands),
                              "the install transaction sets the identity state aside")
-            self.assertIn("   Gateway deployment is incomplete; rerun the same install command to stage it again.",
-                          system.messages)
-            self.assertIn("   Previous gateway release retained: /srv/old-release", system.messages)
+            self.assertIn("   Gateway deployment is incomplete; the install transaction puts the previous gateway "
+                          "back.", system.messages)
             system.fail_migration = False
-            again = self.gateway(context=gateway.context)
+            again = self.gateway(context=gateway.context, transaction=NEXT)
             self.assertEqual(again.perform(system), 0, system.messages)
         journal = self.journal(again)
         self.assertEqual((journal["phase"], journal["previous_release"]), ("complete", "/srv/old-release"))
@@ -400,14 +403,9 @@ class Lifecycle(GatewayFixture):
         self.assertNotEqual(gateway.release, again.release)
 
     def test_a_transaction_names_the_release_and_its_record_after_itself(self):
-        gateway, system = self.gateway(transaction="20261105T101500Z-0a1b2c"), Host()
-        self.assertEqual(gateway.release, gateway.root / "releases/20261105T101500Z-0a1b2c")
-        self.assertEqual(gateway.directory, gateway.context.var / "transaction/20261105T101500Z-0a1b2c/gateway")
-        system.fail_migration = True
-        self.assertEqual(gateway.perform(system), 1)
-        self.assertIn("   Gateway deployment is incomplete; the install transaction puts the previous gateway back.",
-                      system.messages)
-        self.assertFalse(any("rerun" in message for message in system.messages))
+        gateway = self.gateway()
+        self.assertEqual(gateway.release, gateway.root / f"releases/{TRANSACTION}")
+        self.assertEqual(gateway.directory, gateway.context.var / f"transaction/{TRANSACTION}/gateway")
 
     def test_upgrade_moves_https_to_the_host_files_port_and_checks_readiness_there(self):
         gateway, system = self.gateway(inputs=False), real_openssl(Host())
@@ -496,25 +494,79 @@ class Lifecycle(GatewayFixture):
         self.assertIn(f"   Gateway HTTPS moves from port 13600 to {oh_ports.ACCESS_PORT}: update bookmarks, "
                       "home-screen apps and terminal --url", system.messages)
 
-    def test_identity_state_elsewhere_is_refused_before_anything_stops(self):
-        gateway, system = self.gateway(inputs=False), real_openssl(Host())
-        old = private_directory(self.root / "old-release")
-        system.installed = old
+    def exported(self, gateway, old, *, state=None, callbacks=False):
+        """The adopt helper, as root would answer for release `old`: its
+        identity state at `state` (access/state by default)."""
+        calls = []
 
         def adopt(system, *argv):
+            self.assertEqual(argv[0], "adopt")
+            calls.append(argv)
             destination = private_directory(argv[2])
-            for name in ("tls-cert.pem", "tls-key.pem"):
+            for name in ("tls-cert.pem", "tls-key.pem", *(("callbacks.json",) if callbacks else ())):
                 atomic_private(destination / name, b"fixture")
             json_private(destination / "adopted.json", {
-                "state": str(self.root / "elsewhere"), "runtime_url": "http://127.0.0.1:13602",
-                "port": oh_ports.ACCESS_PORT, "previous_release": str(old), "callbacks": False,
+                "state": str(state or gateway.root / "state"), "runtime_url": "http://127.0.0.1:13602",
+                "port": oh_ports.ACCESS_PORT, "previous_release": str(old), "callbacks": callbacks,
                 "tls_cert": str(destination / "tls-cert.pem"), "tls_key": str(destination / "tls-key.pem")})
+        scope = ExitStack()
+        self.addCleanup(scope.close)
+        scope.enter_context(patch.object(gateway, "_helper", side_effect=adopt))
+        scope.enter_context(patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())))
+        return calls
 
-        with patch.object(gateway, "_helper", side_effect=adopt), \
-                patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())):
-            self.assertEqual(gateway.perform(system), 1)
-        self.assertTrue(any("keeps its identity state in" in message for message in system.messages), system.messages)
-        self.assertFalse(any("stop" in command or "migrate" in command for command in system.commands))
+    def test_identity_state_elsewhere_is_refused_before_anything_stops(self):
+        # The install's preparation proves the gateway (GatewayInputs),
+        # before its transaction begins and stops anything.
+        gateway, system = self.gateway(inputs=False), Host()
+        system.installed = private_directory(self.root / "old-release")
+        self.exported(gateway, system.installed, state=self.root / "elsewhere")
+        self.assertEqual(GatewayInputs(gateway).perform(system), 1)
+        self.assertIn(f"   the installed gateway keeps its identity state in {self.root / 'elsewhere'}, not "
+                      f"{gateway.root / 'state'}; move it there before upgrading", system.messages)
+        self.assertEqual(system.commands, [], "only the export ran, as root")
+        self.assertFalse(gateway.inputs.exists(), "nothing of Thermite's is written before the transaction")
+
+    def test_a_relay_without_its_exact_map_is_refused_before_anything_stops(self):
+        relay = UnitOrigin(fragment="/etc/systemd/system/" + staging.ACCESS_UNITS[2], active="active")
+        for inputs in (False, True):
+            with self.subTest(fixed_inputs=inputs):
+                gateway, system = self.gateway(inputs=inputs), Host()
+                system.installed = private_directory(self.root / "old-release")
+                system.overrides[staging.ACCESS_UNITS[2]] = relay
+                self.exported(gateway, system.installed)
+                self.assertEqual(GatewayInputs(gateway).perform(system), 1)
+                self.assertIn("   installed callback service has no recoverable exact callback map; refusing to "
+                              "retire it", system.messages)
+
+    def test_a_proven_export_is_what_the_switch_adopts(self):
+        gateway, system = self.gateway(inputs=False), real_openssl(Host())
+        system.installed = private_directory(self.root / "old-release")
+        calls = self.exported(gateway, system.installed, callbacks=True)
+        self.assertEqual(GatewayInputs(gateway).perform(system), 0, system.messages)
+        self.assertFalse(gateway.inputs.exists())
+        with patch.object(gateway, "_relocate_callbacks"):
+            metadata = gateway._metadata(system, system.installed)
+        self.assertEqual(len(calls), 1, "the release is exported once, before the transaction")
+        self.assertEqual((metadata["state"], metadata["callback_file"]),
+                         (str(gateway.root / "state"), str(gateway.inputs / "callbacks.json")))
+        self.assertEqual((gateway.inputs / "tls-key.pem").read_bytes(), b"fixture")
+
+    def test_callbacks_found_new_wait_for_the_next_transaction(self):
+        # Commissioning finds Sonos callbacks no installed relay serves: the
+        # map waits in access/inputs, and changeover.relay runs one more
+        # install transaction for its unit.
+        gateway, system = self.gateway(), Host()
+        found = gateway.inputs / "callbacks.json"
+        gateway.boundary = lambda system, metadata, callback: json_private(found, {"version": 1}) or found
+        with patch.object(Gateway, "_https", return_value="https://house.example.test:13601"):
+            self.assertEqual(gateway.perform(system), 0, system.messages)
+        self.assertTrue(gateway.deferred)
+        self.assertIn("   Sonos event callbacks were found; one more install transaction activates their relay",
+                      system.messages)
+        [staged] = self.staged
+        self.assertFalse(staged["callbacks"])
+        self.assertTrue(found.exists(), "the map waits in access/inputs")
 
     def test_not_found_units_do_not_block_fresh_deployment(self):
         gateway, system = self.gateway(), Host()
@@ -618,7 +670,7 @@ class Lifecycle(GatewayFixture):
             self.assertEqual(gateway.perform(system), 0)
             system.installed, system.active = gateway.release, True
             atomic_private(gateway.context.area / gateway.context.token_file, b"new-runtime-credential")
-            again = self.gateway(context=gateway.context)
+            again = self.gateway(context=gateway.context, transaction=NEXT)
             self.assertEqual(again.perform(system), 0, system.messages)
         first, second = self.staged
         self.assertEqual(Path(second["runtime_token_file"]).read_bytes(), b"new-runtime-credential")

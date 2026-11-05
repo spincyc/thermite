@@ -83,7 +83,9 @@ rollback. The unified deployment workflow uses a separate committed private site
 - The gateway's served TLS certificate, key and callback map live at fixed
   paths in `access/inputs/`, and each run stages a release named after its
   transaction, `access/releases/<id>`. The gateway keeps no resume journal of
-  its own.
+  its own. A gateway whose identity state is not in
+  `access/state`, or whose callback relay has no exact map to keep, is
+  refused while the install prepares, before anything stops.
 - The installer ISO's first-boot guide asks for your equipment and time zone
   in `instance/host.yaml`, not a state directory, which the fixed
   `/srv/thermite` layout removed. The Arch image's login profile puts
