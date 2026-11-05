@@ -144,9 +144,9 @@ class Fixture(unittest.TestCase):
         return changeover.Work(kind, verb, prepared, switched, verified, changeover.release(self.context),
                                items=lambda system: [])
 
-    def transact(self, work, installed=INSTALLED, before=BEFORE):
+    def transact(self, work, installed=INSTALLED, before=BEFORE, **options):
         return changeover.run(self.context, self.host.system, lambda id: work, installed=installed, bridged=False,
-                              before=before, first=3)
+                              before=before, first=3, **options)
 
     def run_upgrade(self, *, prepare=(), switch=(), verify=(), **answers):
         self.host = Host(self, **answers)
@@ -451,7 +451,7 @@ class Kinds(Fixture):
         self.assertEqual((work.kind, work.release, work.pull, work.switching), ("uninstall", None, False, []))
         work.preparation = [Fake("account", self.log)]
         with patch.object(steps.Halt, "check", return_value=Check(True, "fixture")):
-            self.assertEqual(self.transact(work, before=None), changeover.COMMITTED)
+            self.assertEqual(self.transact(work, before=None, pinned=False), changeover.COMMITTED)
         self.assertFalse((self.directory / "release.json").exists(), "the installed release carries over")
         self.assertEqual(json.loads((self.directory / "desired.json").read_text())["items"], [])
         self.assertEqual((self.record()["head_before"], self.record()["head_after"]), (AFTER, AFTER))

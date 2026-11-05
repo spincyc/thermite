@@ -23,7 +23,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_deploy as deploy  # noqa: E402
 import oh_paths  # noqa: E402
 import oh_release  # noqa: E402
-from oh_cli import deploy as deploy_cli, install as install_cli, rollback as rollback_cli, health, status  # noqa: E402
+from oh_cli import deploy as deploy_cli, install as install_cli, health, status  # noqa: E402
 from oh_install import runner, steps  # noqa: E402
 from oh_testing import boot  # noqa: E402
 
@@ -244,25 +244,6 @@ class SplitInstaller(unittest.TestCase):
             self.assertEqual(deploy_cli.deployment_host("reviewed-commit"), self.host)
         inputs.assert_called_once_with(self.site, self.context.head)
 
-    def test_rollback_history_waives_boot_only_for_the_exact_rendered_digest(self):
-        args = SimpleNamespace(commit=self.context.head, force=False, dry_run=True)
-        result = SimpleNamespace(commit=self.context.head, subject="fixture", conf=deploy.Changes(),
-                                 atv_app=deploy.Changes(), with_metrics=False)
-        for digest, accepted in ((self.context.conf_digest, True), ("different output", False), (None, False)):
-            entry = {"commit": self.context.head, "number": 1, "deployed_at": "earlier", "conf_digest": digest}
-            with self.subTest(digest=digest), patch.object(rollback_cli, "AREA", self.site), \
-                    patch.object(deploy, "resolve", return_value=self.context.head), \
-                    patch.object(deploy, "read_record", return_value={"commit": "c" * 40}), \
-                    patch.object(deploy, "deploys", return_value=[entry]), \
-                    patch.object(deploy, "export", return_value={oh_paths.SITE_FILE: deploy.Blob(b"manifest")}), \
-                    patch.object(deploy, "committed_inputs", return_value=(self.versions, self.host, self.requirement)), \
-                    patch.object(deploy, "prepared_files", return_value=(self.files, self.application)), \
-                    patch.object(rollback_cli, "warn_units", return_value=[]), \
-                    patch.object(deploy, "deploy", return_value=result) as applied, patch("sys.stdout", new=io.StringIO()):
-                self.assertEqual(rollback_cli.roll_back(args, deploy.State(self.runtime), host=self.host), 0)
-                self.assertEqual(applied.call_args.kwargs["force"], accepted)
-                self.assertEqual(applied.call_args.kwargs.get("expected_conf_digest"), self.context.conf_digest if accepted else None)
-
     def test_schema2_unit_status_reads_the_selected_snapshot_without_top_level_deploy(self):
         name = next(iter(deploy.INSTALLED))
         target = Path(self.temporary.name) / "installed.unit"
@@ -314,16 +295,11 @@ class SplitInstaller(unittest.TestCase):
             self.assertEqual(status.show(args, host), 1)
             units.assert_called_once_with(status.AREA, rev=self.context.head)
 
-    def test_symbolic_deploy_and_rollback_targets_are_pinned_before_the_body(self):
+    def test_symbolic_deploy_targets_are_pinned_before_the_body(self):
         with patch.object(deploy_cli, "deployment_selection", return_value=(self.context.head, self.host, self.requirement)), \
                 patch.object(deploy_cli, "apply", return_value=0) as apply, patch.object(oh_paths, "require_compatible"):
             self.assertEqual(deploy_cli.main(["HEAD", "--dry-run", "--_configuration-phase"]), 0)
             self.assertEqual(apply.call_args.args[0].rev, self.context.head)
-        with patch.object(rollback_cli, "deployment_selection", return_value=(self.context.head, self.host, self.requirement)), \
-                patch.object(rollback_cli, "roll_back", return_value=0) as apply:
-            self.assertEqual(rollback_cli.main(["previous", "--dry-run"]), 0)
-            self.assertEqual(apply.call_args.args[0].commit, self.context.head)
-            self.assertEqual(apply.call_args.args[1].root, self.runtime)
 
     def test_privileged_helper_paths_use_the_frozen_application(self):
         program = self.site / "var/application-releases" / self.application["digest"]

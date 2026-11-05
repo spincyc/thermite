@@ -328,5 +328,76 @@ class InstallHostPhase(unittest.TestCase):
         self.transaction.assert_not_called()
 
 
+class RollbackHostPhase(unittest.TestCase):
+    """thermite rollback: an install transaction of an earlier site commit,
+    the site's branch left where it is (Q16)."""
+
+    def setUp(self):
+        from oh_cli import rollback as rollback_cli
+        self.cli = rollback_cli
+        self.site = AREA / ".scratch/update-site/fictional-site"
+        application = {"version": "0.1.0.dev0", "digest": "a" * 64}
+        self.head = steps.Context(self.site, {"openhab": {"version": "5.2.3"}},
+                                  {"uid": 9001, "gid": 9001, "root": "/srv/thermite-fixture"},
+                                  "b" * 40, "c" * 64, "fixture-host", None, application=application)
+        self.earlier = steps.Context(**{**self.head.__dict__, "head": "e" * 40})
+        self.system = Mock(spec=System)
+        self.installed = {"transaction": "20261105T101500Z-3f9a2c", "installed": True,
+                          "release": {"site": "b" * 40}}
+        self.entries = [{"commit": "e" * 40, "number": 1, "deployed_at": "earlier", "current": False},
+                        {"commit": "b" * 40, "number": 2, "deployed_at": "later", "current": True}]
+        scope = ExitStack()
+        self.addCleanup(scope.close)
+        scope.enter_context(patch.object(rollback_cli, "AREA", self.site))
+        self.contexts = scope.enter_context(patch.object(
+            steps, "committed_context", side_effect=lambda area, system, revision=None: (
+                self.earlier if revision else self.head)))
+        scope.enter_context(patch.object(deploy, "deploys", return_value=self.entries))
+        scope.enter_context(patch.object(deploy, "read_record", return_value={"commit": "b" * 40}))
+        self.resolve = scope.enter_context(patch.object(changeover, "resolve", return_value=None))
+        self.manifest = scope.enter_context(patch.object(manifest, "installed", return_value=self.installed))
+        scope.enter_context(patch.object(bridge, "needed", return_value=False))
+        scope.enter_context(patch.object(manifest, "thermite_present", return_value=[]))
+        self.run = scope.enter_context(patch.object(runner, "run", return_value=0))
+        self.confirm = scope.enter_context(patch.object(runner, "confirm_run", return_value=True))
+        self.transaction = scope.enter_context(patch.object(changeover, "run", return_value=0))
+
+    def test_the_commit_before_is_installed_without_moving_the_site(self):
+        self.assertEqual(self.cli.roll_back(self.system, None, False), 0)
+        self.assertEqual(self.contexts.call_args.kwargs, {"revision": "e" * 40})
+        (context, _, build), options = self.transaction.call_args
+        self.assertIs(context, self.earlier)
+        self.assertEqual(options, {"installed": self.installed, "bridged": False, "before": "b" * 40,
+                                   "after": "e" * 40, "first": 3, "pinned": False})
+        with patch.object(changeover, "install_work") as work:
+            build("20261105T101500Z-3f9a2c")
+        self.assertEqual(work.call_args.kwargs, {"verb": "rollback"})
+        committed = self.run.call_args.args[0][1]
+        self.assertEqual((committed.head, committed.context.head), ("b" * 40, "e" * 40),
+                         "HEAD stays clean and is not what is installed")
+
+    def test_another_application_release_or_nothing_installed_refuses(self):
+        self.earlier = steps.Context(**{**self.earlier.__dict__, "application": {"digest": "f" * 64}})
+        with self.assertRaisesRegex(deploy.DeployError, "pins another application release"):
+            self.cli.roll_back(self.system, None, False)
+        self.earlier = steps.Context(**{**self.head.__dict__, "head": "e" * 40})
+        self.manifest.return_value = None
+        self.assertEqual(self.cli.roll_back(self.system, None, False), 2)
+        self.transaction.assert_not_called()
+
+    def test_an_open_transaction_is_resolved_first(self):
+        self.resolve.return_value = changeover.ROLLED_BACK
+        self.assertEqual(self.cli.roll_back(self.system, None, False), changeover.ROLLED_BACK)
+        self.resolve.assert_called_once_with(self.site, self.system, "rollback")
+        self.contexts.assert_not_called()
+
+    def test_deploy_history_records_it_as_a_rollback(self):
+        with patch.object(changeover, "release", return_value={}), patch.object(steps.NativeDeadline, "of"):
+            work = changeover.install_work(self.earlier, "20261105T101500Z-3f9a2c", verb="rollback")
+        deployment = next(step for step in work.switching if isinstance(step, steps.Deploy))
+        self.assertEqual(deployment.trail(), ("--_how", "rollback"))
+        self.assertEqual((work.kind, work.verb), ("install", "rollback"))
+
+
 if __name__ == "__main__":
     unittest.main()

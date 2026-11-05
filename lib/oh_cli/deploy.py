@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--_configuration-phase", action="store_true", help=argparse.SUPPRESS)
     # The installer's phase says, for the history, whether an install or an
     # upgrade runs it.
-    parser.add_argument("--_how", choices=("install", "upgrade"), default="install", help=argparse.SUPPRESS)
+    parser.add_argument("--_how", choices=("install", "upgrade", "rollback"), default="install", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
         if not args._configuration_phase:

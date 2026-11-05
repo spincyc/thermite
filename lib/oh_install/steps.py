@@ -248,19 +248,25 @@ class Context:
                 **{service.unit: [int(service.listen.rsplit(":", 1)[1])] for service in metrics.services(self.host)}}
 
 
-def committed_context(area: Path, system: System, runtime_token_file: Path | None = None) -> Context:
-    """Plan schema-2 installs from committed inputs, never working output.
+def committed_context(area: Path, system: System, runtime_token_file: Path | None = None, *,
+                      revision: str | None = None) -> Context:
+    """Plan schema-2 installs from committed inputs, never working output:
+    HEAD's, or `revision`'s (thermite rollback), which must pin the same
+    application release.
 
     Rendering may use a cleaned temporary directory; planning does not
     materialize a site build, fetch anything or change production state.
     Complete checkouts and schema-1 sites retain their existing behavior.
     """
     from oh_paths import descriptor
-    head = deploy.resolve(area, "HEAD")
+    head = deploy.resolve(area, revision or "HEAD")
     selected = descriptor(area)
     files = application_ = None
     if selected and selected["version"] == 2:
         versions, host, committed = deploy.committed_inputs(area, head)
+        if committed != selected and revision is not None:
+            raise deploy.DeployError(f"{head[:12]} pins another application release than the site's HEAD; "
+                                     "installing it needs that release")
         if committed != selected:
             raise deploy.DeployError("commit the site's application requirement before installation")
         files, application_ = deploy.prepared_files(area, head, area / "var")
@@ -2004,8 +2010,11 @@ class Verify(Step):
 class Committed(Step):
     title = "Committed configuration"
 
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, *, head: str | None = None):
         self.context = context
+        #: The site's HEAD: the commit installed, unless a rollback installs
+        #: an earlier one.
+        self.head = head or context.head
 
     def check(self, system: System) -> Check:
         area = self.context.area
@@ -2020,7 +2029,7 @@ class Committed(Step):
                                 "run thermite generate, then commit")
         else:
             code, out = system.capture(["git", "-C", str(area), "rev-parse", "HEAD"])
-            if code or out.strip() != self.context.head:
+            if code or out.strip() != self.head:
                 problems.append("the site commit changed during planning; rerun from the intended commit")
         code, out = system.capture(["git", "-C", str(area), "status", "--porcelain", "--untracked-files=all",
                                     "--", "."])
@@ -2035,6 +2044,9 @@ class Committed(Step):
         if problems:
             return Check(False, "", "; ".join(problems))
         detail = "committed inputs and their pinned application are verified" if self.context.prepared is not None else "deploy/ is generated"
+        if self.head != self.context.head:
+            return Check(True, f"{detail}; HEAD, {self.head[:12]}, is clean, and {self.context.head[:12]} is "
+                               "installed from it")
         return Check(True, f"{detail}; HEAD, {self.context.head[:12]}, has every change")
 
 

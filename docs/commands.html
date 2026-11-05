@@ -43,7 +43,7 @@
 <h2 id="test">Test on a test runtime, never production</h2>
 <table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13616</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
-<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>update the application, native services and HTTPS gateway together</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>compatibility alias for the complete install workflow</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>update the application, native services and HTTPS gateway together</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>compatibility alias for the complete install workflow</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>install the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
 <table class="verbs"><tbody><tr><td><a href="#dhcp-reservations"><code>thermite dhcp-reservations</code></a></td><td>list the UniFi DHCP reservations the house file needs</td></tr><tr><td><a href="#matrix-settings"><code>thermite matrix-settings</code></a></td><td>show matrix settings that differ from the house file; --apply sets them</td></tr><tr><td><a href="#control4"><code>thermite control4</code></a></td><td>export the Control4 project read-only and compare it</td></tr><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
@@ -73,7 +73,7 @@ production runtime on this host:
   upgrade              update the application, native services and HTTPS gateway together
   uninstall            stop thermite here and remove its units; --purge deletes its state
   deploy               compatibility alias for the complete install workflow
-  rollback             deploy the commit deployed before the current one, or another
+  rollback             install the commit deployed before the current one, or another
   status               what is deployed and running here, against this checkout
   history              this host&#x27;s deploys, numbered, the latest last
   health               read-only: every Thing ONLINE in the runtime
@@ -1010,40 +1010,32 @@ examples:
                                     update the application and every service
 </pre>
 </section>
-<section class="verb" id="rollback"><h3><code>thermite rollback</code></h3><p>Deploy the commit deployed before the current one, or another.</p><pre class="help">usage: thermite rollback [-h] [--config DIR] [-n] [--force] [--state DIR] [COMMIT]
+<section class="verb" id="rollback"><h3><code>thermite rollback</code></h3><p>Install the commit deployed before the current one, or another.</p><pre class="help">usage: thermite rollback [-h] [--config DIR] [-n] [COMMIT]
 
-Put back an earlier site commit&#x27;s runtime configuration (conf/), Apple TV
-helper files and monitoring configuration (metrics/), rendered with that
-commit&#x27;s exact cached application release: without COMMIT, the commit
-deployed before the one deployed now (thermite history lists them); with it,
-that commit. It deploys as you, through the thermite group, with an explicit
-ownership handoff to thermite:thermite, and records a rollback in the history.
+Install an earlier site commit on this host as one install transaction:
+without COMMIT, the commit deployed before the one deployed now (thermite
+history lists them); with it, that commit. Everything the commit pins is
+installed as thermite install installs HEAD: its configuration with a boot
+test, its units, native versions and images, the native-port filter and the
+HTTPS gateway; the transaction commits only once its health passes, and any
+failure rolls back to the version that runs now. The deploy history records
+it as a rollback.
 
-Only those files change. Rollback does not select another application for the
-owner command, change systemd units or native versions, or restore runtime
-data, the HTTPS gateway or identity state; docs/installation.md#update-or-remove
-and docs/packaging.md#update-and-roll-back describe that recovery.
-
-A commit this host&#x27;s history holds ran here before, so it needs no fresh boot
-test, provided its configuration renders to the exact digest recorded then;
-the deploy checks that digest again before writing. Any other commit needs
-thermite test boot to have passed on its conf/ here, or --force.
-
-When the commit&#x27;s deploy/ holds other units than the installed ones (an older
-runtime pin, for example), it warns and names how the owner installs them.
+The site&#x27;s branch does not move: the next thermite install or upgrade
+installs HEAD again. To keep the earlier configuration, revert the site to
+it in a new commit. The commit must pin the application release that runs
+this command; for one pinned by another release, or to bring back the
+state as it was before the last upgrade, see thermite revert and
+docs/installation.md#update-or-remove. Runtime data stays as it is.
 
 positional arguments:
-  COMMIT                the commit to deploy (default: the one deployed before the
+  COMMIT                the commit to install (default: the one deployed before the
                         current one)
 
 options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
   -n, --dry-run         report what it would do; change nothing
-  --force               deploy a commit that never ran here without a passed thermite
-                        test boot
-  --state DIR           the runtime state (default: runtime/ in instance/host.yaml&#x27;s
-                        root, /srv/thermite)
 
 switches every verb takes:
   -q, --quiet           print only errors
@@ -1051,14 +1043,20 @@ switches every verb takes:
   --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 exit status:
-  0  rolled back (or, with --dry-run, it could)
-  2  it could not: nothing to roll back to, an unknown commit, no boot test
-     on a commit that never ran here (without --force), no write access
+  0  committed and verified
+  1  declined, refused before anything stopped, a check failed, or an earlier
+     transaction was finished or closed instead of rolling back
+  2  nothing to roll back to, an unknown commit, one that pins another
+     application release, or no installed version
+  3  rolled back: the version that ran runs again and its health passes
+  4  rolled back, but its health does not pass; it keeps running
+  5  the rollback did not finish: Thermite stays stopped; run thermite rollback again
+  130  interrupted; the next thermite rollback rolls the open transaction back first
 
 examples:
-  thermite rollback -n              what rolling back to the previous deploy would change
-  thermite rollback                 deploy the commit deployed before the current one
-  thermite rollback 3d22e36         deploy that commit (thermite history lists them)
+  thermite rollback -n              what installing the commit deployed before the current one would do
+  thermite rollback                 install the commit deployed before the current one
+  thermite rollback 3d22e36         install that commit (thermite history lists them)
 </pre>
 </section>
 <section class="verb" id="status"><h3><code>thermite status</code></h3><p>What is deployed and running here, against this checkout.</p><pre class="help">usage: thermite status [-h] [--config DIR] [--json] [--state DIR]
@@ -1113,12 +1111,12 @@ oldest first and the latest last, one line each: the number, when (UTC),
 the commit, who deployed it, whether thermite test boot had passed on its
 conf/ here, and its subject, followed by how it came when not a plain
 deploy (install, upgrade or rollback). * marks the one deployed now.
-thermite rollback deploys the one before it.
+thermite rollback installs the one before it.
 
 --details adds what each deploy recorded: the files it added (+), changed
 (~) and removed (-) in each tree, what became of the reloads and restarts
 they asked for, each HTTPS gateway release an install or upgrade then
-activated, with the release it replaced, and each upgrade transaction that
+activated, with the release it replaced, and each install transaction that
 rolled it back. Upgrades before the install engine also show the state and
 identity backups they took; nothing writes or reads those any more. --json has all of it, with up to 50 paths of each kind
 per tree and exact counts.

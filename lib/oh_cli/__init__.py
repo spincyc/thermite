@@ -74,7 +74,7 @@ VERBS = {
     "upgrade": Verb("production", "update the application, native services and HTTPS gateway together", site=False),
     "uninstall": Verb("production", "stop thermite here and remove its units; --purge deletes its state"),
     "deploy": Verb("production", "compatibility alias for the complete install workflow", site=False),
-    "rollback": Verb("production", "deploy the commit deployed before the current one, or another"),
+    "rollback": Verb("production", "install the commit deployed before the current one, or another"),
     "status": Verb("production", "what is deployed and running here, against this checkout"),
     "history": Verb("production", "this host's deploys, numbered, the latest last"),
     "health": Verb("production", "read-only: every Thing ONLINE in the runtime"),

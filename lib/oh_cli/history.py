@@ -21,12 +21,12 @@ oldest first and the latest last, one line each: the number, when (UTC),
 the commit, who deployed it, whether thermite test boot had passed on its
 conf/ here, and its subject, followed by how it came when not a plain
 deploy (install, upgrade or rollback). * marks the one deployed now.
-thermite rollback deploys the one before it.
+thermite rollback installs the one before it.
 
 --details adds what each deploy recorded: the files it added (+), changed
 (~) and removed (-) in each tree, what became of the reloads and restarts
 they asked for, each HTTPS gateway release an install or upgrade then
-activated, with the release it replaced, and each upgrade transaction that
+activated, with the release it replaced, and each install transaction that
 rolled it back. Upgrades before the install engine also show the state and
 identity backups they took; nothing writes or reads those any more. --json has all of it, with up to 50 paths of each kind
 per tree and exact counts.

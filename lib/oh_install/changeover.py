@@ -178,14 +178,20 @@ class Transaction:
 
     @classmethod
     def create(cls, context: steps.Context, id: str, *, kind: str, verb: str, before: str | None,
-               after: str | None, previous: str | None, gid: int, installed: bool, history: bool) -> Transaction:
-        """`installed`: whether a version of Thermite runs before it, to come
-        back if it rolls back. `history`: whether it deploys a site commit,
-        so that a rollback is recorded in thermite history."""
+               after: str | None, previous: str | None, gid: int, installed: bool, history: bool,
+               pinned: bool = True, bridged: bool = False, gateway: str | None = None) -> Transaction:
+        """`before`/`after`: the site commits of the version that runs and of
+        the one installed. `installed`: whether a version of Thermite runs
+        before it, to come back if it rolls back. `history`: whether it
+        deploys a site commit, so that a rollback is recorded in thermite
+        history. `pinned`: whether `after` is a pin commit made for it, to
+        undo if it does not commit. `gateway`: the gateway release the
+        bridged version runs, kept until the next commit."""
         transaction = cls(context.var, id, {
             "version": 1, "id": id, "kind": kind, "verb": verb, "site": str(context.area),
             "root": str(context.installation.root), "state": str(context.layout.root), "gid": gid,
             "head_before": before, "head_after": after, "installed": installed, "history": history,
+            "pinned": pinned, "bridged": bridged, "gateway_before": gateway,
             "application": {"current": (context.application or {}).get("digest"), "previous": previous},
             "asides": {}, "phase": "preparing"})
         transaction.directory.mkdir(mode=0o700, parents=True)
@@ -243,6 +249,8 @@ class Transaction:
         import oh_source_upgrade
         before, after = self.record.get("head_before"), self.record.get("head_after")
         site = shlex.quote(str(self.site))
+        if not self.record.get("pinned", True):
+            return
         if before is None:
             system.say("   The site may still pin the new release: its revision before the transaction is not known. "
                        f"Review `git -C {site} log -2` and revert the pin commit if it is there.")
@@ -663,26 +671,28 @@ def preview(context: steps.Context, system: System, work: Work, *, first: int) -
 # Running one -------------------------------------------------------------------
 
 def run(context: steps.Context, system: System, build: Callable[[str], Work], *, installed: dict | None,
-        bridged: bool, before: str | None, first: int, after: str | None = None) -> int:
+        bridged: bool, before: str | None, first: int, after: str | None = None, pinned: bool = True) -> int:
     """Prepare, begin, switch, verify and commit; roll back on failure.
 
     `build` makes the transaction's Work for its id. `before`/`after` are
-    the site's revisions around a pin commit made for it (undone when it
-    does not commit); without them the site does not move."""
+    the site commits of the version that runs and of the one installed;
+    `pinned` says `after` is a pin commit made for this transaction, undone
+    when it does not commit."""
     id = manifest.transaction_id()
     work = build(id)
     after = after or context.head
-    if before is None and bridged and work.release is not None:
+    if before is None and bridged and pinned and work.release is not None:
         # bridge: the version 1 wrapper committed the pin without saying so.
         before, after = bridge.site_before(_toplevel(context.area), context.area,
                                            (context.application or {}).get("digest"))
-    elif before is None and work.release is None:
+    elif before is None and not pinned:
         before = after
     present = bool(installed and installed.get("installed", True)) or bridged
     transaction = Transaction.create(
         context, id, kind=work.kind, verb=work.verb, before=before, after=after,
         previous=previous_application(installed, system), gid=context.host["gid"], installed=present,
-        history=work.release is not None)
+        history=work.release is not None and work.kind != "revert", pinned=pinned, bridged=bridged,
+        gateway=_gateway(system) if bridged else None)
     prefetch = Prefetch(context)
     root = context.installation.root
 
@@ -691,7 +701,7 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
         items = work.items(system) if work.items is not None else manifest.desired(work.switching, system, root)
         _json(transaction.file("desired.json"), {
             "kind": work.kind, "tools": tools, "items": [item.to_json() for item in items],
-            "pulled": prefetch.pulled, "extra": _allocated(context.program) if work.switching else 0})
+            "pulled": prefetch.pulled, "extra": _allocated(context.program) if work.release is not None else 0})
         if bridged:
             described = manifest.desired(work.described or work.switching, system, root)
             _json(transaction.file("current.json"), bridge.describe(context, system, described, tools, engine._now()))
@@ -740,6 +750,17 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
     return code
 
 
+def _gateway(system: System) -> str | None:
+    """The release the installed gateway runs, by name; None when unknown."""
+    from oh_access import AccessError
+    from oh_install import access
+    try:
+        found = access.installed_release(system)
+    except (OSError, ValueError, AccessError):
+        return None
+    return found.name if found else None
+
+
 def relay(context: steps.Context, system: System, transaction: Transaction, *, first: int) -> int:
     """Commissioning found Sonos event callbacks the committed version did
     not declare a relay for: one more install transaction of the same
@@ -747,7 +768,7 @@ def relay(context: steps.Context, system: System, transaction: Transaction, *, f
     system.say("Sonos event callbacks were found: one more install transaction activates their relay.")
     code = run(context, system, lambda id: install_work(context, id, verb=transaction.verb),
                installed=manifest.installed(system, context.installation.root), bridged=False,
-               before=None, after=context.head, first=first)
+               before=None, after=context.head, first=first, pinned=False)
     if code in (ROLLED_BACK, UNHEALTHY, REFUSED):
         system.say(f"The relay was not activated, but transaction {transaction.id} stays committed: run "
                    f"{command(context.area, 'install')} to activate it.")
