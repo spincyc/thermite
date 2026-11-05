@@ -10,13 +10,20 @@ reinstated is fixed here, by the item's class; a release supplies data
 
 from __future__ import annotations
 
+import argparse
+import contextlib
 import dataclasses
 import errno
+import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shlex
+import stat
+import subprocess
+import sys
 import time
 
 #: Everything the engine touches outside the installation root is below
@@ -1354,3 +1361,369 @@ class Engine:
         if journal.before["target"]["active"]:
             lines.append(shlex.join(["systemctl", "start", TARGET]))
         return lines
+
+
+# The real host ----------------------------------------------------------------
+
+def trusted_tool(value, owner=None) -> str:
+    """The tool's resolved path, if root (or, in tests, the caller) owns it
+    and every directory on the way, and no one else can change any of them;
+    a sticky world-writable directory such as /tmp is allowed on the way."""
+    owners = {0, os.geteuid() if owner is None else owner}
+    path = Path(str(checked_path(value, "tool")))
+    real = Path(os.path.realpath(path))
+    for each in (path, real):
+        for ancestor in each.parents:
+            info = os.stat(ancestor)
+            if info.st_uid not in owners or info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX:
+                raise EngineError(f"tool {path}: {ancestor} could be changed by someone other than root")
+    info = os.stat(real)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid not in owners or info.st_mode & 0o022 or not info.st_mode & 0o100:
+        raise EngineError(f"tool {path} must be an executable file only root can change")
+    return str(real)
+
+
+def trusted_tools(tools) -> dict:
+    return {name: trusted_tool(path) for name, path in check_tools(tools).items() if path is not None}
+
+
+class OsDisk(Disk):
+    """The filesystem, as root (`owner`, the effective uid) sees it. Copies
+    and filesystem syncs run the cp and sync tools."""
+
+    def __init__(self, tools=None):
+        self.tools = dict(tools or {})
+        self.owner = os.geteuid()
+
+    def lstat(self, path):
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            return None
+        mode = info.st_mode
+        kind = ("file" if stat.S_ISREG(mode) else "link" if stat.S_ISLNK(mode) else
+                "dir" if stat.S_ISDIR(mode) else "other")
+        return Stat(kind, stat.S_IMODE(mode), info.st_uid, info.st_gid, info.st_size, info.st_dev)
+
+    def read_bytes(self, path, limit):
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        with os.fdopen(descriptor, "rb") as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                raise EngineError(f"{path} is not a regular file")
+            data = source.read(limit + 1)
+        if len(data) > limit:
+            raise EngineError(f"{path} is larger than {limit} bytes")
+        return data
+
+    def readlink(self, path):
+        return os.readlink(path)
+
+    def listdir(self, path):
+        return sorted(os.listdir(path))
+
+    def allocated(self, path):
+        """Allocated blocks, as `cp -a` keeps sparse files sparse."""
+        info = os.lstat(path)
+        total = info.st_blocks * 512
+        if stat.S_ISDIR(info.st_mode):
+            with os.scandir(path) as entries:
+                for entry in entries:
+                    total += (self.allocated(entry.path) if entry.is_dir(follow_symlinks=False)
+                              else entry.stat(follow_symlinks=False).st_blocks * 512)
+        return total
+
+    def available(self, path):
+        info = os.statvfs(path)
+        return info.f_bavail * info.f_frsize
+
+    def write_atomic(self, path, data, mode):
+        path = Path(path)
+        temporary = path.with_name("." + path.name + ".tmp")
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC, mode)
+        try:
+            os.fchmod(descriptor, mode)
+            view = memoryview(data)
+            while view:
+                view = view[os.write(descriptor, view):]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, path)
+        self.fsync_dir(path.parent)
+
+    def mkdir(self, path, mode):
+        os.mkdir(path, mode)
+        os.chmod(path, mode)  # Whatever the umask; only root can reach it.
+
+    def rename(self, source, destination):
+        if os.path.lexists(destination):
+            raise FileExistsError(errno.EEXIST, "the engine never renames onto a path", str(destination))
+        os.rename(source, destination)
+
+    def _tool(self, name, *argv):
+        if not self.tools.get(name):
+            raise EngineError(f"no {name} tool is configured")
+        result = subprocess.run([self.tools[name], *map(str, argv)], stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, env=ENVIRONMENT, check=False)
+        if result.returncode:
+            raise EngineError(f"{name} {shlex.join(map(str, argv))} failed: {result.stderr.strip()}")
+
+    def copy(self, source, destination):
+        self._tool("cp", "-a", "--reflink=auto", "--no-target-directory", "--", source, destination)
+
+    def remove_tree(self, path):
+        path = Path(path)
+        with _directory(path.parent) as parent:
+            try:
+                device = os.stat(path.name, dir_fd=parent, follow_symlinks=False).st_dev
+            except FileNotFoundError:
+                return
+            _remove(parent, path.name, device)
+
+    def sync_fs(self, path):
+        self._tool("sync", "--file-system", "--", path)
+
+    def fsync_dir(self, path):
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    @contextlib.contextmanager
+    def lock(self, path):
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise EngineError(f"another engine verb is running on {path}") from None
+            yield
+        finally:
+            os.close(descriptor)
+
+
+#: What root's tools run with: nothing inherited from the caller.
+ENVIRONMENT = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}
+
+
+@contextlib.contextmanager
+def _directory(path):
+    """A descriptor for a directory, reached without following symlinks."""
+    descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for part in Path(path).parts[1:]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def _remove(parent, name, device):
+    """rm -rf --one-file-system, by descriptor: a symlink is removed, never
+    followed, and a mount point below is refused."""
+    info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    if not stat.S_ISDIR(info.st_mode):
+        os.unlink(name, dir_fd=parent)
+        return
+    if info.st_dev != device:
+        raise EngineError(f"{name} is another filesystem mounted below what is removed")
+    child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+    try:
+        for entry in os.listdir(child):
+            _remove(child, entry, device)
+    finally:
+        os.close(child)
+    os.rmdir(name, dir_fd=parent)
+
+
+class SubprocessHost(Host):
+    """The tools, by their resolved paths, with a fixed environment. What
+    they print goes to stderr, so that the engine's own output stays clean."""
+
+    def __init__(self, tools=None):
+        self.tools = dict(tools or {})
+
+    def _argv(self, argv):
+        if not self.tools.get(argv[0]):
+            raise EngineError(f"no {argv[0]} tool is configured")
+        return [self.tools[argv[0]], *map(str, argv[1:])]
+
+    def run(self, argv):
+        return subprocess.run(self._argv(argv), stdin=subprocess.DEVNULL, stdout=sys.stderr, env=ENVIRONMENT,
+                              check=False).returncode
+
+    def capture(self, argv):
+        result = subprocess.run(self._argv(argv), stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                env=ENVIRONMENT, check=False)
+        return result.returncode, result.stdout
+
+
+# The command line ---------------------------------------------------------------
+
+#: Exit statuses: refused or failed; not enough room; rolled back; stuck.
+FAILED, SHORT, ROLLED_BACK, STUCK = 1, 2, 3, 5
+
+
+def _input(disk, value) -> dict:
+    """An operator-written JSON input, read once; root reads no operator file
+    after begin."""
+    path = Path(str(checked_path(value, "input file")))
+    try:
+        return json.loads(disk.read_bytes(path, 4 * 1024 * 1024))
+    except (UnicodeDecodeError, ValueError) as error:
+        raise EngineError(f"{path} is not JSON: {error}") from None
+
+
+def _pinned(engine, id) -> Path:
+    """The engine copy begin pinned for a transaction, if root's custody of
+    it holds."""
+    directory = engine.directory(id)
+    engine._safe(directory)
+    engine._private(engine.transactions, "dir")
+    engine._private(directory, "dir")
+    engine._private(directory / "engine.py", "file")
+    return directory / "engine.py"
+
+
+def _delegate(pinned, argv) -> None:
+    """Run the verb with the engine that began the transaction instead."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, [sys.executable, "-I", "-S", str(pinned), *argv])
+
+
+def _open_one(engine) -> str | None:
+    """The one transaction that is not finished, by id; None if none is."""
+    open_ids = []
+    for id in engine.ids():
+        try:
+            journal = engine.read(id)
+        except EngineError:
+            open_ids.append(id)  # Only its own engine can read it.
+            continue
+        if journal is not None and journal.open:
+            open_ids.append(id)
+    if len(open_ids) > 1:
+        raise EngineError(f"more than one transaction is open: {', '.join(open_ids)}; name one with --id")
+    return open_ids[0] if open_ids else None
+
+
+def parser() -> argparse.ArgumentParser:
+    command_line = argparse.ArgumentParser(prog="engine.py", description="Thermite's install transactions, as root.")
+    verbs = command_line.add_subparsers(dest="verb", required=True)
+    for verb, help in (("plan", "the room needed to set the current version aside, as JSON"),
+                       ("begin", "record a transaction and pin this engine for it"),
+                       ("guard", "disable thermite.target until the commit"),
+                       ("collect", "set the stopped version aside"),
+                       ("commit", "record the new version and commit it"),
+                       ("rollback", "put the previous version back, or finish a committed transaction"),
+                       ("status", "list the transactions")):
+        command = verbs.add_parser(verb, help=help)
+        command.add_argument("--root", required=True, help="the installation root")
+        if verb in ("begin", "guard", "collect", "commit", "rollback"):
+            command.add_argument("--id", required=verb != "rollback", help="the transaction")
+        if verb in ("plan", "begin"):
+            command.add_argument("--desired", required=True, help="the desired set, JSON")
+            command.add_argument("--current", help="a description of an installation without a manifest")
+        if verb == "begin":
+            command.add_argument("--operator", required=True, help="the operator's side, JSON")
+        if verb == "commit":
+            command.add_argument("--release", help="the release installed, JSON (none for an uninstall)")
+        if verb == "rollback":
+            shown = command.add_mutually_exclusive_group()
+            shown.add_argument("--dry-run", action="store_true", help="say what a rollback would do")
+            shown.add_argument("--print", action="store_true", help="print the commands to roll back by hand")
+        if verb == "status":
+            command.add_argument("--json", action="store_true")
+    return command_line
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    args = parser().parse_args(argv)
+    try:
+        return _main(args, argv)
+    except SpaceShort as error:
+        print(error, file=sys.stderr)
+        return SHORT
+    except (OSError, EngineError) as error:
+        print(f"thermite install engine: {error}", file=sys.stderr)
+        return FAILED
+
+
+def _main(args, argv) -> int:
+    here = Path(__file__).resolve()
+    engine = Engine(OsDisk(), SubprocessHost(), args.root, source=here.read_bytes(), say=lambda text: print(
+        text, file=sys.stderr))
+    engine.check_root()
+    if args.verb in ("plan", "begin"):
+        desired = _input(engine.disk, args.desired)
+        current = _input(engine.disk, args.current) if args.current else None
+        tools = trusted_tools(validate_desired(desired, engine.root, engine.system)["tools"])
+        engine.disk.tools = engine.host.tools = tools
+        if args.verb == "plan":
+            space = engine.plan(desired, current)
+            print(json.dumps(space, sort_keys=True))
+            if space["required"] > space["available"]:
+                print(describe_space(space, engine.root), file=sys.stderr)
+                return SHORT
+            return 0
+        journal = engine.begin(args.id, desired, _input(engine.disk, args.operator), current)
+        print(json.dumps({"id": journal.id, "phase": journal.phase, "engine": journal.engine_path}))
+        return 0
+    if args.verb == "status":
+        found = engine.status()
+        if args.json:
+            print(json.dumps(found, sort_keys=True))
+            return 0
+        for each in found:
+            if "kind" not in each:
+                print(f"{each['id']}: {each['error']}")
+                continue
+            print(f"{each['id']}: {each['kind']} {each['phase']}" + (", open" if each["open"] else "")
+                  + (f", the kept backup ({_size(each['bytes'])})" if "bytes" in each else ""))
+        return 0
+    id = args.id
+    if id is None:
+        id = _open_one(engine)
+        if id is None:
+            print("No transaction is open.")
+            return 0
+        argv = [*argv, "--id", id]
+    pinned = _pinned(engine, id)
+    if here != pinned:
+        _delegate(pinned, argv)
+    journal = engine.read(id)
+    if journal is None:
+        raise EngineError(f"transaction {id} has no journal; begin did not finish")
+    tools = trusted_tools(journal.tools)
+    engine.disk.tools = engine.host.tools = tools
+    if args.verb == "rollback" and (args.print or args.dry_run):
+        engine._open(id)
+        if args.dry_run:
+            print(f"Rolling back transaction {id} ({journal.kind}, {journal.phase}) would run:")
+        print("\n".join(engine.manual(journal)))
+        return 0
+    if args.verb == "rollback":
+        if journal.phase in TERMINAL:
+            return 0
+        journal = engine.rollback(id)
+        if journal.phase == "stuck":
+            print(f"Stuck: {journal.outcome['error']}. Thermite stays stopped with the boot guard on; "
+                  f"rerun, or roll back by hand: {sys.executable} -I -S {pinned} rollback --root {engine.root} "
+                  f"--id {id} --print", file=sys.stderr)
+            return STUCK
+        return 0 if journal.phase == "kept" else ROLLED_BACK
+    if args.verb == "commit":
+        journal = engine.commit(id, _input(engine.disk, args.release) if args.release else None)
+    else:
+        journal = getattr(engine, args.verb)(id)
+    print(json.dumps({"id": journal.id, "phase": journal.phase}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

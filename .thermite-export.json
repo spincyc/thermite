@@ -453,6 +453,7 @@
     "tests/test_system_ui.py",
     "tests/test_tui_verb.py",
     "tests/test_txn_engine.py",
+    "tests/test_txn_engine_os.py",
     "tests/test_txn_faults.py",
     "tests/test_unified_install.py",
     "tests/test_unit_invariants.py",
