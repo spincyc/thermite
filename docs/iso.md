@@ -82,9 +82,8 @@ used when another bootloader opens the ISO as a file.
    confirmation. Nothing selects a disk or starts installation automatically.
 5. Create your own normal user with a password and sudo access. Use that
    account for Thermite; reserve `thermite` for the non-login service account
-   created during later commissioning. Keep the preselected `git`, `make`,
-   `python`, `python-yaml`, `podman`, `runc`, `util-linux`, `nodejs`, `npm`
-   and `sudo` packages.
+   created during later commissioning. Keep the preselected packages listed
+   under [Packages](#packages).
    NetworkManager is preselected for the installed network; configure the
    connection appropriate to your machine. These settings remain visible
    and editable in the native menu.
@@ -112,6 +111,29 @@ a login profile that puts `~/.local/bin` first on PATH.
 It uses the signed OS `python-yaml` package to match Arch's Python ABI.
 A failed hook fails installation; it must not be treated as a completed
 Thermite image. No runtime services or house are deployed by this hook.
+
+## Packages
+
+`iso/packages.json` is the one list of packages the Arch image installs.
+The image renders archinstall's package list and its live preflight from it,
+and a test holds this table to it. The first tier is everything
+`thermite install`'s Packages step installs, so that step finds nothing to
+do; install itself still checks only those. The other tiers are for the
+person at the console or on SSH.
+
+| Tier | Packages |
+|---|---|
+| Thermite's own requirements | `podman` `runc` `util-linux` `git` `make` `python` `python-yaml` `nodejs` `npm` `openssl` `nftables` |
+| Host services | `sudo` `openssh` `rsync` `avahi` `nss-mdns` `networkmanager` `wpa_supplicant` `zram-generator` `pacman-contrib` `kernel-modules-hook` |
+| Owner's picks | `btop` `emacs-nox` `jq` `miller` |
+| Operator tools | `nmap` `tcpdump` `bind` `arp-scan` `mtr` `traceroute` `ethtool` `socat` `openbsd-netcat` `inetutils` `ngrep` `usbutils` `picocom` `dmidecode` `go-yq` `ripgrep` `less` `htop` `lsof` `strace` `iotop-c` `smartmontools` `nvme-cli` `ncdu` `lm_sensors` `tmux` `bash-completion` `man-db` `man-pages` `nano` `vim` `tree` `pv` |
+| Terminal descriptions | `kitty-terminfo` `ghostty-terminfo` `rxvt-unicode-terminfo` `foot-terminfo` |
+| Btrfs only | `compsize` |
+
+Some of these packages ship units that stay disabled: `named` (bind is here
+for `dig`), `nftables` (Arch's stock ruleset admits only SSH; Thermite loads
+its own native-port boundary), `rsyncd` (rsync runs over SSH), `smartd`,
+`avahi-dnsconfd`, `gpm`, the `lm_sensors` units and the `inetutils` servers.
 
 ## Optional Ubuntu Server image
 

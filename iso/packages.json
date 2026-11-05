@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "tiers": [
+    {
+      "name": "thermite",
+      "title": "Thermite's own requirements",
+      "description": "What thermite install's Packages step installs; the image preinstalls it so that step has nothing to do.",
+      "packages": ["podman", "runc", "util-linux", "git", "make", "python", "python-yaml", "nodejs", "npm", "openssl", "nftables"]
+    },
+    {
+      "name": "host",
+      "title": "Host services",
+      "description": "Owner login and sudo, SSH and rsync, mDNS names, the network, zram swap, package cache cleanup and the running kernel's modules after an upgrade.",
+      "packages": ["sudo", "openssh", "rsync", "avahi", "nss-mdns", "networkmanager", "wpa_supplicant", "zram-generator", "pacman-contrib", "kernel-modules-hook"]
+    },
+    {
+      "name": "owner",
+      "title": "Owner's picks",
+      "description": "btop, Emacs without X (it pulls in GCC, about 0.6 GB), jq and Miller (mlr).",
+      "packages": ["btop", "emacs-nox", "jq", "miller"]
+    },
+    {
+      "name": "operator",
+      "title": "Operator tools",
+      "description": "Small diagnostics for the network, devices, logs, processes and disks. None starts a service.",
+      "packages": ["nmap", "tcpdump", "bind", "arp-scan", "mtr", "traceroute", "ethtool", "socat", "openbsd-netcat", "inetutils", "ngrep", "usbutils", "picocom", "dmidecode", "go-yq", "ripgrep", "less", "htop", "lsof", "strace", "iotop-c", "smartmontools", "nvme-cli", "ncdu", "lm_sensors", "tmux", "bash-completion", "man-db", "man-pages", "nano", "vim", "tree", "pv"]
+    },
+    {
+      "name": "terminfo",
+      "title": "Terminal descriptions",
+      "description": "kitty, Ghostty, urxvt and foot over SSH; ncurses already has the rest.",
+      "packages": ["kitty-terminfo", "ghostty-terminfo", "rxvt-unicode-terminfo", "foot-terminfo"]
+    },
+    {
+      "name": "btrfs",
+      "title": "Btrfs only",
+      "description": "Compression statistics, installed only with the Btrfs layout.",
+      "filesystem": "btrfs",
+      "packages": ["compsize"]
+    }
+  ],
+  "enable": ["sshd.service", "avahi-daemon.service", "paccache.timer", "linux-modules-cleanup.service"],
+  "keep_disabled": {
+    "named.service": "bind is here for dig; the host is never a DNS server",
+    "nftables.service": "Arch's stock ruleset admits only SSH; Thermite loads its own native-port boundary",
+    "rsyncd.service": "rsync runs over SSH; the daemon has no encryption",
+    "rsyncd.socket": "rsync runs over SSH; the daemon has no encryption",
+    "smartd.service": "not shown to stay quiet on hosts without SMART devices; enable it by hand on real disks",
+    "avahi-dnsconfd.service": "only avahi-daemon answers .local names",
+    "gpm.service": "vim's console mouse, not needed",
+    "lm_sensors.service": "sensors is read by hand",
+    "fancontrol.service": "sensors is read by hand",
+    "ftpd.service": "inetutils is here for its clients",
+    "rlogin.socket": "inetutils is here for its clients",
+    "rsh.socket": "inetutils is here for its clients",
+    "talk.socket": "inetutils is here for its clients",
+    "telnet.socket": "inetutils is here for its clients"
+  }
+}

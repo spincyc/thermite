@@ -74,41 +74,66 @@ class InstallerISO(unittest.TestCase):
     def test_arch_defaults_preserve_native_storage_and_identity_choices(self):
         self.assertTrue(oh_iso.inputs()["base"]["name"].startswith("archlinux-"))
         self.assertTrue(oh_iso.inputs("ubuntu")["base"]["name"].startswith("ubuntu-"))
-        config = json.loads((AREA / "iso/arch-config.json").read_text())
-        self.assertEqual(set(config), {"packages", "network_config"})
-        self.assertTrue({"python", "python-yaml", "git", "make", "podman", "runc", "util-linux", "nodejs", "npm", "sudo"} <= set(config["packages"]))
         script = (AREA / "iso/arch-install.sh").read_text()
         self.assertNotIn("--silent", script)
         self.assertLess(script.index("pacman -Sp"), script.index("exec archinstall"))
         self.assertLess(script.index("plugin.name not in plugins"), script.index("exec archinstall"))
 
+    def test_package_tiers_cover_thermites_packages_step(self):
+        from oh_install import steps
+        document = oh_iso.packages()
+        names = oh_iso.package_names(document, "btrfs")
+        # thermite install's Packages step finds nothing to do on an image host.
+        self.assertTrue(set(steps.PACKAGES["pacman"]) <= set(names))
+        self.assertEqual(document["tiers"][0]["packages"], list(steps.PACKAGES["pacman"]))
+        self.assertTrue({"openssh", "rsync", "avahi", "nss-mdns", "sudo", "btop", "emacs-nox", "jq", "miller",
+                         "kitty-terminfo", "ghostty-terminfo", "rxvt-unicode-terminfo", "foot-terminfo"} <= set(names))
+        # Excluded by the review: heavy, a GUI stack, or a broker unit.
+        self.assertFalse({"wireshark-cli", "gupnp-tools", "mosquitto"} & set(names))
+        self.assertNotIn("compsize", oh_iso.package_names(document, "ext4"))
+        self.assertIn("compsize", names)
+        self.assertFalse(set(document["enable"]) & set(document["keep_disabled"]))
+        self.assertTrue({"named.service", "nftables.service", "rsyncd.service"} <= set(document["keep_disabled"]))
+        self.assertIn("sshd.service", document["enable"])
+        for broken in ({"version": 2}, {**document, "enable": ["sshd.service", "named.service"]},
+                       {**document, "tiers": [*document["tiers"], {"name": "x", "title": "x", "description": "x",
+                                                                   "packages": ["git"]}]},
+                       {**document, "tiers": [{"name": "x", "title": "x", "description": "x", "packages": ["git *"]}]}):
+            with patch.object(oh_iso.json, "loads", return_value=broken), self.assertRaises(ValueError):
+                oh_iso.packages()
+
     def test_arch_preflight_and_docs_list_exactly_the_configured_packages(self):
-        packages = json.loads((AREA / "iso/arch-config.json").read_text())["packages"]
+        document = oh_iso.packages()
         script = (AREA / "iso/arch-install.sh").read_text().splitlines()
         extraction = [line for line in script if line.startswith("packages=$(")]
         preflight = [line for line in script if line.startswith("pacman -Sp ")]
         self.assertEqual((len(extraction), len(preflight)), (1, 1))
         self.assertIn('"$media/arch-config.json"', extraction[0])
         self.assertIn(" $packages ", preflight[0])
-        self.assertFalse(set(preflight[0].split()) & set(packages), "the preflight repeats configured packages")
-        # Run the script's own extraction, with python3 as this interpreter.
+        names = oh_iso.package_names(document, "btrfs")
+        self.assertFalse(set(preflight[0].split()) & set(names), "the preflight repeats configured packages")
+        # Run the script's own extraction, with python3 as this interpreter,
+        # over the configuration the build writes.
         tools = self.root / "bin"; tools.mkdir(); (tools / "python3").symlink_to(sys.executable)
         def extract(media):
             return subprocess.run(["bash", "-c", f'set -euo pipefail; media="$1"; {extraction[0]}; printf %s "$packages"',
                                    "preflight", str(media)], env={"PATH": f"{tools}:{os.environ['PATH']}"},
                                   capture_output=True, text=True, timeout=30)
-        completed = extract(AREA / "iso")
+        media = self.root / "media"; media.mkdir()
+        (media / "arch-config.json").write_text(json.dumps({"packages": names, "network_config": {"type": "nm"}}))
+        completed = extract(media)
         self.assertEqual((completed.returncode, completed.stderr), (0, ""))
-        self.assertEqual(completed.stdout.split(), packages)
+        self.assertEqual(completed.stdout.split(), names)
         unsafe = self.root / "unsafe"; unsafe.mkdir()
         (unsafe / "arch-config.json").write_text(json.dumps({"packages": ["git", "*"]}))
         completed = extract(unsafe)
         self.assertNotEqual(completed.returncode, 0)
         self.assertEqual(completed.stdout, "")
         guide = (AREA / "docs/iso.md").read_text()
-        listed = re.search(r"Keep the preselected (.*?) packages\.", guide, re.S)
-        self.assertIsNotNone(listed)
-        self.assertEqual(re.findall(r"`([^`]+)`", listed.group(1)), packages)
+        section = guide[guide.index("## Packages"):guide.index("\n## ", guide.index("## Packages") + 1)]
+        rows = re.findall(r"^\| ([^|]+) \| (`.*`) \|$", section, re.M)
+        self.assertEqual([(title, re.findall(r"`([^`]+)`", listed)) for title, listed in rows],
+                         [(tier["title"], tier["packages"]) for tier in document["tiers"]])
 
     def test_arch_boot_configs_keep_source_uuid_and_local_script(self):
         options = "archisobasedir=arch archisosearchuuid=2026-11-01-08-42-25-00"

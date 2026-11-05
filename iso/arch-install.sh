@@ -48,5 +48,5 @@ packages=$(python3 -I -B -c 'import json, re, sys; names = json.load(open(sys.ar
 pacman -Sy --noconfirm
 # Unquoted: validated names, one word each. The rest is archinstall's own base.
 # shellcheck disable=SC2086
-pacman -Sp --noconfirm base linux linux-firmware mkinitcpio networkmanager wpa_supplicant grub efibootmgr $packages >/dev/null
+pacman -Sp --noconfirm base linux linux-firmware mkinitcpio grub efibootmgr $packages >/dev/null
 exec archinstall --config "$media/arch-config.json" --plugin "$media/arch-plugin.py"

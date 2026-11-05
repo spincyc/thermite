@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import struct
 import subprocess
@@ -23,6 +24,44 @@ def inputs(base: str = "arch") -> dict:
     if base not in ("arch", "ubuntu"): raise ValueError("base must be arch or ubuntu")
     document = json.loads((oh_paths.PROGRAM / "iso/inputs.json").read_text())
     return document["bases"][base]
+
+
+#: Arch package and systemd unit names the image may name.
+PACKAGE = re.compile(r"[a-z0-9][a-z0-9@._+-]*")
+UNIT = re.compile(r"[A-Za-z0-9@._-]+\.(?:service|socket|timer|path)")
+FILESYSTEMS = ("btrfs", "ext4")
+
+
+def packages() -> dict:
+    """iso/packages.json, checked: the one tiered list the Arch image installs.
+
+    The build copies it onto the medium, where the live installer renders
+    archinstall's package list and its preflight from it, and docs/iso.md and
+    the tests read it here.
+    """
+    document = json.loads((oh_paths.PROGRAM / "iso/packages.json").read_text())
+    if document.get("version") != 1 or set(document) != {"version", "tiers", "enable", "keep_disabled"}:
+        raise ValueError("iso/packages.json: unsupported document")
+    seen = set()
+    for tier in document["tiers"]:
+        if set(tier) - {"name", "title", "description", "packages", "filesystem"} or not tier.get("packages"):
+            raise ValueError(f"iso/packages.json: malformed tier {tier.get('name')!r}")
+        if tier.get("filesystem", FILESYSTEMS[0]) not in FILESYSTEMS:
+            raise ValueError(f"iso/packages.json: unknown filesystem in tier {tier['name']!r}")
+        for name in tier["packages"]:
+            if not isinstance(name, str) or not PACKAGE.fullmatch(name) or name in seen:
+                raise ValueError(f"iso/packages.json: invalid or repeated package {name!r}")
+            seen.add(name)
+    units = [*document["enable"], *document["keep_disabled"]]
+    if not all(isinstance(unit, str) and UNIT.fullmatch(unit) for unit in units) or len(set(units)) != len(units):
+        raise ValueError("iso/packages.json: invalid, repeated or both enabled and disabled units")
+    return document
+
+
+def package_names(document: dict, filesystem: str | None = None) -> list[str]:
+    """Every tier's packages in order; a filesystem's tier only with that filesystem."""
+    return [name for tier in document["tiers"] if tier.get("filesystem") in (None, filesystem)
+            for name in tier["packages"]]
 
 
 def sha256(path: Path) -> str:
@@ -251,8 +290,11 @@ def build(cache: Path, output: Path, work: Path, *, xorriso: str | None = None, 
             payload["python_dependency"] = {"provider": "system", "package": "python-yaml", "module": "yaml"}
         (media / "payload.json").write_text(json.dumps(payload, indent=2) + "\n")
         if base == "arch":
-            for name in ("arch-install.sh", "arch-plugin.py", "arch-config.json"):
+            for name in ("arch-install.sh", "arch-plugin.py"):
                 (media / name).write_bytes(public["iso/" + name])
+            # The guided installer preselects every tier the default layout needs.
+            config = {"packages": package_names(packages(), "btrfs"), "network_config": {"type": "nm"}}
+            (media / "arch-config.json").write_text(json.dumps(config, indent=2) + "\n")
             mapping, appended = arch_mapping(staging, image, tool)
         else:
             mapping = ubuntu_mapping(staging, media, image, tool)
