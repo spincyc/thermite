@@ -11,9 +11,20 @@ import oh_paths
 import oh_release
 
 IGNORED = ("/var/", "/build/", "/.scratch/", "/.venv/", "__pycache__/", "*.pyc", "/conf/", "/metrics/", "/deploy/")
+#: --empty's house: no rooms or devices, in the sample's JSON-as-YAML form.
+EMPTY_HOUSE = '{\n  "version": 1,\n  "rooms": {},\n  "devices": []\n}\n'
+README = ("# Private thermite configuration\n\n{house} Run `thermite check --config .`, then commit instance/, "
+          "versions.json and thermite-site.json in private Git. Install from any directory with `thermite install "
+          "--config /path/to/this/site`. The application is installed separately; this directory needs no launcher or "
+          "Makefile. conf/, metrics/ and deploy/ are ignored build output. Never publish site facts upstream. init "
+          "starts no service. `thermite install` deploys the native services and the HTTPS gateway, with its private "
+          "certificate authority, in one approved run; household authentication starts off until you enable it on the "
+          "gateway's Security page.\n")
 
 
-def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool = False) -> dict:
+def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool = False, empty: bool = False) -> dict:
+    """empty writes a house with no rooms or devices instead of the fictional example."""
+    if upgrade and empty: raise ValueError("--empty creates a new site; --upgrade keeps the existing house")
     target, program = Path(target).expanduser().absolute(), Path(program).resolve()
     release = oh_release.manifest(program)
     if target == program or program in target.parents or target in program.parents:
@@ -53,7 +64,10 @@ def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool 
         for name in ("instance/devices.yaml", "instance/host.yaml", "versions.json"):
             out = target / name; out.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(program / name, out); out.chmod(0o600)
-        (target / "README.md").write_text("# Private thermite configuration\n\nThe initial devices are fictional. Edit instance/ before deployment. Run `thermite check --config .`, then commit instance/, versions.json and thermite-site.json in private Git. Install from any directory with `thermite install --config /path/to/this/site`. The application is installed separately; this directory needs no launcher or Makefile. conf/, metrics/ and deploy/ are ignored build output. Never publish site facts upstream. init starts no service. `thermite install` deploys the native services and the HTTPS gateway, with its private certificate authority, in one approved run; household authentication starts off until you enable it on the gateway's Security page.\n")
+        if empty: (target / "instance/devices.yaml").write_text(EMPTY_HOUSE)
+        (target / "README.md").write_text(README.format(
+            house="The house is empty. Add rooms and devices to instance/devices.yaml." if empty else
+            "The initial devices are fictional. Edit instance/ before deployment."))
     original = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
     missing = [line for line in IGNORED if line not in original.splitlines()]
     if missing:
@@ -66,4 +80,4 @@ def initialize(target: Path, *, program: Path = oh_paths.PROGRAM, upgrade: bool 
         os.replace(temporary, path)
     finally: Path(temporary).unlink(missing_ok=True)
     return {"site": str(target), "application": release["application"], "release": release["digest"],
-            "cached": str(cached), "upgraded": upgrade, "previous": previous, "activated": False}
+            "cached": str(cached), "upgraded": upgrade, "previous": previous, "empty": empty, "activated": False}

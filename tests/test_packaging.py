@@ -91,6 +91,34 @@ class Packaging(unittest.TestCase):
         for name in derived:
             self.assertNotIn(name, status)
 
+    def test_empty_site_has_no_rooms_or_devices_and_passes_check(self):
+        site = self.root / "empty-site"
+        report = oh_init.initialize(site, program=self.program, empty=True)
+        self.assertTrue(report["empty"])
+        self.assertEqual(json.loads((site / "instance/devices.yaml").read_text()),
+                         {"version": 1, "rooms": {}, "devices": []})
+        # Only the house changes: the host defaults and release pin are the example's.
+        self.assertEqual((site / "instance/host.yaml").read_bytes(), (self.program / "instance/host.yaml").read_bytes())
+        self.assertIn("The house is empty", (site / "README.md").read_text())
+        self.assertNotIn("fictional", (site / "README.md").read_text())
+        environment = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "THERMITE_SITE"}}
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        # thermite install runs generate --check, validate and lint: an empty
+        # house generates no Things or Items, and that is not a problem.
+        completed = subprocess.run([sys.executable, str(self.program / "bin/thermite"), "check", "--config", str(site)],
+                                   cwd=self.root, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("house file: 0 devices, conf: 0 Things, 0 Items, 0 problems", completed.stdout)
+        with self.assertRaises(ValueError): oh_init.initialize(site, program=self.program, upgrade=True, empty=True)
+        # The example house's empty conf/ is still a problem.
+        example = self.root / "example-site"
+        oh_init.initialize(example, program=self.program)
+        (example / "conf").mkdir()
+        completed = subprocess.run([sys.executable, str(self.program / "bin/thermite"), "--config", str(example),
+                                    "validate"], cwd=self.root, env=environment, capture_output=True, text=True, timeout=60)
+        self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
+        self.assertIn("defines no Things or Items", completed.stderr)
+
     def test_fresh_clone_renders_with_exact_installed_release_without_creating_var(self):
         source = self.root / "fresh-clone-source"
         oh_init.initialize(source, program=self.program)

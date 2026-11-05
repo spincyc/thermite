@@ -50,7 +50,8 @@ def main(argv: list[str] | None = None) -> int:
     things, items, problems = inventory.conf_objects(arguments.conf)
     if not arguments.conf.is_dir():
         problems.append(f"{arguments.conf} does not exist; run thermite generate")
-    elif not things and not items:
+    elif not things and not items and (devices or data.get("rooms")):
+        # An empty house (thermite init --empty) rightly generates none.
         problems.append(f"{arguments.conf} defines no Things or Items; run thermite generate")
     else:
         problems += inventory.cross_check(data, things, items)

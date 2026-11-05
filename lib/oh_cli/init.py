@@ -8,12 +8,15 @@ from oh_init import initialize
 
 def main(argv=None):
     parser = oh_cli.command("init", __doc__, (("thermite init ~/my-site", "write a fictional private site; start no service"),
+                                             ("thermite init --empty ~/my-site", "write a site whose house has no rooms or devices yet"),
                                              ("thermite init --upgrade ~/my-site", "pin an installed upgrade while preserving all configuration and prior releases")))
     parser.add_argument("directory", type=Path, help="new private site directory, or the existing site for --upgrade")
-    parser.add_argument("--upgrade", action="store_true", help="update the release pin and ignore rules; preserve configuration and state")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--empty", action="store_true", help="start with no rooms or devices instead of the fictional example house")
+    mode.add_argument("--upgrade", action="store_true", help="update the release pin and ignore rules; preserve configuration and state")
     oh_cli.add_json(parser)
     args = parser.parse_args(argv)
-    try: report = initialize(args.directory, upgrade=args.upgrade)
+    try: report = initialize(args.directory, upgrade=args.upgrade, empty=args.empty)
     except (OSError, ValueError) as exc:
         print(f"thermite init: {exc}", file=sys.stderr); return 2
     if args.json: print(json.dumps(report, indent=2))

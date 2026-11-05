@@ -138,7 +138,7 @@ examples:
   thermite help sandbox             one verb&#x27;s actions, switches and examples
   thermite completion bash          tab completion for bash (thermite help completion)
 </pre>
-<section class="verb" id="init"><h3><code>thermite init</code></h3><p>Create a private site, or pin an installed application upgrade.</p><pre class="help">usage: thermite init [-h] [--config DIR] [--upgrade] [--json] directory
+<section class="verb" id="init"><h3><code>thermite init</code></h3><p>Create a private site, or pin an installed application upgrade.</p><pre class="help">usage: thermite init [-h] [--config DIR] [--empty | --upgrade] [--json] directory
 
 Create a separate private site, or explicitly select an installed upgrade.
 
@@ -148,6 +148,8 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
+  --empty               start with no rooms or devices instead of the fictional example
+                        house
   --upgrade             update the release pin and ignore rules; preserve configuration
                         and state
   --json                print the report as JSON
@@ -159,6 +161,7 @@ switches every verb takes:
 
 examples:
   thermite init ~/my-site           write a fictional private site; start no service
+  thermite init --empty ~/my-site   write a site whose house has no rooms or devices yet
   thermite init --upgrade ~/my-site
                                     pin an installed upgrade while preserving all configuration and prior releases
 </pre>
