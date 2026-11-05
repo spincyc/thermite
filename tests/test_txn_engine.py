@@ -765,6 +765,66 @@ class Verbs(unittest.TestCase):
         self.assertEqual({item["class"] for item in data["items"] if item["path"].endswith(("userdata", "state"))},
                          {"tree"})
 
+    def revert(self, id="20261106T090000Z-00e5f6", *, finish=True):
+        self.engine.begin(id, {"kind": "revert", "tools": fakes.TOOLS, "items": []}, fakes.OPERATOR)
+        self.engine.guard(id)
+        self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
+        self.engine.collect(id)
+        self.engine.reinstate(id)
+        self.host.run(("systemctl", "start", engine.TARGET))
+        return self.engine.commit(id) if finish else self.engine.read(id)
+
+    def test_a_revert_brings_back_the_kept_version_its_state_and_live_rules(self):
+        old = {path: self.disk.walk(path) for path in [*self.old.files, *self.old.links, f"{ROOT}/runtime/userdata",
+                                                       f"{ROOT}/access/state"]}
+        live = self.host.state()
+        newer = fakes.version("new", prometheus="two", extra_units=("thermite-extra.service",))
+        self.through_switch(newer)
+        self.engine.commit(ID, fakes.release(newer))
+        self.disk.put(f"{ROOT}/runtime/userdata/jsondb/written-since.json", data=b"lost", mode=0o640, uid=980,
+                      gid=980)
+        journal = self.revert()
+        self.assertEqual(journal.phase, "kept")
+        self.assertEqual(journal.before["reverts"], ID)
+        self.assertEqual({path: self.disk.walk(path) for path in old}, old)
+        self.assertNotIn(f"{fakes.UNITS}/thermite-extra.service", self.disk.nodes, "what only the newer one had")
+        self.assertEqual(self.host.state(), live)
+        self.assertEqual(self.disk.nodes[f"{ROOT}/runtime/monitoring/prometheus/chunks/000001"].data, b"samples one",
+                         "the samples of the kept version's own Prometheus")
+        data = engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data, root=ROOT)
+        self.assertEqual((data["release"], data["pins"]), ({"label": "old"}, self.old.pins))
+        self.assertEqual(data["application"], {"current": "sha256:old", "previous": "sha256:new"})
+        self.assertEqual(data["images"], {"current": self.old.images, "previous": newer.images},
+                         "the newer images stay, as previous")
+        releases = next(item for item in data["items"] if item["class"] == "versioned")
+        self.assertEqual((releases["current"], releases["previous"]), (fakes.OLD, ID))
+        self.assertEqual(sorted(self.disk.listdir(f"{ROOT}/access/releases")), sorted([ID, fakes.OLD]))
+        self.assertEqual(self.engine.ids(), [journal.id], "the reverted transaction and the state since are gone")
+        self.assertEqual([argv for argv in self.host.log if argv[:2] == ("podman", "image")], [])
+
+    def test_a_failed_revert_rolls_back_to_the_version_it_would_have_replaced(self):
+        self.through_switch()
+        self.engine.commit(ID, fakes.release(self.new))
+        before = fakes.world(self.disk, self.host, fakes.managed_paths(self.old, self.new))
+        journal = self.revert(finish=False)
+        self.assertEqual(self.disk.nodes[f"{ROOT}/access/state/identity.sqlite3"].data, b"identity old")
+        self.assertEqual(self.engine.rollback(journal.id).phase, "rolled-back")
+        self.assertEqual(fakes.world(self.disk, self.host, fakes.managed_paths(self.old, self.new)), before)
+
+    def test_a_revert_needs_a_kept_install_or_upgrade_of_a_transaction_installed_version(self):
+        desired = {"kind": "revert", "tools": fakes.TOOLS, "items": []}
+        with self.assertRaisesRegex(engine.EngineError, f"transaction {fakes.OLD}, which the installed manifest keeps"):
+            self.engine.plan(desired)
+        self.through_switch()
+        self.engine.commit(ID, fakes.release(self.new))
+        with self.assertRaisesRegex(engine.EngineError, "the desired set lists none"):
+            self.engine.plan({**desired, "items": fakes.desired_items(self.old)})
+        with self.assertRaisesRegex(engine.EngineError, "is an upgrade, not a revert"):
+            self.engine.reinstate(ID)
+        self.revert()
+        with self.assertRaisesRegex(engine.EngineError, "is a revert; only an install or upgrade keeps"):
+            self.engine.plan(desired)
+
     def test_rollback_print_after_a_partial_rollback_moves_nothing_back_twice(self):
         """Killed after an aside went back but before `restored` was saved:
         the printed commands must not move the restored version to failed/."""

@@ -58,7 +58,12 @@ TOOL_DIRS = ("/usr/bin", "/usr/sbin", "/bin", "/sbin")
 #: uninstall keeps all state: every installed item below the root stays in
 #: place, recorded as shared. A purge removes runtime/ and access/ whole,
 #: whatever the desired set lists, then the installed manifest and every
-#: transaction, its own backup included: nothing Thermite made is left.
+#: transaction, its own backup included: nothing Thermite made is left. A
+#: revert brings back the version the last install or upgrade kept: its
+#: desired set is that version's, its switch is `reinstate`, which copies
+#: back what that transaction set aside, and its commit records that
+#: version's release; the state the reverted version wrote is moved aside
+#: and deleted at the commit.
 KINDS = ("install", "upgrade", "clean", "revert", "uninstall", "purge")
 UNINSTALLING = ("uninstall", "purge")
 
@@ -823,10 +828,52 @@ class Engine:
 
     # Planning ------------------------------------------------------------
 
+    def reverted(self) -> Journal:
+        """The transaction a revert undoes: the one the installed manifest
+        keeps, an install or upgrade whose set-aside version was itself
+        installed by a transaction and is still whole."""
+        installed, _ = self.installed()
+        if installed is None or not installed["installed"]:
+            raise EngineError("nothing is installed, so there is nothing to revert")
+        kept = self.read(installed["kept"])
+        if kept is None or kept.phase != "kept" or kept.manifest is None or (
+                kept.manifest["transaction"] != installed["transaction"]):
+            raise EngineError(f"transaction {installed['kept']}, which the installed manifest keeps, is not "
+                              "the committed one it names")
+        if kept.kind not in ("install", "upgrade"):
+            raise EngineError(f"transaction {kept.id} is a{'n' if kept.kind[0] in 'aeiou' else ''} {kept.kind}; "
+                              "only an install or upgrade keeps a version to revert to")
+        if kept.current is None or not kept.current["installed"]:
+            raise EngineError(f"nothing was installed before transaction {kept.id}")
+        if kept.before["source"] == "bridge":
+            raise EngineError(f"the version before transaction {kept.id} was described, not installed by a "
+                              "transaction, so its gateway release is not recorded")
+        return kept
+
+    def _reverting(self, kept) -> list[dict]:
+        """The kept version's items, as a desired set: its state trees are
+        moved aside whole, to be replaced by its own."""
+        items = []
+        for item in kept.current["items"]:
+            cls = CLASSES[item["class"]]
+            wanted = {"path": item["path"], "class": "tree-move" if cls.name == "tree" else cls.name,
+                      **{key: item[key] for key in cls.declared if key in item}}
+            if cls.name == "shared-pinned":
+                if item["pin"] not in kept.current["pins"]:
+                    raise EngineError(f"{item['path']}: the kept version pins no {item['pin']}")
+                wanted["value"] = kept.current["pins"][item["pin"]]
+            items.append(wanted)
+        return check_items(items, self.root, self.system, recorded=False)
+
     def desired(self, data) -> dict:
         """The desired set, checked, as the engine enforces it for its kind:
-        a purge's is runtime/ and access/ as tree-move items, nothing else."""
+        a purge's is runtime/ and access/ as tree-move items, nothing else;
+        a revert's is the kept version's, and the operator names none."""
         desired = validate_desired(data, self.root, self.system)
+        if desired["kind"] == "revert":
+            if desired["items"]:
+                raise EngineError("a revert installs the kept version's items; the desired set lists none")
+            desired["items"] = self._reverting(self.reverted())
         if desired["kind"] == "purge":
             whole = [{"path": str(self.root / name), "class": "tree-move"} for name in ("access", "runtime")]
             other = [item["path"] for item in desired["items"] if item not in whole]
@@ -878,7 +925,7 @@ class Engine:
                                  aside=f"{CLASSES[cls].aside}/{len(entries)}" if action in ("copy", "move") else None,
                                  apply_unit=(old or new).get("apply_unit"),
                                  meta={"absent": self._absent(path)} if action == "add" else None))
-            if new and new["class"] == "versioned" and exists and id is not None:
+            if new and new["class"] == "versioned" and exists and id is not None and kind != "revert":
                 child = f"{path}/{id}"
                 if self.disk.lstat(child) is not None:
                     raise EngineError(f"{child} already exists")
@@ -993,12 +1040,13 @@ class Engine:
             self.disk.write_atomic(directory / "engine.py", self.source, 0o600)
             if raw is not None:
                 self.disk.write_atomic(directory / "manifest", raw, 0o600)
+            reverts = {"reverts": self.reverted().id} if desired["kind"] == "revert" else {}
             journal = Journal(
                 id=id, kind=desired["kind"], installation=str(self.root),
                 engine_sha256=hashlib.sha256(self.source).hexdigest(), engine_path=str(directory / "engine.py"),
                 tools=desired["tools"], operator=operator, space=space, entries=entries, pulled=desired["pulled"],
                 before={"manifest": "manifest" if raw is not None else None, "source": source, "target": target,
-                        "apparmor": apparmor},
+                        "apparmor": apparmor, **reverts},
                 current=installed, desired=desired["items"], phases=[["planned", self.clock()]])
             self.save(journal)
             return journal
@@ -1098,6 +1146,45 @@ class Engine:
             self._advance(journal, "switching")
             return journal
 
+    def reinstate(self, id) -> Journal:
+        """A revert's switch: copy back everything the reverted transaction
+        set aside, over what this one set aside in turn, then load the units,
+        rules and policy that came back. Rerunning it copies them again; a
+        rollback puts the reverted version back whatever it reached."""
+        self.check_root()
+        with self.disk.lock(self.root):
+            journal = self._open(id)
+            if journal.kind != "revert":
+                raise EngineError(f"transaction {id} is a{'n' if journal.kind[0] in 'aeiou' else ''} "
+                                  f"{journal.kind}, not a revert")
+            if journal.phase != "switching":
+                raise EngineError(f"transaction {id} is {journal.phase}, not switching")
+            kept = self.read(journal.before["reverts"])
+            if kept is None or kept.phase != "kept":
+                raise EngineError(f"transaction {journal.before['reverts']} is no longer kept")
+            source = self.directory(kept.id)
+            mine = {entry.path: entry for entry in journal.entries}
+            back = []
+            for entry in kept.entries:
+                if entry.action not in ("copy", "move") or not entry.existed:
+                    continue
+                own = mine.get(entry.path)
+                if own is None or own.action == "leave" or own.action != "add" and own.state != "aside":
+                    raise EngineError(f"{entry.path} was not set aside by this revert")
+                self._safe(entry.path)
+                if self.disk.lstat(source / entry.aside) is None:
+                    raise EngineError(f"{source / entry.aside}, the kept {entry.path}, is missing")
+                self._discard(Path(entry.path))
+                self._copy(source / entry.aside, Path(entry.path))
+                back.append(entry)
+            self._systemctl("daemon-reload")
+            for entry in back:
+                if entry.cls == "nft" and entry.apply_unit:
+                    self._systemctl("restart", entry.apply_unit)
+                if entry.cls == "apparmor" and journal.before["apparmor"]:
+                    self._run("apparmor_parser", "-r", entry.path)
+            return journal
+
     def _unload(self, path) -> None:
         # Unloading needs the policy file, so it comes before the file goes.
         if self.host.run(("apparmor_parser", "-R", str(path))):
@@ -1156,10 +1243,17 @@ class Engine:
             if journal.phase != "switching":
                 raise EngineError(f"transaction {id} is {journal.phase}, not switching")
             current = journal.current or {}
+            reverted = {}
+            if journal.kind == "revert":
+                kept = self.read(journal.before["reverts"])
+                if kept is None:
+                    raise EngineError(f"transaction {journal.before['reverts']} is gone")
+                reverted = {item["path"]: item for item in kept.current["items"]}
             if release is None:
-                release = {"release": current.get("release", {}), "pins": current.get("pins", {}),
-                           "images": current.get("images", {}).get("current", []),
-                           "application": current.get("application", {}).get("current")}
+                carried = kept.current if journal.kind == "revert" else current
+                release = {"release": carried.get("release", {}), "pins": carried.get("pins", {}),
+                           "images": carried.get("images", {}).get("current", []),
+                           "application": carried.get("application", {}).get("current")}
             release = validate_release(release)
             for item in journal.desired:
                 if item["class"] == "shared-pinned" and release["pins"].get(item["pin"]) != item["value"]:
@@ -1173,10 +1267,12 @@ class Engine:
                     items.append({"path": path, "class": cls, **({"pin": item["pin"]} if "pin" in item else {})})
                     continue
                 if cls == "versioned":
-                    self._meta(f"{path}/{id}", "versioned")
+                    # A revert's current child is the kept version's again.
+                    child = reverted[path]["current"] if journal.kind == "revert" else id
+                    self._meta(f"{path}/{child}", "versioned")
                     old = installed.get(path, {})
-                    previous = old.get("current") if old.get("current") not in (None, id) else old.get("previous")
-                    items.append({"path": path, "class": cls, "current": id, "previous": previous})
+                    previous = old.get("current") if old.get("current") not in (None, child) else old.get("previous")
+                    items.append({"path": path, "class": cls, "current": child, "previous": previous})
                     devices.setdefault(self.disk.lstat(path).dev, path)
                     continue
                 found = self.disk.lstat(path)
@@ -1907,12 +2003,13 @@ def parser() -> argparse.ArgumentParser:
                        ("begin", "record a transaction and pin this engine for it"),
                        ("guard", "disable thermite.target until the commit"),
                        ("collect", "set the stopped version aside"),
+                       ("reinstate", "a revert's switch: put the kept version back"),
                        ("commit", "record the new version and commit it"),
                        ("rollback", "put the previous version back, or finish a committed transaction"),
                        ("status", "list the transactions")):
         command = verbs.add_parser(verb, help=help)
         command.add_argument("--root", required=True, help="the installation root")
-        if verb in ("begin", "guard", "collect", "commit", "rollback"):
+        if verb in ("begin", "guard", "collect", "reinstate", "commit", "rollback"):
             command.add_argument("--id", required=verb != "rollback", help="the transaction")
         if verb in ("plan", "begin"):
             command.add_argument("--desired", required=True, help="the desired set, JSON")
