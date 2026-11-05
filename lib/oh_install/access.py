@@ -17,6 +17,7 @@ import ssl
 import oh_ports
 from oh_access import AccessError, guest, staging
 from oh_access.files import atomic_private, json_private, private_directory, read_private, service_identity
+from oh_install import manifest
 from oh_install.model import Check, Command, Step, Task
 
 
@@ -176,6 +177,22 @@ class Gateway(Step):
 
     def actions(self, system):
         return [Task("prepare gateway, stop writers, back up identity, migrate, activate and verify HTTPS", self.perform)]
+
+    def relays(self, system):
+        """Whether the callback relay runs: once its map exists, in the fixed
+        inputs or behind an installed unit, it is never dropped."""
+        return (system.lexists(self.root / "inputs" / "callbacks.json")
+                or system.lexists(manifest.UNITS / staging.ACCESS_UNITS[2]))
+
+    def desired(self, system):
+        """The units and their links, the side-by-side releases, the identity
+        state and the fixed inputs a release migrates or reissues, and the
+        public trust certificate. Old identity tars stay where they are."""
+        units = [*staging.ACCESS_UNITS[:2], *(staging.ACCESS_UNITS[2:] if self.relays(system) else ())]
+        return [*(manifest.unit(manifest.UNITS / name) for name in units), *(manifest.link(name) for name in units),
+                manifest.Item(self.root / "releases", "versioned"), manifest.Item(self.root / "state", "tree"),
+                manifest.Item(self.root / "inputs", "tree"), manifest.Item(self.root / "tls-cert.pem", "file"),
+                manifest.Item(self.root / "backups", "shared")]
 
     def _run(self, system, *argv):
         from oh_install.runner import perform

@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 import re
 
+from oh_install import manifest
 from oh_install.model import Check, Command, Step, Task
 
 UNIT = "thermite-native-boundary.service"
@@ -127,6 +128,12 @@ class NativeIngress(Step):
     def actions(self, system):
         return [Task("install persistent native-port rules and verify the active kernel rules", self.perform)]
 
+    def desired(self, system):
+        # Wanted by multi-user.target, not thermite.target: stopping Thermite
+        # never lifts the filter, and the boot guard leaves it loaded.
+        return [manifest.unit(UNIT_FILE), manifest.Item(RULE_FILE, "nft", apply_unit=UNIT),
+                manifest.link(UNIT, "multi-user.target")]
+
     def current(self, system):
         """Whether the installed rules and unit are what this run installs;
         reapplying the same rules changes nothing a service runs on."""
@@ -229,3 +236,6 @@ class NativeIngressPrerequisites(NativeIngress):
     def actions(self, system):
         return [Task("inspect existing firewall policy and check the required rules without applying them",
                      lambda system: self.perform(system, probe=True))]
+
+    def desired(self, system):
+        return []

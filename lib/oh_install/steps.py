@@ -20,7 +20,7 @@ import oh_service
 import oh_units
 import oh_ports
 import oh_metrics as metrics
-from oh_install import backup, ownership, progress
+from oh_install import backup, manifest, ownership, progress
 from oh_install.access import Gateway
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
 from oh_install.model import Action, Check, Command, ReadinessStep, Step, Task
@@ -556,6 +556,10 @@ class NodeConfinement(Step):
             actions.append(Command(("python3", str(PROGRAM / "lib/oh_apparmor.py"), "--verify", parser), root=True))
         return actions
 
+    def desired(self, system: System) -> list[manifest.Item]:
+        classes = {oh_apparmor.POLICY: "apparmor"}
+        return [manifest.Item(path, classes.get(path, "file")) for path in oh_apparmor.expected(oh_apparmor.enabled(system))]
+
 
 class Account(Step):
     title = "Service account and operator access"
@@ -679,6 +683,13 @@ class StateDirectories(Step):
         return [Command(("install", "-d", "-o", str(host["uid"]), "-g", str(host["gid"]),
                          "-m", f"{mode:05o}", *map(str, paths)), root=True) for mode, paths in by_mode.items()]
 
+    def desired(self, system: System) -> list[manifest.Item]:
+        # The trees a version may change; logs and the old tar backups stay
+        # where they are, whichever version runs.
+        layout = self.context.layout
+        return [*(manifest.Item(path, "tree") for path in (layout.atv_venv, layout.atv_secrets, layout.secrets)),
+                *(manifest.Item(path, "shared") for path in (layout.logs, layout.backups))]
+
 
 class MetricsDirectories(StateDirectories):
     title = "Monitoring directories"
@@ -698,6 +709,16 @@ class MetricsDirectories(StateDirectories):
 
     def actions(self, system: System) -> list[Action]:
         return self.fix(system)
+
+    def desired(self, system: System) -> list[manifest.Item]:
+        # Prometheus' samples are copied aside only when its image changes:
+        # up to the retention size, and only a new version may rewrite them.
+        layout = self.context.layout
+        return [manifest.Item(layout.prometheus_data, "shared-pinned", image="prometheus",
+                              value=self.context.versions["prometheus"]["image"]["digest"]),
+                *(manifest.Item(path, "tree") for path in (layout.grafana_data, layout.root / metrics.STATE_ALERTMANAGER,
+                                                           layout.root / metrics.STATE_NTFY, layout.monitoring_secrets)),
+                manifest.Item(layout.textfile, "shared")]
 
 
 class BootTest(Step):
@@ -860,6 +881,15 @@ class Deploy(Step):
         accepted = operator_command(self.context, system, approved)
         return [*checks, dataclasses.replace(command, approved_argv=accepted.argv, terminal=True)]
 
+    def desired(self, system: System) -> list[manifest.Item]:
+        # The deploy's records are files, so that its history (shared, as
+        # all logs are) can stay beside them.
+        layout = self.context.layout
+        return [*(manifest.Item(path, "tree") for path in (layout.conf, layout.metrics, layout.exporter_app, layout.atv_app)),
+                *(manifest.Item(path, "file") for path in (layout.record, layout.pending, layout.atv_restart,
+                                                           layout.metrics_restart)),
+                manifest.Item(layout.history, "shared")]
+
 
 class Units(Step):
     title = "Service units"
@@ -902,6 +932,15 @@ class Units(Step):
                 # changed template or host setting never strands the units.
                 Task(f"prepare the unit manifest for {ownership.MANIFEST}", self.prepare_manifest),
                 Command(("install", "-D", "-o", "0", "-g", "0", "-m", "0644", str(self.manifest), str(ownership.MANIFEST)), root=True)]
+
+    def desired(self, system: System) -> list[manifest.Item]:
+        items = []
+        for source, target in sorted(deploy.INSTALLED.items()):
+            items.append(manifest.unit(target))
+            # Quadlets are enabled by their generator, and drop-ins not at all.
+            if target.parent == manifest.UNITS:
+                items += manifest.wants_links(self.context.unit(source).decode(), target.name)
+        return items
 
     def prepare_manifest(self, system: System) -> int:
         try:
@@ -1200,6 +1239,10 @@ class NativePreparation(Step):
                          "--uid", str(host["uid"]), "--gid", str(host["gid"])), root=True),
                 Command((*helper, "--check-pairing-logging"), root=True),
                 Command(final, root=True)]
+
+    def desired(self, system: System) -> list[manifest.Item]:
+        # The update tool migrates userdata in place: a copy is set aside.
+        return [manifest.Item(self.context.layout.userdata, "tree"), manifest.Item(self.context.layout.addons, "tree")]
 
 
 def _secret_wrong(system: System, context: Context, path: Path) -> str | None:

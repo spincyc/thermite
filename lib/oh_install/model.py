@@ -83,6 +83,12 @@ class Step:
         """Verify completed actions; ordinary installation steps read back state."""
         return self.check(system)
 
+    def desired(self, system: System) -> list:
+        """What this step installs, as manifest.Item paths and classes: the
+        set an install transaction collects, and records once committed.
+        It reads the host only to choose what exists (AppArmor's state)."""
+        return []
+
 
 class ReadinessStep(Step):
     """Hand a polling task's successful live observation to the runner once.
