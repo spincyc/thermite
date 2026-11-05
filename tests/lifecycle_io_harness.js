@@ -228,16 +228,19 @@ test('module read-only guard stops mutation even when its caller omits readonly'
 });
 test('sanitized activity counts queued, active and unknown work without exposing tickets',()=>{
  const f=setup(),published=[];const bridge=f.module.create(f.descriptor,{...f.env,onStatus:row=>published.push(JSON.parse(JSON.stringify(row)))});
- assert.deepEqual(bridge.status(),{pending:0,active:0,quarantined:0,eventsQueued:1}); // Actor readiness.
- bridge.events();assert.deepEqual(published.at(-1),{pending:0,active:0,quarantined:0,eventsQueued:0});
+ assert.deepEqual(bridge.status(),{pending:0,active:0,quarantined:0,eventsQueued:1,quarantinedKeys:[]}); // Actor readiness.
+ bridge.events();assert.deepEqual(published.at(-1),{pending:0,active:0,quarantined:0,eventsQueued:0,quarantinedKeys:[]});
  const publications=published.length;bridge.events();assert.equal(published.length,publications+1);
  bridge.dispatch({token:String('private-id'),key:'switch',resource:'D1',value:'3'},()=>{});
  assert.equal(bridge.status().pending,1);let active;
  f.provider.execute=()=>{active=bridge.status();return {outcome:'applied'};};f.actor.drain();
  assert.equal(active.active,1);assert.equal(active.pending,0);assert(bridge.status().eventsQueued>0);
- bridge.events();assert.deepEqual(published.at(-1),{pending:0,active:0,quarantined:0,eventsQueued:0});
+ bridge.events();assert.deepEqual(published.at(-1),{pending:0,active:0,quarantined:0,eventsQueued:0,quarantinedKeys:[]});
  f.provider.execute=()=>{throw Error('lost reply');};bridge.dispatch({token:String('private-unknown'),key:'switch',resource:'D2',value:'3'},()=>{});f.actor.drain();bridge.events();
- assert.equal(bridge.status().quarantined,1);assert.equal(bridge.status().active,0);
+ assert.equal(bridge.status().quarantined,1);assert.equal(bridge.status().active,0);assert.deepEqual(bridge.status().quarantinedKeys,['switch']);
+ f.broker.overflow.set(true);assert.equal(bridge.status().quarantined,2);assert.deepEqual(bridge.status().quarantinedKeys,['switch'],'overflow names no device');f.broker.overflow.set(false);
+ const row=JSON.parse(f.broker.states.get('other')||'{}');row.quarantine='unknown';row.pending=row.pending||{};row.queue=[];f.broker.states.put('other',JSON.stringify(row));
+ assert.deepEqual(bridge.status().quarantinedKeys,['other','switch'],'sorted, stable for change detection');
  assert(!JSON.stringify(published).includes('private-'));assert(!JSON.stringify(published).includes('D1'));
 });
 test('qualified terminal write readback is sanitized and published after durable retirement',()=>{

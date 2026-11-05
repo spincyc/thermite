@@ -92,15 +92,29 @@ EXECUTOR_QUIET = 0.25
 REMOTE_EVENTS = "/rest/events?topics=openhab/items/loc_*_source/stateupdated"
 
 
+#: The executor status: its counts, then the quarantined actor keys.
+ACTIVITY_BYTES = 8192
+ACTOR_KEY = re.compile(r"[a-z][a-z0-9_]*")  # oh_inventory.ID
+
+
 def executor_activity(value: str | None) -> dict[str, int] | None:
-    """Only bounded, sanitized executor counts can establish test quiescence."""
+    """Only bounded, sanitized executor counts can establish test quiescence.
+
+    The status may also name the quarantined actor keys (sorted, distinct);
+    they are checked and dropped, since only the counts decide quiescence.
+    """
     try:
-        row = json.loads(value) if isinstance(value, str) and len(value) <= 1024 else None
+        row = json.loads(value) if isinstance(value, str) and len(value) <= ACTIVITY_BYTES else None
     except ValueError:
         return None
     fields = ("pending", "active", "quarantined", "eventsQueued")
-    if (not isinstance(row, dict) or set(row) != set(fields)
+    if (not isinstance(row, dict) or not set(fields) <= set(row) <= {*fields, "quarantinedKeys"}
             or any(type(row[name]) is not int or not 0 <= row[name] <= 1048576 for name in fields)):
+        return None
+    keys = row.get("quarantinedKeys", [])
+    if (not isinstance(keys, list) or len(keys) > row["quarantined"]
+            or not all(isinstance(key, str) and ACTOR_KEY.fullmatch(key) for key in keys)
+            or keys != sorted(set(keys))):
         return None
     return {name: row[name] for name in fields}
 

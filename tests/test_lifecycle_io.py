@@ -97,8 +97,15 @@ class Quiescence(unittest.TestCase):
     def test_activity_snapshot_is_bounded_and_contains_only_nonnegative_counts(self):
         idle=dict(pending=0,active=0,quarantined=0,eventsQueued=0)
         self.assertEqual(routing_check.executor_activity(json.dumps(idle)),idle)
-        bad=[None,'UNDEF','not JSON','{}','[]',' '*1025]
-        bad += [json.dumps({**idle,**change}) for change in ({'active':True},{'pending':-1},{'active':1.5},{'extra':'ticket'})]
+        self.assertEqual(routing_check.executor_activity(json.dumps({**idle,'quarantinedKeys':[]})),idle)
+        held=dict(idle,quarantined=2)
+        self.assertEqual(routing_check.executor_activity(json.dumps({**held,'quarantinedKeys':['example_avr','example_tv']})),held)
+        bad=[None,'UNDEF','not JSON','{}','[]',' '*(routing_check.ACTIVITY_BYTES+1)]
+        bad += [json.dumps({**idle,**change}) for change in ({'active':True},{'pending':-1},{'active':1.5},{'extra':'ticket'},
+                                                            {'quarantinedKeys':'example_avr'},{'quarantinedKeys':['example_avr']},
+                                                            {'quarantined':2,'quarantinedKeys':['example_tv','example_avr']},
+                                                            {'quarantined':2,'quarantinedKeys':['example_avr','example_avr']},
+                                                            {'quarantined':1,'quarantinedKeys':['Bad key']},{'quarantined':1,'quarantinedKeys':[1]})]
         for value in bad:
             with self.subTest(value=value):self.assertIsNone(routing_check.executor_activity(value))
 

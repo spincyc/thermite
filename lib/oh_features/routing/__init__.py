@@ -108,6 +108,9 @@ HEADER = (
 )
 #: The Source command and state of a room with nothing routed to it.
 OFF = "off"
+#: Routing telemetry: JSON counts routing.js posts (its METRICS_ITEM).
+METRICS_ITEM = "house_routing_metrics"
+HOUSE_ITEMS = (METRICS_ITEM,)
 EDID_KEYS = {"idle"}
 #: A room's devices that a choice powers and switches, in the order the
 #: signal reaches them: the screen is the last.
@@ -1175,6 +1178,8 @@ def render(house: House, conf: Conf) -> None:
             "tags": ["Status"], "autoupdate": False,
             "metadata": {"stateDescription": {"config": {"readOnly": True}}},
         }
+    out.items[METRICS_ITEM] = {"type": "String", "label": "Routing telemetry", "autoupdate": False,
+                               "metadata": {"stateDescription": {"config": {"readOnly": True}}}}
     sources = routing["sources"].values()
     _label_ports(conf, devices[routing["hdmi_matrix"]],
                  {routing["hdmi_off_input"]: "Off",

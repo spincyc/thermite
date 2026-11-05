@@ -417,6 +417,8 @@
     "tests/test_remote_system.py",
     "tests/test_room_policy_worker.py",
     "tests/test_routing_script.py",
+    "tests/test_routing_telemetry.py",
+    "tests/test_routing_telemetry_harness.js",
     "tests/test_security_commands.py",
     "tests/test_service_account.py",
     "tests/test_sims.py",
