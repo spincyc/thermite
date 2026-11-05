@@ -202,35 +202,35 @@ cmake --build .scratch/build/host && ctest --test-dir .scratch/build/host --outp
 and peer eviction; `components/thermite_boards/test` the TCA8418, FT6x06,
 CST328, CST3530 and MAX17048 decoding, battery curve, debouncing and touch
 mapping; `remote/test` the key table, repeat timing, console lines and the
-dim and sleep policy. The ESP-IDF sources themselves have only been checked
-with a host `gcc -fsyntax-only` pass against the v5.5.6 headers and LVGL
-9.2.2, not built with the Xtensa toolchain.
+dim and sleep policy.
+
+On 2026-11-05 the base and all four boards built with ESP-IDF v5.5.6 without
+a warning, every line of their `sdkconfig` defaults took effect, and each
+remote app is about 1.2 MB of its 3 MB partition (the base about 0.7 MB of
+1.5 MB). None has yet run on a board.
 
 ## Unverified
 
 Check these first when the hardware arrives, in this order.
 
-1. **First full build** with ESP-IDF v5.5.6: Kconfig names in the
-   `sdkconfig` files, the component manager adding LVGL to `thermite_ui`
-   from its `idf_component.yml`, and app size within the 3 MB partition.
-2. **Base**: `thermite hello` on its USB port, a `send` answered by one
+1. **Base**: `thermite hello` on its USB port, a `send` answered by one
    `sent`, logs only on the UART connector.
-3. **Displays**: colours and orientation on each board. OMOTE's MADCTL
+2. **Displays**: colours and orientation on each board. OMOTE's MADCTL
    conflict (mirror Y) and its i80 clock (10 MHz chosen; OMOTE runs 40 MHz,
    beyond the ILI9341's write cycle); Waveshare's vendor tuning sent after
    esp_lcd's init.
-4. **Touch axes**: CST328 raw range (logged at boot) and orientation; the
+3. **Touch axes**: CST328 raw range (logged at boot) and orientation; the
    FT6206's mirroring on OMOTE.
-5. **Wake loops**: deep sleep must not wake at once. Watch for a stuck-low
+4. **Wake loops**: deep sleep must not wake at once. Watch for a stuck-low
    keypad INT, a latched LIS3DH INT1, or a CST328 INT held low (each is
    excluded when low at sleep, and logged).
-6. **Wake latency and the wake key**: that OMOTE's TCA8418 FIFO still holds
+5. **Wake latency and the wake key**: that OMOTE's TCA8418 FIFO still holds
    the press after the ESP32 boots, and that StickS3's A and B stay powered
    (the deep-sleep rail) to wake it.
-7. **Power**: Waveshare stays on battery through deep sleep (GPIO7 held);
+6. **Power**: Waveshare stays on battery through deep sleep (GPIO7 held);
    StickS3's PMIC keeps the ESP32 rail with its watchdog off; OMOTE sleep
    current with the LCD rail off.
-8. **Thresholds**: LIS3DH lift-to-wake (128 mg high-pass, chosen here, not
+7. **Thresholds**: LIS3DH lift-to-wake (128 mg high-pass, chosen here, not
    OMOTE's); battery curves (Waveshare's ADC through a ×3 divider, StickS3's
    linear 3.3–4.1 V).
-9. **StickS3 key choice**: A is Play and B is Volume +, our test-rig choice.
+8. **StickS3 key choice**: A is Play and B is Volume +, our test-rig choice.

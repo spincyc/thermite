@@ -8,3 +8,5 @@
 __pycache__/
 *.pyc
 node_modules/
+# What the ESP-IDF component manager fetches; dependencies.lock pins it.
+/handheld/firmware/remote/managed_components/

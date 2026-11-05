@@ -139,9 +139,9 @@ static esp_err_t touch_init(void)
         .raw_height = sane ? range_y : LCD_H,
         .width = LCD_W,
         .height = LCD_H,
-        .swap_xy = CONFIG_THERMITE_TOUCH_SWAP_XY,
-        .mirror_x = CONFIG_THERMITE_TOUCH_MIRROR_X,
-        .mirror_y = CONFIG_THERMITE_TOUCH_MIRROR_Y,
+        .swap_xy = BOARD_TOUCH_SWAP_XY,
+        .mirror_x = BOARD_TOUCH_MIRROR_X,
+        .mirror_y = BOARD_TOUCH_MIRROR_Y,
     };
     if (s_touch_map.swap_xy && sane) {
         s_touch_map.raw_width = range_y;
@@ -198,9 +198,9 @@ esp_err_t board_display_init(esp_lcd_panel_io_handle_t *io, esp_lcd_panel_handle
         .controller = LCD_ST7789,
         .reset = LCD_RST,
         .bgr = true,
-        .invert = CONFIG_THERMITE_LCD_INVERT,
-        .mirror_x = CONFIG_THERMITE_LCD_MIRROR_X,
-        .mirror_y = CONFIG_THERMITE_LCD_MIRROR_Y,
+        .invert = BOARD_LCD_INVERT,
+        .mirror_x = BOARD_LCD_MIRROR_X,
+        .mirror_y = BOARD_LCD_MIRROR_Y,
         .extra = TUNING,
         .extra_count = sizeof TUNING / sizeof TUNING[0],
     };

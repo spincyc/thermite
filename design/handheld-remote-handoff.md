@@ -2,9 +2,8 @@
 
 Updated 2026-11-05. All parts are ordered. The protocol, bridge, command,
 remote core, screen, simulator, and the firmware for the four boards and the
-base are written ([handheld/](../handheld/README.md)). Nothing has run on
-hardware, and the firmware has not been compiled for the ESP32-S3: installing
-the ESP-IDF toolchain was not permitted in the session that wrote it.
+base are written ([handheld/](../handheld/README.md)), and the firmware
+builds with ESP-IDF v5.5.6. Nothing has run on hardware.
 Research and decisions are in [handheld-remote.md](handheld-remote.md).
 
 ## Owner directions
@@ -38,9 +37,9 @@ Research and decisions are in [handheld-remote.md](handheld-remote.md).
   `thermite-remote-sim --script`: a bubble switched the room's source, keys
   reached the player, a held Volume + repeated (four presses in 800 ms), and
   a sleep and wake recovered the screen in the same session.
-- The firmware sources pass `gcc -fsyntax-only -Werror` against the ESP-IDF
-  v5.5.6 and LVGL 9.2.2 headers with a hand-written `sdkconfig.h`. That is a
-  type check, not a build.
+- The base and all four boards build with ESP-IDF v5.5.6 and LVGL 9.2.2
+  without a warning; every line of their `sdkconfig` defaults takes effect;
+  each remote app fills about 1.2 MB of its 3 MB partition.
 
 ## Next steps
 
@@ -49,13 +48,12 @@ what to check on each board.
 
 | Step | Done when |
 | --- | --- |
-| 1. Install ESP-IDF v5.5.6 and build the base and all four remote boards | Five builds succeed and each app fits its 3 MB partition |
-| 2. Flash the base on a DevKitC-1 and run `thermite handheld serve` | `thermite base` seen; one `sent` per `send`; only protocol lines on its USB port |
-| 3. Waveshare: display colours and orientation, touch axes, enrol, drive the mock house | Its screen controls `--mock` as the simulator does |
-| 4. StickS3: press-to-ack latency from deep sleep, awake and standby current | Measurements recorded in handheld-remote.md |
-| 5. Against the real gateway | A handheld's commands reach openHAB and show in the command trail |
-| 6. OMOTE / OpenRemote boards: i80 display orientation, TCA8418 wake key, LIS3DH lift threshold, MAX17048 | Every key works; the remote wakes by key and by lift |
-| 7. Optional: tear down one used NEEO remote | SWD access and STM32 readout-protection level known |
+| 1. Flash the base on a DevKitC-1 and run `thermite handheld serve` | `thermite base` seen; one `sent` per `send`; only protocol lines on its USB port |
+| 2. Waveshare: display colours and orientation, touch axes, enrol, drive the mock house | Its screen controls `--mock` as the simulator does |
+| 3. StickS3: press-to-ack latency from deep sleep, awake and standby current | Measurements recorded in handheld-remote.md |
+| 4. Against the real gateway | A handheld's commands reach openHAB and show in the command trail |
+| 5. OMOTE / OpenRemote boards: i80 display orientation, TCA8418 wake key, LIS3DH lift threshold, MAX17048 | Every key works; the remote wakes by key and by lift |
+| 6. Optional: tear down one used NEEO remote | SWD access and STM32 readout-protection level known |
 
 ## Known gaps
 
@@ -74,5 +72,5 @@ what to check on each board.
 
 - Can Yoke's per-room ESP32 IR endpoints double as ESP-NOW bases, or does the
   house need one USB base plus relay docks?
-- What press-to-action latency and battery life are acceptable? Step 4
+- What press-to-action latency and battery life are acceptable? Step 3
   measures both.

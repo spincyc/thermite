@@ -16,6 +16,40 @@
 #include "esp_lcd_panel_dev.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
+#include "sdkconfig.h"
+
+/* The bring-up overrides (Kconfig) as 0 or 1: sdkconfig.h leaves a disabled bool undefined. */
+#ifdef CONFIG_THERMITE_LCD_INVERT
+#define BOARD_LCD_INVERT 1
+#else
+#define BOARD_LCD_INVERT 0
+#endif
+#ifdef CONFIG_THERMITE_LCD_MIRROR_X
+#define BOARD_LCD_MIRROR_X 1
+#else
+#define BOARD_LCD_MIRROR_X 0
+#endif
+#ifdef CONFIG_THERMITE_LCD_MIRROR_Y
+#define BOARD_LCD_MIRROR_Y 1
+#else
+#define BOARD_LCD_MIRROR_Y 0
+#endif
+#ifdef CONFIG_THERMITE_TOUCH_SWAP_XY
+#define BOARD_TOUCH_SWAP_XY 1
+#else
+#define BOARD_TOUCH_SWAP_XY 0
+#endif
+#ifdef CONFIG_THERMITE_TOUCH_MIRROR_X
+#define BOARD_TOUCH_MIRROR_X 1
+#else
+#define BOARD_TOUCH_MIRROR_X 0
+#endif
+#ifdef CONFIG_THERMITE_TOUCH_MIRROR_Y
+#define BOARD_TOUCH_MIRROR_Y 1
+#else
+#define BOARD_TOUCH_MIRROR_Y 0
+#endif
+
 
 #define I2C_TIMEOUT_MS 50
 

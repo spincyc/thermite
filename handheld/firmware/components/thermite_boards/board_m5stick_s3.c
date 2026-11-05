@@ -131,9 +131,9 @@ esp_err_t board_display_init(esp_lcd_panel_io_handle_t *io, esp_lcd_panel_handle
         .x_gap = LCD_X_GAP,
         .y_gap = LCD_Y_GAP,
         .bgr = true,
-        .invert = CONFIG_THERMITE_LCD_INVERT,
-        .mirror_x = CONFIG_THERMITE_LCD_MIRROR_X,
-        .mirror_y = CONFIG_THERMITE_LCD_MIRROR_Y,
+        .invert = BOARD_LCD_INVERT,
+        .mirror_x = BOARD_LCD_MIRROR_X,
+        .mirror_y = BOARD_LCD_MIRROR_Y,
     };
     ESP_RETURN_ON_ERROR(lcd_spi_init(&bus, &config, io, panel), TAG, "LCD");
     s_panel = *panel;
