@@ -15,7 +15,10 @@ rollback. The unified deployment workflow uses a separate committed private site
   than the image's frozen `/usr/local/bin/thermite`, and install no longer
   warns about the launcher on PATH. Its live preflight checks exactly the
   packages archinstall will install, read from `arch-config.json` (it missed
-  runc and util-linux), and the guide lists the same ones.
+  runc and util-linux), and the guide lists the same ones. The README
+  `thermite init` writes into a new site says `thermite install` deploys the
+  native services and HTTPS gateway in one run, not that accounts and TLS
+  need separate commissioning.
 - Install and upgrade stop all of Thermite, `systemctl stop thermite.target
   thermite.slice`, before they change anything it runs on (its units,
   openHAB's native state, the native-port firewall or the deployment), check

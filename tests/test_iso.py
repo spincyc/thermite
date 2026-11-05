@@ -259,6 +259,10 @@ class InstallerISO(unittest.TestCase):
         self.assertIn("expected a regular file", completed.stderr)
         site = self.root / "private-site"
         self.assertTrue((site / "thermite-site.json").is_file())
+        # The site README describes the unified install the first-boot guide uses.
+        readme = (site / "README.md").read_text()
+        self.assertIn("`thermite install` deploys the native services and the HTTPS gateway", readme)
+        self.assertNotIn("separate commissioning", readme)
         self.assertFalse((site / "bin").exists())
         self.assertFalse((site / "Makefile").exists())
         result = subprocess.run([str(entry), "--config", str(site), "--help"], cwd=outside, env=environment,
