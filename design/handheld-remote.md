@@ -8,9 +8,9 @@ implements for it. Prices and availability are as found on that date; the
 ## Recommendation
 
 Prototype now on ESP32-S3 touch boards, and build toward the open-source
-**OMOTE** remote family as the first Halo-shaped target. Carry button presses
-over **ESP-NOW** to a base station connected to the Thermite server, and use
-Wi-Fi only while docked, for layout sync and updates.
+**OMOTE** remote family as the first Halo-shaped target. Carry all traffic
+over **ESP-NOW** to a base station connected to the Thermite server; see
+[Decisions](#decisions-2026-11-05).
 
 No assembled, Halo-shaped remote on sale accepts our own firmware. OMOTE is
 the only flashable design in the right shape, and it is built from published
@@ -97,28 +97,26 @@ since 2025-03-11, claims about 450 ms faster than MQTT over Wi-Fi),
 [ESPHomeRemote](https://github.com/Aggro600/ESPHomeRemote) (the dock relays
 ESP-NOW) and PARAM KEY.
 
-Proposed shape, to be specified in an ADR before implementation:
+## Decisions, 2026-11-05
 
-- The remote sends key events over ESP-NOW to a base station. Each event
-  carries a pairing identity, room, button and operation ID. Bench work starts
-  with an ESP32 on the Thermite server's USB port.
-- Yoke's ESP32-S3 IR endpoint
-  ([ADR 0025](https://github.com/spincyc/yoke/blob/main/doc/decisions/0025-esp32-rmt-ir-endpoint-itach-subset.md))
-  uses W5500 Ethernet and leaves its radio free, so per-room IR endpoints
-  could also receive ESP-NOW and serve as bases. That needs validating
-  alongside RMT IR output; Yoke's hardware checks are not yet run.
-- The base reports events to Thermite over an authenticated local protocol
-  with bounded messages and operation IDs, so a retried event is never
-  applied twice.
-- A Thermite remote integration maps events to existing openHAB Items and
-  pushes compact state changes back: source, volume, lock state, now playing.
-- The remote caches a layout derived from the house's `REMOTE_LAYOUTS`
-  ([web/remote/remotes.js](../web/remote/remotes.js)) and refreshes it over
-  Wi-Fi while docked.
-- Pair each remote with an individually enrolled key. Generate no
-  fleet-wide credentials. ESP-IDF limits how many ESP-NOW peers can be
-  encrypted; check the configured limit against the number of remotes and
-  docks.
+Implemented in [handheld/](../handheld/); [PROTOCOL.md](../handheld/PROTOCOL.md)
+is normative.
+
+| Decision | Reason |
+| --- | --- |
+| The remote is a thin client: the bridge runs one `RemoteSession` per remote, on the house model, layouts and backend the web and terminal remotes use, and sends a screen model | One behavior across all three clients. Rooms, locks, the second press of Power and All off, and button availability need no second implementation in C |
+| ESP-NOW for all traffic, Wi-Fi never associated; the base is a keyless relay on the server's USB port | Instant wake; the screen model is small enough that a Wi-Fi-only-while-docked layout sync is unnecessary. A base that holds no keys can be replaced or relayed without re-enrolling |
+| End-to-end AES-256-CCM between remote and bridge, one key per remote; sessions chosen by the bridge, counters per session and direction | Authenticated and private over the air, with replay protection and no durable writes on either side. Bridge restarts cost one HELLO |
+| Operations are acknowledged and deduplicated by number | A retried key press is not applied twice while the bridge runs |
+| Firmware lives in Thermite under `handheld/firmware/`, excluded from releases, not in Yoke | Both ends of this protocol change together. Yoke's endpoints route devices independently of Thermite; the handheld renders Thermite's session model |
+| ESP-IDF v5.5.6, as Yoke pins; LVGL 9.2.2 is the only external component; display, touch, keypad, accelerometer and gauge drivers are our own | One toolchain across Spincyc ESP32 firmware, and the smallest dependency surface to qualify |
+| Firmware updates over USB for now | Over-the-air updates need Wi-Fi association or a bulk ESP-NOW transfer; neither is needed to prototype |
+
+Yoke's ESP32-S3 IR endpoint
+([ADR 0025](https://github.com/spincyc/yoke/blob/main/doc/decisions/0025-esp32-rmt-ir-endpoint-itach-subset.md))
+uses W5500 Ethernet and leaves its radio free, so per-room IR endpoints could
+later relay ESP-NOW as bases. That needs validating alongside RMT IR output;
+Yoke's hardware checks are not yet run.
 
 Thread or other 802.15.4 links need different silicon (ESP32-C6, ESP32-H2 or
 nRF). No handheld with a touchscreen on that silicon was found for sale.

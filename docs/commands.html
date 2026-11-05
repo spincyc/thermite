@@ -47,7 +47,7 @@
 <h2 id="devices">The house&#x27;s devices</h2>
 <table class="verbs"><tbody><tr><td><a href="#dhcp-reservations"><code>thermite dhcp-reservations</code></a></td><td>list the UniFi DHCP reservations the house file needs</td></tr><tr><td><a href="#matrix-settings"><code>thermite matrix-settings</code></a></td><td>show matrix settings that differ from the house file; --apply sets them</td></tr><tr><td><a href="#control4"><code>thermite control4</code></a></td><td>export the Control4 project read-only and compare it</td></tr><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
-<table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#tui"><code>thermite tui</code></a></td><td>the house remote in a terminal on any computer, from its HTTPS gateway</td></tr><tr><td><a href="#access"><code>thermite access</code></a></td><td>site login, local identity bootstrap, HTTPS service and room policies</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the flaming bowl mark and color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#tui"><code>thermite tui</code></a></td><td>the house remote in a terminal on any computer, from its HTTPS gateway</td></tr><tr><td><a href="#handheld"><code>thermite handheld</code></a></td><td>handheld remotes: the bridge to the house, enrolling and forgetting them</td></tr><tr><td><a href="#access"><code>thermite access</code></a></td><td>site login, local identity bootstrap, HTTPS service and room policies</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the flaming bowl mark and color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
 <h2 id="program">This program</h2>
 <table class="verbs"><tbody><tr><td><a href="#version"><code>thermite version</code></a></td><td>thermite&#x27;s version, and runtime&#x27;s: pinned, and running here</td></tr><tr><td><a href="#package"><code>thermite package</code></a></td><td>build a privacy-checked portable application wheel</td></tr><tr><td><a href="#iso"><code>thermite iso</code></a></td><td>build a bootable installer for a dedicated Thermite machine</td></tr><tr><td><a href="#completion"><code>thermite completion</code></a></td><td>print a completion script for bash, zsh or fish</td></tr></tbody></table>
 <h2 id="overview">thermite --help</h2>
@@ -91,6 +91,7 @@ the house&#x27;s devices:
 front ends, themes and docs:
   remote               the house remote in a terminal
   tui                  the house remote in a terminal on any computer, from its HTTPS gateway
+  handheld             handheld remotes: the bridge to the house, enrolling and forgetting them
   access               site login, local identity bootstrap, HTTPS service and room policies
   theme                the flaming bowl mark and color themes: show, check, export
   docs                 build the docs site, or export it to the thermite repository
@@ -1942,6 +1943,164 @@ examples:
                                     sign in once; thermite tui then uses that account
   thermite tui --room ROOM --light  start in that room, in the theme&#x27;s light mode
 </pre>
+</section>
+<section class="verb" id="handheld"><h3><code>thermite handheld</code></h3><p>Handheld remotes: the bridge to the house, enrolling and forgetting them.</p><pre class="help">usage: thermite handheld [-h] [--config DIR] ACTION ...
+
+Handheld remotes: ESP32-S3 remotes that reach the house by radio (ESP-NOW)
+through a base station on a USB port of the computer that runs serve.
+
+serve is the bridge: like thermite tui it opens the house on a Thermite
+gateway, from any computer, and runs one remote session for each enrolled
+remote, sending each the screen its session shows and turning its buttons
+into the same commands the web and terminal remotes send. Guests control
+unlocked rooms without a login; after thermite access login for the same
+address, that account&#x27;s personal credential is used. It needs Node.js.
+
+enroll gives a remote connected by USB a fresh key and the base&#x27;s address,
+and keeps both in the state file; --simulator enrolls a simulated remote
+instead and writes its key file. list shows the enrolled remotes and forget
+removes one. The state file holds the remotes&#x27; keys: it is private (mode
+0600) and keys are never printed.
+
+Without --url serve opens https://thermite:13600, as thermite tui does, and
+trusts the gateway&#x27;s certificate the same way (thermite help tui).
+
+options:
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+
+actions:
+  ACTION
+    serve               run the bridge between the base and the house
+    enroll              enroll a remote, or a simulated one
+    list                list the enrolled remotes and the base
+    forget              forget an enrolled remote
+
+switches every verb takes:
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
+
+the base:
+  Without --port, serve uses the Espressif USB serial port in
+  /dev/serial/by-id that answers thermite hello as a base, and enroll the
+  one that answers as a remote. serve reopens the base when it is
+  unplugged and plugged in again. --listen PATH makes a Unix socket a
+  simulated base connects to instead. enroll gives a remote the base&#x27;s MAC
+  and channel as serve last saw them, or as --base-port&#x27;s base says them.
+
+examples:
+  thermite handheld serve           the bridge for the house on https://thermite:13600, on the base plugged in here
+  thermite handheld serve --mock --listen /tmp/thermite-base.sock
+                                    the mock house, for a simulated base and remote on that socket
+  thermite handheld enroll --name lounge
+                                    enroll the remote connected by USB as lounge
+  thermite handheld enroll --simulator --name sim
+                                    enroll a simulated remote; its key file is printed
+  thermite handheld list            the enrolled remotes, their boards, batteries and rooms
+  thermite handheld forget lounge --port /dev/ttyACM1
+                                    forget lounge, here and on the remote itself
+</pre>
+<details id="handheld-serve"><summary><code>thermite handheld serve</code></summary><pre class="help">usage: thermite handheld serve [-h] [--url URL] [--ca-file FILE] [--mock]
+                               [--port DEVICE | --listen PATH] [--state FILE]
+
+Run the bridge between the base and the house.
+
+options:
+  -h, --help      show this help message and exit
+  --url URL       the gateway: https://HOST:PORT, HOST:PORT or HOST (default:
+                  https://thermite:13600, or a selected site&#x27;s gateway.port)
+  --ca-file FILE  trust this copy of the server&#x27;s tls-cert.pem; remembered for that
+                  address
+  --mock          the remote page&#x27;s mock house, which sends nothing
+  --port DEVICE   the base&#x27;s USB serial port (default: the one that answers)
+  --listen PATH   a Unix socket for a simulated base to connect to
+  --state FILE    the state file (default: ~/.local/state/thermite/handheld/state.json,
+                  under $XDG_STATE_HOME)
+
+switches every verb takes:
+  -q, --quiet     print only errors
+  -v, --verbose   also print, on stderr, the commands and HTTP requests it runs
+  --no-color      no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite handheld serve           the bridge for the house on https://thermite:13600, on the base plugged in here
+  thermite handheld serve --mock --listen /tmp/thermite-base.sock
+                                    the mock house, for a simulated base and remote on that socket
+</pre></details>
+<details id="handheld-enroll"><summary><code>thermite handheld enroll</code></summary><pre class="help">usage: thermite handheld enroll [-h] --name NAME [--port DEVICE] [--base-port DEVICE]
+                                [--simulator] [--key-file FILE] [--mac MAC]
+                                [--state FILE]
+
+Enroll a remote, or a simulated one.
+
+options:
+  -h, --help          show this help message and exit
+  --name NAME         what to call the remote: letters, digits, . _ -
+  --port DEVICE       the remote&#x27;s USB serial port (default: the Espressif port that
+                      answers as a remote)
+  --base-port DEVICE  read the base&#x27;s MAC and channel from it (default: what serve last
+                      saw)
+  --simulator         enroll a simulated remote: no device
+  --key-file FILE     with --simulator: where to write its key (default: NAME.key beside
+                      the state file)
+  --mac MAC           with --simulator: its MAC (default: the locally administered one
+                      ending 00:01)
+  --state FILE        the state file (default:
+                      ~/.local/state/thermite/handheld/state.json, under
+                      $XDG_STATE_HOME)
+
+switches every verb takes:
+  -q, --quiet         print only errors
+  -v, --verbose       also print, on stderr, the commands and HTTP requests it runs
+  --no-color          no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite handheld enroll --name lounge
+                                    enroll the remote connected by USB as lounge
+  thermite handheld enroll --simulator --name sim
+                                    enroll a simulated remote; its key file is printed
+</pre></details>
+<details id="handheld-list"><summary><code>thermite handheld list</code></summary><pre class="help">usage: thermite handheld list [-h] [--state FILE] [--json]
+
+List the enrolled remotes and the base.
+
+options:
+  -h, --help     show this help message and exit
+  --state FILE   the state file (default: ~/.local/state/thermite/handheld/state.json,
+                 under $XDG_STATE_HOME)
+  --json         print the report as JSON
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite handheld list            the enrolled remotes, their boards, batteries and rooms
+</pre></details>
+<details id="handheld-forget"><summary><code>thermite handheld forget</code></summary><pre class="help">usage: thermite handheld forget [-h] [--port DEVICE] [--state FILE] NAME
+
+Forget an enrolled remote.
+
+positional arguments:
+  NAME           the remote&#x27;s name (thermite handheld list)
+
+options:
+  -h, --help     show this help message and exit
+  --port DEVICE  also erase the enrolment on the remote connected by USB here
+  --state FILE   the state file (default: ~/.local/state/thermite/handheld/state.json,
+                 under $XDG_STATE_HOME)
+
+switches every verb takes:
+  -q, --quiet    print only errors
+  -v, --verbose  also print, on stderr, the commands and HTTP requests it runs
+  --no-color     no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite handheld forget lounge --port /dev/ttyACM1
+                                    forget lounge, here and on the remote itself
+</pre></details>
 </section>
 <section class="verb" id="access"><h3><code>thermite access</code></h3><p>Site login, local identity bootstrap, HTTPS service and room policies.</p><pre class="help">usage: thermite access [-h] [--config DIR] ACTION ...
 

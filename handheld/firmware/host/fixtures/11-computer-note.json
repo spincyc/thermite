@@ -1,0 +1,93 @@
+{
+ "screen": {
+  "id": "3d335a1cfef1cbe4",
+  "room": "example_east",
+  "label": "Example East",
+  "rooms": [
+   {
+    "id": "example_west",
+    "label": "Example West",
+    "led": "ok",
+    "short": "Player"
+   },
+   {
+    "id": "example_east",
+    "label": "Example East",
+    "led": "ok",
+    "short": "Computer"
+   },
+   {
+    "id": "example_north",
+    "label": "Example North",
+    "led": "off",
+    "short": "Off"
+   }
+  ],
+  "led": "ok",
+  "short": "Computer",
+  "problem": "",
+  "notice": "",
+  "locked": false,
+  "bubbles": [
+   {
+    "id": "off",
+    "label": "Off",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_computer",
+    "label": "Computer",
+    "state": "current",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_display",
+    "label": "Example Display",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   }
+  ],
+  "selected": "example_computer",
+  "hidden": false,
+  "remote": {
+   "label": "Keyboard and mouse",
+   "note": "Example Computer is a PC: use its own keyboard and mouse"
+  },
+  "pad": null,
+  "rows": [],
+  "beside": [],
+  "channel": false,
+  "buttons": {
+   "volume_up": {
+    "label": "Volume up",
+    "icon": "plus",
+    "repeat": true
+   },
+   "volume_down": {
+    "label": "Volume down",
+    "icon": "minus",
+    "repeat": true
+   },
+   "mute": {
+    "label": "Mute",
+    "icon": "mute"
+   }
+  },
+  "allOff": false
+ },
+ "audio": {
+  "short": "Example Display",
+  "value": 20,
+  "min": 0,
+  "max": 100,
+  "step": 1,
+  "muted": false,
+  "disabled": false,
+  "text": "20",
+  "caption": "Example Display · 20"
+ }
+}

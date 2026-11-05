@@ -1,0 +1,289 @@
+{
+ "screen": {
+  "id": "5a4cb813ad4e36b3",
+  "room": "example_west",
+  "label": "Example West",
+  "rooms": [
+   {
+    "id": "example_west",
+    "label": "Example West",
+    "led": "ok",
+    "short": "Player"
+   },
+   {
+    "id": "example_east",
+    "label": "Example East",
+    "led": "ok",
+    "short": "Computer"
+   },
+   {
+    "id": "example_north",
+    "label": "Example North",
+    "led": "off",
+    "short": "Off"
+   }
+  ],
+  "led": "ok",
+  "short": "Player",
+  "problem": "",
+  "notice": "",
+  "locked": false,
+  "bubbles": [
+   {
+    "id": "off",
+    "label": "Off",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_player",
+    "label": "Player",
+    "state": "current",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_computer",
+    "label": "Computer",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_tv",
+    "label": "Example TV",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   }
+  ],
+  "selected": "example_player",
+  "hidden": false,
+  "remote": {
+   "label": "Blu-ray remote",
+   "note": ""
+  },
+  "pad": {
+   "corners": [
+    "power",
+    "eject",
+    "back",
+    "home"
+   ]
+  },
+  "rows": [
+   {
+    "label": "",
+    "keys": [
+     "previous",
+     "rewind",
+     "play",
+     "pause",
+     "stop",
+     "fast_forward",
+     "next"
+    ],
+    "columns": 0
+   },
+   {
+    "label": "Apps",
+    "keys": [
+     "netflix",
+     "favorite"
+    ],
+    "columns": 2
+   },
+   {
+    "label": "Disc menus",
+    "keys": [
+     "top_menu",
+     "popup_menu",
+     "options",
+     "display"
+    ],
+    "columns": 2
+   },
+   {
+    "label": "Audio",
+    "keys": [
+     "audio",
+     "subtitle"
+    ],
+    "columns": 2
+   },
+   {
+    "label": "Wireless audio",
+    "keys": [
+     "bluetooth"
+    ],
+    "columns": 1
+   },
+   {
+    "label": "Color keys",
+    "keys": [
+     "red",
+     "green",
+     "yellow",
+     "blue"
+    ],
+    "columns": 4
+   }
+  ],
+  "beside": [],
+  "channel": false,
+  "buttons": {
+   "up": {
+    "label": "Up",
+    "icon": "up",
+    "repeat": true
+   },
+   "down": {
+    "label": "Down",
+    "icon": "down",
+    "repeat": true
+   },
+   "left": {
+    "label": "Left",
+    "icon": "left",
+    "repeat": true
+   },
+   "right": {
+    "label": "Right",
+    "icon": "right",
+    "repeat": true
+   },
+   "ok": {
+    "label": "OK",
+    "text": "OK"
+   },
+   "power": {
+    "label": "Power",
+    "icon": "power"
+   },
+   "eject": {
+    "label": "Open/close",
+    "icon": "eject"
+   },
+   "back": {
+    "label": "Back",
+    "icon": "back"
+   },
+   "home": {
+    "label": "Home",
+    "icon": "home"
+   },
+   "previous": {
+    "label": "Previous",
+    "icon": "previous"
+   },
+   "rewind": {
+    "label": "Rewind",
+    "icon": "rewind"
+   },
+   "play": {
+    "label": "Play",
+    "icon": "play"
+   },
+   "pause": {
+    "label": "Pause",
+    "icon": "pause"
+   },
+   "stop": {
+    "label": "Stop",
+    "icon": "stop"
+   },
+   "fast_forward": {
+    "label": "Fast-forward",
+    "icon": "forward"
+   },
+   "next": {
+    "label": "Next",
+    "icon": "next"
+   },
+   "netflix": {
+    "label": "Netflix",
+    "text": "NETFLIX"
+   },
+   "favorite": {
+    "label": "Favorite",
+    "text": "Favorite"
+   },
+   "top_menu": {
+    "label": "Top menu",
+    "text": "Top menu"
+   },
+   "popup_menu": {
+    "label": "Pop-up menu",
+    "text": "Pop-up"
+   },
+   "options": {
+    "label": "Options",
+    "text": "Options"
+   },
+   "display": {
+    "label": "Display",
+    "text": "Display"
+   },
+   "audio": {
+    "label": "Audio track",
+    "text": "Audio"
+   },
+   "subtitle": {
+    "label": "Subtitles",
+    "text": "Subtitle"
+   },
+   "bluetooth": {
+    "label": "Bluetooth audio",
+    "text": "Bluetooth"
+   },
+   "red": {
+    "label": "Red",
+    "text": "Red"
+   },
+   "green": {
+    "label": "Green",
+    "text": "Green"
+   },
+   "yellow": {
+    "label": "Yellow",
+    "text": "Yellow"
+   },
+   "blue": {
+    "label": "Blue",
+    "text": "Blue"
+   },
+   "volume_up": {
+    "label": "Volume up",
+    "icon": "plus",
+    "repeat": true
+   },
+   "volume_down": {
+    "label": "Volume down",
+    "icon": "minus",
+    "repeat": true
+   },
+   "mute": {
+    "label": "Mute",
+    "icon": "mute"
+   }
+  },
+  "allOff": false
+ },
+ "audio": {
+  "short": "Example TV",
+  "value": 35,
+  "min": 0,
+  "max": 100,
+  "step": 1,
+  "muted": false,
+  "disabled": false,
+  "text": "35",
+  "caption": "Example TV · 35"
+ },
+ "toast": {
+  "title": "Example TV input",
+  "body": "Already on HDMI 1",
+  "tone": "muted"
+ }
+}

@@ -1,0 +1,375 @@
+{
+ "screen": {
+  "id": "5ee5c551f37b8cb1",
+  "room": "example_west",
+  "label": "Example West",
+  "rooms": [
+   {
+    "id": "example_west",
+    "label": "Example West",
+    "led": "ok",
+    "short": "Player"
+   },
+   {
+    "id": "example_east",
+    "label": "Example East",
+    "led": "ok",
+    "short": "Computer"
+   },
+   {
+    "id": "example_north",
+    "label": "Example North",
+    "led": "off",
+    "short": "Off"
+   }
+  ],
+  "led": "ok",
+  "short": "Player",
+  "problem": "",
+  "notice": "",
+  "locked": false,
+  "bubbles": [
+   {
+    "id": "off",
+    "label": "Off",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_player",
+    "label": "Player",
+    "state": "current",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_computer",
+    "label": "Computer",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_tv",
+    "label": "Example TV",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   }
+  ],
+  "selected": "example_tv",
+  "hidden": false,
+  "remote": {
+   "label": "Sony TV remote",
+   "note": ""
+  },
+  "pad": {
+   "corners": [
+    "power",
+    "settings",
+    "back",
+    "home"
+   ]
+  },
+  "rows": [
+   {
+    "label": "",
+    "keys": [
+     "input",
+     "guide",
+     "info",
+     "action_menu"
+    ],
+    "columns": 0
+   },
+   {
+    "label": "",
+    "keys": [
+     "previous",
+     "rewind",
+     "play",
+     "pause",
+     "stop",
+     "fast_forward",
+     "next"
+    ],
+    "columns": 0
+   },
+   {
+    "label": "Apps",
+    "keys": [
+     "netflix",
+     "youtube"
+    ],
+    "columns": 2
+   },
+   {
+    "label": "TV",
+    "keys": [
+     "tv",
+     "exit",
+     "options",
+     "help"
+    ],
+    "columns": 2
+   },
+   {
+    "label": "Audio",
+    "keys": [
+     "audio",
+     "subtitle"
+    ],
+    "columns": 2
+   },
+   {
+    "label": "Channels",
+    "keys": [
+     "digit_1",
+     "digit_2",
+     "digit_3",
+     "digit_4",
+     "digit_5",
+     "digit_6",
+     "digit_7",
+     "digit_8",
+     "digit_9",
+     "digit_dot",
+     "digit_0",
+     "digit_enter"
+    ],
+    "columns": 3
+   },
+   {
+    "label": "Color keys",
+    "keys": [
+     "red",
+     "green",
+     "yellow",
+     "blue"
+    ],
+    "columns": 4
+   }
+  ],
+  "beside": [],
+  "channel": true,
+  "buttons": {
+   "up": {
+    "label": "Up",
+    "icon": "up",
+    "repeat": true
+   },
+   "down": {
+    "label": "Down",
+    "icon": "down",
+    "repeat": true
+   },
+   "left": {
+    "label": "Left",
+    "icon": "left",
+    "repeat": true
+   },
+   "right": {
+    "label": "Right",
+    "icon": "right",
+    "repeat": true
+   },
+   "ok": {
+    "label": "OK",
+    "text": "OK"
+   },
+   "power": {
+    "label": "Power",
+    "icon": "power"
+   },
+   "settings": {
+    "label": "Settings",
+    "icon": "settings"
+   },
+   "back": {
+    "label": "Back",
+    "icon": "back"
+   },
+   "home": {
+    "label": "Home",
+    "icon": "home"
+   },
+   "input": {
+    "label": "Input",
+    "icon": "input"
+   },
+   "guide": {
+    "label": "Programme guide",
+    "text": "Guide"
+   },
+   "info": {
+    "label": "Info",
+    "text": "Info"
+   },
+   "action_menu": {
+    "label": "Action menu",
+    "text": "Action menu"
+   },
+   "previous": {
+    "label": "Previous",
+    "icon": "previous"
+   },
+   "rewind": {
+    "label": "Rewind",
+    "icon": "rewind"
+   },
+   "play": {
+    "label": "Play",
+    "icon": "play"
+   },
+   "pause": {
+    "label": "Pause",
+    "icon": "pause"
+   },
+   "stop": {
+    "label": "Stop",
+    "icon": "stop"
+   },
+   "fast_forward": {
+    "label": "Fast-forward",
+    "icon": "forward"
+   },
+   "next": {
+    "label": "Next",
+    "icon": "next"
+   },
+   "netflix": {
+    "label": "Netflix",
+    "text": "NETFLIX"
+   },
+   "youtube": {
+    "label": "YouTube",
+    "text": "YouTube"
+   },
+   "tv": {
+    "label": "TV",
+    "icon": "tv"
+   },
+   "exit": {
+    "label": "Exit",
+    "text": "Exit"
+   },
+   "options": {
+    "label": "Options",
+    "text": "Options"
+   },
+   "help": {
+    "label": "Help",
+    "text": "Help"
+   },
+   "audio": {
+    "label": "Audio track",
+    "text": "Audio"
+   },
+   "subtitle": {
+    "label": "Subtitles",
+    "text": "Subtitle"
+   },
+   "digit_1": {
+    "label": "1",
+    "text": "1"
+   },
+   "digit_2": {
+    "label": "2",
+    "text": "2"
+   },
+   "digit_3": {
+    "label": "3",
+    "text": "3"
+   },
+   "digit_4": {
+    "label": "4",
+    "text": "4"
+   },
+   "digit_5": {
+    "label": "5",
+    "text": "5"
+   },
+   "digit_6": {
+    "label": "6",
+    "text": "6"
+   },
+   "digit_7": {
+    "label": "7",
+    "text": "7"
+   },
+   "digit_8": {
+    "label": "8",
+    "text": "8"
+   },
+   "digit_9": {
+    "label": "9",
+    "text": "9"
+   },
+   "digit_dot": {
+    "label": "Channel decimal point",
+    "text": "."
+   },
+   "digit_0": {
+    "label": "0",
+    "text": "0"
+   },
+   "digit_enter": {
+    "label": "Channel enter",
+    "text": "Enter"
+   },
+   "red": {
+    "label": "Red",
+    "text": "Red"
+   },
+   "green": {
+    "label": "Green",
+    "text": "Green"
+   },
+   "yellow": {
+    "label": "Yellow",
+    "text": "Yellow"
+   },
+   "blue": {
+    "label": "Blue",
+    "text": "Blue"
+   },
+   "volume_up": {
+    "label": "Volume up",
+    "icon": "plus",
+    "repeat": true
+   },
+   "volume_down": {
+    "label": "Volume down",
+    "icon": "minus",
+    "repeat": true
+   },
+   "mute": {
+    "label": "Mute",
+    "icon": "mute"
+   },
+   "channel_up": {
+    "label": "Channel up",
+    "icon": "up",
+    "repeat": true
+   },
+   "channel_down": {
+    "label": "Channel down",
+    "icon": "down",
+    "repeat": true
+   }
+  },
+  "allOff": false
+ },
+ "audio": {
+  "short": "Example TV",
+  "value": 35,
+  "min": 0,
+  "max": 100,
+  "step": 1,
+  "muted": false,
+  "disabled": false,
+  "text": "35",
+  "caption": "Example TV · 35"
+ }
+}

@@ -1,0 +1,19 @@
+# Every board. Each board adds sdkconfig.board.<name>, and the UI its LVGL
+# settings (../components/thermite_ui/sdkconfig.lvgl); list all three in
+# SDKCONFIG_DEFAULTS; CMakeLists.txt does so from THERMITE_BOARD.
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_FREERTOS_HZ=1000
+# app_main runs LVGL, the remote core and the loop.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
+# ESP-NOW only: no station NVS writes, no association.
+# CONFIG_ESP_WIFI_NVS_ENABLED is not set
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+# Fast wake: a quiet bootloader that skips re-hashing the app when waking from
+# deep sleep (a cold boot still validates it). No secure boot on these remotes.
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP=y
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

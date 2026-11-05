@@ -1,0 +1,176 @@
+{
+ "sim": {
+  "link": "connecting",
+  "battery": 64,
+  "charging": true
+ },
+ "screen": {
+  "id": "53c5eae879f820bf",
+  "room": "example_west",
+  "label": "Example West",
+  "rooms": [
+   {
+    "id": "example_west",
+    "label": "Example West",
+    "led": "ok",
+    "short": "Player"
+   },
+   {
+    "id": "example_east",
+    "label": "Example East",
+    "led": "ok",
+    "short": "Computer"
+   },
+   {
+    "id": "example_north",
+    "label": "Example North",
+    "led": "off",
+    "short": "Off"
+   }
+  ],
+  "led": "ok",
+  "short": "Player",
+  "problem": "",
+  "notice": "",
+  "locked": false,
+  "bubbles": [
+   {
+    "id": "off",
+    "label": "Off",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_player",
+    "label": "Player",
+    "state": "current",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_computer",
+    "label": "Computer",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_tv",
+    "label": "Example TV",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   }
+  ],
+  "selected": "example_player",
+  "hidden": false,
+  "remote": {
+   "label": "Siri Remote",
+   "note": ""
+  },
+  "pad": {
+   "corners": [
+    "power",
+    null,
+    "back",
+    "tv"
+   ]
+  },
+  "rows": [
+   {
+    "label": "Apps",
+    "keys": [
+     "netflix",
+     "youtube"
+    ],
+    "columns": 2
+   }
+  ],
+  "beside": [
+   "play_pause"
+  ],
+  "channel": false,
+  "buttons": {
+   "up": {
+    "label": "Up",
+    "icon": "up",
+    "repeat": true
+   },
+   "down": {
+    "label": "Down",
+    "icon": "down",
+    "repeat": true
+   },
+   "left": {
+    "label": "Left",
+    "icon": "left",
+    "repeat": true
+   },
+   "right": {
+    "label": "Right",
+    "icon": "right",
+    "repeat": true
+   },
+   "ok": {
+    "label": "OK",
+    "text": "OK"
+   },
+   "power": {
+    "label": "Power",
+    "icon": "power"
+   },
+   "back": {
+    "label": "Back",
+    "icon": "back"
+   },
+   "tv": {
+    "label": "TV",
+    "icon": "tv"
+   },
+   "netflix": {
+    "label": "Netflix",
+    "text": "NETFLIX"
+   },
+   "youtube": {
+    "label": "YouTube",
+    "text": "YouTube"
+   },
+   "play_pause": {
+    "label": "Play/pause",
+    "icon": "play-pause"
+   },
+   "volume_up": {
+    "label": "Volume up",
+    "icon": "plus",
+    "repeat": true
+   },
+   "volume_down": {
+    "label": "Volume down",
+    "icon": "minus",
+    "repeat": true
+   },
+   "mute": {
+    "label": "Mute",
+    "icon": "mute"
+   }
+  },
+  "allOff": false
+ },
+ "audio": {
+  "short": "Example TV",
+  "value": 35,
+  "min": 0,
+  "max": 100,
+  "step": 1,
+  "muted": false,
+  "disabled": false,
+  "text": "35",
+  "caption": "Example TV · 35"
+ },
+ "toast": {
+  "title": "Not connected",
+  "body": "The remote's base did not answer",
+  "tone": "bad"
+ }
+}

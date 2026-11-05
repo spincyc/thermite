@@ -1,0 +1,6 @@
+# Name,   Type, SubType, Offset,  Size
+# One 3 MB app (LVGL and Wi-Fi together outgrow the 1.5 MB "large" default);
+# fits the smallest flash in use (StickS3, 8 MB). Updates are over USB only.
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, 0x10000, 0x300000,

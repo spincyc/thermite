@@ -1,0 +1,80 @@
+{
+ "screen": {
+  "id": "0e301a1fb7fce74c",
+  "room": "example_north",
+  "label": "Example North",
+  "rooms": [
+   {
+    "id": "example_west",
+    "label": "Example West",
+    "led": "ok",
+    "short": "Player"
+   },
+   {
+    "id": "example_east",
+    "label": "Example East",
+    "led": "ok",
+    "short": "Computer"
+   },
+   {
+    "id": "example_north",
+    "label": "Example North",
+    "led": "off",
+    "short": "Off"
+   }
+  ],
+  "led": "off",
+  "short": "Off",
+  "problem": "",
+  "notice": "",
+  "locked": false,
+  "bubbles": [
+   {
+    "id": "off",
+    "label": "Off",
+    "state": "current",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_streamer",
+    "label": "Streamer",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   },
+   {
+    "id": "example_receiver",
+    "label": "Receiver",
+    "state": "idle",
+    "lock": false,
+    "inert": false
+   }
+  ],
+  "selected": "off",
+  "hidden": true,
+  "remote": null,
+  "pad": null,
+  "rows": [],
+  "beside": [],
+  "channel": false,
+  "buttons": {
+   "volume_up": {
+    "label": "Volume up",
+    "icon": "plus",
+    "repeat": true
+   },
+   "volume_down": {
+    "label": "Volume down",
+    "icon": "minus",
+    "repeat": true
+   },
+   "mute": {
+    "label": "Mute",
+    "icon": "mute"
+   }
+  },
+  "allOff": false
+ },
+ "audio": null
+}

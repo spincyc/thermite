@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite handheld` serves battery handheld remotes: ESP32-S3 boards on
+  their own ESP-NOW link to a USB base station, each a thin client of a
+  remote session the bridge runs on the house model, layouts and backend the
+  web and terminal remotes use. `serve` runs the bridge (`--mock`, and
+  `--listen` for the desktop simulator), `enroll` gives a remote its own key
+  over USB, `list` and `forget` manage them. Frames are AES-256-CCM sealed
+  end to end; the base holds no keys (handheld/PROTOCOL.md). The firmware for
+  the Waveshare ESP32-S3-Touch-LCD-2.8, M5Stack StickS3, OMOTE Rev5 and
+  OpenRemote Rev6, the base's, and the simulator are in handheld/firmware,
+  outside releases; none has yet run on hardware.
 - A terminal remote's telemetry reports its kind, `tui`, as the gateway
   requires; it sent its own label (`tui/<host>`), and the gateway refused
   every report.

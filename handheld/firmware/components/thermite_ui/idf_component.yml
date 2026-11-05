@@ -1,0 +1,7 @@
+# The only external component (design/handheld-remote.md, Decisions), pinned
+# exactly. The component manager adds it to this component's public
+# requirements, so the remote app reaches LVGL through thermite_ui.
+# host/fetch-deps.sh fetches the same release for the host build.
+dependencies:
+  idf: ">=5.5.6"
+  lvgl/lvgl: "9.2.2"

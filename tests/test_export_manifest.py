@@ -20,6 +20,14 @@ EXCLUDED = {
     "design/handheld-remote.md": "handheld remote hardware research, not part of the application",
     "design/hardware-endpoints.md": "proposed hardware design notes, not part of the application",
 }
+#: Reviewed directories, every file below them, that releases omit, with why.
+EXCLUDED_TREES = {
+    "handheld/firmware/": "the handheld remote's firmware sources, built with ESP-IDF, not installed",
+}
+
+
+def excluded(path):
+    return path in EXCLUDED or any(path.startswith(tree) for tree in EXCLUDED_TREES)
 
 
 def git(*argv):
@@ -41,10 +49,10 @@ class ExportManifest(unittest.TestCase):
         duplicates = sorted({path for path in manifest if manifest.count(path) > 1})
         self.assertEqual(duplicates, [], "duplicate .thermite-export.json paths")
         self.assertEqual(manifest, sorted(manifest), ".thermite-export.json paths must stay sorted")
-        missing = sorted(files - set(manifest) - set(EXCLUDED))
+        missing = sorted(path for path in files - set(manifest) if not excluded(path))
         unknown = sorted(set(manifest) - files)
         stale = sorted(set(EXCLUDED) - files)
-        both = sorted(set(EXCLUDED) & set(manifest))
+        both = sorted(path for path in manifest if excluded(path))
         problems = [*(f"add to .thermite-export.json (or EXCLUDED here, with a reason): {path}" for path in missing),
                     *(f"remove from .thermite-export.json, or add the file to Git: {path}" for path in unknown),
                     *(f"remove the stale EXCLUDED entry: {path}" for path in stale),

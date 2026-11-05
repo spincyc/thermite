@@ -1,0 +1,69 @@
+menu "Thermite board"
+
+choice THERMITE_BOARD
+    prompt "Handheld board"
+    default THERMITE_BOARD_WAVESHARE_S3_LCD28
+    help
+        The board the remote app is built for. The remote's sdkconfig.board.<name>
+        files set this; see handheld/firmware/README.md.
+
+config THERMITE_BOARD_WAVESHARE_S3_LCD28
+    bool "Waveshare ESP32-S3-Touch-LCD-2.8 (waveshare-s3-lcd28)"
+config THERMITE_BOARD_M5STICK_S3
+    bool "M5Stack StickS3 (m5stick-s3)"
+config THERMITE_BOARD_OMOTE_REV5
+    bool "OMOTE Rev5 (omote-rev5)"
+config THERMITE_BOARD_OPENREMOTE_REV6
+    bool "OpenRemote Rev6 (openremote-rev6)"
+endchoice
+
+config THERMITE_BOARD_OMOTE_FAMILY
+    bool
+    default y if THERMITE_BOARD_OMOTE_REV5 || THERMITE_BOARD_OPENREMOTE_REV6
+
+config THERMITE_OMOTE_PANEL_ST7789
+    bool "Panel controller is an ST7789V, not an ILI9341"
+    depends on THERMITE_BOARD_OMOTE_FAMILY
+    default n
+    help
+        OpenRemote's firmware offers a BuyDisplay ST7789V panel option. The
+        ER-TFT028A2-4 is an ILI9341 according to BuyDisplay (unverified).
+
+# Bring-up overrides. The defaults are each board's best-sourced values; the
+# hardware may prove them wrong (handheld/firmware/README.md, "Unverified").
+config THERMITE_LCD_PCLK_MHZ
+    int "Display bus clock, MHz"
+    range 1 80
+    default 10 if THERMITE_BOARD_OMOTE_FAMILY
+    default 40
+
+config THERMITE_LCD_INVERT
+    bool "Invert display colours (INVON)"
+    default n if THERMITE_BOARD_OMOTE_REV5
+    default y
+
+config THERMITE_LCD_MIRROR_X
+    bool "Mirror display X (MADCTL MX)"
+    default y if THERMITE_BOARD_WAVESHARE_S3_LCD28 || THERMITE_BOARD_OMOTE_FAMILY
+    default n
+
+config THERMITE_LCD_MIRROR_Y
+    bool "Mirror display Y (MADCTL MY)"
+    default y if THERMITE_BOARD_OMOTE_FAMILY
+    default n
+
+config THERMITE_TOUCH_SWAP_XY
+    bool "Swap touch X and Y"
+    default n
+
+config THERMITE_TOUCH_MIRROR_X
+    bool "Mirror touch X"
+    default y if THERMITE_BOARD_OMOTE_FAMILY
+    default n
+
+config THERMITE_TOUCH_MIRROR_Y
+    bool "Mirror touch Y"
+    default y if THERMITE_BOARD_OMOTE_FAMILY
+    default n
+
+endmenu

@@ -1,0 +1,9 @@
+# OpenRemote Rev6: as OMOTE Rev5 (same ESP32 nets), with the BuyDisplay
+# ER-TFT028A2-4 panel, which needs colour inversion (the Kconfig default for
+# this board). For OpenRemote's ST7789V panel option, also set
+# CONFIG_THERMITE_OMOTE_PANEL_ST7789=y.
+CONFIG_THERMITE_BOARD_OPENREMOTE_REV6=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+# CONFIG_USJ_ENABLE_USB_SERIAL_JTAG is not set

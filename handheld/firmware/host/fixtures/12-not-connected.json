@@ -1,0 +1,7 @@
+{
+ "sim": {
+  "link": "offline",
+  "battery": 12,
+  "charging": false
+ }
+}
