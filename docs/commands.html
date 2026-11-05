@@ -556,7 +556,9 @@ is unchanged, so its Source selectors switch the real matrices and its
 remote drives the devices under control (the Apple TVs through thermite
 apple-tv serve; every other control stays guarded in conf/), and HTTP and HTTPS
 listen on every interface, so phones on the LAN reach it on port 13616 of
-this host. Anyone on the LAN can then do what the runtime&#x27;s implicit &#x27;user&#x27; role
+this host. Only services/upnp.cfg is left out: with no gateway callback relay
+here, Sonos events come to that port directly (oh_render.unrelayed). Anyone
+on the LAN can then do what the runtime&#x27;s implicit &#x27;user&#x27; role
 allows, choosing sources and driving those devices included; administration
 still needs the admin login. `reload` keeps the mode the sandbox was started in;
 stop and start it to change modes. It refuses to start while production runtime runs
@@ -664,8 +666,9 @@ options:
   --fresh            empty userdata first (only if it is below var/)
   --timeout SECONDS  seconds to wait for REST (default: 300)
   --no-token         skip creating the admin user and API token
-  --live             conf/ unchanged, so the matrices and the devices under control are
-                     driven for real, and reachable from the LAN
+  --live             conf/ unchanged but for the callback relay&#x27;s port, so the matrices
+                     and the devices under control are driven for real, and reachable
+                     from the LAN
 
 switches every verb takes:
   -q, --quiet        print only errors

@@ -1,15 +1,21 @@
 """Native commissioning preserves authority and admits only proven callback paths."""
+import contextlib
 import copy
+import io
 import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from urllib.parse import urlsplit
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
+import oh_ports
+import oh_render
 from oh_access import native_boundary as boundary
+from oh_cli import generate, sandbox as sandbox_cli
 
 # Explicitly generated locally administered fixture identity, never a device MAC.
 DEVICE = {"ip": "192.0.2.20", "mac": bytes((2, 0, 0, 0, 0, 20)).hex(":"), "sonos_udn": "RINCON_02000000001401400"}
@@ -38,7 +44,8 @@ def callback_config(port=13615):
 class Native:
     def __init__(self):
         self.configs = {boundary.AUTH_CONFIG: {"implicitUserRole": True, "trustedNetworks": "192.0.2.0/24", "allowBasicAuth": False, "cacheExpiration": 321},
-                        boundary.UPNP_CONFIG: {"interfaces": "eth1", "streamListenPort": "13602"}}
+                        # As openHAB starts with conf/services/upnp.cfg (oh_render).
+                        boundary.UPNP_CONFIG: {"interfaces": "eth1", "streamListenPort": "13602", "httpProxyPort": "13615"}}
         self.calls = []
         self.anonymous = 401
         self.authenticated = 200
@@ -75,15 +82,7 @@ class Native:
         if method == "PUT":
             previous = copy.deepcopy(self.configs[path])
             if not self.ignore_put:
-                if path == boundary.UPNP_CONFIG:
-                    # This PID has no config description: Gson's untyped JSON
-                    # numbers reach OSGi through Double.toString(), which leaves
-                    # a decimal point that jUPnP's Integer.parseInt rejects.
-                    values = json.loads(options["body"], parse_int=float, parse_float=float)
-                    self.configs[path] = {key: str(value) if type(value) is float else value
-                                          for key, value in values.items()}
-                else:
-                    self.configs[path] = json.loads(options["body"])
+                self.configs[path] = json.loads(options["body"])
             if self.alter_unrelated:
                 self.configs[path]["cacheExpiration"] = 999
             self.wait = self.fail_after_put
@@ -239,7 +238,7 @@ class Commissioning(unittest.TestCase):
                 self.assertTrue(all("Authorization" in call[2]["headers"] for call in items[:2]))
                 self.assertNotIn("Authorization", items[-1][2]["headers"])
                 puts = [url for method, url, _ in self.native.calls if method == "PUT"]
-                self.assertEqual(puts, [ORIGIN + boundary.AUTH_CONFIG, ORIGIN + boundary.UPNP_CONFIG])
+                self.assertEqual(puts, [ORIGIN + boundary.AUTH_CONFIG])
                 self.assertGreaterEqual(self.native.now, 1)
                 self.assertLess(self.native.now, 3)
 
@@ -298,48 +297,50 @@ class Commissioning(unittest.TestCase):
             self.assertEqual(self.token.read_bytes(), b"private-test-token\n")
             self.assertEqual(sum("/rest/items?" in call[1] for call in self.native.calls), 1)
 
-    def test_sonos_configures_advertised_callback_port_preserving_settings(self):
+    def test_sonos_reads_back_the_rendered_callback_port_and_never_writes_jupnp(self):
+        before = copy.deepcopy(self.native.configs[boundary.UPNP_CONFIG])
         result = self.configure(house={"devices": [DEVICE]})
         self.assertEqual(result["callbacks"], callback_config())
-        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG], {"interfaces": "eth1", "streamListenPort": "13602", "httpProxyPort": "13615"})
+        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG], before)
+        self.assertFalse(any(method == "PUT" and url.endswith(boundary.UPNP_CONFIG) for method, url, _ in self.native.calls))
 
-    def test_jupnp_decimal_port_is_repaired_without_changing_other_settings_and_repeat_is_idempotent(self):
-        original = {"asyncThreadPoolSize": "20", "multicastResponsePort": "0", "threadPoolSize": "20",
-                    "felix.fileinstall.filename": "file:/fictional/runtime/etc/org.jupnp.cfg"}
-        self.native.configs[boundary.UPNP_CONFIG] = {**original, "httpProxyPort": "13615.0"}
-        self.configure(existing_callbacks=callback_config())
-        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG], {**original, "httpProxyPort": "13615"})
-        puts = [options for method, url, options in self.native.calls if method == "PUT" and url.endswith(boundary.UPNP_CONFIG)]
-        self.assertEqual(len(puts), 1)
-        self.assertEqual(json.loads(puts[0]["body"]), {**original, "httpProxyPort": "13615"})
-        self.native.calls.clear()
-        self.configure(existing_callbacks=callback_config())
-        self.assertFalse(any(method == "PUT" for method, _, _ in self.native.calls))
-
-    def test_jupnp_decimal_or_non_string_readback_never_counts_as_configured(self):
-        for value in ("13615.0", 13615, 13615.0, True):
+    def test_jupnp_port_other_than_the_rendered_string_fails_at_once_without_a_write(self):
+        # A decimal, a JSON number or another port: openHAB did not start with
+        # conf/services/upnp.cfg, and a runtime write would restart jUPnP.
+        for value in ("13615.0", 13615, 13615.0, True, "13616", None):
             with self.subTest(value=value):
                 self.native = Native()
-                self.native.configs[boundary.AUTH_CONFIG] = {"implicitUserRole": False, "trustedNetworks": ""}
-                self.native.configs[boundary.UPNP_CONFIG]["httpProxyPort"] = value
-                self.native.ignore_put = True
-                mismatch = "value" if type(value) is str else "type"
-                with self.assertRaisesRegex(boundary.BoundaryError, r"jUPnP configuration readback \(httpProxyPort " + mismatch + r" mismatch\)"):
+                if value is None:
+                    del self.native.configs[boundary.UPNP_CONFIG]["httpProxyPort"]
+                else:
+                    self.native.configs[boundary.UPNP_CONFIG]["httpProxyPort"] = value
+                with self.assertRaisesRegex(boundary.BoundaryError, r"has not applied conf/services/upnp\.cfg") as raised:
                     self.configure(existing_callbacks=callback_config())
-                self.assertEqual(sum(call[0] == "PUT" for call in self.native.calls), 1)
+                self.assertNotIn("13615", str(raised.exception))
+                self.assertLess(self.native.now, 1, "a missing setting must fail without polling")
+                self.assertFalse(any(method == "PUT" and url.endswith(boundary.UPNP_CONFIG)
+                                     for method, url, _ in self.native.calls))
+
+    def test_without_callbacks_jupnp_is_neither_read_nor_written(self):
+        del self.native.configs[boundary.UPNP_CONFIG]["httpProxyPort"]
+        self.assertIsNone(self.configure()["callbacks"])
+        self.assertFalse(any(url.endswith(boundary.UPNP_CONFIG) for _, url, _ in self.native.calls))
 
     def test_adoption_preserves_exact_routes_listener_and_relocated_port(self):
         config = callback_config(14614)
+        self.native.configs[boundary.UPNP_CONFIG]["httpProxyPort"] = "14614"
         result = self.configure(house={"devices": [DEVICE]}, existing_callbacks=config)
         self.assertEqual(result["callbacks"], config)
         self.assertFalse(any(DEVICE["ip"] in call[1] for call in self.native.calls))
-        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG]["httpProxyPort"], "14614")
+        self.native = Native()
+        with self.assertRaisesRegex(boundary.BoundaryError, "callback relay's port"):
+            self.configure(house={"devices": [DEVICE]}, existing_callbacks=config)
 
     def test_wrong_existing_namespace_is_not_silently_replaced(self):
         self.native.configs[boundary.UPNP_CONFIG]["callbackURI"] = "http://localhost/other"
         with self.assertRaisesRegex(boundary.BoundaryError, "namespace"):
             self.configure(existing_callbacks=callback_config())
-        self.assertNotIn("httpProxyPort", self.native.configs[boundary.UPNP_CONFIG])
+        self.assertFalse(any(method == "PUT" and url.endswith(boundary.UPNP_CONFIG) for method, url, _ in self.native.calls))
 
     def test_native_credentials_never_go_to_nonloopback_url(self):
         with self.assertRaises(boundary.BoundaryError):
@@ -355,6 +356,77 @@ def nft_snapshot():
             {"match": {"op": "!=", "left": {"meta": {"key": "iifname"}}, "right": "lo"}},
             {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": {"set": [13602, 13603, 13604, 13605, 13624]}}},
             {"reject": {"type": "tcp reset"}}]}}]}
+
+
+def house(controls, udn=True):
+    """A house whose one device is DEVICE, listing `controls`."""
+    device = {"id": "example_arc", "room": "example_lounge", "kind": "soundbar", "make": "Sonos", "model": "Arc",
+              **DEVICE, "controls": controls}
+    if not udn:
+        del device["sonos_udn"]
+    return {"version": 1, "rooms": {"example_lounge": {"label": "Example Lounge", "tag": "Room"}}, "devices": [device]}
+
+
+class RenderedProxyPort(unittest.TestCase):
+    """openHAB starts with the relay's port (conf/services/upnp.cfg) exactly
+    when commissioning maps callback routes; nothing changes it at runtime."""
+
+    def test_rendered_exactly_when_discovery_maps_callback_routes(self):
+        cases = {"observed": (house({"observe": ["sonos"]}), True),
+                 "controlled": (house({"observe": ["sonos"], "control": ["sonos"]}), True),
+                 "identity only": (house({"observe": ["network_ping"]}), True),
+                 "no sonos": (house({"observe": ["network_ping"]}, udn=False), False)}
+        for name, (data, relayed) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(oh_render.validate(data), [])
+                files = oh_render.render(data)
+                routes = boundary.discover_callbacks(data, ORIGIN, "192.0.2.10", request=Native().request)
+                self.assertEqual(routes is not None, relayed)
+                self.assertEqual(oh_render.UPNP_CFG in files, relayed)
+
+    def test_port_is_the_effective_allocation_as_a_decimal_string(self):
+        data = house({"observe": ["sonos"]})
+        line = oh_render.build(data, host={"gateway": {"port": 14601}}).render()[oh_render.UPNP_CFG].splitlines()[-1]
+        # ConfigDispatcher passes the text after "=" on as a String, which
+        # jUPnP's Integer.parseInt takes; "13615.0" would be rejected.
+        self.assertEqual(line, f"org.jupnp:httpProxyPort={oh_ports.CALLBACK_PORT}")
+        host = {"http_port": 14602}
+        moved = {**oh_ports.effective(host), "callbacks": 14615}
+        with mock.patch.object(oh_ports, "effective", return_value=moved) as effective:
+            files = oh_render.build(data, host=host).render()
+        effective.assert_called_with(host)
+        self.assertIn("org.jupnp:httpProxyPort=14615\n", files[oh_render.UPNP_CFG])
+        with self.assertRaisesRegex(ValueError, "collides"):
+            oh_render.build(data, host={"guest_http": {"port": oh_ports.CALLBACK_PORT}})
+
+    def test_generate_allocates_from_the_host_file(self):
+        scratch = AREA / ".scratch/upnp-proxy-generate"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            (root / "instance").mkdir()
+            (root / "versions.json").write_text((AREA / "versions.json").read_text())
+            (root / "instance/host.yaml").write_text((AREA / "instance/host.yaml").read_text())
+            (root / "instance/devices.yaml").write_text(json.dumps(house({"observe": ["sonos"]})))
+            output = root / "output"
+            with mock.patch.object(generate, "AREA", root), mock.patch.object(oh_render, "build", wraps=oh_render.build) as build, \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                generate.main(["--house", str(root / "instance/devices.yaml"), "--conf", str(output / "conf"),
+                               "--root", str(output)])
+            self.assertEqual(build.call_args.kwargs["host"], json.loads((AREA / "instance/host.yaml").read_text()))
+            self.assertEqual((output / "conf" / oh_render.UPNP_CFG).read_text().splitlines()[-1],
+                             f"org.jupnp:httpProxyPort={oh_ports.CALLBACK_PORT}")
+
+    def test_runtimes_without_the_relay_never_get_its_port(self):
+        files = oh_render.render(house({"observe": ["sonos"]}))
+        # The boot check and the read-only sandbox: jUPnP has no network.
+        for paths in (None, oh_render.SESSION_FILES):
+            self.assertEqual(oh_render.unaddressed(oh_render.read_only(files), paths)[oh_render.UPNP_CFG], oh_render.NO_UPNP)
+        # The live sandbox: Sonos events come to its own port.
+        self.assertEqual(oh_render.unrelayed(files), {path: text for path, text in files.items() if path != oh_render.UPNP_CFG})
+        with mock.patch.object(sandbox_cli.lib, "mirror_conf") as mirror:
+            sandbox_cli.mirror(None, True)
+        self.assertIs(mirror.call_args.args[2], oh_render.unrelayed)
 
 
 class NativeFilter(unittest.TestCase):

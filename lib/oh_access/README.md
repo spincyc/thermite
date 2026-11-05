@@ -253,6 +253,11 @@ The native runtime retains subscription SID/sequence authority.
 Before activation, verify the actual native SUBSCRIBE callback address,
 port and path, then a notification that changes the native Item. jUPnP's
 `httpProxyPort` changes the advertised port; it does not create this listener.
+openHAB gets it as it starts, from `conf/services/upnp.cfg`, which `thermite
+generate` writes for a house with Sonos devices (the devices commissioning
+maps). Commissioning only reads it back and fails if openHAB does not use the
+relay's port: changed while openHAB runs, jUPnP restarts and openHAB answers
+every NOTIFY with HTTP 501 until it restarts.
 An HTTP 200 alone does not prove a state update or callback preservation.
 
 ## Optional Guest listener

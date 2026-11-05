@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     from oh_features import remote_system
     import oh_access_mode
     built = render.build(data, system_metadata=remote_system.manifest(host, versions["openhab"]["version"],
-                                                                     mode=oh_access_mode.mode(data)))
+                                                                     mode=oh_access_mode.mode(data)), host=host)
     files = built.render()
     units = deploy.render_units(versions, host)
     root = arguments.root

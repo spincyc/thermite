@@ -62,11 +62,18 @@ def udn(mac: str) -> str:
     return "RINCON_" + mac.replace(":", "").upper() + "01400"
 
 
+def relayed(device: dict) -> bool:
+    """Whether the gateway relays this device's UPnP events: it has a UDN or
+    lists sonos in any phase. oh_access.native_boundary.discover_callbacks
+    maps these devices' event paths; oh_render points jUPnP at the relay
+    when the house has any."""
+    return bool(device.get("sonos_udn")) or any(NAME in (names or []) for names in (device.get("controls") or {}).values())
+
+
 def validate(device: dict) -> list[str]:
     where = device.get("id") or "a device"
     problems = []
-    used = any(NAME in (names or []) for names in (device.get("controls") or {}).values())
-    if device.get("sonos_udn") or used:
+    if relayed(device):
         expected = udn(device.get("mac") or "")
         if device.get("sonos_udn") != expected:
             problems.append(f"{where}: sonos_udn should be {expected} for its mac")

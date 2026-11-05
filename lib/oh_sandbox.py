@@ -703,7 +703,7 @@ def write_secret(path: Path, value: str) -> None:
 LOOPBACK = "127.0.0.1"
 #: A live sandbox listens on every interface, so phones on the LAN reach it.
 EVERY_INTERFACE = "0.0.0.0"
-#: The sandbox's modes: a read-only copy of conf/, or conf/ unchanged.
+#: The sandbox's modes: a read-only copy of conf/, or conf/ unchanged (oh_render.unrelayed).
 READ_ONLY = "read-only"
 LIVE = "live"
 

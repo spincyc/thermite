@@ -65,6 +65,9 @@ For Sonos, the workflow derives exact callback routes from committed identities
 and live device descriptions; existing verified routes and their LAN address
 are retained, on the allocation's callback port and native upstream.
 The relay accepts only the verified NOTIFY traffic, never general native API access.
+For a house with Sonos devices, generated `conf/services/upnp.cfg` sets
+`org.jupnp:httpProxyPort=13615`, so openHAB starts advertising the relay's
+port; the boot check and sandbox, which have no relay, replace or drop it.
 
 The installer and upgrade configure the stopped native console in
 `userdata/etc/org.apache.karaf.shell.cfg`, preserving other settings and fixing

@@ -27,6 +27,7 @@ import xml.etree.ElementTree as ET
 
 import oh_http
 import oh_ports
+from oh_integrations import sonos
 from . import AccessError
 from .callbacks import CallbackRelay, SERVICES, XML_DECLARATION
 from .files import read_private
@@ -267,8 +268,7 @@ def validate_callbacks(config, runtime_url):
 
 def discover_callbacks(house_data, runtime_url, lan_address, *, callback_port=oh_ports.CALLBACK_PORT, request=request):
     """Read only committed Sonos addresses; never follow descriptor URLs or SSDP."""
-    devices = [device for device in house_data.get("devices", [])
-               if device.get("sonos_udn") or any("sonos" in (names or []) for names in (device.get("controls") or {}).values())]
+    devices = [device for device in house_data.get("devices", []) if sonos.relayed(device)]
     if not devices:
         return None
     if len(devices) > 64:
@@ -294,7 +294,8 @@ def relocated_callbacks(config, runtime_url, port):
 
     Its verified routes and LAN address are kept; the listener and upstream
     are the allocation's, so a changed allocation moves them, as it moves the
-    HTTPS port. The native jUPnP proxy port follows in configure().
+    HTTPS port. openHAB's jUPnP proxy port follows from the same allocation
+    in conf/services/upnp.cfg (oh_render.build); configure() checks it.
     """
     runtime_url = _runtime(runtime_url)
     address = config["bind_host"]
@@ -441,6 +442,9 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
               record=None):
     """Preserve settings, configure the boundary, and prove authenticated access.
 
+    jUPnP's callback proxy port is read back, never written: openHAB applies
+    it from conf/services/upnp.cfg as it starts (oh_render.build).
+
     The callback config is returned privately to the lifecycle caller. This
     function neither writes it nor logs native bodies, tokens, paths or peers.
     PUT is never retried after an unknown outcome; a rerun reads actual state.
@@ -571,10 +575,14 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
         upnp = read(UPNP_CONFIG)
         if upnp.get("callbackURI", CALLBACK_URI) != CALLBACK_URI:
             raise BoundaryError("Existing jUPnP callback namespace differs from the verified relay paths")
-        # jUPnP has no openHAB config description to normalize JSON numbers.
-        # The generic REST/OSGi path can persist an integer as "13615.0",
-        # which jUPnP's Integer.parseInt rejects. Preserve a decimal string.
-        update(UPNP_CONFIG, {"httpProxyPort": str(callbacks["port"])})
+        # Changing jUPnP's configuration restarts it, and openHAB then answers
+        # every NOTIFY 501 until it restarts. openHAB starts with the port
+        # instead: conf/services/upnp.cfg (oh_render) sets the decimal string
+        # jUPnP's Integer.parseInt takes, so only a readback belongs here.
+        if upnp.get("httpProxyPort") != str(callbacks["port"]):
+            raise BoundaryError("jUPnP does not advertise the callback relay's port: openHAB has not applied "
+                                "conf/services/upnp.cfg; deploy the generated configuration, restart openHAB and "
+                                "rerun the deployment")
     for authenticated in (True, False):
         stage("authenticated Item access" if authenticated else "anonymous Item access")
         failure = ("Internal native Item access did not pass commissioning" if authenticated else

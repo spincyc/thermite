@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Sonos events keep reaching openHAB after an install or upgrade. jUPnP's
+  callback proxy port, the relay's 13615, is now generated configuration:
+  `conf/services/upnp.cfg` sets it for a house with Sonos devices, so
+  openHAB starts with it. Commissioning set it through REST while openHAB
+  ran, which restarted jUPnP, and openHAB then answered every forwarded
+  NOTIFY with HTTP 501 until it was restarted. Commissioning now only reads
+  the port back and fails, naming the file, if openHAB does not use it.
+  The live sandbox, which has no relay, leaves the file out.
 - The plain-HTTP Guest port is 13600, the HTTPS application 13601, and
   every other listener follows them, one port up from before: native
   HTTP/HTTPS 13602/13603, Grafana 13611, the Sonos callback relay 13615

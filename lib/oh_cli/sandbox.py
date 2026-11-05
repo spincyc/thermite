@@ -41,7 +41,9 @@ is unchanged, so its Source selectors switch the real matrices and its
 remote drives the devices under control (the Apple TVs through thermite
 apple-tv serve; every other control stays guarded in conf/), and HTTP and HTTPS
 listen on every interface, so phones on the LAN reach it on port {sandbox_http} of
-this host. Anyone on the LAN can then do what the runtime's implicit 'user' role
+this host. Only services/upnp.cfg is left out: with no gateway callback relay
+here, Sonos events come to that port directly (oh_render.unrelayed). Anyone
+on the LAN can then do what the runtime's implicit 'user' role
 allows, choosing sources and driving those devices included; administration
 still needs the admin login. `reload` keeps the mode the sandbox was started in;
 stop and start it to change modes. It refuses to start while production runtime runs
@@ -115,7 +117,7 @@ SANDBOX_CONF = lib.VAR / "sandbox" / "conf"
 
 
 def mirror(source: Path | None, live: bool) -> Path:
-    return lib.mirror_conf(source or render.CONF, SANDBOX_CONF, dict if live else read_only)
+    return lib.mirror_conf(source or render.CONF, SANDBOX_CONF, render.unrelayed if live else read_only)
 
 
 def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
@@ -284,8 +286,8 @@ def main(argv=None) -> int:
     oh_cli.add_timeout(p, 300, "REST")
     p.add_argument("--no-token", action="store_true", help="skip creating the admin user and API token")
     p.add_argument("--live", action="store_true",
-                   help="conf/ unchanged, so the matrices and the devices under control are driven for real, "
-                        "and reachable from the LAN")
+                   help="conf/ unchanged but for the callback relay's port, so the matrices and the devices "
+                        "under control are driven for real, and reachable from the LAN")
     p.set_defaults(func=cmd_start)
 
     p = oh_cli.action(sub, "reload", "refresh var/sandbox/conf from conf/, in the mode the sandbox started in",

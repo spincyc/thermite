@@ -371,9 +371,12 @@ device has delivered an event: verify device updates after commissioning.
 Household clients use the gateway URL; the native loopback service remains
 available to the gateway and monitoring.
 
-Commissioning writes jUPnP's callback port as an integer string, as required by
-the pinned native runtime. An interrupted upgrade that stored a decimal string
-repairs it when rerun; no manual configuration edit is needed. If commissioning
+jUPnP advertises the callback relay's port, which `thermite generate` writes
+to `conf/services/upnp.cfg` as an integer string, as the pinned native runtime
+requires. openHAB applies it as it starts; commissioning only checks that
+openHAB uses it, because changing it while openHAB runs leaves Sonos events
+unanswered (HTTP 501) until openHAB restarts. If the check fails, deploy the
+generated configuration, restart openHAB and rerun. If commissioning
 times out, its error identifies the operation waiting for readback without
 printing private native settings or credentials.
 
