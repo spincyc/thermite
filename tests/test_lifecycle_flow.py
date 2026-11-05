@@ -365,7 +365,7 @@ class UnitFailures(unittest.TestCase):
 
 
 class Compensation(unittest.TestCase):
-    """L8: a failure after stopping services starts them again."""
+    """L8: a failure after stopping Thermite starts thermite.target again."""
 
     class Stage(Step):
         def __init__(self, title, *actions):
@@ -394,51 +394,50 @@ class Compensation(unittest.TestCase):
                 code = runner.run(stages, system, AREA, root_confirmed=True)
         return code, system
 
-    def test_failure_before_restart_starts_what_the_run_stopped(self):
-        stop = Command(("systemctl", "stop", "thermite-openhab.service", "thermite-grafana.service"), root=True,
-                       stops=("thermite-openhab.service", "thermite-grafana.service"))
+    STOP = Command(("systemctl", "stop", "thermite.target", "thermite.slice"), root=True, stops=("thermite.target",))
+
+    def test_failure_before_restart_starts_the_whole_target(self):
         start = Command(("systemctl", "start", "thermite-openhab.service"), root=True, starts=("thermite-openhab.service",))
         fail = Command(("fixture-fails",), root=True)
-        code, system = self.run_steps(self.Stage("Backup", stop), self.Stage("Restart", start), self.Stage("Later", fail))
+        code, system = self.run_steps(self.Stage("Stop", self.STOP), self.Stage("Services", start), self.Stage("Later", fail))
         self.assertEqual(code, 1)
-        self.assertEqual(system.run.call_args.args[0], ("sudo", "systemctl", "start", "thermite-grafana.service"))
+        self.assertEqual(system.run.call_args.args[0], ("sudo", "systemctl", "start", "thermite.target"),
+                         "the target starts every member, not only those this run started")
         said = " ".join(call.args[0] for call in system.say.call_args_list)
-        self.assertIn("starting them now", said)
+        self.assertIn("starting it now", said)
 
-    def test_success_or_restarted_units_need_no_compensation(self):
-        stop = Command(("systemctl", "stop", "thermite-openhab.service"), root=True, stops=("thermite-openhab.service",))
-        start = Command(("systemctl", "start", "thermite-openhab.service"), root=True, starts=("thermite-openhab.service",))
-        code, system = self.run_steps(self.Stage("Backup", stop), self.Stage("Restart", start))
+    def test_success_or_a_started_target_needs_no_compensation(self):
+        start = Command(("systemctl", "enable", "--now", "thermite.target"), root=True, starts=("thermite.target",))
+        code, system = self.run_steps(self.Stage("Stop", self.STOP), self.Stage("Target", start))
         self.assertEqual(code, 0)
         self.assertEqual(system.run.call_count, 2)
+        target = steps.Target(context()).actions(mock.Mock(spec=System))
+        self.assertEqual([action.starts for action in target], [("thermite.target",)])
 
     def test_interruption_names_the_command_without_running_it(self):
-        stop = Command(("systemctl", "stop", "thermite-openhab.service"), root=True, stops=("thermite-openhab.service",))
-
         def interrupted(system):
             raise KeyboardInterrupt
 
-        _, system = self.run_steps(self.Stage("Backup", stop), self.Stage("Later", Task("fixture", interrupted)), interrupt=True)
+        _, system = self.run_steps(self.Stage("Stop", self.STOP), self.Stage("Later", Task("fixture", interrupted)),
+                                   interrupt=True)
         self.assertEqual(system.run.call_count, 1)
         said = " ".join(call.args[0] for call in system.say.call_args_list)
-        self.assertIn("sudo systemctl start thermite-openhab.service", said)
+        self.assertIn("sudo systemctl start thermite.target", said)
 
-    def test_disruptive_steps_mark_what_they_stop(self):
+    def test_only_the_stop_before_changes_stops_anything(self):
         system = mock.Mock(spec=System)
         system.unit.return_value = Unit("active", "enabled", 0, 1)
-        system.stat.return_value = None
-        with mock.patch.object(ownership, "inspect", return_value=ownership.Owned(
-                entries=(("thermite-openhab.service", "thermite-openhab.service", Path("/fictional")),
-                         ("thermite-grafana.service", "thermite-grafana.service", Path("/fictional")),
-                         ("thermite-atv-restart.service", "thermite-atv-restart.service", Path("/fictional"))))), \
-                mock.patch.object(deploy, "prepare_openhab_argv", return_value=("fixture-prepare",)):
+        system.stat.return_value = SimpleNamespace(uid=9001, gid=9001, mode=0o750, is_dir=True)
+        with self.owned_everything(), mock.patch.object(deploy, "prepare_openhab_argv", return_value=("fixture-prepare",)):
             backup = steps.Backup(context(), "fixture", "5.2.3")
             backup.available = lambda system: Path("/fictional/backup.tar.gz")
-            stop = backup.actions(system)[0]
-            preparation = steps.NativePreparation(context()).actions(system)
-        self.assertEqual(stop.stops, ("thermite-openhab.service",))
-        self.assertNotIn("thermite-atv-restart.service", preparation[0].stops)
-        self.assertIn("thermite-grafana.service", preparation[0].stops)
+            for receipt in (True, False):
+                with mock.patch.object(steps, "service_receipt", return_value=receipt):
+                    for step in (backup, steps.NativePreparation(context())):
+                        with self.subTest(step=type(step).__name__, receipt=receipt):
+                            self.assertFalse([action for action in step.actions(system) if action.argv[0] == "systemctl"],
+                                             "Quiesce stopped all of Thermite before this step")
+                            self.assertFalse(any(action.stops or action.starts for action in step.actions(system)))
 
     def owned_everything(self):
         names = ("thermite-openhab.service", "thermite-atv.service", "thermite-grafana.service",
@@ -446,7 +445,7 @@ class Compensation(unittest.TestCase):
         return mock.patch.object(ownership, "inspect", return_value=ownership.Owned(
             entries=tuple((name, name, Path("/fictional")) for name in names)))
 
-    def test_an_openhab_only_change_stops_only_openhab_and_repairs_only_its_trees(self):
+    def test_an_openhab_only_change_repairs_only_its_trees(self):
         system = mock.Mock(spec=System)
         system.unit.return_value = Unit("active", "enabled", 0, 1)
         with self.owned_everything(), mock.patch.object(steps, "service_receipt", return_value=True), \
@@ -454,21 +453,17 @@ class Compensation(unittest.TestCase):
                 mock.patch.object(steps.Account, "missing", return_value=[]), \
                 mock.patch.object(deploy, "prepare_openhab_argv", return_value=("fixture-prepare",)):
             preparation = steps.NativePreparation(context()).actions(system)
-        stops = [action for action in preparation if action.argv[:2] == ("systemctl", "stop")]
-        self.assertEqual([action.argv for action in stops], [("systemctl", "stop", "thermite-openhab.service")],
-                         "the gateway (via thermite.target), the helper and monitoring keep running")
         repairs = [action.argv for action in preparation if action.argv[1:2] and action.argv[1].endswith("lib/oh_service.py")]
         self.assertEqual([argv[-1] for argv in repairs], ["--runtime", "--check-pairing-logging", "--runtime"])
         self.assertFalse(any("--receipt" in argv for argv in repairs), "only a full repair records the receipt")
 
-    def test_custody_repair_still_stops_everything_and_records_the_receipt(self):
+    def test_custody_repair_records_the_receipt(self):
         system = mock.Mock(spec=System)
         system.unit.return_value = Unit("active", "enabled", 0, 1)
         with self.owned_everything(), mock.patch.object(steps, "service_receipt", return_value=False), \
                 mock.patch.object(deploy, "prepare_openhab_argv", return_value=("fixture-prepare",)):
             preparation = steps.NativePreparation(context()).actions(system)
-        stopped = {name for action in preparation if action.argv[:2] == ("systemctl", "stop") for name in action.argv[2:]}
-        self.assertLessEqual({"thermite.target", "thermite-grafana.service", "thermite-atv.service"}, stopped)
+        self.assertEqual(preparation[0].argv[-4:], ("--uid", "9001", "--gid", "9001"), "the full repair")
         self.assertEqual(preparation[-1].argv[-1], "--receipt")
 
     def test_a_receipt_of_the_previous_policy_reruns_the_full_preparation(self):
@@ -505,18 +500,6 @@ class Compensation(unittest.TestCase):
                             "a changed Apple TV helper unit restarts the helper, not openHAB")
             backup = steps.Backup(context(), "fixture", "5.2.3")
             self.assertTrue(backup.check(system).done)
-
-    def test_grafana_starts_again_right_after_the_backup(self):
-        system = mock.Mock(spec=System)
-        system.unit.return_value = Unit("active", "enabled", 0, 1)
-        system.stat.return_value = SimpleNamespace(uid=9001, gid=9001, mode=0o750)
-        with self.owned_everything():
-            backup = steps.Backup(context(), "fixture", "5.2.3")
-            backup.available = lambda system: Path("/fictional/backup.tar.gz")
-            actions = backup.actions(system)
-        self.assertEqual(actions[0].argv, ("systemctl", "stop", "thermite-openhab.service", "thermite-grafana.service"))
-        self.assertEqual(actions[-1].argv, ("systemctl", "start", "thermite-grafana.service"))
-        self.assertEqual(actions[-1].starts, ("thermite-grafana.service",))
 
 
 class Health(unittest.TestCase):

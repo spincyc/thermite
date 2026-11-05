@@ -146,15 +146,23 @@ class UnifiedInstall(unittest.TestCase):
             self.assertLess(types.index(steps.Target), types.index(steps.NativeReady))
             self.assertEqual(types.count(steps.NativeReady), 1, "one authoritative wait owns the deadline and recovery budget")
             self.assertEqual(types.index(steps.NativeReady) + 1, types.index(steps.MetricsAnswer))
-            self.assertEqual(types.index(steps.MetricsAnswer) + 1, types.index(steps.ListenerRecord))
-            self.assertEqual(types.index(steps.ListenerRecord) + 1, types.index(steps.Verify))
-            self.assertEqual(types.index(steps.ListenerMove) + 1, types.index(steps.Units))
+            self.assertEqual(types.index(steps.MetricsAnswer) + 1, types.index(steps.Verify))
+            # Everything that needs no stop comes first; everything that
+            # changes what Thermite runs on, or starts it, comes after.
+            quiesce = types.index(steps.Quiesce)
+            self.assertEqual(types.count(steps.Quiesce), 1)
+            self.assertEqual(types.index(steps.BootTest) + 1, quiesce)
+            for changing in (steps.Backup, steps.Account, steps.StateDirectories, steps.MetricsDirectories,
+                             steps.Units, steps.NativePreparation, NativeIngress, steps.Deploy, native, Gateway,
+                             steps.Target):
+                if changing in types:
+                    self.assertLess(quiesce, types.index(changing), changing)
             self.assertTrue(sequence[types.index(Gateway)].stop_on_failure)
         for sequence in (steps.install(context), steps.upgrade(context, plan, "fixture"), steps.clean_install(context)):
             types = [type(step) for step in sequence]
             probe = types.index(NativeIngressPrerequisites)
             self.assertLess(types.index(steps.Packages), probe)
-            for disruptive in (steps.BootTest, steps.Backup, steps.Units, steps.NativePreparation,
+            for disruptive in (steps.BootTest, steps.Quiesce, steps.Backup, steps.Units, steps.NativePreparation,
                                steps.Stop, steps.RemoveUnits, steps.Purge, steps.OperatorCredentialsReset):
                 if disruptive in types:
                     self.assertLess(probe, types.index(disruptive))

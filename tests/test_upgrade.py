@@ -20,7 +20,7 @@ from oh_cli import upgrade as upgrade_cli  # noqa: E402
 from oh_install import ownership, runner, steps  # noqa: E402
 from oh_install.model import Check, Task  # noqa: E402
 from oh_install.model import Command  # noqa: E402
-from oh_install.system import Stat, System, Unit  # noqa: E402
+from oh_install.system import Stat, System, Unit, UnitOrigin  # noqa: E402
 
 
 class Upgrade(unittest.TestCase):
@@ -55,7 +55,7 @@ class Upgrade(unittest.TestCase):
             scope.enter_context(patch.object(steps.Units, "stale", return_value=()))
             scope.enter_context(patch.object(steps.Token, "saved", return_value=True))
             scope.enter_context(patch.object(steps.oh_apparmor, "enabled", return_value=False))
-            for kind in (steps.ListenerMove, steps.Target, steps.Packages, steps.NodeConfinement,
+            for kind in (steps.Target, steps.Packages, steps.NodeConfinement,
                          steps.Preconditions, steps.Account, steps.NativePreparation):
                 scope.enter_context(patch.object(kind, "check", return_value=Check(True, "fixture current")))
             scope.enter_context(patch.object(deploy, "unit_version", return_value="5.2.3"))
@@ -148,34 +148,70 @@ class Upgrade(unittest.TestCase):
         self.runtime_time = 40
         self.assertTrue(self.plan().current)
 
-    def test_moved_listeners_stop_every_service_before_units_and_are_recorded_after_readiness(self):
-        move, record = steps.ListenerMove(self.context), steps.ListenerRecord(self.context)
-        owned = Mock(units=lambda roles: list(roles))
-        with patch.object(ownership, "inspect", return_value=owned):
-            # Nothing records the ports the running services listen on.
-            self.assertFalse(move.check(self.system).done)
-            [stop] = move.actions(self.system)
-            with self.planning(), patch.object(steps.ListenerMove, "check", return_value=Check(False, "fixture")):
-                plan = steps.plan(self.context, self.system)
-        self.assertEqual(stop.argv, ("systemctl", "stop", *oh_units.CONTAINED, *oh_units.ACCESS_UNITS))
-        self.assertEqual(stop.stops, stop.argv[2:])
-        self.assertIn("listener ports", plan.migration)
-        self.assertFalse(plan.current)
-        saved = {}
-        self.system.write_private.side_effect = lambda path, text: saved.update({path: text})
-        self.assertFalse(record.check(self.system).done)
-        self.assertEqual(record.save(self.system), 0)
-        self.system.read_bytes.side_effect = lambda path: saved.get(path, "").encode()
-        with patch.object(ownership, "inspect", return_value=owned):
-            self.assertTrue(move.check(self.system).done)
-            self.assertTrue(record.check(self.system).done)
-            # The next allocation moves them again; with nothing running there is nothing to stop.
-            self.context.host["gateway"] = {"port": 16301}
-            self.assertFalse(move.check(self.system).done)
-            self.system.unit.side_effect = lambda name: Unit("inactive", "enabled", None)
-            self.assertTrue(move.check(self.system).done)
-            self.assertEqual(move.actions(self.system), [])
-        self.assertFalse(record.check(self.system).done)
+    @contextmanager
+    def quiescing(self, *, change=None, running=True):
+        """A host where Thermite runs (or not) and this run changes `change` (or nothing)."""
+        changes = {"units": patch.object(steps.Units, "stale", return_value=[deploy.QUADLET] if change == "units" else []),
+                   "native": patch.object(steps.NativePreparation, "check",
+                                          return_value=Check(change != "native", "fixture")),
+                   "ingress": patch.object(steps.NativeIngress, "current", return_value=change != "ingress"),
+                   "services": patch.object(steps.Services, "plan", side_effect=lambda system: (
+                       [], [oh_units.ATV] if change == "services" else [], False))}
+        if change == "deploy":
+            self.record["commit"] = "d" * 40
+        self.system.unit_origins.side_effect = lambda names: {
+            name: UnitOrigin(active="active" if running else "inactive") for name in names}
+        with ExitStack() as scope:
+            for patcher in changes.values():
+                scope.enter_context(patcher)
+            yield steps.Quiesce(self.context)
+
+    def test_an_up_to_date_rerun_stops_nothing(self):
+        with self.quiescing() as quiesce:
+            found = quiesce.check(self.system)
+        self.assertTrue(found.done)
+        self.assertIn("keeps running", found.detail)
+
+    def test_any_change_stops_all_of_thermite_then_confirms_the_slice_is_empty(self):
+        for change, words in (("units", "service units"), ("native", "openHAB's native state"),
+                              ("ingress", "native-port firewall"), ("deploy", "the deployment"),
+                              ("services", "started before their units changed")):
+            with self.subTest(change=change):
+                self.setUp()
+                with self.quiescing(change=change) as quiesce:
+                    found = quiesce.check(self.system)
+                    self.assertFalse(found.done)
+                    self.assertIn(words, found.detail)
+                    stop, confirm = quiesce.actions(self.system)
+                    self.assertEqual(stop.argv, ("systemctl", "stop", oh_units.TARGET, oh_units.SLICE))
+                    self.assertTrue(stop.root)
+                    self.assertEqual(stop.stops, (oh_units.TARGET,), "a failed run starts the target as a whole")
+                    self.system.unit_origins.side_effect = lambda names: {
+                        name: UnitOrigin(active="inactive") for name in names}
+                    self.assertEqual(confirm.perform(self.system), 0)
+                    self.assertTrue(quiesce.after_actions(self.system).done)
+                self.assertIn(oh_units.SLICE, self.system.unit_origins.call_args.args[0])
+
+    def test_a_change_with_nothing_running_stops_nothing(self):
+        with self.quiescing(change="deploy", running=False) as quiesce:
+            self.assertTrue(quiesce.check(self.system).done)
+
+    def test_anything_still_in_the_slice_after_the_stop_fails_clearly(self):
+        with self.quiescing(change="units") as quiesce:
+            self.system.unit_origins.side_effect = lambda names: {
+                name: UnitOrigin(active="deactivating" if name == oh_units.SLICE else "inactive") for name in names}
+            self.assertEqual(quiesce.stopped(self.system), 1)
+            said = self.system.say.call_args.args[0]
+            self.assertIn(f"{oh_units.SLICE} (deactivating)", said)
+            self.assertIn(f"systemctl status {oh_units.SLICE}", said)
+            self.system.unit_origins.side_effect = lambda names: {
+                name: UnitOrigin(known=False, load_state="", active="unknown") for name in names}
+            self.assertEqual(quiesce.stopped(self.system), 1, "an unknown state is never proof of a stop")
+
+    def test_planning_names_no_listener_record(self):
+        plan = self.plan()
+        self.assertTrue(plan.current)
+        self.assertFalse(any("listener" in item for item in plan.migration))
 
     def test_invalid_deployment_record_requires_redeployment(self):
         self.record = []

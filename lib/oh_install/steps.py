@@ -913,65 +913,68 @@ class Units(Step):
         return 0
 
 
-class ListenerMove(Step):
-    """Stop every Thermite service before its listener ports change.
+class Quiesce(Step):
+    """Stop all of Thermite before anything it runs on changes.
 
-    A new allocation can give one service a port another holds until it
-    restarts (moved up one, the Apple TV helper takes Prometheus' old port),
-    and the steps after this one start services a few at a time. With all of
-    them stopped first, each starts on a free port. ListenerRecord saves the
-    allocation once everything runs on it; a failed run stops them again.
+    Every service then starts on the new units, state and listener ports,
+    never beside an old one that still holds a port or a file it needs. A
+    run that changes none of them stops nothing. The later steps start each
+    service again and the target last; a failed run starts the target.
     """
-    title = "Listener ports"
+    title = "Stop Thermite before changes"
+    #: What runs while Thermite does. The slice holds every service, so it
+    #: is the authority; the names say what still runs.
+    UNITS = (oh_units.TARGET, oh_units.SLICE, *oh_units.DAEMONS, *oh_units.RESTART_PATHS,
+             *oh_units.RESTART_SERVICES)
 
     def __init__(self, context: Context):
         self.context = context
 
-    @property
-    def record(self) -> Path:
-        return self.context.var / "listeners.json"
+    def changes(self, system: System) -> list[str]:
+        """What this run changes that a running service uses or holds.
 
-    def moved(self, system: System) -> bool:
-        try:
-            recorded = json.loads(system.read_bytes(self.record) or b"null")
-        except ValueError:
-            recorded = None
-        return recorded != oh_ports.effective(self.context.host)
+        Starting a stopped service, enabling a path unit or the target, an
+        explicit fresh runtime start and the gateway's own restaging (new
+        certificate, credential or repair) change nothing the others run on.
+        """
+        changes = []
+        if Units(self.context).stale(system):
+            changes.append("service units")
+        if not NativePreparation(self.context).check(system).done:
+            changes.append("openHAB's native state")
+        if not NativeIngress(self.context).current(system):
+            changes.append("the native-port firewall")
+        if not Deploy(self.context).check(system).done:
+            changes.append("the deployment")
+        if any(step.plan(system)[1] for step in (Services(self.context), MetricsServices(self.context))):
+            changes.append("services started before their units changed")
+        return changes
 
     def running(self, system: System) -> list[str]:
-        units = [*ownership.inspect(self.context, system).units(oh_units.CONTAINED), *oh_units.ACCESS_UNITS]
-        return [name for name in units if system.unit(name).active in ACTIVE]
+        """What of Thermite runs, or cannot be shown not to."""
+        return [f"{name} ({origin.active})" for name, origin in system.unit_origins(self.UNITS).items()
+                if not origin.known or origin.active in ACTIVE]
 
     def check(self, system: System) -> Check:
-        if not self.moved(system):
-            return Check(True, f"as {self.record} records them")
+        changes = self.changes(system)
+        if not changes:
+            return Check(True, "nothing Thermite runs on changes, so it keeps running")
         running = self.running(system)
         if not running:
-            return Check(True, "no Thermite service runs on the ports they leave")
-        return Check(False, f"they change: to stop {', '.join(running)} before any starts on its new port")
+            return Check(True, f"nothing of Thermite runs; this run changes {', '.join(changes)}")
+        return Check(False, f"this run changes {', '.join(changes)}: to stop {oh_units.TARGET} and "
+                            f"{oh_units.SLICE} first ({', '.join(running)})")
 
     def actions(self, system: System) -> list[Action]:
+        return [Command(("systemctl", "stop", oh_units.TARGET, oh_units.SLICE), root=True, stops=(oh_units.TARGET,)),
+                Task(f"confirm nothing in {oh_units.SLICE} still runs", self.stopped)]
+
+    def stopped(self, system: System) -> int:
         running = self.running(system)
-        return [Command(("systemctl", "stop", *running), root=True, stops=_restartable(running))] if running else []
-
-
-class ListenerRecord(ListenerMove):
-    title = "Listener record"
-
-    def check(self, system: System) -> Check:
-        if not self.moved(system):
-            return Check(True, f"{self.record}")
-        return Check(False, f"to record the listener ports in {self.record}")
-
-    def actions(self, system: System) -> list[Action]:
-        return [Task(f"record the listener ports in {self.record}", self.save)]
-
-    def save(self, system: System) -> int:
-        try:
-            system.private_directory(self.record.parent)
-            system.write_private(self.record, json.dumps(oh_ports.effective(self.context.host), indent=2) + "\n")
-        except (OSError, ValueError):
-            system.say(f"   could not write {self.record}; check the site's var/ custody, then rerun")
+        if running:
+            system.say(f"   still running after the stop: {', '.join(running)}; no unit, state or deployment changed. "
+                       f"`systemctl status {oh_units.SLICE}` shows what runs in it; find out why it did not "
+                       "stop, then rerun.")
             return 1
         return 0
 
@@ -1079,7 +1082,7 @@ class Target(Step):
         return Check(state.active == "active" and state.enabled == "enabled", oh_units.TARGET)
 
     def actions(self, system: System) -> list[Action]:
-        return [Command(("systemctl", "enable", "--now", oh_units.TARGET), root=True)]
+        return [Command(("systemctl", "enable", "--now", oh_units.TARGET), root=True, starts=(oh_units.TARGET,))]
 
 
 def _opaque(system: System, context: Context, path: Path) -> bool:
@@ -1145,17 +1148,17 @@ def state_owned(context: Context, system: System) -> bool:
     return True
 
 
-#: The installed files that define openHAB's own container. Another unit's
-#: change (the Apple TV helper's, a metrics service's) restarts only that unit.
+#: The installed files that define openHAB's own container: a change to them
+#: needs openHAB's offline preparation, and the upgrade's backup before it.
 RUNTIME_FILES = (deploy.QUADLET, deploy.CONTAINER_DROPINS[oh_units.RUNTIME])
 
 
 class NativePreparation(Step):
     """Offline openHAB preparation, in one of two scopes. Custody (a missing
     receipt, account or directory) repairs the whole state tree, which every
-    service writes, so it stops them all. Otherwise only openHAB stops and
-    only its own trees are repaired: the gateway, the Apple TV helper and
-    monitoring keep running through an openHAB-only change."""
+    service writes. Otherwise only openHAB's own trees are repaired. Either
+    way Quiesce has stopped all of Thermite first: this step acting is one
+    of the changes it stops for."""
     title = "Native state and ownership"
 
     def __init__(self, context: Context):
@@ -1171,45 +1174,32 @@ class NativePreparation(Step):
         if self.applied:
             return Check(True, "offline preparation, native guards and ownership repair succeeded")
         if self.custody(system):
-            return Check(False, "stop every active native/metrics process and restart path, repair custody, prepare native userdata without root, then verify guards and repair final modes")
+            return Check(False, "repair custody, prepare native userdata without root, then verify guards and repair final modes")
         start, restart, _ = Services(self.context).plan(system)
         needed = (oh_units.RUNTIME in (*start, *restart)
                   or Units(self.context).stale(system, RUNTIME_FILES)
                   or not PairingLogging(self.context).check(system).done
                   or not NativeListeners(self.context).check(system).done)
         return Check(not needed, "service ownership and native preparation are recorded" if not needed else
-                     "stop openHAB only, prepare its userdata without root, then verify guards and repair its own files; other services keep running")
+                     "prepare openHAB's userdata without root, then verify guards and repair its own files")
 
     def actions(self, system: System) -> list[Action]:
         PROGRAM = self.context.program
         custody = self.custody(system)
         self.applied = True
         host, root = self.context.host, self.context.layout.root
-        owned = ownership.inspect(self.context, system)
-        paths = [name for name in owned.units(Stop.PATHS) if system.unit(name).active in ACTIVE] if custody else []
-        running = [name for name in owned.units(Stop.SERVICES if custody else (oh_units.RUNTIME,))
-                   if system.unit(name).active in ACTIVE]
         helper = ("/usr/bin/python3", str(PROGRAM / "lib/oh_service.py"), str(root),
                   "--uid", str(host["uid"]), "--gid", str(host["gid"]))
         # Only a full repair may record the receipt; openHAB's own repair keeps it.
         repair, final = (helper, (*helper, "--receipt")) if custody else ((*helper, "--runtime"),) * 2
         userdata = str(self.context.layout.userdata)
-        return [*([Command(("systemctl", "stop", *paths), root=True, stops=_restartable(paths))] if paths else []),
-                *([Command(("systemctl", "stop", *running), root=True, stops=_restartable(running))] if running else []),
-                Command(repair, root=True),
+        return [Command(repair, root=True),
                 Command(deploy.prepare_openhab_argv(self.context.versions, host), root=True),
                 Command(("python3", str(PROGRAM / "lib/oh_logging.py"), userdata, "--http-port", str(host["http_port"])), root=True),
                 Command(("python3", str(PROGRAM / "lib/oh_ports.py"), userdata, "--http-port", str(host["http_port"]),
                          "--uid", str(host["uid"]), "--gid", str(host["gid"])), root=True),
                 Command((*helper, "--check-pairing-logging"), root=True),
                 Command(final, root=True)]
-
-
-def _restartable(names: list[str]) -> tuple[str, ...]:
-    """Units a failed run starts again: not the boot target or path-triggered
-    one-shot restarts, which their path units start when needed."""
-    triggered = {"thermite-atv-restart.service", Path(deploy.METRICS_RESTART_SERVICE).name, oh_units.TARGET}
-    return tuple(name for name in names if name not in triggered)
 
 
 def _secret_wrong(system: System, context: Context, path: Path) -> str | None:
@@ -2092,8 +2082,6 @@ def plan(context: Context, system: System) -> Plan:
         migration.append("explicit runtime credential import")
     elif not Token(context).saved(system):
         migration.append("private runtime access")
-    if not ListenerMove(context).check(system).done:
-        migration.append("listener ports")
     if not Target(context).check(system).done:
         migration.append("Thermite boot target")
     if not Packages().check(system).done:
@@ -2147,6 +2135,12 @@ def restore_argvs(layout: deploy.State, file: Path, stamp: str, grafana: bool = 
 
 
 class Backup(Step):
+    """openHAB's (and Grafana's) state as the installed version left it.
+
+    It follows Quiesce: whenever it has a backup to take (openHAB's units
+    change or its state needs offline preparation), Quiesce stopped all of
+    Thermite for that change, so nothing writes what it copies.
+    """
     title = "State backup"
 
     def __init__(self, context: Context, stamp: str, version: str | None):
@@ -2221,24 +2215,15 @@ class Backup(Step):
             return Check(True, f"{latest}")
         self.grafana = system.stat(self.context.layout.grafana_data) is not None
         self.target = self.available(system)
-        return Check(False, f"to stop {' and '.join(self.stopped(self.grafana))} and write {self.file}"
-                            + (", with Grafana's data; Grafana starts again straight after" if self.grafana else "")
+        return Check(False, f"to write {self.file} while Thermite is stopped"
+                            + (", with Grafana's data" if self.grafana else "")
                             + "; not Prometheus' samples (up to the retention size, and nothing restores them)")
-
-    @staticmethod
-    def stopped(grafana: bool) -> tuple[str, ...]:
-        # Grafana's SQLite database copied while Grafana writes it may not open again.
-        return ("thermite-openhab.service", *(["thermite-grafana.service"] if grafana else []))
 
     def actions(self, system: System) -> list[Action]:
         PROGRAM = self.context.program
         host, backups = self.context.host, self.context.layout.backups
         self.grafana = system.stat(self.context.layout.grafana_data) is not None
         actions: list[Action] = []
-        running = [name for name in ownership.inspect(self.context, system).units(self.stopped(self.grafana))
-                   if system.unit(name).active in ACTIVE]
-        if running:
-            actions.append(Command(("systemctl", "stop", *running), root=True, stops=_restartable(running)))
         directory = system.stat(backups)
         if directory is None or (directory.uid, directory.gid, directory.mode) != (host["uid"], host["gid"], 0o750):
             actions.append(Command(("install", "-d", "-o", str(host["uid"]), "-g", str(host["gid"]), "-m", "0750",
@@ -2246,11 +2231,6 @@ class Backup(Step):
         actions.append(Command(("python3", str(PROGRAM / "lib/oh_install/backup.py"), str(self.context.layout.root),
                                 "--name", self.file.name, "--uid", str(host["uid"]), "--gid", str(host["gid"]),
                                 *(("--grafana",) if self.grafana else ())), root=True))
-        # Grafana stopped only for a consistent copy of its database; openHAB
-        # stays stopped for its offline preparation.
-        grafana = [name for name in running if name != oh_units.RUNTIME]
-        if grafana:
-            actions.append(Command(("systemctl", "start", *grafana), root=True, starts=tuple(grafana)))
         return actions
 
 
@@ -2277,7 +2257,7 @@ def native_steps(context: Context, restart: bool = False) -> list[Step]:
 
 def directory_steps(context: Context) -> list[Step]:
     """The account and every directory a unit bind-mounts. They precede
-    Units: a failed run starts what it stopped again, and systemd restarts
+    Units: a failed run starts thermite.target again, and systemd restarts
     a crashed service, on whichever units are installed by then."""
     return [Account(context), StateDirectories(context), MetricsDirectories(context)]
 
@@ -2285,10 +2265,11 @@ def directory_steps(context: Context) -> list[Step]:
 def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     """The upgrade's steps after its preconditions, in order. A host where
     openHAB runs without the metrics gets them here."""
-    return [WhatChanges(plan_), Preconditions(context), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
-            *directory_steps(context), ListenerMove(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context),
+    return [WhatChanges(plan_), Preconditions(context), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context),
+            Quiesce(context), Backup(context, stamp, plan_.installed_version),
+            *directory_steps(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context),
             Restart(context, restart_runtime=plan_.restart_runtime), *native_steps(context, restart=True), MetricsAnswer(context),
-            ListenerRecord(context), Verify(context)]
+            Verify(context)]
 
 
 # --------------------------------------------------------------------------
@@ -2473,6 +2454,6 @@ def install_preflight(context: Context) -> list[Step]:
 def install(context: Context, *, preflight: bool = True) -> list[Step]:
     """Every step, in order."""
     return [*(install_preflight(context) if preflight else []), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context),
-            *directory_steps(context), ListenerMove(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context),
+            Quiesce(context), *directory_steps(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context),
             Services(context, restart_runtime=context.restart_runtime), *native_steps(context), MetricsAnswer(context),
-            ListenerRecord(context), Verify(context)]
+            Verify(context)]

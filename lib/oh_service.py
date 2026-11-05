@@ -57,9 +57,9 @@ SHARED = ("conf", "metrics", "atv/app", "exporter/app", "deploy")
 PRIVATE = ("secrets", "atv/secrets", "monitoring/secrets", "userdata")
 NATIVE_ROOTS = ("conf", "userdata", LOGS, "addons", "atv", "deploy", "secrets", "metrics", "monitoring", "exporter",
                 "backups")
-#: The openHAB container's own trees, its volumes. A deploy that changes only
-#: openHAB repairs just these while openHAB alone is stopped: the gateway,
-#: the Apple TV helper and monitoring keep running on their own stores.
+#: The openHAB container's own trees, its volumes. A change that needs only
+#: openHAB's offline preparation repairs just these: the gateway, the Apple TV
+#: helper and monitoring write their own stores.
 RUNTIME_STORES = ("conf", "userdata", LOGS, "addons", "secrets")
 RUNTIME_ROOTS = ("", "addons", "atv", "atv/venv", "monitoring", "monitoring/prometheus", "monitoring/grafana",
                  "monitoring/alertmanager", "monitoring/ntfy", "exporter")

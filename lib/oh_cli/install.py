@@ -134,7 +134,8 @@ def approve(system: System, context: steps.Context, clean: bool) -> bool:
             system.say(f"Deletes all runtime data in {context.layout.root} and local credentials.")
     if oh_cli.switches.verbose:
         system.say("This install run includes packages, service-account setup, permissions, boot checks, systemd units, "
-                   "deployment and its ownership handoff, service starts/restarts, credential setup and health checks.")
+                   "deployment and its ownership handoff, stopping all of Thermite when anything it runs on changes and "
+                   "starting it again, credential setup and health checks.")
     return runner.confirm_run(system, "clean install" if clean else "install")
 
 

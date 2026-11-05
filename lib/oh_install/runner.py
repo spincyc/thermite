@@ -65,27 +65,29 @@ def compensate(system: System, area: Path, stopped: dict[str, None], rerun: str,
                root_confirmed: bool, interrupted: bool = False) -> None:
     """Start what this run stopped, after a failure before its own restart.
 
-    Backups and native preparation stop the runtime, helpers and monitoring;
-    a failure before the step that starts them again would otherwise leave
-    the house without automation until a rerun. An interruption runs nothing
-    more: it names the command instead.
+    The install stops all of Thermite before it changes anything, and
+    records thermite.target as stopped until the step that starts it again;
+    a failure between them would otherwise leave the house without
+    automation until a rerun. Starting the target starts every member. An
+    interruption runs nothing more: it names the command instead.
     """
     names = list(stopped)
     if not names:
         return
     command = Command(("systemctl", "start", *names), root=True)
+    them = "it" if len(names) == 1 else "them"
     if interrupted:
-        system.say(f"This run stopped {', '.join(names)} and did not start them again. "
+        system.say(f"This run stopped {', '.join(names)} and did not start {them} again. "
                    f"To restore service before rerunning: {command.shown()}")
         return
-    system.say(f"This run stopped {', '.join(names)} and failed before starting them again; "
-               "starting them now so the house keeps its automation.")
+    system.say(f"This run stopped {', '.join(names)} and failed before starting {them} again; "
+               f"starting {them} now so the house keeps its automation.")
     code = perform(command, system, area, rerun, root_confirmed=root_confirmed)
     if code == 0:
         stopped.clear()
-        system.say("Started the stopped services again. The installation is still incomplete. " + rerun)
+        system.say(f"Started {', '.join(names)} again. The installation is still incomplete. " + rerun)
     else:
-        system.say(f"Could not start them again (exit status {code}); fix the reported cause, then run "
+        system.say(f"Could not start {them} again (exit status {code}); fix the reported cause, then run "
                    f"{command.shown()} or rerun.")
 
 

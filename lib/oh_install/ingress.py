@@ -127,6 +127,12 @@ class NativeIngress(Step):
     def actions(self, system):
         return [Task("install persistent native-port rules and verify the active kernel rules", self.perform)]
 
+    def current(self, system):
+        """Whether the installed rules and unit are what this run installs;
+        reapplying the same rules changes nothing a service runs on."""
+        return (system.read_bytes(RULE_FILE) == rule_text(self.context.host).encode()
+                and system.read_bytes(UNIT_FILE) == unit_text().encode())
+
     @staticmethod
     def kernel_hint(system):
         """Explain a failed probe without guessing that a usable kernel is broken."""

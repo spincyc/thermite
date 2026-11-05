@@ -172,8 +172,9 @@ def upgrade(system: System, dry_run: bool, when: str | None = None, *, runtime_t
             step.how = "upgrade"
             step.backup = next((found for found in rest if isinstance(found, steps.Backup)), None)
     if not dry_run:
-        system.say(f"Upgrade: {plan.describe()}. This run includes the boot test, any needed backup, "
-                   "sudo commands, service restarts, deployment and health checks.")
+        system.say(f"Upgrade: {plan.describe()}. This run includes the boot test, stopping all of Thermite "
+                   "when anything it runs on changes, any needed backup, sudo commands, deployment, starting "
+                   "Thermite again and health checks.")
         if not run_approved and not runner.confirm_run(system, "upgrade", RERUN):
             return 1
     status = runner.run(rest, system, AREA, dry_run=dry_run, first=3, rerun=RERUN,
