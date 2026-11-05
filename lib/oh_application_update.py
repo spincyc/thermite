@@ -412,8 +412,9 @@ def refuse_older(reason: str | None, site: Path, digest: str) -> None:
             pinned = "?"
         raise Downgrade(f"refusing to pin release {digest[:12]} over the site's newer release {str(pinned)[:12]}: "
                         f"{reason}. The newer release may already have migrated state, such as the identity schema, "
-                        "that an older one cannot read. Restore matching backups deliberately "
-                        "(docs/installation.md#update-or-remove), then rerun with --allow-downgrade.")
+                        "that an older one cannot read. thermite revert puts back the version before the last "
+                        "upgrade with its state (docs/installation.md#go-back); otherwise restore state the older "
+                        "release can read, then rerun with --allow-downgrade.")
 
 
 def preview(operation: str, site: Path, program: Path, exact: bool, host_args: Sequence[str],

@@ -98,9 +98,10 @@ def desired_mode(relative: str, mode: int, directory: bool, *, private_cache: bo
             return 0o775 if private_cache and mode == 0o775 else 0o700
         return PRIVATE_FILE
     if _under(relative, ("backups",)):
-        # Recovery can enumerate archive names without reading credentials.
-        # Keep the helper's nonsecret completion witnesses group-readable,
-        # but never widen a private file just because its name resembles one.
+        # The tar backups earlier releases wrote, which nothing reads any
+        # more, keep the modes they were left with: archives private, the
+        # helper's nonsecret completion witnesses group-readable. A private
+        # file is never widened just because its name resembles one.
         if (not directory and mode == RUNTIME_FILE and relative.count("/") == 1
                 and relative.endswith(".tar.gz.complete.json")):
             return RUNTIME_FILE

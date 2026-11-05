@@ -652,7 +652,10 @@ release under `~/.local/share/thermite/application/`, with their records and
 source checkouts. An environment that no record names is left alone. The
 first commit on a host installed before the install engine also removes the
 gateway releases staged before it, except the one that version ran;
-`runtime/backups/` is never pruned.
+`runtime/backups/` is never pruned. The application environments are pruned
+by the owner command once it selects the new application, so that first
+upgrade, which the owner command from before the install engine runs, leaves
+them all; the next upgrade removes the older ones.
 
 Upgrades no longer write tar backups of openHAB's and Grafana's state to
 `runtime/backups/`, and nothing reads the ones earlier releases wrote: the

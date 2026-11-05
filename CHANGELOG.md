@@ -108,7 +108,10 @@ rollback. The unified deployment workflow uses a separate committed private site
   itself, and Grafana stays stopped until monitoring starts. A failure after
   the stop rolls the transaction back; nothing else starts Thermite again,
   and the native-port boundary keeps no `var/native-boundary/previous.nft`
-  journal of its own any more (delete it). A test holds every unit
+  journal of its own any more. One left there means an earlier release's
+  port change did not finish: the next install or upgrade applies the
+  filter afresh, and a rollback puts back the live table it found, so
+  delete the file once that commits. A test holds every unit
   Thermite installs to `PartOf=thermite.target`, `Slice=thermite.slice` and
   being wanted by the target alone; the native-port boundary, which only
   loads the firewall rules, stays outside both.
