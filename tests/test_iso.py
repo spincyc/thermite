@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -80,6 +81,34 @@ class InstallerISO(unittest.TestCase):
         self.assertNotIn("--silent", script)
         self.assertLess(script.index("pacman -Sp"), script.index("exec archinstall"))
         self.assertLess(script.index("plugin.name not in plugins"), script.index("exec archinstall"))
+
+    def test_arch_preflight_and_docs_list_exactly_the_configured_packages(self):
+        packages = json.loads((AREA / "iso/arch-config.json").read_text())["packages"]
+        script = (AREA / "iso/arch-install.sh").read_text().splitlines()
+        extraction = [line for line in script if line.startswith("packages=$(")]
+        preflight = [line for line in script if line.startswith("pacman -Sp ")]
+        self.assertEqual((len(extraction), len(preflight)), (1, 1))
+        self.assertIn('"$media/arch-config.json"', extraction[0])
+        self.assertIn(" $packages ", preflight[0])
+        self.assertFalse(set(preflight[0].split()) & set(packages), "the preflight repeats configured packages")
+        # Run the script's own extraction, with python3 as this interpreter.
+        tools = self.root / "bin"; tools.mkdir(); (tools / "python3").symlink_to(sys.executable)
+        def extract(media):
+            return subprocess.run(["bash", "-c", f'set -euo pipefail; media="$1"; {extraction[0]}; printf %s "$packages"',
+                                   "preflight", str(media)], env={"PATH": f"{tools}:{os.environ['PATH']}"},
+                                  capture_output=True, text=True, timeout=30)
+        completed = extract(AREA / "iso")
+        self.assertEqual((completed.returncode, completed.stderr), (0, ""))
+        self.assertEqual(completed.stdout.split(), packages)
+        unsafe = self.root / "unsafe"; unsafe.mkdir()
+        (unsafe / "arch-config.json").write_text(json.dumps({"packages": ["git", "*"]}))
+        completed = extract(unsafe)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(completed.stdout, "")
+        guide = (AREA / "docs/iso.md").read_text()
+        listed = re.search(r"Keep the preselected (.*?) packages\.", guide, re.S)
+        self.assertIsNotNone(listed)
+        self.assertEqual(re.findall(r"`([^`]+)`", listed.group(1)), packages)
 
     def test_arch_boot_configs_keep_source_uuid_and_local_script(self):
         options = "archisobasedir=arch archisosearchuuid=2026-11-01-08-42-25-00"

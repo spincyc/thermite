@@ -13,7 +13,9 @@ rollback. The unified deployment workflow uses a separate committed private site
   `~/.local/bin` first on PATH, so after `thermite install` switches
   `~/.local/bin/thermite`, `thermite` runs that verified application rather
   than the image's frozen `/usr/local/bin/thermite`, and install no longer
-  warns about the launcher on PATH.
+  warns about the launcher on PATH. Its live preflight checks exactly the
+  packages archinstall will install, read from `arch-config.json` (it missed
+  runc and util-linux), and the guide lists the same ones.
 - Install and upgrade stop all of Thermite, `systemctl stop thermite.target
   thermite.slice`, before they change anything it runs on (its units,
   openHAB's native state, the native-port firewall or the deployment), check

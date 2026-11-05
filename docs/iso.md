@@ -83,7 +83,8 @@ used when another bootloader opens the ISO as a file.
 5. Create your own normal user with a password and sudo access. Use that
    account for Thermite; reserve `thermite` for the non-login service account
    created during later commissioning. Keep the preselected `git`, `make`,
-   `python`, `python-yaml`, `podman`, `nodejs`, `npm` and `sudo` packages.
+   `python`, `python-yaml`, `podman`, `runc`, `util-linux`, `nodejs`, `npm`
+   and `sudo` packages.
    NetworkManager is preselected for the installed network; configure the
    connection appropriate to your machine. These settings remain visible
    and editable in the native menu.

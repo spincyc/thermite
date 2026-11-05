@@ -42,6 +42,11 @@ if plugin.name not in plugins or not callable(getattr(plugins[plugin.name], 'on_
 PY
 # Only the disposable live environment changes here. Fail before entering
 # the installer if repositories/DNS/time/signature setup cannot be reached.
+# The preselected packages come from the configuration archinstall reads,
+# so the preflight checks exactly what it will install.
+packages=$(python3 -I -B -c 'import json, re, sys; names = json.load(open(sys.argv[1]))["packages"]; valid = names and all(re.fullmatch(r"[a-z0-9][a-z0-9@._+-]*", n) for n in names); print(*names) if valid else sys.exit("arch-config.json has an invalid package list")' "$media/arch-config.json")
 pacman -Sy --noconfirm
-pacman -Sp --noconfirm base linux linux-firmware mkinitcpio git make python python-yaml podman nodejs npm sudo networkmanager wpa_supplicant grub efibootmgr >/dev/null
+# Unquoted: validated names, one word each. The rest is archinstall's own base.
+# shellcheck disable=SC2086
+pacman -Sp --noconfirm base linux linux-firmware mkinitcpio networkmanager wpa_supplicant grub efibootmgr $packages >/dev/null
 exec archinstall --config "$media/arch-config.json" --plugin "$media/arch-plugin.py"
