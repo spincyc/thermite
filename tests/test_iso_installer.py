@@ -188,6 +188,8 @@ def fixture(root: Path) -> tuple[Path, Path]:
                        ("proc/cpuinfo", "processor\t: 0\nmodel name\t: Example CPU\n"),
                        ("usr/share/zoneinfo/Europe/Berlin", "TZif"), ("usr/share/zoneinfo/America/New_York", "TZif"),
                        ("usr/share/zoneinfo/posix/Europe/Berlin", "TZif"), ("usr/share/zoneinfo/zone.tab", ""),
+                       ("usr/share/zoneinfo/SECURITY", "Please report time zone problems\n"),
+                       ("usr/share/zoneinfo/Factory", "TZif"),
                        ("usr/share/i18n/SUPPORTED", "en_US.UTF-8 UTF-8\nen_US ISO-8859-1\nde_DE.UTF-8 UTF-8\n")):
         (live / name).parent.mkdir(parents=True, exist_ok=True); (live / name).write_text(text)
     for name in ("sys/firmware/efi", "sys/class/net/wlan0/wireless", "var/lib"):

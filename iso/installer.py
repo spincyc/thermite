@@ -225,12 +225,20 @@ def authorized_key(host: Host, media: Path) -> dict | None:
     return json.loads(payload.read_text()).get("authorized_key") if payload.is_file() else None
 
 
+def zone_file(path: Path) -> bool:
+    with path.open("rb") as stream:
+        return stream.read(4) == b"TZif"
+
+
 def choices(host: Host) -> dict:
     """Timezones, UTF-8 locales and console keymaps the live system knows."""
     zones = host.path("/usr/share/zoneinfo")
+    # Zone files only: tzdata also ships text files (SECURITY) and Factory,
+    # which is no place's time.
     timezones = sorted(str(path.relative_to(zones)) for path in zones.rglob("*")
                        if path.is_file() and path.relative_to(zones).parts[0] not in ("posix", "right", "Etc")
-                       and path.name[:1].isupper() and "." not in path.name) + ["UTC"]
+                       and path.name[:1].isupper() and "." not in path.name and path.name != "Factory"
+                       and zone_file(path)) + ["UTC"]
     supported = host.path("/usr/share/i18n/SUPPORTED")
     locales = sorted({line.split()[0] for line in supported.read_text().splitlines()
                       if line.strip() and line.split()[-1] == "UTF-8"}) if supported.is_file() else ["en_US.UTF-8"]
