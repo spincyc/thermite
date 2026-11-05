@@ -74,7 +74,7 @@ function run(source, table, { things, items, java = {}, clock, globals = {}, run
   let text = source;
   for (const [mark, value] of Object.entries(table)) text = text.replace(`const ${mark} = null;`, `const ${mark} = ${JSON.stringify(value)};`);
   vm.runInContext(text, context);
-  return { rules, logs, posted: openhab.posted };
+  return { rules, logs, posted: openhab.posted, context };
 }
 
 const VERIFIED = name => '<?xml version="1.0" encoding="utf-8"?>\r\n<tx>\r\n<cmd id="1">' + name + '</cmd>\r\n</tx>\r\n';
@@ -329,14 +329,26 @@ test('a read-only copy connects to no AVPro matrix and only logs what it would s
   assert(r.logs.some(([level, message]) => level === 'info' && message === 'matrix: SEND is false, not sending SET OUT4 VS IN2'));
 });
 
-// A Sony projector on ADCP. It greets each connection with NOKEY, then
-// answers one request at a time: power_status, input and, while it is on,
-// picture_mode with a quoted value, and a power, input or key line with ok.
+// A Sony projector on ADCP. It greets each connection with `greeting`
+// (NOKEY: no authentication), then answers one request at a time:
+// power_status, input and, while it is on, picture_mode with a quoted
+// value; power, input and key with ok, or with `refuse` (an err_* token);
+// anything else with err_cmd. `down` refuses connections. `mute` answers
+// nothing, and `asleep` that many requests, as `wake` does the first request
+// of that many coming connections; such an answer comes late, after the
+// read that waited for it gave up. `errors` answers that many requests
+// err_cmd, and `hangup` closes a connection at that request, unanswered.
+// close() closes every connection while idle; cycle() forgets them, as a
+// power cycle does, so that the next request on one is reset.
 function adcp({ send = true } = {}) {
-  const clock = { now: 0 };
-  const projector = { power: 'on', input: 'hdmi1', mode: 'reference', opened: [], requests: [], links: [] };
+  const clock = { now: 0 }, hooks = [];
+  const projector = { power: 'on', input: 'hdmi1', mode: 'reference', greeting: 'NOKEY', refuse: null, down: false,
+    mute: false, asleep: 0, wake: 0, errors: 0, hangup: null, opened: [], requests: [], links: [],
+    close() { for (const link of projector.links) link.peerClosed = true; },
+    cycle() { for (const link of projector.links) link.forgotten = true; } };
   function answer(request) {
     const set = /^(power|input|key) "([^"]*)"$/.exec(request);
+    if (set && projector.refuse) return projector.refuse;
     if (set && set[1] === 'power') projector.power = set[2] === 'on' ? 'on' : 'standby';
     else if (set && set[1] === 'input') projector.input = set[2];
     if (set) return 'ok';
@@ -348,39 +360,152 @@ function adcp({ send = true } = {}) {
   const thermiteIO = {
     deadline: ms => clock.now + ms,
     open() {
+      if (projector.down) throw Error('refused');
       projector.opened.push(clock.now / 15000);
-      const link = { closed: false, lines: ['NOKEY'] };
+      const link = { closed: false, peerClosed: false, forgotten: false, reset: false, waking: projector.wake > 0,
+        lines: [projector.greeting], late: [] };
+      if (link.waking) projector.wake -= 1;
       projector.links.push(link);
       return link;
     },
+    renew(link, end) { link.deadline = end; },
     line(link) {
+      if (link.closed) return null;
       if (link.lines.length) return link.lines.shift();
+      if (link.reset) { link.closed = true; throw Error('reset'); }
+      if (link.peerClosed) { link.closed = true; return null; }
+      link.lines.push(...link.late.splice(0));
       throw Error('quiet');
     },
+    quietTimeout: link => !link.closed,
     write(link, text) {
       if (link.closed) throw Error('closed');
+      if (link.forgotten) link.reset = true;
+      if (link.reset || link.peerClosed) return;
       const request = text.replace(/\r\n$/, '');
       projector.requests.push(request);
-      link.lines.push(answer(request));
+      if (request === projector.hangup) { link.peerClosed = true; return; }
+      const late = projector.mute || projector.asleep > 0 || link.waking;
+      if (projector.asleep > 0) projector.asleep -= 1;
+      link.waking = false;
+      if (!late && projector.errors > 0) { projector.errors -= 1; link.lines.push('err_cmd'); }
+      else (late ? link.late : link.lines).push(answer(request));
     },
     close(link) { link.closed = true; },
   };
   const items = {};
   const source = send ? adcpSource : adcpSource.replace('const SEND = true;', 'const SEND = false;');
   const loaded = run(source.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: [{ id: 'projector', host: '192.0.2.31',
-    port: 53595, control: true }], KEYS: { menu: 'menu' }, INPUTS: ['hdmi1', 'hdmi2'] }, { items, clock, globals: { thermiteIO } });
-  return { ...loaded, clock, projector, items,
+    port: 53595, control: true }], KEYS: { menu: 'menu' }, INPUTS: ['hdmi1', 'hdmi2'] }, { items, clock, globals: { thermiteIO },
+    runtime: { lifecycleTracker: { addDisposeHook: hook => hooks.push(hook) } } });
+  const warnings = () => loaded.logs.filter(([level]) => level === 'warn').map(([, message]) => message);
+  return { ...loaded, clock, projector, items, warnings, unload: () => hooks.forEach(hook => hook()),
     poll: () => { loaded.rules.sony_adcp_projector_poll.execute(); clock.now += 15000; },
     command: (point, value) => loaded.rules.sony_adcp_projector_command.execute({
       itemName: `projector_${point}`, receivedCommand: value }) };
 }
 
+const READS = ['power_status ?', 'input ?', 'picture_mode ?'];
+
+test('a Sony projector is read every 15 s and commanded on one kept ADCP connection, closed when the script unloads', () => {
+  const r = adcp();
+  r.poll(); r.poll(); r.poll();
+  assert.deepEqual(r.projector.opened, [0]); assert.deepEqual(r.projector.requests, Array(3).fill(READS).flat());
+  assert.deepEqual([r.items.projector_power, r.items.projector_input, r.items.projector_picture_mode], ['ON', 'hdmi1', 'reference']);
+  r.command('input', 'hdmi2');
+  assert.deepEqual(r.projector.opened, [0]);
+  assert.deepEqual(r.projector.requests.slice(9), ['power_status ?', 'input "hdmi2"', ...READS]);
+  assert.equal(r.items.projector_input, 'hdmi2');
+  // In standby it answers on the same connection; picture_mode is not asked.
+  r.projector.power = 'standby'; r.poll();
+  assert.deepEqual(r.projector.requests.slice(14), ['power_status ?', 'input ?']);
+  assert.deepEqual([r.items.projector_power, r.items.projector_picture_mode], ['OFF', 'UNDEF']);
+  assert.deepEqual(r.projector.opened, [0]); assert.deepEqual(r.warnings(), []);
+  r.unload();
+  assert(r.projector.links[0].closed);
+});
+
+test('a connection the projector closed while idle, or lost to a power cycle, is replaced within the poll', () => {
+  const r = adcp();
+  r.poll(); r.poll();
+  r.projector.close(); r.poll(); r.poll();
+  r.projector.cycle(); r.poll(); r.poll();
+  assert.deepEqual(r.projector.opened, [0, 2, 4]); assert.deepEqual(r.projector.requests, Array(6).fill(READS).flat());
+  assert(!r.posted.some(([, state]) => state === 'UNDEF')); assert.deepEqual(r.warnings(), []);
+});
+
+test('a projector waking from standby is asked again: after err_cmd on the same connection, after silence on a new one', () => {
+  const r = adcp();
+  r.poll();
+  r.projector.errors = 1; r.poll();
+  assert.deepEqual(r.projector.requests.slice(3), ['power_status ?', ...READS]);
+  // Silent on the kept connection, then on the first request of a new one.
+  r.projector.asleep = 1; r.poll();
+  r.projector.close(); r.projector.wake = 1; r.poll(); r.poll();
+  assert.deepEqual(r.projector.opened, [0, 2, 3, 3]);
+  assert(!r.posted.some(([, state]) => state === 'UNDEF')); assert.deepEqual(r.warnings(), []);
+});
+
+test('a projector that does not answer is UNDEF and tried after 15 and 30 s, then every minute; a command connects at once', () => {
+  const r = adcp();
+  r.poll();
+  r.projector.mute = true;
+  for (let poll = 1; poll < 14; poll++) r.poll();
+  // The kept connection, then each try's, is asked once more on a new one.
+  assert.deepEqual(r.projector.opened, [0, 1, 2, 2, 4, 4, 8, 8, 12, 12]);
+  assert.equal(r.items.projector_power, 'UNDEF');
+  assert.deepEqual(r.warnings(), ['projector: does not answer power_status ?; its Items are UNDEF until it answers']);
+  r.projector.mute = false; r.command('power', 'OFF');
+  assert.deepEqual(r.projector.opened.slice(10), [14]); assert.equal(r.items.projector_power, 'OFF');
+  assert(r.logs.some(([level, message]) => level === 'info' && message === 'projector: answering over ADCP again'));
+  r.poll(); r.poll();
+  assert.deepEqual(r.projector.opened.slice(10), [14]);
+});
+
+test('a projector that closes the connection while answering, or asks for a password, is UNDEF and backed off', () => {
+  const r = adcp();
+  r.poll();
+  r.projector.hangup = 'input ?'; r.poll();
+  assert.equal(r.items.projector_power, 'UNDEF'); assert(r.projector.links[0].closed);
+  assert.deepEqual(r.warnings(), ['projector: closed the connection; its Items are UNDEF until it answers']);
+  r.projector.hangup = null; r.poll(); r.poll();
+  assert.deepEqual(r.projector.opened, [0, 2]); assert.equal(r.items.projector_power, 'ON');
+  // Its challenge is never answered, and the greeting is read on connect only.
+  const locked = adcp();
+  locked.projector.greeting = '9f86d081';
+  for (let poll = 0; poll < 5; poll++) locked.poll();
+  assert.deepEqual(locked.projector.opened, [0, 1, 3]); assert.deepEqual(locked.projector.requests, []);
+  assert.deepEqual(locked.warnings(), ['projector: asks for unsupported ADCP authentication; its Items are UNDEF until it answers']);
+});
+
+test('the routing provider is unsent before the command line, refused or unknown after it, and probes at once', () => {
+  const r = adcp(), provider = r.context.routingProvider();
+  r.poll();
+  assert.deepEqual(provider.execute('projector_input', 'hdmi2'),
+    { outcome: 'applied', sample: { value: 'hdmi2', fresh: true, basis: 'owned_native_read', observedAt: 15000 } });
+  r.projector.refuse = 'err_inactive';
+  assert.deepEqual(provider.execute('projector_input', 'hdmi1'), { outcome: 'refused' });
+  assert.deepEqual(r.projector.opened, [0]);
+  // The kept connection lost and no new one: nothing was sent.
+  r.projector.refuse = null; r.projector.cycle(); r.projector.down = true;
+  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'unsent' });
+  r.projector.down = false; r.projector.mute = true;
+  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'unsent' });
+  r.projector.mute = false;
+  const opened = r.projector.opened.length;
+  assert.equal(provider.probe('projector_power').value, 'ON'); assert.equal(r.projector.opened.length, opened + 1);
+  r.projector.hangup = 'input "hdmi1"';
+  assert.deepEqual(provider.execute('projector_input', 'hdmi1'), { outcome: 'unknown' });
+  // Taken, but its read-back closed: applied, unconfirmed.
+  r.projector.hangup = 'input ?';
+  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'applied', sample: null });
+  assert.deepEqual(r.projector.requests.filter(line => !line.endsWith(' ?')),
+    ['input "hdmi2"', 'input "hdmi1"', 'input "hdmi1"', 'power "off"']);
+});
+
 test('a read-only copy connects to no Sony projector and only logs what it would send', () => {
-  const live = adcp();
-  live.poll();
-  assert.deepEqual(live.projector.opened, [0]); assert.equal(live.items.projector_power, 'ON');
   const r = adcp({ send: false });
-  r.poll(); r.poll(); r.command('power', 'OFF'); r.command('key', 'menu');
+  r.poll(); r.poll(); r.command('power', 'OFF'); r.command('key', 'menu'); r.unload();
   assert.deepEqual(r.projector.opened, []); assert.deepEqual(r.posted, []);
   assert.deepEqual(r.logs, [['info', 'projector: SEND is false, not sending power "off"'],
     ['info', 'projector: SEND is false, not sending key "menu"']]);

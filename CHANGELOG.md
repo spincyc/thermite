@@ -7,6 +7,18 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A Sony projector on ADCP gets one connection, kept open, instead of a new
+  one every 15 s and another per command. Its state is read on it every
+  15 s, well inside its 60 s connection time-out, and commands are sent on
+  it. A connection it closed or lost while idle (its time-out, a standby, a
+  power cycle) is replaced at once, and a first request it leaves
+  unanswered while waking from low-power standby is asked again. A projector that stops
+  answering, or closes the connection while answering, is UNDEF and
+  reconnected after 15 and 30 s, then every minute; a command connects at
+  once. Nothing else connects to it: the sandbox and the boot check no
+  longer read it beside the runtime, and the metrics no longer probe its
+  port. It answers one request at a time, across controllers too.
+
 - An AVPro matrix gets one telnet connection, kept open as AVPro's own
   control drivers keep theirs, instead of a new one every 5 s. Its routing
   is read on it every 10 s and switches are sent on it. A matrix that stops

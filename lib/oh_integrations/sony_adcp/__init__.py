@@ -3,14 +3,20 @@
 No binding speaks ADCP (openHAB's sonyprojector binding speaks PJ Talk on
 53484, which the VPL-VW915ES has closed), so a rule does:
 conf/automation/js/sony_adcp_<device>.js, sony_adcp.js beside this file with the
-device table filled in. Every 15 seconds it opens one short connection
-per projector, reads `power_status ?`, `input ?` and, while the projector is
-on, `picture_mode ?`, and posts them to the Items; a projector that does not
-answer gets UNDEF. A device that also lists sony_adcp under control has its
-power, input and key Items turned into ADCP lines (LINES) on a connection of
-their own. The projector greets with NOKEY when ADCP authentication is off,
-as the example's is; the rule does not implement the password handshake and
-reports a projector that asks for one.
+device table filled in. It keeps one ADCP connection open per projector,
+and every 15 seconds, well inside the projector's 60-second connection
+time-out, reads `power_status ?`, `input ?` and, while the projector is on,
+`picture_mode ?` on it and posts them to the Items. A device that also lists
+sony_adcp under control has its power, input and key Items turned into ADCP
+lines (LINES) on that connection. A projector that does not answer, or
+closes the connection while answering, gets UNDEF and is reconnected after
+15 and 30 seconds, then every minute; a connection it closed or lost while
+idle (its time-out, a standby, a power cycle) is replaced at once, and a
+first request a projector waking from low-power standby leaves unanswered is
+asked again.
+The projector greets each connection with NOKEY when ADCP authentication is
+off, as the example's is; the rule does not implement the password handshake
+and reports a projector that asks for one.
 
 Items, per device:
 
@@ -54,8 +60,8 @@ KINDS = {"projector"}
 PORT = 53595
 #: A TCP probe of PORT would cost the projector a session, reset with its greeting unread.
 PROBED = False
-#: Seconds from a command to its read-back: none, the command's own
-#: connection reads the projector again.
+#: Seconds from a command to its read-back: none, the command's session
+#: reads the projector again on the same connection.
 READ_BACK = 0
 RULE = "automation/js/sony_adcp.js"
 SOURCE = Path(__file__).resolve().parent / "sony_adcp.js"
