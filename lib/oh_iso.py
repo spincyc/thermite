@@ -1,10 +1,14 @@
 """Rootless remaster of integrity-pinned Arch and Ubuntu installer ISOs.
 
-No host disk is opened for writing. The image carries an interactive native
-OS installer and a reviewed, fictional-site application payload.
+No host disk is opened for writing. The Arch image boots into Thermite's own
+installer (iso/installer.py and tui/installer, on a pinned Node.js and
+blessed); the Ubuntu image keeps its interactive native installer. Both
+carry a reviewed, fictional-site application payload.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -83,11 +87,59 @@ def new_path(path: Path) -> Path:
     return path
 
 
+def integrity(path: Path, algorithm: str = "sha512") -> str:
+    """npm's Subresource Integrity form of a file's digest."""
+    with path.open("rb") as stream:
+        return algorithm + "-" + base64.b64encode(hashlib.file_digest(stream, algorithm).digest()).decode()
+
+
 def verified(path: Path, description: dict) -> Path:
+    """The file, if it has the pinned digest: a SHA-256, or the npm registry's
+    sha512 integrity for a package it publishes no SHA-256 of."""
     path = regular(path)
-    if sha256(path) != description["sha256"]:
-        raise ValueError(f"SHA256 mismatch: {path}")
+    if "sha256" in description:
+        if sha256(path) != description["sha256"]: raise ValueError(f"SHA256 mismatch: {path}")
+    elif not description.get("integrity", "").startswith("sha512-") or integrity(path) != description["integrity"]:
+        raise ValueError(f"integrity mismatch: {path}")
     return path
+
+
+#: What the live medium's installer runs, at the same paths under the
+#: medium's thermite directory as in the program, so main.js finds app.js.
+INSTALLER = ("iso/installer.py", "tui/installer/controller.js", "tui/installer/core.js", "tui/installer/main.js",
+             "tui/installer/view.js", "tui/remote/app.js", "tui/remote/grid.js", "tui/remote/paint.js",
+             "tui/remote/styles.js", "tui/remote/theme.js", "tui/remote/torch.js")
+#: OpenSSH public key types --authorized-key accepts.
+KEY_TYPES = ("ssh-ed25519", "sk-ssh-ed25519@openssh.com", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384",
+             "ecdsa-sha2-nistp521", "sk-ecdsa-sha2-nistp256@openssh.com", "ssh-rsa")
+
+
+def public_key(path: Path) -> dict:
+    """The one OpenSSH public key in a file, without options, and its
+    fingerprint as ssh-keygen -l prints it."""
+    lines = [line.strip() for line in regular(path).read_text().splitlines()
+             if line.strip() and not line.lstrip().startswith("#")]
+    if len(lines) != 1: raise ValueError("--authorized-key needs a file with exactly one public key")
+    fields = lines[0].split(None, 2)
+    if len(fields) < 2 or fields[0] not in KEY_TYPES:
+        raise ValueError("--authorized-key needs an OpenSSH public key line (ssh-ed25519 AAAA... comment)")
+    try:
+        blob = base64.b64decode(fields[1], validate=True)
+    except binascii.Error:
+        raise ValueError("--authorized-key: the key is not valid base64") from None
+    size = int.from_bytes(blob[:4], "big") if len(blob) >= 4 else 0
+    if blob[4:4 + size].decode("ascii", "replace") != fields[0]:
+        raise ValueError("--authorized-key: the key's data does not match its type")
+    fingerprint = "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
+    return {"type": fields[0], "fingerprint": fingerprint, "comment": fields[2] if len(fields) > 2 else "",
+            "line": " ".join(fields[:2]) + (" " + fields[2] if len(fields) > 2 else "")}
+
+
+def look() -> str:
+    """The installer's colors and torch, as thermite tui gets them (THERMITE_REMOTE_LOOK)."""
+    import oh_brand
+
+    return json.dumps({**json.loads(oh_brand.as_json(oh_brand.load())), "torch": oh_brand.spec()}) + "\n"
 
 
 def fetch(cache: Path, *, base: str = "arch") -> dict:
@@ -254,15 +306,64 @@ def arch_mapping(staging: Path, image: Path, tool: str) -> tuple[list[str], list
     return mapping, ["-append_partition", "2", "0xef", str(esp)]
 
 
-def build(cache: Path, output: Path, work: Path, *, xorriso: str | None = None, base: str = "arch") -> dict:
+def stage(media: Path, cache: Path, *, base: str = "arch", authorized_key: dict | None = None) -> dict:
+    """Write the medium's thermite directory from the reviewed public files
+    and the verified cache; returns its payload.json."""
+    pin = inputs(base)
+    public = oh_package.public_files()
+    wheel, release = oh_package.wheel(public, media)
+    payload = {"version": 1, "application": release["application"], "release": release["digest"], "base": base,
+               "wheels": {"application": {"name": wheel.name, "sha256": sha256(wheel)}}}
+    if "pyyaml" in pin:
+        dependency = verified(Path(cache) / pin["pyyaml"]["name"], pin["pyyaml"])
+        shutil.copyfile(dependency, media / dependency.name)
+        payload["wheels"]["pyyaml"] = {"name": dependency.name, "sha256": pin["pyyaml"]["sha256"]}
+    else:
+        payload["python_dependency"] = {"provider": "system", "package": "python-yaml", "module": "yaml"}
+    for source, name in (("bootstrap.py", "bootstrap.py"), ("first-boot.txt", "FIRST-BOOT.txt")):
+        (media / name).write_bytes(public["iso/" + source])
+    if base == "arch":
+        for name in ("arch-install.sh", "arch-plugin.py", "packages.json"):
+            (media / name).write_bytes(public["iso/" + name])
+        # The installer and what it runs on: Node.js and blessed as pinned,
+        # unpacked on the live system only after their digests match again.
+        files = {}
+        for name in INSTALLER:
+            staged = media / ("installer.py" if name == "iso/installer.py" else name)
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            staged.write_bytes(public[name])
+            files[str(staged.relative_to(media))] = sha256(staged)
+        (media / "look.json").write_text(look())
+        files["look.json"] = sha256(media / "look.json")
+        runtime = {}
+        for key in ("node", "blessed"):
+            archive = verified(Path(cache) / pin[key]["name"], pin[key])
+            shutil.copyfile(archive, media / archive.name)
+            runtime[key] = {name: pin[key][name] for name in ("name", "sha256", "integrity") if name in pin[key]}
+        payload["installer"] = {**runtime, "files": files}
+        if authorized_key:
+            (media / "authorized_keys").write_text(authorized_key["line"] + "\n")
+            payload["authorized_key"] = {name: authorized_key[name] for name in ("type", "fingerprint", "comment")}
+    elif authorized_key:
+        raise ValueError("--authorized-key needs the Arch image; Ubuntu's installer asks for keys itself")
+    (media / "payload.json").write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
+
+
+def build(cache: Path, output: Path, work: Path, *, xorriso: str | None = None, base: str = "arch",
+          authorized_key: Path | None = None) -> dict:
     """Build a real hybrid ISO using the base's BIOS/UEFI boot image replay.
 
     The caller chooses a disposable work parent (normally .scratch/iso).
     A completed image has a SHA256 sidecar and a provenance receipt.
+    authorized_key: a public key file; the live system then accepts SSH
+    with that key alone, into the installer, and the owner gets it.
     """
     pin = inputs(base)
     image = verified(Path(cache) / pin["base"]["name"], pin["base"])
-    dependency = verified(Path(cache) / pin["pyyaml"]["name"], pin["pyyaml"]) if "pyyaml" in pin else None
+    for key in pin:
+        verified(Path(cache) / pin[key]["name"], pin[key])
+    key = public_key(authorized_key) if authorized_key else None
     output = new_path(output)
     checksum, receipt_path = new_path(Path(str(output) + ".sha256")), new_path(Path(str(output) + ".json"))
     tool = str(regular(Path(xorriso))) if xorriso else executable("xorriso")
@@ -271,30 +372,13 @@ def build(cache: Path, output: Path, work: Path, *, xorriso: str | None = None, 
         if parent.is_symlink(): raise ValueError("work path must not contain symlinks")
     work.mkdir(parents=True, exist_ok=True)
     output.parent.mkdir(parents=True, exist_ok=True)
-    # Build only the privacy-reviewed public payload, never copy a checkout
-    # or selected private site directly into installation media.
-    public = oh_package.public_files()
     with tempfile.TemporaryDirectory(prefix="remaster-", dir=work) as temporary:
         staging = Path(temporary)
         media = staging / "thermite"; media.mkdir()
-        wheel, release = oh_package.wheel(public, media)
-        if dependency: shutil.copyfile(dependency, media / dependency.name)
-        for source, name in (("bootstrap.py", "bootstrap.py"), ("first-boot.txt", "FIRST-BOOT.txt")):
-            (media / name).write_bytes(public["iso/" + source])
-        payload = {"version": 1, "application": release["application"], "release": release["digest"],
-                   "base": base,
-                   "wheels": {"application": {"name": wheel.name, "sha256": sha256(wheel)}}}
-        if dependency:
-            payload["wheels"]["pyyaml"] = {"name": dependency.name, "sha256": pin["pyyaml"]["sha256"]}
-        else:
-            payload["python_dependency"] = {"provider": "system", "package": "python-yaml", "module": "yaml"}
-        (media / "payload.json").write_text(json.dumps(payload, indent=2) + "\n")
+        # Build only the privacy-reviewed public payload, never copy a
+        # checkout or selected private site directly into installation media.
+        payload = stage(media, cache, base=base, authorized_key=key)
         if base == "arch":
-            for name in ("arch-install.sh", "arch-plugin.py"):
-                (media / name).write_bytes(public["iso/" + name])
-            # The guided installer preselects every tier the default layout needs.
-            config = {"packages": package_names(packages(), "btrfs"), "network_config": {"type": "nm"}}
-            (media / "arch-config.json").write_text(json.dumps(config, indent=2) + "\n")
             mapping, appended = arch_mapping(staging, image, tool)
         else:
             mapping = ubuntu_mapping(staging, media, image, tool)
@@ -308,9 +392,14 @@ def build(cache: Path, output: Path, work: Path, *, xorriso: str | None = None, 
         # Publish without overwriting a concurrently created destination.
         with partial.open("rb") as source, output.open("xb") as destination:
             shutil.copyfileobj(source, destination)
-    result = {"version": 1, "image": output.name, "sha256": sha256(output), "distribution": base, "base": pin["base"],
-              "payload": payload, "boot": "upstream BIOS and UEFI images replayed",
-              "installation": "interactive storage and identity; no unattended disk selection"}
+    installation = ("Thermite's installer: checked answers, the disk's name typed back before it is erased"
+                    if base == "arch" else "interactive storage and identity; no unattended disk selection")
+    result = {"version": 1, "image": output.name, "sha256": sha256(output), "distribution": base,
+              "inputs": {name: {field: value for field, value in description.items() if field != "url"}
+                         for name, description in pin.items()},
+              "base": pin["base"], "payload": payload, "boot": "upstream BIOS and UEFI images replayed",
+              "installation": installation,
+              "ssh": (f"live installer and owner accept {key['fingerprint']} only" if key else "no key")}
     with checksum.open("x") as out: out.write(result["sha256"] + "  " + output.name + "\n")
     with receipt_path.open("x") as out: json.dump(result, out, indent=2); out.write("\n")
     return result

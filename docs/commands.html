@@ -2859,15 +2859,22 @@ examples:
 <section class="verb" id="iso"><h3><code>thermite iso</code></h3><p>Build a bootable installer for a dedicated Thermite machine.</p><pre class="help">usage: thermite iso [-h] [--config DIR] ACTION ...
 
 Build a hybrid BIOS/UEFI Arch Linux installer containing the reviewed
-Thermite application. It asks for disk, network and owner account settings.
-No private site or credentials are embedded. Runtime commissioning follows
-first boot and needs Internet access. Arch OS installation also requires
-Internet access. --base ubuntu retains the Ubuntu Server offline OS installer.
-Building requires xorriso, plus mtools for Arch; no root.
+Thermite application. It boots into Thermite&#x27;s installer, which asks for the
+network, host name, owner, passwords, region, disk and filesystem, then
+installs Arch Linux; the first boot sets up an empty Thermite house as the
+owner. No private site or credentials are embedded. Installing and the first
+boot need Internet access. --base ubuntu retains the Ubuntu Server offline OS
+installer. Building requires xorriso, plus mtools for Arch; no root.
 
-fetch downloads the pinned base ISO and any bundled Python dependency over
-HTTPS and checks SHA256. build uses those cached inputs and writes an ISO plus a
-checksum and provenance receipt. Existing outputs are never overwritten.
+fetch downloads the pinned inputs over HTTPS and checks their digests: the
+base ISO, and for Arch the Node.js runtime and blessed the installer runs on
+(for Ubuntu, a Python dependency). build uses those cached inputs and writes
+an ISO plus a checksum and provenance receipt. Existing outputs are never
+overwritten.
+
+--authorized-key FILE (Arch) embeds one SSH public key: the live system then
+accepts SSH logins as root with that key alone, straight into the installer,
+and the installed host&#x27;s owner gets the key, with password SSH turned off.
 
 options:
   -h, --help            show this help message and exit
@@ -2888,6 +2895,8 @@ examples:
                                     download and verify fixed inputs
   thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso
                                     build the bootable installer and checksum
+  thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso --authorized-key ~/.ssh/id_ed25519.pub
+                                    also install over SSH with this key
 </pre>
 <details id="iso-fetch"><summary><code>thermite iso fetch</code></summary><pre class="help">usage: thermite iso fetch [-h] --cache DIR [--base {arch,ubuntu}]
 
@@ -2908,26 +2917,29 @@ examples:
                                     download and verify fixed inputs
 </pre></details>
 <details id="iso-build"><summary><code>thermite iso build</code></summary><pre class="help">usage: thermite iso build [-h] --cache DIR --work DIR --out FILE [--xorriso XORRISO]
-                          [--base {arch,ubuntu}]
+                          [--base {arch,ubuntu}] [--authorized-key FILE]
 
 Build a bootable ISO from the verified cache.
 
 options:
-  -h, --help            show this help message and exit
-  --cache DIR           directory containing verified inputs
-  --work DIR            disposable staging directory
-  --out FILE            new output ISO filename
-  --xorriso XORRISO     explicit xorriso executable
-  --base {arch,ubuntu}  installer distribution (default: arch)
+  -h, --help             show this help message and exit
+  --cache DIR            directory containing verified inputs
+  --work DIR             disposable staging directory
+  --out FILE             new output ISO filename
+  --xorriso XORRISO      explicit xorriso executable
+  --base {arch,ubuntu}   installer distribution (default: arch)
+  --authorized-key FILE  SSH public key for the live installer and the owner (Arch only)
 
 switches every verb takes:
-  -q, --quiet           print only errors
-  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
-  --no-color            no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet            print only errors
+  -v, --verbose          also print, on stderr, the commands and HTTP requests it runs
+  --no-color             no color in what it prints (as NO_COLOR=1 does)
 
 examples:
   thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso
                                     build the bootable installer and checksum
+  thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso --authorized-key ~/.ssh/id_ed25519.pub
+                                    also install over SSH with this key
 </pre></details>
 </section>
 <section class="verb" id="completion"><h3><code>thermite completion</code></h3><p>Print a completion script for bash, zsh or fish.</p><pre class="help">usage: thermite completion [-h] [--config DIR] SHELL

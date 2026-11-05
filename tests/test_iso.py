@@ -1,6 +1,7 @@
 """Portable offline installer contracts; no disk, daemon or network action."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.util
 import json
@@ -71,13 +72,47 @@ class InstallerISO(unittest.TestCase):
         with self.assertRaises(ValueError): oh_iso.grub_config("linux /different/kernel ---\n")
         with self.assertRaises(ValueError): oh_iso.grub_config("linux /casper/vmlinuz autoinstall ---\n")
 
-    def test_arch_defaults_preserve_native_storage_and_identity_choices(self):
+    def test_arch_boot_starts_thermites_installer_not_archinstalls_menus(self):
         self.assertTrue(oh_iso.inputs()["base"]["name"].startswith("archlinux-"))
         self.assertTrue(oh_iso.inputs("ubuntu")["base"]["name"].startswith("ubuntu-"))
         script = (AREA / "iso/arch-install.sh").read_text()
-        self.assertNotIn("--silent", script)
-        self.assertLess(script.index("pacman -Sp"), script.index("exec archinstall"))
-        self.assertLess(script.index("plugin.name not in plugins"), script.index("exec archinstall"))
+        self.assertIn('python3 -I -B "$media/installer.py" launch', script)
+        self.assertNotIn("archinstall", script.replace("archinstall's menus", ""))
+        self.assertNotIn("read ", script)
+
+    def test_node_and_blessed_are_pinned_like_the_base_image(self):
+        pins = oh_iso.inputs()
+        node = pins["node"]
+        version = re.fullmatch(r"node-(v\d+\.\d+\.\d+)-linux-x64\.tar\.xz", node["name"])[1]
+        self.assertEqual(node["url"], f"https://nodejs.org/dist/{version}/{node['name']}")
+        self.assertEqual(node["provenance"], f"https://nodejs.org/dist/{version}/SHASUMS256.txt")
+        self.assertRegex(node["sha256"], r"^[0-9a-f]{64}$")
+        # blessed is the one thermite tui locks; the registry publishes its
+        # sha512 integrity, not a SHA-256.
+        lock = json.loads((AREA / "tui/remote/package-lock.json").read_text())["packages"]["node_modules/blessed"]
+        blessed = pins["blessed"]
+        self.assertEqual((blessed["url"], blessed["integrity"]), (lock["resolved"], lock["integrity"]))
+        self.assertEqual(blessed["name"], f"blessed-{lock['version']}.tgz")
+        self.assertNotIn("sha256", blessed)
+        self.assertNotIn("node", oh_iso.inputs("ubuntu"))
+
+    def test_authorized_key_is_one_plain_public_key(self):
+        def key(kind, comment=" casey@example", body=None):
+            import base64
+            blob = body or (len(kind).to_bytes(4, "big") + kind.encode() + (32).to_bytes(4, "big") + bytes(range(32)))
+            return kind + " " + base64.b64encode(blob).decode() + comment
+        good = self.root / "good.pub"; good.write_text("# the owner's laptop\n" + key("ssh-ed25519") + "\n")
+        found = oh_iso.public_key(good)
+        self.assertEqual((found["type"], found["comment"]), ("ssh-ed25519", "casey@example"))
+        self.assertEqual(found["line"], key("ssh-ed25519"))
+        if shutil.which("ssh-keygen"):
+            printed = subprocess.run(["ssh-keygen", "-l", "-f", str(good)], capture_output=True, text=True).stdout
+            self.assertEqual(printed.split()[1], found["fingerprint"])
+        for index, text in enumerate((key("ssh-ed25519") + "\n" + key("ssh-ed25519"), 'command="sh" ' + key("ssh-ed25519"),
+                                      key("ssh-rsa", body=b"\0\0\0\x0bssh-ed25519"), "ssh-ed25519 !!!", "",
+                                      key("ssh-ed25519").replace("ssh-ed25519 ", "ssh-dss ", 1))):
+            bad = self.root / f"bad-{index}.pub"; bad.write_text(text)
+            with self.assertRaises(ValueError): oh_iso.public_key(bad)
 
     def test_package_tiers_cover_thermites_packages_step(self):
         from oh_install import steps
@@ -102,33 +137,10 @@ class InstallerISO(unittest.TestCase):
             with patch.object(oh_iso.json, "loads", return_value=broken), self.assertRaises(ValueError):
                 oh_iso.packages()
 
-    def test_arch_preflight_and_docs_list_exactly_the_configured_packages(self):
+    def test_docs_list_exactly_the_configured_packages(self):
+        # The core's configuration and preflight read packages.json itself
+        # (tests/test_iso_installer.py); the guide's table must agree with it.
         document = oh_iso.packages()
-        script = (AREA / "iso/arch-install.sh").read_text().splitlines()
-        extraction = [line for line in script if line.startswith("packages=$(")]
-        preflight = [line for line in script if line.startswith("pacman -Sp ")]
-        self.assertEqual((len(extraction), len(preflight)), (1, 1))
-        self.assertIn('"$media/arch-config.json"', extraction[0])
-        self.assertIn(" $packages ", preflight[0])
-        names = oh_iso.package_names(document, "btrfs")
-        self.assertFalse(set(preflight[0].split()) & set(names), "the preflight repeats configured packages")
-        # Run the script's own extraction, with python3 as this interpreter,
-        # over the configuration the build writes.
-        tools = self.root / "bin"; tools.mkdir(); (tools / "python3").symlink_to(sys.executable)
-        def extract(media):
-            return subprocess.run(["bash", "-c", f'set -euo pipefail; media="$1"; {extraction[0]}; printf %s "$packages"',
-                                   "preflight", str(media)], env={"PATH": f"{tools}:{os.environ['PATH']}"},
-                                  capture_output=True, text=True, timeout=30)
-        media = self.root / "media"; media.mkdir()
-        (media / "arch-config.json").write_text(json.dumps({"packages": names, "network_config": {"type": "nm"}}))
-        completed = extract(media)
-        self.assertEqual((completed.returncode, completed.stderr), (0, ""))
-        self.assertEqual(completed.stdout.split(), names)
-        unsafe = self.root / "unsafe"; unsafe.mkdir()
-        (unsafe / "arch-config.json").write_text(json.dumps({"packages": ["git", "*"]}))
-        completed = extract(unsafe)
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertEqual(completed.stdout, "")
         guide = (AREA / "docs/iso.md").read_text()
         section = guide[guide.index("## Packages"):guide.index("\n## ", guide.index("## Packages") + 1)]
         rows = re.findall(r"^\| ([^|]+) \| (`.*`) \|$", section, re.M)
@@ -187,15 +199,108 @@ class InstallerISO(unittest.TestCase):
 
     def test_fetch_verifies_cached_inputs_without_network_and_refuses_corruption(self):
         pin = {key: {"name": key, "sha256": hashlib.sha256(key.encode()).hexdigest(),
-                     "url": "https://example.invalid/" + key} for key in ("base", "pyyaml")}
+                     "url": "https://example.invalid/" + key} for key in ("base", "node")}
+        pin["blessed"] = {"name": "blessed", "url": "https://example.invalid/blessed",
+                          "integrity": "sha512-" + base64.b64encode(hashlib.sha512(b"blessed").digest()).decode()}
         cache = self.root / "cache"; cache.mkdir()
         for key in pin: (cache / key).write_text(key)
         with patch.object(oh_iso, "inputs", return_value=pin), \
                 patch.object(oh_iso.urllib.request, "urlopen", side_effect=AssertionError("network forbidden")):
-            self.assertEqual(set(oh_iso.fetch(cache)), {"base", "pyyaml"})
-            (cache / "pyyaml").write_text("changed")
+            self.assertEqual(set(oh_iso.fetch(cache)), {"base", "node", "blessed"})
+            for key in ("node", "blessed"):
+                (cache / key).write_text("changed")
+                with self.assertRaises(ValueError): oh_iso.fetch(cache)
+                self.assertEqual((cache / key).read_text(), "changed")
+                (cache / key).write_text(key)
+        # An integrity that is not sha512 is never accepted.
+        weak = {**pin["blessed"], "integrity": "sha1-" + base64.b64encode(hashlib.sha1(b"blessed").digest()).decode()}
+        with self.assertRaises(ValueError): oh_iso.verified(cache / "blessed", weak)
+
+    def test_fetch_downloads_a_missing_input_and_keeps_only_a_verified_one(self):
+        import io as streams
+        body = b"node tarball"
+        pin = {"node": {"name": "node.tar.xz", "sha256": hashlib.sha256(body).hexdigest(),
+                        "url": "https://example.invalid/node.tar.xz"}}
+        class Response(streams.BytesIO):
+            url = pin["node"]["url"]
+        cache = self.root / "cache"
+        with patch.object(oh_iso, "inputs", return_value=pin), \
+                patch.object(oh_iso.urllib.request, "urlopen", return_value=Response(body)) as opened:
+            self.assertEqual(oh_iso.fetch(cache), {"node": str(cache / "node.tar.xz")})
+        opened.assert_called_once_with(pin["node"]["url"], timeout=60)
+        self.assertEqual((cache / "node.tar.xz").read_bytes(), body)
+        (cache / "node.tar.xz").unlink()
+        with patch.object(oh_iso, "inputs", return_value=pin), \
+                patch.object(oh_iso.urllib.request, "urlopen", return_value=Response(b"tampered")):
             with self.assertRaises(ValueError): oh_iso.fetch(cache)
-        self.assertEqual((cache / "pyyaml").read_text(), "changed")
+        self.assertEqual(list(cache.iterdir()), [])
+
+    def test_arch_media_carries_the_installer_its_runtime_and_the_key(self):
+        from tests.test_iso_installer import runtime_archives
+        cache = self.root / "cache"; cache.mkdir()
+        pins = {"base": oh_iso.inputs()["base"], **runtime_archives(cache)}
+        key = self.root / "owner.pub"
+        key.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f casey@example\n")
+        media = self.root / "media"; media.mkdir()
+        with patch.object(oh_iso, "inputs", return_value=pins):
+            payload = oh_iso.stage(media, cache, authorized_key=oh_iso.public_key(key))
+        installer = payload["installer"]
+        self.assertEqual(installer["node"], pins["node"])
+        self.assertEqual(installer["blessed"], pins["blessed"])
+        self.assertEqual(set(installer["files"]), {"installer.py", "look.json", *(name for name in oh_iso.INSTALLER
+                                                                                   if name.startswith("tui/"))})
+        for name, digest in installer["files"].items():
+            self.assertEqual(oh_iso.sha256(media / name), digest, name)
+        self.assertEqual(json.loads((media / "payload.json").read_text()), payload)
+        self.assertEqual(json.loads((media / "packages.json").read_text()), oh_iso.packages())
+        self.assertIn("torch", json.loads((media / "look.json").read_text()))
+        self.assertEqual((media / "authorized_keys").read_text(), key.read_text())
+        self.assertEqual(payload["authorized_key"]["comment"], "casey@example")
+        self.assertFalse((media / "arch-config.json").exists())
+        # What tty1 and SSH run: the core unpacks the runtime the medium carries.
+        spec = importlib.util.spec_from_file_location("staged_installer", media / "installer.py")
+        staged = importlib.util.module_from_spec(spec); spec.loader.exec_module(staged)
+        node, modules = staged.runtime(media, self.root / "state")
+        self.assertTrue(os.access(node, os.X_OK) and (modules / "blessed/package.json").is_file())
+        if shutil.which("node"):
+            # The staged terminal loads from its medium paths alone.
+            completed = subprocess.run([shutil.which("node"), "-e", "const m = require(process.argv[1]); "
+                                        "console.log(typeof m.parse, require(process.argv[2]).STEPS.length)",
+                                        str(media / "tui/installer/main.js"), str(media / "tui/installer/controller.js")],
+                                       capture_output=True, text=True, timeout=30)
+            self.assertEqual(completed.stdout.strip(), "function 11", completed.stderr)
+        with patch.object(oh_iso, "inputs", return_value={"base": pins["base"]}), \
+                self.assertRaisesRegex(ValueError, "needs the Arch image"):
+            other = self.root / "ubuntu-media"; other.mkdir()
+            oh_iso.stage(other, cache, base="ubuntu", authorized_key=oh_iso.public_key(key))
+
+    def test_build_records_its_inputs_and_key_in_the_receipt(self):
+        from tests.test_iso_installer import runtime_archives
+        cache = self.root / "cache"; cache.mkdir()
+        (cache / "base.iso").write_bytes(b"base image")
+        pins = {"base": {"name": "base.iso", "sha256": hashlib.sha256(b"base image").hexdigest(),
+                         "url": "https://example.invalid/base.iso"}, **runtime_archives(cache)}
+        key = self.root / "owner.pub"
+        key.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f casey@example\n")
+        mapped = {}
+        def xorriso(argv, **options):
+            mapped["media"] = sorted(path.name for path in Path(argv[argv.index("-map") + 1]).iterdir())
+            Path(argv[argv.index("-outdev") + 1]).write_bytes(b"remastered")
+            return subprocess.CompletedProcess(argv, 0)
+        output = self.root / "out/thermite.iso"
+        with patch.object(oh_iso, "inputs", return_value=pins), patch.object(oh_iso, "executable", return_value="xorriso"), \
+                patch.object(oh_iso, "arch_mapping", return_value=([], [])), \
+                patch.object(oh_iso.subprocess, "run", side_effect=xorriso):
+            result = oh_iso.build(cache, output, self.root / "work", authorized_key=key)
+        self.assertIn(pins["node"]["name"], mapped["media"])
+        self.assertIn("authorized_keys", mapped["media"])
+        self.assertEqual(result["sha256"], hashlib.sha256(b"remastered").hexdigest())
+        self.assertEqual(result["inputs"]["blessed"], {"name": pins["blessed"]["name"],
+                                                       "integrity": pins["blessed"]["integrity"]})
+        fingerprint = oh_iso.public_key(key)["fingerprint"]
+        self.assertEqual(result["payload"]["authorized_key"]["fingerprint"], fingerprint)
+        self.assertIn(fingerprint, result["ssh"])
+        self.assertEqual(json.loads(Path(str(output) + ".json").read_text()), result)
 
     def test_bootstrap_wheel_traversal_and_links_are_rejected(self):
         target = self.root / "library"; target.mkdir()

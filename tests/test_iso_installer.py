@@ -6,8 +6,10 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import types
 import unittest
@@ -61,11 +63,50 @@ ANSWERS = {"hostname": "Thermite", "owner": "casey", "owner_password": "owner-se
 SECRETS = ("owner-secret-1", "root-secret-1", "wifi-secret-1")
 
 
+NODE_PIN = oh_iso.inputs()["node"]["name"]
+
+
+def runtime_archives(directory: Path) -> dict:
+    """Stand-ins for the pinned Node.js tarball and blessed package, and
+    their pins: a node that is a shell script, a blessed that is one file."""
+    node = directory / NODE_PIN
+    script = b"#!/bin/sh\necho node-fixture\n"
+    with tarfile.open(node, "w:xz") as tar:
+        for name, data in ((f"{NODE_PIN.removesuffix('.tar.xz')}/bin/node", script),
+                           (f"{NODE_PIN.removesuffix('.tar.xz')}/README.md", b"fixture\n")):
+            member = tarfile.TarInfo(name); member.size = len(data); member.mode = 0o755
+            tar.addfile(member, io.BytesIO(data))
+    blessed = directory / "blessed-0.1.81.tgz"
+    with tarfile.open(blessed, "w:gz") as tar:
+        for name, data in (("package/package.json", b'{"name": "blessed", "version": "0.1.81"}\n'),
+                           ("package/lib/blessed.js", b"module.exports = {};\n")):
+            member = tarfile.TarInfo(name); member.size = len(data)
+            tar.addfile(member, io.BytesIO(data))
+    return {"node": {"name": node.name, "sha256": oh_iso.sha256(node)},
+            "blessed": {"name": blessed.name, "integrity": oh_iso.integrity(blessed)}}
+
+
+def installer_media(media: Path) -> None:
+    """The installer's part of a medium, as oh_iso.stage writes it, with stand-in archives."""
+    pins = runtime_archives(media)
+    files = {}
+    for name in oh_iso.INSTALLER:
+        staged = media / ("installer.py" if name == "iso/installer.py" else name)
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(AREA / name, staged)
+        files[str(staged.relative_to(media))] = oh_iso.sha256(staged)
+    (media / "look.json").write_text('{"name": "fixture"}\n')
+    files["look.json"] = oh_iso.sha256(media / "look.json")
+    payload = json.loads((media / "payload.json").read_text())
+    payload["installer"] = {**pins, "files": files}
+    (media / "payload.json").write_text(json.dumps(payload))
+
+
 class FakeHost(installer.Host):
     def __init__(self, root: Path, *, taken=(), fail=(), archinstall="4.5.1", code=0, lines=ARCHINSTALL_LINES):
         super().__init__(root)
         self.taken, self.fail, self.version, self.code, self.lines = set(taken), set(fail), archinstall, code, lines
-        self.calls, self.spawned = [], []
+        self.calls, self.spawned, self.called = [], [], []
 
     def run(self, argv, *, timeout=120, input=None):
         argv = list(argv); self.calls.append(argv)
@@ -89,6 +130,10 @@ class FakeHost(installer.Host):
                              "creds_mode": (state / "creds.json").stat().st_mode & 0o777,
                              "wifi": json.loads((state / "wifi.json").read_text()) if (state / "wifi.json").exists() else None})
         return types.SimpleNamespace(stdout=iter(line + "\n" for line in self.lines), wait=lambda: self.code)
+
+    def call(self, argv, env):
+        self.called.append((list(argv), env))
+        return 0
 
     def hash_password(self, plaintext):
         return "$y$fixture$" + hashlib.sha256(plaintext.encode()).hexdigest()[:16]
@@ -329,6 +374,63 @@ class InstallerCore(unittest.TestCase):
         self.assertTrue(all(line["id"] == 7 for line in lines))
         self.assertTrue(all("event" in line for line in lines[:-1]))
         self.assertEqual(lines[-1]["result"]["hostname"], "thermite")
+
+    def test_launch_unpacks_the_pinned_runtime_once_and_starts_the_terminal(self):
+        self.said = self.enterContext(patch.object(installer, "print", create=True))
+        installer_media(self.media)
+        host = self.host()
+        env = {"TERM": "xterm-kitty", "PATH": "/usr/bin"}
+        self.assertEqual(installer.launch(host, media=self.media, state=self.state, env=env), 0)
+        (argv, seen), = host.called
+        node = self.state / "runtime/node"
+        self.assertEqual(argv[:2], [str(node), str(self.media / "tui/installer/main.js")])
+        self.assertEqual(subprocess.run([str(node)], capture_output=True, text=True).stdout, "node-fixture\n")
+        modules = Path(argv[argv.index("--modules") + 1])
+        self.assertTrue((modules / "blessed/lib/blessed.js").is_file())
+        self.assertEqual(argv[argv.index("--label") + 1], "the console")
+        self.assertEqual(argv[argv.index("--core") + 1], str(self.media / "installer.py"))
+        # No terminfo for kitty on this live system: xterm-256color instead.
+        self.assertEqual((seen["TERM"], seen["THERMITE_REMOTE_LOOK"]), ("xterm-256color", '{"name": "fixture"}\n'))
+        again = self.live / "usr/local/bin/thermite-installer"
+        self.assertIn("installer.py launch", again.read_text())
+        # Without a key in the image, the live sshd is left as archiso has it.
+        self.assertFalse((self.live / "etc/ssh/sshd_config.d/05-thermite.conf").exists())
+        # An SSH login reuses what the console unpacked; a known TERM stays.
+        (self.live / "usr/share/terminfo/x/xterm-kitty").parent.mkdir(parents=True)
+        (self.live / "usr/share/terminfo/x/xterm-kitty").write_text("")
+        node.write_text("unpacked once")
+        installer.launch(host, media=self.media, state=self.state, ssh=True,
+                         env={**env, "SSH_CLIENT": "192.0.2.20 50000 22"})
+        argv, seen = host.called[-1]
+        self.assertEqual((node.read_text(), seen["TERM"]), ("unpacked once", "xterm-kitty"))
+        self.assertEqual(argv[argv.index("--label") + 1], "SSH from 192.0.2.20")
+        # A damaged medium never runs.
+        (self.state / "runtime/pinned.json").unlink()
+        with (self.media / NODE_PIN).open("ab") as out: out.write(b"damaged")
+        self.assertEqual(installer.launch(host, media=self.media, state=self.state, env=env), 1)
+        self.assertEqual(len(host.called), 2)
+        self.assertIn("is damaged", self.said.call_args.args[0])
+
+    def test_an_images_key_opens_live_ssh_to_the_installer_alone(self):
+        self.said = self.enterContext(patch.object(installer, "print", create=True))
+        installer_media(self.media)
+        key = "ssh-ed25519 " + "A" * 68 + " casey@example"
+        (self.media / "authorized_keys").write_text(key + "\n")
+        payload = json.loads((self.media / "payload.json").read_text())
+        payload["authorized_key"] = {"type": "ssh-ed25519", "fingerprint": "SHA256:fixture", "comment": "casey@example"}
+        (self.media / "payload.json").write_text(json.dumps(payload))
+        host = self.host()
+        installer.launch(host, media=self.media, state=self.state, env={"TERM": "linux"})
+        line = (self.live / "root/.ssh/authorized_keys").read_text()
+        self.assertTrue(line.startswith('command="'))
+        self.assertIn("installer.py launch --ssh\",restrict,pty " + key, line)
+        self.assertEqual((self.live / "root/.ssh/authorized_keys").stat().st_mode & 0o777, 0o600)
+        config = (self.live / "etc/ssh/sshd_config.d/05-thermite.conf").read_text()
+        for setting in ("PermitRootLogin forced-commands-only", "PasswordAuthentication no",
+                        "KbdInteractiveAuthentication no", "AuthenticationMethods publickey"):
+            self.assertIn(setting, config.splitlines())
+        self.assertIn(["systemctl", "reload-or-restart", "sshd.service"], host.calls)
+        self.assertEqual(self.facts(host)["authorized_key"]["fingerprint"], "SHA256:fixture")
 
     def test_core_stays_stdlib_only(self):
         import ast

@@ -9,6 +9,18 @@
         "url": "https://geo.mirror.pkgbuild.com/iso/2026.11.01/archlinux-2026.11.01-x86_64.iso",
         "sha256": "01bcdcf01af2f7d58f2794899c834770d25c9bfc945bd092b32bb66672a4a216",
         "provenance": "https://archlinux.org/releng/releases/2026.11.01/"
+      },
+      "node": {
+        "name": "node-v26.13.0-linux-x64.tar.xz",
+        "url": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz",
+        "sha256": "d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997",
+        "provenance": "https://nodejs.org/dist/v26.13.0/SHASUMS256.txt"
+      },
+      "blessed": {
+        "name": "blessed-0.1.81.tgz",
+        "url": "https://registry.npmjs.org/blessed/-/blessed-0.1.81.tgz",
+        "integrity": "sha512-LoF5gae+hlmfORcG1M5+5XZi4LBmvlXTzwJWzUlPryN/SJdSflZvROM2TwkT0GMpq7oqT48NRd4GS7BiVBc5OQ==",
+        "provenance": "tui/remote/package-lock.json"
       }
     },
     "ubuntu": {

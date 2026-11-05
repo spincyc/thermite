@@ -5,7 +5,8 @@ answers, writes archinstall 4.5's configuration and credentials, runs it
 without its menus, streams progress as JSON lines and keeps a log. It never
 chooses a disk itself: install needs the disk's name typed back.
 
-    python3 -I -B installer.py serve      JSON-lines requests on stdin
+    python3 -I -B installer.py launch [--ssh]   the terminal (archiso runs it on tty1)
+    python3 -I -B installer.py serve            JSON-lines requests on stdin
 
 Every request is one line, {"id": N, "op": NAME, ...}; every answer is one
 line with the same id, {"ok": true, "result": ...} or {"ok": false,
@@ -15,17 +16,22 @@ credentials file, which is deleted after the run, and are never logged.
 """
 from __future__ import annotations
 
+import base64
 import ctypes
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import pwd
 import re
+import shutil
 import signal
 import socket
 import subprocess
 import sys
+import tarfile
 import time
 import uuid
 
@@ -101,6 +107,10 @@ class Host:
         # Its own session: a closed SSH login's hangup must not reach it.
         return subprocess.Popen(list(argv), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 text=True, errors="replace", env=env, bufsize=1, start_new_session=True)
+
+    def call(self, argv, env: dict) -> int:
+        """A program on this terminal, until it ends."""
+        return subprocess.run(list(argv), env=env).returncode
 
     def hash_password(self, plaintext: str) -> str:
         """yescrypt, as archinstall and Arch's PAM hash passwords."""
@@ -181,12 +191,9 @@ def facts(host: Host, media: Path = MEDIA) -> dict:
 
 
 def authorized_key(host: Host, media: Path) -> dict | None:
-    """The public key the image was built with, as its fingerprint shows."""
-    key = media / "authorized_keys"
-    if not key.is_file(): return None
-    completed = host.run(["ssh-keygen", "-l", "-f", str(key)], timeout=10)
-    return {"fingerprint": completed.stdout.strip() if not completed.returncode else "",
-            "type": key.read_text().split()[0]}
+    """The public key the image was built with ({type, fingerprint, comment})."""
+    payload = media / "payload.json"
+    return json.loads(payload.read_text()).get("authorized_key") if payload.is_file() else None
 
 
 def choices(host: Host) -> dict:
@@ -540,6 +547,121 @@ def keep(run: Run, target: Path) -> None:
     (destination / "installer.log").write_bytes((run.state / "installer.log").read_bytes())
 
 
+# ---- launch: the terminal on the live system -----------------------------------
+
+#: The live sshd with the image's key: that key alone, as root, and only
+#: into the installer (its authorized_keys line forces the command).
+#: sshd_config.d is read in order and the first value wins, so this
+#: precedes archiso's own 10-archiso.conf.
+LIVE_SSHD = """\
+# Thermite installer: SSH with the image's key only, straight into the installer.
+PermitRootLogin forced-commands-only
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AuthenticationMethods publickey
+"""
+#: The command a login runs again on this live system.
+COMMAND = "thermite-installer"
+
+
+def digest(path: Path, algorithm: str = "sha256") -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, algorithm).hexdigest()
+
+
+def sri(path: Path) -> str:
+    with path.open("rb") as stream:
+        return "sha512-" + base64.b64encode(hashlib.file_digest(stream, "sha512").digest()).decode()
+
+
+def runtime(media: Path, state: Path) -> tuple[Path, Path]:
+    """Node.js and blessed from the medium, checked against payload.json
+    again and unpacked once into STATE: (node, node_modules)."""
+    pinned = json.loads((media / "payload.json").read_text())["installer"]
+    unpacked = state / "runtime"
+    marker = unpacked / "pinned.json"
+    node, modules = unpacked / "node", unpacked / "node_modules"
+    if marker.is_file() and json.loads(marker.read_text()) == pinned: return node, modules
+    for name, expected in pinned["files"].items():
+        if digest(media / name) != expected: raise ValueError(f"{name} on the medium is damaged")
+    archive = media / pinned["node"]["name"]
+    if digest(archive) != pinned["node"]["sha256"]: raise ValueError(f"{archive.name} on the medium is damaged")
+    package = media / pinned["blessed"]["name"]
+    if sri(package) != pinned["blessed"]["integrity"]: raise ValueError(f"{package.name} on the medium is damaged")
+    shutil.rmtree(unpacked, ignore_errors=True)
+    unpacked.mkdir(mode=0o700, parents=True)
+    # Only the node binary; the tarball's npm and headers stay packed.
+    with tarfile.open(archive, "r:xz") as tar:
+        member = tar.getmember(pinned["node"]["name"].removesuffix(".tar.xz") + "/bin/node")
+        if not member.isfile(): raise ValueError("the Node.js archive has no node program")
+        with tar.extractfile(member) as source, node.open("xb") as out: shutil.copyfileobj(source, out)
+    node.chmod(0o755)
+    # An npm tarball keeps its files under package/.
+    with tarfile.open(package, "r:gz") as tar:
+        members = []
+        for member in tar.getmembers():
+            if not member.name.startswith("package/"): raise ValueError("unexpected blessed archive layout")
+            member.name = "blessed/" + member.name.removeprefix("package/")
+            members.append(member)
+        tar.extractall(modules, members=members, filter="data")
+    marker.write_text(json.dumps(pinned) + "\n")
+    return node, modules
+
+
+def live_ssh(host: Host, media: Path) -> bool:
+    """With the image's key: sshd takes that key alone, into the installer."""
+    key = media / "authorized_keys"
+    if not key.is_file(): return False
+    forced = (f'command="{sys.executable} -I -B {media / "installer.py"} launch --ssh",restrict,pty '
+              + key.read_text().strip() + "\n")
+    directory = host.path("/root/.ssh")
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    private(directory / "authorized_keys", forced)
+    config = host.path("/etc/ssh/sshd_config.d/05-thermite.conf")
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(LIVE_SSHD)
+    host.run(["systemctl", "reload-or-restart", "sshd.service"], timeout=30)
+    return True
+
+
+def terminal(env: dict, host: Host) -> str:
+    """TERM if this system describes it, else xterm-256color: SSH from a
+    terminal the live system has no terminfo for still gets the installer."""
+    name = env.get("TERM", "")
+    known = name and name != "dumb" and any(host.path(f"{root}/{name[0]}/{name}").exists()
+                                           for root in ("/usr/share/terminfo", "/usr/lib/terminfo"))
+    return name if known else "xterm-256color"
+
+
+def launch(host: Host, *, media: Path = MEDIA, state: Path = STATE, ssh: bool = False, env=None) -> int:
+    """The installer's terminal on this console or SSH login; its status."""
+    env = dict(os.environ if env is None else env)
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not ssh:
+        live_ssh(host, media)
+        command = host.path(f"/usr/local/bin/{COMMAND}")
+        command.parent.mkdir(parents=True, exist_ok=True)
+        command.write_text(f"#!/bin/sh\nexec {sys.executable} -I -B {media / 'installer.py'} launch \"$@\"\n")
+        command.chmod(0o755)
+        # Terminus draws the installer's box corners and marks on the console.
+        if env.get("TERM") == "linux" and host.path("/usr/share/kbd/consolefonts/ter-v16n.psf.gz").exists():
+            host.run(["setfont", "ter-v16n"], timeout=10)
+    try:
+        node, modules = runtime(media, state)
+    except (OSError, ValueError, KeyError, tarfile.TarError) as exc:
+        print(f"The Thermite installer cannot start: {exc}", file=sys.stderr)
+        return 1
+    client = env.get("SSH_CLIENT", "").split()
+    label = f"SSH from {client[0]}" if ssh and client else "SSH" if ssh else "the console"
+    env.update({"TERM": terminal(env, host), "THERMITE_REMOTE_LOOK": (media / "look.json").read_text()})
+    status = host.call([str(node), str(media / "tui/installer/main.js"), "--modules", str(modules),
+                        "--core", str(media / "installer.py"), "--python", sys.executable, "--label", label,
+                        "--core-log", str(state / "core.log")], env)
+    print(f"Left the Thermite installer. {COMMAND} starts it again; "
+          f"tail -f {state / 'installer.log'} follows an installation.")
+    return status
+
+
 # ---- serve ----------------------------------------------------------------------
 
 class Session:
@@ -624,6 +746,15 @@ def serve(session: Session, stdin=sys.stdin, stdout=sys.stdout) -> int:
 
 
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["launch"] and set(argv[1:]) <= {"--ssh"}:
+        if os.geteuid() != 0: raise SystemExit("the installer runs as root on the live medium")
+        ssh = "--ssh" in argv
+        status = launch(Host(), ssh=ssh)
+        if ssh:
+            # The forced command is the whole login: a shell follows the installer.
+            shell = pwd.getpwuid(0).pw_shell or "/bin/sh"
+            os.execv(shell, ["-" + Path(shell).name])
+        return status
     if argv[:1] == ["serve"]:
         if os.geteuid() != 0: raise SystemExit("the installer core runs as root on the live medium")
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
