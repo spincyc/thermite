@@ -743,11 +743,42 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
     if code:
         return roll_back(system, transaction, "a step failed")
     code = committed(system, transaction)
+    if work.kind not in engine.UNINSTALLING:
+        retain(context, system, transaction)
     if work.after is not None:
         work.after(system, transaction)
     if work.gateway is not None and getattr(work.gateway, "deferred", False):
         return relay(context, system, transaction, first=first + len(opening) + len(rest))
     return code
+
+
+def retain(context: steps.Context, system: System, transaction: Transaction) -> None:
+    """Retention after a commit (Q13 aside): the gateway releases the
+    installed manifest names as current and previous stay, as does, until
+    the next commit, the one a bridged version ran; the engine prunes
+    older recorded ones, and this removes those staged before the engine,
+    which no manifest records. Old runtime/backups tars stay untouched."""
+    try:
+        installed = manifest.installed(system, context.installation.root)
+    except manifest.ManifestError:
+        return
+    releases = context.installation.access / "releases"
+    item = next((item for item in (installed or {}).get("items", []) if item["path"] == str(releases)), None)
+    names = system.directory_entries(releases) if item is not None else None
+    if not names:
+        return
+    if transaction.record.get("bridged") and not transaction.record.get("gateway_before"):
+        return  # The release the described version runs is not known: nothing goes.
+    keep = {item.get("current"), item.get("previous"), transaction.record.get("gateway_before")}
+    older = [releases / name for name in names if name not in keep]
+    if not older:
+        return
+    code = runner.perform(Command(("rm", "-rf", "--one-file-system", "--", *map(str, older)), root=True),
+                          system, context.area, root_confirmed=True)
+    if code == 0:
+        system.say(f"   Removed {len(older)} older gateway release(s) from {releases}.")
+    else:
+        system.say(f"   Could not remove the older gateway releases in {releases}; they stay until the next commit.")
 
 
 def _gateway(system: System) -> str | None:
@@ -758,7 +789,7 @@ def _gateway(system: System) -> str | None:
         found = access.installed_release(system)
     except (OSError, ValueError, AccessError):
         return None
-    return found.name if found else None
+    return found.name if found and found.parent.name == "releases" else None
 
 
 def relay(context: steps.Context, system: System, transaction: Transaction, *, first: int) -> int:

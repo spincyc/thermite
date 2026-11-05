@@ -486,5 +486,28 @@ Path(report).write_text(json.dumps({"code": code, "host": host}))
                       application.older(store, site, site, installed_release["digest"], None))
 
 
+class Retention(unittest.TestCase):
+    def test_only_the_selected_and_the_previous_environment_stay(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            store = Path(temporary)
+            for name, key in (("environment-a", "git-" + "a" * 40), ("environment-b", "release-" + "b" * 64),
+                              ("environment-c", "git-" + "c" * 40), ("environment-d", "git-" + "d" * 40)):
+                (store / name / "bin").mkdir(parents=True)
+                (store / f"{key}.json").write_text(json.dumps({"environment": name, "release": {"digest": "x"}}))
+            (store / "sources" / ("a" * 40)).mkdir(parents=True)
+            (store / "environment-orphan").mkdir()
+            said = []
+            application.retain(store, store / "environment-c", str(store / "environment-b/bin/thermite"), said.append)
+            self.assertEqual(sorted(path.name for path in store.iterdir()),
+                             ["environment-b", "environment-c", "environment-orphan", f"git-{'c' * 40}.json",
+                              f"release-{'b' * 64}.json", "sources"])
+            self.assertEqual(list((store / "sources").iterdir()), [])
+            self.assertIn("Removed 2 older application environment(s)", said[0])
+            for previous in (None, (b"#!/usr/bin/python3\n", 0o755), "/usr/local/bin/thermite"):
+                with self.subTest(previous=previous):
+                    application.retain(store, store / "environment-c", previous, said.append)
+                    self.assertTrue((store / "environment-b").is_dir(), "an unknown previous command keeps all")
+
 if __name__ == "__main__":
     unittest.main()

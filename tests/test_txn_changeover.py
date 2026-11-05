@@ -129,7 +129,7 @@ class Fixture(unittest.TestCase):
         scope = ExitStack()
         self.addCleanup(scope.close)
         for name, value in (("images", [IMAGE]), ("pins", {"openhab": "sha256:" + "e" * 64}),
-                            ("tools", txn_fakes.TOOLS), ("transaction_id", txn_fakes.ID)):
+                            ("tools", txn_fakes.TOOLS), ("transaction_id", txn_fakes.ID), ("installed", None)):
             scope.enter_context(patch.object(manifest, name, return_value=value))
         scope.enter_context(patch.object(changeover.Transaction, "unpin",
                                          lambda transaction, system: self.unpinned.append(transaction.id)))
@@ -535,6 +535,28 @@ class Kinds(Fixture):
         self.assertEqual(changeover.pending_command(self.site), f"thermite uninstall --config {self.site}")
         self.assertIn(f"Run thermite uninstall --config {self.site} to roll it back", self.said())
 
+    def test_a_commit_keeps_the_current_and_previous_gateway_releases_and_removes_older_ones(self):
+        self.host = Host(self)
+        releases = self.context.installation.access / "releases"
+        installed = {**INSTALLED, "items": [{"path": str(releases), "class": "versioned",
+                                             "current": txn_fakes.ID, "previous": txn_fakes.OLD}]}
+        self.host.system.directory_entries.return_value = [txn_fakes.OLD, txn_fakes.ID, "20250101-staged",
+                                                            "fixture-v1"]
+        transaction = changeover.Transaction(self.site / "var", txn_fakes.ID, {"gateway_before": "fixture-v1"})
+        with patch.object(manifest, "installed", return_value=installed):
+            changeover.retain(self.context, self.host.system, transaction)
+        self.assertEqual(self.log, [f"sudo rm -rf --one-file-system -- {releases}/20250101-staged"],
+                         "the release the bridged version ran stays until the next commit")
+        self.log.clear()
+        transaction.record["gateway_before"] = None
+        with patch.object(manifest, "installed", return_value=installed):
+            changeover.retain(self.context, self.host.system, transaction)
+        self.assertEqual(self.log, [f"sudo rm -rf --one-file-system -- {releases}/20250101-staged {releases}/fixture-v1"])
+        self.log.clear()
+        transaction.record["bridged"] = True
+        with patch.object(manifest, "installed", return_value=installed):
+            changeover.retain(self.context, self.host.system, transaction)
+        self.assertEqual(self.log, [], "a bridged version's own release unknown: nothing is removed")
 
     def test_a_transaction_that_rolled_back_before_its_deploy_is_shown_under_the_one_that_ran(self):
         from oh_cli import history

@@ -148,6 +148,38 @@ def retain_launcher(store: Path, previous: tuple[bytes, int]) -> Path:
     return backup
 
 
+def retain(store: Path, current: Path, previous: str | tuple | None, say: Callable[[str], None]) -> None:
+    """Retention after the owner command moved to `current`: that
+    environment and the one the command selected before stay (thermite
+    revert runs it); older environments with their records and source
+    checkouts go. Nothing goes when the previous command was not one of
+    this store's, and an environment no record names is left alone."""
+    if not isinstance(previous, str):
+        return
+    before = Path(previous)
+    if before.parent.name != "bin" or before.parent.parent.parent != store:
+        return
+    keep = {current.name, before.parent.parent.name}
+    removed = 0
+    for record in sorted(store.glob("*.json")):
+        try:
+            name = json.loads(record.read_text())["environment"]
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+        if not isinstance(name, str) or Path(name).name != name or name in keep:
+            continue
+        environment = store / name
+        if environment.is_dir() and not environment.is_symlink():
+            shutil.rmtree(environment, ignore_errors=True)
+        record.unlink(missing_ok=True)
+        checkout = store / "sources" / record.stem.removeprefix("git-")
+        if record.name.startswith("git-") and checkout.is_dir() and not checkout.is_symlink():
+            shutil.rmtree(checkout, ignore_errors=True)
+        removed += 1
+    if removed:
+        say(f"Removed {removed} older application environment(s); the previous one stays for thermite revert.")
+
+
 def select(home: Path, command: Path) -> Path:
     """Point the owner command at `command`, an environment's own launcher,
     in one replacement (thermite revert selects the previous one). A
@@ -516,6 +548,7 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
                     os.replace(temporary, launcher)
                 finally:
                     temporary.unlink(missing_ok=True)
+                retain(store, environment, previous_launcher, say)
         except Downgrade:
             raise
         except Transacted as outcome:
@@ -544,7 +577,7 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
             say("Resume: " + shlex.join(resume))
             raise
     say(f"{operation.capitalize()} complete. {launcher} selects the verified application; "
-        "previous environments are retained.")
+        "the previous environment is retained.")
     found = shutil.which("thermite")
     if found is None or Path(found).resolve() != launcher.resolve():
         say(f"Warning: `thermite` on PATH is {found or 'missing'}, not {launcher}. Put {launcher.parent} "
