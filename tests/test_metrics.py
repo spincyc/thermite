@@ -258,7 +258,7 @@ class Alerting(unittest.TestCase):
 
     def test_session_and_tls_ports_are_not_probed(self):
         """A TCP probe would cost an AVPro a session and a listing, and an
-        Android TV remote or Cast port a TLS handshake."""
+        Android TV remote, Cast or WiiM port a TLS handshake."""
         inventory = copy.deepcopy(INVENTORY)
         inventory["devices"] += [
             {"id": "example_avpro", "room": "example_east", "kind": "hdmi_matrix", "make": "AVPro Edge",
@@ -266,11 +266,15 @@ class Alerting(unittest.TestCase):
              "controls": {"observe": ["network_ping"], "control": ["avpro_telnet"]}},
             {"id": "example_shield", "room": "example_east", "kind": "streamer", "make": "NVIDIA",
              "model": "SHIELD TV Pro", "ip": "192.0.2.31",
-             "controls": {"observe": ["cast"], "control": ["androidtv_googletv"]}}]
+             "controls": {"observe": ["cast"], "control": ["androidtv_googletv"]}},
+            {"id": "example_amp", "room": "example_east", "kind": "streaming_amp", "make": "WiiM",
+             "model": "Amp Pro", "ip": "192.0.2.32",
+             "controls": {"observe": ["wiim_http"], "control": ["wiim_http"]}}]
         found, unknown = oh_metrics.probes(inventory)
-        self.assertFalse({"example_avpro", "example_shield"} & {probe.device for probe in found})
+        self.assertFalse({"example_avpro", "example_shield", "example_amp"} & {probe.device for probe in found})
         self.assertIn(("example_avpro", ("network_ping", "avpro_telnet")), unknown)
         self.assertIn(("example_shield", ("cast", "androidtv_googletv")), unknown)
+        self.assertIn(("example_amp", ("wiim_http",)), unknown)
 
     def test_device_ports_are_probed_every_two_minutes(self):
         prometheus = yaml.safe_load(FILES[oh_metrics.PROMETHEUS_YML])

@@ -614,6 +614,25 @@ class MetricsHealth(unittest.TestCase):
         self.assertEqual(health.describe(), "Prometheus http://127.0.0.1:13606 ready, targets 1/2 up; "
                                             "Grafana http://192.0.2.5:13610/ answers")
 
+    def test_a_device_port_not_probed_yet_is_not_down(self):
+        """Device ports are probed every 2 minutes, so after a start most are
+        unknown for a while; any other job's unknown target is not up."""
+        targets = {"data": {"activeTargets": [
+            {"health": "up", "labels": {"job": "openhab", "instance": "127.0.0.1:8080"}},
+            {"health": "unknown", "labels": {"job": "device_tcp", "instance": "192.0.2.40:80"}},
+            {"health": "up", "labels": {"job": "device_tcp", "instance": "192.0.2.41:80"}}]}}
+        table = {"http://127.0.0.1:13606/-/ready": (200, b""),
+                 "http://127.0.0.1:13606/api/v1/targets": (200, json.dumps(targets).encode()),
+                 "http://192.0.2.5:13610/api/health": (200, b"{}")}
+        health = deploy.metrics_health(HOST, "192.0.2.5", self.answers(table))
+        self.assertEqual((health.up, health.total, health.down), (2, 2, ()))
+        self.assertTrue(health.targets_ok)
+        targets["data"]["activeTargets"][0]["health"] = "unknown"
+        table["http://127.0.0.1:13606/api/v1/targets"] = (200, json.dumps(targets).encode())
+        health = deploy.metrics_health(HOST, "192.0.2.5", self.answers(table))
+        self.assertEqual((health.up, health.total, health.down), (1, 2, ("openhab 127.0.0.1:8080",)))
+        self.assertFalse(health.targets_ok)
+
     def test_the_systemd_collector(self):
         def collector(*values):
             result = [{"metric": {"collector": "systemd"}, "value": [1.0, value]} for value in values]

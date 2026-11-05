@@ -12,12 +12,19 @@ rollback. The unified deployment workflow uses a separate committed private site
   the receiver closes every HTTP connection, so each poll's requests were
   about 107 new connections a minute between two receivers, now about 35.
   A change made on its front panel or from Control4 shows within 15 s.
-  Routing still reads its power and input back right after switching them.
-  A volume or mute it was sent is read back only at its next poll, so the
-  remote steps from and shows the value it sent until then (its control's
-  readBack, 16 s) instead of for 3 s and 6 s.
+  The routing lifecycle still reads its power and input back right after
+  switching them. A volume or mute it was sent is read back only at its
+  next poll, up to 18 s later (its control's readBack), so the remote steps
+  from and shows the value it sent for 19 s instead of for 3 s and 6 s.
+  routing.js holds a choice's Source until the slowest receiver or display
+  can have read it back (20 s with such a receiver, else 15 s; without the
+  lifecycle that is the binding's poll), and the remote waits a second
+  longer.
 - A WiiM is polled every 30 s instead of every 10 s, each poll a new TLS
-  connection; a command is still read back a second later.
+  connection; a command is still read back a second later. The metrics no
+  longer probe its HTTPS port either.
+- Monitoring readiness and `thermite health` no longer count a device port
+  Prometheus has not probed yet since it started as down.
 
 - The metrics probe each device's control ports every 2 minutes instead
   of every 30 s; each probe is a new connection to a device its integration

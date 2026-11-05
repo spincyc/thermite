@@ -39,7 +39,7 @@ function load(options = {}) {
         w.posts.push([name, String(value), w.clock]); this.state = String(value);
       } });
   }
-  const table = { rooms: ROOMS, edid: null, off: 'off' };
+  const table = { rooms: ROOMS, edid: null, off: 'off', holdMs: 15000 };
   if (options.lifecycle) {
     table.lifecycle = { resources: {}, io: { wake: 'house_routing_io_events' }, consumers: [] };
     w.items.set('house_routing_io_events', { state: 'NULL', sendCommand() {}, postUpdate() {} });

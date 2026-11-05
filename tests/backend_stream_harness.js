@@ -233,7 +233,7 @@ async function probe(name, run, options) {
     c.live()[0].open();
     c.event("loc_room_0_source", "other");
     assert.equal((await choosing).pending, null);
-    // A choice not read back settles at CONFIRM_MS without reading the Item.
+    // A choice not read back settles at confirmMs() without reading the Item.
     const second = c.backend.choose("room_1", "other");
     await tick();
     assert(c.fire(16000));

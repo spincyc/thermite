@@ -114,7 +114,7 @@ def build(house: House) -> dict:
     devices = {d["id"]: d for d in house.devices}
     passive = {(room.get("display") or {}).get("device") for room in (route.get("rooms") or {}).values()
                if (room.get("display") or {}).get("passive") is True}
-    out = {"version": 1, "rooms": [], "sources": {}, "devices": {}, "initial": {}}
+    out = {"version": 1, "rooms": [], "sources": {}, "devices": {}, "initial": {}, "holdMs": routing.hold_ms(data)}
     for ident, device in devices.items():
         row = {"label": device.get("name") or device.get("model") or ident,
                "short": device.get("model") or device.get("name") or ident,

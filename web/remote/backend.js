@@ -83,7 +83,7 @@
  *   getState   the room as the snapshot and the events since say; it waits
  *              for the first snapshot (up to SNAPSHOT_TIMEOUT)
  *   choose     POST /rest/items/loc_<room>_source, text/plain body "off" or a source id;
- *              pending stays set until the Item's next update arrives, or CONFIRM_MS pass
+ *              pending stays set until the Item's next update arrives, or confirmMs() pass
  *   press, setVolume, setInput
  *              POST /rest/items/<Item>, text/plain body: ON or OFF, a volume, an input value, or
  *              the button id for control.key; the device's integration turns it into the
@@ -101,8 +101,11 @@
   // On every remote, and always the room's audio device.
   const AUDIO = { volume_up: true, volume_down: true, mute: true };
 
-  // How long a choice waits to be read back: routing.js's RECENT_MS (15 s), and a second.
-  const CONFIRM_MS = 16000;
+  // How long a choice waits to be read back: routing.js's RECENT_MS (the
+  // model's holdMs, 15 s unless a receiver reports later), and a second.
+  function confirmMs(house) {
+    return (house.holdMs || 15000) + 1000;
+  }
   // How long a value sent is stepped or toggled from instead of the one read
   // back: a held volume key repeats faster than a device reports, and a
   // second Mute can come before the first is read back (a second after the
@@ -765,7 +768,7 @@
     this.base = config.base || "";
     this.fetch = config.fetch || ((url, init) => global.fetch(url, init));
     this.EventSource = config.EventSource || global.EventSource;
-    this.timeout = config.timeout != null ? config.timeout : CONFIRM_MS;
+    this.timeout = config.timeout != null ? config.timeout : confirmMs(house);
     this.view = config.view === "home" ? "home" : "remote";
     // The state verb a room's Source arrives as in this view.
     this.sourceVerb = this.view === "home" ? "statechanged" : "stateupdated";
@@ -1236,7 +1239,7 @@
     return new Promise((resolve) => { this.waiting[roomId] = resolve; });
   };
 
-  // openHAB took the command: wait for the read-back, or CONFIRM_MS. The
+  // openHAB took the command: wait for the read-back, or confirmMs(). The
   // stream (and its snapshot after any gap) holds what the room reads.
   OpenHabBackend.prototype.choiceSent = function (roomId, sourceId) {
     const item = this.items[roomId];

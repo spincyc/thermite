@@ -53,13 +53,15 @@ DEVICE_KEYS = ("zones",)
 #: every connection, and each poll opens one for each of its requests, so it
 #: polls three times less often than the binding allows (5 s). It reads
 #: nothing after a command, so a command is read back at the next poll:
-#: READ_BACK, which the remote waits for (remote()'s readBack). The routing
-#: lifecycle reads power and input back itself after switching them
-#: (lifecycle_io.js denonWrite); without it, routing.js holds a choice's
-#: Source for RECENT_MS (15 s), about one poll. Telnet would report at once,
-#: but Control4 may hold the receiver's one telnet connection.
+#: READ_BACK, which the remote waits for (remote()'s readBack), as routing.js
+#: does for a choice (routing.hold_ms()). The routing lifecycle reads power
+#: and input back itself after switching them (lifecycle_io.js denonWrite).
+#: Telnet would report at once, but Control4 may hold the receiver's one
+#: telnet connection.
 POLL = 15
-READ_BACK = POLL
+#: The binding's next poll starts POLL s after the last one ended, and its
+#: requests, each a new connection, take a few seconds more.
+READ_BACK = POLL + 3
 #: The binding's zoneCount: the main zone plus up to three more.
 ZONES = range(1, 5)
 DEFAULT_ZONES = 2

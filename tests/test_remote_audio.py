@@ -175,6 +175,16 @@ console.info = () => {};
                                 capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_a_room_waits_for_its_slowest_receiver_or_display(self):
+        """routing.js holds a choice (RECENT_MS) and the remote waits for it
+        until a receiver read only at its poll can have shown it."""
+        model, _ = compiled(zones())
+        hold = (denonmarantz_http.READ_BACK + 2) * 1000
+        self.assertEqual((model["holdMs"], routing.table(zones())["holdMs"]), (hold, hold))
+        model, _ = compiled(desk())
+        self.assertEqual((model["holdMs"], routing.table(desk())["holdMs"]), (15000, 15000))
+        self.assertIn("const RECENT_MS = TABLE.holdMs;", (AREA / "lib/oh_features/routing/routing.js").read_text())
+
     def test_a_receiver_holds_the_volume_sent_until_its_next_poll(self):
         """A Marantz reports a command only at its next poll (READ_BACK), so
         the remote steps from and shows what it sent until then."""

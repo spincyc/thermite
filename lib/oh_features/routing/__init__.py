@@ -1036,6 +1036,23 @@ def edid_table(data: dict) -> dict | None:
     }
 
 
+#: Seconds routing.js holds a room's Source after a choice while its
+#: receiver or display does not show it yet (RECENT_MS): at least this, a
+#: receiver being read seconds after the matrix.
+HOLD = 15
+
+
+def hold_ms(data: dict) -> int:
+    """routing.js's RECENT_MS: HOLD, or the slowest read-back (READ_BACK)
+    of a room's receiver or display and 2 s, if longer."""
+    devices = {d["id"]: d for d in data["devices"]}
+    rooms = ((data.get("routing") or {}).get("rooms") or {}).values()
+    staged = {(entry.get(role) or {}).get("device") for entry in rooms for role in ("receiver", "display")}
+    slowest = max((module.READ_BACK for ident in staged if ident in devices
+                   for module in [stager(devices[ident])] if module), default=0)
+    return 1000 * max(HOLD, slowest + 2)
+
+
 def table(data: dict) -> dict:
     """What routing.js needs: by room id, the EDID table, and the Source
     state of a room that is off. A room's stages are its display, then its
@@ -1100,7 +1117,7 @@ def table(data: dict) -> dict:
     for room, raw in rooms.items():
         if "sync" in raw:
             rooms[raw["sync"]["leader"]].setdefault("followers", []).append(room)
-    result = {"rooms": rooms, "edid": edid_table(data), "off": OFF}
+    result = {"rooms": rooms, "edid": edid_table(data), "off": OFF, "holdMs": hold_ms(data)}
     if lifecycle_enabled(data):
         from .lifecycle import compile_descriptor
         from .lifecycle_io import capabilities

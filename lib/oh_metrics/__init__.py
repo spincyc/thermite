@@ -57,8 +57,10 @@ SCRAPE_INTERVAL = "30s"
 SCRAPE_TIMEOUT = "10s"
 #: Shorter than SCRAPE_TIMEOUT, so a dead device fails its probe instead of the scrape.
 PROBE_TIMEOUT = "5s"
-#: Each probe is a new connection to a device that its integration already
-#: polls, so device ports are probed less often than everything else.
+#: The job probing device ports. Each probe is a new connection to a device
+#: that its integration already polls, so it probes less often than the
+#: other jobs scrape.
+DEVICE_JOB = "device_tcp"
 DEVICE_PROBE_INTERVAL = "2m"
 
 #: Below the runtime state (oh_deploy.State): the deployed copy of
@@ -559,7 +561,7 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
                     add("thing", ident, "thermite_thing_online", {"thing": uid}, 0, demand)
         for probe in found:
             if probe.device == ident and set(controls).intersection(probe.integrations):
-                add("port", ident, "probe_success", {"job": "device_tcp", "device": ident, "port": str(probe.port)}, 0,
+                add("port", ident, "probe_success", {"job": DEVICE_JOB, "device": ident, "port": str(probe.port)}, 0,
                     demand)
         if demand is None:
             return
@@ -663,7 +665,7 @@ def prometheus_yml(inventory: dict, host: dict, conf=None) -> str:
              "authorization": {"type": "Bearer", "credentials_file": f"{SECRETS_MOUNT}/{OPENHAB_TOKEN}"},
              "static_configs": [{"targets": [openhab_address(host)]}]},
             {"job_name": "thermite", "static_configs": [{"targets": [f"{LOOPBACK}:{port['exporter']}"]}]},
-            _blackbox_job("device_tcp", device_targets, port["blackbox"], DEVICE_PROBE_INTERVAL),
+            _blackbox_job(DEVICE_JOB, device_targets, port["blackbox"], DEVICE_PROBE_INTERVAL),
             _blackbox_job("service_http", service_targets, port["blackbox"]),
             _blackbox_job(GATEWAY_JOB, [{"targets": [gateway_probe_url(host)],
                                          "labels": {"__param_module": HTTPS_GATEWAY, "service": "gateway"}}],

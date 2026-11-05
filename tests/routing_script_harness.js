@@ -19,6 +19,7 @@ const TABLE = {
   rooms: { den: room('den', 'Den', 'matrix_output1_input'), office: room('office', 'Office', 'matrix_output2_input') },
   edid: { inputs: { 1: 'matrix_input1_edid' }, outputs: { matrix_output1_input: '5', matrix_output2_input: '6' }, idle: null },
   off: 'off',
+  holdMs: 15000,
   lifecycle: { resources: { matrix_output1_input: { key: 'matrix' }, matrix_output2_input: { key: 'matrix' } },
     io: { wake: 'house_routing_io_events' }, consumers: [] },
 };

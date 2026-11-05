@@ -60,6 +60,9 @@ HEX_FIELDS = {"Title", "Artist"}
 #: BASE_URL, so each channel names its own command.
 STATUS = "command=getPlayerStatus"
 BASE_URL = "https://{ip}/httpapi.asp?"
+#: A TCP probe of its HTTPS port would cost the player a TLS handshake it
+#: never gets; its Thing's status shows it reachable.
+PROBED = False
 #: Seconds from a command to its read-back: the binding asks for
 #: getPlayerStatus again a second after a command (refreshAfterCommand).
 READ_BACK = 1

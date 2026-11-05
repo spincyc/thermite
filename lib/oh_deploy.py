@@ -2235,6 +2235,11 @@ def metrics_health(host: dict, address: str | None = None, get=http_get) -> Metr
         except (ValueError, KeyError, TypeError):
             targets = None
         if isinstance(targets, list):
+            # A device port Prometheus has not probed yet since it started
+            # (every DEVICE_PROBE_INTERVAL) is not down: its health is unknown.
+            targets = [target for target in targets
+                       if not (target.get("health") == "unknown"
+                               and (target.get("labels") or {}).get("job") == metrics.DEVICE_JOB)]
             total = len(targets)
             up = sum(1 for target in targets if target.get("health") == "up")
             down = sorted(f"{(target.get('labels') or {}).get('job', '?')} "
