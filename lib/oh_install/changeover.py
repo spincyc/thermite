@@ -249,6 +249,12 @@ class Transaction:
                 asides[str(path)] = None
         self.save(asides=asides)
 
+    def discard_copies(self) -> None:
+        """Nothing began: what the gateway's preparation copied into this
+        transaction (Gateway._exported, the installed gateway's TLS key
+        among it) goes now rather than at the next commit."""
+        shutil.rmtree(self.directory / "gateway", ignore_errors=True)
+
     def put_back(self) -> None:
         for path, aside in self.record.get("asides", {}).items():
             path = Path(path)
@@ -810,8 +816,10 @@ def _toplevel(site: Path) -> Path:
 
 
 def refused(system: System, transaction: Transaction) -> int:
-    """Nothing began: the site goes back to pinning the version that runs."""
+    """Nothing began: the site goes back to pinning the version that runs,
+    and the preparation's gateway copies go."""
     transaction.unpin(system)
+    transaction.discard_copies()
     transaction.close("refused")
     system.say(f"{transaction.name} refused: nothing of Thermite was stopped or changed.")
     return REFUSED
@@ -825,6 +833,7 @@ def _interrupted(system: System, transaction: Transaction) -> int:
         system.say(f"\nInterrupted before the transaction began: nothing of Thermite was stopped or changed. "
                    f"Run {transaction.rerun} again.")
         transaction.unpin(system)
+        transaction.discard_copies()
         transaction.close("refused")
     return INTERRUPTED
 

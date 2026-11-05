@@ -220,6 +220,22 @@ class Refused(Fixture):
         self.assertEqual(self.run_upgrade(prepare=[("packages", 1)]), changeover.REFUSED)
         self.assertEqual(self.log, ["packages"])
 
+    def exported(self, system):
+        """What GatewayInputs leaves: the installed gateway's adoption export."""
+        export = self.directory / "gateway/adopted-0a1b2c"
+        export.mkdir(parents=True, mode=0o700)
+        (export / "tls-key.pem").write_text("fixture key\n")
+        return 0
+
+    def test_a_refusal_or_an_interrupt_before_begin_drops_the_gateway_copies(self):
+        for outcome, code in ((1, changeover.REFUSED), (KeyboardInterrupt(), changeover.INTERRUPTED)):
+            with self.subTest(outcome=outcome):
+                shutil.rmtree(self.site / "var/transaction", ignore_errors=True)
+                self.assertEqual(self.run_upgrade(prepare=[("gateway inputs", self.exported),
+                                                           ("packages", outcome)]), code)
+                self.assertFalse((self.directory / "gateway").exists())
+                self.assertEqual(self.record()["phase"], "refused", "its record stays")
+
 
 class RolledBack(Fixture):
     def setUp(self):
