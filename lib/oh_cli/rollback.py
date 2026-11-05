@@ -84,7 +84,11 @@ def roll_back(system: System, commit: str | None, dry_run: bool) -> int:
             f"release: revert the site to it in a new commit (`git -C {shlex.quote(str(AREA))} revert --no-edit "
             f"{wanted[:12]}..HEAD`), then thermite install, or thermite revert to the version before the last "
             "upgrade")
-    installed = manifest.installed(system, context.installation.root)
+    try:
+        installed = manifest.installed(system, context.installation.root)
+    except manifest.ManifestError as exc:
+        system.say(f"{exc}. {manifest.missing_recovery(context)}")
+        return 2
     bridged = installed is None and bridge.needed(system)
     if (installed is None or not installed["installed"]) and not bridged:
         if manifest.thermite_present(context, system):
