@@ -821,9 +821,10 @@ class Engine:
                 cls = old["class"]
             if exists and action in ("copy", "move"):
                 self._meta(path, cls)  # The shape the class needs.
+            # Rollback reloads the old rules with the old version's unit.
             entries.append(Entry(len(entries), path, cls, action, exists, removed=action == "move" and not new,
                                  aside=f"{CLASSES[cls].aside}/{len(entries)}" if action in ("copy", "move") else None,
-                                 apply_unit=(new or old).get("apply_unit")))
+                                 apply_unit=(old or new).get("apply_unit")))
             if new and new["class"] == "versioned" and exists and id is not None:
                 child = f"{path}/{id}"
                 if self.disk.lstat(child) is not None:
@@ -1268,13 +1269,17 @@ class Engine:
 
     def _table(self, journal, entry) -> None:
         """The live table as it was: loaded from the restored rule file by
-        its unit, or deleted if there was none."""
-        if journal.live["nft"]:
+        the old version's unit, from the text collect saved when no rule
+        file of the old version loaded it, or deleted if there was none."""
+        if journal.live["nft"] and entry.existed:
             self._systemctl("restart", entry.apply_unit)
             if self.host.capture(("nft", "list", "table", *TABLE))[0]:
                 raise EngineError(f"{entry.apply_unit} did not load table {' '.join(TABLE)}")
-        elif self.host.capture(("nft", "list", "table", *TABLE))[0] == 0:
+            return
+        if self.host.capture(("nft", "list", "table", *TABLE))[0] == 0:
             self._run("nft", "delete", "table", *TABLE)
+        if journal.live["nft"]:
+            self._run("nft", "-f", str(self.directory(journal.id) / journal.live["nft"]))
 
     def _entry(self, journal, entry, source) -> None:
         """Reinstate one entry. Before its aside is complete the live path is
@@ -1385,8 +1390,12 @@ class Engine:
             lines.append(shlex.join(["systemctl", "daemon-reload"]))
             nft = next((entry for entry in journal.entries if entry.cls == "nft" and entry.action != "leave"), None)
             if nft is not None and journal.live["nft_checked"]:
-                lines.append(shlex.join(["systemctl", "restart", nft.apply_unit]) if journal.live["nft"]
-                             else shlex.join(["nft", "delete", "table", *TABLE]))
+                if journal.live["nft"] and nft.existed:
+                    lines.append(shlex.join(["systemctl", "restart", nft.apply_unit]))
+                else:
+                    lines.append(shlex.join(["nft", "delete", "table", *TABLE]) + " 2>/dev/null || true")
+                    if journal.live["nft"]:
+                        lines.append(shlex.join(["nft", "-f", str(directory / journal.live["nft"])]))
             if journal.before["apparmor"]:
                 lines += [shlex.join(["apparmor_parser", "-r", entry.path]) for entry in journal.entries
                           if entry.cls == "apparmor" and entry.action in ("copy", "move")]

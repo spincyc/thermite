@@ -427,6 +427,12 @@ class FakeHost(engine.Host):
                 return 0
             if verb in ("daemon-reload", "reset-failed"):
                 return 0
+        if argv[:2] == ("nft", "-f"):
+            node = self.disk.nodes.get(argv[2])
+            if node is None or self.table is not None:
+                return 1  # The fake only loads into an empty table.
+            self.table = node.data.decode()
+            return 0
         if argv == ("nft", "delete", "table", *engine.TABLE):
             if self.table is None:
                 return 1
@@ -624,7 +630,8 @@ def switch(disk, host, new: Version, id=ID):
             disk.put(f"{path}/{name}", data=data, mode=0o640, uid=980, gid=980)
         if cls == "versioned":
             disk.put(f"{path}/{id}/config.json", data=b'{"new": true}')
-    for argv in (("systemctl", "daemon-reload"), ("systemctl", "restart", BOUNDARY),
+    apply = new.files[RULES][2]["apply_unit"] if RULES in new.files else BOUNDARY
+    for argv in (("systemctl", "daemon-reload"), ("systemctl", "restart", apply),
                  *((("apparmor_parser", "-r", POLICY),) if POLICY in new.files and disk.nodes.get(APPARMOR) else ()),
                  ("systemctl", "start", engine.TARGET)):
         assert host.run(argv) == 0, argv

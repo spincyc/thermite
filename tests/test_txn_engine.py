@@ -537,6 +537,42 @@ class Verbs(unittest.TestCase):
         self.assertEqual(self.engine.rollback(ID).phase, "rolled-back")
         self.assertEqual(len(self.host.log), calls, "a finished rollback runs nothing")
 
+    def test_rollback_reloads_the_table_with_the_old_versions_unit(self):
+        """A release that renames the boundary unit: the old rules go back
+        with the old unit, which is what loads them."""
+        before = fakes.world(self.disk, self.host, fakes.managed_paths(self.old, self.new))
+        renamed = "thermite-boundary.service"
+        new = fakes.version("new")
+        del new.files[f"{fakes.UNITS}/{fakes.BOUNDARY}"]
+        new.files[f"{fakes.UNITS}/{renamed}"] = ("unit", fakes.unit_text(renamed, "new"), {"unit": renamed})
+        new.files[fakes.RULES] = ("nft", new.files[fakes.RULES][1], {"apply_unit": renamed})
+        new.links = {f"{fakes.WANTS}/{renamed}": f"{fakes.UNITS}/{renamed}"}
+        self.through_switch(new)
+        self.host.run(("systemctl", "restart", renamed))
+        self.assertEqual(self.host.table, new.files[fakes.RULES][1].decode())
+        journal = self.engine.rollback(ID)
+        self.assertEqual((journal.phase, journal.outcome["error"]), ("rolled-back", None))
+        self.assertIn(f"systemctl restart {fakes.BOUNDARY}", self.engine.manual(journal))
+        self.assertEqual(fakes.world(self.disk, self.host, fakes.managed_paths(self.old, new)) | {"host": None},
+                         before | {"host": None})
+        self.assertEqual(self.host.table, self.old.files[fakes.RULES][1].decode())
+
+    def test_a_table_no_rule_file_loaded_is_put_back_from_its_text(self):
+        disk = fakes.MemoryDisk()
+        host = fakes.FakeHost(disk)
+        fakes.empty(disk)
+        host.table = "table inet thermite_native { # loaded by hand }\n"
+        run = engine.Engine(disk, host, ROOT, source=fakes.SOURCE, clock=lambda: fakes.CLOCK)
+        run.begin(ID, self.desired(kind="install"), fakes.OPERATOR)
+        run.guard(ID)
+        run.collect(ID)
+        fakes.switch(disk, host, self.new)
+        self.assertNotEqual(host.table, "table inet thermite_native { # loaded by hand }\n")
+        journal = run.rollback(ID)
+        self.assertEqual((journal.phase, journal.outcome["error"]), ("rolled-back", None))
+        self.assertEqual(host.table, "table inet thermite_native { # loaded by hand }\n")
+        self.assertIn(f"nft -f {ROOT}/.transaction/{ID}/live/thermite_native.nft", run.manual(journal))
+
     def test_a_committed_transaction_is_finished_not_undone(self):
         self.through_switch()
         commit = self.engine.commit
