@@ -752,7 +752,7 @@ examples:
                                     production&#x27;s log, in the runtime state
 </pre></details>
 </section>
-<section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, with one approval for the whole run.</p><pre class="help">usage: thermite install [-h] [--config DIR] [-n] [--clean] [--restart-runtime]
+<section class="verb" id="install"><h3><code>thermite install</code></h3><p>Install thermite on this host, with one approval for the whole run.</p><pre class="help">usage: thermite install [-h] [--config DIR] [-n] [--clean] [--yes] [--restart-runtime]
                         [--runtime-token-file RUNTIME_TOKEN_FILE] [--source SOURCE]
                         [--revision REVISION] [--native-timeout SECONDS]
                         [--allow-downgrade]
@@ -794,6 +794,11 @@ moves the state trees under runtime/ aside and clears the local
 runtime/monitoring credentials, and deletes them only at the commit; it
 requires typing the exact state path. Logs, history, old backups and the
 gateway&#x27;s identity/TLS state are retained.
+--yes gives the run&#x27;s one approval up front, for an unattended install from a
+system unit with standard input at /dev/null: it covers what that approval
+covers, the root commands run under sudo -n, nothing reads standard input,
+and any other question is answered no. It needs sudo without a password,
+and is refused with --clean, which asks you to type the state path.
 --restart-runtime installs even when nothing differs, starting everything fresh.
 --native-timeout sets the one native readiness allowance (300-7200 seconds).
 --dry-run fetches, commits and changes nothing. When the site pins the release
@@ -807,6 +812,9 @@ options:
   -n, --dry-run                 report what it would do; change nothing
   --clean                       delete native state and local API/Grafana credential
                                 copies, then reinstall; pairings are lost
+  --yes                         approve the whole run up front, unattended: nothing
+                                reads standard input, and any other question is answered
+                                no
   --restart-runtime             restart runtime once after deployment, then run normal
                                 readiness checks
   --runtime-token-file RUNTIME_TOKEN_FILE
@@ -847,6 +855,8 @@ examples:
   thermite install                  install with one approval for the whole run; rolls back by itself on failure
   thermite install --clean --dry-run
                                     review a complete native-state reset and fresh installation
+  thermite install --yes --config /path/to/private-site
+                                    install unattended, approved up front, asking nothing
 </pre>
 </section>
 <section class="verb" id="upgrade"><h3><code>thermite upgrade</code></h3><p>Update the application, native services and HTTPS gateway together.</p><pre class="help">usage: thermite upgrade [-h] [--config DIR] [-n]

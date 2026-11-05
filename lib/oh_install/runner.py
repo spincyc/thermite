@@ -11,14 +11,18 @@ import shlex
 import oh_cli
 from oh_install import progress
 from oh_install.model import Action, Command, Step, Task
-from oh_install.system import System
+from oh_install.system import UNATTENDED, System
 
 RERUN = f"Run thermite install --config {shlex.quote(str(oh_cli.AREA))} again to go on from here."
 _TASK_APPROVAL = ContextVar("thermite_task_approval", default=False)
 
 
 def confirm_run(system: System, operation: str, rerun: str = RERUN) -> bool:
-    """One interactive approval, scoped to this invocation's workflow."""
+    """One interactive approval, scoped to this invocation's workflow; given
+    up front by --yes."""
+    if UNATTENDED.get():
+        system.say(f"Approved by --yes: this {operation} runs without asking.")
+        return True
     if not system.interactive():
         system.say(f"Stopped; this {operation} needs you at a terminal. {rerun}")
         return False
@@ -37,8 +41,11 @@ def perform(action: Action, system: System, area: Path, rerun: str = RERUN, *,
     if root_confirmed and isinstance(action, Command) and action.approved_argv is not None:
         action = replace(action, argv=action.approved_argv)
     root = isinstance(action, Command) and action.root
-    if (root or isinstance(action, Task) and action.interactive) and not system.interactive():
-        system.say(f"   needs you at a terminal: {action.shown()}")
+    # --yes approved the run: its root commands run under sudo -n, which
+    # never asks for a password. Nothing else that would ask runs.
+    approved = UNATTENDED.get() and root and root_confirmed
+    if (root or isinstance(action, Task) and action.interactive) and not approved and not system.interactive():
+        system.say(f"   {'--yes does not approve' if UNATTENDED.get() else 'needs you at a terminal'}: {action.shown()}")
         system.say(f"Stopped. {rerun}")
         return None
     if root:
@@ -51,7 +58,7 @@ def perform(action: Action, system: System, area: Path, rerun: str = RERUN, *,
         system.say(f"   {'running' if isinstance(action, Command) else 'now'}: {action.shown()}")
     if isinstance(action, Command):
         with progress.command(terminal=action.terminal, show_output=action.show_output):
-            return system.run(action.full, area)
+            return system.run(("sudo", "-n", *action.argv) if approved else action.full, area)
     # A task may request a bounded recovery command. It inherits only this
     # invocation's approval; reset even on exceptions before another run.
     approval = _TASK_APPROVAL.set(root_confirmed)

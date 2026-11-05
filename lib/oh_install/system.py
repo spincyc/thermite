@@ -23,12 +23,19 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
+from contextvars import ContextVar
 from pathlib import Path
 
 import oh_cli
 import oh_deploy as deploy
 import oh_http
 from oh_install import progress
+
+#: Whether the owner approved this run up front (thermite install --yes),
+#: as a system unit with no terminal does: the run's one approval is given
+#: (runner.confirm_run) and covers its root commands, nothing reads standard
+#: input, and any other question is answered no.
+UNATTENDED = ContextVar("thermite_unattended", default=False)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -399,9 +406,12 @@ class System:
         return deploy.metrics_health(host, address)
 
     def interactive(self) -> bool:
-        return sys.stdin.isatty()
+        return not UNATTENDED.get() and sys.stdin.isatty()
 
     def ask(self, prompt: str) -> str:
+        if UNATTENDED.get():
+            self.say(f"{prompt.strip()} no: --yes answers only the run's approval")
+            return ""
         try:
             with progress.paused():
                 if oh_cli.switches.quiet:
@@ -418,6 +428,9 @@ class System:
             return ""
 
     def secret(self, prompt: str) -> str:
+        if UNATTENDED.get():
+            self.say(f"{prompt.strip()} not asked: --yes reads nothing")
+            return ""
         try:
             with progress.paused():
                 if oh_cli.switches.quiet and (active := progress.current.get()):

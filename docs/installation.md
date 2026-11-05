@@ -152,6 +152,19 @@ use the stable owner command for subsequent runs. Do not run the whole CLI as
 root. Rerun the same install command after correcting a reported failure;
 each new run asks for approval again.
 
+### An unattended install
+
+`thermite install --yes --config DIR` gives that one approval up front, for a
+run with nobody at a terminal, such as a system unit with standard input at
+`/dev/null`. It covers exactly what the approval covers; nothing reads
+standard input, and any other question is answered no. Its sudo commands run
+with `sudo -n`, so the owner account needs sudo without a password, and a
+command that would ask for one fails and the run stops. `--yes` is refused
+with `--clean`, which asks you to type the state path. A run that finds an
+earlier transaction open resolves it and stops, as every install does, and
+the next run installs; `thermite status --json` names such a transaction as
+`open_transaction`.
+
 ### Service ownership
 
 Application services run as the non-login user and group `thermite`, UID/GID

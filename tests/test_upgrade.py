@@ -20,7 +20,9 @@ import oh_deploy as deploy  # noqa: E402
 import oh_units  # noqa: E402
 from oh_cli import upgrade as upgrade_cli  # noqa: E402
 from oh_install import bridge, changeover, manifest, runner, steps  # noqa: E402
-from oh_install.system import Stat, System, Unit, UnitOrigin  # noqa: E402
+from oh_install import system as system_module  # noqa: E402
+from oh_install.model import Command, Task  # noqa: E402
+from oh_install.system import UNATTENDED, Stat, System, Unit, UnitOrigin  # noqa: E402
 
 
 class Upgrade(unittest.TestCase):
@@ -451,6 +453,86 @@ class UninstallHostPhase(unittest.TestCase):
         self.assertEqual(preview.call_args.args[2].kind, "purge")
         self.transaction.assert_not_called()
 
+
+class Unattended(unittest.TestCase):
+    """thermite install --yes, as the installer image's first boot runs it
+    from a system unit with standard input at /dev/null: the run's one
+    approval is given up front, nothing reads standard input, and any other
+    question is answered no."""
+
+    def setUp(self):
+        approval = UNATTENDED.set(True)
+        self.addCleanup(UNATTENDED.reset, approval)
+        self.system = Mock(spec=System)
+        self.system.interactive.return_value = False
+        self.system.run.return_value = 0
+        self.site = Path("/home/owner/fixture-site")
+
+    def said(self):
+        return "\n".join(str(call.args[0]) for call in self.system.say.call_args_list)
+
+    def test_the_approval_is_given_without_asking(self):
+        self.assertTrue(runner.confirm_run(self.system, "install"))
+        self.system.ask.assert_not_called()
+        self.assertIn("Approved by --yes: this install runs without asking.", self.said())
+
+    def test_the_approved_runs_root_commands_run_under_sudo_without_a_password(self):
+        command = Command(("systemctl", "daemon-reload"), root=True, terminal=True)
+        self.assertEqual(runner.perform(command, self.system, self.site, root_confirmed=True), 0)
+        self.system.run.assert_called_once_with(("sudo", "-n", "systemctl", "daemon-reload"), self.site)
+        self.system.ask.assert_not_called()
+
+    def test_nothing_the_approval_does_not_cover_runs(self):
+        command = Command(("systemctl", "daemon-reload"), root=True)
+        typed = Task("type the state path", lambda system: 0, interactive=True)
+        for action, approved in ((command, False), (typed, True)):
+            with self.subTest(action=action.shown()):
+                self.assertIsNone(runner.perform(action, self.system, self.site, root_confirmed=approved))
+                self.assertIn(f"   --yes does not approve: {action.shown()}", self.said())
+        self.system.run.assert_not_called()
+        self.system.ask.assert_not_called()
+
+    def test_the_host_reads_no_standard_input_and_answers_no(self):
+        host = System()
+        with patch("builtins.input", side_effect=AssertionError("standard input was read")), \
+                patch("getpass.getpass", side_effect=AssertionError("standard input was read")), \
+                patch.object(system_module.sys.stdin, "isatty", return_value=True), \
+                patch.object(System, "say") as said:
+            self.assertFalse(host.interactive(), "a terminal is never asked under --yes")
+            self.assertEqual(host.ask("   Run it? [y/N] "), "")
+            self.assertEqual(host.secret("Password: "), "")
+        self.assertEqual(said.call_args_list[0].args[0], "Run it? [y/N] no: --yes answers only the run's approval")
+
+    def test_install_yes_approves_the_workflow_and_its_host_phase(self):
+        from oh_cli import install as install_cli
+        import oh_application_update
+        UNATTENDED.set(False)
+        seen = {}
+
+        def workflow(site, *, approve, host_args, **kwargs):
+            seen.update(approved=approve(), host_args=host_args, unattended=UNATTENDED.get())
+            return 0
+        with patch.object(install_cli.os, "geteuid", return_value=1000), \
+                patch.object(changeover, "resolve", return_value=None), \
+                patch.object(oh_application_update, "install", side_effect=workflow), \
+                patch.object(System, "say"), patch.object(System, "ask", side_effect=AssertionError("asked")):
+            self.assertEqual(install_cli.main(["--yes"]), 0)
+        self.assertEqual((seen["approved"], seen["unattended"]), (True, True))
+        self.assertIn("--yes", seen["host_args"], "the host phase runs unattended too")
+        self.assertFalse(UNATTENDED.get(), "the approval ends with the run")
+        with patch.object(install_cli.os, "geteuid", return_value=1000), \
+                patch.object(changeover, "pinned", side_effect=lambda *args: 0 if UNATTENDED.get() else 1) as phase:
+            self.assertEqual(install_cli.main(["--_host-phase", "--_run-approved", "--yes"]), 0)
+        phase.assert_called_once()
+
+    def test_a_clean_install_cannot_be_approved_up_front(self):
+        from oh_cli import install as install_cli
+        with patch.object(install_cli.os, "geteuid", return_value=1000), redirect_stderr(io.StringIO()) as stderr, \
+                patch.object(install_cli, "run") as run:
+            self.assertEqual(install_cli.main(["--yes", "--clean"]), 2)
+        run.assert_not_called()
+        self.assertEqual(stderr.getvalue(), "thermite install: --yes cannot approve a clean install, which asks you "
+                                            "to type the state path\n")
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 """Install thermite on this host, or show what that would do.
 
-    thermite install --config DIR [--dry-run] [--clean] [--restart-runtime]
+    thermite install --config DIR [--dry-run] [--clean | --yes] [--restart-runtime]
                      [--native-timeout SECONDS] [--allow-downgrade]
 """
 
@@ -17,7 +17,7 @@ import oh_cli
 import oh_deploy as deploy
 from oh_cli import AREA
 from oh_install import bridge, changeover, manifest, ownership, runner, steps
-from oh_install.system import System
+from oh_install.system import UNATTENDED, System
 
 DESCRIPTION = """\
 Deploy the complete Thermite installation using committed private configuration.
@@ -57,6 +57,11 @@ moves the state trees under runtime/ aside and clears the local
 runtime/monitoring credentials, and deletes them only at the commit; it
 requires typing the exact state path. Logs, history, old backups and the
 gateway's identity/TLS state are retained.
+--yes gives the run's one approval up front, for an unattended install from a
+system unit with standard input at /dev/null: it covers what that approval
+covers, the root commands run under sudo -n, nothing reads standard input,
+and any other question is answered no. It needs sudo without a password,
+and is refused with --clean, which asks you to type the state path.
 --restart-runtime installs even when nothing differs, starting everything fresh.
 --native-timeout sets the one native readiness allowance (300-7200 seconds).
 --dry-run fetches, commits and changes nothing. When the site pins the release
@@ -85,6 +90,7 @@ EXAMPLES = (
     ("thermite install --dry-run", "each step, and what it would run here; runs nothing"),
     ("thermite install", "install with one approval for the whole run; rolls back by itself on failure"),
     ("thermite install --clean --dry-run", "review a complete native-state reset and fresh installation"),
+    ("thermite install --yes --config /path/to/private-site", "install unattended, approved up front, asking nothing"),
 )
 
 
@@ -93,6 +99,9 @@ def main(argv: list[str] | None = None) -> int:
     oh_cli.add_dry_run(parser)
     parser.add_argument("--clean", action="store_true",
                         help="delete native state and local API/Grafana credential copies, then reinstall; pairings are lost")
+    parser.add_argument("--yes", action="store_true",
+                        help="approve the whole run up front, unattended: nothing reads standard input, and any "
+                             "other question is answered no")
     parser.add_argument("--restart-runtime", action="store_true",
                         help="restart runtime once after deployment, then run normal readiness checks")
     parser.add_argument("--runtime-token-file", type=Path,
@@ -111,7 +120,19 @@ def main(argv: list[str] | None = None) -> int:
     if os.geteuid() == 0:
         print("thermite install: run it as your user; it asks once before applying the installation", file=sys.stderr)
         return 2
-    system = System()
+    if arguments.yes and arguments.clean:
+        print("thermite install: --yes cannot approve a clean install, which asks you to type the state path",
+              file=sys.stderr)
+        return 2
+    approval = UNATTENDED.set(arguments.yes)
+    try:
+        return run(System(), arguments)
+    finally:
+        UNATTENDED.reset(approval)
+
+
+def run(system: System, arguments: argparse.Namespace) -> int:
+    """thermite install, or its host phase, with `arguments` parsed."""
     try:
         if not arguments._host_phase:
             if arguments._run_approved:
@@ -125,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
                 AREA, source=arguments.source, revision=arguments.revision,
                 dry_run=arguments.dry_run, approve=lambda: runner.confirm_run(system, "install"),
                 runtime_token_file=arguments.runtime_token_file, allow_downgrade=arguments.allow_downgrade,
-                host_args=(["--clean"] if arguments.clean else []) +
+                host_args=(["--clean"] if arguments.clean else []) + (["--yes"] if arguments.yes else []) +
                           (["--restart-runtime"] if arguments.restart_runtime else []) +
                           (["--native-timeout", str(arguments.native_timeout)]
                            if arguments.native_timeout is not None else []) +

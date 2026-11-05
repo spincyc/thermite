@@ -45,7 +45,11 @@ rollback. The unified deployment workflow uses a separate committed private site
   copies inside the transaction, and deletes them only at the commit; a
   failure puts them back. A gateway whose callback relay was deferred
   activates it in one more transaction in the same run. A fresh install that
-  rolls back leaves nothing installed.
+  rolls back leaves nothing installed. New `thermite install --yes` approves
+  the run up front for an unattended install, from a system unit with
+  standard input at `/dev/null`: nothing reads standard input, its sudo
+  commands run with `sudo -n`, and any other question is answered no. It is
+  refused with `--clean` (docs/installation.md#an-unattended-install).
 - `thermite uninstall` is an install transaction of its own: the engine sets
   aside the units, links, native-port filter and AppArmor policy, leaves the
   state in place and records the installation as not installed, so a later
