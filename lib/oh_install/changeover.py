@@ -949,6 +949,15 @@ def rolled_back(system: System, transaction: Transaction) -> int:
                    "but its health check does not pass (above); the engine says so above when it did not even "
                    f"start. It is left as it is: fix what health reports (systemctl start {oh_units.TARGET} if it "
                    "did not start), then run thermite health --production --installation to check again.")
+    if record.get("bridged"):
+        # The version 1 wrapper speaks next, and version 1's own install
+        # proves the root holds only runtime/ and access/.
+        aside = f"{transaction.root}/.transaction"
+        system.say(f"   This was the first transaction on a host installed before the install engine, and that "
+                   "version runs again. Its application workflow may say next that a completed site release "
+                   "commit is retained: the site is where the lines above say. That version's own thermite "
+                   f"install refuses while {aside} exists, which keeps this transaction until one commits: run "
+                   f"{transaction.rerun} again, or, as root, remove {aside} first.")
     return ROLLED_BACK if healthy else UNHEALTHY
 
 

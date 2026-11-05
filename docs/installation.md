@@ -818,6 +818,25 @@ like any later one. Its commit removes the gateway releases staged before
 it, except the one the old version ran; when that one is unknown, it keeps
 them all.
 
+That first upgrade runs under the owner command from before the install
+engine, whose own messages frame the new upgrade's. When the upgrade stops
+or rolls back, that command then says that "a completed site release commit
+is retained so the same command can resume" and prints a `Resume:` command.
+Unless the transaction is still open (exit status 5, or 130 after it
+began), the site's pin commit was undone instead, as the upgrade said just
+before; the `Resume:` command, like `thermite upgrade`, runs the upgrade
+again.
+
+After that first transaction rolls back, the version from before the
+install engine runs again, and `/srv/thermite/.transaction/` keeps the
+rolled-back transaction until a transaction commits. That version's own
+`thermite install` refuses while it is there ("cannot prove /srv/thermite is
+Thermite's installation root"); `thermite upgrade` does not. Fix what the
+rollback reported and run `thermite upgrade` again, or, to use that
+version's install, first remove the rolled-back transaction as root:
+`sudo rm -rf /srv/thermite/.transaction`. Only after a rollback, exit
+status 3 or 4: after 5 or 130 the transaction is still open.
+
 When Thermite's units and files are here but neither manifest is, or
 `installed.json` is damaged, nothing can prove which of them this
 installation owns, so `thermite install`, `upgrade`, `uninstall`,

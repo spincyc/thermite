@@ -604,6 +604,21 @@ class Kinds(Fixture):
         self.assertEqual((self.record()["head_before"], self.record()["head_after"], self.record()["bridged"]),
                          (None, AFTER, True))
 
+    def test_a_bridged_rollback_says_how_version_1_installs_again(self):
+        # Version 1's own install refuses a root holding .transaction.
+        for health, code in ((0, changeover.ROLLED_BACK), (1, changeover.UNHEALTHY)):
+            with self.subTest(health=health):
+                shutil.rmtree(self.site / "var/transaction", ignore_errors=True)
+                self.assertEqual(self.bridged(health=health), code)
+                said = self.said()
+                self.assertIn("may say next that a completed site release commit is retained", said)
+                self.assertIn(f"refuses while /srv/thermite-fixture/.transaction exists, which keeps this transaction "
+                              f"until one commits: run {changeover.command(self.site, 'upgrade')} again, or, as "
+                              "root, remove /srv/thermite-fixture/.transaction first.", said)
+        shutil.rmtree(self.site / "var/transaction")
+        self.run_upgrade(switch=[("switch", 1)])
+        self.assertNotIn("installed before the install engine", self.said())
+
     def test_an_uninstall_commits_what_is_installed_and_records_no_deploy(self):
         self.host = Host(self)
         work = changeover.uninstall_work(self.context, txn_fakes.ID)

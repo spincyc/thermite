@@ -29,6 +29,16 @@ rollback. The unified deployment workflow uses a separate committed private site
   stops, with the recovery steps (docs/installation.md#a-missing-manifest).
   A rollback stuck after the engine's commands were run by hand (`rollback
   --print`) is closed by rerunning the command, which checks what is back.
+- The first upgrade runs under the owner command from before the install
+  engine. When it stops or rolls back, that command says "A completed site
+  release commit is retained so the same command can resume": unless the
+  transaction is still open (exit status 5, or 130 after it began), the pin
+  commit was undone instead, as the upgrade says just before, also when it
+  stops before the transaction begins. After
+  that first transaction rolls back, the old version's own `thermite
+  install` refuses while `/srv/thermite/.transaction/` holds it: run
+  `thermite upgrade` again, or remove that directory as root first
+  (docs/installation.md#a-missing-manifest). The rollback says so.
 - `thermite install` is the same install transaction, and so is `install
   --clean`: after you type the state path, it moves the state trees under
   `runtime/` aside whole and clears the deploy records and local credential
