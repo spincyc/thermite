@@ -235,5 +235,11 @@ function page(options = {}) {
   }
   proof.quietModes = true;
 
+  // A labelled client (thermite tui, the handheld bridge) reports as its kind.
+  site = gateway(); client = create(site, { client: "tui/handheld.example" }); await client.ready();
+  client.record("command_timeout", 3); await client.loadLocks(); await tick();
+  assert.equal(site.reports[0].body.client, "tui");
+  proof.labelledKind = true;
+
   process.stdout.write(JSON.stringify(proof));
 })().catch(error => { process.stderr.write(error.stack + "\n"); process.exitCode = 1; });

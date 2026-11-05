@@ -26,6 +26,9 @@ class ClientTelemetry(unittest.TestCase):
         for key in ("flushAfterSuccess", "acceptedClears", "spacedAndSingle"):
             self.assertTrue(self.proof[key], key)
 
+    def test_a_labelled_client_reports_as_its_kind(self):
+        self.assertTrue(self.proof["labelledKind"])
+
     def test_refused_reports_are_dropped_and_throttled_or_failed_ones_kept_without_recursion(self):
         for key in ("refusedDrops", "throttledKeeps", "noRecursion"):
             self.assertTrue(self.proof[key], key)

@@ -122,7 +122,10 @@
     // was sent, other 4xx drop it, 408/429/5xx and network failures keep it
     // for later. A telemetry POST's own failure is never recorded.
     const TELEMETRY = "/api/v1/telemetry", KINDS = ["policy_timeout", "locks_timeout", "command_timeout", "stream_error", "stream_refused", "snapshot_timeout"];
-    const telemetryClient = config.client || (typeof document === "undefined" ? "tui" : "web"), now = config.now || Date.now;
+    // The gateway counts reports by kind (oh_identity.telemetry): web or tui, never a
+    // client's own label (tui/<host>, which names it in the command trail).
+    const telemetryClient = config.client ? String(config.client).split("/")[0] : typeof document === "undefined" ? "tui" : "web",
+      now = config.now || Date.now;
     let telemetry = Object.create(null), hopProtocol = "unknown", reporting = false, reportAfter = 0, throttledUntil = 0;
     const normalHop = (value) => { const hop = String(value || "").toLowerCase();
       return ["h2", "h2c"].includes(hop) ? "h2" : /^http\/1\.[01]$/.test(hop) ? "http/1.1" : /^h3(-|$)/.test(hop) ? "h3" : "unknown"; };

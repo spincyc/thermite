@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A terminal remote's telemetry reports its kind, `tui`, as the gateway
+  requires; it sent its own label (`tui/<host>`), and the gateway refused
+  every report.
+
 - `thermite test boot` reaches no device: its copy of conf/ addresses every
   device and the Apple TV helper at the limited broadcast address, which
   the kernel refuses before a packet leaves, gives every Sonos Thing a
