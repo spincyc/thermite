@@ -643,7 +643,7 @@ class UnitOwnership(unittest.TestCase):
 
 
 class Uninstall(unittest.TestCase):
-    """D8: uninstall covers the boundary unit and names what it keeps."""
+    """D8: uninstall names what it keeps."""
 
     def test_boundary_unit_is_removed_only_when_exact(self):
         from oh_install.ingress import UNIT, UNIT_FILE, unit_text
@@ -659,15 +659,14 @@ class Uninstall(unittest.TestCase):
             self.assertNotIn(UNIT, steps.Stop(context()).paths_on(system))
             self.assertNotIn(UNIT_FILE, steps.RemoveUnits(context()).present(system))
 
-    def test_kept_lists_gateway_identity_and_filter_with_commands(self):
-        text = uninstall.kept(context(), purge=True)
-        for expected in ("thermite-access.service", "identity state in /srv/fictional/access:",
-                         "rm -rf --one-file-system /srv/fictional/access", "sudo rmdir /srv/fictional`",
-                         "nft delete table inet thermite_native", "systemctl disable --now"):
+    def test_kept_names_the_state_an_uninstall_keeps_and_a_purge_removes(self):
+        text = uninstall.kept(context(), purge=False)
+        for expected in ("Thermite's state under /srv/fictional", "/etc/thermite/installed.json", "the images",
+                         "thermite uninstall --purge removes the state and the images too"):
             self.assertIn(expected, text)
-        self.assertNotIn("/srv/fictional/runtime", text)
-        self.assertIn("the runtime state, /srv/fictional/runtime (thermite uninstall --purge deletes it)",
-                      uninstall.kept(context(), purge=False))
+        purged = uninstall.kept(context(), purge=True)
+        self.assertNotIn("/srv/fictional", purged)
+        self.assertIn("var/gateway/authority", purged)
 
 
 if __name__ == "__main__":

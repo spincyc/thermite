@@ -759,15 +759,30 @@ it is.
 
 ### Remove
 
-`thermite uninstall --config "$HOME/thermite-site" --dry-run` shows service
-removal, including the boot-time `thermite-native-boundary.service`. The
-runtime state is retained by default; `--purge` deletes `runtime/` only. Uninstall
-keeps the HTTPS gateway units, their identity state in `access/` (accounts,
-sessions and the TLS key) and the native port filter (the
-`inet thermite_native` nft table and its rule file), and prints the commands
-that remove each, then the emptied installation root. Back up private configuration, runtime data, credentials,
-`var/gateway/authority/` and release artifacts before deleting an
-installation.
+```sh
+thermite uninstall --config "$HOME/thermite-site" --dry-run
+thermite uninstall --config "$HOME/thermite-site"
+```
+
+Uninstall is one install transaction too, with the same exit statuses.
+Thermite stops, and the install engine sets aside everything it installed
+outside the installation root: the units and quadlets and their links, the
+boot-time `thermite-native-boundary.service`, the native-port rule file with
+its loaded `inet thermite_native` table, and the node exporter's AppArmor
+policy. The state stays where it is, `runtime/` and `access/` (accounts,
+pairings, the gateway's identity and TLS key, history, monitoring data),
+recorded in `/etc/thermite/installed.json` as not installed, so a later
+`thermite install` finds it again. The images, the `thermite` account and
+the packages stay too. What was set aside stays in
+`/srv/thermite/.transaction/<id>/` until the next transaction commits.
+
+`thermite uninstall --purge` asks you to type the installation root, then
+also moves `runtime/` and `access/` aside whole; its commit removes them, the
+installed manifest (and `/etc/thermite` once empty), Thermite's images and
+every transaction, its own included, and the site's `var/transaction/`. The
+site, with `var/gateway/authority/`, stays. Back up private configuration,
+runtime data, credentials, `var/gateway/authority/` and release artifacts
+before purging an installation.
 
 ## Native lifecycle regression
 

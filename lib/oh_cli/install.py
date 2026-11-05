@@ -164,15 +164,6 @@ def approve(system: System, context: steps.Context, clean: bool) -> bool:
     return runner.confirm_run(system, "clean install" if clean else "install")
 
 
-def refuse_open(system: System, dry_run: bool) -> bool:
-    """An install transaction that has not finished comes first."""
-    pending = changeover.open_transaction(AREA / "var")
-    if pending and not dry_run:
-        system.say(f"An install transaction, {pending}, has not finished: run "
-                   f"{changeover.pending_command(AREA)} first; it commits or rolls it back.")
-    return bool(pending) and not dry_run
-
-
 def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token_file: Path | None = None,
             restart_runtime: bool = False, run_approved: bool = False, native_timeout: int | None = None,
             site_before: str | None = None) -> int:

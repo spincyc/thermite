@@ -601,7 +601,7 @@ def uninstall_work(context: steps.Context, id: str | None, *, purge: bool = Fals
     and, at the commit, removes them with the installed manifest, the
     images and every transaction."""
     root = context.installation.root
-    work = Work("purge" if purge else "uninstall", "uninstall", [steps.Account(context)], [], [Authorize()], None,
+    work = Work("purge" if purge else "uninstall", "uninstall", [], [], [Authorize()], None,
                 items=lambda system: [], described=switching(context, None), pull=False)
     if purge:
         work.items = lambda system: [manifest.Item(root / "access", "tree-move"),

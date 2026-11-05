@@ -932,50 +932,54 @@ examples:
 </section>
 <section class="verb" id="uninstall"><h3><code>thermite uninstall</code></h3><p>Stop thermite here and remove its units; --purge deletes its state.</p><pre class="help">usage: thermite uninstall [-h] [--config DIR] [-n] [--purge]
 
-Undo thermite install on this host, as apt remove does: stop runtime, the
-Apple TV helper, the metrics services (Prometheus, node_exporter,
-blackbox_exporter, the runtime exporter, Grafana) and their restart paths
-(and disable the path units and the boot-time native port boundary),
-remove the unit files thermite install installed and its unit manifest,
-and systemctl daemon-reload. The services come from quadlets, which systemd
-generates from those files, so removing them is what keeps them from
-starting at the next boot.
+Undo thermite install on this host as one install transaction, as apt
+remove does: Thermite stops, and the install engine, as root, sets aside
+everything it installed outside the installation root (the units and
+quadlets and their links, the native-port filter and its loaded table, the
+node exporter&#x27;s confinement) and reloads systemd. Its state stays where it
+is: runtime/ (conf, userdata, secrets, the deploy records and backups,
+Prometheus&#x27; samples, Grafana&#x27;s data) and access/ (the gateway&#x27;s identity,
+TLS key and releases), recorded in /etc/thermite/installed.json as not
+installed, so thermite install finds it again. The images, the thermite
+user and group and the packages stay too. What was set aside stays in the
+installation root&#x27;s .transaction/ until the next transaction commits.
 
-It keeps the runtime state, runtime/ in the installation root (conf,
-userdata, secrets, the deploy records and backups, Prometheus&#x27; samples,
-Grafana&#x27;s data and the metrics secrets), the thermite user and group, the
-packages, images and host node-exporter confinement configuration, and says
-so: thermite install puts runtime and the metrics back on the same state.
---purge, as apt purge does, also deletes the runtime state; before that step
-it shows the path and asks you to type it. The HTTPS gateway, its worker and
-callback units, and their identity state (accounts, TLS key) in the
-installation root&#x27;s access/ are kept, with the commands that remove them and
-then the emptied installation root; so are the loaded native port filter and
-its rule file.
+--purge, as apt purge does, also removes runtime/ and access/ whole, the
+installed manifest, Thermite&#x27;s images and every transaction, and the site&#x27;s
+var/transaction; the site itself, with var/gateway/authority, stays. It
+asks you to type the installation root before anything stops. Until the
+commit, any failure rolls back in the same run and Thermite runs again.
 
-One y/n question approves this uninstall run, including its sudo commands.
-Compact status shows each stage; -v/--verbose shows details and commands.
-Interactive commands keep the terminal, with the spinner paused. Each step
-first checks whether it is done and skips it if so. --dry-run only reads:
-it reports each step and what it would run. An agent uses only that:
-agents never run sudo.
+One y/n question approves this run, including its sudo commands. --dry-run
+only reads: it reports what it would do. An agent uses only that: agents
+never run sudo.
 
 options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
   -n, --dry-run         report what it would do; change nothing
-  --purge               also delete the runtime state: conf, userdata, secrets, deploy
-                        records, backups, metrics
+  --purge               also remove runtime/ and access/, the images and every
+                        transaction
 
 switches every verb takes:
   -q, --quiet           print only errors
   -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
   --no-color            no color in what it prints (as NO_COLOR=1 does)
 
+exit status:
+  0  committed, or nothing is installed here
+  1  declined, refused before anything stopped, or an earlier transaction
+     was finished or closed instead of uninstalling
+  2  Thermite&#x27;s files without its installed manifest, or run as root
+  3  rolled back: Thermite runs again and its health passes
+  4  rolled back, but its health does not pass; it keeps running
+  5  the rollback did not finish: Thermite stays stopped; run thermite uninstall again
+  130  interrupted; the next thermite uninstall rolls the open transaction back first
+
 examples:
   thermite uninstall -n             what uninstalling would do here; runs nothing
-  thermite uninstall                stop thermite and the metrics and remove their units, keeping the state
-  thermite uninstall -n --purge     what deleting the state too would do
+  thermite uninstall                stop thermite and remove what it installed, keeping its state
+  thermite uninstall -n --purge     what removing the state too would do
 </pre>
 </section>
 <section class="verb" id="deploy"><h3><code>thermite deploy</code></h3><p>Compatibility alias for the complete install workflow.</p><pre class="help">usage: thermite deploy [-h] [--config DIR] [-n] [--yes] [--force] [--state DIR] [REV]

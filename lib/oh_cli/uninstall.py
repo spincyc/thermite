@@ -1,7 +1,7 @@
-"""Stop thermite on this host and remove its units; --purge also deletes its
-state.
+"""Uninstall thermite from this host as one install transaction; --purge
+also removes its state.
 
-    thermite uninstall [-n | --dry-run] [--purge]
+    thermite uninstall --config DIR [-n | --dry-run] [--purge]
 """
 
 from __future__ import annotations
@@ -12,95 +12,109 @@ import sys
 import oh_cli
 import oh_deploy as deploy
 from oh_cli import AREA
-from oh_install import runner, steps
+from oh_install import bridge, changeover, manifest, runner, steps
 from oh_install.system import System
 
 RERUN = "Run thermite uninstall again to go on from here."
 
 DESCRIPTION = """\
-Undo thermite install on this host, as apt remove does: stop runtime, the
-Apple TV helper, the metrics services (Prometheus, node_exporter,
-blackbox_exporter, the runtime exporter, Grafana) and their restart paths
-(and disable the path units and the boot-time native port boundary),
-remove the unit files thermite install installed and its unit manifest,
-and systemctl daemon-reload. The services come from quadlets, which systemd
-generates from those files, so removing them is what keeps them from
-starting at the next boot.
+Undo thermite install on this host as one install transaction, as apt
+remove does: Thermite stops, and the install engine, as root, sets aside
+everything it installed outside the installation root (the units and
+quadlets and their links, the native-port filter and its loaded table, the
+node exporter's confinement) and reloads systemd. Its state stays where it
+is: runtime/ (conf, userdata, secrets, the deploy records and backups,
+Prometheus' samples, Grafana's data) and access/ (the gateway's identity,
+TLS key and releases), recorded in /etc/thermite/installed.json as not
+installed, so thermite install finds it again. The images, the thermite
+user and group and the packages stay too. What was set aside stays in the
+installation root's .transaction/ until the next transaction commits.
 
-It keeps the runtime state, runtime/ in the installation root (conf,
-userdata, secrets, the deploy records and backups, Prometheus' samples,
-Grafana's data and the metrics secrets), the thermite user and group, the
-packages, images and host node-exporter confinement configuration, and says
-so: thermite install puts runtime and the metrics back on the same state.
---purge, as apt purge does, also deletes the runtime state; before that step
-it shows the path and asks you to type it. The HTTPS gateway, its worker and
-callback units, and their identity state (accounts, TLS key) in the
-installation root's access/ are kept, with the commands that remove them and
-then the emptied installation root; so are the loaded native port filter and
-its rule file.
+--purge, as apt purge does, also removes runtime/ and access/ whole, the
+installed manifest, Thermite's images and every transaction, and the site's
+var/transaction; the site itself, with var/gateway/authority, stays. It
+asks you to type the installation root before anything stops. Until the
+commit, any failure rolls back in the same run and Thermite runs again.
 
-One y/n question approves this uninstall run, including its sudo commands.
-Compact status shows each stage; -v/--verbose shows details and commands.
-Interactive commands keep the terminal, with the spinner paused. Each step
-first checks whether it is done and skips it if so. --dry-run only reads:
-it reports each step and what it would run. An agent uses only that:
-agents never run sudo.
+One y/n question approves this run, including its sudo commands. --dry-run
+only reads: it reports what it would do. An agent uses only that: agents
+never run sudo.
+"""
+
+NOTES = """\
+exit status:
+  0  committed, or nothing is installed here
+  1  declined, refused before anything stopped, or an earlier transaction
+     was finished or closed instead of uninstalling
+  2  Thermite's files without its installed manifest, or run as root
+  3  rolled back: Thermite runs again and its health passes
+  4  rolled back, but its health does not pass; it keeps running
+  5  the rollback did not finish: Thermite stays stopped; run thermite uninstall again
+  130  interrupted; the next thermite uninstall rolls the open transaction back first
 """
 
 EXAMPLES = (
     ("thermite uninstall -n", "what uninstalling would do here; runs nothing"),
-    ("thermite uninstall", "stop thermite and the metrics and remove their units, keeping the state"),
-    ("thermite uninstall -n --purge", "what deleting the state too would do"),
+    ("thermite uninstall", "stop thermite and remove what it installed, keeping its state"),
+    ("thermite uninstall -n --purge", "what removing the state too would do"),
 )
 
 
 def kept(context: steps.Context, purge: bool) -> str:
-    from oh_access.staging import ACCESS_UNITS
-    from oh_install.ingress import RULE_FILE
-    installation = context.installation
-    state = "" if purge else f"the runtime state, {installation.runtime} (thermite uninstall --purge deletes it); "
-    access = installation.access
-    units = " ".join(ACCESS_UNITS)
-    return (f"Kept: {state}the thermite user and group; the packages; the images (`sudo podman images` lists them, "
-            "`sudo podman rmi IMAGE` deletes one); host node-exporter confinement configuration; and this clone.\n"
-            f"Also kept: the HTTPS gateway ({units}) and its identity state in {access}: accounts, sessions and the "
-            "TLS key. Back that directory up first, then remove them with "
-            f"`sudo systemctl disable --now {units}`, "
-            + " ".join(f"`sudo rm /etc/systemd/system/{name}`" for name in ACCESS_UNITS)
-            + f", `sudo systemctl daemon-reload` and `sudo rm -rf --one-file-system {access}`. Once runtime/ and "
-            f"access/ are both gone, `sudo rmdir {installation.root}` removes the installation root, "
-            "a btrfs subvolume or a plain directory.\n"
-            f"The native port filter stays loaded until reboot: `sudo nft delete table inet thermite_native` "
-            f"unloads it and `sudo rm {RULE_FILE}` removes its rules.\n"
-            "thermite install installs runtime, the gateway and the metrics again.")
+    root = context.installation.root
+    if purge:
+        return ("Kept: the thermite user and group; the packages; the site with its var/gateway/authority; and this "
+                "clone. thermite install installs Thermite afresh.")
+    return (f"Kept: Thermite's state under {root}, runtime/ and access/ (accounts, pairings, the gateway's identity "
+            f"and TLS key, history, monitoring data), recorded in {manifest.INSTALLED} so that thermite install "
+            "finds it again; the images (`sudo podman images` lists them); the thermite user and group; the "
+            "packages; and this clone. thermite uninstall --purge removes the state and the images too.")
 
 
 def uninstall(system: System, dry_run: bool, purge: bool) -> int:
-    from oh_cli.install import refuse_open
-    if refuse_open(system, dry_run):
-        return 2
-    versions, host = deploy.load(AREA)
-    context = steps.Context(AREA, versions, host, "", "", system.hostname(), system.address())
-    what = "uninstalling and purging" if purge else "uninstalling"
-    system.say(f"{'What ' + what if dry_run else what.capitalize()} runtime on this host, {context.hostname}, "
-               f"{'would do' if dry_run else 'step by step'}:")
     if not dry_run:
-        system.say(f"This run stops runtime and monitoring, removes their units, and "
-                   f"{'deletes' if purge else 'keeps'} the runtime state at {context.layout.root}.")
-        if not runner.confirm_run(system, "uninstall", RERUN):
-            return 1
-    code = runner.run(steps.uninstall(context, purge), system, AREA, dry_run=dry_run, rerun=RERUN,
-                      root_confirmed=not dry_run)
-    if not code or dry_run:
+        found = changeover.resolve(AREA, system, "uninstall")
+        if found is not None:
+            return changeover.REFUSED if found == changeover.COMMITTED else found
+    context = steps.committed_context(AREA, system)
+    root = context.installation.root
+    try:
+        installed = manifest.installed(system, root)
+    except manifest.ManifestError as exc:
+        system.say(f"{exc}. {manifest.missing_recovery(context)}")
+        return 2
+    bridged = installed is None and bridge.needed(system)
+    if installed is None and not bridged:
+        if manifest.thermite_present(context, system):
+            system.say(manifest.missing_recovery(context))
+            return 2
+        system.say("Thermite is not installed here; there is nothing to uninstall.")
+        return 0
+    if installed is not None and not installed["installed"] and not purge:
+        system.say(f"Thermite is already uninstalled here; its state stays under {root} "
+                   "(thermite uninstall --purge removes it).")
+        return 0
+    what = "uninstalling and purging" if purge else "uninstalling"
+    system.say(f"{'What ' + what if dry_run else what.capitalize()} thermite on this host, {context.hostname}, "
+               f"{'would do' if dry_run else 'step by step'}:")
+    if dry_run:
+        return changeover.preview(context, system, changeover.uninstall_work(context, None, purge=purge), first=1)
+    system.say(f"This run stops Thermite, removes what it installed, and "
+               f"{'removes' if purge else 'keeps'} its state under {root}.")
+    if not runner.confirm_run(system, "purge" if purge else "uninstall", RERUN):
+        return 1
+    code = changeover.run(context, system, lambda id: changeover.uninstall_work(context, id, purge=purge),
+                          installed=installed, bridged=bridged, before=None, first=1, pinned=False)
+    if code == changeover.COMMITTED:
         system.say(kept(context, purge))
     return code
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = oh_cli.command("uninstall", DESCRIPTION, EXAMPLES)
+    parser = oh_cli.command("uninstall", DESCRIPTION, EXAMPLES, NOTES)
     oh_cli.add_dry_run(parser)
     parser.add_argument("--purge", action="store_true",
-                        help="also delete the runtime state: conf, userdata, secrets, deploy records, backups, metrics")
+                        help="also remove runtime/ and access/, the images and every transaction")
     arguments = parser.parse_args(argv)
     if os.geteuid() == 0:
         print("thermite uninstall: run it as your user; it asks once before applying the uninstall",
@@ -109,6 +123,9 @@ def main(argv: list[str] | None = None) -> int:
     system = System()
     try:
         return uninstall(system, arguments.dry_run, arguments.purge)
+    except (deploy.DeployError, ValueError, OSError) as exc:
+        print(f"thermite uninstall: {exc}", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         system.say(f"\nInterrupted. {RERUN}")
-        return 130
+        return changeover.INTERRUPTED

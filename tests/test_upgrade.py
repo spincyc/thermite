@@ -399,5 +399,83 @@ class RollbackHostPhase(unittest.TestCase):
         self.assertEqual((work.kind, work.verb), ("install", "rollback"))
 
 
+class UninstallHostPhase(unittest.TestCase):
+    """thermite uninstall and --purge: the same install transaction, of the
+    uninstall and purge kinds."""
+
+    def setUp(self):
+        from oh_cli import uninstall as uninstall_cli
+        self.cli = uninstall_cli
+        self.site = AREA / ".scratch/update-site/fictional-site"
+        self.context = steps.Context(self.site, {"openhab": {"version": "5.2.3"}},
+                                     {"uid": 9001, "gid": 9001, "root": "/srv/thermite-fixture"},
+                                     "b" * 40, "c" * 64, "fixture-host", None,
+                                     application={"version": "0.1.0.dev0", "digest": "a" * 64})
+        self.system = Mock(spec=System)
+        self.installed = {"transaction": "20261105T101500Z-3f9a2c", "installed": True}
+        scope = ExitStack()
+        self.addCleanup(scope.close)
+        scope.enter_context(patch.object(uninstall_cli, "AREA", self.site))
+        scope.enter_context(patch.object(steps, "committed_context", return_value=self.context))
+        self.resolve = scope.enter_context(patch.object(changeover, "resolve", return_value=None))
+        self.manifest = scope.enter_context(patch.object(manifest, "installed", return_value=self.installed))
+        self.bridge = scope.enter_context(patch.object(bridge, "needed", return_value=False))
+        self.present = scope.enter_context(patch.object(manifest, "thermite_present", return_value=[]))
+        self.confirm = scope.enter_context(patch.object(runner, "confirm_run", return_value=True))
+        self.transaction = scope.enter_context(patch.object(changeover, "run", return_value=0))
+
+    def said(self):
+        return "\n".join(str(call.args[0]) for call in self.system.say.call_args_list)
+
+    def purge(self):
+        build = self.transaction.call_args.args[2]
+        with patch.object(changeover, "uninstall_work") as work:
+            build("20261105T101500Z-3f9a2c")
+        return work.call_args.kwargs["purge"]
+
+    def test_an_uninstall_is_one_transaction_that_keeps_the_state(self):
+        self.assertEqual(self.cli.uninstall(self.system, False, False), 0)
+        self.assertEqual(self.transaction.call_args.kwargs, {"installed": self.installed, "bridged": False,
+                                                             "before": None, "first": 1, "pinned": False})
+        self.assertFalse(self.purge())
+        self.assertIn("Kept: Thermite's state under /srv/thermite-fixture", self.said())
+        self.assertEqual(self.confirm.call_args.args[1], "uninstall")
+
+    def test_a_purge_is_its_own_kind(self):
+        self.assertEqual(self.cli.uninstall(self.system, False, True), 0)
+        self.assertTrue(self.purge())
+        self.assertEqual(self.confirm.call_args.args[1], "purge")
+        self.assertIn("thermite install installs Thermite afresh", self.said())
+
+    def test_nothing_installed_is_nothing_to_do_but_files_without_a_manifest_refuse(self):
+        self.manifest.return_value = None
+        self.assertEqual(self.cli.uninstall(self.system, False, False), 0)
+        self.assertIn("nothing to uninstall", self.said())
+        self.present.return_value = [deploy.QUADLET]
+        self.assertEqual(self.cli.uninstall(self.system, False, True), 2)
+        self.assertIn(manifest.missing_recovery(self.context), self.said())
+        self.bridge.return_value = True
+        self.assertEqual(self.cli.uninstall(self.system, False, False), 0)
+        self.assertTrue(self.transaction.call_args.kwargs["bridged"])
+
+    def test_an_uninstalled_host_can_still_be_purged(self):
+        self.manifest.return_value = {**self.installed, "installed": False}
+        self.assertEqual(self.cli.uninstall(self.system, False, False), 0)
+        self.transaction.assert_not_called()
+        self.assertIn("already uninstalled", self.said())
+        self.assertEqual(self.cli.uninstall(self.system, False, True), 0)
+        self.assertTrue(self.purge())
+
+    def test_an_open_transaction_is_resolved_first_and_a_dry_run_previews(self):
+        self.resolve.return_value = changeover.STUCK
+        self.assertEqual(self.cli.uninstall(self.system, False, False), changeover.STUCK)
+        self.resolve.assert_called_once_with(self.site, self.system, "uninstall")
+        self.manifest.assert_not_called()
+        with patch.object(changeover, "preview", return_value=0) as preview:
+            self.assertEqual(self.cli.uninstall(self.system, True, True), 0)
+        self.assertEqual(preview.call_args.args[2].kind, "purge")
+        self.transaction.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
