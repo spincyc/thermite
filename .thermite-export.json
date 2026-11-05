@@ -461,6 +461,7 @@
     "tests/test_txn_engine_os.py",
     "tests/test_txn_faults.py",
     "tests/test_txn_revert.py",
+    "tests/test_txn_verbs.py",
     "tests/test_unified_install.py",
     "tests/test_unit_invariants.py",
     "tests/test_upgrade.py",
