@@ -309,7 +309,7 @@ function ownerIntro(ctx) {
   return "Your own login on the host, with sudo through the wheel group. thermite is reserved for the service "
     + "account Thermite creates. " + (key
     ? "The image's SSH key (" + (key.fingerprint || key.type) + ") becomes this user's key, and SSH stops accepting passwords."
-    : "SSH accepts this password until you install a key.");
+    : "SSH accepts this password until you add a key and turn passwords off, as FIRST-BOOT.txt shows.");
 }
 
 function review(g, ctx) {

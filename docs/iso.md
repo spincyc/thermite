@@ -49,7 +49,11 @@ application payload: the application wheel, `iso/packages.json`, the
 installer core (`iso/installer.py`), its terminal (`tui/installer` with the
 `tui/remote` modules it draws with), the theme and torch as `thermite tui`
 gets them, the Node.js and blessed archives, and their digests in
-`payload.json`. The selected private site is never copied into the image.
+`payload.json`, together with the digests of the medium's other files: the
+boot hook, the `archinstall` plugin, the first-boot unit, the bootstrap and
+its guide, the key and the wheels. Each time the installer starts, the live
+system checks every one of them and refuses a damaged medium. The selected
+private site is never copied into the image.
 
 To install over SSH as well as on the console, add one public key:
 
@@ -61,8 +65,11 @@ thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .sc
 The file must hold exactly one OpenSSH public key without options. The live
 system then accepts SSH as `root` with that key alone, straight into the
 installer, and the installed host gives it to the owner and turns password
-SSH off. Without a key the live system's SSH stays as Arch ships it, which
-accepts no login until someone sets a root password at the console.
+SSH off. Quitting the installer over SSH leaves a root shell on the live
+system, as on its console: the key's holder has root there already, since
+the installer can erase any disk. Without a key the live system's SSH stays
+as Arch ships it, which accepts no login until someone sets a root password
+at the console.
 
 The outputs are `thermite.iso`, `thermite.iso.sha256` and
 `thermite.iso.json`. The receipt records every input's digest, the
@@ -99,26 +106,30 @@ entries used when another boot loader opens the ISO as a file.
    at a time: the other is told who holds it and can follow
    `/run/thermite-installer/installer.log`.
 3. Answer its steps. Tab and the arrows move, Enter goes on, Esc goes back,
-   Ctrl-T switches between dark and light, Ctrl-C leaves for a shell
+   Ctrl-T switches between dark and light, Ctrl-C leaves for a root shell
+   on the live system, on the console or over SSH alike
    (`thermite-installer` starts it again):
 
    | Step | Asks for | Notes |
    |---|---|---|
    | Welcome | | This machine: firmware, processor, memory, disks, network, warnings |
-   | Network | Wi-Fi network and passphrase, if there is no cable | The installed host joins the same Wi-Fi |
+   | Network | Wi-Fi network and passphrase, if there is no cable | Open, WPA2 and WPA3 Personal networks, a hidden one by name, a passphrase or the 64-digit key. The installed host joins the network this system is joined to, also one joined with `iwctl` from a shell when iwd saved its passphrase; otherwise join it here |
    | Host name | default `thermite` | If `thermite.local` already answers on the network, `thermite-2` (or the next free one) is suggested; Enter twice keeps a taken name |
    | Owner | user name and password | Your login, in `wheel` with sudo; `thermite` is reserved for the service account |
    | Root password | | Console and emergency use only; it must differ from the owner's |
    | Region | time zone, language, console keyboard | Type to search a list |
    | Disk | the whole disk to install on | Disks smaller than 32 GB, read-only, in use or holding the installer are not offered; less than 64 GB warns |
    | System | Btrfs (default) or ext4; `linux-lts` (default) or `linux` | Both kernels are installed; the other is the fallback boot entry |
-   | Review | the disk's name, typed back | Nothing is written before this |
+   | Review | the disk's name, typed back | Shows every answer, the Wi-Fi network and the disk's serial number; Esc goes back to change one. Nothing is written before this, and a disk that differs from the one shown (serial number, WWN or size) is refused, also just before it is erased |
 
-4. The progress screen follows the installation: a package check before the
-   disk is touched, then partitioning, the base system, the boot loader, the
-   owner, Thermite's packages and services, and Thermite's own part. A
-   failed run says why and returns to the review; the disk may already have
-   been changed.
+4. The progress screen follows the installation: before the disk is
+   touched, a package check and a wait of up to three minutes for the clock
+   to synchronize (`archinstall` would otherwise wait for it without end),
+   then partitioning, the base system, the boot loader, the owner,
+   Thermite's packages and services, and Thermite's own part. A failed run
+   says why, and Esc returns to the review to install again; that first
+   unmounts what the failed run left mounted at `/mnt`. The disk may
+   already have been changed.
 5. When it is done, remove the installation medium and press Enter to
    restart.
 
@@ -127,7 +138,11 @@ The installer core (`iso/installer.py`) checks every answer, writes
 file only root can read, deleted after the run), runs `archinstall` without
 its menus, and logs to `/run/thermite-installer/installer.log`. Passwords
 and the Wi-Fi passphrase never reach a command line, a log or the
-installed host's records. A dropped SSH login does not stop a running
+installed host's records; the passphrase is read from iwd's own file and
+written only to the installed host's NetworkManager profile, which only
+root can read. After each run the core removes any copy of the password
+hashes `archinstall` kept in `/var/log/archinstall`, on the live system and
+on the installed host. A dropped SSH login does not stop a running
 installation.
 
 The layout is a 1 GiB boot partition (`/boot`, FAT32) and the system:
@@ -143,38 +158,74 @@ packages and services are installed, with the target still mounted. It
 installs the application from the medium into `/opt/thermite/venv` with
 the `thermite` launcher, then configures:
 
-- `sshd` enabled, with `PermitRootLogin no`; with an image key, that key in
-  the owner's `~/.ssh/authorized_keys` and password logins off.
+- `sshd` enabled, with `PermitRootLogin no` and `AllowGroups wheel`; with an
+  image key, that key in the owner's `~/.ssh/authorized_keys` and password
+  logins off. Without one, see [password SSH off](#password-ssh-off) once
+  you have added a key.
 - `sudo` for the `wheel` group, checked by `visudo`.
 - `avahi-daemon` and `nss-mdns`, so `.local` names resolve; time
   synchronization, zram swap and the journal capped at 2 GB.
-- `xterm-256color` for a terminal the host has no terminfo for, in
-  `/etc/profile.d/thermite-term.sh`; `~/.local/bin` first on PATH.
+- `xterm-256color` for an interactive login from a terminal the host has no
+  terminfo for, announced in one line, in `/etc/profile.d/thermite-term.sh`;
+  `~/.local/bin` first on PATH.
+- `smartd` enabled only when the installed disk reports SMART health data
+  to `smartctl` on the live system (or is NVMe); the receipt says which.
+- With Wi-Fi, a NetworkManager profile for the network the installer
+  joined: open, WPA2 (`wpa-psk`) or WPA3 (`sae`), as iwd negotiated it.
 - The units listed under [Packages](#packages) as disabled stay disabled.
 - `/var/log/thermite-install`: `receipt.json` (application release, input
-  digests, the key's fingerprint), `answers.json` without secrets, and the
-  installer's own log. `archinstall`'s log is `/var/log/archinstall/install.log`.
+  digests, the key's fingerprint, whether `smartd` runs), `answers.json`
+  without secrets, and the installer's own log. `archinstall`'s log is
+  `/var/log/archinstall/install.log`.
+
+### Password SSH off
+
+With an image key, the installer turns password SSH off. Without one, SSH
+accepts the owner's password until you turn it off yourself. Add your key
+from your own machine, check that it logs in without a password, then turn
+passwords off on the host and check `sshd`'s configuration before reloading
+it:
+
+```sh
+ssh-copy-id <owner>@<host>.local
+ssh -o PasswordAuthentication=no <owner>@<host>.local true
+```
+
+On the host:
+
+```sh
+printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' |
+  sudo tee /etc/ssh/sshd_config.d/30-thermite-keys-only.conf
+sudo sshd -t && sudo systemctl reload sshd.service
+```
+
+Keep the current session open until a new key login works.
 
 ## First boot
 
 The `thermite-first-boot` unit runs once, after the network is up:
 
-1. As root, it adds a temporary sudo rule letting the owner run `thermite
-   install` without a password.
+1. As root, it adds a temporary sudo rule that lets the owner run any
+   command as root without a password, until the unit ends. A
+   `tmpfiles.d` rule also removes it early in every boot, so a power loss
+   during the run cannot leave it behind.
 2. As the owner, it waits up to 15 minutes for the Internet, creates an
    empty house with `thermite init --empty ~/thermite-site` in the time
    zone you chose, commits it to a new Git repository, and runs `thermite
-   install --config ~/thermite-site`, answering its one approval. Any other
-   question is declined, and a password prompt stops it.
+   install --yes --config ~/thermite-site`, which approves the installation
+   without asking and reads nothing from its input. If `thermite status
+   --json` reports an install transaction that a stopped run left open, it
+   runs that command once to finish or roll it back, which stops there,
+   then again to install. The whole installation may take three hours.
 3. As root, whatever happened, it removes the sudo rule, writes the login
    message and disables itself.
 
-Each interactive login shows its status: while it runs (with `journalctl
--fu thermite-first-boot.service`), why it stopped, or once that it
-finished. Its log is `/var/log/thermite-install/first-boot.log`. After a
-failure, `sudo systemctl start thermite-first-boot.service` tries again and
-skips what is done; `/opt/thermite/FIRST-BOOT.txt` also has the steps by
-hand. The house starts empty: add your rooms and equipment to
+Each interactive login shows its status: while it runs, why it stopped, or
+once that it finished. `journalctl -fu thermite-first-boot.service` follows
+it; its log is `/var/log/thermite-install/first-boot.log`. After a failure,
+`sudo systemctl start thermite-first-boot.service` tries again with the
+house it made, after finishing or rolling back an install the stopped run
+left open; `/opt/thermite/FIRST-BOOT.txt` also has the steps by hand. The house starts empty: add your rooms and equipment to
 `instance/devices.yaml` and run `thermite install` again.
 
 The first `thermite install` prepares Thermite's own owner-managed
@@ -208,8 +259,10 @@ person at the console or on SSH.
 
 Some of these packages ship units that stay disabled: `named` (bind is here
 for `dig`), `nftables` (Arch's stock ruleset admits only SSH; Thermite loads
-its own native-port boundary), `rsyncd` (rsync runs over SSH), `smartd`,
+its own native-port boundary), `rsyncd` (rsync runs over SSH),
 `avahi-dnsconfd`, `gpm`, the `lm_sensors` units and the `inetutils` servers.
+`smartd` (smartmontools) runs only when the installed disk reports SMART
+health data.
 
 ## Optional Ubuntu Server image
 
@@ -243,16 +296,17 @@ first-boot unit.
 ## Validation and limits
 
 Offline checks cover the input pins and their digests (Node.js and blessed
-included, with downloads mocked), the staged medium and its payload, the
-key check and fingerprint, answer checking, `archinstall`'s configuration
+included, with downloads mocked), the staged medium and its payload, the key
+check and fingerprint, answer checking, `archinstall`'s configuration
 against its 4.5 schema and layout rules, the installation run with a fake
-`archinstall` (no secret on disk afterwards), the installer terminal driven
-through every step against the real core at four sizes in both themes, the
-plugin's changes to a fake target, the first-boot unit's sudo rule and its
-pseudo-terminal approval, both boot configuration formats, EFI partition
-bounds, safe wheel extraction and the login profile's PATH order under the
-available POSIX shells. A real remaster also requires the pinned image and
-the build tools.
+`archinstall` (no secret on disk afterwards), Wi-Fi names, passphrases and
+profiles against a fake iwd, the installer terminal driven through every
+step against the real core at four sizes in both themes, the plugin's
+changes to a fake target, the first-boot unit's sudo and `tmpfiles.d` rules
+and its unattended install with a stand-in `thermite`, both boot
+configuration formats, EFI partition bounds, safe wheel extraction and the
+login profile's PATH order under the available POSIX shells. A real remaster
+also requires the pinned image and the build tools.
 
 A complete acceptance run must boot the image in firmware (UEFI and BIOS),
 answer the installer on the console and over SSH, install to an explicitly

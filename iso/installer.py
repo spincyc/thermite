@@ -777,10 +777,12 @@ def keep(run: Run, target: Path) -> None:
 
 # ---- launch: the terminal on the live system -----------------------------------
 
-#: The live sshd with the image's key: that key alone, as root, and only
-#: into the installer (its authorized_keys line forces the command).
-#: sshd_config.d is read in order and the first value wins, so this
-#: precedes archiso's own 10-archiso.conf.
+#: The live sshd with the image's key: that key alone, as root, starting
+#: the installer (its authorized_keys line forces the command). Quitting
+#: the installer leaves that login a root shell on this live system, as on
+#: the console: the key's holder has root here already, since the
+#: installer erases disks. sshd_config.d is read in order and the first
+#: value wins, so this precedes archiso's own 10-archiso.conf.
 LIVE_SSHD = """\
 # Thermite installer: SSH with the image's key only, straight into the installer.
 PermitRootLogin forced-commands-only
@@ -995,7 +997,9 @@ def main(argv: list[str]) -> int:
         ssh = "--ssh" in argv
         status = launch(Host(), ssh=ssh)
         if ssh:
-            # The forced command is the whole login: a shell follows the installer.
+            # The forced command is the whole login: a root shell on this
+            # live system follows the installer, as on the console. That
+            # gives the key's holder nothing the installer did not.
             shell = pwd.getpwuid(0).pw_shell or "/bin/sh"
             os.execv(shell, ["-" + Path(shell).name])
         return status

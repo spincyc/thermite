@@ -93,20 +93,25 @@ rollback. The unified deployment workflow uses a separate committed private site
   refused while the install prepares, before anything stops.
 - The Arch installer ISO boots into Thermite's own installer instead of
   archinstall's menus: a terminal that looks like `thermite tui`, on the
-  console and, with `thermite iso build --authorized-key FILE`, over SSH with
-  that key alone. It asks for the network (joining Wi-Fi if needed), a host
-  name (`thermite`, or `thermite-2` when that already answers on mDNS), the
-  owner and root passwords, region, disk (erased only after its name is
-  typed back), Btrfs or ext4 and `linux-lts` or `linux`, then runs
-  archinstall 4.5 unattended and shows its progress. The installed host has
-  SSH without root logins (and without passwords when the image has a key),
-  sudo for `wheel`, mDNS names, zram swap, a capped journal, a terminal
-  fallback, and its answers and logs in `/var/log/thermite-install`. On its
-  first boot it creates an empty house (`thermite init --empty`, also new)
-  and runs `thermite install` as the owner, then removes its temporary sudo
-  rule and disables itself; logins show its progress. The image bundles
-  Node.js 26.13.0 LTS and blessed 0.1.81, pinned in `iso/inputs.json` like
-  the base image, and every package it installs comes from one tiered
+  console and, with `thermite iso build --authorized-key FILE`, over SSH
+  with that key alone. It asks for the network (joining open, WPA2, WPA3 or
+  hidden Wi-Fi if needed; the installed host joins the network the live
+  system is joined to), a host name (`thermite`, or `thermite-2` when that
+  already answers on mDNS), the owner and root passwords, region, disk
+  (erased only after its name is typed back, and only if it is still the
+  disk the review showed), Btrfs or ext4 and `linux-lts` or `linux`, then
+  runs archinstall 4.5 unattended and shows its progress; a failed run can
+  be retried from the review. The installed host has SSH for `wheel` only,
+  without root logins (and without passwords when the image has a key), sudo
+  for `wheel`, mDNS names, zram swap, a capped journal, `smartd` when its
+  disk reports SMART data, an announced terminal fallback, and its answers
+  and logs in `/var/log/thermite-install`. On its first boot it creates an
+  empty house (`thermite init --empty`, also new) and runs `thermite install
+  --yes` as the owner, into its log and the journal, then removes its
+  temporary sudo rule (also at every boot, in case the power failed) and
+  disables itself; logins show its progress. The image bundles Node.js
+  26.13.0 LTS and blessed 0.1.81, pinned in `iso/inputs.json` like the base
+  image, and every package it installs comes from one tiered
   `iso/packages.json`.
 - The installer ISO's first-boot guide asks for your equipment and time zone
   in `instance/host.yaml`, not a state directory, which the fixed

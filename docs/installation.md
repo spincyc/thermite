@@ -9,7 +9,9 @@ Bootstrap the application once, create a private site, then deploy it with
 HTTPS gateway together. Later, `thermite upgrade --config DIR` updates the
 application and the complete installation. Installing a Python package alone
 starts no service.
-For a bare machine, use the [installer ISO](iso.md), then continue at
+For a bare machine, use the [installer ISO](iso.md). The Arch image creates
+an empty private site and installs it on its [first boot](iso.md#first-boot);
+after the Ubuntu image, continue at
 [Create your private site](#create-your-private-site).
 
 For a stock OS installation, first follow the official
