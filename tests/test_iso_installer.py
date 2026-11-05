@@ -119,10 +119,11 @@ def installer_media(media: Path) -> None:
 
 class FakeHost(installer.Host):
     def __init__(self, root: Path, *, taken=(), fail=(), archinstall="4.5.1", code=0, lines=ARCHINSTALL_LINES,
-                 joined=None, mounted=(), swapped=None):
+                 joined=None, mounted=(), swapped=None, synchronized=True):
         super().__init__(root)
         self.mounts = set(map(str, mounted))  # mount points, as umount leaves them
         self.swapped = swapped  # lsblk reads before the first disk is another
+        self.synchronized = synchronized  # the clock, as timedatectl reports it
         self.taken, self.fail, self.version, self.code, self.lines = set(taken), set(fail), archinstall, code, lines
         self.joined = joined  # the Wi-Fi network wlan0 is joined to
         self.calls, self.spawned, self.called = [], [], []
@@ -145,6 +146,7 @@ class FakeHost(installer.Host):
                                        *([{"dst": "default", "dev": "wlan0", "metric": 600}] if self.joined else [])]))
         if argv[0] == "ip": return done(0, json.dumps(IP))
         if argv[0] == "localectl": return done(0, "de\nus\nuk\n")
+        if argv[0] == "timedatectl": return done(0, "yes\n" if self.synchronized else "no\n")
         if argv[0] == "resolvectl": return done(0 if argv[-1] in self.taken else 1)
         if argv[0] == "iwctl":
             action = argv[3] if len(argv) > 3 else ""
@@ -387,6 +389,17 @@ class InstallerCore(unittest.TestCase):
                                   emit=events.append)
             self.assertIn("not the disk the review showed" if reads == 0 else "nothing was erased", str(caught.exception))
             self.assertEqual(host.spawned, [])
+
+    def test_a_clock_that_never_synchronizes_stops_the_run_before_the_disk(self):
+        host, events, slept = self.host(synchronized=False), [], []
+        with patch.object(installer.time, "sleep", slept.append), \
+                self.assertRaisesRegex(RuntimeError, "did not synchronize .* NTP .* Nothing was erased"):
+            installer.install(ANSWERS, host, media=self.media, state=self.state, target=self.target,
+                              emit=events.append)
+        self.assertEqual(sum(slept), installer.CLOCK_WAIT)
+        self.assertEqual(host.spawned, [])
+        self.assertIn("Waiting for the clock to synchronize with a time server", [event.get("text") for event in events])
+        self.assertFalse(any(call[:2] == ["pacman", "-Sy"] for call in host.calls))
 
     def test_a_retry_unmounts_what_the_failed_run_left_mounted_first(self):
         host = self.host(mounted={self.target})

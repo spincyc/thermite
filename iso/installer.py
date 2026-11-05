@@ -66,6 +66,8 @@ ARCHINSTALL = (4, 5)
 #: What archinstall straps besides the packages file; the preflight checks
 #: them too, so a missing package fails before the disk is touched.
 BASE = ("base", "linux-firmware", "mkinitcpio")
+#: How long the preflight waits for the clock to synchronize, and between looks.
+CLOCK_WAIT, CLOCK_RETRY = 180, 5
 #: Lines of archinstall's output that start a phase, and its share of the run.
 PHASES = (("Starting device modifications", "disk", 5, "Partitioning and formatting the disk"),
           ("Starting installation", "base", 10, "Installing the base system"),
@@ -641,6 +643,20 @@ def archinstall_version(host: Host) -> tuple[int, int] | None:
     return (int(found[1]), int(found[2])) if found else None
 
 
+def clock(host: Host, run: Run) -> None:
+    """archinstall waits, with no end, for systemd's clock synchronization
+    (timedatectl's NTPSynchronized) before it installs anything: wait here
+    instead, for CLOCK_WAIT, and say why when it never comes."""
+    for attempt in range(CLOCK_WAIT // CLOCK_RETRY + 1):
+        completed = host.run(["timedatectl", "show", "--property=NTPSynchronized", "--value"], timeout=10)
+        if completed.stdout.strip() == "yes": return
+        if attempt == 0: run.say("line", text="Waiting for the clock to synchronize with a time server")
+        if attempt < CLOCK_WAIT // CLOCK_RETRY: time.sleep(CLOCK_RETRY)
+    raise RuntimeError(f"the clock did not synchronize with a time server in {CLOCK_WAIT // 60} minutes, and "
+                       "archinstall would wait for it without end; this network may block NTP (UDP port 123). "
+                       "Nothing was erased")
+
+
 def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STATE, target: Path = TARGET,
             emit=lambda event: None) -> dict:
     """Check everything again, preflight, then run archinstall unattended."""
@@ -662,10 +678,11 @@ def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STA
     run.say("answers", answers=public(answers))
     secrets = [state / "creds.json", state / "wifi.json"]
     try:
-        run.phase("preflight", 1, "Checking the installer, keyring, mirrors and packages")
+        run.phase("preflight", 1, "Checking the installer, keyring, clock, mirrors and packages")
         if archinstall_version(host) != ARCHINSTALL:
             raise RuntimeError("this medium needs its bundled archinstall 4.5; do not upgrade it")
         run.command(["systemctl", "start", "pacman-init.service"], "the package keyring")
+        clock(host, run)
         run.command(["pacman", "-Sy", "--noconfirm"], "the package database refresh")
         # Every package the run will strap, checked before the disk is wiped.
         run.command(["pacman", "-Sp", "--noconfirm", *preflight_packages(answers, found, document)],
