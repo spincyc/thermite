@@ -385,6 +385,27 @@ class Verbs(unittest.TestCase):
         self.assertEqual(engine.describe_space(self.engine.plan(self.desired()), ROOT).splitlines()[-1],
                          "Not enough space: nothing was stopped or changed. Free 6.0 MiB, then rerun.")
 
+    def test_a_finished_transaction_of_another_format_blocks_nothing(self):
+        """An engine of another journal format cannot read this journal, but
+        the marker says it is finished: it begins, and its commit prunes it."""
+        self.through_switch()
+        self.engine.commit(ID, fakes.release(self.new))
+        path = f"{ROOT}/.transaction/{ID}"
+        self.assertEqual(self.disk.nodes[f"{path}/terminal"].data, b"kept\n")
+        data = json.loads(self.disk.nodes[f"{path}/journal.json"].data)
+        self.disk.nodes[f"{path}/journal.json"].data = json.dumps({**data, "format": 0}).encode()
+        self.assertEqual(self.engine.status()[0] | {"error": None},
+                         {"id": ID, "open": False, "phase": "kept", "error": None})
+        later, newer = "20261201T090000Z-0000ab", fakes.version("newer")
+        self.through_switch(newer, id=later)
+        self.engine.commit(later, fakes.release(newer))
+        self.assertEqual(self.engine.ids(), [later])
+        # An unreadable transaction that is not marked still refuses.
+        self.disk.put(f"{ROOT}/.transaction/{ID}/journal.json", data=b"{}", mode=0o600)
+        self.disk.nodes[f"{ROOT}/.transaction/{ID}"].mode = 0o700
+        with self.assertRaisesRegex(engine.EngineError, f"transaction {ID} cannot be read"):
+            self.begin(id="20261202T090000Z-0000cd")
+
     def test_every_later_verb_refuses_another_engine(self):
         self.begin()
         other = self.make(source=b"# a different release's engine\n")

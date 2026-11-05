@@ -149,6 +149,7 @@ class Harness(unittest.TestCase):
         journal = engine_on(disk, host).read(ID)
         if journal is not None:
             self.assertIn(journal.phase, engine.TERMINAL, what)
+            self.assertTrue(engine_on(disk, host).finished(ID), what)
 
 
 class CrashAnywhere(Harness):

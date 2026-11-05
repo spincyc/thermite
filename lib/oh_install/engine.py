@@ -128,6 +128,11 @@ PHASES = ("planned", "guarded", "collecting", "switching", "committed", "kept",
           "rolling-back", "rolled-back", "stuck")
 #: Phases after which the transaction needs nothing more.
 TERMINAL = ("kept", "rolled-back")
+#: Written beside the journal, holding the phase, once a transaction reaches
+#: a terminal phase. It is the one part of a transaction every engine reads,
+#: whatever its journal format: one marked so blocks no later begin, and the
+#: next commit prunes it.
+FINISHED = "terminal"
 #: Each phase and the phases a verb may move it to.
 NEXT = {
     "planned": ("guarded", "rolling-back"),
@@ -761,6 +766,19 @@ class Engine:
     def _advance(self, journal, phase) -> None:
         journal.advance(phase, self.clock())
         self.save(journal)
+        if phase in TERMINAL:
+            self._mark(journal)
+
+    def _mark(self, journal) -> None:
+        """The format-independent record that the transaction is finished."""
+        path = self.directory(journal.id) / FINISHED
+        if self.disk.lstat(path) is None:
+            self.disk.write_atomic(path, f"{journal.phase}\n".encode(), 0o600)
+
+    def finished(self, id) -> bool:
+        """Whether the transaction is marked finished, by any engine."""
+        found = self.disk.lstat(self.directory(id) / FINISHED)
+        return found is not None and found.kind == "file"
 
     def _meta(self, path, cls) -> dict:
         found = self.disk.lstat(path)
@@ -887,6 +905,8 @@ class Engine:
         self.check_root()
         with self.disk.lock(self.root):
             for other in self.ids():
+                if self.finished(other):
+                    continue
                 try:
                     journal = self.read(other)
                 except EngineError as error:
@@ -1146,6 +1166,7 @@ class Engine:
     def _finish(self, journal) -> Journal:
         """Everything after the commit point; rerunning it is harmless."""
         if journal.phase == "kept":
+            self._mark(journal)
             return journal
         raw = render_manifest(journal.manifest)
         self._safe(self.manifest_path)
@@ -1181,7 +1202,9 @@ class Engine:
             try:
                 found = self.read(other)
             except EngineError:
-                continue  # Never remove what cannot be read.
+                if not self.finished(other):
+                    continue  # Never remove what cannot be read, unless it is finished.
+                found = None
             if found is not None and found.phase not in TERMINAL:
                 continue
             if found is not None and found.phase == "rolled-back":
@@ -1216,6 +1239,7 @@ class Engine:
             if journal.phase in ("committed", "kept"):
                 return self._finish(journal)
             if journal.phase == "rolled-back":
+                self._mark(journal)
                 return journal
             if journal.phase not in ("rolling-back", "stuck"):
                 journal.rollback_from = journal.phase
@@ -1356,7 +1380,10 @@ class Engine:
             try:
                 journal = self.read(id)
             except EngineError as error:
-                found.append({"id": id, "error": str(error)})
+                finished = self.finished(id)
+                found.append({"id": id, "open": not finished, "error": str(error),
+                              **({"phase": self.disk.read_bytes(self.directory(id) / FINISHED, 64).decode().strip()}
+                                 if finished else {})})
                 continue
             if journal is None:
                 found.append({"id": id, "phase": None, "open": False, "error": "begin did not finish"})
@@ -1650,7 +1677,8 @@ def _open_one(engine) -> str | None:
         try:
             journal = engine.read(id)
         except EngineError:
-            open_ids.append(id)  # Only its own engine can read it.
+            if not engine.finished(id):
+                open_ids.append(id)  # Only its own engine can read it.
             continue
         if journal is not None and journal.open:
             open_ids.append(id)
@@ -1770,6 +1798,7 @@ def _main(args, argv, here) -> int:
     engine.disk.tools = engine.host.tools = tools
     if args.verb == "rollback":
         if journal.phase in TERMINAL:
+            engine.rollback(id)  # Marks it finished, if a crash came first.
             return 0
         journal = engine.rollback(id)
         if journal.phase == "stuck":
