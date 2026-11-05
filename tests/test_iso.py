@@ -225,8 +225,9 @@ class InstallerISO(unittest.TestCase):
         installer = payload["installer"]
         self.assertEqual(installer["node"], pins["node"])
         self.assertEqual(installer["blessed"], pins["blessed"])
-        self.assertEqual(set(installer["files"]), {"installer.py", "look.json", *(name for name in oh_iso.INSTALLER
-                                                                                   if name.startswith("tui/"))})
+        self.assertEqual(set(installer["files"]), {"installer.py", "look.json", *oh_iso.ARCH_FILES, "bootstrap.py",
+                                                   "FIRST-BOOT.txt", "authorized_keys",
+                                                   *(name for name in oh_iso.INSTALLER if name.startswith("tui/"))})
         for name, digest in installer["files"].items():
             self.assertEqual(oh_iso.sha256(media / name), digest, name)
         self.assertEqual(json.loads((media / "payload.json").read_text()), payload)

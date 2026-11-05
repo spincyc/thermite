@@ -109,6 +109,9 @@ def verified(path: Path, description: dict) -> Path:
 INSTALLER = ("iso/installer.py", "tui/installer/controller.js", "tui/installer/core.js", "tui/installer/main.js",
              "tui/installer/view.js", "tui/remote/app.js", "tui/remote/grid.js", "tui/remote/paint.js",
              "tui/remote/styles.js", "tui/remote/theme.js", "tui/remote/torch.js")
+#: The Arch medium's other files, from iso/: what boots the installer and
+#: what it installs on the target.
+ARCH_FILES = ("arch-install.sh", "arch-plugin.py", "first-boot.py", "packages.json")
 #: OpenSSH public key types --authorized-key accepts.
 KEY_TYPES = ("ssh-ed25519", "sk-ssh-ed25519@openssh.com", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384",
              "ecdsa-sha2-nistp521", "sk-ecdsa-sha2-nistp256@openssh.com", "ssh-rsa")
@@ -323,11 +326,13 @@ def stage(media: Path, cache: Path, *, base: str = "arch", authorized_key: dict 
     for source, name in (("bootstrap.py", "bootstrap.py"), ("first-boot.txt", "FIRST-BOOT.txt")):
         (media / name).write_bytes(public["iso/" + source])
     if base == "arch":
-        for name in ("arch-install.sh", "arch-plugin.py", "first-boot.py", "packages.json"):
+        for name in ARCH_FILES:
             (media / name).write_bytes(public["iso/" + name])
         # The installer and what it runs on: Node.js and blessed as pinned,
         # unpacked on the live system only after their digests match again.
-        files = {}
+        # The live system checks every file here (and the wheels) before it
+        # starts the installer.
+        files = {name: sha256(media / name) for name in (*ARCH_FILES, "bootstrap.py", "FIRST-BOOT.txt")}
         for name in INSTALLER:
             staged = media / ("installer.py" if name == "iso/installer.py" else name)
             staged.parent.mkdir(parents=True, exist_ok=True)
@@ -340,9 +345,11 @@ def stage(media: Path, cache: Path, *, base: str = "arch", authorized_key: dict 
             archive = verified(Path(cache) / pin[key]["name"], pin[key])
             shutil.copyfile(archive, media / archive.name)
             runtime[key] = {name: pin[key][name] for name in ("name", "sha256", "integrity") if name in pin[key]}
-        payload["installer"] = {**runtime, "files": files}
         if authorized_key:
             (media / "authorized_keys").write_text(authorized_key["line"] + "\n")
+            files["authorized_keys"] = sha256(media / "authorized_keys")
+        payload["installer"] = {**runtime, "files": files}
+        if authorized_key:
             payload["authorized_key"] = {name: authorized_key[name] for name in ("type", "fingerprint", "comment")}
     elif authorized_key:
         raise ValueError("--authorized-key needs the Arch image; Ubuntu's installer asks for keys itself")

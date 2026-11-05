@@ -765,20 +765,30 @@ def sri(path: Path) -> str:
         return "sha512-" + base64.b64encode(hashlib.file_digest(stream, "sha512").digest()).decode()
 
 
+def verify(media: Path, payload: dict) -> None:
+    """Every file payload.json names, by its digest: the installer, what it
+    runs on, and what it installs on the target (the plugin, first boot,
+    the packages file, the boot hook, the bootstrap and the wheels)."""
+    pinned = payload["installer"]
+    expected = [*pinned["files"].items(), *((wheel["name"], wheel["sha256"]) for wheel in payload["wheels"].values()),
+                (pinned["node"]["name"], pinned["node"]["sha256"])]
+    for name, value in expected:
+        if digest(media / name) != value: raise ValueError(f"{name} on the medium is damaged")
+    package = media / pinned["blessed"]["name"]
+    if sri(package) != pinned["blessed"]["integrity"]: raise ValueError(f"{package.name} on the medium is damaged")
+
+
 def runtime(media: Path, state: Path) -> tuple[Path, Path]:
-    """Node.js and blessed from the medium, checked against payload.json
-    again and unpacked once into STATE: (node, node_modules)."""
-    pinned = json.loads((media / "payload.json").read_text())["installer"]
+    """The medium checked against payload.json again, each time; Node.js
+    and blessed unpacked once into STATE: (node, node_modules)."""
+    payload = json.loads((media / "payload.json").read_text())
+    verify(media, payload)
+    pinned = payload["installer"]
+    archive, package = media / pinned["node"]["name"], media / pinned["blessed"]["name"]
     unpacked = state / "runtime"
     marker = unpacked / "pinned.json"
     node, modules = unpacked / "node", unpacked / "node_modules"
     if marker.is_file() and json.loads(marker.read_text()) == pinned: return node, modules
-    for name, expected in pinned["files"].items():
-        if digest(media / name) != expected: raise ValueError(f"{name} on the medium is damaged")
-    archive = media / pinned["node"]["name"]
-    if digest(archive) != pinned["node"]["sha256"]: raise ValueError(f"{archive.name} on the medium is damaged")
-    package = media / pinned["blessed"]["name"]
-    if sri(package) != pinned["blessed"]["integrity"]: raise ValueError(f"{package.name} on the medium is damaged")
     shutil.rmtree(unpacked, ignore_errors=True)
     unpacked.mkdir(mode=0o700, parents=True)
     # Only the node binary; the tarball's npm and headers stay packed.

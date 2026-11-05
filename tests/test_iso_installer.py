@@ -112,8 +112,15 @@ def installer_media(media: Path) -> None:
         files[str(staged.relative_to(media))] = oh_iso.sha256(staged)
     (media / "look.json").write_text('{"name": "fixture"}\n')
     files["look.json"] = oh_iso.sha256(media / "look.json")
+    for name in (*oh_iso.ARCH_FILES, "bootstrap.py", "FIRST-BOOT.txt"):
+        source = AREA / "iso" / ("first-boot.txt" if name == "FIRST-BOOT.txt" else name)
+        shutil.copyfile(source, media / name)
+        files[name] = oh_iso.sha256(media / name)
+    wheel = media / "thermite_app-0.1.0-py3-none-any.whl"
+    wheel.write_bytes(b"wheel fixture")
     payload = json.loads((media / "payload.json").read_text())
     payload["installer"] = {**pins, "files": files}
+    payload["wheels"] = {"application": {"name": wheel.name, "sha256": oh_iso.sha256(wheel)}}
     (media / "payload.json").write_text(json.dumps(payload))
 
 
@@ -574,12 +581,16 @@ class InstallerCore(unittest.TestCase):
         argv, seen = host.called[-1]
         self.assertEqual((node.read_text(), seen["TERM"]), ("unpacked once", "xterm-kitty"))
         self.assertEqual(argv[argv.index("--label") + 1], "SSH from 192.0.2.20")
-        # A damaged medium never runs.
-        (self.state / "runtime/pinned.json").unlink()
-        with (self.media / NODE_PIN).open("ab") as out: out.write(b"damaged")
-        self.assertEqual(installer.launch(host, media=self.media, state=self.state, env=env), 1)
+        # A damaged medium never runs, unpacked already or not: any file
+        # the installer runs, or installs on the target.
+        for name in ("arch-plugin.py", "first-boot.py", "packages.json", "arch-install.sh", "bootstrap.py",
+                     "FIRST-BOOT.txt", "thermite_app-0.1.0-py3-none-any.whl", "tui/installer/view.js", NODE_PIN):
+            kept = (self.media / name).read_bytes()
+            (self.media / name).write_bytes(kept + b"damaged")
+            self.assertEqual(installer.launch(host, media=self.media, state=self.state, env=env), 1, name)
+            self.assertIn(f"{name} on the medium is damaged", self.said.call_args.args[0])
+            (self.media / name).write_bytes(kept)
         self.assertEqual(len(host.called), 2)
-        self.assertIn("is damaged", self.said.call_args.args[0])
 
     def test_an_images_key_opens_live_ssh_to_the_installer_alone(self):
         self.said = self.enterContext(patch.object(installer, "print", create=True))
