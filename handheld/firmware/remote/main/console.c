@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "driver/uart.h"
 #include "esp_log.h"
 #include "sdkconfig.h"
 
@@ -10,7 +11,6 @@
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #else
-#include "driver/uart.h"
 #include "driver/uart_vfs.h"
 #endif
 
@@ -20,12 +20,23 @@ static QueueHandle_t s_lines;
 static TaskHandle_t s_notify;
 static uint32_t s_bit;
 
+int console_uart_read(uart_port_t port, uint8_t *buffer, size_t size)
+{
+    int n = uart_read_bytes(port, buffer, 1, portMAX_DELAY);
+    size_t held = 0;
+    if (n == 1 && size > 1 && uart_get_buffered_data_len(port, &held) == ESP_OK && held) {
+        int more = uart_read_bytes(port, buffer + 1, held < size - 1 ? held : size - 1, 0);
+        if (more > 0) n += more;
+    }
+    return n;
+}
+
 static int read_some(uint8_t *buffer, size_t size)
 {
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
     return usb_serial_jtag_read_bytes(buffer, size, portMAX_DELAY);
 #else
-    return uart_read_bytes(CONFIG_ESP_CONSOLE_UART_NUM, buffer, size, portMAX_DELAY);
+    return console_uart_read(CONFIG_ESP_CONSOLE_UART_NUM, buffer, size);
 #endif
 }
 
