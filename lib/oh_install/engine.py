@@ -1336,9 +1336,11 @@ class Engine:
             entry.state = "discarded"
             self.save(journal)
             return
-        if entry.state == "moving" and self.disk.lstat(aside) is None:
-            # The move never completed, so the live path is still whole; its
-            # removal effect may have run.
+        if self.disk.lstat(aside) is None:
+            # Moving: the move never completed, so the live path is still
+            # whole (its removal effect may have run). Later: the aside went
+            # back already, by this engine or by hand from rollback --print.
+            # Either way what is live is the old version, and _verify checks.
             self._discard(partial(aside))
             entry.state = "restored"
             self.save(journal)
@@ -1393,6 +1395,35 @@ class Engine:
                           **({"bytes": self.disk.allocated(self.directory(id))} if journal.phase == "kept" else {})})
         return found
 
+    def _manual_entry(self, journal, entry, source) -> list[str]:
+        """One entry's commands, derived from its state as _entry derives
+        its steps. Each move is guarded by what is on disk, so running the
+        commands again, or after rollback got partway, loses nothing."""
+        if entry.action == "leave" or entry.state in ("restored", "discarded") or entry.state == "planned" and (
+                entry.action != "add"):
+            return []
+        if entry.action == "add" and source != "switching":
+            return []
+        directory = self.directory(journal.id)
+        live, failed = entry.path, str(directory / "failed" / str(entry.n))
+        lines = [f"# {entry.n} {entry.path} ({entry.cls}, {entry.action}, {entry.state})"]
+        if entry.action == "add":
+            if entry.cls == "apparmor" and journal.before["apparmor"]:
+                lines.append(f"if {_present(live)}; then {shlex.join(['apparmor_parser', '-R', live])}; fi")
+            lines.append(f"if {_present(live)}; then {shlex.join(['mv', '-T', live, failed])}; fi")
+            return lines
+        aside = str(directory / entry.aside)
+        if entry.state == "partial" or entry.action == "copy" and source == "collecting":
+            # The live path was never touched.
+            return [*lines, shlex.join(["rm", "-rf", "--", str(partial(aside)), aside])]
+        if entry.state == "moving":
+            lines.append(shlex.join(["rm", "-rf", "--", str(partial(aside))]))
+        # Only while the aside exists does it go back; before that, whatever
+        # is live moves out of its way.
+        lines.append(f"if {_present(aside)}; then {{ ! {_present(live)} || {shlex.join(['mv', '-T', live, failed])}; }}"
+                     f" && {shlex.join(['mv', '-T', aside, live])}; fi")
+        return lines
+
     def manual(self, journal) -> list[str]:
         """The shell commands that put the old version back by hand, for when
         the engine itself cannot run (rollback --print)."""
@@ -1402,18 +1433,7 @@ class Engine:
         if source in ("collecting", "switching"):
             lines.append(shlex.join(["systemctl", "stop", TARGET, SLICE]))
             for entry in reversed(journal.entries):
-                if entry.action == "leave" or entry.state in ("restored", "discarded"):
-                    continue
-                if entry.action != "add" and entry.state == "planned" or entry.action == "add" and source != "switching":
-                    continue
-                failed = str(directory / "failed" / str(entry.n))
-                lines.append(f"# {entry.n} {entry.path} ({entry.cls}, {entry.action}, {entry.state})")
-                if entry.action == "copy" and source == "collecting":
-                    lines.append(shlex.join(["rm", "-rf", "--", str(directory / entry.aside)]))
-                    continue
-                lines.append(f"test ! -e {shlex.quote(entry.path)} || " + shlex.join(["mv", "-T", entry.path, failed]))
-                if entry.action != "add":
-                    lines.append(shlex.join(["mv", "-T", str(directory / entry.aside), entry.path]))
+                lines += self._manual_entry(journal, entry, source)
             lines.append(shlex.join(["systemctl", "daemon-reload"]))
             nft = next((entry for entry in journal.entries if entry.cls == "nft" and entry.action != "leave"), None)
             if nft is not None and journal.live["nft_checked"]:
@@ -1432,6 +1452,12 @@ class Engine:
         if journal.before["target"]["active"]:
             lines.append(shlex.join(["systemctl", "start", TARGET]))
         return lines
+
+
+def _present(path) -> str:
+    """A shell test that the path exists, a dangling symlink included."""
+    quoted = shlex.quote(str(path))
+    return f"{{ [ -e {quoted} ] || [ -L {quoted} ]; }}"
 
 
 # The real host ----------------------------------------------------------------

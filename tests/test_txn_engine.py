@@ -638,6 +638,30 @@ class Verbs(unittest.TestCase):
         self.assertEqual({item["class"] for item in data["items"] if item["path"].endswith(("userdata", "state"))},
                          {"tree"})
 
+    def test_rollback_print_after_a_partial_rollback_moves_nothing_back_twice(self):
+        """Killed after an aside went back but before `restored` was saved:
+        the printed commands must not move the restored version to failed/."""
+        self.through_switch()
+        unit = f"{fakes.UNITS}/{fakes.BOUNDARY}"
+        save = self.engine.save
+
+        def killed(journal):
+            if next(entry for entry in journal.entries if entry.path == unit).state == "restored":
+                raise fakes.Crash("before restored was saved")
+            save(journal)
+        self.engine.save = killed
+        with self.assertRaises(fakes.Crash):
+            self.engine.rollback(ID)
+        journal = self.make().read(ID)
+        entry = next(entry for entry in journal.entries if entry.path == unit)
+        self.assertEqual(entry.state, "returning")
+        self.assertEqual(self.disk.nodes[unit].data, self.old.files[unit][1])
+        lines = self.make().manual(journal)
+        start = lines.index(f"# {entry.n} {unit} (unit, copy, returning)")
+        aside = f"{ROOT}/.transaction/{ID}/{entry.aside}"
+        self.assertTrue(lines[start + 1].startswith(f"if {{ [ -e {aside} ] || [ -L {aside} ]; }}; then"),
+                        lines[start + 1])
+
     def test_rollback_print_lists_the_manual_commands(self):
         self.through_switch()
         journal = self.engine.read(ID)
@@ -646,10 +670,13 @@ class Verbs(unittest.TestCase):
         directory = f"{ROOT}/.transaction/{ID}"
         self.assertEqual(lines[:2], [f"# Roll back transaction {ID} (upgrade, switching) by hand, as root.",
                                      "systemctl stop thermite.target thermite.slice"])
-        self.assertIn(f"test ! -e {unit.path} || mv -T {unit.path} {directory}/failed/{unit.n}", lines)
-        self.assertIn(f"mv -T {directory}/{unit.aside} {unit.path}", lines)
-        self.assertIn(f"test ! -e {ROOT}/access/releases/{ID} || mv -T {ROOT}/access/releases/{ID} "
-                      f"{directory}/failed/{next(e.n for e in journal.entries if e.path.endswith(ID))}", lines)
+        aside, failed = f"{directory}/{unit.aside}", f"{directory}/failed/{unit.n}"
+        self.assertIn(f"if {{ [ -e {aside} ] || [ -L {aside} ]; }}; then {{ ! {{ [ -e {unit.path} ] || "
+                      f"[ -L {unit.path} ]; }} || mv -T {unit.path} {failed}; }} && mv -T {aside} {unit.path}; fi",
+                      lines)
+        added = f"{ROOT}/access/releases/{ID}"
+        self.assertIn(f"if {{ [ -e {added} ] || [ -L {added} ]; }}; then mv -T {added} "
+                      f"{directory}/failed/{next(e.n for e in journal.entries if e.path.endswith(ID))}; fi", lines)
         self.assertEqual(lines[-6:], ["systemctl daemon-reload", f"systemctl restart {fakes.BOUNDARY}",
                                       f"apparmor_parser -r {fakes.POLICY}", "systemctl reset-failed 'thermite*'",
                                       "systemctl enable thermite.target", "systemctl start thermite.target"])

@@ -399,6 +399,48 @@ esac
         self.assertIn("run the engine that wrote it", refused)
         self.assertTrue((self.wants / "thermite.target").is_symlink(), "nothing was rolled back")
 
+    def test_the_printed_rollback_finishes_a_partial_one(self):
+        """Killed after one aside went back, before its journal said so: the
+        commands rollback --print gives, run by hand, put the old version
+        back whole, and the engine then finds nothing left to do."""
+        before = snapshot(self.system, self.root, skip={self.root / ".transaction"})
+        state = snapshot(self.state, skip={self.state / "log", self.state / "cwd"})
+        self.run_engine("begin", "--id", ID, "--desired", str(self.inputs["desired"]),
+                        "--operator", str(self.inputs["operator"]))
+        self.run_engine("guard", "--id", ID)
+        subprocess.run([self.tools["systemctl"], "stop", "thermite.target", "thermite.slice"], check=True, cwd="/")
+        self.run_engine("collect", "--id", ID)
+        self.switch(ID)
+        tools = {name: path for name, path in self.tools.items() if path}
+        run = engine.Engine(engine.OsDisk(tools), engine.SubprocessHost(tools), self.root, system=self.system,
+                            source=self.copy.read_bytes())
+        unit = str(self.units / BOUNDARY)
+        save = run.save
+
+        def killed(journal):
+            if next(entry for entry in journal.entries if entry.path == unit).state == "restored":
+                raise KeyboardInterrupt("killed before restored was saved")
+            save(journal)
+        run.save = killed
+        with self.assertRaises(KeyboardInterrupt):
+            run.rollback(ID)
+        printed = self.run_engine("rollback", "--print").stdout
+        self.assertIn(f"{unit} (unit, copy, returning)", printed)
+        # Only the fake tools and plain file utilities can be found.
+        bin = self.base / "bin"
+        bin.mkdir()
+        for name in ("mv", "rm", "cat", "cp", "ln", "touch"):
+            (bin / name).symlink_to(shutil.which(name, path="/usr/bin:/bin"))
+        for name in ("systemctl", "nft"):
+            (bin / name).symlink_to(self.tools[name])
+        result = subprocess.run(["/bin/sh", "-c", printed], capture_output=True, text=True, cwd="/",
+                                env={"PATH": str(bin)}, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(snapshot(self.system, self.root, skip={self.root / ".transaction"}), before)
+        self.assertEqual(snapshot(self.state, skip={self.state / "log", self.state / "cwd"}), state)
+        self.run_engine("rollback", status=engine.ROLLED_BACK)
+        self.assertEqual(snapshot(self.system, self.root, skip={self.root / ".transaction"}), before)
+
     def test_each_verb_checks_only_the_tools_it_runs(self):
         self.run_engine("begin", "--id", ID, "--desired", str(self.inputs["desired"]),
                         "--operator", str(self.inputs["operator"]))
