@@ -25,7 +25,7 @@ import oh_source_upgrade  # noqa: E402
 import oh_units  # noqa: E402
 from oh_install import changeover, engine, manifest, runner, steps  # noqa: E402
 from oh_install.model import Check, Command, Step, Task  # noqa: E402
-from oh_install.system import System, Unit, UnitOrigin  # noqa: E402
+from oh_install.system import Stat, System, Unit, UnitOrigin  # noqa: E402
 from tests import txn_fakes  # noqa: E402
 
 BEFORE, AFTER = "1" * 40, "2" * 40
@@ -37,7 +37,8 @@ SPACE = {"required": 300 * 1024 * 1024, "available": 4 * 1024 ** 3, "margin": en
 
 
 class Fake(Step):
-    """A step that records running and answers with `outcome`."""
+    """A step that records running and answers with `outcome`, or with
+    what `outcome(system)` returns."""
 
     always = True
     stop_on_failure = True
@@ -56,7 +57,7 @@ class Fake(Step):
         self.log.append(self.name)
         if isinstance(self.outcome, BaseException):
             raise self.outcome
-        return self.outcome
+        return self.outcome(system) if callable(self.outcome) else self.outcome
 
 
 class Host:
@@ -753,6 +754,144 @@ class Kinds(Fixture):
             [entry] = deploy.deploys(layout)
             [line] = [text for text in history.details(entry) if text.startswith("rolled back")]
             self.assertIn(f"of {AFTER[:12]}, which never deployed here", line)
+
+
+def item(data: dict) -> manifest.Item:
+    """A desired item, from the engine's JSON."""
+    return manifest.Item(Path(data["path"]), data["class"], unit=data.get("unit"), apply_unit=data.get("apply_unit"),
+                         target=Path(data["target"]) if "target" in data else None, image=data.get("pin"),
+                         value=data.get("value"))
+
+
+class FreshInstall(unittest.TestCase):
+    """thermite install on a host Thermite never ran on, from the empty host
+    to the commit: changeover's own steps, the real install engine over the
+    in-memory host, and the installation root, which nothing else makes
+    before the engine plans inside it."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.site = Path(temporary.name) / "site"
+        (self.site / "var").mkdir(parents=True, mode=0o700)
+        self.context = steps.Context(
+            self.site, {"openhab": {"version": "5.2.3"}}, {"uid": 9001, "gid": 9001, "root": txn_fakes.ROOT},
+            AFTER, "c" * 64, "fixture-host", "192.0.2.10", application={"version": "1.0", "digest": "d" * 64})
+        self.disk = txn_fakes.MemoryDisk()
+        for directory in (txn_fakes.UNITS, txn_fakes.WANTS, "/etc/containers/systemd", "/srv"):
+            self.disk.put(directory, "dir", durable=True)
+        self.disk.put(txn_fakes.APPARMOR, data=b"Y\n", durable=True)
+        self.disk.settle()
+        self.host = txn_fakes.FakeHost(self.disk)
+        self.engine = engine.Engine(self.disk, self.host, txn_fakes.ROOT, source=txn_fakes.SOURCE,
+                                    clock=lambda: txn_fakes.CLOCK)
+        self.new = txn_fakes.version("new")
+        self.log = []
+        self.system = Mock(spec=System)
+        self.system.interactive.return_value = True
+        self.system.process_groups.return_value = {9001}
+        self.system.unit_origins.side_effect = lambda names: {name: UnitOrigin() for name in names}
+        self.system.unit_file.return_value = None
+        self.system.fstype.return_value = "ext4"
+        self.system.stat.side_effect = self.stat
+        self.system.directory_entries.side_effect = lambda path: self.disk.listdir(path)
+        self.system.run.side_effect = self.command
+        self.system.capture.side_effect = self.captured
+        scope = ExitStack()
+        self.addCleanup(scope.close)
+        for name, value in (("tools", txn_fakes.TOOLS), ("transaction_id", txn_fakes.ID)):
+            scope.enter_context(patch.object(manifest, name, return_value=value))
+        scope.enter_context(patch.object(manifest, "installed", lambda system, root: self.installed()))
+
+    def stat(self, path):
+        node = self.disk.nodes.get(str(path))
+        return None if node is None else Stat(node.uid, node.gid, node.mode, node.kind == "dir", 0.0, len(node.data))
+
+    def installed(self):
+        node = self.disk.nodes.get("/etc/thermite/installed.json")
+        return None if node is None else json.loads(node.data)
+
+    def verb(self, argv):
+        """An engine verb, run as the engine's own main would run it."""
+        options = engine.parser().parse_args(argv)
+        self.assertEqual(options.root, txn_fakes.ROOT)
+        self.log.append(options.verb)
+
+        def read(path):
+            return json.loads(Path(path).read_text())
+
+        self.engine.check_root()
+        if options.verb == "plan":
+            return json.dumps(self.engine.plan(read(options.desired)))
+        if options.verb == "begin":
+            self.engine.begin(options.id, read(options.desired), read(options.operator))
+        elif options.verb == "commit":
+            self.engine.commit(options.id, read(options.release) if options.release else None)
+        else:
+            getattr(self.engine, options.verb)(options.id)
+        return ""
+
+    def command(self, argv, cwd):
+        argv = tuple(map(str, argv))
+        if argv == ("sudo", "-v"):
+            return 0
+        if argv[1:4] == (changeover.PYTHON, "-I", "-S"):
+            try:
+                self.verb(argv[5:])
+            except engine.EngineError as exc:
+                self.log.append(f"refused: {exc}")
+                return engine.FAILED
+            return 0
+        self.log.append(" ".join(argv))
+        if argv[:2] == ("sudo", "mkdir"):
+            self.disk.put(argv[-1], "dir", mode=0o755)
+        elif argv[:3] == ("sudo", "install", "-d"):
+            self.disk.put(argv[-1], "dir", mode=int(argv[-2], 8))
+        else:
+            raise AssertionError(f"unexpected command {argv}")
+        return 0
+
+    def captured(self, argv, **kwargs):
+        argv = tuple(map(str, argv))
+        self.assertEqual(argv[2:5], (changeover.PYTHON, "-I", "-S"))
+        try:
+            return 0, self.verb(argv[6:])
+        except engine.EngineError as exc:
+            self.log.append(f"refused: {exc}")
+            return engine.FAILED, ""
+
+    def switch(self, system):
+        txn_fakes.switch(self.disk, self.host, self.new)
+        return 0
+
+    def healthy(self, system):
+        self.assertIn(engine.TARGET, self.host.active)
+        return 0
+
+    def test_an_empty_host_gets_its_root_then_one_transaction_commits(self):
+        made = [step for step in changeover.preparation(self.context) if isinstance(step, steps.InstallationRoot)]
+        work = changeover.Work(
+            "install", "install", made, [Fake("switch", self.log, self.switch)],
+            [changeover.Authorize(), Fake("health", self.log, self.healthy)], txn_fakes.release(self.new),
+            items=lambda system: [item(each) for each in txn_fakes.desired_items(self.new)],
+            pull=False)
+        self.assertNotIn(txn_fakes.ROOT, self.disk.nodes)
+        code = changeover.run(self.context, self.system, lambda id: work, installed=None, bridged=False, before=None,
+                              first=1)
+        self.assertEqual(code, changeover.COMMITTED, self.log)
+        self.assertEqual(self.log, [f"sudo mkdir {txn_fakes.ROOT}",
+                                    f"sudo install -d -o root -g root -m 00755 {txn_fakes.ROOT}",
+                                    "plan", "begin", "guard", "collect", "switch", "health", "commit"])
+        root = self.disk.nodes[txn_fakes.ROOT]
+        self.assertEqual((root.kind, root.uid, root.gid, root.mode), ("dir", 0, 0, 0o755))
+        installed = self.installed()
+        self.assertEqual((installed["installed"], installed["transaction"], installed["release"]),
+                         (True, txn_fakes.ID, {"label": "new"}))
+        self.assertTrue(self.host.enabled())
+        self.assertEqual(self.engine.read(txn_fakes.ID).phase, "kept")
+        record = json.loads((self.site / "var/transaction" / txn_fakes.ID / "record.json").read_text())
+        self.assertEqual((record["phase"], record["installed"]), ("committed", False))
+        self.assertIsNone(changeover.open_transaction(self.site / "var"))
 
 
 class Runner(unittest.TestCase):

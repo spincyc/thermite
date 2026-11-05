@@ -541,9 +541,10 @@ def release(context: steps.Context) -> dict:
 
 def preparation(context: steps.Context) -> list[Step]:
     """What the transaction needs that is the host's, never an item: done
-    while Thermite runs."""
+    while Thermite runs. It ends with the installation root, which the
+    transaction plans and begins inside."""
     return [*steps.configuration_steps(context), steps.Packages(), NativeIngressPrerequisites(context),
-            steps.AppArmorService(), steps.BootTest(context), steps.Account(context)]
+            steps.AppArmorService(), steps.BootTest(context), steps.Account(context), steps.InstallationRoot(context)]
 
 
 def switching(context: steps.Context, transaction: str | None, how: str = "upgrade") -> list[Step]:

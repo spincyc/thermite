@@ -619,6 +619,45 @@ class Account(Step):
         return actions
 
 
+class InstallationRoot(Step):
+    """The installation root, root's own with ROOT_MODE and a btrfs
+    subvolume where its parent filesystem is btrfs: made while preparing,
+    since a transaction plans and begins inside it (engine check_root)."""
+
+    title = "Installation root"
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def wrong(self, system: System) -> bool:
+        """Whether the installation root is missing, or not root's with ROOT_MODE."""
+        found = system.stat(self.context.installation.root)
+        return not (found and found.is_dir and (found.uid, found.gid, found.mode) == (0, 0, deploy.ROOT_MODE))
+
+    def check(self, system: System) -> Check:
+        top = self.context.installation.root
+        if system.stat(top) is None:
+            return Check(False, f"{top} does not exist")
+        if self.wrong(system):
+            return Check(False, f"to fix: {top} (root, {deploy.ROOT_MODE:04o})")
+        return Check(True, f"{top}, owned by root")
+
+    def actions(self, system: System) -> list[Action]:
+        # The installation root is the subvolume; runtime/ and the gateway's
+        # access/ are plain directories inside it.
+        top = self.context.installation.root
+        actions = []
+        if system.stat(top) is None:
+            if system.stat(top.parent) is None:
+                actions.append(Command(("mkdir", "-p", str(top.parent)), root=True))
+            if system.fstype(top.parent) == "btrfs":
+                actions.append(Command(("btrfs", "subvolume", "create", str(top)), root=True))
+            else:
+                actions.append(Command(("mkdir", str(top)), root=True))
+        return [*actions, Command(("install", "-d", "-o", "root", "-g", "root", "-m", f"{deploy.ROOT_MODE:05o}",
+                                   str(top)), root=True)]
+
+
 class StateDirectories(Step):
     title = "Service state directories"
 
@@ -640,41 +679,18 @@ class StateDirectories(Step):
                     wrong.append((mode, path))
         return wrong
 
-    def top_wrong(self, system: System) -> bool:
-        """Whether the installation root is missing, or not root's with ROOT_MODE."""
-        found = system.stat(self.context.installation.root)
-        return not (found and found.is_dir and (found.uid, found.gid, found.mode) == (0, 0, deploy.ROOT_MODE))
-
     def check(self, system: System) -> Check:
         top = self.context.installation.root
-        if system.stat(top) is None:
-            return Check(False, f"{top} does not exist")
         wrong = [path for _, path in self.wrong(system)]
         if self.applied and self.context.host["gid"] not in system.process_groups():
             return Check(True, f"service directories installed for {NAME}; log in again for group access")
-        if self.top_wrong(system) or wrong:
-            return Check(False, "to create or fix: " + ", ".join(
-                [*([f"{top} (root, {deploy.ROOT_MODE:04o})"] if self.top_wrong(system) else []),
-                 *(str(path.relative_to(top)) for path in wrong)]))
+        if wrong:
+            return Check(False, "to create or fix: " + ", ".join(str(path.relative_to(top)) for path in wrong))
         count = sum(len(paths) for _, paths in self.directories())
-        return Check(True, f"{top}, owned by root, and its {count} runtime directories, owned by {NAME}")
+        return Check(True, f"the {count} runtime directories in {top}, owned by {NAME}")
 
     def actions(self, system: System) -> list[Action]:
-        # The installation root is the subvolume; runtime/ and the gateway's
-        # access/ are plain directories inside it.
-        top = self.context.installation.root
-        actions = []
-        if system.stat(top) is None:
-            if system.stat(top.parent) is None:
-                actions.append(Command(("mkdir", "-p", str(top.parent)), root=True))
-            if system.fstype(top.parent) == "btrfs":
-                actions.append(Command(("btrfs", "subvolume", "create", str(top)), root=True))
-            else:
-                actions.append(Command(("mkdir", str(top)), root=True))
-        if self.top_wrong(system):
-            actions.append(Command(("install", "-d", "-o", "root", "-g", "root", "-m", f"{deploy.ROOT_MODE:05o}",
-                                    str(top)), root=True))
-        return actions + self.fix(system)
+        return self.fix(system)
 
     def fix(self, system: System) -> list[Action]:
         self.applied = True
@@ -711,9 +727,6 @@ class MetricsDirectories(StateDirectories):
             return Check(False, "to create or fix: " + ", ".join(str(p.relative_to(root)) for _, p in wrong))
         return Check(True, f"{', '.join(str(p.relative_to(root)) for _, paths in self.directories() for p in paths)}, "
                            f"owned by {NAME}")
-
-    def actions(self, system: System) -> list[Action]:
-        return self.fix(system)
 
     def desired(self, system: System) -> list[manifest.Item]:
         # Prometheus' samples are copied aside only when its image changes:

@@ -115,43 +115,58 @@ class Paths(unittest.TestCase):
             deploy.validate_host({**host, "state_root": str(TOP)})
 
 
+class InstallationRoot(unittest.TestCase):
+    def actions(self, host):
+        return [action.argv for action in steps.InstallationRoot(context()).actions(host)]
+
+    def test_a_new_root_on_btrfs_is_a_root_owned_subvolume(self):
+        host = Host({Path("/srv"): directory(0, 0, 0o755)})
+        self.assertEqual(steps.InstallationRoot(context()).check(host).detail, f"{TOP} does not exist")
+        self.assertEqual(self.actions(host), [("btrfs", "subvolume", "create", str(TOP)),
+                                              ("install", "-d", "-o", "root", "-g", "root", "-m", "00755", str(TOP))])
+
+    def test_a_new_root_elsewhere_is_a_directory_and_its_parent_is_made(self):
+        self.assertEqual(self.actions(Host(fstype="ext4")), [
+            ("mkdir", "-p", "/srv"), ("mkdir", str(TOP)),
+            ("install", "-d", "-o", "root", "-g", "root", "-m", "00755", str(TOP))])
+
+    def test_a_root_not_owned_by_root_is_repaired_in_place(self):
+        host = Host({TOP: directory(9001, 9001, 0o750)})
+        check = steps.InstallationRoot(context()).check(host)
+        self.assertFalse(check.done)
+        self.assertEqual(check.detail, f"to fix: {TOP} (root, 0755)")
+        self.assertEqual(self.actions(host), [("install", "-d", "-o", "root", "-g", "root", "-m", "00755", str(TOP))])
+
+    def test_a_root_owned_by_root_needs_nothing(self):
+        check = steps.InstallationRoot(context()).check(Host({TOP: directory(0, 0, 0o755)}))
+        self.assertTrue(check.done, check.detail)
+
+    def test_it_is_made_while_preparing_before_the_room_is_planned_inside_it(self):
+        from oh_install import changeover
+        self.assertIsInstance(changeover.preparation(context())[-1], steps.InstallationRoot)
+
+
 class StateDirectories(unittest.TestCase):
     def actions(self, host):
         return [action.argv for action in steps.StateDirectories(context()).actions(host)]
 
-    def test_a_new_root_on_btrfs_is_a_root_owned_subvolume(self):
-        host = Host({Path("/srv"): directory(0, 0, 0o755)})
-        self.assertEqual(steps.StateDirectories(context()).check(host).detail, f"{TOP} does not exist")
+    def test_a_new_root_gets_its_runtime_directories_but_no_subvolume(self):
+        host = Host({TOP: directory(0, 0, 0o755)})
         argv = self.actions(host)
-        self.assertEqual(argv[:2], [("btrfs", "subvolume", "create", str(TOP)),
-                                    ("install", "-d", "-o", "root", "-g", "root", "-m", "00755", str(TOP))])
-        created = [word for command in argv[2:] for word in command]
+        created = [word for command in argv for word in command]
         self.assertIn(str(RUNTIME), created)
-        self.assertEqual({command[:5] for command in argv[2:]}, {("install", "-d", "-o", "9001", "-g")})
+        self.assertEqual({command[:5] for command in argv}, {("install", "-d", "-o", "9001", "-g")})
         # runtime/ is a plain directory; access/ belongs to the gateway step.
-        self.assertFalse([command for command in argv if "subvolume" in command and str(TOP) not in command])
+        self.assertNotIn(str(TOP), created)
         self.assertFalse([word for word in created if word.startswith(str(ACCESS))])
-
-    def test_a_new_root_elsewhere_is_a_directory_and_its_parent_is_made(self):
-        argv = self.actions(Host(fstype="ext4"))
-        self.assertEqual(argv[:3], [("mkdir", "-p", "/srv"), ("mkdir", str(TOP)),
-                                    ("install", "-d", "-o", "root", "-g", "root", "-m", "00755", str(TOP))])
 
     def test_a_current_layout_needs_nothing(self):
         layout = deploy.state({})
         host = Host({TOP: directory(0, 0, 0o755), **runtime_directories(layout)})
         check = steps.StateDirectories(context()).check(host)
         self.assertTrue(check.done, check.detail)
-        self.assertIn(f"{TOP}, owned by root", check.detail)
+        self.assertIn(f"runtime directories in {TOP}", check.detail)
         self.assertEqual(self.actions(host), [])
-
-    def test_a_root_not_owned_by_root_is_repaired_in_place(self):
-        layout = deploy.state({})
-        host = Host({TOP: directory(9001, 9001, 0o750), **runtime_directories(layout)})
-        check = steps.StateDirectories(context()).check(host)
-        self.assertFalse(check.done)
-        self.assertEqual(check.detail, f"to create or fix: {TOP} (root, 0755)")
-        self.assertEqual(self.actions(host), [("install", "-d", "-o", "root", "-g", "root", "-m", "00755", str(TOP))])
 
     def test_an_install_without_logs_gets_the_setgid_group_directory(self):
         layout = deploy.state({})

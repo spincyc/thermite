@@ -585,7 +585,8 @@ the upgrade below shows the whole sequence.
 
 While Thermite keeps running, the upgrade prepares what belongs to the host
 rather than to Thermite: the configuration checks and boot test, required
-packages, AppArmor's own service and the `thermite` account. It pulls every
+packages, AppArmor's own service, the `thermite` account and, on a new host,
+the installation root, which the install engine works inside. It pulls every
 pinned container image before anything stops. Then it shows the room the
 install engine needs to set the installed version aside:
 
