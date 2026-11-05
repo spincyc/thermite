@@ -16,7 +16,7 @@ import sys
 
 import oh_ports
 
-from . import AccessError, guest, metrics
+from . import AccessError, guest
 from .files import json_private, private_directory, read_private, require_service_account
 
 CONFIG_FIELDS = {"version", "state", "contract_file", "runtime_url", "runtime_token_file", "allowed_hosts",
@@ -451,6 +451,7 @@ def serve(config_path):
             raise AccessError("An authenticated site requires an active administrator")
         rebase_timezone(adapter, config["timezone"])
         from oh_identity.asgi import application
+        from . import metrics
         # Direct TLS, and plain HTTP only on the opt-in Guest listener.
         # Hypercorn trusts no proxy or forwarded header: the ASGI client is
         # always the socket peer.

@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 import oh_ports
 
-from . import AccessError, metrics
+from . import AccessError
 from .callbacks import CallbackRelay, MAX_HEADER_BYTES
 from .files import read_private, require_service_account
 
@@ -86,6 +86,7 @@ def serve(config_path):
     """Owner invokes separately; no TLS/auth proxy or general HTTP forwarding."""
     require_service_account()
     config = load_config(config_path)
+    from . import metrics
     application = CallbackRelay(config["routes"], config["upstream"], config["hosts"], receipt=metrics.callback_receipt)
     import uvicorn
     textfile = metrics.start(metrics.CALLBACKS, metrics.CALLBACKS_FILE)
