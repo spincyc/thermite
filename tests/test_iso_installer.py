@@ -118,8 +118,9 @@ def installer_media(media: Path) -> None:
 
 class FakeHost(installer.Host):
     def __init__(self, root: Path, *, taken=(), fail=(), archinstall="4.5.1", code=0, lines=ARCHINSTALL_LINES,
-                 joined=None):
+                 joined=None, mounted=()):
         super().__init__(root)
+        self.mounts = set(map(str, mounted))  # mount points, as umount leaves them
         self.taken, self.fail, self.version, self.code, self.lines = set(taken), set(fail), archinstall, code, lines
         self.joined = joined  # the Wi-Fi network wlan0 is joined to
         self.calls, self.spawned, self.called = [], [], []
@@ -128,6 +129,7 @@ class FakeHost(installer.Host):
         argv = list(argv); self.calls.append(argv)
         def done(code=0, out="", err=""): return subprocess.CompletedProcess(argv, code, out, err)
         if argv[0] in self.fail: return done(1, "", f"{argv[0]} failed")
+        if argv[0] == "umount": self.mounts.discard(argv[-1])
         if argv[0] == "lsblk": return done(0, json.dumps(LSBLK))
         if argv[:2] == ["ip", "-json"] and "route" in argv:
             return done(0, json.dumps([{"dst": "default", "gateway": "192.0.2.1", "dev": "enp1s0", "metric": 100},
@@ -148,6 +150,8 @@ class FakeHost(installer.Host):
         return done()
 
     def online(self): return True
+
+    def mounted(self, path): return str(path) in self.mounts
 
     def spawn(self, argv, env):
         state = Path(env["THERMITE_INSTALLER_STATE"])
@@ -359,6 +363,22 @@ class InstallerCore(unittest.TestCase):
             self.assertFalse((self.state / "creds.json").exists())
         with self.assertRaises(installer.Invalid):
             installer.install({**ANSWERS, "confirm": "ERASE"}, self.host(), media=self.media, state=self.state)
+
+    def test_a_retry_unmounts_what_the_failed_run_left_mounted_first(self):
+        host = self.host(mounted={self.target})
+        installer.install(ANSWERS, host, media=self.media, state=self.state, target=self.target)
+        umount = ["umount", "--recursive", str(self.target)]
+        self.assertLess(host.calls.index(umount), next(index for index, call in enumerate(host.calls)
+                                                       if call[0] == "lsblk"))
+        self.assertIn("which an earlier run left mounted", (self.state / "installer.log").read_text())
+        # Nothing is unmounted when nothing is mounted; a mount that stays refuses the run.
+        host = self.host()
+        installer.install(ANSWERS, host, media=self.media, state=self.state, target=self.target)
+        self.assertNotIn(umount, host.calls)
+        host = self.host(mounted={self.target}, fail={"umount"})
+        with self.assertRaisesRegex(installer.Invalid, "still mounted"):
+            installer.install(ANSWERS, host, media=self.media, state=self.state, target=self.target)
+        self.assertEqual(host.spawned, [])
 
     def test_wifi_scan_and_connect_keep_the_passphrase_off_command_lines(self):
         host = self.host()

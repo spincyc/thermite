@@ -100,6 +100,9 @@ class Host:
         except (OSError, subprocess.TimeoutExpired) as exc:
             return subprocess.CompletedProcess(list(argv), 127, "", str(exc))
 
+    def mounted(self, path: Path) -> bool:
+        return os.path.ismount(path)
+
     def online(self) -> bool:
         try:
             with socket.create_connection(("archlinux.org", 443), timeout=5):
@@ -630,6 +633,12 @@ def archinstall_version(host: Host) -> tuple[int, int] | None:
 def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STATE, target: Path = TARGET,
             emit=lambda event: None) -> dict:
     """Check everything again, preflight, then run archinstall unattended."""
+    # A failed run can leave the target mounted, and its disk then reads as
+    # in use: unmount it first, so the review can try again.
+    left = host.mounted(target)
+    if left and (host.run(["umount", "--recursive", str(target)], timeout=120).returncode or host.mounted(target)):
+        raise Invalid(f"{target} is still mounted from an earlier run, and could not be unmounted; "
+                      f"from a shell, umount -R {target}, then try again")
     found, options = facts(host, media), choices(host)
     values, errors = check(answers, found, options)
     if errors: raise Invalid("; ".join(f"{field}: {message}" for field, message in errors.items()))
@@ -638,6 +647,7 @@ def install(answers: dict, host: Host, *, media: Path = MEDIA, state: Path = STA
     if joined: answers["wifi_security"] = joined["security"]
     document = json.loads((media / "packages.json").read_text())
     run = Run(host, state, emit)
+    if left: run.say("line", text=f"Unmounted {target}, which an earlier run left mounted")
     run.say("answers", answers=public(answers))
     secrets = [state / "creds.json", state / "wifi.json"]
     try:
