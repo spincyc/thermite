@@ -19,7 +19,7 @@ METRICS_RESTART_PATH = "thermite-metrics-restart.path"
 METRICS_RESTART_SERVICE = "thermite-metrics-restart.service"
 
 #: The gateway, its policy worker and its callback relay: host services, not
-#: containers (oh_access.staging.ACCESS_UNITS writes them).
+#: containers (oh_access.staging writes them).
 ACCESS = "thermite-access.service"
 ACCESS_WORKER = "thermite-access-worker.service"
 ACCESS_CALLBACKS = "thermite-access-callbacks.service"

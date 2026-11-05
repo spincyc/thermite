@@ -16,7 +16,7 @@ from . import TEXTFILE_ENVIRONMENT, AccessError
 from .files import (atomic_private, json_private, private_directory, read_private,
                     require_service_account, service_identity)
 
-ACCESS_UNITS = ("thermite-access.service", "thermite-access-worker.service", "thermite-access-callbacks.service")
+ACCESS_UNITS = oh_units.ACCESS_UNITS
 
 
 class _EnvironmentInstallError(AccessError):
