@@ -66,14 +66,15 @@ rollback. The unified deployment workflow uses a separate committed private site
 - New `thermite revert` puts back the version the last install or upgrade set
   aside, with its state as it was then, as its own transaction. It says that
   everything written since is lost and asks you to type the installation
-  root. Inside the transaction the site's branch goes back to the commit
-  before the upgrade's pin commit, so the previous version checks its health
-  with its own application (a site still pinning the new release would have
-  run the new release's health instead); a rollback puts the pin commit
-  back. Once it commits, `~/.local/bin/thermite` selects the previous
-  application, whichever run finishes the commit. Likewise a purge's commit
-  removes the site's `var/transaction/` and every commit prunes the older
-  gateway releases even when a rollback or the next run finishes it.
+  root; a site with uncommitted changes is refused before that. Inside the
+  transaction the site's branch goes back to the commit before the
+  upgrade's pin commit, so the previous version checks its health with its
+  own application (a site still pinning the new release would have run the
+  new release's health instead); a rollback puts the pin commit back. Once
+  it commits, `~/.local/bin/thermite` selects the previous application,
+  whichever run finishes the commit. Likewise a purge's commit removes the
+  site's `var/transaction/` and every commit prunes the older gateway
+  releases even when a rollback or the next run finishes it.
 - Each commit keeps only the current and the previous gateway release,
   application environment and container images, and removes older ones.
   Gateway releases staged before the install engine are removed at the first

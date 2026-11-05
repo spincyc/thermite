@@ -455,6 +455,14 @@ class SitePin(GitSite):
         self.assertEqual(self.git("rev-parse", "HEAD"), self.before)
         self.assertEqual(self.git("status", "--porcelain"), "")
 
+    def test_a_site_already_back_needs_nothing_whatever_else_is_uncommitted(self):
+        self.git("reset", "-q", "--hard", self.before)
+        (self.root / "notes.txt").write_text("owner's file\n")
+        self.git("add", "notes.txt")
+        self.assertFalse(oh_source_upgrade.reset_pin(self.root, expected=self.after, previous=self.before))
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.before)
+        self.assertEqual(self.git("status", "--porcelain"), "A  notes.txt")
+
     def test_other_changes_beside_a_half_done_reset_are_left_alone(self):
         self.git("update-ref", "HEAD", self.before, self.after)
         (self.root / "notes.txt").write_text("owner's file\n")

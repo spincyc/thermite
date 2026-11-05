@@ -12,6 +12,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -52,6 +53,7 @@ class Fixture(unittest.TestCase):
         directory = self.site / "var/transaction" / txn_fakes.ID
         directory.mkdir(parents=True)
         (directory / "record.json").write_text(json.dumps(self.record))
+        subprocess.run(["git", "init", "-q", str(self.site)], check=True)
         self.installed = {"installed": True, "kept": txn_fakes.ID, "transaction": txn_fakes.ID}
         self.environment = self.temporary / "home/.local/share/thermite/application/environment-old"
         self.system = Mock(spec=System)
@@ -277,14 +279,53 @@ class Transacted(unittest.TestCase):
     def directory(self):
         return self.site / "var/transaction" / txn_fakes.ID
 
-    def revert(self, **answers):
+    def revert(self, typed="/srv/thermite-fixture", **answers):
         self.host = Reverting(self, **answers)
-        self.host.system.ask.return_value = "/srv/thermite-fixture"
+        self.host.system.ask.side_effect = typed if callable(typed) else lambda prompt: typed
         with patch.object(Path, "home", return_value=self.temporary / "home"):
             return revert_cli.revert(self.host.system, False)
 
     def record(self):
         return json.loads((self.directory / "record.json").read_text())
+
+    def said(self):
+        return "\n".join(str(call.args[0]) for call in self.host.system.say.call_args_list)
+
+    def edit(self):
+        """The owner's own uncommitted edit, beside the pin's files."""
+        (self.site / ".gitignore").write_text("/var/\n/notes/\n")
+
+    def test_a_site_with_uncommitted_changes_is_refused_before_anything_stops(self):
+        self.edit()
+        self.assertEqual(self.revert(), 2)
+        self.assertEqual(self.log, [], "nothing ran, not even the engine's plan")
+        self.assertIn("Nothing was changed: the site's Git repository has uncommitted changes", self.said())
+        self.assertNotIn("does not pin", self.said())
+        self.assertFalse(self.directory.exists())
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.after)
+        self.assertEqual((self.site / ".gitignore").read_text(), "/var/\n/notes/\n")
+
+    def test_changes_made_while_it_asks_are_never_said_to_unpin_the_site(self):
+        # They came after the refusal checked: a wrong root typed refuses
+        # before begin, with the site where it was.
+        def typed(answer):
+            def ask(prompt):
+                self.edit()
+                return answer
+            return ask
+        self.assertEqual(self.revert(typed("/srv/elsewhere")), changeover.REFUSED)
+        self.assertNotIn("does not pin", self.said())
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.after)
+        # The right root: the site cannot go back with them, so the revert
+        # rolls back, and the site already pins the version that runs.
+        self.git("checkout", "--", ".gitignore")
+        shutil.rmtree(self.site / "var/transaction" / txn_fakes.ID)
+        self.assertEqual(self.revert(typed("/srv/thermite-fixture")), changeover.ROLLED_BACK)
+        self.assertIn("The site cannot go back", self.said())
+        self.assertNotIn("does not pin", self.said())
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.after)
+        self.assertEqual((self.site / ".gitignore").read_text(), "/var/\n/notes/\n")
+        self.assertEqual(self.record()["phase"], "rolled-back")
 
     def test_the_previous_version_checks_its_health_with_its_own_application(self):
         self.assertEqual(self.revert(), changeover.COMMITTED)

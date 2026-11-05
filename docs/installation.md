@@ -775,10 +775,10 @@ commit. A revert writes no deploy-history entry.
 
 A revert is refused with exit status 2 after an uninstall, a clean install
 or another revert, when the site is not at the commit that transaction
-installed, when the previous application environment is gone, and after the
-first transaction on a host installed before the install engine: that
-transaction recorded no gateway release for the version before it. Use
-`thermite rollback` there.
+installed or its Git repository has uncommitted changes, when the previous
+application environment is gone, and after the first transaction on a host
+installed before the install engine: that transaction recorded no gateway
+release for the version before it. Use `thermite rollback` there.
 
 Pinning an application release older than the site's committed one requires
 `--allow-downgrade`, after deliberately restoring state the newer release

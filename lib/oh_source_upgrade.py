@@ -156,7 +156,8 @@ def reset_pin(site: Path, *, expected: str, previous: str) -> bool:
     (compare and swap), then put the files that commit changed back as
     `previous` has them. A reset that stopped between the two, HEAD at one
     commit with exactly those files as the other has them, is finished.
-    False when the site is already at `previous`; PinMoved, changing
+    False when the site is already at `previous` with those files as it
+    has them, whatever else is uncommitted beside them; PinMoved, changing
     nothing, when anyone else moved it or changed files since;
     PinUnfinished when HEAD moved but the files could not follow."""
     root = Path(git(site, "rev-parse", "--show-toplevel"))
@@ -166,6 +167,8 @@ def reset_pin(site: Path, *, expected: str, previous: str) -> bool:
     names = [name for name in run("git", "-C", root, "diff", "--name-only", "--no-renames", "-z", previous,
                                   expected, capture=True).split("\0") if name]
     paths = [f":(literal){name}" for name in names]
+    if head == previous and (not paths or _same(root, previous, paths) and _same(root, previous, paths, "--cached")):
+        return False
     files = head
     if git(root, "status", "--porcelain", "--untracked-files=no"):
         changed = {name for options in ((), ("--cached",)) for name in run(
@@ -174,8 +177,6 @@ def reset_pin(site: Path, *, expected: str, previous: str) -> bool:
         files = expected if head == previous else previous
         if not changed <= set(names) or not (_same(root, files, paths) and _same(root, files, paths, "--cached")):
             raise PinMoved("the site has uncommitted changes")
-    if head == previous and files == previous:
-        return False
     if head == expected:
         run("git", "-C", root, "update-ref", "-m", "thermite: undo the application pin commit", "HEAD", previous,
             expected)

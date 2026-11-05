@@ -46,8 +46,8 @@ exit status:
   0  committed: the previous version runs again, with its state
   1  declined, or refused before anything stopped (also when an earlier
      transaction was finished or closed instead of reverting)
-  2  nothing to revert to, the site is not at the upgrade's commit, or the
-     previous application environment is gone
+  2  nothing to revert to, the site is not at the upgrade's commit or has
+     uncommitted changes, or the previous application environment is gone
   3  rolled back: the version that ran runs again and its health passes
   4  rolled back, but its health does not pass; it keeps running
   5  the rollback did not finish: Thermite stays stopped; run thermite revert again
@@ -177,6 +177,17 @@ def refusal(context: steps.Context, system: System) -> tuple[str | None, dict | 
     if context.head != after:
         return (f"the site is at {context.head[:12]}, not {after[:12]}, the commit transaction {kept} installed; "
                 "a revert puts the site back to the commit before that one"), None
+    # The site's branch moves back inside the transaction (SitePin), which
+    # refuses changes it would carry along: refuse them before it begins.
+    import subprocess
+    import oh_source_upgrade
+    try:
+        changed = oh_source_upgrade.git(context.area, "status", "--porcelain", "--untracked-files=no")
+    except subprocess.CalledProcessError as exc:
+        return f"git status failed in the site's repository (exit status {exc.returncode})", None
+    if changed:
+        return (f"the site's Git repository has uncommitted changes, and a revert moves its branch back to "
+                f"{before[:12]}: commit or set them aside first"), None
     if environment(record["application"].get("previous")) is None:
         return (f"the previous application, {str(record['application'].get('previous'))[:12]}, has no prepared "
                 "environment any more"), None

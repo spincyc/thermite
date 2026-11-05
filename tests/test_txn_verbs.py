@@ -13,6 +13,7 @@ from contextlib import ExitStack, redirect_stderr
 import io
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -82,6 +83,11 @@ class Fixture(unittest.TestCase):
     def patch(self, target, name, **kwargs):
         return self.scope.enter_context(patch.object(target, name, **kwargs))
 
+    def repository(self):
+        """The site as a Git repository with nothing uncommitted, as a
+        revert needs it."""
+        subprocess.run(["git", "init", "-q", str(self.site)], check=True)
+
     def said(self):
         return "\n".join(str(call.args[0]) for call in self.system.say.call_args_list)
 
@@ -138,6 +144,7 @@ class Preview(Fixture):
 
     def test_a_revert_puts_the_kept_version_back(self):
         """Through thermite revert -n, whose Work is its own."""
+        self.repository()
         directory = self.site / "var/transaction" / txn_fakes.ID
         directory.mkdir(parents=True)
         (directory / "record.json").write_text(json.dumps({
@@ -232,6 +239,7 @@ class DryRuns(Fixture):
                       self.said())
 
     def test_revert(self):
+        self.repository()
         directory = self.site / "var/transaction" / txn_fakes.OLD
         directory.mkdir(parents=True)
         (directory / "record.json").write_text(json.dumps({

@@ -1112,8 +1112,8 @@ exit status:
   0  committed: the previous version runs again, with its state
   1  declined, or refused before anything stopped (also when an earlier
      transaction was finished or closed instead of reverting)
-  2  nothing to revert to, the site is not at the upgrade&#x27;s commit, or the
-     previous application environment is gone
+  2  nothing to revert to, the site is not at the upgrade&#x27;s commit or has
+     uncommitted changes, or the previous application environment is gone
   3  rolled back: the version that ran runs again and its health passes
   4  rolled back, but its health does not pass; it keeps running
   5  the rollback did not finish: Thermite stays stopped; run thermite revert again
