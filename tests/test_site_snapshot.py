@@ -129,17 +129,6 @@ for name, value in outputs.items():
                 deploy.prepared_files(self.site, commit, self.var)
             render.assert_not_called()
 
-    def test_history_boot_waiver_must_match_the_actual_final_render_before_installation(self):
-        release, _ = self.release("fenced")
-        commit = self.revision(release, "config")
-        historical = {"conf/fixture.js": deploy.Blob(b"previously observed output")}
-        digest = deploy.tree_digest({"fixture.js": historical["conf/fixture.js"]})
-        with mock.patch.object(deploy, "install") as install:
-            with self.assertRaisesRegex(deploy.DeployError, "final configuration differs"):
-                deploy.deploy(self.site, deploy.State(self.root / "state"), self.var, commit,
-                              force=True, expected_conf_digest=digest)
-            install.assert_not_called()
-
     def test_schema2_refuses_committed_application_code_and_instance_executables(self):
         release, _ = self.release("inputs")
         self.revision(release, "config")

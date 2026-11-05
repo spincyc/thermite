@@ -1552,8 +1552,7 @@ class Deployed:
 
 def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bool = False,
            dry_run: bool = False, how: str = "deploy", host: dict | None = None,
-           ownership_approved: bool = False, expected_conf_digest: str | None = None,
-           marker=None) -> Deployed:
+           ownership_approved: bool = False, marker=None) -> Deployed:
     """Install commit `rev`'s conf/ into the state's conf and the helper's
     files into atv/app (and, once the state has their directories, its
     metrics/ into metrics and the exporter into exporter/app), then record
@@ -1570,7 +1569,7 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
         mark(marker_line("start", commit=commit, how=how, by=getpass.getuser()), "info")
     try:
         result = _deploy(area, layout, var, commit, force=force, dry_run=dry_run, how=how, host=host,
-                         ownership_approved=ownership_approved, expected_conf_digest=expected_conf_digest)
+                         ownership_approved=ownership_approved)
     except BaseException as exc:
         if mark is not None:
             mark(marker_line("end", commit=commit, how=how, outcome="failed", error=type(exc).__name__), "warning")
@@ -1581,7 +1580,7 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
 
 
 def _deploy(area: Path, layout: State, var: Path, commit: str, *, force: bool, dry_run: bool, how: str,
-            host: dict | None, ownership_approved: bool, expected_conf_digest: str | None) -> Deployed:
+            host: dict | None, ownership_approved: bool) -> Deployed:
     if commit == resolve(area, "HEAD"):
         dirt = uncommitted(area)
         if dirt:
@@ -1589,11 +1588,6 @@ def _deploy(area: Path, layout: State, var: Path, commit: str, *, force: bool, d
             raise DeployError("automation/openhab has changes that are not committed; a deploy installs a commit, "
                               f"and make check has tested the working tree. Commit them first:{listed}")
     files, application = deployment_files(area, commit, var)
-    if expected_conf_digest is not None:
-        conf = {name.removeprefix("conf/"): blob for name, blob in files.items() if name.startswith("conf/")}
-        if tree_digest(conf) != expected_conf_digest:
-            raise DeployError("the final configuration differs from the verified historical deployment; "
-                              "no deployment files were changed")
     if application is not None:
         from oh_paths import SITE_FILE
         locked = export(area, commit, (SITE_FILE,)).get(SITE_FILE)
