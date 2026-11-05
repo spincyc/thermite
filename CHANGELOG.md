@@ -19,6 +19,11 @@ rollback. The unified deployment workflow uses a separate committed private site
   an earlier allocation wrote is replaced, and an adopted Sonos callback map
   keeps its verified routes on the new callback port and native upstream.
   Bookmarks, home-screen apps and terminals move to https://HOST:13601.
+- An upgrade adopts a gateway whose unit repeats a list directive, as
+  every unit staged since the gateway wrote its metrics files does (two
+  `ReadWritePaths=` lines); it refused such a unit as ambiguous. Only
+  `User`, `Group` and `WorkingDirectory`, which identify the release, must
+  appear once.
 
 - `thermite handheld` serves battery handheld remotes: ESP32-S3 boards on
   their own ESP-NOW link to a USB base station, each a thin client of a

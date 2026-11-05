@@ -570,6 +570,23 @@ class Lifecycle(PrivateFixture):
             with self.assertRaisesRegex(ValueError, "root custody"):
                 installed_release(system)
 
+    def test_the_unit_staging_writes_identifies_its_release_and_repeats_are_refused(self):
+        release = Path("/srv/thermite/access/releases/fixture")
+        unit = staging.units(release, state=Path("/srv/thermite/access/state"),
+                             textfile=Path("/srv/thermite/runtime/textfile"))["thermite-access.service"]
+        # Its list directives repeat: each writable path is its own line.
+        self.assertEqual(unit.count("\nReadWritePaths="), 2)
+        system = Host()
+        system.installed = release
+        with patch.object(system, "unit_file", return_value=UnitFile(unit.encode(), 0, 0o644)):
+            self.assertEqual(installed_release(system), release)
+        for directive in ("User=thermite", "WorkingDirectory=/srv/elsewhere"):
+            repeated = unit.replace("[Service]\n", "[Service]\n" + directive + "\n")
+            with self.subTest(directive=directive), \
+                    patch.object(system, "unit_file", return_value=UnitFile(repeated.encode(), 0, 0o644)), \
+                    self.assertRaisesRegex(AccessError, "ambiguous"):
+                installed_release(system)
+
     def test_failed_https_never_marks_deployment_complete(self):
         gateway, system = self.gateway(), Host()
         with patch.object(gateway, "_https", side_effect=ValueError("certificate validation failed")):

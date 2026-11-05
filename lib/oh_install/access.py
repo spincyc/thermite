@@ -72,6 +72,10 @@ def site_inputs(root):
         oh_paths.SITE, remote.INSTANCE, globalcache_ir.INSTANCE = previous
 
 
+#: The thermite-access.service directives that identify its release.
+RELEASE_DIRECTIVES = ("User", "Group", "WorkingDirectory")
+
+
 def installed_release(system):
     """Discover opaque service state through the installed, root-owned unit."""
     origin = system.unit_origin("thermite-access.service")
@@ -98,6 +102,10 @@ def installed_release(system):
             section = line
         elif section == "[Service]" and "=" in line and not line.startswith(("#", ";")):
             key, value = line.split("=", 1)
+            # Only the identifying directives must be single; list directives
+            # such as ReadWritePaths and Environment repeat in staged units.
+            if key not in RELEASE_DIRECTIVES:
+                continue
             if key in values:
                 raise AccessError("installed gateway has ambiguous service directives")
             values[key] = value
