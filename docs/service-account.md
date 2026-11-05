@@ -93,6 +93,20 @@ HTTPS gateway, as one install transaction that commits the new version or puts
 the installed one back. Review the plan before applying it. One approval
 covers the complete workflow.
 
+Each commit records what is installed in the root-owned
+`/etc/thermite/installed.json`: every unit, link, rule file and policy
+outside the installation root, the state trees, the installed release, its
+images and application, and the transaction that set the previous version
+aside. Install, upgrade, uninstall, rollback and revert set aside exactly
+what it names, so only Thermite's own files change. When Thermite's units or
+files are here but that manifest is missing or damaged, nothing can prove
+which of them are Thermite's: every one of those commands refuses before
+anything stops and prints the recovery steps, which move Thermite's units,
+rule file and AppArmor files aside by hand and leave the state in place; see
+[a missing manifest](installation.md#a-missing-manifest). An installation
+from before the install engine has no `installed.json`; its first
+transaction describes it from `/etc/thermite/units.json` instead.
+
 Before changing or removing a unit, the installer proves it is Thermite's.
 It records each unit file it installs, with its digest and the application
 release that rendered it, in the root-owned `/etc/thermite/units.json`. A
@@ -167,7 +181,8 @@ HTTPS gateway, policy worker and verified callback relay together with the
 native services. Their releases and identity state live in the installation
 root's `access/`, beside the native `runtime/` and never inside it. `access/`
 and its `releases/` belong to the operator, mode 0755; each run stages a new
-release, `releases/<id>`, named after its install transaction. Private release
+release, `releases/<id>`, named after its install transaction; each commit
+keeps the current and the previous release and removes older ones. Private release
 files and the persistent identity in `state/` belong to `thermite:thermite`,
 mode 0700. The served TLS certificate and key and the verified callback map
 live in `inputs/`, private to the operator (0700), so a transaction can set

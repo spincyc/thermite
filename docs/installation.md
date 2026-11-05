@@ -566,6 +566,21 @@ native-runtime or access-release update sequence. For a reviewed local
 checkout or an explicit Git revision, use `--source DIR` or `--revision REV`;
 see [application releases](packaging.md#update-and-roll-back).
 
+Every command that changes what is installed runs as one install
+transaction: `thermite install` (and `--clean`), `thermite upgrade`,
+`thermite uninstall` (and `--purge`), `thermite rollback` and `thermite
+revert`. They differ only in what they set aside and what they switch in;
+the upgrade below shows the whole sequence.
+
+| Command | Sets aside | Switches in | Commit |
+|---|---|---|---|
+| `install`, `upgrade` | units, filter, AppArmor policy; copies of the state trees | the site's HEAD | keeps the version set aside |
+| `install --clean` | as install, but the state trees under `runtime/` and monitoring are moved, and the deploy records and local credential copies cleared | HEAD on fresh state | deletes the moved state |
+| `rollback [COMMIT]` | as install | an earlier site commit | keeps the version set aside |
+| `revert` | units, filter, AppArmor policy; the state trees moved whole | the version the last install or upgrade kept, with its state | keeps the newer version set aside |
+| `uninstall` | units, filter, AppArmor policy | nothing; the state stays in place | records "not installed" |
+| `uninstall --purge` | as uninstall, and `runtime/` and `access/` whole | nothing | deletes the state, images and every transaction |
+
 ### How an upgrade runs
 
 While Thermite keeps running, the upgrade prepares what belongs to the host
@@ -606,7 +621,7 @@ engine runs as root from the copy pinned at begin,
 7. **Commit**: the engine records the new version in
    `/etc/thermite/installed.json` and enables `thermite.target`. The version
    before it stays set aside in `/srv/thermite/.transaction/<id>/` until the
-   next upgrade commits.
+   next transaction commits; `thermite revert` puts it back.
 
 Only after the commit does `~/.local/bin/thermite` switch to the new
 application. Thermite is down from the stop until the target starts again:
@@ -624,11 +639,19 @@ unless the service-account receipt, account or a state directory is missing.
 
 The site's committed `versions.json` still selects native component versions.
 Updating Thermite does not silently replace those pins. Keep the private
-repository clean and retain `var/application-releases/`, `var/gateway/authority/`
-and previous application environments for recovery. Application environments
-install their dependencies from the hashed `lib/requirements-app.txt` and are
-rebuilt automatically after a Python minor-version upgrade; the previous
-environment is retained.
+repository clean and keep `var/application-releases/` and
+`var/gateway/authority/`. Application environments install their
+dependencies from the hashed `lib/requirements-app.txt` and are rebuilt
+automatically after a Python minor-version upgrade.
+
+Each commit keeps two versions and removes older ones: the current and the
+previous gateway release in `access/releases/`, the container images the two
+pin, and the application environments of the current and the previous
+release under `~/.local/share/thermite/application/`, with their records and
+source checkouts. An environment that no record names is left alone. The
+first commit on a host installed before the install engine also removes the
+gateway releases staged before it, except the one that version ran;
+`runtime/backups/` is never pruned.
 
 Upgrades no longer write tar backups of openHAB's and Grafana's state to
 `runtime/backups/`, and nothing reads the ones earlier releases wrote: the
@@ -667,9 +690,9 @@ the rollback is the only undo.
 
 | Exit status | Outcome |
 |---|---|
-| 0 | Committed, or nothing to change and healthy. |
-| 1 | Refused before the transaction began: nothing of Thermite was stopped or changed. Also a rerun that only finished or closed an earlier upgrade's transaction. |
-| 2 | Not started: no installed manifest (see [a missing manifest](#a-missing-manifest)), or invalid arguments. |
+| 0 | Committed; nothing to change and healthy; or nothing to uninstall. |
+| 1 | Refused before the transaction began: nothing of Thermite was stopped or changed. Also declined, or a rerun that only finished or closed an earlier transaction. |
+| 2 | Not started: Thermite's files without a manifest (see [a missing manifest](#a-missing-manifest)), nothing to roll back or revert to, or invalid arguments. |
 | 3 | Rolled back: the version that ran before runs again, healthy. |
 | 4 | Rolled back: the version that ran before runs again, but its health check fails; it keeps running. |
 | 5 | The rollback is stuck: see [a stuck rollback](#a-stuck-rollback). |
@@ -680,13 +703,8 @@ After exit status 4, fix what health reports, then check again with
 reset (it moved on, or has uncommitted changes), the upgrade says so and
 prints the `git revert` that pins the version that runs.
 
-To go back to an older release after a commit, revert the site's
-release-pin commit, then run the older release's cached launcher,
-`python3 var/application-releases/<digest>/bin/thermite install --config DIR`;
-that install also reinstalls the release's units. Pinning a release older
-than the site's committed one requires `--allow-downgrade`, after
-deliberately restoring state the newer release may have migrated. Do not
-initialize new accounts or replace credentials merely to retry.
+To go back after a commit, see [go back](#go-back). Do not initialize new
+accounts or replace credentials merely to retry.
 
 `--dry-run` prints a provisional host plan only when the site pins the release
 that is running it; otherwise the host plan is resolved after approval.
@@ -699,24 +717,71 @@ clears the deploy's records and local credential copies inside the
 transaction, and deletes what it moved aside only at the commit. Logs, the
 deploy history, old backups and the gateway's identity stay.
 
+### Go back
+
+Two commands go back, each as its own install transaction with the exit
+statuses above:
+
+```sh
+thermite rollback --config "$HOME/thermite-site" --dry-run
+thermite rollback --config "$HOME/thermite-site" [COMMIT]
+thermite revert --config "$HOME/thermite-site" --dry-run
+thermite revert --config "$HOME/thermite-site"
+```
+
+`thermite rollback` installs an earlier site commit: by default the one
+deployed before the current one (`thermite history` lists them). It installs
+that commit as `thermite install` installs HEAD, with its boot test, units,
+images, native-port filter and gateway; the state stays as it is, and the
+deploy history records a rollback. The site's branch does not move, so the
+next install or upgrade installs HEAD again; to keep the earlier
+configuration, revert the site to it in a new commit. The commit must pin
+the application release that runs the command; one pinned by another
+release is refused with exit status 2.
+
+`thermite revert` puts back the version the last install or upgrade set
+aside, with its state as it was then. That means its files, units, filter
+and confinement, its `runtime/` and `access/` trees, and the runtime token,
+Grafana password, runtime credentials and gateway profile in the site's
+`var/`. Everything Thermite wrote since that commit is lost: accounts,
+pairings, credentials, history and monitoring data. Revert says so and asks
+you to type the installation root before anything stops; until it commits, a
+rollback keeps all of it. The previous version must pass its own health
+check, through its own application environment, before the revert commits.
+Then the site's branch goes back to the commit before the upgrade's pin
+commit, and `~/.local/bin/thermite` selects the previous application again.
+A revert writes no deploy-history entry.
+
+A revert is refused with exit status 2 after an uninstall, a clean install
+or another revert, when the site is not at the commit that transaction
+installed, when the previous application environment is gone, and after the
+first transaction on a host installed before the install engine: that
+transaction recorded no gateway release for the version before it. Use
+`thermite rollback` there.
+
+Pinning an application release older than the site's committed one requires
+`--allow-downgrade`, after deliberately restoring state the newer release
+may have migrated.
+
 ### An interrupted upgrade
 
 Ctrl-C before the transaction begins changes nothing, and the site's pin
 commit is undone. After it began, the transaction stays open: Thermite may
 be stopped, with `thermite.target` kept from booting. `thermite status`
-reports it as a problem, and `thermite uninstall` refuses to run. Run the
-command that began it (`thermite upgrade` or `thermite install`, with
-`--config DIR`) again: it first finishes a
-transaction the engine already committed, closes one that never began, or
-rolls back any other, then stops without upgrading and says so, with that
-outcome's exit status. Run it once more to upgrade.
+reports it as a problem and names the command to run. Run the command that
+began it again, with `--config DIR`; any other command that runs a
+transaction (`install`, `upgrade`, `uninstall`, `rollback` or `revert`) does
+the same. It first finishes a transaction the engine already committed,
+closes one that never began, or rolls back any other, then stops without
+doing anything more and says so, with that outcome's exit status. Run it
+once more to go on.
 
 ### A stuck rollback
 
 Exit status 5 means the engine could not put something back, for example
 because the disk is full. Thermite stays stopped and `thermite.target` stays
 disabled; the transaction stays open and no other one can begin. Fix the
-cause the upgrade printed, then run `thermite upgrade --config DIR` again: the
+cause the command printed, then run it again with `--config DIR`: the
 rollback continues from where it stopped.
 
 When the engine itself cannot run, it prints the commands it would run, for
@@ -729,11 +794,13 @@ sudo /usr/bin/python3 -I -S /srv/thermite/.transaction/<id>/engine.py \
   status --root /srv/thermite
 ```
 
-The upgrade's message names the transaction and the engine copy; `status`
-lists every transaction and its phase. The engine's journal still records a
-transaction rolled back by hand as stuck, so keep
-`/srv/thermite/.transaction/<id>/` until a rerun of `thermite upgrade` has
-resolved it.
+The command's message names the transaction and the engine copy; `status`
+lists every transaction and its phase. After rolling back by hand, keep
+`/srv/thermite/.transaction/<id>/` and run the command again: the engine's
+journal still records the transaction as stuck, and only the engine closes
+it. The rerun takes every entry already back as restored, checks that what
+is live is the version it collected, restarts that version and closes the
+transaction; only then can another begin.
 
 ### A missing manifest
 
@@ -742,13 +809,15 @@ An installation from this release on records what it installed in
 before the install engine describes it instead from `/etc/thermite/units.json`
 and the fixed paths, and refuses before anything stops if any of them is not
 exactly what the installer wrote; that first transaction then sets it aside
-like any later one. Gateway releases staged before it stay in
-`access/releases/` until you remove them.
+like any later one. Its commit removes the gateway releases staged before
+it, except the one the old version ran; when that one is unknown, it keeps
+them all.
 
 When Thermite's units and files are here but neither manifest is, or
 `installed.json` is damaged, nothing can prove which of them this
-installation owns, so `thermite upgrade` refuses with exit status 2 and
-changes nothing. To recover, as root: stop Thermite
+installation owns, so `thermite install`, `upgrade`, `uninstall`,
+`rollback` and `revert` refuse with exit status 2 and change nothing, and
+print these steps. To recover, as root: stop Thermite
 (`systemctl stop thermite.target thermite.slice`); move its units
 (`/etc/systemd/system/thermite*`, `/etc/containers/systemd/thermite*` and
 their links in `/etc/systemd/system/multi-user.target.wants`), the native-port

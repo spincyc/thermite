@@ -18,7 +18,7 @@ The same controls in your terminal. Both screenshots show **demo mode with ficti
 
 ## What you get
 
-- **Checked deployments.** Validate the configuration, check openHAB startup, and restore an earlier deployment with `thermite rollback`.
+- **Checked deployments.** Validate the configuration, check openHAB startup, restore an earlier deployment with `thermite rollback`, and go back to the version before the last upgrade, with its state, with `thermite revert`.
 - **Local control.** Core integrations communicate on your network. Optional cloud integrations use their providers' services.
 - **Your own site.** Keep real inventory and an exact application release pin in private Git. Generated runtime files stay outside Git.
 

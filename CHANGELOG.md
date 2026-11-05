@@ -19,12 +19,45 @@ rollback. The unified deployment workflow uses a separate committed private site
   again, the site's pin commit is undone, `thermite history` shows "rolled
   back", and the owner command is switched only after a commit. Exit statuses
   say how it ended: 0 committed, 1 refused, 3 rolled back, 4 rolled back but
-  unhealthy, 5 rollback stuck, 130 interrupted. A rerun first finishes or
-  rolls back an unfinished transaction, then stops and says so; `thermite
-  status` reports one, and install and uninstall refuse while one is open.
-  The first upgrade describes an installation from before the engine from
-  `/etc/thermite/units.json`; one without either manifest is refused with
-  the recovery steps (docs/installation.md#a-missing-manifest).
+  unhealthy, 5 rollback stuck, 130 interrupted. Any command that runs a
+  transaction first finishes or rolls back an unfinished one, then stops
+  and says so; `thermite status` reports one and names the command. The
+  first transaction describes an installation from before the engine from
+  `/etc/thermite/units.json`; Thermite's files without either manifest are
+  refused, before anything stops, with the recovery steps
+  (docs/installation.md#a-missing-manifest). A rollback stuck after the
+  engine's commands were run by hand (`rollback --print`) is closed by
+  rerunning the command, which checks what is back.
+- `thermite install` is the same install transaction, and so is `install
+  --clean`: after you type the state path, it moves the state trees under
+  `runtime/` aside whole and clears the deploy records and local credential
+  copies inside the transaction, and deletes them only at the commit; a
+  failure puts them back. A gateway whose callback relay was deferred
+  activates it in one more transaction in the same run. A fresh install that
+  rolls back leaves nothing installed.
+- `thermite uninstall` is an install transaction of its own: the engine sets
+  aside the units, links, native-port filter and AppArmor policy, leaves the
+  state in place and records the installation as not installed, so a later
+  install finds it. It used to keep the gateway's units and the filter and
+  print how to remove them. `--purge` asks you to type the installation root,
+  moves `runtime/` and `access/` aside, and its commit removes them, the
+  manifest, the images and every transaction, including the site's
+  `var/transaction/`.
+- `thermite rollback [COMMIT]` installs an earlier site commit as an install
+  transaction of that commit, with its boot test, units, images, filter and
+  gateway, committed only once its health passes; the site's branch does not
+  move. It used to redeploy the configuration alone. `--force` and `--state`
+  are gone; a commit pinned by another application release is refused.
+- New `thermite revert` puts back the version the last install or upgrade set
+  aside, with its state as it was then, as its own transaction. It says that
+  everything written since is lost and asks you to type the installation
+  root; the previous version must pass its own health check before the
+  commit, and then the site's pin and `~/.local/bin/thermite` go back too.
+- Each commit keeps only the current and the previous gateway release,
+  application environment and container images, and removes older ones.
+  Gateway releases staged before the install engine are removed at the first
+  commit, except the one the old version ran. `runtime/backups/` is never
+  pruned.
 - Upgrades no longer take tar backups: Thermite's state backups under
   `runtime/backups/` (`*-openhab-*.tar.gz`) and the gateway's identity tars
   under `access/backups/` are no longer written or read, and the printed
@@ -33,7 +66,7 @@ rollback. The unified deployment workflow uses a separate committed private site
 - The gateway's served TLS certificate, key and callback map live at fixed
   paths in `access/inputs/`, and each run stages a release named after its
   transaction, `access/releases/<id>`. The gateway keeps no resume journal of
-  its own; releases staged before stay until removed by hand.
+  its own.
 - The installer ISO's first-boot guide asks for your equipment and time zone
   in `instance/host.yaml`, not a state directory, which the fixed
   `/srv/thermite` layout removed. The Arch image's login profile puts
@@ -46,17 +79,17 @@ rollback. The unified deployment workflow uses a separate committed private site
   `thermite init` writes into a new site says `thermite install` deploys the
   native services and HTTPS gateway in one run, not that accounts and TLS
   need separate commissioning.
-- Install and upgrade stop all of Thermite, `systemctl stop thermite.target
-  thermite.slice`, before they change anything it runs on (its units,
-  openHAB's native state, the native-port firewall or the deployment), check
-  that nothing in the slice still runs, and then start every service again.
-  A rerun with nothing to change stops nothing. This replaces restarting only
-  the services whose units changed, and the listener record: nothing reads
-  the site's `var/listeners.json` any more; delete it. openHAB's offline
-  preparation no longer stops services itself, so every run that changes
-  anything prepares openHAB offline, and Grafana stays stopped until
-  monitoring starts. An install that fails after the stop starts
-  `thermite.target` again; an upgrade rolls back instead. A test holds every unit
+- Every install transaction stops all of Thermite, `systemctl stop
+  thermite.target thermite.slice`, before the engine sets anything aside,
+  checks that nothing in the slice still runs, and then starts every service
+  again. A rerun with nothing to change only checks health and stops
+  nothing. This replaces restarting only the services whose units changed,
+  and the listener record: nothing reads the site's `var/listeners.json` any
+  more; delete it. openHAB's offline preparation no longer stops services
+  itself, and Grafana stays stopped until monitoring starts. A failure after
+  the stop rolls the transaction back; nothing else starts Thermite again,
+  and the native-port boundary keeps no `var/native-boundary/previous.nft`
+  journal of its own any more (delete it). A test holds every unit
   Thermite installs to `PartOf=thermite.target`, `Slice=thermite.slice` and
   being wanted by the target alone; the native-port boundary, which only
   loads the firewall rules, stays outside both.

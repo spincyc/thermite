@@ -134,8 +134,9 @@ needed, prepares or reuses a private application environment under
 `~/.local/share/thermite/application/`, and verifies every installed release
 file. Python package installation happens inside that environment, from the
 hashed `lib/requirements-app.txt`, never in the OS-managed interpreter. An
-environment built for another Python minor version is rebuilt; the old one is
-retained. A dry run performs no fetch, environment creation,
+environment built for another Python minor version is rebuilt. Once the owner
+command switches, only the current and the previous release's environments
+are kept. A dry run performs no fetch, environment creation,
 site update or service change; the remote revision remains unknown until the
 approved fetch.
 
@@ -180,36 +181,35 @@ not silently change them.
 
 Validation or commit failures restore only the upgrade's bounded site edits
 when those files have not changed concurrently. Concurrent edits are preserved
-for review. An upgrade's host phase that ends without a commit says what
-happened and keeps the previous owner command selected: refused before its
-install transaction began (nothing of Thermite changed), rolled back (the
-version that ran before runs again), or stuck or interrupted (the next
-`thermite upgrade` resolves the transaction first). Once nothing began, or
-the rollback finished, it undoes the site's pin commit, so the site pins the
-version that runs; the candidate environment stays cached for the next run. See
-[when an upgrade fails](installation.md#when-an-upgrade-fails) for the exit
-statuses.
+for review. An install's or upgrade's host phase that ends without a commit
+says what happened and keeps the previous owner command selected: refused
+before its install transaction began (nothing of Thermite changed), rolled
+back (the version that ran before runs again), or stuck or interrupted (the
+next command that runs a transaction resolves it first). Once nothing began,
+or the rollback finished, it undoes the site's pin commit, so the site pins
+the version that runs; the candidate environment stays cached for the next
+run. See [when an upgrade fails](installation.md#when-an-upgrade-fails) for
+the exit statuses.
 
-An install's host phase that fails keeps the committed candidate pin and
-candidate environment, while the previous owner command stays selected. Rerun
-the printed Resume command, which names the fetched commit with `--revision`:
-it revalidates and reuses the candidate without a duplicate pin commit.
-Meanwhile the previous owner command runs site commands with the site's pinned
-release, verified from `var/application-releases/<digest>`, instead of
-refusing. A changed or damaged retained release is refused. `--dry-run` shows
-a provisional host plan only when the site pins the release that is running
-it.
+A run that stops before its host phase keeps a completed pin commit and the
+candidate environment, and prints a Resume command that names the fetched
+commit with `--revision`: it revalidates and reuses the candidate without a
+duplicate pin commit. Meanwhile the previous owner command runs site
+commands with the site's pinned release, verified from
+`var/application-releases/<digest>`, instead of refusing. A changed or
+damaged retained release is refused. `--dry-run` shows a provisional host
+plan only when the site pins the release that is running it.
 
-To go back to an older release after an upgrade committed, revert the site's
-release-pin commit, then run that release's cached
-`var/application-releases/<digest>/bin/thermite install --config DIR`. Before
-selecting an older gateway, establish that it supports the current identity
-schema. Do not bootstrap a new authority, reset accounts or replace
-credentials to retry.
+To go back after a commit, `thermite revert` puts back the version the last
+install or upgrade set aside, with its state, and `thermite rollback`
+installs an earlier site commit that pins the running release; see
+[go back](installation.md#go-back). Do not bootstrap a new authority, reset
+accounts or replace credentials to retry.
 
 Verified application releases are also cached under
-`var/application-releases/`. Keep that cache, `var/gateway/authority/`,
-previous application environments, gateway releases and original artifacts. A historical deployment resolves the
+`var/application-releases/`. Keep that cache, `var/gateway/authority/` and
+original artifacts; each commit keeps the current and the previous
+application environment and gateway release itself. A historical deployment resolves the
 private Git revision's exact application requirement, renders configuration
 with that release and copies its finite helper files. A missing cache can use
 the exact installed release; unavailable or modified artifacts fail before
