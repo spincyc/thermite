@@ -30,13 +30,14 @@ from oh_metrics import exporter
 
 class Allocation(unittest.TestCase):
     def test_one_contiguous_run_with_distinct_application_anchor(self):
-        self.assertEqual(oh_ports.ACCESS_PORT, 13601)
-        self.assertEqual(list(oh_ports.DEFAULTS.values()), list(range(13601, 13628)))
+        # Plain-HTTP Guest controls on 13600, HTTPS on 13601, the rest increasing from there.
+        self.assertEqual(tuple(oh_ports.DEFAULTS)[:2], ("guest_http", "access"))
+        self.assertEqual((oh_ports.GUEST_HTTP_PORT, oh_ports.ACCESS_PORT), (13600, 13601))
+        self.assertEqual(list(oh_ports.DEFAULTS.values()), list(range(13600, 13627)))
         self.assertEqual(len(set(oh_ports.DEFAULTS.values())), len(oh_ports.DEFAULTS))
-        self.assertEqual(tuple(oh_ports.DEFAULTS)[-4:], ("native_shutdown", "sandbox_shutdown", "boot_shutdown", "guest_http"))
+        self.assertEqual(tuple(oh_ports.DEFAULTS)[-3:], ("native_shutdown", "sandbox_shutdown", "boot_shutdown"))
         self.assertEqual([oh_ports.DEFAULTS[name] for name in ("native_shutdown", "sandbox_shutdown", "boot_shutdown")],
                          [13624, 13625, 13626])
-        self.assertEqual(oh_ports.GUEST_HTTP_PORT, 13627)
 
     def test_overrides_cannot_take_other_production_or_development_listeners(self):
         for host in ({"http_port": oh_ports.HTTPS_PORT},

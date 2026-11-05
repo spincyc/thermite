@@ -731,7 +731,7 @@ class Lifecycle(PrivateFixture):
         gateway.context.host = {**gateway.context.host, "guest_http": guest_http}
         def stage(release, **kwargs):
             self.assertEqual(kwargs["guest_http"], guest_http)
-            self.assertEqual(kwargs["host_ports"]["guest_http"], 13627)
+            self.assertEqual(kwargs["host_ports"]["guest_http"], 13600)
             self.assertEqual(kwargs["state"], str(gateway.root / "state"))
             self.assertEqual(kwargs["house"], gateway.context.configuration / "instance/devices.yaml")
             self.assertEqual(kwargs["assets"], self.root / "managed-assets")
@@ -746,10 +746,10 @@ class Lifecycle(PrivateFixture):
         with patch.object(staging, "stage", side_effect=stage) as staged, \
                 patch.object(gateway, "_assets", return_value=self.root / "managed-assets"), \
                 patch.object(gateway, "_https", return_value="https://house.example.test:13601"), \
-                patch.object(gateway, "_guest_http", return_value=["   Guest HTTP verified: http://192.0.2.10:13627/"]):
+                patch.object(gateway, "_guest_http", return_value=["   Guest HTTP verified: http://192.0.2.10:13600/"]):
             self.assertEqual(gateway.perform(system), 0, system.messages)
             staged.assert_called_once()
-        self.assertIn("   Guest HTTP verified: http://192.0.2.10:13627/", system.messages)
+        self.assertIn("   Guest HTTP verified: http://192.0.2.10:13600/", system.messages)
         self.assertTrue(any(command[0] == "openssl" for command in system.commands))
         metadata = json.loads(gateway.journal_path.read_bytes())["metadata"]
         authority = gateway.context.var / "gateway/authority/ca-cert.pem"

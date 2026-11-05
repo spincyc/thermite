@@ -35,9 +35,9 @@ from oh_identity.tests.test_gateway_server import HOST as LOOPBACK, EventRuntime
 from oh_identity.urls import urlpatterns
 from oh_routes import asset_version
 
-LISTENER = Listener(frozenset({"http://192.0.2.10:13627", "http://[2001:db8::10]:13627",
-                               "http://remote.guest.example:13627"}), "https://house.example.test:13601")
-HOST = "192.0.2.10:13627"
+LISTENER = Listener(frozenset({"http://192.0.2.10:13600", "http://[2001:db8::10]:13600",
+                               "http://remote.guest.example:13600"}), "https://house.example.test:13601")
+HOST = "192.0.2.10:13600"
 ORIGIN = "http://" + HOST
 WEB = Path(__file__).resolve().parents[3] / "web/remote"
 #: Pages that stay on the HTTPS site, as routes and as files.
@@ -65,7 +65,7 @@ class GuestClient(AsyncClient):
         headers = [(name, value) for name, value in scope["headers"] if name != b"host" and (name, value) != (b"cookie", b"")]
         if self.host is not None:
             headers.append((b"host", self.host.encode()))
-        return {**scope, "headers": headers, "client": ["192.0.2.50", 50123], "server": ("192.0.2.10", 13627),
+        return {**scope, "headers": headers, "client": ["192.0.2.50", 50123], "server": ("192.0.2.10", 13600),
                 "scheme": "http", SCOPE: LISTENER}
 
 
@@ -246,11 +246,11 @@ class Listening(TestCase):
         self.assertEqual(self.adapter.transport.commands, [])
 
     def test_host_must_name_the_listener_with_its_port(self):
-        for host in (HOST, "[2001:db8::10]:13627", "remote.guest.example:13627", "REMOTE.Guest.Example:13627"):
+        for host in (HOST, "[2001:db8::10]:13600", "remote.guest.example:13600", "REMOTE.Guest.Example:13600"):
             with self.subTest(host=host):
                 self.assertEqual(call("get", "/api/v1/me", client=GuestClient(host)).status_code, 200)
-        for host in ("attacker.example:13627", "192.0.2.10", "192.0.2.10:13601", "house.example.test:13601",
-                     "localhost:13627", "192.0.2.10:13627.attacker.example", "", None):
+        for host in ("attacker.example:13600", "192.0.2.10", "192.0.2.10:13601", "house.example.test:13601",
+                     "localhost:13600", "192.0.2.10:13600.attacker.example", "", None):
             with self.subTest(host=host):
                 response = call("get", "/api/v1/me", client=GuestClient(host))
                 self.assertEqual((response.status_code, body(response)["error"]), (400, "invalid_host"))
@@ -260,7 +260,7 @@ class Listening(TestCase):
 
     def test_controls_need_the_listeners_own_origin_and_json(self):
         command = {"action": "source", "value": "off"}
-        for origin in (None, "null", "http://attacker.example", "https://192.0.2.10:13627", "http://192.0.2.10:13601",
+        for origin in (None, "null", "http://attacker.example", "https://192.0.2.10:13600", "http://192.0.2.10:13601",
                        "http://192.0.2.10", ORIGIN + "/", "https://house.example.test:13601"):
             with self.subTest(origin=origin):
                 response = call("post", "/api/v1/rooms/den/commands", command, origin=origin)
@@ -315,7 +315,7 @@ class Listening(TestCase):
     def test_no_answer_sets_a_cookie_and_headers_match_https_without_its_extras(self):
         answers = [call("get", path) for path in ("/", "/remotes/", "/static/remote/remote.js", "/api/v1/me",
                                                   "/api/v1/security", "/missing", "/security/")]
-        answers += [call("get", "/api/v1/me", client=GuestClient("attacker.example:13627")),
+        answers += [call("get", "/api/v1/me", client=GuestClient("attacker.example:13600")),
                     call("get", "/api/v1/me", Cookie=settings.SESSION_COOKIE_NAME + "=x"),
                     call("post", "/api/v1/rooms/den/commands", {"action": "source", "value": "off"}),
                     call("post", "/api/v1/rooms/den/commands", {"action": "source", "value": "off"}, origin=None)]

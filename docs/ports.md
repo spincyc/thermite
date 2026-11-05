@@ -1,8 +1,9 @@
 # Thermite listening ports
 
-Thermite's default TCP listeners occupy **13601–13627**, anchored at the
-HTTPS application on **13601**; every other listener follows it, in the
-order below. `lib/oh_ports.py` owns the allocation.
+Thermite's default TCP listeners occupy **13600–13626**: the optional
+plain-HTTP Guest controls on **13600**, the HTTPS application on **13601**,
+and every other listener after them, in the order below. `lib/oh_ports.py`
+owns the allocation.
 `instance/host.yaml` keeps the site's native HTTP/HTTPS choices and optional
 `gateway: port`, `metrics: <service>_port` and `guest_http: port` overrides.
 Generation rejects invalid values and
@@ -20,6 +21,7 @@ run that stops early stops them all again next time.
 
 | Port | Listener | Binding / use |
 | --- | --- | --- |
+| 13600 | Optional plain-HTTP Guest controls | Listed `guest_http.listen` addresses, admitting only `guest_http.clients`; no listener without `guest_http` |
 | 13601 | Application HTTPS with toggleable authentication; `gateway: port` moves it | Configured address; TLS required |
 | 13602 | Native runtime HTTP | 127.0.0.1 only; verified device callbacks use the relay |
 | 13603 | Native runtime HTTPS | 127.0.0.1 only |
@@ -46,7 +48,6 @@ run that stops early stops them all again next time.
 | 13624 | Native Karaf shutdown control | 127.0.0.1 only |
 | 13625 | Sandbox Karaf shutdown control | 127.0.0.1 only |
 | 13626 | Boot-check Karaf shutdown control | 127.0.0.1 only |
-| 13627 | Optional plain-HTTP Guest controls | Listed `guest_http.listen` addresses, admitting only `guest_http.clients`; no listener without `guest_http` |
 
 HTTPS is the application entry point whether authentication is on or off.
 [Moving the HTTPS application](#moving-the-https-application) explains its
@@ -98,8 +99,8 @@ units, run the unified install/upgrade, and update bookmarks as needed. Existing
 gateway everyone signs in to. It is a mapping named for the gateway, beside
 `metrics:` and `guest_http:`, so it cannot be mistaken for the top-level
 `http_port` and `https_port`, which are the native runtime's loopback
-listeners. The product default is 13601, the range's first port; a moved
-gateway frees it for another override.
+listeners. The product default is 13601; a moved gateway frees it for
+another override.
 
 ```yaml
 gateway:
@@ -138,9 +139,8 @@ ports, the usual application defaults displaced above, and Kubernetes' default
 [Prysm's QUIC listener](https://github.com/OffchainLabs/prysm/discussions/14728)
 and the [AgentTeams dashboard](https://github.com/agentteams-group/agentteams-dashboard).
 Targeted searches found no known open-source default allocation for
-13600–13625, the run first chosen; 13626, added later for the Guest port, and
-13627, since the HTTPS application moved to 13601 (2026-11-05) and every other
-listener up one, lie in the same unassigned block. This is a local convention,
+13600–13625, the run first chosen; 13626, added later, lies in the same
+unassigned block. This is a local convention,
 not an IANA reservation or a promise that no other program uses those
 numbers. Startup preconditions still check whether required ports are
 occupied.

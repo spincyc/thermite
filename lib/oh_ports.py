@@ -16,12 +16,14 @@ import socket
 import stat
 from types import MappingProxyType
 
-BASE = 13601
+BASE = 13600
+#: In port order: the plain-HTTP Guest listener, the HTTPS application, then
+#: every other listener.
 NAMES = (
-    "access", "http", "https", "karaf", "lsp", "helper", "prometheus", "node_exporter",
+    "guest_http", "access", "http", "https", "karaf", "lsp", "helper", "prometheus", "node_exporter",
     "blackbox", "exporter", "grafana", "alertmanager", "ntfy", "notifications", "callbacks",
     "sandbox_http", "sandbox_https", "sandbox_karaf", "boot_http", "boot_https", "boot_karaf", "docs", "preview",
-    "native_shutdown", "sandbox_shutdown", "boot_shutdown", "guest_http",
+    "native_shutdown", "sandbox_shutdown", "boot_shutdown",
 )
 DEFAULTS = MappingProxyType({name: BASE + offset for offset, name in enumerate(NAMES)})
 ACCESS_PORT = DEFAULTS["access"]

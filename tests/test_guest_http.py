@@ -37,7 +37,7 @@ SINGLE = {"listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"]}
 class Schema(unittest.TestCase):
     def test_host_yaml_opens_a_restricted_listener_only_when_asked(self):
         self.assertEqual(oh_deploy.validate_host({**HOST, "guest_http": SINGLE})["guest_http"], SINGLE)
-        self.assertEqual(guest.settings(SINGLE), {"port": 13627, **SINGLE, "names": []})
+        self.assertEqual(guest.settings(SINGLE), {"port": 13600, **SINGLE, "names": []})
         self.assertIsNone(guest.settings(None))
         full = {"port": 14626, "listen": ["198.51.100.1", "2001:DB8::1"], "clients": ["198.51.100.0/24", "2001:db8::/64"],
                 "names": ["remote.guest.example"]}
@@ -63,15 +63,15 @@ class Schema(unittest.TestCase):
             "as an IPv4 network": {**SINGLE, "clients": ["::ffff:192.0.2.0/120"]},
             "is not a lowercase DNS name": {**SINGLE, "names": ["Remote_Guest"]},
             "under guest_http.listen": {**SINGLE, "names": ["192.0.2.11"]},
-            "guest_http.port: listener port": {**SINGLE, "port": "13627"},
+            "guest_http.port: listener port": {**SINGLE, "port": "13600"},
         }
         for reason, value in cases.items():
             with self.subTest(reason=reason), self.assertRaisesRegex(oh_deploy.HostError, reason):
                 oh_deploy.validate_host({**HOST, "guest_http": value})
 
     def test_port_is_allocated_and_cannot_collide(self):
-        self.assertEqual(oh_ports.GUEST_HTTP_PORT, 13627)
-        self.assertEqual(oh_ports.DEFAULTS["guest_http"], 13627)
+        self.assertEqual(oh_ports.GUEST_HTTP_PORT, 13600)
+        self.assertEqual(oh_ports.DEFAULTS["guest_http"], 13600)
         self.assertEqual(oh_ports.effective({"guest_http": {**SINGLE, "port": 14626}})["guest_http"], 14626)
         for port in (oh_ports.ACCESS_PORT, 13602, oh_ports.DOCS_PORT):
             with self.subTest(port=port), self.assertRaisesRegex(oh_deploy.HostError, "collides"):
@@ -81,7 +81,7 @@ class Schema(unittest.TestCase):
 
     def test_guests_may_take_13601_only_once_the_gateway_moves_off_it(self):
         first = {**SINGLE, "port": 13601}
-        with self.assertRaisesRegex(oh_deploy.HostError, "listener port 13601 collides: access and guest_http"):
+        with self.assertRaisesRegex(oh_deploy.HostError, "listener port 13601 collides: guest_http and access"):
             oh_deploy.validate_host({**HOST, "guest_http": first})
         moved = oh_deploy.validate_host({**HOST, "gateway": {"port": 16301}, "guest_http": first})
         ports = oh_ports.effective(moved)
@@ -166,13 +166,13 @@ class Peers(unittest.TestCase):
 
         async def app(scope, receive, send):
             seen.append(scope)
-        listener = guest.Listener(frozenset({"http://192.0.2.10:13627"}), "https://house.example.test:13601")
+        listener = guest.Listener(frozenset({"http://192.0.2.10:13600"}), "https://house.example.test:13601")
         original = {"type": "http", "headers": [(b"thermite.guest_http", b"forged")]}
         asyncio.run(guest.mark(app, listener)(original, None, None))
         asyncio.run(app(original, None, None))
         self.assertIs(seen[0][guest.SCOPE], listener)
         self.assertNotIn(guest.SCOPE, seen[1])
-        self.assertEqual(listener.hosts, {"192.0.2.10:13627"})
+        self.assertEqual(listener.hosts, {"192.0.2.10:13600"})
 
 
 class GatewayConfiguration(unittest.TestCase):
@@ -315,7 +315,7 @@ class InstallerAndStatus(unittest.TestCase):
 
     def test_status_lists_the_guest_addresses(self):
         for settings, expected in ((None, []), ({**SINGLE, "names": ["remote.guest.example"]},
-                                                ["http://192.0.2.10:13627/", "http://remote.guest.example:13627/"])):
+                                                ["http://192.0.2.10:13600/", "http://remote.guest.example:13600/"])):
             report, out = {}, io.StringIO()
             with contextlib.redirect_stdout(out):
                 status.show_guest({**HOST, **({"guest_http": settings} if settings else {})}, report, print)

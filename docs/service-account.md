@@ -153,7 +153,7 @@ checks. The gateway, worker and verified callback relay are commissioned by
 the same workflow and join the same target and slice. Generating files alone
 starts no service.
 
-Default TCP listeners use Thermite's [13601–13627 range](ports.md).
+Default TCP listeners use Thermite's [13600–13626 range](ports.md).
 Persistent files remain below the installation root's `runtime/`; upstream
 container paths such as `/openhab` and `/var/lib/grafana` are private mounts,
 not the host's independent application directories. Discovery protocols keep

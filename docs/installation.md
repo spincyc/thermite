@@ -400,14 +400,14 @@ the guest network:
 guest_http:
   listen: [198.51.100.2]       # this host's address on the guest network
   clients: [198.51.100.0/24]   # the networks allowed to connect
-  # port: 13627                # the default
+  # port: 13600                # the default
   # names: [remote.guest.example]
 ```
 
 `listen` names this host's own addresses, never a wildcard; `clients` names
 the guest network. The gateway closes a connection from any other address
 before reading it, and logs how many it closed at most once a minute. Guests
-open `http://198.51.100.2:13627/`, or a name from the optional `names` that
+open `http://198.51.100.2:13600/`, or a name from the optional `names` that
 resolves to a `listen` address; a request naming any other host is refused.
 Commit the change and run `thermite upgrade --config DIR`. `thermite status`
 lists the Guest addresses, and install and upgrade check each one as a Guest
@@ -437,7 +437,7 @@ Weigh the trade-offs before enabling it:
   busy guest network can briefly make the HTTPS site answer 503 too.
 - Bind the listener only to the guest network's address and keep `clients` to
   that network. The managed `nftables` table guards native ports only and
-  leaves this port alone; on a host with its own firewall, open 13627/tcp
+  leaves this port alone; on a host with its own firewall, open 13600/tcp
   (or your `port`) from the guest network, and from nowhere else.
 
 ## Trace a command

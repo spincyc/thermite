@@ -234,7 +234,7 @@ class InstalledInstall(unittest.TestCase):
             port=13601, guest_http={"listen": ["192.0.2.10", "192.0.2.10"], "clients": ["192.0.2.0/24"]})
         config = json.loads((target / "config.json").read_text())
         self.assertEqual((config["version"], config["guest_http"]),
-                         (2, {"port": 13627, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"], "names": []}))
+                         (2, {"port": 13600, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"], "names": []}))
         self.assertEqual((target / "program/lib/reviewed.py").read_text(), "# application resource\n")
         self.assertEqual((target / "program/bin/thermite").read_text(), "# application launcher\n")
         self.assertFalse((self.site / "lib").exists())

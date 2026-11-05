@@ -199,7 +199,7 @@ async function browser(page, client) {
   assert(grid.text().includes("thermite access login"));
 
   // The plain-HTTP Guest listener: Guest only, no session or CSRF, sign-in on the HTTPS site.
-  const plain = "http://198.51.100.2:13627", secure = "https://house.example.test:13601", plainCalls = [];
+  const plain = "http://198.51.100.2:13600", secure = "https://house.example.test:13601", plainCalls = [];
   const listener = Access.create({ base: plain, guest: true, secure, fetch: async (url, init) => {
     const route = new URL(url).pathname; plainCalls.push(route);
     if (route === "/api/v1/security") { const { csrf, ...status } = mode(true); return response(status); }
