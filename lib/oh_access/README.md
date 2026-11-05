@@ -199,6 +199,36 @@ never command arguments, environment values or normal output. `logout`
 revokes first and removes only the unchanged credential file; a credential the
 site already rejects (401) is removed as already signed out.
 
+## Metrics
+
+No access service opens a metrics port, and the gateway never serves
+`/metrics` on its LAN-facing TLS listener. Each service keeps its own
+`prometheus_client` registry (`oh_access.metrics`, hash-pinned with the
+release) and, every 10 seconds, writes it to
+`/srv/thermite/runtime/textfile/<unit>.prom`: a new mode-0640 file renamed over
+the old, so a scrape never reads half a file. The staged units name that
+directory in `THERMITE_TEXTFILE_DIR` and may write only there; node_exporter's
+textfile collector serves the files, and `node_textfile_mtime_seconds` shows a
+writer that stopped. Without the variable nothing is written.
+
+- The gateway, wrapped around admission so its 503s count too: requests by
+  listener (`https` or `guest`), route class and status class; request and
+  runtime-request seconds; problem answers by code; open event streams by view
+  and HTTP version, the most any one peer holds, refusals by the limit that was
+  full and lifetimes by how they ended (an `oh_identity.hub` observer); the
+  shared runtime subscription's state, connections, failures and resyncs, and
+  the events, frames and overflow resyncs it served (`EventHub.status()`); and
+  what clients reported through `/api/v1/telemetry`.
+- The policy worker: when it last finished a pass, rooms by policy state,
+  schedule boundaries by outcome and their lag, repairs, the oldest locked-room
+  check, and errors by stage.
+- The callback relay: callbacks by outcome and when it last forwarded one.
+
+Every label value is finite: route and status classes, problem codes,
+outcomes and stages named in `oh_access.metrics`, and room IDs from the
+compiled house. No path, peer address, credential or free text becomes a
+label.
+
 ## Optional device callbacks
 
 `stage --callbacks <private-file>` validates and copies an explicit callback

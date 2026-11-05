@@ -389,7 +389,10 @@ class Lifecycle(PrivateFixture):
         area = private_directory(self.root / "site")
         context = SimpleNamespace(area=area, var=area / "var", head="a" * 40, conf_digest="c" * 64,
                                   application={"version": "1.2.3", "digest": "b" * 64},
-                                  installation=SimpleNamespace(access=self.root / "production" / "access"), hostname="house.example.test",
+                                  installation=SimpleNamespace(
+                                      access=self.root / "production" / "access",
+                                      state=SimpleNamespace(textfile=self.root / "production" / "runtime" / "textfile")),
+                                  hostname="house.example.test",
                                   address="192.0.2.10", host={"timezone": "UTC"}, configuration=area,
                                   url="http://127.0.0.1:13601", token_file=Path("var/token"))
         gateway = Gateway(context, boundary=lambda system, metadata, callback: callback)

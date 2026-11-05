@@ -377,7 +377,8 @@ class Gateway(Step):
                                     port=metadata["port"], timezone=metadata["timezone"],
                                     area=self.context.area, plan_directory=plan, callbacks=callback,
                                     wheelhouse=self.options.get("wheelhouse"), host_ports=oh_ports.effective(self.context.host),
-                                    guest_http=self.context.host.get("guest_http"))
+                                    guest_http=self.context.host.get("guest_http"),
+                                    textfile=self.context.installation.state.textfile)
         self._save(journal, stage=receipt, phase="staged")
         return receipt
 

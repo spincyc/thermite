@@ -2,7 +2,7 @@ from django.urls import path, register_converter
 
 from oh_routes import ALIASES, ROUTES
 
-from . import views
+from . import telemetry, views
 from .addresses import RoomConverter
 from .streams import events
 from .topics import VIEWS
@@ -17,6 +17,7 @@ urlpatterns = [
     path("api/v1/security", views.security),
     path("api/v1/token-login", views.token_login),
     path("api/v1/all-off", views.all_off),
+    path("api/v1/telemetry", telemetry.report),
     path("api/v1/tokens", views.tokens), path("api/v1/tokens/<uuid:ident>", views.tokens),
     path("api/v1/users", views.users), path("api/v1/users/<int:ident>", views.users),
     path("api/v1/locks", views.locks),

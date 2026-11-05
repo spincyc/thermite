@@ -83,6 +83,21 @@ def body(response):
     return json.loads(response.content)
 
 
+def guest_application(answer_status):
+    async def application(scope, receive, send):
+        await send({"type": "http.response.start", "status": answer_status, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+    return application
+
+
+async def _receive():
+    return {"type": "http.request", "body": b"", "more_body": False}
+
+
+async def _discard(message):
+    pass
+
+
 class Listening(TestCase):
     def setUp(self):
         SecurityState.objects.update_or_create(pk=1, defaults={"enabled": False, "revision": 1})
@@ -259,6 +274,33 @@ class Listening(TestCase):
             with self.subTest(origin=origin):
                 self.assertEqual(call("post", "/api/v1/rooms/den/commands", command, origin=origin).status_code, 202)
         self.assertEqual(self.adapter.transport.commands, [("loc_den_source", "off")] * 3)
+
+    def test_guests_report_telemetry_with_the_listeners_origin_and_json(self):
+        from oh_access import metrics
+        from oh_identity import telemetry
+        self.addCleanup(setattr, telemetry, "limits", telemetry.limits)
+        telemetry.limits = telemetry.Limits(per_peer=100)
+        report = {"client": "web", "protocol": "http/1.1", "events": {"policy_timeout": {"count": 2, "waits": [8.5]}}}
+        events = metrics.CLIENT_EVENTS.labels("web", "policy_timeout")
+        guests = metrics.REQUESTS.labels("guest", "other", "2xx")
+        before, requests = events._value.get(), guests._value.get()
+        for origin in (None, "http://attacker.example", "https://house.example.test:13600"):
+            with self.subTest(origin=origin):
+                response = call("post", "/api/v1/telemetry", report, origin=origin)
+                self.assertEqual((response.status_code, body(response)["error"]), (403, "invalid_origin"))
+        refused = call("post", "/api/v1/telemetry", json.dumps(report), content_type="text/plain")
+        self.assertEqual((refused.status_code, body(refused)["error"]), (415, "json_required"))
+        self.assertEqual(call("get", "/api/v1/telemetry").status_code, 405)
+        self.assertEqual(events._value.get(), before)
+        answer = call("post", "/api/v1/telemetry", report)
+        self.assertEqual(answer.status_code, 204)
+        self.assertFalse(answer.cookies)
+        self.assertEqual(events._value.get(), before + 2)
+        # Django's test client calls the application, not Metered; count one through it.
+        application = metrics.Metered(guest_application(answer_status=204))
+        async_to_sync(application)({"type": "http", "path": "/api/v1/telemetry", SCOPE: LISTENER},
+                                   _receive, _discard)
+        self.assertEqual(guests._value.get(), requests + 1)
 
     def test_room_locks_refuse_guest_commands_as_on_https(self):
         SecurityState.objects.filter(pk=1).update(enabled=True)

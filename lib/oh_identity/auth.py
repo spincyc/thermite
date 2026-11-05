@@ -15,6 +15,8 @@ from django.middleware.csrf import CsrfViewMiddleware
 from django.db import transaction
 from django.utils import timezone
 
+from oh_access import metrics
+
 from .addresses import peer_bucket
 from .models import LoginThrottle, PersonalToken, RoomPolicy, User
 from .services import Problem, audit, is_admin, peer_digest, permissions
@@ -51,9 +53,29 @@ class Guest:
         self._identity_context = {"guest": True, "security_revision": revision, "peer": peer}
 
 
+#: Every problem code the gateway answers with (tests hold every Problem and
+#: failure() to it). thermite_gateway_problems_total counts each by code;
+#: anything outside it counts as other.
+PROBLEMS = frozenset({
+    "already_initialized", "authentication_disabled", "authorization_changed", "credential_expired",
+    "csrf_failed", "device_locked", "forbidden", "invalid_active", "invalid_admin", "invalid_command",
+    "invalid_contract", "invalid_host", "invalid_json", "invalid_lock", "invalid_login", "invalid_origin",
+    "invalid_pairing_command", "invalid_password", "invalid_policy", "invalid_sdp", "invalid_security",
+    "invalid_setup_code", "invalid_setup_lifetime", "invalid_telemetry", "invalid_token", "invalid_token_channel",
+    "invalid_topics", "invalid_user", "json_required", "last_admin", "login_required", "login_throttled",
+    "media_unavailable", "method_not_allowed", "missing_field", "mixed_authentication", "not_found",
+    "policy_unavailable", "revision_conflict", "room_locked", "room_state_changed", "room_state_unavailable",
+    "runtime_busy", "runtime_not_configured", "runtime_unavailable", "secure_connection_required",
+    "security_unavailable", "session_expired", "session_required", "telemetry_throttled", "too_many_streams",
+    "unknown_action", "unknown_field", "unknown_room", "other"})
+for _code in PROBLEMS:
+    metrics.PROBLEMS.labels(_code)
+
+
 def failure(code, status=403, *, retry_after=None, allow=None, detail=None):
     # "error" is the stable member every client reads; detail adds only fixed
     # codes/paths chosen by the server.
+    metrics.problem(code if code in PROBLEMS else "other")
     response = JsonResponse({"error": code, **(detail or {})}, status=status)
     response["Cache-Control"] = "no-store"
     if retry_after is not None:

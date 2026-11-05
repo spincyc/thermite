@@ -8,7 +8,7 @@ import signal
 import threading
 import time
 
-from . import AccessError
+from . import AccessError, metrics
 
 LOG = logging.getLogger(__name__)
 # At most one reconnect warning per interval; suppressed ones are counted.
@@ -181,6 +181,85 @@ class Warnings:
 OBSERVED = ["openhab/items/*/stateupdated"]
 
 
+class Telemetry:
+    """The policy worker's metrics (oh_access.metrics), from what it already
+    does: boundaries through its store, everything else from each pass's
+    result. A room a pass did not reach keeps its last state."""
+
+    def __init__(self, rooms, *, clock=time.time, monotonic=time.monotonic):
+        self.clock, self.monotonic = clock, monotonic
+        self.states = dict.fromkeys(rooms, "unlocked")
+        self.verified = {}
+        self.records = ()
+
+    def store(self, store):
+        telemetry = self
+
+        class Metered:
+            def __getattr__(self, name):
+                return getattr(store, name)
+
+            def policies(self):
+                telemetry.records = store.policies()
+                return telemetry.records
+
+            def claim_boundary(self, room, revision, key, at):
+                claimed = store.claim_boundary(room, revision, key, at)
+                if claimed:
+                    lag = (datetime.fromtimestamp(telemetry.clock(), timezone.utc) - at).total_seconds()
+                    metrics.POLICY_LAG.observe(max(0.0, lag))
+                return claimed
+
+            def finish_boundary(self, room, revision, key, outcome):
+                store.finish_boundary(room, revision, key, outcome)
+                reason = outcome.get("reason") if isinstance(outcome, dict) else None
+                metrics.POLICY_BOUNDARIES.labels(reason if reason in metrics.BOUNDARY_OUTCOMES else "other").inc()
+        return Metered()
+
+    def _manual(self, room):
+        for record in self.records:
+            config = record.config if isinstance(record.config, dict) else {}
+            if config.get("room") == room:
+                return config.get("manual_lock") is not None
+        return False
+
+    def stepped(self, result):
+        now = self.monotonic()
+        for room, status in result.items() if isinstance(result, dict) else ():
+            if room not in self.states or not isinstance(status, dict):
+                continue
+            phase = status.get("phase")
+            if phase == "invalid" or status.get("state") in ("degraded", "unknown"):
+                state = "unavailable"
+            elif phase in ("enforcing", "verified"):
+                state = "manual" if self._manual(room) else "scheduled"
+            else:
+                state = "unlocked"
+            if state in ("manual", "scheduled") and self.states[room] not in ("manual", "scheduled"):
+                self.verified[room] = now  # A new lock is measured from its start.
+            self.states[room] = state
+            if phase == "verified":
+                self.verified[room] = now
+            if "repair" in status:
+                metrics.POLICY_REPAIRS.labels("sent").inc()
+            if status.get("reason") == "dispatch_unconfirmed":
+                metrics.POLICY_REPAIRS.labels("unconfirmed").inc()
+            if status.get("reason") == "native_read_unavailable":
+                metrics.policy_error("read")
+        for state in metrics.ROOM_STATES:
+            metrics.POLICY_ROOMS.labels(state).set(sum(each == state for each in self.states.values()))
+        for room, state in self.states.items():
+            if state in ("manual", "scheduled"):
+                metrics.POLICY_RECONCILE_AGE.labels(room).set(max(0.0, now - self.verified.get(room, now)))
+            else:
+                self.verified.pop(room, None)
+                try:
+                    metrics.POLICY_RECONCILE_AGE.remove(room)
+                except KeyError:
+                    pass
+        metrics.POLICY_LOOP.set(self.clock())
+
+
 async def observe(transport, cache, stop, warnings=None):
     """Consume native events; the supervisor cancels to interrupt a quiet feed."""
     warnings = warnings or Warnings()
@@ -199,6 +278,7 @@ async def observe(transport, cache, stop, warnings=None):
             if stop.is_set():
                 return
             warnings.failed(error)
+            metrics.policy_error("stream")
         finally:
             cache.clear()
             await iterator.aclose()
@@ -222,6 +302,7 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
     from oh_identity.runtime import plain
     from oh_room_policy import Worker
     store = Store()
+    telemetry = Telemetry(adapter.contract.rooms)
     house = plain(adapter.contract.house)
     fields = observed_fields(house, adapter.contract.rooms)
     import oh_integrations
@@ -234,7 +315,7 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
                 native_power[descriptor["item"]] = descriptor["reported_at"]
     cache = NativeCache(fields, native_power=native_power, clock=wall_clock)
     io = PolicyIO(adapter, store, cache, house)
-    worker = Worker(house, store, io, locks=locks, wall_clock=wall_clock)
+    worker = Worker(house, telemetry.store(store), io, locks=locks, wall_clock=wall_clock)
     rooms_by_item = {}
     for room, choices in io.plans.items():
         for plan in choices.values():
@@ -268,17 +349,19 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
     thread = threading.Thread(target=listen, daemon=True)
+    textfile = None
     try:
         # Take the process lease BEFORE connecting a feed or running any writes.
         with locks.hold(["room-policy-worker"], blocking=False):
             if not shutdown_requested:
                 thread.start()
+            textfile = metrics.start(metrics.WORKER, metrics.WORKER_FILE)
             pruned = None
             while not shutdown_requested and not stop.is_set():
                 if pruned is None or time.monotonic() - pruned >= PRUNE_EVERY:
                     pruned = time.monotonic()
                     maintain(store)
-                worker.step()
+                telemetry.stepped(worker.step())
                 if not shutdown_requested and not stop.is_set():
                     worker.wait(min(5, interval))
     finally:
@@ -295,6 +378,8 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
             loop.run_until_complete(asyncio.gather(observer, return_exceptions=True))
             loop.close()
         cache.clear()
+        if textfile:
+            textfile.stop()
         for signum, handler in previous.items():
             signal.signal(signum, handler)
         if thread.is_alive():
@@ -310,6 +395,7 @@ def maintain(store):
         store.prune(datetime.now(timezone.utc))
     except Exception as error:
         LOG.warning("Identity housekeeping failed (%s); retrying tomorrow.", type(error).__name__)
+        metrics.policy_error("housekeeping")
 
 
 def cache_items(fields):

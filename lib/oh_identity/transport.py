@@ -1,16 +1,19 @@
 """Authenticated loopback transport. Responses never become public error text."""
 
+import functools
 import json
 import os
 import re
 import stat
 import threading
+import time
 import weakref
 from pathlib import Path
 from urllib.parse import quote
 
 import httpx
 
+from oh_access import metrics
 from oh_ports import NATIVE_URL
 
 from .addresses import loopback_origin
@@ -37,6 +40,30 @@ STATES_BYTES = 8 * 1024 * 1024
 #: rarely this quiet; a silently dropped one would otherwise freeze every
 #: client stream the hub serves.
 QUIET_SECONDS = 60
+
+def timed(kind):
+    """Observe a runtime request in thermite_gateway_upstream_request_seconds."""
+    def decorate(method):
+        @functools.wraps(method)
+        def call(*args, **kwargs):
+            started, outcome = time.monotonic(), "error"
+            try:
+                result = method(*args, **kwargs)
+                outcome = "ok"
+                return result
+            except httpx.PoolTimeout:
+                outcome = "pool_timeout"
+                raise
+            except httpx.TimeoutException:
+                outcome = "timeout"
+                raise
+            except (httpx.HTTPStatusError, CommandRefused):
+                outcome = "http_error"
+                raise
+            finally:
+                metrics.upstream(kind, outcome, time.monotonic() - started)
+        return call
+    return decorate
 
 
 def native_query(filters, base=NATIVE_URL):
@@ -101,6 +128,7 @@ class LoopbackTransport:
                     limits=httpx.Limits(max_connections=capacity, max_keepalive_connections=capacity))
             return self._clients[kind]
 
+    @timed("read")
     def read(self, item):
         response = self._client("read").get(self.base + "/rest/items/" + quote(item, safe="") + "/state", headers=self.headers)
         response.raise_for_status()
@@ -108,6 +136,7 @@ class LoopbackTransport:
             raise ValueError("Oversize runtime state")
         return response.text.strip()
 
+    @timed("command")
     def command(self, item, value, source=None):
         """source (thermite.<origin>:<id>, the command's trail ID) becomes
         the event source openHAB 5.2.3 records for the command: its REST
@@ -126,6 +155,7 @@ class LoopbackTransport:
         if response.status_code not in {200, 202}:
             raise CommandRefused(response.status_code)
 
+    @timed("read")
     def states(self, names):
         """The raw states of these Items, read together in one request. openHAB
         lists every Item; only the named ones are kept, the rest never leave
@@ -142,6 +172,7 @@ class LoopbackTransport:
         return {row["name"]: row["state"] for row in rows
                 if isinstance(row, dict) and row.get("name") in wanted and isinstance(row.get("state"), str)}
 
+    @timed("group")
     def group(self, item):
         response = self._client("read").get(self.base + "/rest/items/" + quote(item, safe=""), params={"fields": "members(name,state)"}, headers=self.headers)
         response.raise_for_status()
@@ -149,6 +180,7 @@ class LoopbackTransport:
             raise ValueError("Oversize runtime group")
         return response.json()
 
+    @timed("media")
     def media(self, resource, method, body, maximum):
         with self._client("media").stream(method, self.base + resource, content=body or None,
                                           headers={**self.headers, "Content-Type": "application/sdp"}) as response:

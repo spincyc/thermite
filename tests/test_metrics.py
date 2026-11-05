@@ -376,6 +376,16 @@ class Units(unittest.TestCase):
         self.assertEqual(set(oh_deploy.CONTAINER_DROPINS), set(oh_units.CONTAINED))
 
 
+    def test_staged_units_may_write_only_their_textfiles(self):
+        from oh_access import staging
+        units = staging.units("/opt/example/release", state="/srv/example/access", callbacks=True,
+                              textfile="/srv/example/runtime/textfile")
+        self.assertEqual(len(units), 3)
+        for name, text in units.items():
+            self.assertIn('\nEnvironment="THERMITE_TEXTFILE_DIR=/srv/example/runtime/textfile"\n', text, name)
+            self.assertIn('\nReadWritePaths="-/srv/example/runtime/textfile"\n', text, name)
+        for text in staging.units("/opt/example/release", state="/srv/example/access").values():
+            self.assertNotIn("THERMITE_TEXTFILE_DIR", text)
 
 
 class Notifications(unittest.TestCase):
@@ -416,6 +426,68 @@ class Deploy(unittest.TestCase):
         self.assertIn((oh_deploy.DIR_MODE, [layout.metrics, layout.exporter_app, layout.textfile]),
                       layout.metrics_directories())
 
+
+class Textfiles(unittest.TestCase):
+    def setUp(self):
+        try:
+            from oh_access import metrics
+        except ImportError as exc:  # prometheus_client is a site requirement
+            self.skipTest(str(exc))
+        self.metrics = metrics
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+
+    def test_written_atomically_with_a_readable_mode(self):
+        textfile = self.metrics.Textfile(self.metrics.CALLBACKS, "example", self.directory, every=60)
+        self.assertTrue(textfile.write())
+        written = self.directory / "example.prom"
+        self.assertEqual(stat.S_IMODE(written.stat().st_mode), 0o640)
+        self.assertIn("# TYPE thermite_callbacks_total counter", written.read_text())
+        self.assertEqual([p.name for p in self.directory.iterdir()], ["example.prom"])
+
+    def test_nothing_is_written_without_a_directory(self):
+        self.assertIsNone(self.metrics.start(self.metrics.CALLBACKS, "example", environ={}))
+        started = self.metrics.start(self.metrics.CALLBACKS, "example",
+                                     environ={self.metrics.ENVIRONMENT: str(self.directory)})
+        self.addCleanup(started.stop)
+        self.assertTrue((self.directory / "example.prom").exists())
+
+    def test_a_failed_write_is_reported_once_and_not_raised(self):
+        textfile = self.metrics.Textfile(self.metrics.CALLBACKS, "example", self.directory / "missing", every=60)
+        with self.assertLogs(self.metrics.LOG, "WARNING") as logged:
+            self.assertFalse(textfile.write())
+            self.assertFalse(textfile.write())
+        self.assertEqual(len(logged.records), 1)
+
+    def test_labels_are_finite(self):
+        text = self.metrics.prometheus_client.generate_latest(self.metrics.GATEWAY).decode()
+        for line in text.splitlines():
+            if line.startswith("#"):
+                continue
+            for value in re.findall(r'="([^"]*)"', line):
+                self.assertRegex(value, r"^[a-z0-9_./+-]*$|^\+Inf$|^[0-9.e+-]+$", line)
+
+    def test_dashboards_name_only_the_gateways_route_classes(self):
+        self.assertLessEqual(set(dashboards.WAITED_ROUTES), set(self.metrics.ROUTES))
+        switching = json.dumps(boards()[dashboards.SWITCHING])
+        for route in dashboards.WAITED_ROUTES:
+            self.assertIn(route, switching)
+        self.assertEqual(set(dashboards.FAILED_OPERATIONS),
+                         set(exporter.OPERATION_OUTCOMES) & set(exporter.FAILURE_REASONS))
+
+    def test_route_classes_never_carry_the_path(self):
+        route = self.metrics.route_class
+        self.assertEqual(route("/api/v1/rooms/example_west/commands"), "command")
+        self.assertEqual(route("/api/v1/rooms/example_west/policy"), "policy")
+        self.assertEqual(route("/rest/items/loc_example_west_source/state"), "items")
+        self.assertEqual(route("/static/remote/remote.js"), "asset")
+        self.assertEqual(route("/api/v1/events/remote"), "events")
+        self.assertEqual(route("/rest/events"), "other")
+        self.assertEqual(route("/api/v1/telemetry"), "other")
+        self.assertEqual(route("/../../etc/passwd"), "other")
+        self.assertEqual(self.metrics.code_class(None), "aborted")
+        self.assertEqual(self.metrics.code_class(503), "5xx")
 
 
 if __name__ == "__main__":

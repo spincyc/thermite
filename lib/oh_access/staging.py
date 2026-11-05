@@ -12,7 +12,7 @@ import venv
 import oh_units
 from oh_service import ACCOUNT, GROUP
 
-from . import AccessError
+from . import TEXTFILE_ENVIRONMENT, AccessError
 from .files import (atomic_private, json_private, private_directory, read_private,
                     require_service_account, service_identity)
 
@@ -43,9 +43,14 @@ def _working_directory(value):
     return text + "/." if text.endswith((" ", "\\")) else text
 
 
-def units(destination, user=ACCOUNT, *, state, callbacks=False):
+def units(destination, user=ACCOUNT, *, state, callbacks=False, textfile=None):
+    """textfile: the runtime's node_exporter textfile directory, where each
+    service writes its metrics (oh_access.metrics); None writes none."""
     root = Path(destination).absolute()
     state = _absolute(state)
+    # '-': a missing directory never keeps a service from starting.
+    metrics = ("\nEnvironment=" + systemd(TEXTFILE_ENVIRONMENT + "=" + str(_absolute(textfile))) +
+               "\nReadWritePaths=" + systemd("-" + str(_absolute(textfile)))) if textfile else ""
     if user != ACCOUNT:
         raise AccessError("Access services require user thermite and group thermite")
     command = [root / "env/bin/python", root / "program/bin/thermite", "access"]
@@ -65,7 +70,7 @@ def units(destination, user=ACCOUNT, *, state, callbacks=False):
             "\nExecStart=:/usr/bin/env -- " + " ".join(systemd(x) for x in [*command, name, "--config", root / config_name]) +
             # Without it the journal would name every one of them env.
             "\nSyslogIdentifier=" + unit +
-            "\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only" + writable +
+            "\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only" + writable + metrics +
             f"\nRestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\n[Install]\nWantedBy={oh_units.TARGET}\n")
     return result
 
@@ -427,7 +432,8 @@ def _export_plan(descriptor, receipt, custody, unit_sources=None):
 
 def stage(destination, *, state, house, assets, runtime_url, runtime_token_file, tls_cert, tls_key,
           allowed_hosts, bind_host, port, timezone, user=None, wheelhouse=None, area=None,
-          install_environment=True, callbacks=None, plan_directory=None, host_ports=None, guest_http=None):
+          install_environment=True, callbacks=None, plan_directory=None, host_ports=None, guest_http=None,
+          textfile=None):
     """A new release with explicit reusable site state. No database is migrated.
 
     guest_http is host.yaml's optional Guest listener mapping (oh_access.guest).
@@ -473,7 +479,7 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
                            guest_port=guest_http["port"] if guest_http else None, host_ports=host_ports)
     except (ValueError, TypeError) as exc:
         raise AccessError(str(exc)) from None
-    generated_units = units(target, user, state=state, callbacks=callback_config is not None)
+    generated_units = units(target, user, state=state, callbacks=callback_config is not None, textfile=textfile)
     # Validate/create only the owned directory. Staging never initializes keys,
     # changes site identity, opens SQLite, migrates schemas or takes worker locks.
     _state_directory(state, uid, gid)

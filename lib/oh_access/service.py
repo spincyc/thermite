@@ -16,7 +16,7 @@ import sys
 
 import oh_ports
 
-from . import AccessError, guest
+from . import AccessError, guest, metrics
 from .files import json_private, private_directory, read_private, require_service_account
 
 CONFIG_FIELDS = {"version", "state", "contract_file", "runtime_url", "runtime_token_file", "allowed_hosts",
@@ -429,7 +429,7 @@ def guest_listeners(config, admission):
 def serve(config_path):
     require_service_account()
     config, adapter, _ = configured(config_path)
-    cleaned = False
+    cleaned, textfile = False, None
 
     def cleanup():
         nonlocal cleaned
@@ -455,8 +455,15 @@ def serve(config_path):
         # Hypercorn trusts no proxy or forwarded header: the ASGI client is
         # always the socket peer.
         tls = tls_context(config["tls_cert"], config["tls_key"])
-        admission = Admission(application)
+        # Both listeners share one metered admission: Metered sees its 503s
+        # and labels each request with its listener (guest.mark sets it).
+        # Metrics go to a textfile (oh_access.metrics), never to a listener.
+        admission = metrics.Metered(Admission(application))
+        metrics.watch_streams()
+        textfile = metrics.start(metrics.GATEWAY, metrics.GATEWAY_FILE, refresh=metrics.refresh_streams)
         _run_server([(admission, listener(config["bind_host"], config["port"], tls)),
                      *guest_listeners(config, admission)], on_shutdown=cleanup)
     finally:
         cleanup()
+        if textfile:
+            textfile.stop()
