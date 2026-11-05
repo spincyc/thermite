@@ -381,6 +381,14 @@ class Permissions(unittest.TestCase):
         self.assertFalse(receipt.exists(), "a failed openHAB repair sends the next deploy through a full one")
 
 
+def kept(path):
+    """A path's stat facts, less its access time: the walk under test reads
+    directories, which may move their atime to the next second."""
+    info = path.stat()
+    return (info.st_mode, info.st_ino, info.st_dev, info.st_nlink, info.st_uid, info.st_gid, info.st_size,
+            info.st_mtime_ns, info.st_ctime_ns)
+
+
 class OwnedRuntime(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -415,9 +423,9 @@ class OwnedRuntime(unittest.TestCase):
         external.mkdir(mode=0o777)
         (self.root / "python").symlink_to(outside)
         (self.root / "lib64").symlink_to(external, target_is_directory=True)
-        before = outside.stat(), external.stat()
+        before = kept(outside), kept(external)
         service.normalize_owned_runtime(self.root)
-        self.assertEqual((outside.stat(), external.stat()), before)
+        self.assertEqual((kept(outside), kept(external)), before)
 
     def test_unsafe_hardlink_rejects_the_whole_runtime_before_chmod(self):
         earlier = self.file("a-console", 0o755)
@@ -425,30 +433,30 @@ class OwnedRuntime(unittest.TestCase):
         external.write_text("global package")
         external.chmod(0o644)
         os.link(external, self.root / "z-linked")
-        before = earlier.stat(), external.stat(), self.root.stat()
+        before = kept(earlier), kept(external), kept(self.root)
         with self.assertRaisesRegex(service.ServiceError, "hard-linked"):
             service.normalize_owned_runtime(self.root)
-        self.assertEqual((earlier.stat(), external.stat(), self.root.stat()), before)
+        self.assertEqual((kept(earlier), kept(external), kept(self.root)), before)
 
     def test_wrong_owner_rejects_before_chmod(self):
         target = self.file("console", 0o755)
-        before = target.stat(), self.root.stat()
+        before = kept(target), kept(self.root)
         with mock.patch.object(service.os, "geteuid", return_value=self.uid + 1):
             with self.assertRaisesRegex(service.ServiceError, "not owned"):
                 service.normalize_owned_runtime(self.root)
-        self.assertEqual((target.stat(), self.root.stat()), before)
+        self.assertEqual((kept(target), kept(self.root)), before)
 
     def test_same_device_mount_crossing_rejects_before_chmod(self):
         earlier = self.file("a-console", 0o755)
         mounted = self.file("z-mounted", 0o644)
         inode = mounted.stat().st_ino
-        before = earlier.stat(), mounted.stat(), self.root.stat()
+        before = kept(earlier), kept(mounted), kept(self.root)
         def mount_id(descriptor):
             return 2 if os.fstat(descriptor).st_ino == inode else 1
         with mock.patch.object(service, "_mount_id", side_effect=mount_id):
             with self.assertRaisesRegex(service.ServiceError, "mounted runtime"):
                 service.normalize_owned_runtime(self.root)
-        self.assertEqual((earlier.stat(), mounted.stat(), self.root.stat()), before)
+        self.assertEqual((kept(earlier), kept(mounted), kept(self.root)), before)
 
     def test_symlink_root_or_ancestor_is_rejected(self):
         link = Path(self.tmp.name, "link")
