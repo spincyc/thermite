@@ -50,7 +50,8 @@ upgrade commits.
 The previous owner command remains selected until the transaction commits.
 If a run is interrupted, or its rollback cannot finish, the next thermite
 upgrade first finishes or rolls back that transaction, then stops and says
-so; thermite status names it. Previous releases do not undo schema changes,
+so, with that outcome's exit status (1 when it finished a commit or closed
+a transaction that never began); thermite status names it. Previous releases do not undo schema changes,
 and upgrade refuses to pin a release older than the site's unless
 --allow-downgrade is given after deliberate recovery. --native-timeout sets
 the one native readiness allowance (300-7200 seconds).
@@ -64,7 +65,8 @@ host. Run as your ordinary user. Use -v for details. Agents only use --dry-run.
 NOTES = """\
 exit status:
   0  committed and verified, or nothing differed and the installed version verified
-  1  declined, refused before anything stopped, or a check failed
+  1  declined, refused before anything stopped, a check failed, or an earlier
+     transaction was finished or closed instead of upgrading
   2  invalid inputs, an older release without --allow-downgrade, missing
      installation or manifest, or run as root
   3  rolled back: the installed version runs again and its health passes
@@ -87,7 +89,9 @@ def upgrade(system: System, dry_run: bool, *, runtime_token_file: Path | None = 
     if not dry_run:
         found = changeover.resolve(AREA, system)
         if found is not None:
-            return found
+            # This run stopped there and installed nothing, even when it
+            # finished an earlier transaction's commit: never success.
+            return changeover.REFUSED if found == changeover.COMMITTED else found
     try:
         installed = manifest.installed(system, context.installation.root)
     except manifest.ManifestError as exc:

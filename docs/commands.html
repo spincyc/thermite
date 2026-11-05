@@ -860,7 +860,8 @@ upgrade commits.
 The previous owner command remains selected until the transaction commits.
 If a run is interrupted, or its rollback cannot finish, the next thermite
 upgrade first finishes or rolls back that transaction, then stops and says
-so; thermite status names it. Previous releases do not undo schema changes,
+so, with that outcome&#x27;s exit status (1 when it finished a commit or closed
+a transaction that never began); thermite status names it. Previous releases do not undo schema changes,
 and upgrade refuses to pin a release older than the site&#x27;s unless
 --allow-downgrade is given after deliberate recovery. --native-timeout sets
 the one native readiness allowance (300-7200 seconds).
@@ -894,7 +895,8 @@ switches every verb takes:
 
 exit status:
   0  committed and verified, or nothing differed and the installed version verified
-  1  declined, refused before anything stopped, or a check failed
+  1  declined, refused before anything stopped, a check failed, or an earlier
+     transaction was finished or closed instead of upgrading
   2  invalid inputs, an older release without --allow-downgrade, missing
      installation or manifest, or run as root
   3  rolled back: the installed version runs again and its health passes

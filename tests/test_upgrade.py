@@ -176,13 +176,16 @@ class HostPhase(unittest.TestCase):
         self.assertIsInstance(self.run.call_args.args[0][0], steps.Health)
 
     def test_an_open_transaction_is_resolved_first_and_nothing_else_runs(self):
-        self.resolve.return_value = changeover.ROLLED_BACK
-        self.assertEqual(self.upgrade()[0], changeover.ROLLED_BACK)
+        for outcome, code in ((changeover.ROLLED_BACK, changeover.ROLLED_BACK), (changeover.STUCK, changeover.STUCK),
+                              (changeover.COMMITTED, changeover.REFUSED)):
+            with self.subTest(outcome=outcome):
+                self.resolve.return_value = outcome
+                self.assertEqual(self.upgrade()[0], code, "this run installed nothing")
         self.manifest.assert_not_called()
         self.transaction.assert_not_called()
         self.resolve.return_value = None
         self.upgrade(dry_run=True)
-        self.assertEqual(self.resolve.call_count, 1, "a dry run resolves nothing")
+        self.assertEqual(self.resolve.call_count, 3, "a dry run resolves nothing")
 
     def test_without_an_installed_manifest_it_refuses(self):
         self.manifest.return_value = None

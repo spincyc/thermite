@@ -73,7 +73,7 @@ class Transacted(Exception):
     other than a commit: it said what happened; nothing is resumed."""
 
     MESSAGES = {
-        1: "Nothing of Thermite was changed; the previous owner command stays selected.",
+        1: "The upgrade did not begin, and the previous owner command stays selected.",
         2: "Nothing of Thermite was changed; the previous owner command stays selected.",
         3: "The upgrade rolled back: the previous version runs again, and the previous owner command stays "
            "selected.",

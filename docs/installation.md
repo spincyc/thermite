@@ -668,7 +668,7 @@ the rollback is the only undo.
 | Exit status | Outcome |
 |---|---|
 | 0 | Committed, or nothing to change and healthy. |
-| 1 | Refused before the transaction began: nothing of Thermite was stopped or changed. |
+| 1 | Refused before the transaction began: nothing of Thermite was stopped or changed. Also a rerun that only finished or closed an earlier upgrade's transaction. |
 | 2 | Not started: no installed manifest (see [a missing manifest](#a-missing-manifest)), or invalid arguments. |
 | 3 | Rolled back: the version that ran before runs again, healthy. |
 | 4 | Rolled back: the version that ran before runs again, but its health check fails; it keeps running. |
@@ -702,8 +702,9 @@ commit is undone. After it began, the transaction stays open: Thermite may
 be stopped, with `thermite.target` kept from booting. `thermite status`
 reports it as a problem, and `thermite install` and `thermite uninstall`
 refuse to run. Run `thermite upgrade --config DIR` again: it first finishes a
-transaction the engine already committed, or rolls back any other, then
-stops without upgrading and says so. Run it once more to upgrade.
+transaction the engine already committed, closes one that never began, or
+rolls back any other, then stops without upgrading and says so, with that
+outcome's exit status. Run it once more to upgrade.
 
 ### A stuck rollback
 

@@ -310,10 +310,14 @@ class Rerun(Fixture):
         self.assertEqual(self.resolve(phase="rolled-back"), changeover.ROLLED_BACK)
         self.assertEqual(self.log, ["sudo -v", "status", f"history {txn_fakes.ID}", "old health"])
 
-    def test_one_that_never_began_is_closed_and_the_upgrade_goes_on(self):
-        self.assertIsNone(self.resolve(phase=None))
+    def test_one_that_never_began_is_closed_its_pin_undone_and_the_run_stops(self):
+        self.assertEqual(self.resolve(phase=None), changeover.REFUSED)
+        self.assertEqual(self.log, ["sudo -v", "status"])
+        self.assertEqual(self.unpinned, [txn_fakes.ID])
         self.assertIsNone(self.is_open())
-        self.assertIsNone(self.resolve())
+        self.assertEqual(self.record()["phase"], "refused")
+        self.assertIn("Stopped there, without upgrading", self.said())
+        self.assertIsNone(self.resolve(), "nothing is left to resolve")
 
     def test_status_names_it(self):
         from oh_cli import status

@@ -643,8 +643,9 @@ def health(system: System, transaction: Transaction) -> bool:
 
 def resolve(site: Path, system: System) -> int | None:
     """Finish an earlier upgrade's transaction that has not finished, then
-    stop (9-F8b): a committed one is finished, any other rolled back. None
-    when there is none, or it never began."""
+    stop (9-F8b): a committed one is finished, one that never began is
+    closed and its pin commit undone, any other rolled back. None when
+    there is none."""
     var = Path(site) / "var"
     id = open_transaction(var)
     if id is None:
@@ -658,10 +659,9 @@ def resolve(site: Path, system: System) -> int | None:
                    "lists the transactions (docs/installation.md#a-stuck-rollback).")
         return STUCK
     if found is None:
-        transaction.close("refused")
-        system.say("   It never began: nothing was changed.")
-        return None
-    if found["phase"] in ("committed", "kept"):
+        system.say("   It never began: nothing of Thermite was changed.")
+        code = refused(system, transaction)
+    elif found["phase"] in ("committed", "kept"):
         if runner.perform(transaction.command("rollback"), system, transaction.site, root_confirmed=True) != 0:
             return _stuck(system, transaction)
         code = committed(system, transaction)
@@ -669,6 +669,6 @@ def resolve(site: Path, system: System) -> int | None:
         code = rolled_back(system, transaction)
     else:
         code = roll_back(system, transaction, "its upgrade did not finish")
-    if code in (COMMITTED, ROLLED_BACK, UNHEALTHY):
+    if code in (COMMITTED, REFUSED, ROLLED_BACK, UNHEALTHY):
         system.say(f"Stopped there, without upgrading; run {upgrade_command(transaction.site)} again to upgrade.")
     return code
