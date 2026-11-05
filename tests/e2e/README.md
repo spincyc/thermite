@@ -71,8 +71,8 @@ git commit -m 'Initialize fictional installation test house'
 
 Keep the generated fictional host defaults for comparable cases: the
 installation root `/srv/thermite` (native state in its `runtime/`, the gateway
-in its `access/`), authenticated HTTPS at **13600** and native HTTP/HTTPS at
-**13601/13602**. Inspect `instance/host.yaml`; record and propagate any intentional
+in its `access/`), authenticated HTTPS at **13601** and native HTTP/HTTPS at
+**13602/13603**. Inspect `instance/host.yaml`; record and propagate any intentional
 overrides. Site inputs and the application release pin must be committed before
 installation. Generated `conf/`, `metrics/` and `deploy/` stay ignored, as do
 the site's `.scratch`, `var` and `build` directories;
@@ -166,7 +166,7 @@ handoff and service-user verification. Use `/srv/thermite/access`, beside the
 native `runtime/`. For this fixture, issue a test certificate covering `localhost` and
 `127.0.0.1`, retain its key privately and trust its public certificate explicitly
 in each test client. Stage with `--allowed-host localhost --allowed-host 127.0.0.1`,
-port 13600 and the native loopback origin from the guide. Do not use a private owner-home path for service
+port 13601 and the native loopback origin from the guide. Do not use a private owner-home path for service
 releases or state.
 
 Use these names consistently for the remaining guest commands:
@@ -174,7 +174,7 @@ Use these names consistently for the remaining guest commands:
 ```sh
 ACCESS_ROOT=/srv/thermite/access
 RELEASE="$ACCESS_ROOT/releases/first"
-URL=https://127.0.0.1:13600
+URL=https://127.0.0.1:13601
 CERT="$TEST_ROOT/tls/ca.pem"
 ADMIN_PASSWORD_FILE="$TEST_ROOT/access-admin-password"
 MATRIX_URL=$("$APP_PYTHON" -c 'import json,sys; data=json.load(open(sys.argv[1])); print("http://" + next(d["ip"] for d in data["devices"] if d["id"] == "example_matrix"))' "$TEST_ROOT/dummy-house.json")
@@ -265,7 +265,7 @@ without changing the operator's real HOME or trust store. Do not use
 Use the reviewed source checkout matching the guest artifact as `CHECKOUT`.
 Set `HOST_SCRATCH` to its case-specific `.scratch` directory, `TRUST_HELPER` to
 the absolute launcher filename, and `FORWARDED_GATEWAY_URL` to the external
-loopback HTTPS forward to guest port 13600. Transfer the public certificate and
+loopback HTTPS forward to guest port 13601. Transfer the public certificate and
 the dummy gateway password file securely; keep the latter owner-owned mode
 0600. Create the screenshot parent beforehand and choose a new filename:
 
@@ -303,13 +303,13 @@ Complete this cutover and persistence checklist for every case:
   authentication test.
 - Review and apply an explicit **guest-only** native-listener seal. This recipe
   does not modify production firewalls or invent callback maps. Inventory actual
-  listeners against [ports](../../docs/ports.md): 13600 is authenticated HTTPS
+  listeners against [ports](../../docs/ports.md): 13601 is authenticated HTTPS
   (the default; `gateway: port` in `instance/host.yaml` moves it);
-  13601/13602 are native HTTP/HTTPS, 13603 is loopback Karaf and 13604 is LSP.
+  13602/13603 are native HTTP/HTTPS, 13604 is loopback Karaf and 13605 is LSP.
   Native HTTP ports also carry websocket and alternate-UI paths. Investigate any
   legacy listeners instead of assuming generation removed them.
 - From outside the guest, probe each native ingress path and the gateway after
-  sealing. A forward to 13600 is not a native-HTTPS forward to 13602. An
+  sealing. A forward to 13601 is not a native-HTTPS forward to 13603. An
   unforwarded port or a guest request to its own address does not establish
   external blocking. Require no native HTTP/TLS response and record the applied
   filtering evidence; HTTP 401/403 still proves the listener is reachable.

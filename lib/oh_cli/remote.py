@@ -45,11 +45,11 @@ front ends drive thermite the same way (tui/remote/README.md).
 
 By default it uses the authenticated site: THERMITE_SITE_URL, the installed
 gateway's verified address, or https://localhost on the site's HTTPS port
-(instance/host.yaml's gateway.port, 13600 by default). A site with
+(instance/host.yaml's gateway.port, 13601 by default). A site with
 access.mode: native instead uses its
 production runtime without login; --native explicitly selects that testing
 mode for this run. Choosing a source really switches the room. --sandbox talks to
-the sandbox on 127.0.0.1:13615 and --mock to the page's mock backend,
+the sandbox on 127.0.0.1:13616 and --mock to the page's mock backend,
 which sends nothing.
 
 Its colors are a thermite theme's, as the remote page's are: the house
@@ -89,7 +89,7 @@ EXAMPLES = (
     ("thermite remote --mock", "the page's mock backend, which sends nothing"),
     ("thermite remote --sandbox --room ROOM", "the sandbox, starting in that room"),
     ("thermite remote --pair", "start on the Pairing screen"),
-    ("thermite remote --url http://thermite.example:13601 --light", "thermite on another host, light"),
+    ("thermite remote --url http://thermite.example:13602 --light", "thermite on another host, light"),
     ("thermite remote --mock --theme contrast", "in the high-contrast theme"),
     ("thermite remote --no-log", "give the log pane's rows to the controls; L shows it again"),
     ("thermite remote --setup", "only install the pinned blessed, then exit"),

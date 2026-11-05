@@ -65,10 +65,10 @@ def plain_http():
         server.server_close()
 
 
-#: A site's instance/host.yaml that moves HTTPS to 16301 and gives Guests 13600.
-MOVED = {"timezone": "Etc/UTC", "http_port": 13601, "https_port": 13602, "uid": 9001, "gid": 9001,
+#: A site's instance/host.yaml that moves HTTPS to 16301 and gives Guests 13601.
+MOVED = {"timezone": "Etc/UTC", "http_port": 13602, "https_port": 13603, "uid": 9001, "gid": 9001,
          "gateway": {"port": 16301},
-         "guest_http": {"port": 13600, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"]}}
+         "guest_http": {"port": 13601, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"]}}
 
 
 class Response(io.BytesIO):
@@ -93,15 +93,15 @@ class Normalize(unittest.TestCase):
             f"https://192.0.2.50:{PORT}/": f"https://192.0.2.50:{PORT}",
             "https://thermite.example": "https://thermite.example",
             "[2001:db8::10]": f"https://[2001:db8::10]:{PORT}",
-            "http://127.0.0.1:13615": "http://127.0.0.1:13615",
-            "http://localhost:13615": "http://localhost:13615",
+            "http://127.0.0.1:13616": "http://127.0.0.1:13616",
+            "http://localhost:13616": "http://localhost:13616",
         }
         for given, expected in cases.items():
             with self.subTest(given=given):
                 self.assertEqual(tui.gateway(given), expected)
 
     def test_refuses_plain_http_off_this_computer_and_anything_but_an_origin(self):
-        for given in ("http://192.0.2.50", "http://thermite:13600", "ftp://thermite",
+        for given in ("http://192.0.2.50", "http://thermite:13601", "ftp://thermite",
                       f"https://thermite:{PORT}/remote", "https://user@thermite", "thermite:port", "https://"):
             with self.subTest(given=given), self.assertRaises(ValueError):
                 tui.gateway(given)
@@ -368,7 +368,7 @@ class Trust(Scratch):
             self.assertEqual(tui.trust(url, None), (ca, "this computer's installation"))
 
     def test_plain_http_on_loopback_needs_no_trust(self):
-        self.assertEqual(tui.trust("http://127.0.0.1:13615", None), (None, "plain http"))
+        self.assertEqual(tui.trust("http://127.0.0.1:13616", None), (None, "plain http"))
 
 
 class Reachability(Scratch):

@@ -31,8 +31,8 @@ ACCESS = TOP / "access"
 
 def context(**host):
     return steps.Context(AREA, {"openhab": {"version": "5.2.3"}},
-                         {"uid": 9001, "gid": 9001, "timezone": "Etc/UTC", "http_port": 13601,
-                          "https_port": 13602, **host},
+                         {"uid": 9001, "gid": 9001, "timezone": "Etc/UTC", "http_port": 13602,
+                          "https_port": 13603, **host},
                          "a" * 40, "b" * 64, "fixture", None,
                          application={"version": "0.1.0.dev0", "digest": "c" * 64})
 

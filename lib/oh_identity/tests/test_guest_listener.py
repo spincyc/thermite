@@ -35,9 +35,9 @@ from oh_identity.tests.test_gateway_server import HOST as LOOPBACK, EventRuntime
 from oh_identity.urls import urlpatterns
 from oh_routes import asset_version
 
-LISTENER = Listener(frozenset({"http://192.0.2.10:13626", "http://[2001:db8::10]:13626",
-                               "http://remote.guest.example:13626"}), "https://house.example.test:13600")
-HOST = "192.0.2.10:13626"
+LISTENER = Listener(frozenset({"http://192.0.2.10:13627", "http://[2001:db8::10]:13627",
+                               "http://remote.guest.example:13627"}), "https://house.example.test:13601")
+HOST = "192.0.2.10:13627"
 ORIGIN = "http://" + HOST
 WEB = Path(__file__).resolve().parents[3] / "web/remote"
 #: Pages that stay on the HTTPS site, as routes and as files.
@@ -65,7 +65,7 @@ class GuestClient(AsyncClient):
         headers = [(name, value) for name, value in scope["headers"] if name != b"host" and (name, value) != (b"cookie", b"")]
         if self.host is not None:
             headers.append((b"host", self.host.encode()))
-        return {**scope, "headers": headers, "client": ["192.0.2.50", 50123], "server": ("192.0.2.10", 13626),
+        return {**scope, "headers": headers, "client": ["192.0.2.50", 50123], "server": ("192.0.2.10", 13627),
                 "scheme": "http", SCOPE: LISTENER}
 
 
@@ -215,7 +215,7 @@ class Listening(TestCase):
     def test_access_config_makes_the_page_guest_only_with_the_secure_site(self):
         script = call("get", "/static/remote/access-config.js").content.decode()
         self.assertEqual(script, 'globalThis.THERMITE_ACCESS_CONFIG = Object.freeze('
-                                 '{"version":1,"mode":"guest","secure":"https://house.example.test:13600"});\n')
+                                 '{"version":1,"mode":"guest","secure":"https://house.example.test:13601"});\n')
         self.assertIn(b'"mode":"authenticated"', self.https().get("/static/remote/access-config.js", secure=True).content)
 
     def test_credentials_are_refused_and_never_used(self):
@@ -246,11 +246,11 @@ class Listening(TestCase):
         self.assertEqual(self.adapter.transport.commands, [])
 
     def test_host_must_name_the_listener_with_its_port(self):
-        for host in (HOST, "[2001:db8::10]:13626", "remote.guest.example:13626", "REMOTE.Guest.Example:13626"):
+        for host in (HOST, "[2001:db8::10]:13627", "remote.guest.example:13627", "REMOTE.Guest.Example:13627"):
             with self.subTest(host=host):
                 self.assertEqual(call("get", "/api/v1/me", client=GuestClient(host)).status_code, 200)
-        for host in ("attacker.example:13626", "192.0.2.10", "192.0.2.10:13600", "house.example.test:13600",
-                     "localhost:13626", "192.0.2.10:13626.attacker.example", "", None):
+        for host in ("attacker.example:13627", "192.0.2.10", "192.0.2.10:13601", "house.example.test:13601",
+                     "localhost:13627", "192.0.2.10:13627.attacker.example", "", None):
             with self.subTest(host=host):
                 response = call("get", "/api/v1/me", client=GuestClient(host))
                 self.assertEqual((response.status_code, body(response)["error"]), (400, "invalid_host"))
@@ -260,8 +260,8 @@ class Listening(TestCase):
 
     def test_controls_need_the_listeners_own_origin_and_json(self):
         command = {"action": "source", "value": "off"}
-        for origin in (None, "null", "http://attacker.example", "https://192.0.2.10:13626", "http://192.0.2.10:13600",
-                       "http://192.0.2.10", ORIGIN + "/", "https://house.example.test:13600"):
+        for origin in (None, "null", "http://attacker.example", "https://192.0.2.10:13627", "http://192.0.2.10:13601",
+                       "http://192.0.2.10", ORIGIN + "/", "https://house.example.test:13601"):
             with self.subTest(origin=origin):
                 response = call("post", "/api/v1/rooms/den/commands", command, origin=origin)
                 self.assertEqual((response.status_code, body(response)["error"]), (403, "invalid_origin"))
@@ -284,7 +284,7 @@ class Listening(TestCase):
         events = metrics.CLIENT_EVENTS.labels("web", "policy_timeout")
         guests = metrics.REQUESTS.labels("guest", "other", "2xx")
         before, requests = events._value.get(), guests._value.get()
-        for origin in (None, "http://attacker.example", "https://house.example.test:13600"):
+        for origin in (None, "http://attacker.example", "https://house.example.test:13601"):
             with self.subTest(origin=origin):
                 response = call("post", "/api/v1/telemetry", report, origin=origin)
                 self.assertEqual((response.status_code, body(response)["error"]), (403, "invalid_origin"))
@@ -315,7 +315,7 @@ class Listening(TestCase):
     def test_no_answer_sets_a_cookie_and_headers_match_https_without_its_extras(self):
         answers = [call("get", path) for path in ("/", "/remotes/", "/static/remote/remote.js", "/api/v1/me",
                                                   "/api/v1/security", "/missing", "/security/")]
-        answers += [call("get", "/api/v1/me", client=GuestClient("attacker.example:13626")),
+        answers += [call("get", "/api/v1/me", client=GuestClient("attacker.example:13627")),
                     call("get", "/api/v1/me", Cookie=settings.SESSION_COOKIE_NAME + "=x"),
                     call("post", "/api/v1/rooms/den/commands", {"action": "source", "value": "off"}),
                     call("post", "/api/v1/rooms/den/commands", {"action": "source", "value": "off"}, origin=None)]
@@ -517,14 +517,14 @@ class Sockets(SimpleTestCase):
         self.assertEqual(seen[1].secure, f"https://[2001:db8::10]:{self.main}")
 
     def test_the_sign_in_link_names_the_configured_https_port(self):
-        # host.yaml's gateway.port moved HTTPS off 13600, and Guests took it.
-        config = {**self.config, "port": 16301, "guest_http": {**self.config["guest_http"], "port": 13600}}
+        # host.yaml's gateway.port moved HTTPS off 13601, and Guests took it.
+        config = {**self.config, "port": 16301, "guest_http": {**self.config["guest_http"], "port": 13601}}
         seen = []
 
         async def inner(scope, receive, send):
             seen.append(scope[SCOPE])
         pairs = service.guest_listeners(config, inner)
-        self.assertEqual([listener.bind for _, listener in pairs], [["127.0.0.1:13600"], ["127.0.0.5:13600"]])
+        self.assertEqual([listener.bind for _, listener in pairs], [["127.0.0.1:13601"], ["127.0.0.5:13601"]])
         asyncio.run(pairs[0][0]({"type": "http"}, None, None))
         self.assertEqual(seen[0].secure, "https://house.example.test:16301")
         script = guest.access_config(type("Request", (), {"scope": {SCOPE: seen[0]}})())

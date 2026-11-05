@@ -24,7 +24,7 @@ class SystemMetadata(unittest.TestCase):
         self.assertEqual(result["runtime"], {"version": "5.2.3"})
         self.assertEqual([tool["id"] for tool in result["tools"]],
                          ["openhab", "grafana", "prometheus", "alertmanager", "ntfy"])
-        self.assertEqual([tool["port"] for tool in result["tools"]], [13601, 13610, 13606, 13611, 13612])
+        self.assertEqual([tool["port"] for tool in result["tools"]], [13602, 13611, 13607, 13612, 13613])
         self.assertEqual([tool["path"] for tool in result["tools"]], ["/settings/", "/", "/query", "/", "/"])
         self.assertEqual([tool["localOnly"] for tool in result["tools"]], [True, False, True, True, True])
         for tool in result["tools"]:
@@ -73,7 +73,7 @@ class SystemMetadata(unittest.TestCase):
             site, program = root / "site", root / "program"
             (site / "instance").mkdir(parents=True)
             (program / "instance").mkdir(parents=True)
-            host = ("root: /srv/thermite\ntimezone: Etc/UTC\nhttps_port: 13602\nuid: 9001\ngid: 9001\n")
+            host = ("root: /srv/thermite\ntimezone: Etc/UTC\nhttps_port: 13603\nuid: 9001\ngid: 9001\n")
             (site / "instance/host.yaml").write_text(host + "http_port: 14001\nmetrics:\n  grafana_port: 14002\n")
             (program / "instance/host.yaml").write_text(host + "http_port: 15001\n")
             (site / "versions.json").write_text(json.dumps({"openhab": {"version": "0.0.0"}}))

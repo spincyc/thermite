@@ -9,7 +9,7 @@
       "label": "openHAB",
       "description": "Advanced runtime settings and add-ons.",
       "scheme": "http",
-      "port": 13601,
+      "port": 13602,
       "path": "/settings/",
       "localOnly": true
     },
@@ -18,7 +18,7 @@
       "label": "Grafana",
       "description": "Dashboards and history.",
       "scheme": "http",
-      "port": 13610,
+      "port": 13611,
       "path": "/",
       "localOnly": false
     },
@@ -27,7 +27,7 @@
       "label": "Prometheus",
       "description": "Metrics queries.",
       "scheme": "http",
-      "port": 13606,
+      "port": 13607,
       "path": "/query",
       "localOnly": true
     },
@@ -36,7 +36,7 @@
       "label": "Alertmanager",
       "description": "Alert routing and silences.",
       "scheme": "http",
-      "port": 13611,
+      "port": 13612,
       "path": "/",
       "localOnly": true
     },
@@ -45,7 +45,7 @@
       "label": "ntfy",
       "description": "Local notification history.",
       "scheme": "http",
-      "port": 13612,
+      "port": 13613,
       "path": "/",
       "localOnly": true
     }

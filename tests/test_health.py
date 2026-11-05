@@ -20,7 +20,7 @@ import oh_sandbox as sandbox  # noqa: E402
 
 TOKEN = "oh." + "fixture.private-token-sentinel"
 PRIVATE = "private-configuration-sentinel"
-HOST = {"root": "/srv/fixture", "http_port": 13601, "https_port": 13602,
+HOST = {"root": "/srv/fixture", "http_port": 13602, "https_port": 13603,
         "uid": 9001, "gid": 9001, "timezone": "UTC"}
 THINGS = "/rest/things?summary=false"
 ITEMS = "/rest/items?recursive=false&fields=name,type,state,groupType"
@@ -123,7 +123,7 @@ class Health(unittest.TestCase):
         self.addCleanup(entry.stop)
 
     def args(self, *, installation=True):
-        return SimpleNamespace(url="http://127.0.0.1:13601", token_file=self.token_file, timeout=1,
+        return SimpleNamespace(url="http://127.0.0.1:13602", token_file=self.token_file, timeout=1,
                                production=True, installation=installation, allow_offline=None,
                                addons=self.addons, host=HOST)
 
@@ -139,7 +139,7 @@ class Health(unittest.TestCase):
     def report(self, *, installation=True):
         with self.backend() as (http, client):
             result = health.run(self.args(installation=installation))
-        client.assert_called_once_with("http://127.0.0.1:13601", token=TOKEN, timeout=1)
+        client.assert_called_once_with("http://127.0.0.1:13602", token=TOKEN, timeout=1)
         self.assertEqual([call.args[0] for call in http.try_get_json.call_args_list],
                          ["/rest/", THINGS, ITEMS, ADDONS])
         return result
@@ -276,7 +276,7 @@ class Health(unittest.TestCase):
         report = self.report()
         self.assertEqual(report["web_entry"], {"ok": False})
         self.assertIn("Thermite web entry is not ready", report["failures"])
-        self.entry.assert_called_once_with("http://127.0.0.1:13601", timeout=1)
+        self.entry.assert_called_once_with("http://127.0.0.1:13602", timeout=1)
         self.entry.reset_mock()
         strict = self.report(installation=False)
         self.entry.assert_not_called()
@@ -334,7 +334,7 @@ class Health(unittest.TestCase):
 
     def test_installation_cli_requires_production_and_rejects_allow_offline(self):
         for arguments in (["--installation"], ["--sandbox", "--installation"],
-                          ["--url", "http://127.0.0.1:13615", "--installation"],
+                          ["--url", "http://127.0.0.1:13616", "--installation"],
                           ["--production", "--installation", "--allow-offline", "http:url:fixture"]):
             with self.subTest(arguments=arguments), mock.patch.object(health, "production") as production, \
                     mock.patch.object(health, "run") as run, contextlib.redirect_stderr(io.StringIO()), \

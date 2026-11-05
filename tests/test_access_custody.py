@@ -178,7 +178,7 @@ class Custody(unittest.TestCase):
         with self.assertRaisesRegex(AccessError, "--plan-directory"):
             staging.stage(target, state=state, house="unused", assets="unused", runtime_url="unused",
                           runtime_token_file="unused", tls_cert="unused", tls_key="unused", allowed_hosts=[],
-                          bind_host="127.0.0.1", port=13600, timezone="UTC")
+                          bind_host="127.0.0.1", port=13601, timezone="UTC")
         self.assertFalse(target.exists())
         self.assertFalse(state.exists())
 
@@ -248,7 +248,7 @@ class Custody(unittest.TestCase):
                     with self.assertRaisesRegex(AccessError, "Release and state ancestors.*protected from replacement"):
                         staging.stage(target, state=state, house="unused", assets="unused", runtime_url="unused",
                                       runtime_token_file="unused", tls_cert="unused", tls_key="unused", allowed_hosts=[],
-                                      bind_host="127.0.0.1", port=13600, timezone="UTC", plan_directory=root / "plan",
+                                      bind_host="127.0.0.1", port=13601, timezone="UTC", plan_directory=root / "plan",
                                       area=root / "source")
                 create.assert_not_called()
                 builder.assert_not_called()

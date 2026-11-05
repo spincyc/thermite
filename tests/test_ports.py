@@ -30,13 +30,13 @@ from oh_metrics import exporter
 
 class Allocation(unittest.TestCase):
     def test_one_contiguous_run_with_distinct_application_anchor(self):
-        self.assertEqual(oh_ports.ACCESS_PORT, 13600)
-        self.assertEqual(list(oh_ports.DEFAULTS.values()), list(range(13600, 13627)))
+        self.assertEqual(oh_ports.ACCESS_PORT, 13601)
+        self.assertEqual(list(oh_ports.DEFAULTS.values()), list(range(13601, 13628)))
         self.assertEqual(len(set(oh_ports.DEFAULTS.values())), len(oh_ports.DEFAULTS))
         self.assertEqual(tuple(oh_ports.DEFAULTS)[-4:], ("native_shutdown", "sandbox_shutdown", "boot_shutdown", "guest_http"))
         self.assertEqual([oh_ports.DEFAULTS[name] for name in ("native_shutdown", "sandbox_shutdown", "boot_shutdown")],
-                         [13623, 13624, 13625])
-        self.assertEqual(oh_ports.GUEST_HTTP_PORT, 13626)
+                         [13624, 13625, 13626])
+        self.assertEqual(oh_ports.GUEST_HTTP_PORT, 13627)
 
     def test_overrides_cannot_take_other_production_or_development_listeners(self):
         for host in ({"http_port": oh_ports.HTTPS_PORT},
@@ -52,7 +52,7 @@ class Allocation(unittest.TestCase):
         host = {"http_port": 14040, "https_port": 14041, "metrics": {"grafana_port": 14042}}
         self.assertEqual(oh_ports.effective(host)["http"], 14040)
         self.assertEqual(oh_metrics.ports(host)["grafana"], 14042)
-        for value in (True, "13601", 0, 1023, 65536):
+        for value in (True, "13602", 0, 1023, 65536):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 oh_ports.effective({"http_port": value})
         for name in ("access", "callbacks"):
@@ -60,18 +60,18 @@ class Allocation(unittest.TestCase):
                 oh_ports.listener(name, 14040, upstream=14040)
 
     def test_gateway_port_moves_the_https_application_and_is_strictly_checked(self):
-        host = {"timezone": "Etc/UTC", "http_port": 13601, "https_port": 13602, "uid": 9001, "gid": 9001}
+        host = {"timezone": "Etc/UTC", "http_port": 13602, "https_port": 13603, "uid": 9001, "gid": 9001}
         self.assertEqual(oh_ports.gateway_port(), oh_ports.ACCESS_PORT)
-        self.assertEqual(oh_ports.gateway_port(host), 13600)
+        self.assertEqual(oh_ports.gateway_port(host), 13601)
         moved = {**host, "gateway": {"port": 16301}}
         self.assertEqual(oh_deploy.validate_host(moved)["gateway"], {"port": 16301})
         self.assertEqual(oh_ports.effective(moved)["access"], 16301)
         self.assertEqual(oh_ports.gateway_port(moved), 16301)
         self.assertEqual(oh_metrics.gateway_address(moved), "127.0.0.1:16301")
-        self.assertEqual(oh_metrics.gateway_address(host), "127.0.0.1:13600")
+        self.assertEqual(oh_metrics.gateway_address(host), "127.0.0.1:13601")
         # Native https_port stays the native runtime's own listener.
-        self.assertEqual(oh_ports.effective(moved)["https"], 13602)
-        self.assertEqual(oh_ports.gateway_port({**host, "gateway": None}), 13600)
+        self.assertEqual(oh_ports.effective(moved)["https"], 13603)
+        self.assertEqual(oh_ports.gateway_port({**host, "gateway": None}), 13601)
         rejected = {
             "gateway: must be a mapping": [16301],
             "unknown gateway setting bind": {"port": 16301, "bind": "0.0.0.0"},
@@ -85,8 +85,8 @@ class Allocation(unittest.TestCase):
                 oh_deploy.validate_host({**host, "gateway": value})
 
     def test_gateway_port_cannot_take_another_listener(self):
-        host = {"timezone": "Etc/UTC", "http_port": 13601, "https_port": 13602, "uid": 9001, "gid": 9001}
-        taken = {"native HTTP": 13601, "native HTTPS": 13602, "sandbox HTTP": 13615, "boot check": 13619,
+        host = {"timezone": "Etc/UTC", "http_port": 13602, "https_port": 13603, "uid": 9001, "gid": 9001}
+        taken = {"native HTTP": 13602, "native HTTPS": 13603, "sandbox HTTP": 13616, "boot check": 13620,
                  "docs preview": oh_ports.DOCS_PORT, "default Guest port": oh_ports.GUEST_HTTP_PORT}
         for name, port in taken.items():
             with self.subTest(listener=name), self.assertRaisesRegex(oh_deploy.HostError, "collides"):
@@ -390,7 +390,7 @@ class Consumers(unittest.TestCase):
         self.assertIn("--cluster.listen-address=", alertmanager.args)
         generated = oh_render.render(oh_public.demo())
         self.assertIn(f"org.openhab.lsp:port={oh_ports.LSP_PORT}", generated["services/runtime.cfg"])
-        self.assertEqual(oh_atv.LISTEN, "127.0.0.1:13605")
+        self.assertEqual(oh_atv.LISTEN, "127.0.0.1:13606")
         self.assertEqual(exporter.OPENHAB, oh_ports.NATIVE_URL)
         self.assertIn("lib/oh_ports.py", oh_metrics.EXPORTER_APP)
         self.assertIn("lib/oh_ports.py", oh_deploy.ATV_APP)
@@ -398,9 +398,9 @@ class Consumers(unittest.TestCase):
     def test_sandbox_and_boot_check_remain_loopback_and_separate(self):
         sandbox = oh_sandbox.sandbox_instance()
         boot = oh_sandbox.boot_check_instance()
-        self.assertEqual((sandbox.http_port, sandbox.https_port, sandbox.ssh_port), (13615, 13616, 13617))
-        self.assertEqual((boot.http_port, boot.https_port, boot.ssh_port), (13618, 13619, 13620))
-        self.assertEqual((sandbox.shutdown_port, boot.shutdown_port), (13624, 13625))
+        self.assertEqual((sandbox.http_port, sandbox.https_port, sandbox.ssh_port), (13616, 13617, 13618))
+        self.assertEqual((boot.http_port, boot.https_port, boot.ssh_port), (13619, 13620, 13621))
+        self.assertEqual((sandbox.shutdown_port, boot.shutdown_port), (13625, 13626))
         self.assertEqual(sandbox.http_address, "127.0.0.1")
         self.assertEqual(boot.http_address, "127.0.0.1")
         self.assertIn("org.openhab.core.model.lsp", oh_sandbox.FEATURES_PROCESSING)

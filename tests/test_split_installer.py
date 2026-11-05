@@ -50,7 +50,7 @@ class SplitInstaller(unittest.TestCase):
         self.requirement = {"version": 2, "application": release["application"], "release": release["digest"]}
         (self.site / oh_paths.SITE_FILE).write_text(json.dumps(self.requirement))
         self.versions = {"openhab": {"version": "5.2.3"}, "java": {"version": "21"}}
-        self.host = {"uid": 9001, "gid": 9001, "root": str(self.site / "installation"), "http_port": 13601}
+        self.host = {"uid": 9001, "gid": 9001, "root": str(self.site / "installation"), "http_port": 13602}
         self.runtime = self.site / "installation/runtime"
         self.files = {name: deploy.Blob(("frozen " + name).encode()) for name in deploy.INSTALLED}
         self.files.update({"conf/services/addons.cfg": deploy.Blob(b"binding = http,network\nmisc = metrics\n"),
@@ -286,7 +286,7 @@ class SplitInstaller(unittest.TestCase):
                 patch.object(deploy, "prepared_files", return_value=(self.files, self.application)) as prepared, \
                 patch.object(deploy, "load", side_effect=AssertionError("mutable host used")):
             health.production(args)
-        self.assertEqual(args.url, "http://127.0.0.1:13601")
+        self.assertEqual(args.url, "http://127.0.0.1:13602")
         self.assertEqual(args.host, self.host)
         self.assertEqual(args._addons_text, self.files["conf/services/addons.cfg"].data.decode())
         prepared.assert_called_once_with(self.site, self.context.head, self.site / "var")

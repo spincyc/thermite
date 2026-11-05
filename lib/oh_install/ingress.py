@@ -18,14 +18,22 @@ def rule_text(host):
     return MARKER + f"# Ports: {host['http_port']},{host['https_port']}\n" + firewall_rules(host)
 
 
-def rule_host(content):
-    match = re.match(re.escape(MARKER) + r"# Ports: (\d+),(\d+)\n", content.decode())
-    if not match:
+def rule_ports(content):
+    """The ports an installer's rule file filters. They are read from the
+    file, not derived from today's allocation, so a file written before the
+    allocation changed is still recognized and can be replaced."""
+    from oh_access.native_boundary import filter_rules
+    text = content.decode()
+    header = re.match(re.escape(MARKER) + r"# Ports: (\d+),(\d+)\n", text)
+    members = re.search(r" tcp dport \{ (\d+(?:, \d+)*) \} ", text)
+    if not header or not members:
         raise ValueError("unrecognized native boundary rule file")
-    host = {"http_port": int(match[1]), "https_port": int(match[2])}
-    if content != rule_text(host).encode():
+    ports = frozenset(int(value) for value in members[1].split(", "))
+    # The five native listeners: HTTP and HTTPS (the header's), Karaf, LSP and shutdown.
+    if (len(ports) != 5 or not {int(header[1]), int(header[2])} <= ports
+            or content != (header[0] + filter_rules(ports)).encode()):
         raise ValueError("native boundary rules have been customized; preserve them for review")
-    return host
+    return ports
 
 
 def table_names(output):
@@ -107,7 +115,7 @@ class NativeIngress(Step):
                     return Check(False, "", f"unrecognized native boundary file: {path}")
                 if path == RULE_FILE:
                     try:
-                        rule_host(file.content)
+                        rule_ports(file.content)
                     except ValueError as exc:
                         return Check(False, "", str(exc))
         origin = system.unit_origin(UNIT)
@@ -132,7 +140,7 @@ class NativeIngress(Step):
 
     def perform(self, system, *, probe=False):
         from oh_access.files import atomic_private, private_directory, read_private
-        from oh_access.native_boundary import verify_firewall
+        from oh_access.native_boundary import firewall_ports, verify_firewall
         from oh_install import runner
         directory = private_directory(self.context.var / "native-boundary")
         rules, unit = directory / RULE_FILE.name, directory / UNIT
@@ -156,12 +164,12 @@ class NativeIngress(Step):
                 if code or previous is None:
                     raise ValueError("cannot inspect previous native firewall policy")
                 try:
-                    verify_firewall(current, rule_host(previous.content))
+                    verify_firewall(current, rule_ports(previous.content))
                 except ValueError:
                     # Installation can stop after publishing the new file but
                     # before applying it. Only our retained exact prior policy
                     # can explain that live state; extra rules still fail.
-                    verify_firewall(current, rule_host(read_private(previous_path)))
+                    verify_firewall(current, rule_ports(read_private(previous_path)))
                 else:
                     # A completed apply may have been interrupted before
                     # removing an older journal. Snapshot the policy actually
@@ -196,7 +204,7 @@ class NativeIngress(Step):
         try:
             if code:
                 raise ValueError("cannot inspect the active native firewall")
-            verify_firewall(output, self.context.host)
+            verify_firewall(output, firewall_ports(self.context.host))
         except ValueError as exc:
             system.say(str(exc))
             return 1

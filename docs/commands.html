@@ -41,7 +41,7 @@
 <h2 id="house">The house file, and what is generated from it</h2>
 <table class="verbs"><tbody><tr><td><a href="#init"><code>thermite init</code></a></td><td>create a private site, or pin an installed application upgrade</td></tr><tr><td><a href="#check"><code>thermite check</code></a></td><td>generate, validate and lint the selected configuration</td></tr><tr><td><a href="#generate"><code>thermite generate</code></a></td><td>write conf/ and metrics/ from the house file, and deploy/&#x27;s systemd units</td></tr><tr><td><a href="#validate"><code>thermite validate</code></a></td><td>check the house file, and that conf/ agrees with it</td></tr><tr><td><a href="#lint"><code>thermite lint</code></a></td><td>refuse credentials in Git, and docs naming a missing make target</td></tr></tbody></table>
 <h2 id="test">Test on a test runtime, never production</h2>
-<table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#test"><code>thermite test</code></a></td><td>boot conf/ on a test runtime; test routing and the controls end to end</td></tr><tr><td><a href="#sandbox"><code>thermite sandbox</code></a></td><td>run a thermite sandbox from a copy of conf/ on 127.0.0.1:13616</td></tr></tbody></table>
 <h2 id="production">Production runtime on this host</h2>
 <table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>update the application, native services and HTTPS gateway together</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>compatibility alias for the complete install workflow</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>deploy the commit deployed before the current one, or another</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
@@ -66,7 +66,7 @@ the house file, and what is generated from it:
 
 test on a test runtime, never production:
   test                 boot conf/ on a test runtime; test routing and the controls end to end
-  sandbox              run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615
+  sandbox              run a thermite sandbox from a copy of conf/ on 127.0.0.1:13616
 
 production runtime on this host:
   install              install thermite on this host, with one approval for the whole run
@@ -284,7 +284,7 @@ examples:
 </section>
 <section class="verb" id="test"><h3><code>thermite test</code></h3><p>Boot conf/ on a test runtime; test routing and the controls end to end.</p><pre class="help">usage: thermite test [-h] [--config DIR] [--timeout SECONDS] [--house FILE] ACTION ...
 
-Test conf/ on a test runtime, the pinned distribution on 127.0.0.1:13618,
+Test conf/ on a test runtime, the pinned distribution on 127.0.0.1:13619,
 never production: `boot` boots conf/ and reports how it loads (thermite
 deploy installs only a conf/ that passed it); `routing` and `controls`
 generate a conf from the house file that drives simulated matrices and
@@ -332,7 +332,7 @@ examples:
 Boot conf/ on a test runtime and report how it loads.
 
 Boot a test runtime (the pinned distribution, see thermite sandbox) on
-CONF, on 127.0.0.1:13618 (HTTPS 13619, Karaf console 13620) so it can run
+CONF, on 127.0.0.1:13619 (HTTPS 13620, Karaf console 13621) so it can run
 beside the sandbox. It boots on var/boot-check/conf, a copy of CONF that
 commands nothing (oh_render.read_only) and reaches no device
 (oh_render.unaddressed): every address in it is the limited broadcast
@@ -433,7 +433,7 @@ and check that:
    fixed setting such as scaler or HDCP) and refused none;
 9. openhab.log holds no ERROR and no model problem.
 
-It uses the test runtime of thermite test boot (127.0.0.1:13618) and its
+It uses the test runtime of thermite test boot (127.0.0.1:13619) and its
 warmed userdata, so it cannot run beside it.
 
 options:
@@ -502,7 +502,7 @@ it does not simulate or claim native Sonos UPnP/SOAP protocol coverage.
 Native discovery/channel status and idempotent real-binding validation are
 separate deployment checks.
 
-It uses the test runtime of thermite test boot (127.0.0.1:13618) and its
+It uses the test runtime of thermite test boot (127.0.0.1:13619) and its
 warmed userdata, so it cannot run beside thermite test boot or thermite
 test routing.
 
@@ -527,17 +527,17 @@ examples:
                                     give a slow host longer to boot
 </pre></details>
 </section>
-<section class="verb" id="sandbox"><h3><code>thermite sandbox</code></h3><p>Run a thermite sandbox from a copy of conf/ on 127.0.0.1:13615.</p><pre class="help">usage: thermite sandbox [-h] [--config DIR] ACTION ...
+<section class="verb" id="sandbox"><h3><code>thermite sandbox</code></h3><p>Run a thermite sandbox from a copy of conf/ on 127.0.0.1:13616.</p><pre class="help">usage: thermite sandbox [-h] [--config DIR] ACTION ...
 
 Run a local runtime sandbox from the distribution zip and a Temurin JRE, both
 pinned in versions.json and cached under build/sandbox/. No root, container
 runtime or system Java is needed.
 
-The sandbox binds HTTP to 127.0.0.1:13615 and HTTPS to 127.0.0.1:13616
+The sandbox binds HTTP to 127.0.0.1:13616 and HTTPS to 127.0.0.1:13617
 (OPENHAB_HTTP_ADDRESS/OPENHAB_HTTP_PORT/OPENHAB_HTTPS_PORT, honoured by
 runtime/bin/setenv), so the UI is not reachable from the LAN (but see
 --live below). The Karaf
-console listens on 127.0.0.1:13617. Bindings still open mDNS sockets on
+console listens on 127.0.0.1:13618. Bindings still open mDNS sockets on
 the LAN.
 
 It runs on var/sandbox/conf, a copy of conf/ in which every HTTP binding
@@ -555,7 +555,7 @@ picks the change up.
 is unchanged, so its Source selectors switch the real matrices and its
 remote drives the devices under control (the Apple TVs through thermite
 apple-tv serve; every other control stays guarded in conf/), and HTTP and HTTPS
-listen on every interface, so phones on the LAN reach it on port 13615 of
+listen on every interface, so phones on the LAN reach it on port 13616 of
 this host. Anyone on the LAN can then do what the runtime&#x27;s implicit &#x27;user&#x27; role
 allows, choosing sources and driving those devices included; administration
 still needs the admin login. `reload` keeps the mode the sandbox was started in;
@@ -594,7 +594,7 @@ REST authentication:
   runtime 5 lets anonymous clients use &#x27;user&#x27; endpoints (implicit user role)
   but needs an administrator for others, such as /rest/addons. After the REST
   API answers, `start` logs into the local Karaf console (runtime/bin/client
-  as the distribution&#x27;s console user openhab/habopen, 127.0.0.1:13617 only)
+  as the distribution&#x27;s console user openhab/habopen, 127.0.0.1:13618 only)
   and runs:
       openhab:users add admin &lt;random password&gt; administrator
       openhab:users addApiToken admin automation sandbox
@@ -602,7 +602,7 @@ REST authentication:
   var/sandbox/admin-password, both mode 0600 and gitignored. A token that
   still works is reused on the next start. Send it as
       curl -H &quot;Authorization: Bearer $(cat var/sandbox/api-token)&quot; \
-           http://127.0.0.1:13615/rest/addons
+           http://127.0.0.1:13616/rest/addons
   and log into the UI as &#x27;admin&#x27; with the stored password. --fresh discards
   both together with userdata.
 
@@ -673,7 +673,7 @@ switches every verb takes:
   --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite sandbox start            read-only, on 127.0.0.1:13615
+  thermite sandbox start            read-only, on 127.0.0.1:13616
   thermite sandbox start --fresh    on an empty userdata: a first boot
   thermite sandbox start --live     a test instance that drives the house, reachable from the LAN
 </pre></details>
@@ -1125,7 +1125,7 @@ missing-account diagnostic as a visible warning, preserving local transport.
 
 The runtime answers /rest/things and /rest/addons only with credentials; pass
 an API token file (the sandbox writes var/sandbox/api-token). --sandbox
-checks the sandbox on 127.0.0.1:13615, with that token when it exists.
+checks the sandbox on 127.0.0.1:13616, with that token when it exists.
 --production checks production runtime on this host, on 127.0.0.1 at
 instance/host.yaml&#x27;s http_port, with the token thermite install saved in
 var/&lt;this host&#x27;s name&gt;/api-token, and the metrics services beside it:
@@ -1146,8 +1146,8 @@ options:
   -h, --help                   show this help message and exit
   --config, --site DIR         use this private configuration directory
   --production                 production runtime on this host
-  --sandbox                    the sandbox, http://127.0.0.1:13615 (thermite sandbox)
-  --url URL                    runtime at URL, e.g. http://thermite.example:13601
+  --sandbox                    the sandbox, http://127.0.0.1:13616 (thermite sandbox)
+  --url URL                    runtime at URL, e.g. http://thermite.example:13602
   --token-file FILE            file holding a runtime API token
   --allow-offline ID [ID ...]  Thing UIDs that may be offline
   --installation               with --production, verify installation and report offline
@@ -1184,7 +1184,7 @@ examples:
   thermite health --production      check production runtime on this host, with the token the install saved
   thermite health --sandbox --addons conf/services/addons.cfg
                                     also fail if an add-on conf/ asks for is not installed
-  thermite health --url http://thermite.example:13601 --json
+  thermite health --url http://thermite.example:13602 --json
                                     runtime at that URL, without a token, as JSON
 </pre>
 </section>
@@ -1497,7 +1497,7 @@ options:
   -h, --help                 show this help message and exit
   --house FILE               the house file (default: instance/devices.yaml)
   --production               production runtime on this host (default)
-  --url URL                  runtime at URL, e.g. http://thermite.example:13601
+  --url URL                  runtime at URL, e.g. http://thermite.example:13602
   --runtime-token-file FILE  a mode-0600 API token for --url
   --json                     print the report as JSON
 
@@ -1528,7 +1528,7 @@ options:
   -h, --help                 show this help message and exit
   --house FILE               the house file (default: instance/devices.yaml)
   --production               production runtime on this host (default)
-  --url URL                  runtime at URL, e.g. http://thermite.example:13601
+  --url URL                  runtime at URL, e.g. http://thermite.example:13602
   --runtime-token-file FILE  a mode-0600 API token for --url
   -n, --dry-run              report what it would do; change nothing
   --homebridge FILE          read the matching local console login from this Homebridge
@@ -1564,7 +1564,7 @@ options:
   -h, --help                 show this help message and exit
   --house FILE               the house file (default: instance/devices.yaml)
   --production               production runtime on this host (default)
-  --url URL                  runtime at URL, e.g. http://thermite.example:13601
+  --url URL                  runtime at URL, e.g. http://thermite.example:13602
   --runtime-token-file FILE  a mode-0600 API token for --url
   --all                      enable native WebRTC for every configured camera
   --none                     disable all native WebRTC sessions; keep status and
@@ -1633,12 +1633,12 @@ pairing:
 localhost only:
   The API has no authentication, and whoever reaches it can pair with and
   drive every Apple TV. thermite runs on the same host, so it listens on
-  127.0.0.1:13605 and refuses a non-loopback --listen unless --allow-remote
+  127.0.0.1:13606 and refuses a non-loopback --listen unless --allow-remote
   is given.
 
 examples:
   thermite apple-tv setup           build the venv with the pinned pyatv
-  thermite apple-tv serve           serve on 127.0.0.1:13605
+  thermite apple-tv serve           serve on 127.0.0.1:13606
   thermite apple-tv serve --setup   build the venv first if it is missing or stale, as production does
 </pre>
 <details id="apple-tv-setup"><summary><code>thermite apple-tv setup</code></summary><pre class="help">usage: thermite apple-tv setup [-h]
@@ -1675,7 +1675,7 @@ options:
   -h, --help          show this help message and exit
   --setup             run setup first if the venv is missing or was built from other
                       pins or another Python
-  --listen HOST:PORT  address to serve on (default 127.0.0.1:13605)
+  --listen HOST:PORT  address to serve on (default 127.0.0.1:13606)
   --secrets DIR       where pairings are stored (default var/secrets/pyatv)
   --allow-remote      allow a non-loopback --listen address (no authentication: anyone
                       who reaches it can pair with and drive the Apple TVs)
@@ -1696,11 +1696,11 @@ pairing:
 localhost only:
   The API has no authentication, and whoever reaches it can pair with and
   drive every Apple TV. thermite runs on the same host, so it listens on
-  127.0.0.1:13605 and refuses a non-loopback --listen unless --allow-remote
+  127.0.0.1:13606 and refuses a non-loopback --listen unless --allow-remote
   is given.
 
 examples:
-  thermite apple-tv serve           serve on 127.0.0.1:13605 until Ctrl-C
+  thermite apple-tv serve           serve on 127.0.0.1:13606 until Ctrl-C
   thermite apple-tv serve --setup --secrets /secrets
                                     as the helper&#x27;s container runs it
 </pre></details>
@@ -1758,11 +1758,11 @@ front ends drive thermite the same way (tui/remote/README.md).
 
 By default it uses the authenticated site: THERMITE_SITE_URL, the installed
 gateway&#x27;s verified address, or https://localhost on the site&#x27;s HTTPS port
-(instance/host.yaml&#x27;s gateway.port, 13600 by default). A site with
+(instance/host.yaml&#x27;s gateway.port, 13601 by default). A site with
 access.mode: native instead uses its
 production runtime without login; --native explicitly selects that testing
 mode for this run. Choosing a source really switches the room. --sandbox talks to
-the sandbox on 127.0.0.1:13615 and --mock to the page&#x27;s mock backend,
+the sandbox on 127.0.0.1:13616 and --mock to the page&#x27;s mock backend,
 which sends nothing.
 
 Its colors are a thermite theme&#x27;s, as the remote page&#x27;s are: the house
@@ -1789,8 +1789,8 @@ options:
   -h, --help                 show this help message and exit
   --config, --site DIR       use this private configuration directory
   --production               production runtime on this host (default)
-  --sandbox                  the sandbox, http://127.0.0.1:13615 (thermite sandbox)
-  --url URL                  runtime at URL, e.g. http://thermite.example:13601
+  --sandbox                  the sandbox, http://127.0.0.1:13616 (thermite sandbox)
+  --url URL                  runtime at URL, e.g. http://thermite.example:13602
   --mock                     the remote page&#x27;s mock backend, which sends nothing
   --native                   explicitly use the native runtime instead of site
                              authentication (owner/testing only)
@@ -1840,7 +1840,7 @@ examples:
   thermite remote --sandbox --room ROOM
                                     the sandbox, starting in that room
   thermite remote --pair            start on the Pairing screen
-  thermite remote --url http://thermite.example:13601 --light
+  thermite remote --url http://thermite.example:13602 --light
                                     thermite on another host, light
   thermite remote --mock --theme contrast
                                     in the high-contrast theme
@@ -1860,12 +1860,12 @@ the gateway serves the house&#x27;s rooms and controls. It needs Node.js; the
 first run installs the pinned blessed into ~/.cache/thermite/tui-remote
 ($XDG_CACHE_HOME) with npm ci.
 
-Without --url it opens https://thermite:13600: most homes run their
+Without --url it opens https://thermite:13601: most homes run their
 Thermite server on a computer named thermite. --url names the gateway as
 https://HOST:PORT, or as HOST:PORT or HOST, which mean https (on port
-13600 without one). With a private site selected (--config DIR),
+13601 without one). With a private site selected (--config DIR),
 the HTTPS port its instance/host.yaml sets, gateway.port, replaces
-13600 in both. Plain http reaches only this computer: localhost,
+13601 in both. Plain http reaches only this computer: localhost,
 127.0.0.1 or [::1]. A site&#x27;s plain-HTTP Guest port serves browsers on its
 guest network, not this remote; pointed at one, it says so.
 
@@ -1876,7 +1876,7 @@ options:
   -h, --help                 show this help message and exit
   --config, --site DIR       use this private configuration directory
   --url URL                  the gateway: https://HOST:PORT, HOST:PORT or HOST (default:
-                             https://thermite:13600, or a selected site&#x27;s gateway.port)
+                             https://thermite:13601, or a selected site&#x27;s gateway.port)
   --ca-file FILE             trust this copy of the server&#x27;s tls-cert.pem; remembered
                              for that address
   --pair                     start on the Pairing screen
@@ -1933,13 +1933,13 @@ exit status:
      serving a house or answering plain HTTP, or its certificate not trusted
 
 examples:
-  thermite tui                      the house on https://thermite:13600, the server named thermite
-  thermite tui --url 192.0.2.50     a server of another name: https://192.0.2.50:13600
+  thermite tui                      the house on https://thermite:13601, the server named thermite
+  thermite tui --url 192.0.2.50     a server of another name: https://192.0.2.50:13601
   thermite tui --config ~/thermite-site --url 192.0.2.50
                                     the same, on the HTTPS port that site&#x27;s instance/host.yaml sets (gateway.port)
-  thermite tui --url https://192.0.2.50:13600 --ca-file ~/thermite-ca.pem
+  thermite tui --url https://192.0.2.50:13601 --ca-file ~/thermite-ca.pem
                                     from a laptop, trusting a copy of the server&#x27;s tls-cert.pem
-  thermite access login --url https://thermite:13600 --user operator
+  thermite access login --url https://thermite:13601 --user operator
                                     sign in once; thermite tui then uses that account
   thermite tui --room ROOM --light  start in that room, in the theme&#x27;s light mode
 </pre>
@@ -1962,7 +1962,7 @@ instead and writes its key file. list shows the enrolled remotes and forget
 removes one. The state file holds the remotes&#x27; keys: it is private (mode
 0600) and keys are never printed.
 
-Without --url serve opens https://thermite:13600, as thermite tui does, and
+Without --url serve opens https://thermite:13601, as thermite tui does, and
 trusts the gateway&#x27;s certificate the same way (thermite help tui).
 
 options:
@@ -1990,7 +1990,7 @@ the base:
   and channel as serve last saw them, or as --base-port&#x27;s base says them.
 
 examples:
-  thermite handheld serve           the bridge for the house on https://thermite:13600, on the base plugged in here
+  thermite handheld serve           the bridge for the house on https://thermite:13601, on the base plugged in here
   thermite handheld serve --mock --listen /tmp/thermite-base.sock
                                     the mock house, for a simulated base and remote on that socket
   thermite handheld enroll --name lounge
@@ -2009,7 +2009,7 @@ Run the bridge between the base and the house.
 options:
   -h, --help      show this help message and exit
   --url URL       the gateway: https://HOST:PORT, HOST:PORT or HOST (default:
-                  https://thermite:13600, or a selected site&#x27;s gateway.port)
+                  https://thermite:13601, or a selected site&#x27;s gateway.port)
   --ca-file FILE  trust this copy of the server&#x27;s tls-cert.pem; remembered for that
                   address
   --mock          the remote page&#x27;s mock house, which sends nothing
@@ -2024,7 +2024,7 @@ switches every verb takes:
   --no-color      no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite handheld serve           the bridge for the house on https://thermite:13600, on the base plugged in here
+  thermite handheld serve           the bridge for the house on https://thermite:13601, on the base plugged in here
   thermite handheld serve --mock --listen /tmp/thermite-base.sock
                                     the mock house, for a simulated base and remote on that socket
 </pre></details>
@@ -2144,7 +2144,7 @@ switches every verb takes:
   --no-color            no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access login --url https://thermite.example:13600 --user operator
+  thermite access login --url https://thermite.example:13601 --user operator
                                     save this site&#x27;s personal credential privately
   thermite access setup --config /srv/thermite/access/releases/RELEASE/config.json
                                     arm first admin setup on the HTTPS Security page
@@ -2339,7 +2339,7 @@ switches every verb takes:
   --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access login --url https://thermite.example:13600 --user operator
+  thermite access login --url https://thermite.example:13601 --user operator
                                     use this site&#x27;s private terminal credential
 </pre></details>
 <details id="access-logout"><summary><code>thermite access logout</code></summary><pre class="help">usage: thermite access logout [-h] [--url URL] [--json]
@@ -2357,7 +2357,7 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access logout --url https://thermite.example:13600
+  thermite access logout --url https://thermite.example:13601
                                     use this site&#x27;s private terminal credential
 </pre></details>
 <details id="access-status"><summary><code>thermite access status</code></summary><pre class="help">usage: thermite access status [-h] [--url URL] [--room ROOM] [--json]
@@ -2376,7 +2376,7 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access status --url https://thermite.example:13600
+  thermite access status --url https://thermite.example:13601
                                     use this site&#x27;s private terminal credential
 </pre></details>
 <details id="access-stage"><summary><code>thermite access stage</code></summary><pre class="help">usage: thermite access stage [-h] --destination DESTINATION --state STATE
@@ -2412,7 +2412,7 @@ options:
   --allowed-host ALLOWED_HOSTS  exact HTTP Host name (repeatable; no wildcard)
   --bind-host BIND_HOST         HTTPS listener address (default: all IPv4 interfaces)
   --port PORT                   unprivileged HTTPS port (default: the selected site&#x27;s
-                                gateway.port, else 13600)
+                                gateway.port, else 13601)
   --timezone TIMEZONE           site&#x27;s IANA timezone (default: UTC)
   --service-user {thermite}     fixed service account (thermite); ownership handoff is
                                 reported explicitly
@@ -2626,7 +2626,7 @@ no device connection or native runtime. Only previously managed source
 files can be removed; unrelated files and license terms stay untouched.
 
 examples:
-  thermite docs serve               preview the site at http://127.0.0.1:13621/
+  thermite docs serve               preview the site at http://127.0.0.1:13622/
   thermite docs check               does it build, without naming this house?
   thermite docs export --to ../thermite
                                     update the thermite repository&#x27;s copy
@@ -2654,7 +2654,7 @@ Preview the site on 127.0.0.1, without writing it anywhere.
 
 options:
   -h, --help     show this help message and exit
-  --port PORT    the port (default: 13621)
+  --port PORT    the port (default: 13622)
 
 switches every verb takes:
   -q, --quiet    print only errors
@@ -2662,7 +2662,7 @@ switches every verb takes:
   --no-color     no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite docs serve               at http://127.0.0.1:13621/
+  thermite docs serve               at http://127.0.0.1:13622/
   thermite docs serve --port 0      on any free port; it prints which
 </pre></details>
 <details id="docs-check"><summary><code>thermite docs check</code></summary><pre class="help">usage: thermite docs check [-h] [--to DIR] [--with-code]

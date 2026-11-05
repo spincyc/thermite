@@ -5,7 +5,7 @@ const Access = require("../web/remote/access"), { EventSource } = require("../tu
 const SOURCE = fs.readFileSync(path.join(__dirname, "../web/remote/access.js"), "utf8");
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-const origin = "https://site.example:13600", csrf = "C".repeat(32), TELEMETRY = "/api/v1/telemetry";
+const origin = "https://site.example:13601", csrf = "C".repeat(32), TELEMETRY = "/api/v1/telemetry";
 const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, auth_enabled: true, permissions: ["site.read", "room.control"] };
 const answer = (value, status = 200, headers = {}) => ({ ok: status >= 200 && status < 300, status, json: async () => value,
   clone() { return answer(value, status, headers); }, headers: { get: name => headers[name] ?? null, getSetCookie: () => [] } });

@@ -8,20 +8,20 @@ See device availability, room history and host health in Grafana, from a phone o
 
 | Service | Port | What it does |
 |---|---|---|
-| Prometheus | 13606, this machine only | collects metrics every 30 seconds, and device ports every 2 minutes; retains 395 days or 12 GB, whichever comes first |
-| node_exporter | 13607, this machine only | the machine itself: CPU, memory, disks, temperatures, and thermite's services; also the gateway's, policy worker's and callback relay's own metrics, which they write to files rather than serve |
-| blackbox_exporter | 13608, this machine only | whether each device answers on the port thermite controls it through (except where a connection would cost the device a session or a TLS handshake: Android TV, Cast, WiiM, AVPro and Sony projector ports, which their Things' status covers), and whether the remote gateway answers over HTTPS |
-| thermite's exporter | 13609, this machine only | each device's status, power, input and volume, by room |
-| Grafana | 13610, your network | the dashboards |
-| Alertmanager | 13611, this machine only | routes monitoring alerts |
-| ntfy | 13612, this machine only | keeps local notifications |
-| Notification adapter | 13613, this machine only | delivers known alert messages to ntfy |
+| Prometheus | 13607, this machine only | collects metrics every 30 seconds, and device ports every 2 minutes; retains 395 days or 12 GB, whichever comes first |
+| node_exporter | 13608, this machine only | the machine itself: CPU, memory, disks, temperatures, and thermite's services; also the gateway's, policy worker's and callback relay's own metrics, which they write to files rather than serve |
+| blackbox_exporter | 13609, this machine only | whether each device answers on the port thermite controls it through (except where a connection would cost the device a session or a TLS handshake: Android TV, Cast, WiiM, AVPro and Sony projector ports, which their Things' status covers), and whether the remote gateway answers over HTTPS |
+| thermite's exporter | 13610, this machine only | each device's status, power, input and volume, by room |
+| Grafana | 13611, your network | the dashboards |
+| Alertmanager | 13612, this machine only | routes monitoring alerts |
+| ntfy | 13613, this machine only | keeps local notifications |
+| Notification adapter | 13614, this machine only | delivers known alert messages to ntfy |
 
 Prometheus also reads runtime memory, threads, events and rule runs through the Metrics add-on. `thermite test boot` checks that it answers. See [storage requirements](requirements.html#storage-and-metrics) for the retention budget.
 
 ## What you see
 
-Open `http://<thermite's address>:13610/`. Anyone on your network can look without logging in. Six dashboards come with it:
+Open `http://<thermite's address>:13611/`. Anyone on your network can look without logging in. Six dashboards come with it:
 
 - **House health**, the home page: is the house OK? Six tiles answer it at a glance: control, rooms ready, remotes, alerts firing, phone delivery and the host. Below them, **Needs attention now** names each room, problem and device in plain words; then every room's source through the day, switching since yesterday evening, and the alerts firing.
 - **Switching and remotes**: how long source changes take and how they end, the routing executor and any quarantined device, the remote gateway's latency, answers and event streams, what remote pages gave up waiting for, and the room policy worker.

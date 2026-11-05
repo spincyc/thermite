@@ -158,7 +158,7 @@ class Configuration(unittest.TestCase):
 
     def test_freed_site_ports_survive_full_staging_and_both_runtime_loaders(self):
         allocated = oh_ports.effective({"metrics": {"grafana_port": 14040}})
-        for number, (access_port, callback_port) in enumerate(((13610, None), (13600, 13610), (13610, 13600))):
+        for number, (access_port, callback_port) in enumerate(((13611, None), (13601, 13611), (13611, 13601))):
             with self.subTest(access=access_port, callbacks=callback_port):
                 if callback_port is not None:
                     config = CONFIG | {"upstream": oh_ports.NATIVE_URL, "port": callback_port,

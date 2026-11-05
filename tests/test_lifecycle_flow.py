@@ -187,7 +187,7 @@ class CommissioningTransport(unittest.TestCase):
 
 def context(**changes):
     values = dict(area=AREA, versions={"openhab": {"version": "5.2.3"}},
-                  host={"root": "/srv/fictional", "uid": 9001, "gid": 9001, "http_port": 13601},
+                  host={"root": "/srv/fictional", "uid": 9001, "gid": 9001, "http_port": 13602},
                   head="a" * 40, conf_digest="b" * 64, hostname="fixture", address=None,
                   prepared={"conf/services/addons.cfg": deploy.Blob(b"binding=sonos\n")},
                   application={"version": "0.1.0.dev0", "digest": "c" * 64})
@@ -342,7 +342,7 @@ class UnitFailures(unittest.TestCase):
         for units, expected in (([Unit("failed", "enabled", None, None)], "failed"),
                                 ([Unit("activating", "enabled", 0, generation) for generation in (1, 2, 3, 4)], "crash loop")):
             with self.subTest(expected=expected):
-                step = steps.Answers(SimpleNamespace(url="http://127.0.0.1:13601"), steps.NativeDeadline(600))
+                step = steps.Answers(SimpleNamespace(url="http://127.0.0.1:13602"), steps.NativeDeadline(600))
                 system = mock.Mock(spec=System)
                 now = clocked(system)
                 system.openhab_version.return_value = None
@@ -356,8 +356,8 @@ class UnitFailures(unittest.TestCase):
         with mock.patch.object(oh_cli, "switches", oh_cli.Switches(verbose=True)), \
                 contextlib.redirect_stdout(io.StringIO()):
             with progress.Progress(system, "1. Runtime readiness") as display:
-                progress.update("REST at http://127.0.0.1:13601 is not ready")
-                progress.update("REST at http://127.0.0.1:13601 is not ready")
+                progress.update("REST at http://127.0.0.1:13602 is not ready")
+                progress.update("REST at http://127.0.0.1:13602 is not ready")
                 display.finish("OK")
         shown = [call.args[0] for call in system.say.call_args_list if "waiting:" in call.args[0]]
         self.assertEqual(len(shown), 1)

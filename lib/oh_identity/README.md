@@ -370,7 +370,7 @@ Production cutover still requires owner integration: native REST/HTTPS/ws and
 alternate UIs must not bypass this boundary, implicit user role must be off,
 trusted networks must not grant anonymous access, and internal helpers must use
 their own credentials. **Preserve actual Sonos/UPnP callback delivery.** Binding
-the native server to loopback alone may break callbacks advertised on LAN:13601.
+the native server to loopback alone may break callbacks advertised on LAN:13602.
 The deployment owner must verify the pinned callback route/port and retain an
 exact method/device-origin callback relay or supported separate listener.
 Host networking alone does not establish this. The identity core implements

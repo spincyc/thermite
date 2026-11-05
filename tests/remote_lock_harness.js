@@ -8,7 +8,7 @@ const assert = require("node:assert/strict"), fs = require("node:fs"), path = re
 const Main = require("../tui/remote/main"), Shared = require("../tui/remote/shared");
 console.log = console.info = () => {};
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const origin = "https://site.example:13600", csrf = "C".repeat(32);
+const origin = "https://site.example:13601", csrf = "C".repeat(32);
 const json = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value, text: async () => JSON.stringify(value),
   clone() { return json(value, status); }, headers: { get: () => "application/json", getSetCookie: () => [] } });
 const text = value => ({ ok: true, status: 200, text: async () => value, json: async () => { throw new SyntaxError("text"); }, headers: { get: () => "text/plain", getSetCookie: () => [] } });

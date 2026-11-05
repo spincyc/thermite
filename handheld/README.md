@@ -38,7 +38,7 @@ thermite handheld forget NAME [--port DEVICE]
 ```
 
 `serve` finds the gateway and trusts it as `thermite tui` does: without
-`--url` it opens `https://thermite:13600`. Guests control unlocked rooms
+`--url` it opens `https://thermite:13601`. Guests control unlocked rooms
 without a login; after `thermite access login` for the same address, that
 account is used. `--mock` uses the remote page's mock house, which sends
 nothing. Without `--port` it uses the Espressif USB port in

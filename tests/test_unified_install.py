@@ -30,7 +30,7 @@ class UnifiedInstall(unittest.TestCase):
         from oh_cli import remote
         from oh_access import client
         arguments = argparse.Namespace(mock=False, native=False, url=None, sandbox=False)
-        profile = {"url": "https://fixture.example:13600", "ca_file": "/fictional/public-cert.pem"}
+        profile = {"url": "https://fixture.example:13601", "ca_file": "/fictional/public-cert.pem"}
         credential = AREA / ".scratch/unified-root/absent-personal-token.json"
         with patch.object(client, "deployment", return_value=profile), \
                 patch.object(client, "credential_path", return_value=credential), \
@@ -45,7 +45,7 @@ class UnifiedInstall(unittest.TestCase):
             self.assertNotIn("THERMITE_REMOTE_TOKEN_FILE", environment)
             with patch.object(client, "saved_ca", side_effect=ValueError("retired old certificate")):
                 self.assertEqual(remote.launch_environment(arguments, None)["NODE_EXTRA_CA_CERTS"], profile["ca_file"])
-            arguments.url = "https://elsewhere.example:13600"
+            arguments.url = "https://elsewhere.example:13601"
             self.assertEqual(remote.target(arguments), ["--url", arguments.url])
             self.assertNotIn("NODE_EXTRA_CA_CERTS", remote.launch_environment(arguments, None))
 
@@ -56,12 +56,12 @@ class UnifiedInstall(unittest.TestCase):
         arguments = argparse.Namespace(mock=False, native=False, url=None, sandbox=False)
         scratch = AREA / ".scratch/unified-root"
         scratch.mkdir(parents=True, exist_ok=True)
-        host = {"timezone": "Etc/UTC", "http_port": 13601, "https_port": 13602, "uid": 9001, "gid": 9001}
+        host = {"timezone": "Etc/UTC", "http_port": 13602, "https_port": 13603, "uid": 9001, "gid": 9001}
         with tempfile.TemporaryDirectory(dir=scratch) as temporary, \
                 patch.object(client, "deployment", return_value=None), patch.dict(os.environ, {}, clear=True):
             site = Path(temporary)
             with patch.object(remote, "AREA", site):
-                self.assertEqual(remote.target(arguments), ["--url", "https://localhost:13600"])
+                self.assertEqual(remote.target(arguments), ["--url", "https://localhost:13601"])
                 (site / "instance").mkdir()
                 (site / "instance/host.yaml").write_text(json.dumps({**host, "gateway": {"port": 16301}}))
                 self.assertEqual(remote.target(arguments), ["--url", "https://localhost:16301"])
@@ -71,7 +71,7 @@ class UnifiedInstall(unittest.TestCase):
 
     def test_local_profile_rejects_native_urls_invalid_certificates_and_extra_credentials(self):
         from oh_access import client, AccessError
-        profile = dict(version=1, url="https://fixture.example:13600", ca_file="/fictional/public-cert.pem",
+        profile = dict(version=1, url="https://fixture.example:13601", ca_file="/fictional/public-cert.pem",
                        release="/fictional/release", state="/fictional/state", versions={}, journal="/fictional/journal")
         with patch.object(client, "read_private", return_value=json.dumps(profile).encode()), \
                 patch.object(client.ssl, "create_default_context"):
@@ -146,7 +146,9 @@ class UnifiedInstall(unittest.TestCase):
             self.assertLess(types.index(steps.Target), types.index(steps.NativeReady))
             self.assertEqual(types.count(steps.NativeReady), 1, "one authoritative wait owns the deadline and recovery budget")
             self.assertEqual(types.index(steps.NativeReady) + 1, types.index(steps.MetricsAnswer))
-            self.assertEqual(types.index(steps.MetricsAnswer) + 1, types.index(steps.Verify))
+            self.assertEqual(types.index(steps.MetricsAnswer) + 1, types.index(steps.ListenerRecord))
+            self.assertEqual(types.index(steps.ListenerRecord) + 1, types.index(steps.Verify))
+            self.assertEqual(types.index(steps.ListenerMove) + 1, types.index(steps.Units))
             self.assertTrue(sequence[types.index(Gateway)].stop_on_failure)
         for sequence in (steps.install(context), steps.upgrade(context, plan, "fixture"), steps.clean_install(context)):
             types = [type(step) for step in sequence]
@@ -167,7 +169,7 @@ class GatewayReadinessLifecycle(unittest.TestCase):
         import oh_deploy
         import oh_sandbox
         context = steps.Context(AREA, {"openhab": {"version": "5.2.3"}},
-                                {"root": "/srv/fictional", "uid": 9001, "gid": 9001, "http_port": 13601},
+                                {"root": "/srv/fictional", "uid": 9001, "gid": 9001, "http_port": 13602},
                                 "a" * 40, "b" * 64, "fixture", None,
                                 prepared={"conf/services/addons.cfg": oh_deploy.Blob(b"binding=sonos\n")},
                                 application={"version": "0.1.0.dev0", "digest": "c" * 64})

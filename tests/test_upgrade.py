@@ -55,7 +55,7 @@ class Upgrade(unittest.TestCase):
             scope.enter_context(patch.object(steps.Units, "stale", return_value=()))
             scope.enter_context(patch.object(steps.Token, "saved", return_value=True))
             scope.enter_context(patch.object(steps.oh_apparmor, "enabled", return_value=False))
-            for kind in (steps.Target, steps.Packages, steps.NodeConfinement,
+            for kind in (steps.ListenerMove, steps.Target, steps.Packages, steps.NodeConfinement,
                          steps.Preconditions, steps.Account, steps.NativePreparation):
                 scope.enter_context(patch.object(kind, "check", return_value=Check(True, "fixture current")))
             scope.enter_context(patch.object(deploy, "unit_version", return_value="5.2.3"))
@@ -147,6 +147,35 @@ class Upgrade(unittest.TestCase):
         self.assertTrue(plan.restart_runtime)
         self.runtime_time = 40
         self.assertTrue(self.plan().current)
+
+    def test_moved_listeners_stop_every_service_before_units_and_are_recorded_after_readiness(self):
+        move, record = steps.ListenerMove(self.context), steps.ListenerRecord(self.context)
+        owned = Mock(units=lambda roles: list(roles))
+        with patch.object(ownership, "inspect", return_value=owned):
+            # Nothing records the ports the running services listen on.
+            self.assertFalse(move.check(self.system).done)
+            [stop] = move.actions(self.system)
+            with self.planning(), patch.object(steps.ListenerMove, "check", return_value=Check(False, "fixture")):
+                plan = steps.plan(self.context, self.system)
+        self.assertEqual(stop.argv, ("systemctl", "stop", *oh_units.CONTAINED, *oh_units.ACCESS_UNITS))
+        self.assertEqual(stop.stops, stop.argv[2:])
+        self.assertIn("listener ports", plan.migration)
+        self.assertFalse(plan.current)
+        saved = {}
+        self.system.write_private.side_effect = lambda path, text: saved.update({path: text})
+        self.assertFalse(record.check(self.system).done)
+        self.assertEqual(record.save(self.system), 0)
+        self.system.read_bytes.side_effect = lambda path: saved.get(path, "").encode()
+        with patch.object(ownership, "inspect", return_value=owned):
+            self.assertTrue(move.check(self.system).done)
+            self.assertTrue(record.check(self.system).done)
+            # The next allocation moves them again; with nothing running there is nothing to stop.
+            self.context.host["gateway"] = {"port": 16301}
+            self.assertFalse(move.check(self.system).done)
+            self.system.unit.side_effect = lambda name: Unit("inactive", "enabled", None)
+            self.assertTrue(move.check(self.system).done)
+            self.assertEqual(move.actions(self.system), [])
+        self.assertFalse(record.check(self.system).done)
 
     def test_invalid_deployment_record_requires_redeployment(self):
         self.record = []

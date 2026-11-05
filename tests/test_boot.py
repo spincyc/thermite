@@ -46,7 +46,7 @@ class BootReadiness(unittest.TestCase):
         (self.conf / "services").mkdir(parents=True)
         (self.conf / "services/addons.cfg").write_text("binding=http\nmisc=metrics\n")
         self.inst = lib.Instance("boot-check", root / "state", self.conf, root / "state/userdata",
-                                 13618, 13619, 13620, shutdown_port=13625)
+                                 13619, 13620, 13621, shutdown_port=13626)
         self.inst.userdata.mkdir(parents=True)
         self.rt = lib.Runtime("5.2.3", root / "distribution", root / "jre")
         self.args = argparse.Namespace(conf=self.conf, rebuild=False, timeout=20, settle=2, stall=5,

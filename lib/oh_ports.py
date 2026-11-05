@@ -16,7 +16,7 @@ import socket
 import stat
 from types import MappingProxyType
 
-BASE = 13600
+BASE = 13601
 NAMES = (
     "access", "http", "https", "karaf", "lsp", "helper", "prometheus", "node_exporter",
     "blackbox", "exporter", "grafana", "alertmanager", "ntfy", "notifications", "callbacks",
@@ -67,7 +67,7 @@ def effective(host: dict | None = None) -> dict[str, int]:
     """Validate production overrides against each other and the remaining listeners.
 
     Every listener keeps its default unless host.yaml moves it, so a default
-    a moved listener frees (such as 13600 after `gateway: {port: ...}`) may
+    a moved listener frees (such as 13601 after `gateway: {port: ...}`) may
     be taken by another override, such as the Guest port.
     """
     host = host or {}

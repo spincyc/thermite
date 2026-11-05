@@ -325,7 +325,7 @@ automation; `thermite pair --help` lists supported pairing steps.
 
 ## Set up HTTPS and accounts
 
-Installation prints the verified HTTPS URL, on port 13600 unless
+Installation prints the verified HTTPS URL, on port 13601 unless
 `gateway: {port: N}` in `instance/host.yaml` moves it (see
 [moving the HTTPS application](ports.md#moving-the-https-application)), and the
 path to its trust certificate, `tls-cert.pem` in the gateway root (`/srv/thermite/access` by
@@ -384,7 +384,7 @@ ordinary controls without a login. To view cameras or administer the site, log i
 credential; installation itself creates no household account. Other computers
 need the server's URL and a copy of `tls-cert.pem`, passed once with
 `--ca-file`: `thermite tui --url URL --ca-file FILE` opens the terminal remote
-there without a private site (with no `--url` it opens `https://thermite:13600`;
+there without a private site (with no `--url` it opens `https://thermite:13601`;
 with `--config DIR` it uses that site's `gateway.port`), and
 `thermite access login` takes the same switches.
 
@@ -400,34 +400,18 @@ the guest network:
 guest_http:
   listen: [198.51.100.2]       # this host's address on the guest network
   clients: [198.51.100.0/24]   # the networks allowed to connect
-  # port: 13626                # the default
+  # port: 13627                # the default
   # names: [remote.guest.example]
 ```
 
 `listen` names this host's own addresses, never a wildcard; `clients` names
 the guest network. The gateway closes a connection from any other address
 before reading it, and logs how many it closed at most once a minute. Guests
-open `http://198.51.100.2:13626/`, or a name from the optional `names` that
+open `http://198.51.100.2:13627/`, or a name from the optional `names` that
 resolves to a `listen` address; a request naming any other host is refused.
 Commit the change and run `thermite upgrade --config DIR`. `thermite status`
 lists the Guest addresses, and install and upgrade check each one as a Guest
 when this host's own address is inside `clients`.
-
-For an easier address to type, move the HTTPS application off 13600 and give
-guests that port:
-
-```yaml
-gateway:
-  port: 16301                  # the HTTPS application, where everyone signs in
-guest_http:
-  port: 13600                  # allowed once the gateway has moved off it
-  listen: [198.51.100.2]
-  clients: [198.51.100.0/24]
-```
-
-Moving the gateway changes every client's HTTPS address; see
-[moving the HTTPS application](ports.md#moving-the-https-application) for
-what to update.
 
 The listener only ever answers as a Guest: Home, Remotes, room states and
 lock status, commands to unlocked rooms and All Off. Locks and schedules
@@ -453,7 +437,7 @@ Weigh the trade-offs before enabling it:
   busy guest network can briefly make the HTTPS site answer 503 too.
 - Bind the listener only to the guest network's address and keep `clients` to
   that network. The managed `nftables` table guards native ports only and
-  leaves this port alone; on a host with its own firewall, open 13626/tcp
+  leaves this port alone; on a host with its own firewall, open 13627/tcp
   (or your `port`) from the guest network, and from nowhere else.
 
 ## Trace a command

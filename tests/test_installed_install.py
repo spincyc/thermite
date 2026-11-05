@@ -39,16 +39,16 @@ class InstalledInstall(unittest.TestCase):
         self.host.read_private.side_effect = FileNotFoundError
         self.host.clock.return_value = 10
         self.host.configure_runtime_access.return_value = "oh.synthetic.123"
-        self.context.host["http_port"] = 13601
+        self.context.host["http_port"] = 13602
         with patch.object(oh_paths, "PROGRAM", self.program):
             action = steps.Token(self.context).actions(self.host)[0]
             self.assertEqual(action.perform(self.host), 0)
         self.host.configure_runtime_access.assert_called_once_with(
-            "http://127.0.0.1:13601", self.site / "var/server/runtime-credentials.json",
+            "http://127.0.0.1:13602", self.site / "var/server/runtime-credentials.json",
             self.site / "var/server/api-token", 10 + steps.WAIT)
 
     def test_existing_runtime_recovers_only_a_missing_operator_copy(self):
-        self.context.host.update(http_port=13601, uid=9001, root=str(self.site / "installation"))
+        self.context.host.update(http_port=13602, uid=9001, root=str(self.site / "installation"))
         self.host.clock.return_value = 10
         self.host.read_private.side_effect = [FileNotFoundError(), FileNotFoundError(), "synthetic-recovered-token\n"]
         self.host.configure_runtime_access.side_effect = NativeAuthError("existing_users")
@@ -61,14 +61,14 @@ class InstalledInstall(unittest.TestCase):
         self.assertEqual(action.argv, ("python3", str(self.program / "lib/oh_install/secrets.py"),
                          str(self.site / "installation/runtime"), "--name", "openhab-token", "--source",
                          str(self.site / "var/server/api-token"), "--uid", "9001", "--gid", "9001",
-                         "--recover-runtime-token", "--runtime-url", "http://127.0.0.1:13601"))
+                         "--recover-runtime-token", "--runtime-url", "http://127.0.0.1:13602"))
         self.assertIs(host, self.host)
         self.assertEqual(area, self.site)
         self.assertEqual(token.validated, "synthetic-recovered-token")
         self.assertNotIn("synthetic-recovered-token", str(self.host.say.call_args_list))
 
     def test_existing_or_rejected_managed_credentials_never_trigger_service_recovery(self):
-        self.context.host["http_port"] = 13601
+        self.context.host["http_port"] = 13602
         self.host.clock.return_value = 10
         for code, saved in (("existing_users", "keep-existing-token"), ("credentials", ""),
                             ("retired", ""), ("identity", "")):
@@ -80,7 +80,7 @@ class InstalledInstall(unittest.TestCase):
                 perform.assert_not_called()
 
     def test_runtime_requiring_authentication_for_uuid_can_recover_without_local_credentials(self):
-        self.context.host.update(http_port=13601, uid=9001, root=str(self.site / "installation"))
+        self.context.host.update(http_port=13602, uid=9001, root=str(self.site / "installation"))
         self.host.clock.return_value = 10
         self.host.read_private.side_effect = [FileNotFoundError(), FileNotFoundError(), "synthetic-recovered-token\n"]
         self.host.configure_runtime_access.side_effect = NativeAuthError("credentials")
@@ -90,7 +90,7 @@ class InstalledInstall(unittest.TestCase):
         perform.assert_called_once()
 
     def test_declined_or_failed_service_recovery_does_not_validate_a_token(self):
-        self.context.host.update(http_port=13601, uid=9001, root=str(self.site / "installation"))
+        self.context.host.update(http_port=13602, uid=9001, root=str(self.site / "installation"))
         self.host.clock.return_value = 10
         self.host.read_private.side_effect = FileNotFoundError
         self.host.configure_runtime_access.side_effect = NativeAuthError("existing_users")
@@ -222,7 +222,7 @@ class InstalledInstall(unittest.TestCase):
                 patch("oh_access.service.compile_contract", side_effect=compile_contract), \
                 patch("oh_access.service.load_config"), patch.object(staging.subprocess, "run") as run:
             receipt = staging.stage(target, state=root / "identity-state", house=self.site / "instance/devices.yaml",
-                                    assets=assets, runtime_url="http://127.0.0.1:13601",
+                                    assets=assets, runtime_url="http://127.0.0.1:13602",
                                     runtime_token_file=root / "bearer", tls_cert=root / "cert", tls_key=root / "key",
                                     allowed_hosts=["site.example"], bind_host="127.0.0.1",
                                     timezone="Etc/UTC", install_environment=False,
@@ -231,10 +231,10 @@ class InstalledInstall(unittest.TestCase):
 
     def test_access_staging_uses_installed_resources_and_selected_site_boundary(self):
         root, target, receipt, location, run = self.stage_access(
-            port=13600, guest_http={"listen": ["192.0.2.10", "192.0.2.10"], "clients": ["192.0.2.0/24"]})
+            port=13601, guest_http={"listen": ["192.0.2.10", "192.0.2.10"], "clients": ["192.0.2.0/24"]})
         config = json.loads((target / "config.json").read_text())
         self.assertEqual((config["version"], config["guest_http"]),
-                         (2, {"port": 13626, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"], "names": []}))
+                         (2, {"port": 13627, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"], "names": []}))
         self.assertEqual((target / "program/lib/reviewed.py").read_text(), "# application resource\n")
         self.assertEqual((target / "program/bin/thermite").read_text(), "# application launcher\n")
         self.assertFalse((self.site / "lib").exists())
@@ -248,22 +248,22 @@ class InstalledInstall(unittest.TestCase):
             self.assertEqual(source.read_bytes(), (target / "units" / source.name).read_bytes())
         run.assert_not_called()
 
-    def test_access_staging_writes_a_moved_https_port_beside_guests_on_13600(self):
+    def test_access_staging_writes_a_moved_https_port_beside_guests_on_13601(self):
         import oh_deploy
         import oh_ports
         from oh_access import AccessError
         from oh_access.service import load_config
-        host = oh_deploy.validate_host({"timezone": "Etc/UTC", "http_port": 13601, "https_port": 13602, "uid": 9001,
+        host = oh_deploy.validate_host({"timezone": "Etc/UTC", "http_port": 13602, "https_port": 13603, "uid": 9001,
                                         "gid": 9001, "gateway": {"port": 16301},
-                                        "guest_http": {"port": 13600, "listen": ["192.0.2.10"],
+                                        "guest_http": {"port": 13601, "listen": ["192.0.2.10"],
                                                        "clients": ["192.0.2.0/24"]}})
-        with self.assertRaisesRegex(AccessError, "listener port 13600 collides"):
-            self.stage_access(port=13600, guest_http=host["guest_http"], host_ports=oh_ports.effective(host))
+        with self.assertRaisesRegex(AccessError, "listener port 13601 collides"):
+            self.stage_access(port=13601, guest_http=host["guest_http"], host_ports=oh_ports.effective(host))
         self.assertFalse((Path(self.temporary.name) / "persistent-release").exists())
         _, target, _, _, _ = self.stage_access(port=oh_ports.gateway_port(host), guest_http=host["guest_http"],
                                                host_ports=oh_ports.effective(host))
         config = load_config(target / "config.json", tls=False)
         self.assertEqual((config["version"], config["port"], config["guest_http"]),
-                         (2, 16301, {"port": 13600, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"], "names": []}))
+                         (2, 16301, {"port": 13601, "listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"], "names": []}))
 
 if __name__ == "__main__": unittest.main()

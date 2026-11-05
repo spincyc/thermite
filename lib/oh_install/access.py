@@ -219,6 +219,8 @@ class Gateway(Step):
                            "update bookmarks, home-screen apps and terminal --url")
             metadata["port"] = port
             metadata["callback_file"] = str(destination / "callbacks.json") if metadata["callbacks"] else None
+            if metadata["callback_file"]:
+                self._relocate_callbacks(system, Path(metadata["callback_file"]))
             origin = system.unit_origin("thermite-access-callbacks.service")
             if not origin.known or origin.load_state != "not-found" and not metadata["callbacks"]:
                 raise AccessError("installed callback service has no recoverable exact callback map; refusing to retire it")
@@ -237,6 +239,17 @@ class Gateway(Step):
                         "tls_key": str(key), "tls_ca": str(authority[0]), "callbacks": False, "callback_file": None}
         self._save(journal, metadata=metadata, phase="inputs")
         return metadata
+
+    def _relocate_callbacks(self, system, path):
+        """Keep the adopted map's verified routes; take its listener port and
+        native upstream from this allocation, never the replaced release."""
+        from oh_access.callback_service import load_config
+        from oh_access.native_boundary import relocated_callbacks
+        adopted = load_config(path)
+        port = oh_ports.effective(self.context.host)["callbacks"]
+        if adopted["port"] != port:
+            system.say(f"   Sonos event callbacks move from port {adopted['port']} to {port}")
+        json_private(path, relocated_callbacks(adopted, self.context.url, port))
 
     def _authority(self, system, name):
         """The site's private signing authority, created once in owner custody.
@@ -536,12 +549,12 @@ class Gateway(Step):
         return report
 
     def _verify_boundary(self, system):
-        from oh_access.native_boundary import verify_firewall, verify_native_listeners
+        from oh_access.native_boundary import firewall_ports, verify_firewall, verify_native_listeners
         self._run(system, "sudo", "-v")
         code, snapshot = system.capture(("sudo", "-n", "nft", "--json", "list", "table", "inet", "thermite_native"), diagnostics=True)
         if code:
             raise AccessError("cannot verify the native listener network filter")
-        verify_firewall(snapshot, self.context.host)
+        verify_firewall(snapshot, firewall_ports(self.context.host))
         code, snapshot = system.capture(("ss", "-H", "-ltn"))
         if code:
             raise AccessError("cannot inspect native listener isolation")

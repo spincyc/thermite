@@ -540,9 +540,9 @@ class ReadinessCompletion(unittest.TestCase):
             self.addCleanup(patch.stop)
 
     def fixture(self, kind, states):
-        context = SimpleNamespace(url="http://127.0.0.1:13601", area=AREA,
+        context = SimpleNamespace(url="http://127.0.0.1:13602", area=AREA,
                                   token_file=Path("fictional-api-token"), host={}, address="192.0.2.10",
-                                  hostname="fixture", grafana_url="http://127.0.0.1:13610/",
+                                  hostname="fixture", grafana_url="http://127.0.0.1:13611/",
                                   prepared={"conf/services/addons.cfg": SimpleNamespace(data=b"binding=http\nmisc=metrics\n")})
         system = mock.Mock(spec=System)
         now = [0.0]
@@ -553,8 +553,8 @@ class ReadinessCompletion(unittest.TestCase):
         if kind is steps.Answers:
             probe, pending, ready = system.openhab_version, None, ["5.2.3"]
         elif kind is steps.MetricsAnswer:
-            pending = MetricsHealth("http://127.0.0.1:13606", None, None, None, (), context.grafana_url, None)
-            ready = [MetricsHealth("http://127.0.0.1:13606", 200, 2, 2, (), context.grafana_url, 200, True)]
+            pending = MetricsHealth("http://127.0.0.1:13607", None, None, None, (), context.grafana_url, None)
+            ready = [MetricsHealth("http://127.0.0.1:13607", 200, 2, 2, (), context.grafana_url, 200, True)]
             probe = system.metrics_health
         else:
             probe, pending = system.native_probe, NativeProbe(0)

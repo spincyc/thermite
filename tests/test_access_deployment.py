@@ -21,6 +21,7 @@ from unittest.mock import patch
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
+import oh_ports
 from oh_access import AccessError, deployment, staging
 from oh_access.files import json_private, private_directory, atomic_private
 from oh_install.access import Gateway, installed_release, openssl_config, site_inputs
@@ -179,8 +180,8 @@ class Adoption(PrivateFixture):
         key = self.private("old-release/key", "existing private key")
         self.private("old-release/callbacks.json", '{"exact":"route and peer"}')
         config = {"version": 1, "state": str(state), "contract_file": str(release / "contract.json"),
-                  "runtime_url": "http://127.0.0.1:13601", "runtime_token_file": str(release / "bearer"),
-                  "allowed_hosts": ["house.example.test"], "bind_host": "192.0.2.5", "port": 13600,
+                  "runtime_url": "http://127.0.0.1:13602", "runtime_token_file": str(release / "bearer"),
+                  "allowed_hosts": ["house.example.test"], "bind_host": "192.0.2.5", "port": 13601,
                   "timezone": "UTC", "tls_cert": str(cert), "tls_key": str(key)}
         json_private(release / "config.json", config)
         return release, state
@@ -207,8 +208,8 @@ class Adoption(PrivateFixture):
 class StagedUpstream(PrivateFixture):
     def material(self):
         token = self.private("release/bearer", "staged-credential")
-        config = self.private("release/config.json", json.dumps({"runtime_url": "http://127.0.0.1:13601", "runtime_token_file": str(token)}))
-        expected = self.private("operator/expected.json", json.dumps({"runtime_url": "http://127.0.0.1:13601",
+        config = self.private("release/config.json", json.dumps({"runtime_url": "http://127.0.0.1:13602", "runtime_token_file": str(token)}))
+        expected = self.private("operator/expected.json", json.dumps({"runtime_url": "http://127.0.0.1:13602",
                              "runtime_credential_sha256": hashlib.sha256(token.read_bytes()).hexdigest()}))
         return token, config, expected
 
@@ -394,7 +395,7 @@ class Lifecycle(PrivateFixture):
                                       state=SimpleNamespace(textfile=self.root / "production" / "runtime" / "textfile")),
                                   hostname="house.example.test",
                                   address="192.0.2.10", host={"timezone": "UTC"}, configuration=area,
-                                  url="http://127.0.0.1:13601", token_file=Path("var/token"))
+                                  url="http://127.0.0.1:13602", token_file=Path("var/token"))
         gateway = Gateway(context, boundary=lambda system, metadata, callback: callback)
         verification = patch.object(gateway, "_verify_boundary")
         verification.start()
@@ -409,7 +410,7 @@ class Lifecycle(PrivateFixture):
         cert, key = gateway._issue(system, self.root / "tls", ["house.example.test"], authority)
         metadata = {"state": str(self.root / "state"), "tls_cert": str(cert), "tls_key": str(key),
                     "tls_ca": str(authority[0]), "allowed_hosts": ["house.example.test"], "bind_host": "0.0.0.0",
-                    "port": 13600, "timezone": "UTC", "callback_file": None, "callbacks": False}
+                    "port": 13601, "timezone": "UTC", "callback_file": None, "callbacks": False}
         release = str(self.root / "release")
         command = ["sudo", "-u", "thermite", "-g", "thermite", release + "/env/bin/python", release + "/program/bin/thermite", "access"]
         receipt = {"destination": release, "persistent_state": metadata["state"], "config": release + "/config.json",
@@ -437,7 +438,7 @@ class Lifecycle(PrivateFixture):
         system.installed = Path("/srv/old-release")
         system.active = True
         system.fail_migration = True
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13600"):
+        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 1)
             self.assertFalse(any("--now" in command for command in system.commands))
             journal = json.loads(gateway.journal_path.read_bytes())
@@ -465,12 +466,12 @@ class Lifecycle(PrivateFixture):
         gateway, system = self.gateway(), real_openssl(Host())
         journal = json.loads(gateway.journal_path.read_bytes())
         served = journal["metadata"]
-        # The installed version 2 release serves HTTPS on 13600.
+        # The installed version 2 release serves HTTPS on 13601.
         old = private_directory(self.root / "old-release")
         json_private(old / "config.json", {
             "version": 2, "state": served["state"], "contract_file": str(old / "contract.json"),
-            "runtime_url": "http://127.0.0.1:13601", "runtime_token_file": str(old / "runtime-bearer"),
-            "allowed_hosts": served["allowed_hosts"], "bind_host": "0.0.0.0", "port": 13600,
+            "runtime_url": "http://127.0.0.1:13602", "runtime_token_file": str(old / "runtime-bearer"),
+            "allowed_hosts": served["allowed_hosts"], "bind_host": "0.0.0.0", "port": 13601,
             "tls_cert": served["tls_cert"], "tls_key": served["tls_key"], "timezone": "UTC", "guest_http": None})
         json_private(gateway.journal_path, {**{key: journal[key] for key in (
             "version", "versions", "runtime_credential_sha256", "runtime_token_file")},
@@ -503,7 +504,7 @@ class Lifecycle(PrivateFixture):
             staged.assert_called_once()
         metadata = json.loads(gateway.journal_path.read_bytes())["metadata"]
         self.assertEqual((metadata["port"], metadata["previous_release"]), (port, str(old)))
-        self.assertIn(f"   Gateway HTTPS moves from port 13600 to {port}: update bookmarks, home-screen apps "
+        self.assertIn(f"   Gateway HTTPS moves from port 13601 to {port}: update bookmarks, home-screen apps "
                       "and terminal --url", system.messages)
         # The old listener's process stops before the new release starts, and
         # readiness is checked, and the terminal profile saved, on the new port.
@@ -516,9 +517,39 @@ class Lifecycle(PrivateFixture):
         profile = json.loads((gateway.context.var / "gateway/current.json").read_bytes())
         self.assertEqual(profile["url"], f"https://house.example.test:{port}")
 
+    def test_an_adopted_callback_map_moves_to_this_allocations_port_and_runtime(self):
+        gateway, system = self.gateway(), Host()
+        served = json.loads(gateway.journal_path.read_bytes())["metadata"]
+        # Installed when the native runtime had 13601 and the relay 13614.
+        old = private_directory(self.root / "old-release")
+        json_private(old / "config.json", {
+            "version": 2, "state": served["state"], "contract_file": str(old / "contract.json"),
+            "runtime_url": "http://127.0.0.1:13601", "runtime_token_file": str(old / "runtime-bearer"),
+            "allowed_hosts": served["allowed_hosts"], "bind_host": "0.0.0.0", "port": 13600,
+            "tls_cert": served["tls_cert"], "tls_key": served["tls_key"], "timezone": "UTC", "guest_http": None})
+        routes = {"/upnpcallback/dev/RINCON_02000000000101400_MR/svc/upnp-org/RenderingControl/event/cb": "192.0.2.40"}
+        json_private(old / "callbacks.json", {"version": 1, "routes": routes, "upstream": "http://127.0.0.1:13601",
+                                              "hosts": ["192.0.2.10:13614"], "bind_host": "192.0.2.10", "port": 13614})
+        system.installed = old
+
+        def adopt(system, *argv):
+            self.assertEqual(argv[0], "adopt")
+            deployment.adopt(argv[1], argv[2], uid=os.geteuid(), gid=os.getegid(), service_uid=os.geteuid())
+
+        with patch.object(gateway, "_helper", side_effect=adopt), \
+                patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())):
+            metadata = gateway._metadata(system, {"previous_release": str(old)})
+        self.assertEqual((metadata["port"], metadata["callbacks"]), (oh_ports.ACCESS_PORT, True))
+        self.assertEqual(json.loads(Path(metadata["callback_file"]).read_bytes()), {
+            "version": 1, "routes": routes, "upstream": "http://127.0.0.1:13602",
+            "hosts": [f"192.0.2.10:{oh_ports.CALLBACK_PORT}"], "bind_host": "192.0.2.10", "port": oh_ports.CALLBACK_PORT})
+        self.assertIn(f"   Sonos event callbacks move from port 13614 to {oh_ports.CALLBACK_PORT}", system.messages)
+        self.assertIn(f"   Gateway HTTPS moves from port 13600 to {oh_ports.ACCESS_PORT}: update bookmarks, "
+                      "home-screen apps and terminal --url", system.messages)
+
     def test_not_found_units_do_not_block_fresh_deployment(self):
         gateway, system = self.gateway(), Host()
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13600"):
+        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 0)
         self.assertTrue(any("migrate" in command for command in system.commands))
         self.assertFalse(any("stop" in command for command in system.commands))
@@ -570,10 +601,10 @@ class Lifecycle(PrivateFixture):
 
     def test_completed_but_unhealthy_service_repairs_with_an_additional_backup(self):
         gateway, system = self.gateway(), Host()
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13600"):
+        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 0)
         original = json.loads(gateway.journal_path.read_bytes())["backup"]
-        with patch.object(gateway, "_https", side_effect=[ValueError("stopped"), "https://house.example.test:13600"]):
+        with patch.object(gateway, "_https", side_effect=[ValueError("stopped"), "https://house.example.test:13601"]):
             self.assertEqual(gateway.perform(system), 0)
         self.assertNotEqual(json.loads(gateway.journal_path.read_bytes())["backup"], original)
 
@@ -587,7 +618,7 @@ class Lifecycle(PrivateFixture):
             return answers.pop(0)
 
         gateway.record = record
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13600"):
+        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 0, "an unrecorded activation still succeeds")
             journal = json.loads(gateway.journal_path.read_bytes())
             self.assertEqual(events, [{"commit": "a" * 40, "application": {"version": "1.2.3", "digest": "b" * 64},
@@ -599,14 +630,14 @@ class Lifecycle(PrivateFixture):
             self.assertEqual(events[1], events[0], "the next run records the activation it missed")
             self.assertEqual(gateway.perform(system), 0)
             self.assertEqual(len(events), 2, "a recorded activation is not recorded again")
-        with patch.object(gateway, "_https", side_effect=[ValueError("stopped"), "https://house.example.test:13600"]):
+        with patch.object(gateway, "_https", side_effect=[ValueError("stopped"), "https://house.example.test:13601"]):
             self.assertEqual(gateway.perform(system), 0)
         self.assertEqual(len(events), 3, "a repair is a new activation with its own backup")
         self.assertNotEqual(events[2]["backup"], events[0]["backup"])
 
     def test_completed_release_repairs_changed_protected_unit_before_success(self):
         gateway, system = self.gateway(), Host()
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13600"):
+        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 0)
             destination = "/etc/systemd/system/thermite-access.service"
             expected = system.unit_bytes[destination]
@@ -619,7 +650,7 @@ class Lifecycle(PrivateFixture):
 
     def test_completed_release_rejects_unknown_worker_override_without_repair(self):
         gateway, system = self.gateway(), Host()
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13600"):
+        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 0)
             profile = (gateway.context.var / "gateway/current.json").read_bytes()
             name = "thermite-access-worker.service"
@@ -638,7 +669,7 @@ class Lifecycle(PrivateFixture):
 
     def test_rotated_runtime_token_restages_same_site_without_changing_identity_or_tls(self):
         gateway, system = self.gateway(), Host()
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13600"):
+        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 0)
         original = json.loads(gateway.journal_path.read_bytes())
         system.installed = Path(original["stage"]["destination"])
@@ -654,7 +685,7 @@ class Lifecycle(PrivateFixture):
             return receipt
         with patch.object(staging, "stage", side_effect=stage) as staged, \
                 patch.object(gateway, "_assets", return_value=self.root / "assets"), \
-                patch.object(gateway, "_https", return_value="https://house.example.test:13600"):
+                patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 0, system.messages)
             self.assertEqual(gateway.perform(system), 0, system.messages)
             staged.assert_called_once()
@@ -669,7 +700,7 @@ class Lifecycle(PrivateFixture):
     def test_staged_auth_failure_stops_before_migration_or_activation(self):
         gateway, system = self.gateway(), Host()
         system.fail_upstream = True
-        with patch.object(gateway, "_https", return_value="https://house.example.test:13600"):
+        with patch.object(gateway, "_https", return_value="https://house.example.test:13601"):
             self.assertEqual(gateway.perform(system), 1)
         self.assertFalse(any("migrate" in command or "--now" in command or "stop" in command for command in system.commands))
         self.assertNotEqual(json.loads(gateway.journal_path.read_bytes())["phase"], "complete")
@@ -683,7 +714,7 @@ class Lifecycle(PrivateFixture):
         gateway.context.host = {**gateway.context.host, "guest_http": guest_http}
         def stage(release, **kwargs):
             self.assertEqual(kwargs["guest_http"], guest_http)
-            self.assertEqual(kwargs["host_ports"]["guest_http"], 13626)
+            self.assertEqual(kwargs["host_ports"]["guest_http"], 13627)
             self.assertEqual(kwargs["state"], str(gateway.root / "state"))
             self.assertEqual(kwargs["house"], gateway.context.configuration / "instance/devices.yaml")
             self.assertEqual(kwargs["assets"], self.root / "managed-assets")
@@ -697,11 +728,11 @@ class Lifecycle(PrivateFixture):
                     "unit_install_commands": self.unit_commands(gateway, release)}
         with patch.object(staging, "stage", side_effect=stage) as staged, \
                 patch.object(gateway, "_assets", return_value=self.root / "managed-assets"), \
-                patch.object(gateway, "_https", return_value="https://house.example.test:13600"), \
-                patch.object(gateway, "_guest_http", return_value=["   Guest HTTP verified: http://192.0.2.10:13626/"]):
+                patch.object(gateway, "_https", return_value="https://house.example.test:13601"), \
+                patch.object(gateway, "_guest_http", return_value=["   Guest HTTP verified: http://192.0.2.10:13627/"]):
             self.assertEqual(gateway.perform(system), 0, system.messages)
             staged.assert_called_once()
-        self.assertIn("   Guest HTTP verified: http://192.0.2.10:13626/", system.messages)
+        self.assertIn("   Guest HTTP verified: http://192.0.2.10:13627/", system.messages)
         self.assertTrue(any(command[0] == "openssl" for command in system.commands))
         metadata = json.loads(gateway.journal_path.read_bytes())["metadata"]
         authority = gateway.context.var / "gateway/authority/ca-cert.pem"
@@ -713,7 +744,7 @@ class Lifecycle(PrivateFixture):
         self.assertTrue(any("--now" in command for command in system.commands))
         self.assertEqual(json.loads(gateway.journal_path.read_bytes())["phase"], "complete")
         profile = json.loads((gateway.context.var / "gateway/current.json").read_bytes())
-        self.assertEqual(profile["url"], "https://house.example.test:13600")
+        self.assertEqual(profile["url"], "https://house.example.test:13601")
         self.assertEqual(profile["ca_file"], str(gateway.root / "tls-cert.pem"))
         self.assertEqual(set(profile), {"version", "url", "ca_file", "release", "state", "versions", "journal"})
 

@@ -172,7 +172,7 @@ class Manifests(unittest.TestCase):
                 mock.patch.object(unifi_protect, "descriptor", wraps=unifi_protect.descriptor) as cameras:
             conf = oh_render.build(copy.deepcopy(data))
             conf.render()
-            oh_metrics.render(copy.deepcopy(data), {"http_port": 13601}, conf=conf)
+            oh_metrics.render(copy.deepcopy(data), {"http_port": 13602}, conf=conf)
             oh_site_contract.compile(oh_conf.House(copy.deepcopy(data)), conf)
         self.assertEqual(diagnostics.call_count, 1)
         self.assertEqual(cameras.call_count, 1)

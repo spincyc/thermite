@@ -289,6 +289,19 @@ def discover_callbacks(house_data, runtime_url, lan_address, *, callback_port=oh
     return validate_callbacks(config, runtime_url)
 
 
+def relocated_callbacks(config, runtime_url, port):
+    """An adopted map on this site's callback port and native runtime.
+
+    Its verified routes and LAN address are kept; the listener and upstream
+    are the allocation's, so a changed allocation moves them, as it moves the
+    HTTPS port. The native jUPnP proxy port follows in configure().
+    """
+    runtime_url = _runtime(runtime_url)
+    address = config["bind_host"]
+    return validate_callbacks({**config, "port": port, "hosts": [f"{address}:{port}"], "upstream": runtime_url},
+                              runtime_url)
+
+
 def native_filter_rules(http_port, https_port, *, karaf_port=oh_ports.KARAF_PORT, lsp_port=oh_ports.LSP_PORT,
                         shutdown_port=oh_ports.SHUTDOWN_PORT):
     """An atomic nft input file affecting only Thermite's reserved table.
@@ -298,9 +311,13 @@ def native_filter_rules(http_port, https_port, *, karaf_port=oh_ports.KARAF_PORT
     handles first installation and removes obsolete chains without a gap.
     https://netfilter.org/projects/nftables/manpage.html
     """
-    ports = oh_ports.unique({"HTTP": http_port, "HTTPS": https_port, "Karaf": karaf_port,
-                             "LSP": lsp_port, "shutdown": shutdown_port})
-    members = ", ".join(str(value) for value in sorted(ports.values()))
+    return filter_rules(oh_ports.unique({"HTTP": http_port, "HTTPS": https_port, "Karaf": karaf_port,
+                                         "LSP": lsp_port, "shutdown": shutdown_port}).values())
+
+
+def filter_rules(ports):
+    """native_filter_rules() for a set of ports, whichever listeners they are."""
+    members = ", ".join(str(value) for value in sorted(ports))
     return (f"add table inet {FILTER_TABLE}\n"
             f"delete table inet {FILTER_TABLE}\n"
             f"add table inet {FILTER_TABLE}\n"
@@ -316,8 +333,13 @@ def verify_native_filter(value, http_port, https_port, *, karaf_port=oh_ports.KA
     named set. Counter/handle values are not authority. The caller must check
     nft's exit status before passing its parsed JSON here.
     """
-    expected = set(oh_ports.unique({"HTTP": http_port, "HTTPS": https_port, "Karaf": karaf_port,
-                                   "LSP": lsp_port, "shutdown": shutdown_port}).values())
+    return verify_filter(value, oh_ports.unique({"HTTP": http_port, "HTTPS": https_port, "Karaf": karaf_port,
+                                                 "LSP": lsp_port, "shutdown": shutdown_port}).values())
+
+
+def verify_filter(value, ports):
+    """verify_native_filter() for a set of ports, whichever listeners they are."""
+    expected = set(ports)
     try:
         if not isinstance(value, dict) or set(value) != {"nftables"} or not isinstance(value["nftables"], list):
             raise ValueError()
@@ -355,23 +377,27 @@ def verify_native_filter(value, http_port, https_port, *, karaf_port=oh_ports.KA
     return {"native_filter": True}
 
 
+def firewall_ports(host):
+    """The native ports the table filters, from the site's validated complete allocation."""
+    ports = oh_ports.effective(host)
+    return frozenset(oh_ports.unique({"HTTP": ports["http"], "HTTPS": ports["https"], "Karaf": ports["karaf"],
+                                      "LSP": ports["lsp"], "shutdown": ports["native_shutdown"]}).values())
+
+
 def firewall_rules(host):
     """Installer adapter using the site's validated complete port allocation."""
-    ports = oh_ports.effective(host)
-    return native_filter_rules(ports["http"], ports["https"], karaf_port=ports["karaf"],
-                               lsp_port=ports["lsp"], shutdown_port=ports["native_shutdown"])
+    return filter_rules(firewall_ports(host))
 
 
-def verify_firewall(output, host):
-    """Installer adapter; reject malformed/duplicate JSON and any foreign policy."""
+def verify_firewall(output, ports):
+    """Installer adapter for firewall_ports() or a rule file's own ports;
+    reject malformed/duplicate JSON and any foreign policy."""
     try:
         raw = output.encode("utf-8") if isinstance(output, str) else output
         value = _json(Response(200, {"content-type": "application/json"}, raw))
     except (AttributeError, TypeError):
         raise BoundaryError("Invalid native network filter inspection") from None
-    ports = oh_ports.effective(host)
-    verify_native_filter(value, ports["http"], ports["https"], karaf_port=ports["karaf"],
-                         lsp_port=ports["lsp"], shutdown_port=ports["native_shutdown"])
+    verify_filter(value, ports)
 
 
 def verify_native_listeners(snapshot, *, http_port, https_port, lsp_port=oh_ports.LSP_PORT, filtered=False):
@@ -546,7 +572,7 @@ def configure(runtime_url, token_file, house_data, lan_address, *, callback_port
         if upnp.get("callbackURI", CALLBACK_URI) != CALLBACK_URI:
             raise BoundaryError("Existing jUPnP callback namespace differs from the verified relay paths")
         # jUPnP has no openHAB config description to normalize JSON numbers.
-        # The generic REST/OSGi path can persist an integer as "13614.0",
+        # The generic REST/OSGi path can persist an integer as "13615.0",
         # which jUPnP's Integer.parseInt rejects. Preserve a decimal string.
         update(UPNP_CONFIG, {"httpProxyPort": str(callbacks["port"])})
     for authenticated in (True, False):

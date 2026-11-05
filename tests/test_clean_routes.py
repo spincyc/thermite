@@ -97,9 +97,9 @@ assert.equal(context.ThermiteNavigation.href("remotes"), "/remotes/");
 context.location.protocol = "file:";
 assert.equal(context.RemoteBackend.servedByOpenHab(context.location), false);
 const Cameras = require("./tui/remote/cameras"), Topology = require("./tui/remote/topology");
-assert.equal(Cameras.url("http://site.test:13601", "front", false, true), "http://site.test:13601/cameras/?backend=native#front");
-assert.equal(Topology.url("http://site.test:13601", "den", "player_a", false, true), "http://site.test:13601/site/?room=den&source=player_a&backend=native");
-assert.equal(new URL(Cameras.url("http://site.test:13601", "front", true, true)).searchParams.get("backend"), "mock");
+assert.equal(Cameras.url("http://site.test:13602", "front", false, true), "http://site.test:13602/cameras/?backend=native#front");
+assert.equal(Topology.url("http://site.test:13602", "den", "player_a", false, true), "http://site.test:13602/site/?room=den&source=player_a&backend=native");
+assert.equal(new URL(Cameras.url("http://site.test:13602", "front", true, true)).searchParams.get("backend"), "mock");
 '''
         result = subprocess.run([shutil.which("node"), "-e", script, json.dumps(oh_routes.PAGES)],
                                 cwd=AREA, text=True, capture_output=True, timeout=10)

@@ -304,7 +304,7 @@ class SecretFiles(unittest.TestCase):
                         existing.mkdir()
                     before = existing.lstat()
                     with patch.object(secrets, "_validate_runtime_token") as validate, self.assertRaises(secrets.SecretError):
-                        self.recover("http://127.0.0.1:13601")
+                        self.recover("http://127.0.0.1:13602")
                     validate.assert_not_called()
                     self.assertEqual(existing.lstat().st_ino, before.st_ino)
                     if kind == "directory":
@@ -334,7 +334,7 @@ class SecretFiles(unittest.TestCase):
                 gid = self.gid + 1 if kind == "gid" else self.gid
                 with patch.object(secrets, "_validate_runtime_token") as validate, \
                         self.assertRaises((OSError, secrets.SecretError)):
-                    self.recover("http://127.0.0.1:13601", uid=uid, gid=gid)
+                    self.recover("http://127.0.0.1:13602", uid=uid, gid=gid)
                 validate.assert_not_called()
                 self.assertFalse(self.destination.exists())
                 self.assertEqual(stat.S_IMODE(target.parent.stat().st_mode), 0o755 if kind == "directory_mode" else 0o700)
@@ -347,14 +347,14 @@ class SecretFiles(unittest.TestCase):
         with patch.object(secrets, "_validate_runtime_token") as validate:
             with self.assertRaises(OSError):
                 secrets.recover_runtime_token(alias, destination=self.destination, uid=self.uid, gid=self.gid,
-                                              url="http://127.0.0.1:13601")
+                                              url="http://127.0.0.1:13602")
             operator_alias = self.root / "operator-alias"
             operator_alias.symlink_to(self.operator, target_is_directory=True)
             with self.assertRaises(OSError):
-                self.recover("http://127.0.0.1:13601", destination=operator_alias / "api-token")
+                self.recover("http://127.0.0.1:13602", destination=operator_alias / "api-token")
             self.operator.chmod(0o750)
             with self.assertRaises(secrets.SecretError):
-                self.recover("http://127.0.0.1:13601")
+                self.recover("http://127.0.0.1:13602")
             self.assertEqual(stat.S_IMODE(self.operator.stat().st_mode), 0o750)
             validate.assert_not_called()
         self.assertFalse(self.destination.exists())
@@ -370,7 +370,7 @@ class SecretFiles(unittest.TestCase):
 
         with patch.object(secrets, "_validate_runtime_token", side_effect=replace_service_token), \
                 self.assertRaises(secrets.SecretError):
-            self.recover("http://127.0.0.1:13601")
+            self.recover("http://127.0.0.1:13602")
         self.assertFalse(self.destination.exists())
 
     def test_recovery_refuses_lock_links_and_concurrent_setup(self):
@@ -394,7 +394,7 @@ class SecretFiles(unittest.TestCase):
                         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     with patch.object(secrets, "_validate_runtime_token") as validate, \
                             self.assertRaises((OSError, secrets.SecretError)):
-                        self.recover("http://127.0.0.1:13601")
+                        self.recover("http://127.0.0.1:13602")
                     validate.assert_not_called()
                     self.assertFalse(self.destination.exists())
                 finally:
@@ -403,9 +403,9 @@ class SecretFiles(unittest.TestCase):
                     lock.unlink()
 
     def test_runtime_validator_restricts_origin_before_sending_any_credential(self):
-        origins = (None, "http://localhost:13601", "http://192.0.2.1:13601", "https://127.0.0.1:13601",
-                   "http://127.0.0.1:13601/path", "http://127.0.0.1:13601?query", "http://127.0.0.1:13601#fragment",
-                   "http://user@127.0.0.1:13601", "http://127.0.0.1:65536", "http://127.0.0.1:0")
+        origins = (None, "http://localhost:13602", "http://192.0.2.1:13602", "https://127.0.0.1:13602",
+                   "http://127.0.0.1:13602/path", "http://127.0.0.1:13602?query", "http://127.0.0.1:13602#fragment",
+                   "http://user@127.0.0.1:13602", "http://127.0.0.1:65536", "http://127.0.0.1:0")
         for origin in origins:
             with self.subTest(origin=origin), patch("http.client.HTTPConnection") as connection, \
                     self.assertRaises(secrets.SecretError):
@@ -416,7 +416,7 @@ class SecretFiles(unittest.TestCase):
         for content in (b"", b"\xff", b"oh.synthetic.unsafe\r\nInjected: header", b"two tokens", b"null\x00"):
             with self.subTest(content=content), patch("http.client.HTTPConnection") as connection, \
                     self.assertRaises(secrets.SecretError):
-                secrets._validate_runtime_token("http://127.0.0.1:13601", content)
+                secrets._validate_runtime_token("http://127.0.0.1:13602", content)
             connection.assert_not_called()
 
     def test_runtime_validator_refuses_redirect_and_invalid_or_oversized_json(self):

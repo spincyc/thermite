@@ -1,7 +1,8 @@
 # Thermite listening ports
 
-Thermite's default TCP listeners occupy **13600–13626**, anchored at the
-HTTPS application on **13600**. `lib/oh_ports.py` owns the allocation.
+Thermite's default TCP listeners occupy **13601–13627**, anchored at the
+HTTPS application on **13601**; every other listener follows it, in the
+order below. `lib/oh_ports.py` owns the allocation.
 `instance/host.yaml` keeps the site's native HTTP/HTTPS choices and optional
 `gateway: port`, `metrics: <service>_port` and `guest_http: port` overrides.
 Generation rejects invalid values and
@@ -11,36 +12,41 @@ frees may be taken by another override. Commit changes and run
 `thermite install --config DIR` or `thermite upgrade --config DIR`; the same
 workflow updates the native boundary and gateway together. Gateway and callback
 listeners are checked against the complete allocation and native upstream.
+When any listener port changes, the workflow stops every Thermite service
+before it installs the new units, since one service's new port may be
+another's old one, then starts each on its new port. It records the
+allocation in the site's `var/listeners.json` once all of them answer, so a
+run that stops early stops them all again next time.
 
 | Port | Listener | Binding / use |
 | --- | --- | --- |
-| 13600 | Application HTTPS with toggleable authentication; `gateway: port` moves it | Configured address; TLS required |
-| 13601 | Native runtime HTTP | 127.0.0.1 only; verified device callbacks use the relay |
-| 13602 | Native runtime HTTPS | 127.0.0.1 only |
-| 13603 | Native Karaf console | 127.0.0.1 only |
-| 13604 | Native language server | Non-loopback access blocked by the managed native firewall |
-| 13605 | Apple TV helper HTTP | 127.0.0.1 only |
-| 13606 | Prometheus HTTP | 127.0.0.1 only |
-| 13607 | node_exporter HTTP | 127.0.0.1 only |
-| 13608 | blackbox_exporter HTTP | 127.0.0.1 only |
-| 13609 | Thermite metrics exporter HTTP | 127.0.0.1 only |
-| 13610 | Grafana HTTP | Existing LAN dashboard access |
-| 13611 | Alertmanager HTTP | 127.0.0.1 only; cluster listener disabled |
-| 13612 | ntfy HTTP | 127.0.0.1 only |
-| 13613 | Notification adapter HTTP | 127.0.0.1 only |
-| 13614 | Optional verified UPnP callback ingress HTTP | Explicit LAN IPv4 address; no listener starts without a private verified map |
-| 13615 | Sandbox HTTP | 127.0.0.1 by default; explicit live mode allows LAN access |
-| 13616 | Sandbox HTTPS | Same sandbox address policy |
-| 13617 | Sandbox Karaf console | 127.0.0.1 only |
-| 13618 | Boot-check HTTP | 127.0.0.1 only |
-| 13619 | Boot-check HTTPS | 127.0.0.1 only |
-| 13620 | Boot-check Karaf console | 127.0.0.1 only |
-| 13621 | Development docs preview HTTP | 127.0.0.1 only; `--port 0` explicitly requests an ephemeral port |
-| 13622 | Development remote preview HTTP | Explicit loopback-only Python static-server command |
-| 13623 | Native Karaf shutdown control | 127.0.0.1 only |
-| 13624 | Sandbox Karaf shutdown control | 127.0.0.1 only |
-| 13625 | Boot-check Karaf shutdown control | 127.0.0.1 only |
-| 13626 | Optional plain-HTTP Guest controls | Listed `guest_http.listen` addresses, admitting only `guest_http.clients`; no listener without `guest_http` |
+| 13601 | Application HTTPS with toggleable authentication; `gateway: port` moves it | Configured address; TLS required |
+| 13602 | Native runtime HTTP | 127.0.0.1 only; verified device callbacks use the relay |
+| 13603 | Native runtime HTTPS | 127.0.0.1 only |
+| 13604 | Native Karaf console | 127.0.0.1 only |
+| 13605 | Native language server | Non-loopback access blocked by the managed native firewall |
+| 13606 | Apple TV helper HTTP | 127.0.0.1 only |
+| 13607 | Prometheus HTTP | 127.0.0.1 only |
+| 13608 | node_exporter HTTP | 127.0.0.1 only |
+| 13609 | blackbox_exporter HTTP | 127.0.0.1 only |
+| 13610 | Thermite metrics exporter HTTP | 127.0.0.1 only |
+| 13611 | Grafana HTTP | Existing LAN dashboard access |
+| 13612 | Alertmanager HTTP | 127.0.0.1 only; cluster listener disabled |
+| 13613 | ntfy HTTP | 127.0.0.1 only |
+| 13614 | Notification adapter HTTP | 127.0.0.1 only |
+| 13615 | Optional verified UPnP callback ingress HTTP | Explicit LAN IPv4 address; no listener starts without a private verified map |
+| 13616 | Sandbox HTTP | 127.0.0.1 by default; explicit live mode allows LAN access |
+| 13617 | Sandbox HTTPS | Same sandbox address policy |
+| 13618 | Sandbox Karaf console | 127.0.0.1 only |
+| 13619 | Boot-check HTTP | 127.0.0.1 only |
+| 13620 | Boot-check HTTPS | 127.0.0.1 only |
+| 13621 | Boot-check Karaf console | 127.0.0.1 only |
+| 13622 | Development docs preview HTTP | 127.0.0.1 only; `--port 0` explicitly requests an ephemeral port |
+| 13623 | Development remote preview HTTP | Explicit loopback-only Python static-server command |
+| 13624 | Native Karaf shutdown control | 127.0.0.1 only |
+| 13625 | Sandbox Karaf shutdown control | 127.0.0.1 only |
+| 13626 | Boot-check Karaf shutdown control | 127.0.0.1 only |
+| 13627 | Optional plain-HTTP Guest controls | Listed `guest_http.listen` addresses, admitting only `guest_http.clients`; no listener without `guest_http` |
 
 HTTPS is the application entry point whether authentication is on or off.
 [Moving the HTTPS application](#moving-the-https-application) explains its
@@ -55,13 +61,14 @@ traffic to native HTTP, HTTPS, Karaf, LSP and shutdown ports in the dedicated
 verifies the active policy and reapplies it before every native runtime start.
 An unknown existing table or modified policy requires review before replacement.
 For Sonos, the workflow derives exact callback routes from committed identities
-and live device descriptions; existing verified routes and ports are retained.
+and live device descriptions; existing verified routes and their LAN address
+are retained, on the allocation's callback port and native upstream.
 The relay accepts only the verified NOTIFY traffic, never general native API access.
 
 The installer and upgrade configure the stopped native console in
 `userdata/etc/org.apache.karaf.shell.cfg`, preserving other settings and fixing
 its address to loopback. Generated `conf/services/runtime.cfg` sets
-`org.openhab.lsp:port=13604`. Sandboxes retain their LSP bundle blacklist.
+`org.openhab.lsp:port=13605`. Sandboxes retain their LSP bundle blacklist.
 The native language server's lack of an address setting is visible in the
 [pinned openHAB 5.2.3 source](https://github.com/openhab/openhab-core/blob/5.2.3/bundles/org.openhab.core.model.lsp/src/main/java/org/openhab/core/model/lsp/internal/ModelServer.java).
 The console's independent setting is documented by its
@@ -91,17 +98,12 @@ units, run the unified install/upgrade, and update bookmarks as needed. Existing
 gateway everyone signs in to. It is a mapping named for the gateway, beside
 `metrics:` and `guest_http:`, so it cannot be mistaken for the top-level
 `http_port` and `https_port`, which are the native runtime's loopback
-listeners. The product default stays 13600. A moved gateway frees 13600, and
-`guest_http: {port: 13600}` may then take it, giving guests the range's
-first port; while the gateway keeps 13600, that Guest port collides.
+listeners. The product default is 13601, the range's first port; a moved
+gateway frees it for another override.
 
 ```yaml
 gateway:
   port: 16301
-guest_http:
-  port: 13600
-  listen: [198.51.100.2]
-  clients: [198.51.100.0/24]
 ```
 
 Commit the change and run `thermite upgrade --config DIR`. The upgrade stops
@@ -120,8 +122,7 @@ not ports, so client trust is unchanged. Origins include the port, though:
   automatically, and `thermite tui --config DIR` uses the site's port.
   Elsewhere, pass `--url HOST:PORT`.
 - The managed firewall table leaves the gateway's ports alone. A host with its
-  own firewall opens the new HTTPS port, and closes the old one unless the
-  Guest listener now uses it.
+  own firewall opens the new HTTPS port and closes the old one.
 
 `thermite status` shows the HTTPS address on the configured port, and reports
 a problem while the installed gateway still serves another.
@@ -136,11 +137,13 @@ ports, the usual application defaults displaced above, and Kubernetes' default
 13000 was considered but already has open-source users, including
 [Prysm's QUIC listener](https://github.com/OffchainLabs/prysm/discussions/14728)
 and the [AgentTeams dashboard](https://github.com/agentteams-group/agentteams-dashboard).
-Targeted searches found no known open-source default allocation for the chosen
-13600–13625 run; 13626, added later for the Guest port, lies in the same
-unassigned block. This is a local convention, not an IANA reservation or a
-promise that no other program uses those numbers. Startup preconditions still
-check whether required ports are occupied.
+Targeted searches found no known open-source default allocation for
+13600–13625, the run first chosen; 13626, added later for the Guest port, and
+13627, since the HTTPS application moved to 13601 (2026-11-05) and every other
+listener up one, lie in the same unassigned block. This is a local convention,
+not an IANA reservation or a promise that no other program uses those
+numbers. Startup preconditions still check whether required ports are
+occupied.
 
 Device destinations keep their protocol ports: receiver HTTP 8080, Sonos
 1400, Google TV 6466/6467, Cast 8009, matrix telnet 23 and other device

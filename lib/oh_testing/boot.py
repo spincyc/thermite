@@ -20,7 +20,7 @@ SUMMARY = "boot conf/ on a test runtime and report how it loads"
 
 DESCRIPTION = """\
 Boot a test runtime (the pinned distribution, see thermite sandbox) on
-CONF, on 127.0.0.1:13618 (HTTPS 13619, Karaf console 13620) so it can run
+CONF, on 127.0.0.1:13619 (HTTPS 13620, Karaf console 13621) so it can run
 beside the sandbox. It boots on var/boot-check/conf, a copy of CONF that
 commands nothing (oh_render.read_only) and reaches no device
 (oh_render.unaddressed): every address in it is the limited broadcast

@@ -10,22 +10,29 @@ from unittest.mock import Mock, patch
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
+from oh_access.native_boundary import filter_rules, firewall_ports
 from oh_install import ingress, runner
 from oh_install.model import Command
 from oh_install.system import UnitFile, UnitOrigin
 
-OLD = {"http_port": 13601, "https_port": 13602}
+OLD = {"http_port": 13602, "https_port": 13603}
 NEW = {"http_port": 14601, "https_port": 14602}
+#: A file the installer wrote under an earlier default allocation, when the
+#: native listeners were 13601-13604 and 13623.
+EARLIER = frozenset({13601, 13602, 13603, 13604, 13623})
+EARLIER_FILE = ingress.MARKER + "# Ports: 13601,13602\n" + filter_rules(EARLIER)
 
 
-def live_policy(host):
+def live_policy(value):
+    """The live table filtering a host's native ports, or a set of ports."""
+    ports = firewall_ports(value) if isinstance(value, dict) else value
     return {"nftables": [{"metainfo": {"version": "fixture"}},
         {"table": {"family": "inet", "name": "thermite_native", "handle": 10}},
         {"chain": {"family": "inet", "table": "thermite_native", "name": "input", "type": "filter", "hook": "input", "prio": -10, "policy": "accept"}},
         {"rule": {"family": "inet", "table": "thermite_native", "chain": "input", "expr": [
             {"match": {"op": "!=", "left": {"meta": {"key": "iifname"}}, "right": "lo"}},
             {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}},
-                       "right": {"set": [host["http_port"], host["https_port"], 13603, 13604, 13623]}}},
+                       "right": {"set": sorted(ports)}}},
             {"reject": {"type": "tcp reset"}}]}}]}
 
 
@@ -94,7 +101,7 @@ class System:
             assert target in (ingress.RULE_FILE, ingress.UNIT_FILE)
             self.files[target] = UnitFile(source.read_bytes(), 0, 0o644)
         elif argv[:2] == ("systemctl", "restart"):
-            self.live = live_policy(ingress.rule_host(self.files[ingress.RULE_FILE].content))
+            self.live = live_policy(ingress.rule_ports(self.files[ingress.RULE_FILE].content))
             if self.corrupt_after_restart:
                 self.live["nftables"].append(copy.deepcopy(self.live["nftables"][-1]))
         else:
@@ -132,7 +139,7 @@ class NativeIngress(unittest.TestCase):
         self.assertEqual(self.perform(system), 0)
         self.assertEqual(system.commands[1][0:2], ("nft", "--check"))
         self.assertEqual(system.commands[-1], ("systemctl", "restart", ingress.UNIT))
-        self.assertEqual(ingress.rule_host(system.files[ingress.RULE_FILE].content), NEW)
+        self.assertEqual(ingress.rule_ports(system.files[ingress.RULE_FILE].content), firewall_ports(NEW))
         self.assertEqual(system.live, live_policy(NEW))
         self.assertFalse(self.previous.exists())
         self.assertEqual(system.captures[-1][-4:], ("list", "table", "inet", "thermite_native"))
@@ -172,11 +179,25 @@ class NativeIngress(unittest.TestCase):
         system.fail = ("systemctl", "restart")
         self.assertEqual(self.perform(system), 7)
         self.assertEqual(self.previous.read_bytes(), ingress.rule_text(OLD).encode())
-        self.assertEqual(ingress.rule_host(system.files[ingress.RULE_FILE].content), NEW)
+        self.assertEqual(ingress.rule_ports(system.files[ingress.RULE_FILE].content), firewall_ports(NEW))
         self.assertEqual(system.live, live_policy(OLD))
         self.assertEqual(self.perform(system), 0)
         self.assertEqual(system.live, live_policy(NEW))
         self.assertFalse(self.previous.exists())
+
+    def test_a_file_from_an_earlier_allocation_is_recognized_and_replaced(self):
+        system = System(live=EARLIER)
+        system.files = {ingress.UNIT_FILE: UnitFile(ingress.unit_text().encode(), 0, 0o644),
+                        ingress.RULE_FILE: UnitFile(EARLIER_FILE.encode(), 0, 0o644)}
+        self.assertEqual(ingress.rule_ports(EARLIER_FILE.encode()), EARLIER)
+        self.assertIsNone(self.step.check(system).problem)
+        self.assertEqual(self.perform(system), 0)
+        self.assertEqual(ingress.rule_ports(system.files[ingress.RULE_FILE].content), firewall_ports(NEW))
+        self.assertEqual(system.live, live_policy(NEW))
+        for edited in (EARLIER_FILE.replace("{ 13601", "{ 22, 13601"), EARLIER_FILE.replace("13623 }", "13623, 22 }"),
+                       EARLIER_FILE.replace("# Ports: 13601,13602", "# Ports: 13601,13605")):
+            with self.subTest(edited=edited.splitlines()[1]), self.assertRaises(ValueError):
+                ingress.rule_ports(edited.encode())
 
     def test_post_apply_verification_failure_preserves_recovery_record(self):
         system = System(installed=OLD, live=OLD)

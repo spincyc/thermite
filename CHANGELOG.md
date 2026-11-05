@@ -7,6 +7,19 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The HTTPS application listens on 13601 by default, the first port of
+  Thermite's range, and every other listener follows it, one port up:
+  native HTTP/HTTPS 13602/13603, Grafana 13611, the Sonos callback relay
+  13615, the Guest port 13627 (docs/ports.md). A site's `instance/host.yaml`
+  sets `http_port: 13602` and `https_port: 13603` before upgrading. When any
+  listener port changes, install and upgrade stop every Thermite service
+  before installing the new units, so none starts on a port another still
+  holds, and record the allocation in the site's `var/listeners.json`. The
+  managed firewall's rule file is recognized by the ports it lists, so one
+  an earlier allocation wrote is replaced, and an adopted Sonos callback map
+  keeps its verified routes on the new callback port and native upstream.
+  Bookmarks, home-screen apps and terminals move to https://HOST:13601.
+
 - `thermite handheld` serves battery handheld remotes: ESP32-S3 boards on
   their own ESP-NOW link to a USB base station, each a thin client of a
   remote session the bridge runs on the house model, layouts and backend the

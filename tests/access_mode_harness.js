@@ -4,7 +4,7 @@ const assert = require("assert/strict"), fs = require("fs"), path = require("pat
 const Access = require("../web/remote/access"), Navigation = require("../web/remote/navigation");
 const Administration = require("../tui/remote/administration"), { Grid } = require("../tui/remote/grid");
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const origin = "https://site.example:13600", csrfValue = "C".repeat(32), csrfName = "thermite_0123456789abcdef_csrf";
+const origin = "https://site.example:13601", csrfValue = "C".repeat(32), csrfName = "thermite_0123456789abcdef_csrf";
 const confirmation = "F".repeat(16);
 const mode = (enabled, revision = 1) => ({ enabled, revision, bootstrap_required: !enabled, setup_available: false, csrf: csrfValue });
 const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, auth_enabled: false, permissions: ["site.read", "room.control", "camera.view"] };
@@ -199,7 +199,7 @@ async function browser(page, client) {
   assert(grid.text().includes("thermite access login"));
 
   // The plain-HTTP Guest listener: Guest only, no session or CSRF, sign-in on the HTTPS site.
-  const plain = "http://198.51.100.2:13626", secure = "https://house.example.test:13600", plainCalls = [];
+  const plain = "http://198.51.100.2:13627", secure = "https://house.example.test:13601", plainCalls = [];
   const listener = Access.create({ base: plain, guest: true, secure, fetch: async (url, init) => {
     const route = new URL(url).pathname; plainCalls.push(route);
     if (route === "/api/v1/security") { const { csrf, ...status } = mode(true); return response(status); }
@@ -219,8 +219,8 @@ async function browser(page, client) {
   await assert.rejects(listener.login("owner", "unused"), error => error.code === "secure_connection_required");
   assert.deepEqual(plainCalls, ["/api/v1/security", "/api/v1/me", "/api/v1/rooms/den/policy", "/api/v1/rooms/den/commands"]);
   assert.deepEqual(Navigation.pages.filter(page => Navigation.allowed(page, listener)).map(page => page.id), ["home", "remotes"]);
-  assert.equal(Access.create({ base: plain, guest: true, secure: "http://house.example.test:13600", fetch: async () => response(guest) }).secureSite(), null);
-  for (const value of ["javascript:alert(1)", secure + "/account/", "https://user@house.example.test:13600", secure + "?next=x", "", null])
+  assert.equal(Access.create({ base: plain, guest: true, secure: "http://house.example.test:13601", fetch: async () => response(guest) }).secureSite(), null);
+  for (const value of ["javascript:alert(1)", secure + "/account/", "https://user@house.example.test:13601", secure + "?next=x", "", null])
     assert.equal(Access.secureOrigin(value), null, String(value));
   assert.equal(Access.secureOrigin(secure + "/"), secure);
   assert.equal(Access.create({ base: origin, guest: true, mock: true, fetch: async () => response(guest) }).guestOnly, false);

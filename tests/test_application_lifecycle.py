@@ -464,11 +464,15 @@ Path(report).write_text(json.dumps({"code": code, "host": host}))
         environment.pop("THERMITE_SITE", None)
         subprocess.run([sys.executable, "-B", str(installed / "bin/thermite"), "init", str(site)],
                        check=True, capture_output=True, env=environment, timeout=120)
-        # The owner's one edit before this upgrade: the installed release wrote
+        # The owner's edits before this upgrade: the installed release wrote
         # state_root, which this release rejects; the default root replaces it.
+        # Its native ports were 13601 and 13602; the HTTPS application has
+        # 13601 now, and every other listener moved up one.
         host_file = site / "instance/host.yaml"
         host = yaml.safe_load(host_file.read_text())
         self.assertEqual(host.pop("state_root"), "/srv/thermite")
+        self.assertEqual((host["http_port"], host["https_port"]), (13601, 13602))
+        host.update(http_port=13602, https_port=13603)
         host_file.write_text(json.dumps(host, indent=2) + "\n")
         self.initialize_git(site)
         official = root / "official"

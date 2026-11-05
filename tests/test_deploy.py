@@ -515,7 +515,7 @@ class MetricsUnits(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(": only this host reaches it.", self.unit(name))
                 self.assertNotIn("0.0.0.0", self.unit(name))
-        self.assertIn("# Listens on 0.0.0.0:13610: phones and computers on the LAN reach it.", self.unit("grafana"))
+        self.assertIn("# Listens on 0.0.0.0:13611: phones and computers on the LAN reach it.", self.unit("grafana"))
 
     def test_volumes_are_labelled_privately_except_the_shared_secrets_and_host_mounts(self):
         prometheus = self.unit("prometheus")
@@ -530,12 +530,12 @@ class MetricsUnits(unittest.TestCase):
     def test_retention_and_reload(self):
         text = self.unit("prometheus")
         self.assertIn("--storage.tsdb.retention.time=395d --storage.tsdb.retention.size=12GB", text)
-        self.assertIn("--web.listen-address=127.0.0.1:13606 --web.enable-lifecycle", text)
+        self.assertIn("--web.listen-address=127.0.0.1:13607 --web.enable-lifecycle", text)
 
     def test_the_exporter_runs_its_deployed_code(self):
         text = self.unit("metrics-exporter")
         self.assertIn("Volume=/srv/thermite/runtime/exporter/app:/app:ro,z\n", text)
-        self.assertIn("Exec=python3 /app/lib/oh_metrics/exporter.py --listen=127.0.0.1:13609 ", text)
+        self.assertIn("Exec=python3 /app/lib/oh_metrics/exporter.py --listen=127.0.0.1:13610 ", text)
         self.assertIn("--openhab=http://127.0.0.1:8080 --token-file=/secrets/openhab-token\n", text)
 
     def test_python_services_run_under_an_init_and_stop_cleanly(self):
@@ -561,7 +561,7 @@ class MetricsUnits(unittest.TestCase):
         self.assertEqual(len(disabled), 13)
         self.assertIn("loki", disabled)
         self.assertNotIn("prometheus", disabled)
-        self.assertEqual(deploy.metrics.alerts.ntfy(13612)["log-level"], "warn")
+        self.assertEqual(deploy.metrics.alerts.ntfy(13613)["log-level"], "warn")
 
     def test_grafana_reads_its_password_from_a_file(self):
         text = self.unit("grafana")
@@ -604,15 +604,15 @@ class MetricsHealth(unittest.TestCase):
         return get
 
     def test_ready_targets_and_grafana(self):
-        get = self.answers({"http://127.0.0.1:13606/-/ready": (200, b""),
-                            "http://127.0.0.1:13606/api/v1/targets": (200, json.dumps(self.TARGETS).encode()),
-                            "http://192.0.2.5:13610/api/health": (200, b"{}")})
+        get = self.answers({"http://127.0.0.1:13607/-/ready": (200, b""),
+                            "http://127.0.0.1:13607/api/v1/targets": (200, json.dumps(self.TARGETS).encode()),
+                            "http://192.0.2.5:13611/api/health": (200, b"{}")})
         health = deploy.metrics_health(HOST, "192.0.2.5", get)
         self.assertEqual((health.up, health.total, health.down), (1, 2, ("devices 192.0.2.40:80",)))
         self.assertTrue(health.prometheus_ok and health.grafana_ok)
         self.assertFalse(health.targets_ok)
-        self.assertEqual(health.describe(), "Prometheus http://127.0.0.1:13606 ready, targets 1/2 up; "
-                                            "Grafana http://192.0.2.5:13610/ answers")
+        self.assertEqual(health.describe(), "Prometheus http://127.0.0.1:13607 ready, targets 1/2 up; "
+                                            "Grafana http://192.0.2.5:13611/ answers")
 
     def test_a_device_port_not_probed_yet_is_not_down(self):
         """Device ports are probed every 2 minutes, so after a start most are
@@ -621,14 +621,14 @@ class MetricsHealth(unittest.TestCase):
             {"health": "up", "labels": {"job": "openhab", "instance": "127.0.0.1:8080"}},
             {"health": "unknown", "labels": {"job": "device_tcp", "instance": "192.0.2.40:80"}},
             {"health": "up", "labels": {"job": "device_tcp", "instance": "192.0.2.41:80"}}]}}
-        table = {"http://127.0.0.1:13606/-/ready": (200, b""),
-                 "http://127.0.0.1:13606/api/v1/targets": (200, json.dumps(targets).encode()),
-                 "http://192.0.2.5:13610/api/health": (200, b"{}")}
+        table = {"http://127.0.0.1:13607/-/ready": (200, b""),
+                 "http://127.0.0.1:13607/api/v1/targets": (200, json.dumps(targets).encode()),
+                 "http://192.0.2.5:13611/api/health": (200, b"{}")}
         health = deploy.metrics_health(HOST, "192.0.2.5", self.answers(table))
         self.assertEqual((health.up, health.total, health.down), (2, 2, ()))
         self.assertTrue(health.targets_ok)
         targets["data"]["activeTargets"][0]["health"] = "unknown"
-        table["http://127.0.0.1:13606/api/v1/targets"] = (200, json.dumps(targets).encode())
+        table["http://127.0.0.1:13607/api/v1/targets"] = (200, json.dumps(targets).encode())
         health = deploy.metrics_health(HOST, "192.0.2.5", self.answers(table))
         self.assertEqual((health.up, health.total, health.down), (1, 2, ("openhab 127.0.0.1:8080",)))
         self.assertFalse(health.targets_ok)
@@ -642,16 +642,16 @@ class MetricsHealth(unittest.TestCase):
         for answer, expected in ((collector("1"), True), (collector("0"), False), (collector(), None),
                                  ((200, b"<html>"), None), ((None, b""), None)):
             with self.subTest(answer=answer):
-                table = self.answers({"http://127.0.0.1:13606/-/ready": (200, b""),
-                                      "http://127.0.0.1:13606/api/v1/targets": (200, json.dumps(self.TARGETS).encode()),
-                                      "http://127.0.0.1:13606/api/v1/query": answer,
-                                      "http://192.0.2.5:13610/api/health": (200, b"{}")})
+                table = self.answers({"http://127.0.0.1:13607/-/ready": (200, b""),
+                                      "http://127.0.0.1:13607/api/v1/targets": (200, json.dumps(self.TARGETS).encode()),
+                                      "http://127.0.0.1:13607/api/v1/query": answer,
+                                      "http://192.0.2.5:13611/api/health": (200, b"{}")})
                 health = deploy.metrics_health(HOST, "192.0.2.5", lambda url: asked.append(url) or table(url))
                 self.assertIs(health.systemd, expected)
                 self.assertEqual("systemd collector fails" in health.describe(), expected is False)
                 report = health_cli.metrics_report(HOST, installed=True, health=health)
                 self.assertEqual(report["systemd_collector"], expected)
-        self.assertIn("http://127.0.0.1:13606/api/v1/query?query=node_scrape_collector_success%7B"
+        self.assertIn("http://127.0.0.1:13607/api/v1/query?query=node_scrape_collector_success%7B"
                       "collector%3D%22systemd%22%7D", asked)
         self.assertFalse(health_cli.metrics_report(HOST, installed=True, health=deploy.MetricsHealth(
             "p", 200, 1, 1, (), "g", 200, False))["ok"])
@@ -660,10 +660,10 @@ class MetricsHealth(unittest.TestCase):
 
     def test_empty_target_discovery_is_not_ready_despite_a_saved_collector_sample(self):
         get = self.answers({
-            "http://127.0.0.1:13606/-/ready": (200, b""),
-            "http://127.0.0.1:13606/api/v1/targets": (200, b'{"data":{"activeTargets":[]}}'),
-            "http://127.0.0.1:13606/api/v1/query": (200, b'{"data":{"result":[{"value":[1,"1"]}]}}'),
-            "http://192.0.2.5:13610/api/health": (200, b"{}"),
+            "http://127.0.0.1:13607/-/ready": (200, b""),
+            "http://127.0.0.1:13607/api/v1/targets": (200, b'{"data":{"activeTargets":[]}}'),
+            "http://127.0.0.1:13607/api/v1/query": (200, b'{"data":{"result":[{"value":[1,"1"]}]}}'),
+            "http://192.0.2.5:13611/api/health": (200, b"{}"),
         })
         health = deploy.metrics_health(HOST, "192.0.2.5", get)
         self.assertEqual((health.up, health.total), (0, 0))
@@ -674,12 +674,12 @@ class MetricsHealth(unittest.TestCase):
     def test_nothing_answers(self):
         health = deploy.metrics_health(HOST, "192.0.2.5", self.answers({}))
         self.assertFalse(health.prometheus_ok or health.grafana_ok or health.targets_ok)
-        self.assertEqual(health.describe(), "Prometheus http://127.0.0.1:13606 not answering; "
-                                            "Grafana http://192.0.2.5:13610/ not answering")
+        self.assertEqual(health.describe(), "Prometheus http://127.0.0.1:13607 not answering; "
+                                            "Grafana http://192.0.2.5:13611/ not answering")
 
     def test_unreadable_targets(self):
-        get = self.answers({"http://127.0.0.1:13606/-/ready": (200, b""),
-                            "http://127.0.0.1:13606/api/v1/targets": (200, b"<html>")})
+        get = self.answers({"http://127.0.0.1:13607/-/ready": (200, b""),
+                            "http://127.0.0.1:13607/api/v1/targets": (200, b"<html>")})
         health = deploy.metrics_health(HOST, "192.0.2.5", get)
         self.assertIsNone(health.total)
         self.assertIn("its targets unreadable", health.describe())
@@ -688,9 +688,9 @@ class MetricsHealth(unittest.TestCase):
         report = health_cli.metrics_report(HOST, installed=False)
         self.assertEqual((report["installed"], report["ok"]), (False, True))
         self.assertIn("not installed yet; thermite upgrade installs them", report["summary"])
-        get = self.answers({"http://127.0.0.1:13606/-/ready": (200, b""),
-                            "http://127.0.0.1:13606/api/v1/targets": (200, json.dumps(self.TARGETS).encode()),
-                            "http://192.0.2.5:13610/api/health": (200, b"{}")})
+        get = self.answers({"http://127.0.0.1:13607/-/ready": (200, b""),
+                            "http://127.0.0.1:13607/api/v1/targets": (200, json.dumps(self.TARGETS).encode()),
+                            "http://192.0.2.5:13611/api/health": (200, b"{}")})
         report = health_cli.metrics_report(HOST, installed=True,
                                            health=deploy.metrics_health(HOST, "192.0.2.5", get))
         self.assertFalse(report["ok"])
@@ -1191,7 +1191,7 @@ class MetricsDeploy(Install):
         record = deploy.read_record(self.layout)
         self.assertEqual(sorted(record["exporter_app"]), ["lib/oh_metrics/exporter.py", "lib/oh_ports.py"])
         self.assertEqual(len(record["metrics"]), 5)
-        self.assertEqual(self.posted, ["http://127.0.0.1:13606/-/reload", "http://127.0.0.1:13608/-/reload"])
+        self.assertEqual(self.posted, ["http://127.0.0.1:13607/-/reload", "http://127.0.0.1:13609/-/reload"])
         self.assertTrue(self.layout.metrics_restart.exists())
         self.assertEqual(result.reloads[:2], ["Prometheus reloaded its configuration",
                                               "blackbox_exporter reloaded its configuration"])
@@ -1203,10 +1203,10 @@ class MetricsDeploy(Install):
         (access / deploy.ACCESS_TRUST).write_bytes(pem)
         self.deploy()
         self.assertEqual(deploy.read_tree(self.layout.metrics)["blackbox/gateway-ca.pem"].data, pem)
-        self.assertIn("http://127.0.0.1:13608/-/reload", self.posted)
+        self.assertIn("http://127.0.0.1:13609/-/reload", self.posted)
 
     def test_rollback_before_notifications_preserves_installed_stack(self):
-        additions = {"metrics/notifications/catalog.json": "{}\n", "metrics/ntfy/server.yml": "listen-http: 127.0.0.1:13612\n",
+        additions = {"metrics/notifications/catalog.json": "{}\n", "metrics/ntfy/server.yml": "listen-http: 127.0.0.1:13613\n",
                      "metrics/alertmanager/alertmanager.yml": "route: {}\n", "lib/oh_metrics/notifications.py": "print()\n"}
         self.deploy(**additions)
         installed = (deploy.read_tree(self.layout.metrics), deploy.read_tree(self.layout.exporter_app))
@@ -1220,7 +1220,7 @@ class MetricsDeploy(Install):
         self.deploy()
         self.layout.metrics_restart.unlink(missing_ok=True)
         result = self.deploy(**{"metrics/alertmanager/alertmanager.yml": "route: {}\n"})
-        self.assertEqual(self.posted, ["http://127.0.0.1:13611/-/reload"])
+        self.assertEqual(self.posted, ["http://127.0.0.1:13612/-/reload"])
         self.assertIn("Alertmanager reloaded its configuration", result.reloads)
         self.assertFalse(self.layout.metrics_restart.exists())
         self.deploy(**{"metrics/notifications/catalog.json": "{}\n"})
@@ -1237,7 +1237,7 @@ class MetricsDeploy(Install):
         self.deploy()
         self.layout.metrics_restart.unlink()
         result = self.deploy(**{"metrics/prometheus/prometheus.yml": "global: {scrape_interval: 1m}\n"})
-        self.assertEqual(self.posted, ["http://127.0.0.1:13606/-/reload"])
+        self.assertEqual(self.posted, ["http://127.0.0.1:13607/-/reload"])
         self.assertEqual(result.reloads, ["Prometheus reloaded its configuration"])
         self.assertFalse(self.layout.metrics_restart.exists())
 
@@ -1333,7 +1333,7 @@ class HostFacts(unittest.TestCase):
         self.refused("metrics.units", metrics={"units": ["x.service\nExecStart=/bin/sh"]})
         self.refused("metrics.retention ", metrics={"retention": 30})
         self.refused("metrics.retention_size", metrics={"retention_size": "12 GB"})
-        self.refused("listener port", http_port="13601")
+        self.refused("listener port", http_port="13602")
         self.refused("uid and gid", uid=0)
         self.refused("metrics.yoke_targets", metrics={"yoke_targets": ["observer.example"]})
 

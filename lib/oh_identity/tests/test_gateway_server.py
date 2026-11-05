@@ -380,11 +380,11 @@ class GatewayServer(SimpleTestCase):
         self.cert, self.key = certificate(self.directory)
 
     def test_listener_keeps_the_gateway_settings(self):
-        config = service.listener("192.0.2.10", 13600, service.tls_context(self.cert, self.key))
-        self.assertEqual(config.bind, ["192.0.2.10:13600"])
-        self.assertEqual(service.listener("2001:db8::1", 13600).bind, ["[2001:db8::1]:13600"])
+        config = service.listener("192.0.2.10", 13601, service.tls_context(self.cert, self.key))
+        self.assertEqual(config.bind, ["192.0.2.10:13601"])
+        self.assertEqual(service.listener("2001:db8::1", 13601).bind, ["[2001:db8::1]:13601"])
         self.assertTrue(config.ssl_enabled)
-        self.assertFalse(service.listener(HOST, 13600).ssl_enabled)
+        self.assertFalse(service.listener(HOST, 13601).ssl_enabled)
         context = config.create_ssl_context()
         self.assertEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
         self.assertTrue(context.options & ssl.OP_NO_COMPRESSION and context.options & ssl.OP_NO_RENEGOTIATION)

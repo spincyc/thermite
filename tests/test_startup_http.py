@@ -25,7 +25,7 @@ class StartupHttp(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.inst = lib.Instance("startup-test", self.root, self.root / "conf", self.root / "userdata",
-                                 13618, 13619, 13620, shutdown_port=13625)
+                                 13619, 13620, 13621, shutdown_port=13626)
         self.inst.conf.mkdir()
         self.inst.userdata.mkdir()
         self.rt = lib.Runtime("5.2.3", self.root / "distribution", self.root / "jre")

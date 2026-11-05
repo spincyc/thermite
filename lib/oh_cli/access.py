@@ -24,7 +24,7 @@ the native network boundary. Stage, migrate, verify, serve and worker here
 are service and recovery primitives, not a separate deployment sequence.
 """
 
-EXAMPLES = (("thermite access login --url https://thermite.example:13600 --user operator", "save this site's personal credential privately"),
+EXAMPLES = (("thermite access login --url https://thermite.example:13601 --user operator", "save this site's personal credential privately"),
             ("thermite access setup --config /srv/thermite/access/releases/RELEASE/config.json", "arm first admin setup on the HTTPS Security page"),
             ("thermite access migrate --config /srv/thermite/access/releases/RELEASE/config.json", "upgrade identity schema after stopping services and backing up state"),
             ("thermite access bootstrap --config /srv/thermite/access/releases/RELEASE/config.json --user admin", "initialize one site's first admin locally"),
@@ -96,7 +96,7 @@ def main(argv=None):
     sub = oh_cli.action(commands, "callbacks", "run the explicitly configured plaintext UPnP NOTIFY listener", examples=[("thermite access callbacks --config /srv/thermite/access/releases/RELEASE/callbacks.json", "run only verified callback paths and peers")])
     sub.add_argument("--config", required=True, type=Path, help="private mode0600 callback-only configuration")
     for name in ("login", "logout", "status"):
-        sub = oh_cli.action(commands, name, {"login": "log this terminal into a site", "logout": "revoke this terminal's site credential", "status": "read this terminal's current site identity and policies"}[name], examples=[("thermite access " + name + " --url https://thermite.example:13600" + (" --user operator" if name == "login" else ""), "use this site's private terminal credential")])
+        sub = oh_cli.action(commands, name, {"login": "log this terminal into a site", "logout": "revoke this terminal's site credential", "status": "read this terminal's current site identity and policies"}[name], examples=[("thermite access " + name + " --url https://thermite.example:13601" + (" --user operator" if name == "login" else ""), "use this site's private terminal credential")])
         sub.add_argument("--url", metavar="URL", help="site's HTTPS origin (default: this site's verified installation)")
         if name == "login":
             sub.add_argument("--user", required=True, help="site username")

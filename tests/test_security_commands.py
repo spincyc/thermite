@@ -140,10 +140,10 @@ class StagePort(unittest.TestCase):
         moved = oh_ports.effective({"gateway": {"port": 16301}})
         required = ["stage", "--destination", "/fictional/release", "--state", "/fictional/state",
                     "--plan-directory", "/fictional/plan", "--assets", "/fictional/assets",
-                    "--runtime-url", "http://127.0.0.1:13601", "--runtime-token-file", "/fictional/bearer",
+                    "--runtime-url", "http://127.0.0.1:13602", "--runtime-token-file", "/fictional/bearer",
                     "--tls-cert", "/fictional/cert", "--tls-key", "/fictional/key", "--allowed-host", "house.example.test",
                     "--json"]
-        for site, extra, expected in ((moved, [], 16301), (None, [], 13600), (moved, ["--port", "14000"], 14000)):
+        for site, extra, expected in ((moved, [], 16301), (None, [], 13601), (moved, ["--port", "14000"], 14000)):
             with self.subTest(site=bool(site), extra=extra), contextlib.redirect_stdout(io.StringIO()), \
                     patch.object(access, "_site_ports", return_value=site), \
                     patch.object(staging, "stage", return_value={}) as stage:

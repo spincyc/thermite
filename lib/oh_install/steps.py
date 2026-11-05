@@ -913,6 +913,69 @@ class Units(Step):
         return 0
 
 
+class ListenerMove(Step):
+    """Stop every Thermite service before its listener ports change.
+
+    A new allocation can give one service a port another holds until it
+    restarts (moved up one, the Apple TV helper takes Prometheus' old port),
+    and the steps after this one start services a few at a time. With all of
+    them stopped first, each starts on a free port. ListenerRecord saves the
+    allocation once everything runs on it; a failed run stops them again.
+    """
+    title = "Listener ports"
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    @property
+    def record(self) -> Path:
+        return self.context.var / "listeners.json"
+
+    def moved(self, system: System) -> bool:
+        try:
+            recorded = json.loads(system.read_bytes(self.record) or b"null")
+        except ValueError:
+            recorded = None
+        return recorded != oh_ports.effective(self.context.host)
+
+    def running(self, system: System) -> list[str]:
+        units = [*ownership.inspect(self.context, system).units(oh_units.CONTAINED), *oh_units.ACCESS_UNITS]
+        return [name for name in units if system.unit(name).active in ACTIVE]
+
+    def check(self, system: System) -> Check:
+        if not self.moved(system):
+            return Check(True, f"as {self.record} records them")
+        running = self.running(system)
+        if not running:
+            return Check(True, "no Thermite service runs on the ports they leave")
+        return Check(False, f"they change: to stop {', '.join(running)} before any starts on its new port")
+
+    def actions(self, system: System) -> list[Action]:
+        running = self.running(system)
+        return [Command(("systemctl", "stop", *running), root=True, stops=_restartable(running))] if running else []
+
+
+class ListenerRecord(ListenerMove):
+    title = "Listener record"
+
+    def check(self, system: System) -> Check:
+        if not self.moved(system):
+            return Check(True, f"{self.record}")
+        return Check(False, f"to record the listener ports in {self.record}")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Task(f"record the listener ports in {self.record}", self.save)]
+
+    def save(self, system: System) -> int:
+        try:
+            system.private_directory(self.record.parent)
+            system.write_private(self.record, json.dumps(oh_ports.effective(self.context.host), indent=2) + "\n")
+        except (OSError, ValueError):
+            system.say(f"   could not write {self.record}; check the site's var/ custody, then rerun")
+            return 1
+        return 0
+
+
 class Services(Step):
     title = "Runtime and Apple TV helper"
     restarts = RESTARTS
@@ -2029,6 +2092,8 @@ def plan(context: Context, system: System) -> Plan:
         migration.append("explicit runtime credential import")
     elif not Token(context).saved(system):
         migration.append("private runtime access")
+    if not ListenerMove(context).check(system).done:
+        migration.append("listener ports")
     if not Target(context).check(system).done:
         migration.append("Thermite boot target")
     if not Packages().check(system).done:
@@ -2221,8 +2286,9 @@ def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
     """The upgrade's steps after its preconditions, in order. A host where
     openHAB runs without the metrics gets them here."""
     return [WhatChanges(plan_), Preconditions(context), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context), Backup(context, stamp, plan_.installed_version),
-            *directory_steps(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context), Restart(context, restart_runtime=plan_.restart_runtime),
-            *native_steps(context, restart=True), MetricsAnswer(context), Verify(context)]
+            *directory_steps(context), ListenerMove(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context),
+            Restart(context, restart_runtime=plan_.restart_runtime), *native_steps(context, restart=True), MetricsAnswer(context),
+            ListenerRecord(context), Verify(context)]
 
 
 # --------------------------------------------------------------------------
@@ -2407,5 +2473,6 @@ def install_preflight(context: Context) -> list[Step]:
 def install(context: Context, *, preflight: bool = True) -> list[Step]:
     """Every step, in order."""
     return [*(install_preflight(context) if preflight else []), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context),
-            *directory_steps(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context), Services(context, restart_runtime=context.restart_runtime),
-            *native_steps(context), MetricsAnswer(context), Verify(context)]
+            *directory_steps(context), ListenerMove(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context),
+            Services(context, restart_runtime=context.restart_runtime), *native_steps(context), MetricsAnswer(context),
+            ListenerRecord(context), Verify(context)]

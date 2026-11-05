@@ -36,7 +36,7 @@ class CommittedSnapshots(unittest.TestCase):
         (self.site / ".gitignore").write_text("/var/\n/conf/\n/metrics/\n/deploy/\n")
         (self.site / "instance").mkdir()
         (self.site / "instance/host.yaml").write_text(
-            "root: /srv/thermite-fixture\ntimezone: Etc/UTC\nhttp_port: 13601\nhttps_port: 13602\nuid: 9001\ngid: 9001\n")
+            "root: /srv/thermite-fixture\ntimezone: Etc/UTC\nhttp_port: 13602\nhttps_port: 13603\nuid: 9001\ngid: 9001\n")
         (self.site / "versions.json").write_text('{"native":"fixture-one"}\n')
         self.var = self.site / "var"
         self.var.mkdir()

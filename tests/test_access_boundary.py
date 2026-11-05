@@ -13,7 +13,7 @@ from oh_access import native_boundary as boundary
 
 # Explicitly generated locally administered fixture identity, never a device MAC.
 DEVICE = {"ip": "192.0.2.20", "mac": bytes((2, 0, 0, 0, 0, 20)).hex(":"), "sonos_udn": "RINCON_02000000001401400"}
-ORIGIN = "http://127.0.0.1:13601"
+ORIGIN = "http://127.0.0.1:13602"
 
 
 def service(name, namespace="upnp-org"):
@@ -30,7 +30,7 @@ def descriptor(root_service="DeviceProperties", embedded=True):
             f"{child}</device></root>").encode()
 
 
-def callback_config(port=13614):
+def callback_config(port=13615):
     return {"version": 1, "routes": boundary.descriptor_routes(descriptor(), DEVICE),
             "upstream": ORIGIN, "hosts": [f"192.0.2.10:{port}"], "bind_host": "192.0.2.10", "port": port}
 
@@ -38,7 +38,7 @@ def callback_config(port=13614):
 class Native:
     def __init__(self):
         self.configs = {boundary.AUTH_CONFIG: {"implicitUserRole": True, "trustedNetworks": "192.0.2.0/24", "allowBasicAuth": False, "cacheExpiration": 321},
-                        boundary.UPNP_CONFIG: {"interfaces": "eth1", "streamListenPort": "13601"}}
+                        boundary.UPNP_CONFIG: {"interfaces": "eth1", "streamListenPort": "13602"}}
         self.calls = []
         self.anonymous = 401
         self.authenticated = 200
@@ -151,7 +151,7 @@ class Descriptors(unittest.TestCase):
             with self.subTest(address=address), self.assertRaises(boundary.BoundaryError):
                 boundary.descriptor_routes(descriptor(), {**DEVICE, "ip": address})
         with self.assertRaises(boundary.BoundaryError):
-            boundary.validate_callbacks({**callback_config(), "upstream": "http://192.0.2.10:13601"}, ORIGIN)
+            boundary.validate_callbacks({**callback_config(), "upstream": "http://192.0.2.10:13602"}, ORIGIN)
 
 
 class Commissioning(unittest.TestCase):
@@ -301,23 +301,23 @@ class Commissioning(unittest.TestCase):
     def test_sonos_configures_advertised_callback_port_preserving_settings(self):
         result = self.configure(house={"devices": [DEVICE]})
         self.assertEqual(result["callbacks"], callback_config())
-        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG], {"interfaces": "eth1", "streamListenPort": "13601", "httpProxyPort": "13614"})
+        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG], {"interfaces": "eth1", "streamListenPort": "13602", "httpProxyPort": "13615"})
 
     def test_jupnp_decimal_port_is_repaired_without_changing_other_settings_and_repeat_is_idempotent(self):
         original = {"asyncThreadPoolSize": "20", "multicastResponsePort": "0", "threadPoolSize": "20",
                     "felix.fileinstall.filename": "file:/fictional/runtime/etc/org.jupnp.cfg"}
-        self.native.configs[boundary.UPNP_CONFIG] = {**original, "httpProxyPort": "13614.0"}
+        self.native.configs[boundary.UPNP_CONFIG] = {**original, "httpProxyPort": "13615.0"}
         self.configure(existing_callbacks=callback_config())
-        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG], {**original, "httpProxyPort": "13614"})
+        self.assertEqual(self.native.configs[boundary.UPNP_CONFIG], {**original, "httpProxyPort": "13615"})
         puts = [options for method, url, options in self.native.calls if method == "PUT" and url.endswith(boundary.UPNP_CONFIG)]
         self.assertEqual(len(puts), 1)
-        self.assertEqual(json.loads(puts[0]["body"]), {**original, "httpProxyPort": "13614"})
+        self.assertEqual(json.loads(puts[0]["body"]), {**original, "httpProxyPort": "13615"})
         self.native.calls.clear()
         self.configure(existing_callbacks=callback_config())
         self.assertFalse(any(method == "PUT" for method, _, _ in self.native.calls))
 
     def test_jupnp_decimal_or_non_string_readback_never_counts_as_configured(self):
-        for value in ("13614.0", 13614, 13614.0, True):
+        for value in ("13615.0", 13615, 13615.0, True):
             with self.subTest(value=value):
                 self.native = Native()
                 self.native.configs[boundary.AUTH_CONFIG] = {"implicitUserRole": False, "trustedNetworks": ""}
@@ -343,7 +343,7 @@ class Commissioning(unittest.TestCase):
 
     def test_native_credentials_never_go_to_nonloopback_url(self):
         with self.assertRaises(boundary.BoundaryError):
-            boundary.configure("http://192.0.2.10:13601", self.token, {}, "192.0.2.10", request=self.native.request)
+            boundary.configure("http://192.0.2.10:13602", self.token, {}, "192.0.2.10", request=self.native.request)
         self.assertEqual(self.native.calls, [])
 
 
@@ -353,7 +353,7 @@ def nft_snapshot():
         {"chain": {"family": "inet", "table": "thermite_native", "name": "input", "type": "filter", "hook": "input", "prio": -10, "policy": "accept"}},
         {"rule": {"family": "inet", "table": "thermite_native", "chain": "input", "handle": 10, "expr": [
             {"match": {"op": "!=", "left": {"meta": {"key": "iifname"}}, "right": "lo"}},
-            {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": {"set": [13601, 13602, 13603, 13604, 13623]}}},
+            {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": {"set": [13602, 13603, 13604, 13605, 13624]}}},
             {"reject": {"type": "tcp reset"}}]}}]}
 
 
@@ -362,8 +362,8 @@ class NativeFilter(unittest.TestCase):
         rules = boundary.firewall_rules({})
         self.assertNotIn("flush ruleset", rules)
         self.assertEqual(rules.count("delete table inet thermite_native"), 1)
-        self.assertIn('iifname != "lo" tcp dport { 13601, 13602, 13603, 13604, 13623 } reject with tcp reset', rules)
-        self.assertIsNone(boundary.verify_firewall(json.dumps(nft_snapshot()), {}))
+        self.assertIn('iifname != "lo" tcp dport { 13602, 13603, 13604, 13605, 13624 } reject with tcp reset', rules)
+        self.assertIsNone(boundary.verify_firewall(json.dumps(nft_snapshot()), boundary.firewall_ports({})))
 
     def test_altered_hook_prior_rule_extra_chain_or_ports_fail(self):
         for kind in ("hook", "priority", "port", "extra_port", "extra_rule", "extra_chain", "early_accept", "wrong_interface", "dormant"):
@@ -380,31 +380,31 @@ class NativeFilter(unittest.TestCase):
             elif kind == "wrong_interface": rule["expr"][0]["match"]["op"] = "=="
             elif kind == "dormant": objects[1]["table"]["flags"] = ["dormant"]
             with self.subTest(kind=kind), self.assertRaises(boundary.BoundaryError):
-                boundary.verify_native_filter(value, 13601, 13602)
+                boundary.verify_native_filter(value, 13602, 13603)
 
     def test_duplicate_json_keys_and_wrong_types_fail(self):
         with self.assertRaises(boundary.BoundaryError):
-            boundary.verify_firewall('{"nftables":[],"nftables":[]}', {})
+            boundary.verify_firewall('{"nftables":[],"nftables":[]}', boundary.firewall_ports({}))
         with self.assertRaises(boundary.BoundaryError):
-            boundary.verify_native_filter({"nftables": None}, 13601, 13602)
+            boundary.verify_native_filter({"nftables": None}, 13602, 13603)
 
     def test_listener_proof_requires_loopback_http_and_filter_for_lsp(self):
-        good = "LISTEN 0 50 127.0.0.1:13601 0.0.0.0:*\nLISTEN 0 50 [::1]:13602 [::]:*\n"
-        self.assertEqual(boundary.verify_native_listeners(good, http_port=13601, https_port=13602), {"native_listeners": True})
-        lsp = good + "LISTEN 0 50 *:13604 *:*\n"
+        good = "LISTEN 0 50 127.0.0.1:13602 0.0.0.0:*\nLISTEN 0 50 [::1]:13603 [::]:*\n"
+        self.assertEqual(boundary.verify_native_listeners(good, http_port=13602, https_port=13603), {"native_listeners": True})
+        lsp = good + "LISTEN 0 50 *:13605 *:*\n"
         with self.assertRaises(boundary.BoundaryError):
-            boundary.verify_native_listeners(lsp, http_port=13601, https_port=13602)
-        boundary.verify_native_listeners(lsp, http_port=13601, https_port=13602, filtered=True)
+            boundary.verify_native_listeners(lsp, http_port=13602, https_port=13603)
+        boundary.verify_native_listeners(lsp, http_port=13602, https_port=13603, filtered=True)
         for snapshot in (good.replace("127.0.0.1", "0.0.0.0"), good.splitlines()[0], ""):
             with self.subTest(snapshot=snapshot), self.assertRaises(boundary.BoundaryError):
-                boundary.verify_native_listeners(snapshot, http_port=13601, https_port=13602, filtered=True)
+                boundary.verify_native_listeners(snapshot, http_port=13602, https_port=13603, filtered=True)
 
     def test_listener_proof_accepts_mapped_loopback_and_rejects_mapped_lan_addresses(self):
-        good = "LISTEN 0 50 [::ffff:127.0.0.1]:13601 [::]:*\nLISTEN 0 50 [::ffff:127.0.0.1]:13602 [::]:*\n"
-        self.assertEqual(boundary.verify_native_listeners(good, http_port=13601, https_port=13602), {"native_listeners": True})
+        good = "LISTEN 0 50 [::ffff:127.0.0.1]:13602 [::]:*\nLISTEN 0 50 [::ffff:127.0.0.1]:13603 [::]:*\n"
+        self.assertEqual(boundary.verify_native_listeners(good, http_port=13602, https_port=13603), {"native_listeners": True})
         for address in ("192.0.2.1", "0.0.0.0"):
             with self.subTest(address=address), self.assertRaises(boundary.BoundaryError):
-                boundary.verify_native_listeners(good.replace("127.0.0.1", address), http_port=13601, https_port=13602)
+                boundary.verify_native_listeners(good.replace("127.0.0.1", address), http_port=13602, https_port=13603)
 
 
 if __name__ == "__main__":

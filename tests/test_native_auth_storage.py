@@ -33,7 +33,7 @@ class RuntimeCredentialStorage(unittest.TestCase):
         self.system = System()
 
     def run_setup(self):
-        return self.system.configure_runtime_access("http://127.0.0.1:13601", self.credentials,
+        return self.system.configure_runtime_access("http://127.0.0.1:13602", self.credentials,
                                                     self.token, self.system.clock() + 10)
 
     def test_record_is_durable_before_publication_and_secrets_are_never_printed(self):
@@ -179,7 +179,7 @@ class RuntimeCredentialStorage(unittest.TestCase):
     def test_malformed_bearer_never_reaches_http_or_exposes_its_value(self):
         with patch("oh_install.system.oh_http.request") as request:
             for token in ("synthetic-private\nsecond-value", "synthetic\x00secret", "nonascii-\u00e9"):
-                result = self.system.native_probe("http://127.0.0.1:13601", token, "/rest/", self.system.clock() + 1)
+                result = self.system.native_probe("http://127.0.0.1:13602", token, "/rest/", self.system.clock() + 1)
                 self.assertEqual(result.status, 0)
                 self.assertEqual(result.problem, "invalid runtime credential")
             request.assert_not_called()
