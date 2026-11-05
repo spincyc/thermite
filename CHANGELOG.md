@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The metrics probe each device's control ports every 2 minutes instead
+  of every 30 s; each probe is a new connection to a device its integration
+  already polls. They no longer probe an Android TV's remote port (6466) or
+  a Cast receiver's control port (8009): each probe cost the device a TLS
+  handshake it never got, and the Thing's status already shows it reachable.
+
 - A Sony projector on ADCP gets one connection, kept open, instead of a new
   one every 15 s and another per command. Its state is read on it every
   15 s, well inside its 60 s connection time-out, and commands are sent on

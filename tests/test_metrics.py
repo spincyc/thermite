@@ -256,15 +256,28 @@ class Alerting(unittest.TestCase):
             job = next(job for job in prometheus["scrape_configs"] if job["job_name"] == name)
             self.assertEqual(job["metric_relabel_configs"][0]["action"], "drop")
 
-    def test_an_avpro_matrix_is_pinged_not_probed(self):
-        """A TCP probe of its telnet port would cost it a session and a listing."""
+    def test_session_and_tls_ports_are_not_probed(self):
+        """A TCP probe would cost an AVPro a session and a listing, and an
+        Android TV remote or Cast port a TLS handshake."""
         inventory = copy.deepcopy(INVENTORY)
-        inventory["devices"].append({"id": "example_avpro", "room": "example_east", "kind": "hdmi_matrix",
-                                     "make": "AVPro Edge", "model": "AC-MX-44X", "ip": "192.0.2.30",
-                                     "controls": {"observe": ["network_ping"], "control": ["avpro_telnet"]}})
+        inventory["devices"] += [
+            {"id": "example_avpro", "room": "example_east", "kind": "hdmi_matrix", "make": "AVPro Edge",
+             "model": "AC-MX-44X", "ip": "192.0.2.30",
+             "controls": {"observe": ["network_ping"], "control": ["avpro_telnet"]}},
+            {"id": "example_shield", "room": "example_east", "kind": "streamer", "make": "NVIDIA",
+             "model": "SHIELD TV Pro", "ip": "192.0.2.31",
+             "controls": {"observe": ["cast"], "control": ["androidtv_googletv"]}}]
         found, unknown = oh_metrics.probes(inventory)
-        self.assertNotIn("example_avpro", [probe.device for probe in found])
+        self.assertFalse({"example_avpro", "example_shield"} & {probe.device for probe in found})
         self.assertIn(("example_avpro", ("network_ping", "avpro_telnet")), unknown)
+        self.assertIn(("example_shield", ("cast", "androidtv_googletv")), unknown)
+
+    def test_device_ports_are_probed_every_two_minutes(self):
+        prometheus = yaml.safe_load(FILES[oh_metrics.PROMETHEUS_YML])
+        intervals = {job["job_name"]: job.get("scrape_interval") for job in prometheus["scrape_configs"]}
+        self.assertEqual(intervals.pop("device_tcp"), "2m")
+        self.assertEqual(set(intervals.values()), {None})
+        self.assertEqual(prometheus["global"]["scrape_interval"], "30s")
 
     def test_a_sony_projector_is_pinged_not_probed(self):
         """A TCP probe of its ADCP port would cost it a session, reset with its greeting unread."""

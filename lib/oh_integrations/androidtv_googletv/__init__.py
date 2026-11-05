@@ -82,6 +82,9 @@ ADDONS = (Addon("binding", "androidtv"),
           Addon("automation", "jsscripting", "the Android TV key, volume and pairing rule (androidtv_googletv.js)"))
 ASSETS: dict[str, str] = {}
 PORT = 6466
+#: A TCP probe of PORT would cost the device a TLS handshake it never gets;
+#: its Thing's status shows it reachable.
+PROBED = False
 #: The remote protocol's port and its pairing port.
 DISCOVER_PORTS = (PORT, 6467)
 DISCOVER_MDNS = ("_androidtvremote2",)

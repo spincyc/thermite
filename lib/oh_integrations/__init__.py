@@ -124,7 +124,8 @@ integration.
                   Things name none)
     PROBED = False
                   metrics never probes its devices: it has no fixed port,
-                  or a connection would cost the device a session
+                  or a connection costs the device a session or a TLS
+                  handshake
     PROBLEM_CLEAR_STATE
                   the state its <id>_problem Item holds for "nothing wrong"
     ROUTE_OPTIONAL = True

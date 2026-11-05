@@ -57,6 +57,9 @@ SCRAPE_INTERVAL = "30s"
 SCRAPE_TIMEOUT = "10s"
 #: Shorter than SCRAPE_TIMEOUT, so a dead device fails its probe instead of the scrape.
 PROBE_TIMEOUT = "5s"
+#: Each probe is a new connection to a device that its integration already
+#: polls, so device ports are probed less often than everything else.
+DEVICE_PROBE_INTERVAL = "2m"
 
 #: Below the runtime state (oh_deploy.State): the deployed copy of
 #: metrics/ (written by bin/thermite deploy through the group, like conf/),
@@ -610,9 +613,10 @@ def _yaml(header: list[str], document: dict) -> str:
 SELF_BUCKETS = [{"source_labels": ["__name__"], "regex": ".+_bucket", "action": "drop"}]
 
 
-def _blackbox_job(name: str, targets: list[dict], port: int) -> dict:
+def _blackbox_job(name: str, targets: list[dict], port: int, interval: str | None = None) -> dict:
     return {
         "job_name": name,
+        **({"scrape_interval": interval} if interval else {}),
         "metrics_path": "/probe",
         "static_configs": targets,
         "relabel_configs": [
@@ -659,7 +663,7 @@ def prometheus_yml(inventory: dict, host: dict, conf=None) -> str:
              "authorization": {"type": "Bearer", "credentials_file": f"{SECRETS_MOUNT}/{OPENHAB_TOKEN}"},
              "static_configs": [{"targets": [openhab_address(host)]}]},
             {"job_name": "thermite", "static_configs": [{"targets": [f"{LOOPBACK}:{port['exporter']}"]}]},
-            _blackbox_job("device_tcp", device_targets, port["blackbox"]),
+            _blackbox_job("device_tcp", device_targets, port["blackbox"], DEVICE_PROBE_INTERVAL),
             _blackbox_job("service_http", service_targets, port["blackbox"]),
             _blackbox_job(GATEWAY_JOB, [{"targets": [gateway_probe_url(host)],
                                          "labels": {"__param_module": HTTPS_GATEWAY, "service": "gateway"}}],
