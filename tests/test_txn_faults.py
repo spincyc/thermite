@@ -24,7 +24,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 from oh_install import engine
 from tests import txn_fakes as fakes
-from tests.txn_fakes import ID, ROOT, FakeHost, MemoryDisk
+from tests.txn_fakes import ID, ROOT, FakeHost, MemoryDisk, inside
 
 
 @dataclasses.dataclass
@@ -51,7 +51,7 @@ class Case:
 
     def paths(self):
         versions = [version for version in (self.old, self.new) if version]
-        return fakes.managed_paths(*versions, pinned=len({version.pins[fakes.PROMETHEUS] for version in versions}) > 1)
+        return fakes.managed_paths(*versions, pinned=len({version.pins.get(fakes.PROMETHEUS) for version in versions} - {None}) > 1)
 
 
 def bridged():
@@ -62,6 +62,10 @@ def bridged():
 
 def gone():
     return dataclasses.replace(fakes.version("gone", shared=True), files={}, links={})
+
+
+def nothing():
+    return fakes.Version({}, {}, {}, {}, [], "nothing")
 
 
 CASES = {
@@ -76,6 +80,8 @@ CASES = {
         fakes.version("old", extra_units=("thermite-old.service", "thermite-old.path"), apparmor=True),
         fakes.version("new", apparmor=False), mounts={"/etc": "etc", "/srv": "srv"}),
     "uninstall": Case(fakes.version("old"), gone(), kind="uninstall", switch=False),
+    # The desired set lists nothing: the engine keeps all state itself.
+    "uninstall_listing_nothing": Case(fakes.version("old"), nothing(), kind="uninstall", switch=False),
     "purge": Case(fakes.version("old"), gone(), kind="purge", purge=True, switch=False),
     "clean": Case(fakes.version("old"), fakes.version("new", tree_class="tree-move"), kind="clean"),
     "bridge_first_upgrade": Case(bridged(), fakes.version("new"), bridge=True),
@@ -115,14 +121,18 @@ def transaction(disk, host, case, *, gate=True):
         run.rollback(ID)
 
 
-def durable_phase(disk, host):
+def durable_phase(disk, host, case=None):
     journal = engine_on(disk, host).read(ID)
+    if journal is None and case is not None and case.kind == "purge" and "/etc/thermite/installed.json" not in (
+            disk.nodes):
+        return "kept"  # Past the commit point, removing its own transaction.
     return journal.phase if journal else None
 
 
 def recover(disk, host):
     """What a rerun does with the open transaction."""
-    if durable_phase(disk, host) is None:
+    engine_on(disk, host).sweep()
+    if engine_on(disk, host).read(ID) is None:
         return None
     return engine_on(disk, host).rollback(ID)
 
@@ -150,6 +160,9 @@ class Harness(unittest.TestCase):
         if journal is not None:
             self.assertIn(journal.phase, engine.TERMINAL, what)
             self.assertTrue(engine_on(disk, host).finished(ID), what)
+        if case.kind == "purge" and phase in ("committed", "kept"):
+            self.assertEqual([path for path in disk.nodes if inside(path, f"{ROOT}/.transaction") or inside(
+                path, "/etc/thermite")], [], f"{what}: a purge leaves nothing")
 
 
 class CrashAnywhere(Harness):
@@ -173,7 +186,7 @@ class CrashAnywhere(Harness):
                 if power:
                     disk.crash()
                     host.boot()
-                phase = durable_phase(disk, host)
+                phase = durable_phase(disk, host, case)
                 if power and phase in ("guarded", "collecting", "switching"):
                     self.assertFalse(host.state()["target"] or host.state()["members"],
                                      f"{what}: Thermite booted with the guard on")
@@ -218,6 +231,9 @@ class CrashAnywhere(Harness):
 
     def test_uninstall(self):
         self.run_case("uninstall")
+
+    def test_uninstall_listing_nothing(self):
+        self.run_case("uninstall_listing_nothing")
 
     def test_purge(self):
         self.run_case("purge")

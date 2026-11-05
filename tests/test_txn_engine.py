@@ -12,6 +12,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 from oh_install import engine
 from tests import txn_fakes as fakes
+from tests.txn_fakes import inside
 
 ROOT = "/srv/thermite"
 ID = "20261105T101500Z-3f9a2c"
@@ -625,6 +626,55 @@ class Verbs(unittest.TestCase):
         self.assertNotIn(fakes.RULES, self.disk.nodes)
         self.assertIsNone(self.host.table)
         self.assertEqual(self.host.loaded, {})
+
+    def test_an_uninstall_keeps_all_state_whatever_it_lists(self):
+        nothing = fakes.Version({}, {}, {}, {}, [], "nothing")
+        state = [f"{ROOT}/access/releases", f"{ROOT}/access/state", f"{ROOT}/runtime/deploy/deployed.json",
+                 f"{ROOT}/runtime/logs", f"{ROOT}/runtime/monitoring/prometheus", f"{ROOT}/runtime/userdata"]
+        found = {path: self.disk.walk(path) for path in state}
+        journal = self.begin(nothing, "uninstall")
+        self.assertEqual({entry.path: entry.action for entry in journal.entries if entry.path.startswith(ROOT)},
+                         dict.fromkeys(state, "leave"))
+        self.engine.guard(ID)
+        self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
+        self.engine.collect(ID)
+        self.engine.commit(ID)
+        data = engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data, root=ROOT)
+        self.assertFalse(data["installed"])
+        self.assertEqual(data["items"], [{"path": path, "class": "shared"} for path in state])
+        self.assertEqual({path: self.disk.walk(path) for path in state}, found)
+        # A reinstall finds the state, and its commit prunes the uninstall
+        # transaction without losing any of it.
+        again = "20261106T090000Z-00a1b2"
+        self.through_switch(kind="install", id=again)
+        self.engine.commit(again, fakes.release(self.new))
+        self.assertEqual(self.engine.ids(), [again])
+        self.assertEqual(self.disk.nodes[f"{ROOT}/access/state/identity.sqlite3"].data, b"identity new")
+        self.assertEqual(self.disk.nodes[f"{ROOT}/.transaction/{again}/trees/"
+                                         f"{next(e.n for e in self.engine.read(again).entries if e.path.endswith('access/state'))}"
+                                         "/identity.sqlite3"].data, b"identity old")
+
+    def test_a_purge_leaves_nothing_thermite_made(self):
+        self.through_switch()
+        self.engine.commit(ID, fakes.release(self.new))
+        purge = "20261106T090000Z-00c3d4"
+        with self.assertRaisesRegex(engine.EngineError, "a purge installs nothing and removes everything"):
+            self.engine.begin(purge, {"kind": "purge", "tools": fakes.TOOLS,
+                                      "items": [{"path": fakes.RULES, "class": "nft", "apply_unit": fakes.BOUNDARY}]},
+                              fakes.OPERATOR)
+        # The desired set need not list runtime/ and access/.
+        self.engine.begin(purge, {"kind": "purge", "tools": fakes.TOOLS, "items": []}, fakes.OPERATOR)
+        self.engine.guard(purge)
+        self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
+        self.engine.collect(purge)
+        self.assertEqual(self.engine.commit(purge).phase, "kept")
+        # The root itself and the host's own .wants directory stay.
+        left = sorted(path for path in self.disk.nodes if (inside(path, ROOT) or inside(path, "/etc/thermite") or (
+            "thermite" in path.rsplit("/", 1)[1])) and path not in (ROOT, f"{fakes.UNITS}/thermite.target.wants"))
+        self.assertEqual(left, [])
+        self.assertEqual(self.host.images, set())
+        self.assertEqual(self.host.state(), {"enabled": False, "target": False, "members": [], "table": None,
+                                             "loaded": {}})
 
     def test_a_clean_install_records_its_new_trees(self):
         clean = fakes.version("new", tree_class="tree-move")

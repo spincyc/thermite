@@ -52,9 +52,12 @@ OPTIONAL_TOOLS = ("nft", "apparmor_parser", "podman")
 #: The directories a tool may be named in, by its own name. Tests run a copy
 #: with a scratch directory added.
 TOOL_DIRS = ("/usr/bin", "/usr/sbin", "/bin", "/sbin")
-#: install | upgrade | clean | uninstall | purge | revert. Only the last
-#: three differ: uninstall and purge record installed=false and leave the
-#: boot target disabled.
+#: install | upgrade | clean | uninstall | purge | revert. Uninstall and
+#: purge record installed=false and leave the boot target disabled. An
+#: uninstall keeps all state: every installed item below the root stays in
+#: place, recorded as shared. A purge removes runtime/ and access/ whole,
+#: whatever the desired set lists, then the installed manifest and every
+#: transaction, its own backup included: nothing Thermite made is left.
 KINDS = ("install", "upgrade", "clean", "revert", "uninstall", "purge")
 UNINSTALLING = ("uninstall", "purge")
 
@@ -133,6 +136,8 @@ TERMINAL = ("kept", "rolled-back")
 #: whatever its journal format: one marked so blocks no later begin, and the
 #: next commit prunes it.
 FINISHED = "terminal"
+#: A purge renames its own transaction to this prefix, then removes it.
+PURGED = ".purged-"
 #: Each phase and the phases a verb may move it to.
 NEXT = {
     "planned": ("guarded", "rolling-back"),
@@ -808,11 +813,24 @@ class Engine:
 
     # Planning ------------------------------------------------------------
 
-    def entries(self, current, desired, id=None) -> list[Entry]:
+    def desired(self, data) -> dict:
+        """The desired set, checked, as the engine enforces it for its kind:
+        a purge's is runtime/ and access/ as tree-move items, nothing else."""
+        desired = validate_desired(data, self.root, self.system)
+        if desired["kind"] == "purge":
+            whole = [{"path": str(self.root / name), "class": "tree-move"} for name in ("access", "runtime")]
+            other = [item["path"] for item in desired["items"] if item not in whole]
+            if other:
+                raise EngineError(f"a purge installs nothing and removes everything, not {other[0]}")
+            desired["items"] = whole
+        return desired
+
+    def entries(self, current, desired, id=None, kind=None) -> list[Entry]:
         """The collect rule over the installed and desired items, checked
         against the disk. Refuses a managed root file that drifted, is
         missing, or is present without being installed (9-Q12), and items
-        that would nest across the two versions."""
+        that would nest across the two versions. An uninstall leaves every
+        installed item below the root in place."""
         installed = {item["path"]: item for item in (current or {}).get("items", [])}
         wanted = {item["path"]: item for item in desired}
         replaced = [path for path, item in wanted.items() if item["class"] == "tree-move"]
@@ -834,6 +852,8 @@ class Engine:
                                       "move it aside by hand if it is not wanted, then rerun")
             changed = bool(new and old and new["class"] == "shared-pinned" and pins.get(new["pin"]) != new["value"])
             action = collect_action(old and old["class"], new and new["class"], exists, changed)
+            if kind == "uninstall" and old and not new and not managed(self.root, path):
+                action = "leave"
             cls = (new or old)["class"]
             if action == "move" and not new:
                 cls = old["class"]
@@ -883,12 +903,12 @@ class Engine:
     def plan(self, desired, current=None) -> dict:
         """What begin would set aside, and whether it fits. Changes nothing."""
         self.check_root()
-        desired = validate_desired(desired, self.root, self.system)
+        desired = self.desired(desired)
         if current is None:
             current, _ = self.installed()
         else:
             current = validate_manifest(current, root=self.root, system=self.system)
-        return self.space(self.entries(current, desired["items"]), desired["extra"])
+        return self.space(self.entries(current, desired["items"], kind=desired["kind"]), desired["extra"])
 
     # Verbs ---------------------------------------------------------------
 
@@ -904,6 +924,7 @@ class Engine:
         directory = self.directory(id)
         self.check_root()
         with self.disk.lock(self.root):
+            self.sweep()
             for other in self.ids():
                 if self.finished(other):
                     continue
@@ -921,9 +942,9 @@ class Engine:
                 if installed is not None:
                     raise EngineError(f"{self.manifest_path} exists; only an installation without one is described")
                 installed, source = validate_manifest(current, root=self.root, system=self.system), "bridge"
-            desired = validate_desired(desired, self.root, self.system)
+            desired = self.desired(desired)
             operator = validate_operator(operator)
-            entries = self.entries(installed, desired["items"], id)
+            entries = self.entries(installed, desired["items"], id, desired["kind"])
             apparmor = self._apparmor()
             for tool in sorted(needed_tools(entries, apparmor)):
                 if not desired["tools"][tool]:
@@ -1141,6 +1162,13 @@ class Engine:
                     raise EngineError(f"{path} points to {record['target']}, not {item['target']}")
                 items.append(record)
                 devices.setdefault(found.dev, path)
+            if journal.kind == "uninstall":
+                # All state stays, recorded as shared so a reinstall finds it.
+                listed = [item["path"] for item in journal.desired]
+                for path in installed:
+                    if not managed(self.root, path) and not any(
+                            path == other or below(path, other) or below(other, path) for other in listed):
+                        items.append({"path": path, "class": "shared"})
             old_images = current.get("images", {"current": [], "previous": []})
             old_application = current.get("application", {"current": None, "previous": None})
             manifest = {
@@ -1167,14 +1195,20 @@ class Engine:
         """Everything after the commit point; rerunning it is harmless."""
         if journal.phase == "kept":
             self._mark(journal)
+            if journal.kind == "purge":
+                self._purge(journal)
             return journal
-        raw = render_manifest(journal.manifest)
         self._safe(self.manifest_path)
-        if self.disk.lstat(self.manifest_path.parent) is None:
-            self.disk.mkdir(self.manifest_path.parent, 0o755)
-            self.disk.fsync_dir(self.manifest_path.parent.parent)
-        if self.disk.lstat(self.manifest_path) is None or self.disk.read_bytes(self.manifest_path, 1024 * 1024) != raw:
-            self.disk.write_atomic(self.manifest_path, raw, 0o644)
+        if journal.kind == "purge":
+            self._discard(self.manifest_path)
+        else:
+            raw = render_manifest(journal.manifest)
+            if self.disk.lstat(self.manifest_path.parent) is None:
+                self.disk.mkdir(self.manifest_path.parent, 0o755)
+                self.disk.fsync_dir(self.manifest_path.parent.parent)
+            if self.disk.lstat(self.manifest_path) is None or self.disk.read_bytes(
+                    self.manifest_path, 1024 * 1024) != raw:
+                self.disk.write_atomic(self.manifest_path, raw, 0o644)
         if journal.kind not in UNINSTALLING:
             self._systemctl("enable", TARGET)
             self._sync_units()
@@ -1183,7 +1217,42 @@ class Engine:
                 self.say(f"warning: systemctl start {TARGET} failed")
         self._advance(journal, "kept")
         self.prune(journal)
+        if journal.kind == "purge":
+            self._purge(journal)
         return journal
+
+    def _purge(self, journal) -> None:
+        """The last of a purge: its own transaction, backup and all. The
+        directory is renamed out of the transactions first, so that a crash
+        while removing it leaves no half transaction, only what sweep()
+        removes."""
+        directory = self.directory(journal.id)
+        if self.disk.lstat(directory) is not None:
+            # The manifest's directory goes first, while the transaction
+            # still says what is left to do.
+            parent = self.manifest_path.parent
+            found = self.disk.lstat(parent)
+            if found is not None and found.kind == "dir" and not self.disk.listdir(parent):
+                self._discard(parent)
+            gone = self.transactions / f"{PURGED}{journal.id}"
+            self._discard(gone)
+            self.disk.rename(directory, gone)
+            self.disk.fsync_dir(self.transactions)
+        self.sweep()
+
+    def sweep(self) -> None:
+        """Finish removing what a purge set to go: its renamed transaction,
+        and the transaction directory once nothing else is in it (begin
+        makes it again)."""
+        if self.disk.lstat(self.transactions) is None:
+            return
+        self._private(self.transactions, "dir")
+        names = self.disk.listdir(self.transactions)
+        purged = [name for name in names if name.startswith(PURGED)]
+        for name in purged:
+            self._discard(self.transactions / name)
+        if len(purged) == len(names):
+            self._discard(self.transactions)
 
     def prune(self, journal) -> None:
         """After a commit, best effort: earlier finished transactions (their
@@ -1221,8 +1290,10 @@ class Engine:
             if item["class"] == "versioned" and new and item["previous"] not in (None, new["current"], new["previous"]):
                 attempt(item["path"], lambda path=f"{item['path']}/{item['previous']}": self._discard(path))
         images = journal.manifest["images"]
-        keep = set(images["current"]) | set(images["previous"])
+        keep = set() if journal.kind == "purge" else set(images["current"]) | set(images["previous"])
         old = current.get("images", {}).get("previous", [])
+        if journal.kind == "purge":
+            old = [*old, *current.get("images", {}).get("current", [])]
         if journal.tools.get("podman"):
             for ref in sorted((set(old) | set(pulled)) - keep):
                 attempt(f"image {ref}", lambda ref=ref: self._run("podman", "image", "rm", "--ignore", "--", ref))
@@ -1792,6 +1863,8 @@ def _main(args, argv, here) -> int:
         return 0
     id = args.id
     if id is None:
+        with engine.disk.lock(engine.root):
+            engine.sweep()  # What a purge killed partway left.
         id = _open_one(engine)
         if id is None:
             print("No transaction is open.")
