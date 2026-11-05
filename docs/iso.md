@@ -1,24 +1,24 @@
 # Bootable installer ISO
 
-The Thermite ISO uses the pinned official Arch Linux 2026.11.01 x86_64
-installation medium and its native `archinstall` guided installer. It adds
-the reviewed Thermite application wheel and first-boot instructions. Build
-it as an ordinary user with `xorriso` and `mtools`; no root, loop device or
-container daemon is required. The resulting image retains upstream BIOS
-and UEFI boot support. Secure Boot is not supplied by this recipe.
+The Thermite ISO is the pinned official Arch Linux 2026.11.01 x86_64
+installation medium with Thermite's own installer added. It boots into a
+terminal that looks like `thermite tui`, asks a few questions, installs Arch
+Linux with `archinstall` 4.5 behind the scenes, and on the installed host's
+first boot sets up an empty Thermite house by itself. Build it as an
+ordinary user with `xorriso` and `mtools`; no root, loop device or container
+daemon is required. The image keeps upstream BIOS and UEFI boot support.
+Secure Boot is not supported: turn it off in the firmware.
 
-The owner chooses the target disk, storage layout, hostname, network and
-login credentials. No disk, password, private house or API token is embedded.
-Arch installation needs Internet access for signed OS packages. The bundled
-application installs after the OS is ready, without pip or a separate
-application download. Runtime commissioning follows first boot and requires
-Internet access for runtime downloads and container images.
-The live medium is pinned; installed Arch OS package versions follow the
-current repositories and are not frozen by the ISO's provenance receipt.
+No disk, password, private house or API token is embedded; the installer
+asks for each and erases a disk only after its name is typed back. Arch
+installation needs Internet access for signed OS packages, and the first
+boot needs it for Thermite's runtime downloads and container images. The
+live medium is pinned; installed Arch package versions follow the current
+repositories and are not frozen by the image's provenance receipt.
 
-For a stock Arch installation followed by the standalone application,
-start with [installation](installation.md). An optional Ubuntu Server ISO
-retains the offline OS and application installation described below.
+For a stock Arch installation followed by the standalone application, start
+with [installation](installation.md). An optional Ubuntu Server image keeps
+Ubuntu's own interactive installer, described below.
 
 ## Build
 
@@ -32,17 +32,44 @@ thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .sc
 
 In a source checkout, substitute `python3 bin/thermite` for `thermite`.
 Allow roughly 6 GB of free space for the Arch base, staging and result.
-Fetch downloads the fixed HTTPS base image and verifies the exact SHA256
-in `iso/inputs.json`. A corrupt existing cache fails and is not overwritten.
-Build uses the verified cache and the privacy-reviewed public application
-payload. The selected private site is never copied into the image.
+
+Fetch downloads the fixed HTTPS inputs in `iso/inputs.json` and checks each
+digest. A corrupt existing cache fails and is not overwritten.
+
+| Input | Pinned by |
+|---|---|
+| Arch Linux 2026.11.01 live ISO | SHA-256 from the [Arch release](https://archlinux.org/releng/releases/2026.11.01/) |
+| Node.js 26.13.0 LTS, `linux-x64` tarball | SHA-256 from its [`SHASUMS256.txt`](https://nodejs.org/dist/v26.13.0/SHASUMS256.txt) |
+| blessed 0.1.81, the npm tarball | sha512 integrity from the npm registry, the same as `tui/remote/package-lock.json` |
+
+The npm registry publishes no SHA-256 for a package, so blessed is pinned by
+the integrity value `thermite tui` already locks; a test holds the two
+equal. Build checks every input again and stages the privacy-reviewed public
+application payload: the application wheel, `iso/packages.json`, the
+installer core (`iso/installer.py`), its terminal (`tui/installer` with the
+`tui/remote` modules it draws with), the theme and torch as `thermite tui`
+gets them, the Node.js and blessed archives, and their digests in
+`payload.json`. The selected private site is never copied into the image.
+
+To install over SSH as well as on the console, add one public key:
+
+```sh
+thermite iso build --cache .scratch/iso/cache --work .scratch/iso/work --out .scratch/iso/thermite.iso \
+  --authorized-key ~/.ssh/id_ed25519.pub
+```
+
+The file must hold exactly one OpenSSH public key without options. The live
+system then accepts SSH as `root` with that key alone, straight into the
+installer, and the installed host gives it to the owner and turns password
+SSH off. Without a key the live system's SSH stays as Arch ships it, which
+accepts no login until someone sets a root password at the console.
 
 The outputs are `thermite.iso`, `thermite.iso.sha256` and
-`thermite.iso.json`. The receipt records the distribution, base digest,
-application release and wheel digests. Existing outputs are refused. Choose
-a new filename when rebuilding. An interrupted image without its checksum
-and receipt is incomplete. Keep the three completed files together and
-verify the image before use:
+`thermite.iso.json`. The receipt records every input's digest, the
+application release, the payload and the key's fingerprint. Existing
+outputs are refused. Choose a new filename when rebuilding. An interrupted
+image without its checksum and receipt is incomplete. Keep the three
+completed files together and verify the image before use:
 
 ```sh
 cd .scratch/iso
@@ -50,73 +77,122 @@ sha256sum --check thermite.iso.sha256
 ```
 
 Build the final image after all application and documentation edits: the
-application release identifies the exact reviewed program bytes. Remastering
-changes the overall ISO hash. The builder checks the pinned upstream SHA256;
-it does not verify detached release signatures. Those can be verified
-separately with the distribution's release key. The generated checksum
-checks the image you built.
+application release identifies the exact reviewed program bytes. The
+builder checks the pinned digests; it does not verify detached release
+signatures, which can be checked separately with each publisher's key.
 
-The builder replays upstream's hybrid boot metadata. For Arch it updates
-both BIOS Syslinux entries and UEFI systemd-boot entries, including the
-copies inside the appended EFI FAT partition. It preserves Arch's source
-UUID and signed live filesystem. It also updates the GRUB loopback entries
-used when another bootloader opens the ISO as a file.
+The builder replays upstream's hybrid boot metadata. It updates both BIOS
+Syslinux entries and UEFI systemd-boot entries, including the copies inside
+the appended EFI FAT partition, to run Thermite's boot hook. It preserves
+Arch's source UUID and signed live filesystem, and the GRUB loopback
+entries used when another boot loader opens the ISO as a file.
 
-## Install a machine with Arch
+## Install a machine
 
 1. Attach the ISO to a new VM, or write it to USB with a tool that displays
    the destination and asks before overwriting it. Thermite supplies no
    command that guesses a USB or system disk.
-2. Boot the `Thermite installation (Arch Linux)` entry. Its live console
-   explains the process before opening the native guided installer.
-3. Connect the live system to the Internet. Wired DHCP is normally automatic.
-   For Wi-Fi, press Ctrl-C, configure the connection with `iwctl`, then run
-   `bash /run/archiso/bootmnt/thermite/arch-install.sh`. Press Enter to run
-   the plugin-loading, network, keyring and package dependency checks. A failed preflight
-   exits before the disk installer starts. A later network failure can still
-   interrupt installation; successful preflight cannot guarantee connectivity
-   for the entire package transfer.
-4. In `archinstall`, choose mirrors, disk configuration, a bootloader,
-   hostname, locale and timezone. Select the intended disk and review the
-   proposed layout. Native Arch owns partitioning and its final destructive
-   confirmation. Nothing selects a disk or starts installation automatically.
-5. Create your own normal user with a password and sudo access. Use that
-   account for Thermite; reserve `thermite` for the non-login service account
-   created during later commissioning. Keep the preselected packages listed
-   under [Packages](#packages).
-   NetworkManager is preselected for the installed network; configure the
-   connection appropriate to your machine. These settings remain visible
-   and editable in the native menu.
-6. Select Install and inspect the native summary and storage confirmation.
-   Accept only when the selected disk and layout are correct. Existing data
-   on selected partitions can be destroyed at this point.
-7. Wait for the Thermite application success message before the native
-   post-installation Reboot menu. Remove the installation medium and boot
-   the installed disk. Log in as your owner account.
+2. Boot the `Thermite installation (Arch Linux)` entry. The installer starts
+   on the first console. With an image key, `ssh root@<address>` from the
+   key's machine opens the same installer; the console's welcome screen
+   shows the key's fingerprint and its address. Only one of them installs
+   at a time: the other is told who holds it and can follow
+   `/run/thermite-installer/installer.log`.
+3. Answer its steps. Tab and the arrows move, Enter goes on, Esc goes back,
+   Ctrl-T switches between dark and light, Ctrl-C leaves for a shell
+   (`thermite-installer` starts it again):
 
-The local Arch startup hook runs on the live medium's first virtual console.
-A serial-only console can invoke the same script manually. Keep the bundled
-`archinstall` 4.5; the wrapper refuses an incompatible installer version.
-Its configuration contains required packages and a network-manager choice,
-with no storage or identity configuration and no silent-install flag.
+   | Step | Asks for | Notes |
+   |---|---|---|
+   | Welcome | | This machine: firmware, processor, memory, disks, network, warnings |
+   | Network | Wi-Fi network and passphrase, if there is no cable | The installed host joins the same Wi-Fi |
+   | Host name | default `thermite` | If `thermite.local` already answers on the network, `thermite-2` (or the next free one) is suggested; Enter twice keeps a taken name |
+   | Owner | user name and password | Your login, in `wheel` with sudo; `thermite` is reserved for the service account |
+   | Root password | | Console and emergency use only; it must differ from the owner's |
+   | Region | time zone, language, console keyboard | Type to search a list |
+   | Disk | the whole disk to install on | Disks smaller than 32 GB, read-only, in use or holding the installer are not offered; less than 64 GB warns |
+   | System | Btrfs (default) or ext4; `linux-lts` (default) or `linux` | Both kernels are installed; the other is the fallback boot entry |
+   | Review | the disk's name, typed back | Nothing is written before this |
 
-The supported `on_genfstab` plugin hook runs after the native installer has
-installed the OS, bootloader, network and owner account, before its reboot
-menu. It checks that the target is a mounted Arch installation with a normal
-owner login, copies the media payload into `/opt/thermite-media`, then runs
-the bootstrap inside that target with `arch-chroot`. Bootstrap verifies the
-application wheel, creates `/opt/thermite/venv`, checks system PyYAML is
-within `>=6,<7`, and adds the `thermite` launcher, login instructions and
-a login profile that puts `~/.local/bin` first on PATH.
-It uses the signed OS `python-yaml` package to match Arch's Python ABI.
-A failed hook fails installation; it must not be treated as a completed
-Thermite image. No runtime services or house are deployed by this hook.
+4. The progress screen follows the installation: a package check before the
+   disk is touched, then partitioning, the base system, the boot loader, the
+   owner, Thermite's packages and services, and Thermite's own part. A
+   failed run says why and returns to the review; the disk may already have
+   been changed.
+5. When it is done, remove the installation medium and press Enter to
+   restart.
+
+The installer core (`iso/installer.py`) checks every answer, writes
+`archinstall`'s configuration and credentials (yescrypt hashes only, in a
+file only root can read, deleted after the run), runs `archinstall` without
+its menus, and logs to `/run/thermite-installer/installer.log`. Passwords
+and the Wi-Fi passphrase never reach a command line, a log or the
+installed host's records. A dropped SSH login does not stop a running
+installation.
+
+The layout is a 1 GiB boot partition (`/boot`, FAT32) and the system:
+Btrfs with the subvolumes `@` (`/`), `@home`, `@log` (`/var/log`) and `@pkg`
+(`/var/cache/pacman/pkg`), compressed with zstd, or a single ext4 file
+system. UEFI hosts get systemd-boot and a GPT disk, BIOS hosts GRUB and an
+MBR disk; either boots the chosen kernel by default. Swap is zram.
+
+## The installed host
+
+Thermite's `archinstall` plugin runs after the OS, boot loader, owner,
+packages and services are installed, with the target still mounted. It
+installs the application from the medium into `/opt/thermite/venv` with
+the `thermite` launcher, then configures:
+
+- `sshd` enabled, with `PermitRootLogin no`; with an image key, that key in
+  the owner's `~/.ssh/authorized_keys` and password logins off.
+- `sudo` for the `wheel` group, checked by `visudo`.
+- `avahi-daemon` and `nss-mdns`, so `.local` names resolve; time
+  synchronization, zram swap and the journal capped at 2 GB.
+- `xterm-256color` for a terminal the host has no terminfo for, in
+  `/etc/profile.d/thermite-term.sh`; `~/.local/bin` first on PATH.
+- The units listed under [Packages](#packages) as disabled stay disabled.
+- `/var/log/thermite-install`: `receipt.json` (application release, input
+  digests, the key's fingerprint), `answers.json` without secrets, and the
+  installer's own log. `archinstall`'s log is `/var/log/archinstall/install.log`.
+
+## First boot
+
+The `thermite-first-boot` unit runs once, after the network is up:
+
+1. As root, it adds a temporary sudo rule letting the owner run `thermite
+   install` without a password.
+2. As the owner, it waits up to 15 minutes for the Internet, creates an
+   empty house with `thermite init --empty ~/thermite-site` in the time
+   zone you chose, commits it to a new Git repository, and runs `thermite
+   install --config ~/thermite-site`, answering its one approval. Any other
+   question is declined, and a password prompt stops it.
+3. As root, whatever happened, it removes the sudo rule, writes the login
+   message and disables itself.
+
+Each interactive login shows its status: while it runs (with `journalctl
+-fu thermite-first-boot.service`), why it stopped, or once that it
+finished. Its log is `/var/log/thermite-install/first-boot.log`. After a
+failure, `sudo systemctl start thermite-first-boot.service` tries again and
+skips what is done; `/opt/thermite/FIRST-BOOT.txt` also has the steps by
+hand. The house starts empty: add your rooms and equipment to
+`instance/devices.yaml` and run `thermite install` again.
+
+The first `thermite install` prepares Thermite's own owner-managed
+application environment from PyPI and selects it through
+`~/.local/bin/thermite`; log out and back in afterwards so `thermite` runs
+it. Commissioning creates the non-login `thermite:thermite` service
+identity, UID/GID 9001; see [service ownership](service-account.md).
+Update later with `thermite upgrade --config "$HOME/thermite-site"`
+([application releases](packaging.md#update-and-roll-back)). Arch system
+upgrades can change Python's minor version; the next install or upgrade
+rebuilds an application environment built for an older one. Keep
+application and private-site backups.
 
 ## Packages
 
 `iso/packages.json` is the one list of packages the Arch image installs.
-The image renders archinstall's package list and its live preflight from it,
-and a test holds this table to it. The first tier is everything
+The installer writes `archinstall`'s package list and its package check from
+it, and a test holds this table to it. The first tier is everything
 `thermite install`'s Packages step installs, so that step finds nothing to
 do; install itself still checks only those. The other tiers are for the
 person at the console or on SSH.
@@ -160,84 +236,44 @@ and create the application environment without pip or network access. An
 offline installation without those packages still completes; the first-boot
 instructions give the one command to install them before `thermite install`.
 The builder refreshes Ubuntu's media checksum list for replaced and added
-files. Reboot from the installed disk and log in as your chosen owner.
-
-## First boot
-
-The login instructions are also in `/opt/thermite/FIRST-BOOT.txt`. Log in as
-your owner account and connect to the Internet. On the Ubuntu image, first
-make sure the prerequisites are present; nothing changes when they already
-are:
-
-```sh
-sudo apt-get update && sudo apt-get install python3-venv git
-```
-
-Then create the private site, replace its fictional inventory, validate and
-commit it, and deploy it with one approval:
-
-```sh
-thermite init "$HOME/thermite-site"
-cd "$HOME/thermite-site"
-thermite check --config "$HOME/thermite-site"
-git init --initial-branch=main
-git add .
-git commit -m 'Initialize private Thermite site'
-thermite install --config "$HOME/thermite-site" --dry-run
-thermite install --config "$HOME/thermite-site"
-```
-
-Edit `instance/devices.yaml` and `instance/host.yaml` before `thermite check`.
-Installation prints the HTTPS URL and the certificate authority file each
-browser or terminal client must trust once. Installation switches
-`~/.local/bin/thermite` to the application it verified; log out and back in
-afterwards. On the Arch image, `/etc/profile.d/thermite.sh` then puts
-`~/.local/bin` first on PATH, as Ubuntu's default `~/.profile` does once that
-directory exists, so `thermite` runs that application rather than the image's
-`/usr/local/bin/thermite`.
-[Installation](installation.md#create-your-private-site) describes each step.
-
-Commissioning creates the non-login `thermite:thermite` service identity,
-UID/GID 9001. Your owner login continues to own private Git and run the CLI.
-Log out and back in for its new group membership to apply. See
-[service ownership](service-account.md).
-
-The ISO application environment contains no pip. The first
-`thermite install` prepares Thermite's own owner-managed application
-environment and selects it through `~/.local/bin/thermite`; update later with
-`thermite upgrade --config "$HOME/thermite-site"`
-([application releases](packaging.md#update-and-roll-back)). Arch system
-upgrades can change Python's minor version; the next install or upgrade
-rebuilds an application environment built for an older one. Keep application
-and private-site backups.
+files. Reboot from the installed disk and log in as your chosen owner. Follow
+`/opt/thermite/FIRST-BOOT.txt` from there: the Ubuntu image has no
+first-boot unit.
 
 ## Validation and limits
 
-Offline checks cover input digests, refusal of unsafe outputs, native
-storage/identity defaults, both boot configuration formats, EFI partition
-bounds, owner-account checks, hook-failure propagation, safe wheel extraction,
-the installed launcher outside the source tree and the login profile's PATH
-order under the available POSIX shells. A real remaster also
-requires the pinned image and the build tools.
+Offline checks cover the input pins and their digests (Node.js and blessed
+included, with downloads mocked), the staged medium and its payload, the
+key check and fingerprint, answer checking, `archinstall`'s configuration
+against its 4.5 schema and layout rules, the installation run with a fake
+`archinstall` (no secret on disk afterwards), the installer terminal driven
+through every step against the real core at four sizes in both themes, the
+plugin's changes to a fake target, the first-boot unit's sudo rule and its
+pseudo-terminal approval, both boot configuration formats, EFI partition
+bounds, safe wheel extraction and the login profile's PATH order under the
+available POSIX shells. A real remaster also requires the pinned image and
+the build tools.
 
-A complete acceptance run must boot the image in firmware, inspect the
-visible guided installer, select an explicitly disposable blank disk,
-confirm its storage plan, complete OS installation and log in after removing
-the ISO. Then commission a fictional private house and inspect the actual
-services and remote. A successful remaster or unit suite alone does not
-prove that complete path. Firmware, storage drivers and physical hardware
-need acceptance on the intended machine as well.
+A complete acceptance run must boot the image in firmware (UEFI and BIOS),
+answer the installer on the console and over SSH, install to an explicitly
+disposable disk, log in after removing the ISO, watch the first boot finish
+and inspect the services and remote. A successful remaster or unit suite
+alone does not prove that path. Firmware, storage drivers and physical
+hardware need acceptance on the intended machine as well.
 
 The implementation follows the official
 [Arch release](https://archlinux.org/releng/releases/2026.11.01/),
 [Arch live startup hook](https://github.com/archlinux/archiso/blob/master/configs/releng/airootfs/root/.automated_script.sh),
 [Arch boot image construction](https://github.com/archlinux/archiso/blob/master/archiso/mkarchiso),
-[Archinstall 4.5 guided flow](https://github.com/archlinux/archinstall/blob/4.5/archinstall/scripts/guided.py)
+[Archinstall 4.5 guided flow](https://github.com/archlinux/archinstall/blob/4.5/archinstall/scripts/guided.py),
+its [configuration](https://github.com/archlinux/archinstall/blob/4.5/examples/config-sample.json)
 and [plugin hook](https://github.com/archlinux/archinstall/blob/4.5/archinstall/lib/installer.py).
 The Ubuntu variant follows the official
 [Subiquity interactive configuration](https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html)
 and [confirmation behavior](https://canonical-subiquity.readthedocs-hosted.com/en/latest/howto/autoinstall-quickstart.html).
 Boot metadata is preserved with
 [xorriso replay](https://www.gnu.org/software/xorriso/man_1_xorriso.html).
+Node.js comes from [nodejs.org](https://nodejs.org/dist/v26.13.0/), blessed
+from the [npm registry](https://registry.npmjs.org/blessed/0.1.81).
 Ubuntu checksums come from [Ubuntu](https://releases.ubuntu.com/24.04/SHA256SUMS)
 and its Python dependency from [PyPI](https://pypi.org/project/PyYAML/6.0.3/).

@@ -91,6 +91,23 @@ rollback. The unified deployment workflow uses a separate committed private site
   its own. A gateway whose identity state is not in
   `access/state`, or whose callback relay has no exact map to keep, is
   refused while the install prepares, before anything stops.
+- The Arch installer ISO boots into Thermite's own installer instead of
+  archinstall's menus: a terminal that looks like `thermite tui`, on the
+  console and, with `thermite iso build --authorized-key FILE`, over SSH with
+  that key alone. It asks for the network (joining Wi-Fi if needed), a host
+  name (`thermite`, or `thermite-2` when that already answers on mDNS), the
+  owner and root passwords, region, disk (erased only after its name is
+  typed back), Btrfs or ext4 and `linux-lts` or `linux`, then runs
+  archinstall 4.5 unattended and shows its progress. The installed host has
+  SSH without root logins (and without passwords when the image has a key),
+  sudo for `wheel`, mDNS names, zram swap, a capped journal, a terminal
+  fallback, and its answers and logs in `/var/log/thermite-install`. On its
+  first boot it creates an empty house (`thermite init --empty`, also new)
+  and runs `thermite install` as the owner, then removes its temporary sudo
+  rule and disables itself; logins show its progress. The image bundles
+  Node.js 26.13.0 LTS and blessed 0.1.81, pinned in `iso/inputs.json` like
+  the base image, and every package it installs comes from one tiered
+  `iso/packages.json`.
 - The installer ISO's first-boot guide asks for your equipment and time zone
   in `instance/host.yaml`, not a state directory, which the fixed
   `/srv/thermite` layout removed. The Arch image's login profile puts

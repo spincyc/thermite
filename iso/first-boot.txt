@@ -1,46 +1,60 @@
 
-Thermite is installed; configure this machine as its owner.
+Thermite is installed. This guide is /opt/thermite/FIRST-BOOT.txt.
 
-No private house, service account, credentials or runtime services exist yet.
-Log in as the owner account you chose in the OS installer and connect to the
-Internet: installation downloads host packages, container images and
-integrity-pinned runtime files.
+On the Arch image, the first boot sets Thermite up by itself: as the owner
+you chose in the installer, it creates an empty house in ~/thermite-site,
+commits it, and runs thermite install, which creates the non-login thermite
+service account (UID/GID 9001), starts the native services and the HTTPS
+gateway, and provisions internal runtime access. It needs the Internet for
+host packages, container images and integrity-pinned runtime files. Your
+login shows its progress until it is done:
 
-On the Ubuntu image, first make sure the prerequisites are present (nothing
-changes when they already are):
+  journalctl -fu thermite-first-boot.service
+  less /var/log/thermite-install/first-boot.log
+
+Then log out and back in: the new login puts ~/.local/bin first on PATH, so
+thermite runs the application install verified, and applies your new
+thermite group membership. Install prints the HTTPS URL and the certificate
+authority file each browser or terminal client must trust once. Inspect the
+result with:
+
+  thermite status --config "$HOME/thermite-site"
+  thermite health --config "$HOME/thermite-site" --production
+
+The house starts empty. Add your rooms and equipment to
+instance/devices.yaml, check and commit them, and deploy again:
+
+  cd "$HOME/thermite-site"
+  thermite check --config "$HOME/thermite-site"
+  git commit -am 'Add the house'
+  thermite install --config "$HOME/thermite-site"
+
+If the first boot did not finish (the login says why), start it again with
+sudo systemctl start thermite-first-boot.service, or do its steps by hand
+as below. The installer's answers, receipt and logs are kept in
+/var/log/thermite-install.
+
+By hand, and on the Ubuntu image: connect to the Internet, then on Ubuntu
+make sure the prerequisites are present (nothing changes when they already
+are):
 
   sudo apt-get update && sudo apt-get install python3-venv git
 
-Create your private site:
+Create your private site. --empty starts with no rooms or devices; without
+it the site holds a fictional example house to replace before commissioning
+real equipment. Edit instance/host.yaml for your time zone:
 
-  thermite init "$HOME/thermite-site"
+  thermite init --empty "$HOME/thermite-site"
   cd "$HOME/thermite-site"
-
-Edit instance/devices.yaml and instance/host.yaml for your equipment and
-time zone. The generated inventory is fictional; replace it before
-commissioning real equipment. Then validate and commit the site:
-
   thermite check --config "$HOME/thermite-site"
   git init --initial-branch=main
   git add .
   git commit -m 'Initialize private Thermite site'
 
-Deploy the complete site with one approval. Install creates the non-login
-thermite service account (UID/GID 9001), starts the native services and the
-HTTPS gateway, and provisions internal runtime access itself:
+Deploy the complete site with one approval:
 
   thermite install --config "$HOME/thermite-site" --dry-run
   thermite install --config "$HOME/thermite-site"
-
-Installation switches ~/.local/bin/thermite to the application it verified.
-Log out and back in afterwards: the new login puts ~/.local/bin first on
-PATH, so thermite runs that application, and applies your new thermite group
-membership. Installation prints the HTTPS URL and the
-certificate authority file each browser or terminal client must trust once.
-Inspect the result with:
-
-  thermite status --config "$HOME/thermite-site"
-  thermite health --config "$HOME/thermite-site" --production
 
 Update later with thermite upgrade --config "$HOME/thermite-site". Keep the
 site repository private. The full guide is docs/installation.md under
