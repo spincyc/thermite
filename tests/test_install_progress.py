@@ -19,7 +19,7 @@ from oh_install import progress, runner
 from oh_install import output
 from oh_install import steps
 from oh_install.model import Check, Command, Step, Task
-from oh_install.system import NativeProbe, System
+from oh_install.system import UNATTENDED, NativeProbe, System
 from oh_deploy import MetricsHealth
 
 
@@ -475,6 +475,23 @@ class Presentation(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("✓", text)
         self.assertEqual((validation.call_count, command.call_count), (1, 1))
+
+    def test_an_unattended_root_command_runs_under_sudo_n_and_nothing_authenticates_first(self):
+        # --yes: a sudo -v first would ask for a password at a terminal.
+        stage = Stage([Check(False, "stopping"), Check(True, "stopped")],
+                      [Command(("systemctl", "stop", "example.service"), root=True)])
+        approval = UNATTENDED.set(True)
+        try:
+            with mock.patch("oh_install.system.subprocess.run", return_value=mock.Mock(returncode=0)) as validation, \
+                    mock.patch("oh_install.output.run", return_value=0) as command:
+                result, _ = self.run_stage(stage)
+        finally:
+            UNATTENDED.reset(approval)
+        self.assertEqual(result, 0)
+        validation.assert_not_called()
+        self.assertEqual([call.args[0] for call in command.call_args_list],
+                         [("sudo", "-n", "systemctl", "stop", "example.service")])
+        self.assertTrue(command.call_args.kwargs["keep_terminal"])
 
     def test_failed_authentication_never_runs_the_root_payload(self):
         stage = Stage([Check(False, "stopping")], [Command(("systemctl", "stop", "example.service"), root=True)])

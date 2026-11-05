@@ -454,7 +454,9 @@ class System:
                 from oh_install import output
                 active = progress.current.get()
                 privileged = bool(argv and argv[0] == "sudo")
-                if privileged:
+                # A command already under sudo -n (--yes) never asks for a
+                # password, so it is not authenticated first: that would.
+                if privileged and tuple(argv[1:2]) != ("-n",):
                     # Authentication owns the terminal only while it may ask
                     # for a password. The actual command cannot prompt or be
                     # retried after a possibly partial mutation.
