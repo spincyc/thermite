@@ -16,7 +16,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_apparmor  # noqa: E402
 import oh_deploy as deploy  # noqa: E402
 import oh_units  # noqa: E402
-from oh_install import engine, ingress, manifest, steps  # noqa: E402
+from oh_install import engine, ingress, manifest, ownership, steps  # noqa: E402
 from oh_install.model import Step  # noqa: E402
 from oh_install.system import Stat, System  # noqa: E402
 from tests.test_deploy import HOST, VERSIONS  # noqa: E402
@@ -61,6 +61,9 @@ class Inventory(unittest.TestCase):
                for name in (oh_units.ATV_RESTART_PATH, oh_units.METRICS_RESTART_PATH, *oh_units.ACCESS_UNITS[:2])},
             UNITS / "multi-user.target.wants" / ingress.UNIT: ingress.UNIT_FILE,
         }, "the boot target's own link is the guard's, never an item")
+
+    def test_the_version_1_unit_record_stays_an_installed_file(self):
+        self.assertEqual(declared()[ownership.MANIFEST].cls, "file")
 
     def test_boundary_firewall_and_confinement_carry_their_live_classes(self):
         items = declared()

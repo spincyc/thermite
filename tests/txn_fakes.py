@@ -1,5 +1,5 @@
 """An in-memory disk and host for the install engine, and whole installations
-on them. Helpers only: test_txn_engine.py and test_txn_faults.py use them.
+on them. Helpers only: the test_txn_*.py modules use them.
 
 MemoryDisk keeps what the engine has written apart from what is durable: a
 change becomes durable only once an fsync of its directory, or a sync of its

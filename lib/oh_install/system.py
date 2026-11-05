@@ -209,6 +209,13 @@ class System:
         except (FileNotFoundError, NotADirectoryError, IsADirectoryError, PermissionError):
             return None
 
+    def readlink(self, path: Path) -> str | None:
+        """A symlink's target; None when path is not a symlink."""
+        try:
+            return os.readlink(path)
+        except OSError:
+            return None
+
     def lexists(self, path: Path) -> bool:
         try:
             os.lstat(path)

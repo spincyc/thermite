@@ -934,7 +934,8 @@ class Units(Step):
                 Command(("install", "-D", "-o", "0", "-g", "0", "-m", "0644", str(self.manifest), str(ownership.MANIFEST)), root=True)]
 
     def desired(self, system: System) -> list[manifest.Item]:
-        items = []
+        # units.json stays while install and uninstall prove ownership by it.
+        items = [manifest.Item(ownership.MANIFEST, "file")]
         for source, target in sorted(deploy.INSTALLED.items()):
             items.append(manifest.unit(target))
             # Quadlets are enabled by their generator, and drop-ins not at all.
