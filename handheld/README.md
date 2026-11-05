@@ -67,6 +67,11 @@ with that key file and socket: it connects as a base, says
 `thermite base 1 sim <mac> 1`, and plays the remote. Drop `--mock` to drive
 a real house through its gateway.
 
+To run the remote's real ESP32-S3 firmware rather than its portable parts,
+use the `qemu` board in Espressif's QEMU on the same socket
+([firmware/README.md](firmware/README.md#qemu)): it enrols over its console
+with `thermite handheld enroll --port`, as hardware does.
+
 ## With hardware
 
 1. Flash the base and the handheld ([firmware/README.md](firmware/README.md)).

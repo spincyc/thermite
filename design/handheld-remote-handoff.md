@@ -40,6 +40,12 @@ Research and decisions are in [handheld-remote.md](handheld-remote.md).
 - The base and all four boards build with ESP-IDF v5.5.6 and LVGL 9.2.2
   without a warning; every line of their `sdkconfig` defaults takes effect;
   each remote app fills about 1.2 MB of its 3 MB partition.
+- The real firmware runs in Espressif's QEMU on the `qemu` board: it enrols
+  over its console with `thermite handheld enroll --port`, draws the bridge's
+  screens, and its test input reached the mock house as a source change, a
+  player key and a volume step (`tests/test_handheld_qemu.py`, opt-in, four
+  runs in a row). Board drivers, ESP-NOW, sleep and power are hardware's to
+  prove.
 
 ## Next steps
 

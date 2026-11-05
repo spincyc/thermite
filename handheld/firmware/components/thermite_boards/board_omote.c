@@ -79,6 +79,7 @@ static const board_info_t INFO = {
     .channel = true,
     .playback = true,
     .swap_bytes = false, /* the i80 peripheral swaps */
+    .deep_sleep = true,
 };
 
 /* The 5x5 matrix as OMOTE's firmware maps it (keypad_keys_hal_esp32.cpp:29-35), [row][column].

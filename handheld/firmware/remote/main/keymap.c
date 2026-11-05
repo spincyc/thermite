@@ -38,6 +38,44 @@ static const key_ids_t KEYS[BOARD_KEY_COUNT] = {
     /* BOARD_KEY_RECORD and BOARD_KEY_NONE: no entry. */
 };
 
+static const char *const NAMES[BOARD_KEY_COUNT] = {
+    [BOARD_KEY_UP] = "up",
+    [BOARD_KEY_DOWN] = "down",
+    [BOARD_KEY_LEFT] = "left",
+    [BOARD_KEY_RIGHT] = "right",
+    [BOARD_KEY_OK] = "ok",
+    [BOARD_KEY_BACK] = "back",
+    [BOARD_KEY_VOLUME_UP] = "volume_up",
+    [BOARD_KEY_VOLUME_DOWN] = "volume_down",
+    [BOARD_KEY_MUTE] = "mute",
+    [BOARD_KEY_CHANNEL_UP] = "channel_up",
+    [BOARD_KEY_CHANNEL_DOWN] = "channel_down",
+    [BOARD_KEY_PLAY] = "play",
+    [BOARD_KEY_STOP] = "stop",
+    [BOARD_KEY_REWIND] = "rewind",
+    [BOARD_KEY_FORWARD] = "forward",
+    [BOARD_KEY_POWER] = "power",
+    [BOARD_KEY_HOME] = "home",
+    [BOARD_KEY_SETTINGS] = "settings",
+    [BOARD_KEY_INFO] = "info",
+    [BOARD_KEY_SOURCE] = "source",
+    [BOARD_KEY_RED] = "red",
+    [BOARD_KEY_GREEN] = "green",
+    [BOARD_KEY_YELLOW] = "yellow",
+    [BOARD_KEY_BLUE] = "blue",
+    [BOARD_KEY_RECORD] = "record",
+};
+
+board_key_t keymap_named(const char *name, size_t length)
+{
+    for (int key = BOARD_KEY_NONE + 1; key < BOARD_KEY_COUNT; key++) {
+        if (NAMES[key] && strlen(NAMES[key]) == length && memcmp(NAMES[key], name, length) == 0) {
+            return (board_key_t)key;
+        }
+    }
+    return BOARD_KEY_NONE;
+}
+
 size_t keymap_ids(board_key_t key, const char *const **ids)
 {
     if ((unsigned)key >= BOARD_KEY_COUNT || KEYS[key].count == 0) {

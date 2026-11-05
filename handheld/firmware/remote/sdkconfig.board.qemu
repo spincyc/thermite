@@ -1,0 +1,5 @@
+# Espressif's QEMU, esp32s3 machine (handheld/firmware/README.md, "QEMU"): a
+# 4 MB flash image, and the console on UART0, since QEMU has no USB.
+CONFIG_THERMITE_BOARD_QEMU=y
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y

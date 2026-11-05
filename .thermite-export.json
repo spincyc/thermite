@@ -400,6 +400,7 @@
     "tests/test_export_manifest.py",
     "tests/test_guest_http.py",
     "tests/test_handheld.py",
+    "tests/test_handheld_qemu.py",
     "tests/test_health.py",
     "tests/test_heos_patch.py",
     "tests/test_host_layout.py",

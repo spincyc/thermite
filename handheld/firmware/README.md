@@ -13,7 +13,9 @@ and is cited, but none is bench-verified; see [Unverified](#unverified).
 | [components/thermite_remote/](components/thermite_remote/) | The remote's behaviour without hardware |
 | [components/thermite_ui/](components/thermite_ui/) | The screen in LVGL 9 |
 | [components/thermite_boards/](components/thermite_boards/) | One board behind `include/board.h`: power, display, touch, keys, battery, sleep, and our own small drivers |
+| [components/thermite_base_proto/](components/thermite_base_proto/) | The base station's lines, for the base and the qemu board's radio |
 | [host/](host/) | Host tests and the simulator |
+| [qemu/](qemu/) | `run.py`: the remote's real firmware in Espressif's QEMU |
 
 ## Boards
 
@@ -23,6 +25,7 @@ and is cited, but none is bench-verified; see [Unverified](#unverified).
 | `m5stick-s3` | M5Stack StickS3, the link test rig (no touch) | Native USB-C (USB-Serial-JTAG), `/dev/ttyACM*` | A is Play, B is Volume + (repeats) |
 | `omote-rev5` | OMOTE Rev5, the target | CH340C on USB-C, UART0, `/dev/ttyUSB*` | 24 keys and SW_PWR, PROTOCOL.md's table |
 | `openremote-rev6` | OpenRemote Rev6, as OMOTE with the BuyDisplay panel | As OMOTE | As OMOTE |
+| `qemu` | Espressif's QEMU, esp32s3 machine: see [QEMU](#qemu) | UART0, served by `qemu/run.py` at `BUILD/console` | Test input on the console |
 | base | Any ESP32-S3-DevKitC-1 (N8 or N16R8) | Protocol on the **USB** connector (native USB-Serial-JTAG); logs on the **UART** connector (UART0) | — |
 
 OMOTE uses GPIO19/20 (the S3's USB pins) for I2C, so it has no native USB:
@@ -101,13 +104,14 @@ sleeps. To try the lines by hand: `picocom -b 115200 --omap crlf PORT`.
 | --- | --- | --- |
 | Boot order | `remote/main/main.c` | `board_init` (power latch, I2C, keypad), clock, NVS, console, radio, `tr_create`, the key that woke it sent with `tr_key`, then `tr_wake`, then display and `tu_create` |
 | One task | `main.c` `run()` | LVGL, `tr_poll`, frames, console lines, keys and touch all on app_main's task; the ESP-NOW callback, the console reader and the key interrupt only queue data and set notification bits |
-| Radio | `main.c` `radio_start` | STA started, never associated, power save off, ESP-NOW with the base as its one unencrypted peer (frames are sealed end to end); frames from other MACs are dropped |
+| Radio | `remote/main/radio_espnow.c` | STA started, never associated, power save off, ESP-NOW with the base as its one unencrypted peer (frames are sealed end to end); frames from other MACs are dropped. The qemu board uses `radio_lines.c` instead |
+| Test input | `remote/main/console_proto.c` | `thermite key` and `thermite touch` (PROTOCOL.md) take the paths a real key or touch takes, on any board; bench automation and QEMU use them |
 | Clock | `main.c` `clock_*` | esp_timer while awake; across deep sleep it resumes where it stopped plus the sleep's length from the RTC timer, so it never steps back |
 | Keys | `remote/main/keymap.c` | PROTOCOL.md's table; repeat 420 ms then every 150 ms when the screen's `buttons[ids[0]].repeat` is true; a late loop gets one press, not a burst |
-| Power | `remote/main/power_policy.c` | Dim at 10 s idle; at 20 s, once `tr_idle`, `tr_sleep`, then deep sleep on its ack or after 300 ms; deep sleep regardless after 60 s |
+| Power | `remote/main/power_policy.c` | Dim at 10 s idle; at 20 s, once `tr_idle`, `tr_sleep`, then deep sleep on its ack or after 300 ms; deep sleep regardless after 60 s. A board without deep sleep (qemu) only dims |
 | Battery | `main.c` | `tr_status` and `tu_battery` at wake and every 30 s |
 | Wake | board files | OMOTE: keypad INT (GPIO8) and LIS3DH motion (GPIO2). StickS3: A and B. Waveshare: BOOT, PWR, and touch INT (GPIO4) when it is idle-high at sleep |
-| Base lines | `base/main/base_proto.c` | Exactly PROTOCOL.md; one `sent` per valid `send`, in order (sends and channel changes share one queue); peers added on demand, least recently used evicted beyond ESP-NOW's 20; channel kept in NVS (default 1); lines up to 2200 bytes; a malformed line gets `thermite error <words>` and no `sent` |
+| Base lines | `components/thermite_base_proto/base_proto.c` | Exactly PROTOCOL.md; one `sent` per valid `send`, in order (sends and channel changes share one queue); peers added on demand, least recently used evicted beyond ESP-NOW's 20; channel kept in NVS (default 1); lines up to 2200 bytes; a malformed line gets `thermite error <words>` and no `sent` |
 
 ## Pins
 
@@ -198,7 +202,7 @@ cmake --build .scratch/build/host && ctest --test-dir .scratch/build/host --outp
 
 `FILE` is the key file `thermite handheld enroll --simulator` printed.
 
-`base/test` covers the base's line parser, formatter, base64, line assembly
+`components/thermite_base_proto/test` covers the base's line parser, formatter, base64, line assembly
 and peer eviction; `components/thermite_boards/test` the TCA8418, FT6x06,
 CST328, CST3530 and MAX17048 decoding, battery curve, debouncing and touch
 mapping; `remote/test` the key table, repeat timing, console lines and the
@@ -208,6 +212,44 @@ On 2026-11-05 the base and all four boards built with ESP-IDF v5.5.6 without
 a warning, every line of their `sdkconfig` defaults took effect, and each
 remote app is about 1.2 MB of its 3 MB partition (the base about 0.7 MB of
 1.5 MB). None has yet run on a board.
+
+## QEMU
+
+The `qemu` board runs the remote's real firmware, compiled for the ESP32-S3,
+in Espressif's QEMU: FreeRTOS, NVS, the console and enrolment, the remote
+core, LVGL and the screen, against the real bridge. QEMU emulates no radio,
+I2C, SPI or LEDC, so the board's display is QEMU's virtual RGB panel, its
+radio is the base station's lines on UART1 (`remote/main/radio_lines.c`: the
+firmware is the base and the remote at once, as the simulator is), and its
+input is the console's test lines. It never deep sleeps. Board drivers, ESP-NOW,
+sleep and power remain for hardware.
+
+```sh
+python "$IDF_PATH/tools/idf_tools.py" install qemu-xtensa   # once, in ESP-IDF's environment
+idf.py -C handheld/firmware/remote -B "$PWD/.scratch/esp/qemu" \
+  -D SDKCONFIG="$PWD/.scratch/esp/qemu/sdkconfig" -D THERMITE_BOARD=qemu build
+
+thermite handheld serve --mock --listen "$XDG_RUNTIME_DIR/thermite-base.sock"    # another terminal
+handheld/firmware/qemu/run.py .scratch/esp/qemu "$XDG_RUNTIME_DIR/thermite-base.sock" [--window]
+thermite handheld enroll --name qemu --port .scratch/esp/qemu/console           # once: NVS keeps it
+
+echo "thermite touch 124 62" > .scratch/esp/qemu/console; echo "thermite touch up" > .scratch/esp/qemu/console
+echo "thermite key volume_up" > .scratch/esp/qemu/console
+handheld/firmware/qemu/run.py screenshot .scratch/esp/qemu shot.png
+```
+
+`run.py` serves the console at `BUILD/console`, a pseudo-terminal it relays
+to QEMU's socket (QEMU's own pty backend passed nothing here); `--console`
+puts it on the terminal instead. Without `--window` the display still runs,
+on SDL's offscreen driver: QEMU's panel draws only when a display refreshes.
+The flash image `BUILD/qemu_flash.bin` keeps the enrolment across runs; each
+run rewrites only the bootloader, partition table and app.
+
+`tests/test_handheld_qemu.py` does all of this unattended: in ESP-IDF's
+environment, `THERMITE_QEMU_BUILD=.scratch/esp/qemu python -m unittest
+tests.test_handheld_qemu` enrols the emulated remote, taps a bubble, presses
+keys, checks the commands that reached the mock house, and captures the
+display.
 
 ## Unverified
 

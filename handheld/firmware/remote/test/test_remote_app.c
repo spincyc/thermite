@@ -55,6 +55,18 @@ static void test_keymap(void)
         const char *const *ids;
         CHECK(keymap_ids((board_key_t)k, &ids) > 0, "key %d has an entry", k);
     }
+    /* Every key has a console name, and the names are its own. */
+    static const char *const names[] = {"up", "down", "left", "right", "ok", "back", "volume_up", "volume_down",
+                                        "mute", "channel_up", "channel_down", "play", "stop", "rewind", "forward",
+                                        "power", "home", "settings", "info", "source", "red", "green", "yellow",
+                                        "blue", "record"};
+    CHECK(sizeof names / sizeof names[0] == BOARD_KEY_COUNT - 1, "a name for every key");
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+        CHECK(keymap_named(names[i], strlen(names[i])) == (board_key_t)(i + 1), "name %s", names[i]);
+    }
+    CHECK(keymap_named("vol", 3) == BOARD_KEY_NONE && keymap_named("upx", 2) == BOARD_KEY_UP &&
+              keymap_named("", 0) == BOARD_KEY_NONE,
+          "names match whole words");
 
     cJSON *screen = cJSON_Parse("{\"buttons\":{\"volume_up\":{\"label\":\"+\",\"repeat\":true},"
                                 "\"power\":{\"repeat\":false},\"mute\":{}}}");
@@ -142,6 +154,20 @@ static void test_console(void)
           "unenrolled %s", line);
     CHECK(cp_format_remote(line, 20, "0.1.0", mac, "x", false) == 0, "no room");
 
+    /* Test input. */
+    CHECK(parse("thermite key volume_up") == CP_KEY && cmd.input == BOARD_KEY_VOLUME_UP && cmd.down && cmd.up,
+          "key press");
+    CHECK(parse("thermite key up down") == CP_KEY && cmd.input == BOARD_KEY_UP && cmd.down && !cmd.up, "key down");
+    CHECK(parse("thermite key up up") == CP_KEY && cmd.input == BOARD_KEY_UP && !cmd.down && cmd.up, "key up");
+    CHECK(parse("thermite key record") == CP_KEY && cmd.input == BOARD_KEY_RECORD, "a key with no entry");
+    CHECK(parse("thermite key") == CP_ERROR && parse("thermite key sideways") == CP_ERROR, "no such key");
+    CHECK(parse("thermite key ok held") == CP_ERROR && parse("thermite key ok up now") == CP_ERROR, "bad edge");
+    CHECK(parse("thermite touch 120 300") == CP_TOUCH && cmd.touching && cmd.x == 120 && cmd.y == 300, "touch");
+    CHECK(parse("thermite touch up") == CP_TOUCH && !cmd.touching, "lift");
+    CHECK(parse("thermite touch 65536 1") == CP_ERROR && parse("thermite touch 1") == CP_ERROR &&
+              parse("thermite touch -1 2") == CP_ERROR && parse("thermite touch up 3") == CP_ERROR,
+          "bad touch");
+
     static cp_lines_t lines;
     int ready = 0, too_long = 0;
     static char big[CP_LINE_MAX + 10];
@@ -163,7 +189,7 @@ static void test_console(void)
 static void test_power(void)
 {
     power_policy_t p;
-    power_init(&p, 0);
+    power_init(&p, 0, true);
     CHECK(power_step(&p, 9999, true) == POWER_NONE, "awake before 10 s");
     CHECK(power_wait(&p, 9999) == 1, "wait to dim");
     CHECK(power_step(&p, 10000, true) == POWER_DIM, "dim at 10 s");
@@ -179,22 +205,30 @@ static void test_power(void)
     CHECK(power_wait(&p, 32150) == 250, "ack wait left (%u)", power_wait(&p, 32150));
     CHECK(power_step(&p, 32200, true) == POWER_SLEEP_NOW, "acked: sleep");
 
-    power_init(&p, 0);
+    power_init(&p, 0, true);
     power_step(&p, 10000, true);
     CHECK(power_step(&p, 20000, true) == POWER_SEND_SLEEP, "sleep sent");
     CHECK(power_step(&p, 20299, false) == POWER_NONE && power_step(&p, 20300, false) == POWER_SLEEP_NOW,
           "no ack: sleep after 300 ms");
 
-    power_init(&p, 0);
+    power_init(&p, 0, true);
     power_step(&p, 10000, true);
     power_step(&p, 20000, true);
     CHECK(power_input(&p, 20100) == POWER_BRIGHTEN && power_step(&p, 20500, false) == POWER_NONE,
           "input while waiting for the ack cancels sleep");
 
-    power_init(&p, 0);
+    power_init(&p, 0, true);
     power_step(&p, 10000, false);
     CHECK(power_step(&p, 59999, false) == POWER_NONE && power_step(&p, 60000, false) == POWER_SLEEP_NOW,
           "forced sleep after 60 s");
+
+    /* A board that cannot deep sleep (QEMU) dims and then waits for input. */
+    power_init(&p, 0, false);
+    CHECK(power_step(&p, 10000, true) == POWER_DIM, "no sleep: dims");
+    CHECK(power_step(&p, 20000, true) == POWER_NONE && power_step(&p, 60000, false) == POWER_NONE,
+          "no sleep: never says sleep");
+    CHECK(power_wait(&p, 20000) == UINT32_MAX, "no sleep: nothing more to wait for");
+    CHECK(power_input(&p, 70000) == POWER_BRIGHTEN, "no sleep: input brightens");
 }
 
 int main(void)

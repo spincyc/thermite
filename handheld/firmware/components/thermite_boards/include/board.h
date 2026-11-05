@@ -37,6 +37,8 @@ typedef struct {
     /* The panel takes RGB565 with its bytes swapped (big-endian on the wire): LVGL's
      * flush must swap them (lv_draw_sw_rgb565_swap) before sending. */
     bool swap_bytes;
+    /* The board can deep sleep and wake again (QEMU cannot): otherwise it only dims. */
+    bool deep_sleep;
 } board_info_t;
 
 const board_info_t *board_info(void);
@@ -51,7 +53,8 @@ esp_err_t board_init(void);
 void board_set_notify(void (*notify)(void *context), void *context);
 
 /* Panel up and on, backlight still off. io and panel stay owned by the board. The
- * app registers its own color-done callback on io (esp_lcd_panel_io_register_event_callbacks). */
+ * app registers its own color-done callback on io (esp_lcd_panel_io_register_event_callbacks);
+ * io is NULL for a panel with no bus, which has drawn when draw_bitmap returns (QEMU's). */
 esp_err_t board_display_init(esp_lcd_panel_io_handle_t *io, esp_lcd_panel_handle_t *panel);
 
 /* Largest DMA transfer the display bus accepts, in bytes: size LVGL's buffers within it. */

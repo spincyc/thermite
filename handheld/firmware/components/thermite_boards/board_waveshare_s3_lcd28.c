@@ -65,6 +65,7 @@ static const board_info_t INFO = {
     .touch = true,
     .console = BOARD_CONSOLE_USB_SERIAL_JTAG,
     .swap_bytes = true,
+    .deep_sleep = true,
 };
 
 /* The demo's ST7789T3 tuning after SLPOUT (DEMO LCD_Driver/Vernon_ST7789T/Vernon_ST7789T.c:160-202), minus

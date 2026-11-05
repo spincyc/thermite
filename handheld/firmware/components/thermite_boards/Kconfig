@@ -15,7 +15,20 @@ config THERMITE_BOARD_OMOTE_REV5
     bool "OMOTE Rev5 (omote-rev5)"
 config THERMITE_BOARD_OPENREMOTE_REV6
     bool "OpenRemote Rev6 (openremote-rev6)"
+config THERMITE_BOARD_QEMU
+    bool "Espressif's QEMU (qemu)"
+    help
+        The remote app in QEMU's esp32s3 machine: its virtual framebuffer as the
+        display, test input on the console, and the base station's lines on
+        UART1 instead of a radio. See handheld/firmware/README.md, "QEMU".
 endchoice
+
+config THERMITE_RADIO_LINES
+    bool
+    default y if THERMITE_BOARD_QEMU
+    help
+        The remote speaks the base station's lines on UART1 (remote/main/radio_lines.c)
+        instead of ESP-NOW.
 
 config THERMITE_BOARD_OMOTE_FAMILY
     bool

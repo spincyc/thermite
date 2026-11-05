@@ -61,8 +61,9 @@ function(device_test name)
   add_test(NAME ${name} COMMAND test_${name})
 endfunction()
 set(BOARDS ${FIRMWARE}/components/thermite_boards)
-device_test(base_proto SOURCES ${FIRMWARE}/base/test/test_base_proto.c ${FIRMWARE}/base/main/base_proto.c
-            INCLUDES ${FIRMWARE}/base/main)
+set(BASE_PROTO ${FIRMWARE}/components/thermite_base_proto)
+device_test(base_proto SOURCES ${BASE_PROTO}/test/test_base_proto.c ${BASE_PROTO}/base_proto.c
+            INCLUDES ${BASE_PROTO}/include)
 device_test(board_decode SOURCES ${BOARDS}/test/test_board_decode.c ${BOARDS}/board_decode.c
             INCLUDES ${BOARDS}/include)
 device_test(remote_app SOURCES ${FIRMWARE}/remote/test/test_remote_app.c ${FIRMWARE}/remote/main/keymap.c

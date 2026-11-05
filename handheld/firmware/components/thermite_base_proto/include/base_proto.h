@@ -2,7 +2,8 @@
  * The base station's USB lines (handheld/PROTOCOL.md, "Base station lines"):
  * parsing host lines, formatting base lines, base64, MACs, line assembly and
  * the ESP-NOW peer table. Pure C with no ESP-IDF dependency, so the host
- * tests in ../test exercise exactly this file.
+ * tests in ../test exercise exactly this file. The base speaks these lines on
+ * its USB port; the qemu board's radio speaks them on UART1.
  */
 #pragma once
 

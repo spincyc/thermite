@@ -8,6 +8,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "board_keys.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -22,6 +24,8 @@ typedef enum {
     CP_HELLO,
     CP_ENROLL,
     CP_FORGET,
+    CP_KEY,   /* test input: a hard key */
+    CP_TOUCH, /* test input: the touch screen */
 } cp_kind_t;
 
 typedef struct {
@@ -30,6 +34,10 @@ typedef struct {
     uint8_t key[CP_KEY_LEN];  /* CP_ENROLL */
     uint8_t base[CP_MAC_LEN]; /* CP_ENROLL */
     uint8_t channel;          /* CP_ENROLL, 1-13 */
+    board_key_t input;        /* CP_KEY */
+    bool down, up;            /* CP_KEY: a press is both */
+    bool touching;            /* CP_TOUCH: false lifts the finger */
+    uint16_t x, y;            /* CP_TOUCH, display coordinates */
 } cp_command_t;
 
 /* One line without its newline; a trailing CR is ignored. */

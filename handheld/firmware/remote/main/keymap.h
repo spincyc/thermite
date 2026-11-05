@@ -22,6 +22,12 @@ extern "C" {
 /* The key array for key, first choice first; 0 (and *ids NULL) for a key with no entry. */
 size_t keymap_ids(board_key_t key, const char *const **ids);
 
+/* The key a console line names (PROTOCOL.md, "Remote console lines"): up, down, left,
+ * right, ok, back, volume_up, volume_down, mute, channel_up, channel_down, play, stop,
+ * rewind, forward, power, home, settings, info, source, red, green, yellow, blue,
+ * record. BOARD_KEY_NONE for any other word. */
+board_key_t keymap_named(const char *name, size_t length);
+
 /* Whether the current screen's buttons spec for id says "repeat": true. screen may be NULL. */
 bool keymap_repeats(const cJSON *screen, const char *id);
 

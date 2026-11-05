@@ -12,8 +12,12 @@ static const char *TAG = "display";
 #define BUFFER_ROWS 40
 
 static esp_lcd_panel_handle_t s_panel;
-static bool s_swap;
+static bool s_swap, s_synchronous;
 static bool s_touched;
+static struct {
+    bool down;
+    uint16_t x, y;
+} s_injected;
 
 static uint32_t tick(void)
 {
@@ -30,17 +34,17 @@ static bool flushed(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t 
 
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
 {
-    (void)display;
     if (s_swap) lv_draw_sw_rgb565_swap(pixels, (uint32_t)lv_area_get_size(area));
-    /* Completion arrives through flushed(), from the bus's interrupt. */
     esp_lcd_panel_draw_bitmap(s_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, pixels);
+    /* A bus completes through flushed(), from its interrupt; a panel without one has drawn. */
+    if (s_synchronous) lv_display_flush_ready(display);
 }
 
 static void read_touch(lv_indev_t *indev, lv_indev_data_t *data)
 {
     (void)indev;
-    uint16_t x, y;
-    if (board_touch_read(&x, &y)) {
+    uint16_t x = s_injected.x, y = s_injected.y;
+    if (s_injected.down || board_touch_read(&x, &y)) {
         data->point.x = x;
         data->point.y = y;
         data->state = LV_INDEV_STATE_PRESSED;
@@ -48,6 +52,13 @@ static void read_touch(lv_indev_t *indev, lv_indev_data_t *data)
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
     }
+}
+
+void display_touch(bool touching, uint16_t x, uint16_t y)
+{
+    s_injected.down = touching;
+    s_injected.x = x;
+    s_injected.y = y;
 }
 
 bool display_touched(void)
@@ -60,9 +71,10 @@ bool display_touched(void)
 lv_display_t *display_start(void)
 {
     const board_info_t *info = board_info();
-    esp_lcd_panel_io_handle_t io;
+    esp_lcd_panel_io_handle_t io = NULL;
     ESP_ERROR_CHECK(board_display_init(&io, &s_panel));
     s_swap = info->swap_bytes;
+    s_synchronous = io == NULL;
 
     lv_init();
     lv_tick_set_cb(tick);
@@ -79,15 +91,16 @@ lv_display_t *display_start(void)
     }
     lv_display_set_buffers(display, a, b, (uint32_t)size, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display, flush);
-    const esp_lcd_panel_io_callbacks_t callbacks = {.on_color_trans_done = flushed};
-    ESP_ERROR_CHECK(esp_lcd_panel_io_register_event_callbacks(io, &callbacks, display));
-
-    if (info->touch) {
-        lv_indev_t *touch = lv_indev_create();
-        lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
-        lv_indev_set_read_cb(touch, read_touch);
-        lv_indev_set_display(touch, display);
+    if (io) {
+        const esp_lcd_panel_io_callbacks_t callbacks = {.on_color_trans_done = flushed};
+        ESP_ERROR_CHECK(esp_lcd_panel_io_register_event_callbacks(io, &callbacks, display));
     }
+
+    /* Every board gets the pointer: test input can touch a board that has no touch screen. */
+    lv_indev_t *touch = lv_indev_create();
+    lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(touch, read_touch);
+    lv_indev_set_display(touch, display);
     return display;
 }
 

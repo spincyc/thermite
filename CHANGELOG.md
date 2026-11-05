@@ -34,7 +34,9 @@ rollback. The unified deployment workflow uses a separate committed private site
   end to end; the base holds no keys (handheld/PROTOCOL.md). The firmware for
   the Waveshare ESP32-S3-Touch-LCD-2.8, M5Stack StickS3, OMOTE Rev5 and
   OpenRemote Rev6, the base's, and the simulator are in handheld/firmware,
-  outside releases; none has yet run on hardware.
+  outside releases; none has yet run on hardware. A `qemu` board runs the
+  real firmware in Espressif's QEMU against the bridge, enrolled and driven
+  over its console (tests/test_handheld_qemu.py, opt-in).
 - A terminal remote's telemetry reports its kind, `tui`, as the gateway
   requires; it sent its own label (`tui/<host>`), and the gateway refused
   every report.

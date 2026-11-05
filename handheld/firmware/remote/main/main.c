@@ -1,11 +1,11 @@
 /*
  * The handheld remote (handheld/PROTOCOL.md): a thin client that draws the
- * bridge's screen model and reports input over ESP-NOW.
+ * bridge's screen model and reports input over its radio (radio.h).
  *
  * One task (app_main's) runs everything that touches LVGL or thermite_remote:
  * lv_timer_handler, tr_poll, received frames, console lines, keys and touch.
- * Other contexts only queue data and set notification bits on it: the Wi-Fi
- * task (ESP-NOW receive), the console reader and the key interrupt.
+ * Other contexts only queue data and set notification bits on it: the radio's
+ * receiver, the console reader and the key interrupt.
  *
  * Boot: power hold and peripherals (board_init), the radio, the remote core,
  * the key that woke us sent at once, then the display. Sleep: dim at 10 s,
@@ -19,17 +19,13 @@
 #include "console.h"
 #include "display.h"
 #include "esp_app_desc.h"
-#include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
-#include "esp_netif.h"
-#include "esp_now.h"
 #include "esp_random.h"
 #include "esp_rtc_time.h"
 #include "esp_sleep.h"
 #include "esp_system.h"
 #include "esp_timer.h"
-#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -37,6 +33,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "power_policy.h"
+#include "radio.h"
 #include "sdkconfig.h"
 #include "thermite_remote.h"
 #include "thermite_ui.h"
@@ -63,14 +60,9 @@ static const char *TAG = "remote";
 #define LOOP_MAX_MS 500
 
 typedef struct {
-    uint16_t length;
-    uint8_t data[TL_FRAME_MAX];
-} frame_t;
-
-typedef struct {
     bool valid;
     uint8_t key[TL_KEY_LEN];
-    uint8_t base[ESP_NOW_ETH_ALEN];
+    uint8_t base[RADIO_MAC_LEN];
     uint8_t channel;
 } enrolment_t;
 
@@ -86,7 +78,7 @@ static RTC_DATA_ATTR struct {
 static TaskHandle_t s_app;
 static QueueHandle_t s_frames, s_lines;
 static enrolment_t s_enrolment;
-static uint8_t s_mac[ESP_NOW_ETH_ALEN];
+static uint8_t s_mac[RADIO_MAC_LEN];
 static tr_t *s_remote;
 static bool s_ui;
 static unsigned s_changed_early;
@@ -168,6 +160,29 @@ static void restart(void)
     esp_restart();
 }
 
+static void press(board_key_t key, bool first);
+static void input(void);
+
+/* Test input (PROTOCOL.md, "Remote console lines"): a key or the touch screen, taking
+ * the paths a real press or touch takes. */
+static void test_input(const cp_command_t *command)
+{
+    if (command->kind == CP_TOUCH) {
+        if (command->touching) input();
+        display_touch(command->touching, command->x, command->y);
+        return;
+    }
+    if (!s_remote) {
+        console_put("thermite error not enrolled\n");
+        return;
+    }
+    if (command->down) {
+        input();
+        press(command->input, true);
+    }
+    if (command->up) key_repeat_up(&s_repeat, command->input);
+}
+
 static void handle_line(const char *text)
 {
     static cp_command_t command;
@@ -194,6 +209,10 @@ static void handle_line(const char *text)
         console_put("thermite enrolled\n");
         restart();
         return;
+    case CP_KEY:
+    case CP_TOUCH:
+        test_input(&command);
+        return;
     case CP_FORGET:
         if (!enrolment_erase()) {
             console_put("thermite error not erased\n");
@@ -211,51 +230,18 @@ static void drain_lines(void)
     while (xQueueReceive(s_lines, &line, 0) == pdTRUE) handle_line(line.text);
 }
 
-/* ---- radio ---- */
-
-static void on_receive(const esp_now_recv_info_t *info, const uint8_t *data, int length)
-{
-    static frame_t frame; /* only the Wi-Fi task calls this */
-    if (length <= 0 || length > TL_FRAME_MAX) return;
-    if (memcmp(info->src_addr, s_enrolment.base, ESP_NOW_ETH_ALEN) != 0) return;
-    frame.length = (uint16_t)length;
-    memcpy(frame.data, data, (size_t)length);
-    if (xQueueSend(s_frames, &frame, 0) == pdTRUE) xTaskNotify(s_app, WAKE_FRAME, eSetBits);
-}
-
-static void radio_start(uint8_t channel)
-{
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&config));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start()); /* never associates */
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
-    ESP_ERROR_CHECK(esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE));
-    ESP_ERROR_CHECK(esp_now_init());
-    ESP_ERROR_CHECK(esp_now_register_recv_cb(on_receive));
-    /* Frames are sealed end to end (AES-256-CCM), so ESP-NOW's own encryption is off. */
-    esp_now_peer_info_t peer = {.channel = 0, .ifidx = WIFI_IF_STA, .encrypt = false};
-    memcpy(peer.peer_addr, s_enrolment.base, ESP_NOW_ETH_ALEN);
-    ESP_ERROR_CHECK(esp_now_add_peer(&peer));
-}
-
 /* ---- platform for thermite_remote ---- */
 
 static void platform_send(void *context, const uint8_t *frame, size_t length)
 {
     (void)context;
-    esp_err_t err = esp_now_send(s_enrolment.base, frame, length);
-    if (err != ESP_OK) ESP_LOGW(TAG, "send: %s", esp_err_to_name(err)); /* the core retries */
+    radio_send(frame, length); /* the core retries a lost frame */
 }
 
 static void platform_channel(void *context, uint8_t channel)
 {
     (void)context;
-    esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
-    if (err != ESP_OK) ESP_LOGW(TAG, "channel %u: %s", channel, esp_err_to_name(err));
+    radio_set_channel(channel);
 }
 
 static uint32_t platform_now(void *context)
@@ -267,7 +253,7 @@ static uint32_t platform_now(void *context)
 static uint64_t platform_random(void *context)
 {
     (void)context;
-    /* The hardware RNG is a true random source while the radio runs. */
+    /* The hardware RNG is a true random source while Wi-Fi runs; QEMU emulates it. */
     return (uint64_t)esp_random() << 32 | esp_random();
 }
 
@@ -353,8 +339,7 @@ static void sleep_now(void)
 {
     ESP_LOGI(TAG, "deep sleep");
     board_sleep_prepare();
-    esp_now_deinit();
-    esp_wifi_stop();
+    radio_stop();
     clock_stop();
     esp_deep_sleep_start();
 }
@@ -395,7 +380,7 @@ static void run_unenrolled(void)
 
 static void run(void)
 {
-    static frame_t frame;
+    static radio_frame_t frame;
     uint32_t key_due = 0, battery_due = (uint32_t)clock_ms() + BATTERY_MS, bits = WAKE_KEYS;
     for (;;) {
         uint32_t now = (uint32_t)clock_ms();
@@ -464,15 +449,16 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_read_mac(s_mac, ESP_MAC_WIFI_STA));
     enrolment_load();
 
-    s_frames = xQueueCreate(FRAME_QUEUE, sizeof(frame_t));
+    s_frames = xQueueCreate(FRAME_QUEUE, sizeof(radio_frame_t));
     s_lines = xQueueCreate(LINE_QUEUE, sizeof(console_line_t));
     configASSERT(s_frames && s_lines);
     console_start(s_lines, s_app, WAKE_LINE);
+    radio_init(s_mac);
     if (!s_enrolment.valid) run_unenrolled();
 
     /* The radio and the remote core before the display: the key that woke us goes first. */
     uint8_t channel = s_persist.channel >= 1 && s_persist.channel <= 13 ? s_persist.channel : s_enrolment.channel;
-    radio_start(channel);
+    radio_start(s_enrolment.base, channel, s_frames, s_app, WAKE_FRAME);
     const tr_identity_t identity = {
         .board = info->name,
         .fw = esp_app_get_description()->version,
@@ -482,7 +468,7 @@ void app_main(void)
     };
     s_remote = tr_create(&s_persist, s_enrolment.key, &identity, &PLATFORM);
     configASSERT(s_remote);
-    power_init(&s_power, (uint32_t)clock_ms());
+    power_init(&s_power, (uint32_t)clock_ms(), info->deep_sleep);
     bool charging = false;
     tr_status(s_remote, board_battery(&charging), charging);
     board_key_t woke_by = board_wake_key();

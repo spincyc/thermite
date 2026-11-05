@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "keymap.h"
+
 static const char PREFIX[] = "thermite ";
 #define PREFIX_LEN (sizeof PREFIX - 1)
 
@@ -60,6 +62,53 @@ static void fail(cp_command_t *command, const char *error)
     command->error = error;
 }
 
+static bool number(const char *text, size_t length, uint16_t *value)
+{
+    unsigned total = 0;
+    if (length < 1 || length > 5) return false;
+    for (size_t i = 0; i < length; i++) {
+        if (text[i] < '0' || text[i] > '9') return false;
+        total = total * 10 + (unsigned)(text[i] - '0');
+    }
+    if (total > UINT16_MAX) return false;
+    *value = (uint16_t)total;
+    return true;
+}
+
+/* "key NAME [down|up]": a press, or one edge of it. */
+static void parse_key(const char **cursor, const char *end, cp_command_t *command)
+{
+    const char *name, *edge;
+    size_t name_n, edge_n = 0;
+    if (!word(cursor, end, &name, &name_n)) return fail(command, "key needs a name");
+    bool has_edge = word(cursor, end, &edge, &edge_n);
+    if (*cursor < end) return fail(command, "key takes a name and down or up");
+    command->input = keymap_named(name, name_n);
+    if (command->input == BOARD_KEY_NONE) return fail(command, "no such key");
+    command->down = !has_edge || is(edge, edge_n, "down");
+    command->up = !has_edge || is(edge, edge_n, "up");
+    if (!command->down && !command->up) return fail(command, "key takes down or up");
+    command->kind = CP_KEY;
+}
+
+/* "touch X Y" puts a finger there; "touch up" lifts it. */
+static void parse_touch(const char **cursor, const char *end, cp_command_t *command)
+{
+    const char *x, *y;
+    size_t x_n, y_n = 0;
+    if (!word(cursor, end, &x, &x_n)) return fail(command, "touch needs x y, or up");
+    if (is(x, x_n, "up")) {
+        if (*cursor < end) return fail(command, "touch up takes nothing more");
+        command->kind = CP_TOUCH;
+        command->touching = false;
+        return;
+    }
+    if (!word(cursor, end, &y, &y_n) || *cursor < end || !number(x, x_n, &command->x) || !number(y, y_n, &command->y))
+        return fail(command, "touch needs x y, or up");
+    command->kind = CP_TOUCH;
+    command->touching = true;
+}
+
 void cp_parse(const char *line, size_t length, cp_command_t *command)
 {
     command->kind = CP_IGNORE;
@@ -92,6 +141,8 @@ void cp_parse(const char *line, size_t length, cp_command_t *command)
         command->channel = (uint8_t)value;
         return;
     }
+    if (is(verb, verb_n, "key")) return parse_key(&cursor, end, command);
+    if (is(verb, verb_n, "touch")) return parse_touch(&cursor, end, command);
     fail(command, "unknown command");
 }
 

@@ -68,6 +68,7 @@ static const board_info_t INFO = {
     .touch = false,
     .console = BOARD_CONSOLE_USB_SERIAL_JTAG,
     .swap_bytes = true,
+    .deep_sleep = true,
 };
 
 static const backlight_t BACKLIGHT = {

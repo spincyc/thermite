@@ -222,6 +222,16 @@ Other console output continues.
 | host to remote | `thermite forget` | Erase the enrolment |
 | remote to host | `thermite forgotten` | Erased |
 | remote to host | `thermite error <words>` | Refused |
+| host to remote | `thermite key <name>` | Test input: press a hard key, as a real press does |
+| host to remote | `thermite key <name> down` or `thermite key <name> up` | Test input: one edge, for a held key |
+| host to remote | `thermite touch <x> <y>` or `thermite touch up` | Test input: a finger at display coordinates, or lifted |
+
+Key names are those of [Hard keys](#hard-keys), lower-case with underscores:
+`up`, `down`, `left`, `right`, `ok`, `back`, `volume_up`, `volume_down`,
+`mute`, `channel_up`, `channel_down`, `play`, `stop`, `rewind`, `forward`,
+`power`, `home`, `settings`, `info`, `source`, `red`, `green`, `yellow`,
+`blue`, `record`. Test input answers only errors. Any board accepts it, for
+bench automation; the qemu board has no other input.
 
 The key never leaves the bridge's state file except over this cable.
 
