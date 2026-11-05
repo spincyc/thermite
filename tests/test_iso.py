@@ -30,7 +30,7 @@ plugin_spec.loader.exec_module(arch_plugin)
 
 class InstallerISO(unittest.TestCase):
     def setUp(self):
-        scratch = AREA.parents[1] / ".scratch/arch-iso/tests"
+        scratch = AREA / ".scratch/iso-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="test-", dir=scratch)
         self.root = Path(self.temporary.name)
