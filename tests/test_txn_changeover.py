@@ -925,6 +925,68 @@ class FreshInstall(unittest.TestCase):
         self.assertIsNone(changeover.open_transaction(self.site / "var"))
 
 
+class Unchanged(Fixture):
+    """A rerun with nothing to change only checks health: the installed
+    version is this one as recorded (release, pins, application, items)
+    and as found (units, filter, confinement, deploy, target, services).
+    Any one difference installs it again."""
+
+    ITEMS = [manifest.Item(Path("/etc/systemd/system/thermite.target"), "unit", unit="thermite.target"),
+             manifest.Item(Path("/srv/thermite-fixture/runtime/userdata"), "tree")]
+
+    def setUp(self):
+        super().setUp()
+        self.system = Mock(spec=System)
+        self.system.unit.return_value = Unit("active", "enabled")
+        wanted = changeover.release(self.context)
+        self.installed = {"installed": True, "release": wanted["release"], "pins": wanted["pins"],
+                          "application": {"current": wanted["application"], "previous": None},
+                          "items": [{"path": str(item.path), "class": item.cls} for item in self.ITEMS]}
+        self.found = {}
+        for target, name, value in (
+                (manifest, "desired", self.ITEMS), (steps.Units, "stale", False),
+                (changeover.NativeIngress, "current", True), (steps.NodeConfinement, "check", Check(True, "fixture")),
+                (steps.Deploy, "check", Check(True, "fixture")), (steps.Services, "plan", ([], [], False)),
+                (steps.MetricsServices, "plan", ([], [], False))):
+            self.found[name if name not in ("check", "plan") else f"{target.__name__}.{name}"] = self.enterContext(
+                patch.object(target, name, return_value=value))
+
+    def unchanged(self, installed=None):
+        return changeover.unchanged(self.context, self.system, self.installed if installed is None else installed)
+
+    def test_the_version_recorded_and_found_is_unchanged(self):
+        self.assertTrue(self.unchanged())
+
+    def test_nothing_or_nothing_installed_is_never_unchanged(self):
+        self.assertFalse(changeover.unchanged(self.context, self.system, None))
+        self.assertFalse(self.unchanged({**self.installed, "installed": False}))
+
+    def test_a_different_record_installs(self):
+        for key, value in (("release", {**self.installed["release"], "site": BEFORE}),
+                           ("pins", {"openhab": "sha256:" + "f" * 64}),
+                           ("application", {"current": "a" * 64, "previous": None}),
+                           ("items", self.installed["items"][:1]),
+                           ("items", [{**self.installed["items"][0], "class": "file"}, self.installed["items"][1]])):
+            with self.subTest(key=key, value=value):
+                self.assertFalse(self.unchanged({**self.installed, key: value}))
+
+    def test_a_difference_found_on_the_host_installs(self):
+        runtime, grafana = "thermite-openhab.service", "thermite-grafana.service"
+        for name, value in (("stale", True), ("current", False), ("NodeConfinement.check", Check(False, "fixture")),
+                            ("Deploy.check", Check(False, "fixture")), ("Services.plan", ([runtime], [], False)),
+                            ("Services.plan", ([], [runtime], False)), ("Services.plan", ([], [], True)),
+                            ("MetricsServices.plan", ([grafana], [], False))):
+            with self.subTest(found=name, value=value):
+                kept = self.found[name].return_value
+                self.found[name].return_value = value
+                self.assertFalse(self.unchanged())
+                self.found[name].return_value = kept
+        for state in (Unit("inactive", "enabled"), Unit("active", "disabled")):
+            with self.subTest(target=state):
+                self.system.unit.return_value = state
+                self.assertFalse(self.unchanged())
+
+
 class Runner(unittest.TestCase):
     def test_a_failed_run_starts_nothing_again(self):
         # The transaction's rollback is the only undo.
