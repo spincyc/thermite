@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
@@ -135,6 +136,17 @@ class Plugin(Scratch):
         self.assertEqual(json.loads((target / first_boot.PENDING).read_text()),
                          {"owner": "casey", "hostname": "thermite", "timezone": "Europe/Berlin"})
         self.assertIn("journalctl -fu thermite-first-boot.service", (target / first_boot.STATUS).read_text())
+        self.assertIn("sudo runs any command as root for casey without a password",
+                      " ".join((target / first_boot.STATUS).read_text().split()))
+        # The first boot's sudo rule never survives a boot, power loss included.
+        tmpfiles = target / first_boot.TMPFILES
+        self.assertIn("r /etc/sudoers.d/90-thermite-first-boot", tmpfiles.read_text().splitlines())
+        if shutil.which("systemd-tmpfiles"):
+            (target / first_boot.SUDOERS).write_text("casey ALL=(ALL:ALL) NOPASSWD: ALL\n")
+            subprocess.run(["systemd-tmpfiles", f"--root={target}", "--remove", "--boot", str(tmpfiles)],
+                           check=True, capture_output=True)
+            self.assertFalse((target / first_boot.SUDOERS).exists())
+            self.assertTrue((target / "etc/sudoers.d/10-thermite-wheel").is_file())
         self.assertTrue(all(line.startswith("Thermite: ") for line in said.splitlines()))
 
     def test_without_a_key_passwords_stay_and_a_missing_owner_stops_it(self):
@@ -212,15 +224,24 @@ class FirstBoot(Scratch):
                          ["casey ALL=(ALL:ALL) NOPASSWD: ALL", "Defaults:casey verifypw=any"])
         self.assertEqual(rule.stat().st_mode & 0o777, 0o440)
         self.assertTrue((self.system / first_boot.LOG).is_file())
-        for status, kept, says in (("75", True, "the Internet did not answer"), ("1", True, "status 1"),
-                                   ("0", False, "Thermite is installed on thermite.local")):
+        for status, code, kept, says in (("75", "exited", True, "the Internet did not answer in 15 minutes"),
+                                         ("1", "exited", True, "status 1; the log says why"),
+                                         ("124", "exited", True, "longer than 3 hours"),
+                                         ("TERM", "killed", True, "stopped by signal TERM, as a shutdown"),
+                                         ("0", "exited", False, "Thermite is installed on thermite.local")):
             first_boot.prepare(self.system, run=ok)
             disabled = []
-            first_boot.finish(self.system, status=status, run=lambda argv, **options: disabled.append(argv))
+            first_boot.finish(self.system, status=status, code=code,
+                              run=lambda argv, **options: disabled.append(argv))
             self.assertFalse(rule.exists())
             self.assertEqual(disabled, [["systemctl", "disable", first_boot.UNIT]])
             self.assertEqual((self.system / first_boot.PENDING).exists(), kept)
-            self.assertIn(says, (self.system / first_boot.STATUS).read_text())
+            message = (self.system / first_boot.STATUS).read_text()
+            self.assertIn(says, message)
+            if kept:
+                # The steps by hand include the identity the commit needs.
+                self.assertIn("git -C ~/thermite-site config user.email casey@thermite.local", message)
+                self.assertIn("finishes or rolls back that install, then installs again", message)
         # A rule visudo refuses is never left behind.
         (self.system / first_boot.PENDING).write_text(json.dumps({"owner": "casey"}))
         refused = lambda argv, **options: subprocess.CompletedProcess(argv, 1)
@@ -228,51 +249,94 @@ class FirstBoot(Scratch):
         self.assertFalse(rule.exists())
 
     def thermite(self, install: str) -> Path:
-        """A stand-in thermite: init writes a site, install is the given shell."""
+        """A stand-in thermite with install --yes's contract: init writes a
+        site; status --json reports the open transaction ($HOME/open); install
+        must get --yes, a closed stdin, TERM=dumb and LC_ALL=C, and resolves
+        an open transaction and stops, as thermite install does; otherwise
+        it runs the given shell."""
         command = self.root / "thermite"
         command.write_text(f"""#!/bin/sh
 set -eu
 case "$1" in
 init) mkdir -p "$3/instance"; echo '{{}}' > "$3/thermite-site.json"
       printf '{{\\n  "timezone": "Etc/UTC",\\n  "uid": 9001\\n}}\\n' > "$3/instance/host.yaml" ;;
-install) {install} ;;
+status) if [ -f "$HOME/open" ]; then printf '{{"open_transaction": "%s"}}\\n' "$(cat "$HOME/open")"
+        else echo '{{"open_transaction": null}}'; fi ;;
+install) [ "$2" = --yes ] && [ "$3" = --config ] || exit 7
+         [ ! -t 0 ] && [ "$(wc -c)" -eq 0 ] || exit 8
+         echo "install sees TERM=$TERM LC_ALL=$LC_ALL" >> "$HOME/installs"
+         if [ -f "$HOME/open" ]; then rm "$HOME/open"; echo "resolved, stopped"; exit 2; fi
+         {install} ;;
 esac
 """)
         command.chmod(0o755)
         return command
 
-    def run_first_boot(self, install: str, online=lambda: True) -> int:
+    def run_first_boot(self, install: str, online=lambda: True, **options) -> tuple[int, str]:
         command = self.thermite(install)
+        out = io.StringIO()
         with patch.dict(os.environ, {"HOME": str(self.home), "GIT_CONFIG_GLOBAL": os.devnull,
                                      "GIT_CONFIG_NOSYSTEM": "1"}):
-            return first_boot.run(self.home, root=self.system, command=str(command), online=online,
-                                  sleep=lambda seconds: None)
+            status = first_boot.run(self.home, root=self.system, command=str(command), online=online,
+                                    sleep=lambda seconds: None, out=out, **options)
+        return status, out.getvalue()
 
-    def test_run_initializes_commits_and_answers_only_installs_approval(self):
+    def test_run_initializes_commits_and_installs_with_yes_into_the_log_and_the_journal(self):
         if not shutil.which("git"): self.skipTest("needs git")
-        install = ('printf "Plan: install everything\\nInstall? [y/N] "; read answer; '
-                   '[ "$answer" = y ] || exit 9; printf "Delete it? [y/N] "; read again; '
-                   '[ -z "$again" ] || exit 8; echo installed')
-        self.assertEqual(self.run_first_boot(install), 0)
+        status, journal = self.run_first_boot("echo installed")
+        self.assertEqual(status, 0)
         site = self.home / first_boot.SITE
         self.assertEqual(json.loads((site / "instance/host.yaml").read_text()),
                          {"timezone": "Europe/Berlin", "uid": 9001})
         git = subprocess.run(["git", "-C", str(site), "log", "--format=%an <%ae> %s"], capture_output=True,
-                                   text=True).stdout
+                             text=True).stdout
         self.assertEqual(git.strip(), "casey <casey@thermite.local> Thermite site from the installer")
+        self.assertEqual((self.home / "installs").read_text(), "install sees TERM=dumb LC_ALL=C\n")
+        # Everything goes to the log and to stdout, which is the journal.
         log = (self.system / first_boot.LOG).read_text()
+        self.assertEqual(log, journal)
+        self.assertIn("$ " + str(self.root / "thermite") + " install --yes --config " + str(site), log)
         self.assertIn("installed", log)
         # Again: the site and its commit are kept, install runs once more.
-        self.assertEqual(self.run_first_boot("echo again"), 0)
+        self.assertEqual(self.run_first_boot("echo again")[0], 0)
         self.assertEqual(len(subprocess.run(["git", "-C", str(site), "log", "--oneline"], capture_output=True,
                                             text=True).stdout.splitlines()), 1)
 
-    def test_a_password_prompt_or_no_internet_stops_the_run(self):
+    def test_an_install_a_stopped_run_left_open_is_resolved_then_installed(self):
         if not shutil.which("git"): self.skipTest("needs git")
-        self.assertEqual(self.run_first_boot('printf "[sudo] password for casey: "; read secret; exit 0'), 3)
-        self.assertIn("a password was asked for", (self.system / first_boot.LOG).read_text())
-        self.assertEqual(self.run_first_boot("exit 0", online=lambda: False), first_boot.OFFLINE)
-        self.assertIn("Waiting for the Internet", (self.system / first_boot.LOG).read_text())
+        (self.home / "open").write_text("20261105T120000-example")
+        status, journal = self.run_first_boot("echo installed")
+        self.assertEqual(status, 0)
+        self.assertEqual(len((self.home / "installs").read_text().splitlines()), 2)
+        self.assertIn("Install transaction 20261105T120000-example of a stopped run is still open", journal)
+        self.assertLess(journal.index("resolved, stopped"), journal.index("installed"))
+        # Nothing open: one run, and its failure is the run's.
+        (self.home / "installs").unlink()
+        self.assertEqual(self.run_first_boot("exit 5")[0], 5)
+        self.assertEqual(len((self.home / "installs").read_text().splitlines()), 1)
+
+    def test_a_slow_install_is_stopped_and_one_that_left_a_process_behind_still_ends(self):
+        if not shutil.which("git"): self.skipTest("needs git")
+        with patch.object(first_boot, "POLL", 0.1):
+            started = time.monotonic()
+            status, journal = self.run_first_boot("exec sleep 30", timeout=2)
+            self.assertEqual(status, first_boot.TOO_LONG)
+            self.assertIn("took too long", journal)
+            # A child that keeps the output open does not keep run waiting.
+            status, journal = self.run_first_boot("(sleep 30 &); echo installed")
+            self.assertEqual(status, 0)
+            self.assertLess(time.monotonic() - started, 20)
+
+    def test_no_internet_stops_the_run(self):
+        status, journal = self.run_first_boot("exit 0", online=lambda: False)
+        self.assertEqual(status, first_boot.OFFLINE)
+        self.assertIn("Waiting for the Internet", journal)
+        self.assertFalse((self.home / "installs").exists())
+
+    def test_first_boot_drives_no_terminal(self):
+        source = (AREA / "iso/first-boot.py").read_text()
+        for gone in ("import pty", "pty.fork", "[y/N]", "APPROVAL", "QUESTION", "PASSWORD"):
+            self.assertFalse(gone in source, gone)
 
 
 if __name__ == "__main__": unittest.main()
