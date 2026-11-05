@@ -80,12 +80,18 @@ class Plugin(Scratch):
         self.state = self.tree(self.root / "state", {"answers.json": json.dumps(ANSWERS),
                                                      "wifi.json": json.dumps(WIFI)})
 
-    def finalize(self):
+    def finalize(self, smart=None):
+        """The plugin on the fake target; smartctl reports smart (no disk by default)."""
         out = io.StringIO()
+        def run(argv, **options):
+            if argv[0] == "smartctl":
+                return subprocess.CompletedProcess(argv, 0 if smart else 2, json.dumps(smart or {}), "")
+            return subprocess.CompletedProcess(argv, 0, "", "")
         with patch.object(Path, "is_mount", return_value=True), \
-                patch.object(plugin.subprocess, "run") as run, patch.object(plugin, "own") as own, redirect_stdout(out):
+                patch.object(plugin.subprocess, "run", side_effect=run) as ran, patch.object(plugin, "own") as own, \
+                redirect_stdout(out):
             plugin.finalize(self.target, self.media, self.state)
-        return [call.args[0] for call in run.call_args_list], own, out.getvalue()
+        return [call.args[0] for call in ran.call_args_list], own, out.getvalue()
 
     def test_target_gets_the_application_settings_records_and_first_boot(self):
         (self.target / "etc/default").mkdir()
@@ -97,13 +103,15 @@ class Plugin(Scratch):
                          ["FIRST-BOOT.txt", "bootstrap.py", "payload.json", "thermite_app-0.1.0-py3-none-any.whl"])
         chroot = ["arch-chroot", str(target)]
         self.assertEqual(commands, [[*chroot, "/usr/bin/python3", "/opt/thermite-media/bootstrap.py"],
+                                    ["smartctl", "--json", "--info", "/dev/sda"],
                                     [*chroot, "visudo", "-cf", "/etc/sudoers.d/10-thermite-wheel"],
                                     [*chroot, "grub-mkconfig", "-o", "/boot/grub/grub.cfg"]])
         sudoers = target / "etc/sudoers.d/10-thermite-wheel"
         self.assertIn("%wheel ALL=(ALL:ALL) ALL", sudoers.read_text().splitlines())
         self.assertEqual(sudoers.stat().st_mode & 0o777, 0o440)
         sshd = (target / "etc/ssh/sshd_config.d/20-thermite.conf").read_text().splitlines()
-        for setting in ("PermitRootLogin no", "PasswordAuthentication no", "KbdInteractiveAuthentication no"):
+        for setting in ("PermitRootLogin no", "AllowGroups wheel", "PasswordAuthentication no",
+                        "KbdInteractiveAuthentication no"):
             self.assertIn(setting, sshd)
         self.assertEqual((target / "etc/ssh/sshd_config").read_text().splitlines()[0],
                          "Include /etc/ssh/sshd_config.d/*.conf")
@@ -127,6 +135,7 @@ class Plugin(Scratch):
         receipt = json.loads((target / "var/log/thermite-install/receipt.json").read_text())
         self.assertEqual((receipt["answers"], receipt["kept_disabled"]), (ANSWERS, ["nftables.service"]))
         self.assertEqual(receipt["logs"]["archinstall"], "/var/log/archinstall/install.log")
+        self.assertEqual(receipt["smartd"], {"enabled": False, "why": "/dev/sda does not report SMART health data"})
         for path in (target / "var/log/thermite-install").iterdir():
             self.assertNotIn(WIFI["passphrase"], path.read_text())
         unit = (target / "etc/systemd/system/thermite-first-boot.service").read_text()
@@ -154,7 +163,7 @@ class Plugin(Scratch):
         (self.target / "etc/ssh/sshd_config").write_text("Include /etc/ssh/sshd_config.d/*.conf\n")
         self.finalize()
         self.assertEqual((self.target / "etc/ssh/sshd_config.d/20-thermite.conf").read_text().splitlines()[1:],
-                         ["PermitRootLogin no"])
+                         ["PermitRootLogin no", "AllowGroups wheel"])
         self.assertEqual((self.target / "etc/ssh/sshd_config").read_text().count("Include"), 1)
         self.assertFalse((self.target / "home/casey/.ssh").exists())
         for group in ("wheel:x:998:\n", "wheel:x:998:casey\n"):
@@ -168,6 +177,37 @@ class Plugin(Scratch):
             self.assertFalse((other / "opt").exists())
         with self.assertRaisesRegex(ValueError, "mounted target"):
             plugin.finalize(self.target, self.media, self.state)
+
+    def test_smartd_runs_only_when_the_installed_disk_reports_smart_data(self):
+        wants = self.target / "etc/systemd/system/multi-user.target.wants"
+        (wants / "smartd.service").symlink_to("/usr/lib/systemd/system/smartd.service")
+        commands, _, said = self.finalize(smart={"device": {"protocol": "ATA"},
+                                                 "smart_support": {"available": True, "enabled": True}})
+        self.assertIn(["arch-chroot", str(self.target), "systemctl", "enable", "smartd.service"], commands)
+        self.assertTrue((wants / "smartd.service").is_symlink())
+        receipt = json.loads((self.target / "var/log/thermite-install/receipt.json").read_text())
+        self.assertEqual(receipt["smartd"], {"enabled": True, "why": "/dev/sda reports SMART health data"})
+        self.assertIn("Thermite: smartd enabled: /dev/sda reports SMART health data", said.splitlines())
+        # What smartctl reports, read as the plugin reads it.
+        def reported(code, report):
+            return plugin.smart("/dev/sda", run=lambda argv, **options: subprocess.CompletedProcess(
+                argv, code, report if isinstance(report, str) else json.dumps(report), ""))
+        self.assertTrue(reported(0, {"device": {"protocol": "NVMe"}}))
+        self.assertTrue(reported(4, {"smart_support": {"available": True, "enabled": True}}))
+        self.assertFalse(reported(0, {"smart_support": {"available": True, "enabled": False}}))
+        self.assertFalse(reported(0, {"smart_support": {"available": False}}))
+        self.assertFalse(reported(2, {"smart_support": {"available": True, "enabled": True}}))
+        self.assertFalse(reported(0, {"device": {"protocol": "SCSI"}}))
+        self.assertFalse(reported(1, "not json"))
+
+    def test_smartd_stays_disabled_without_smart_data(self):
+        wants = self.target / "etc/systemd/system/multi-user.target.wants"
+        (wants / "smartd.service").symlink_to("/usr/lib/systemd/system/smartd.service")
+        commands, _, _ = self.finalize()
+        self.assertFalse((wants / "smartd.service").exists() or (wants / "smartd.service").is_symlink())
+        self.assertFalse(any("enable" in command for command in commands))
+        receipt = json.loads((self.target / "var/log/thermite-install/receipt.json").read_text())
+        self.assertEqual(receipt["kept_disabled"], ["nftables.service", "smartd.service"])
 
     def test_wifi_profile_is_read_back_as_written_and_follows_the_joined_security(self):
         def parsed(text):
@@ -200,10 +240,16 @@ class Plugin(Scratch):
         self.assertEqual(plugin.hosts_line("hosts: files mdns4_minimal dns"), "hosts: files mdns4_minimal dns")
         if not shutil.which("infocmp"): self.skipTest("needs ncurses' infocmp")
         script = self.root / "term.sh"; script.write_text(plugin.TERM_FALLBACK)
-        for given, wanted in (("xterm-thermite-unknown", "xterm-256color"), ("xterm", "xterm"), ("", "")):
-            shown = subprocess.run(["sh", "-c", '. "$1"; printf %s "$TERM"', "term", str(script)],
-                                   env={"PATH": os.environ["PATH"], "TERM": given}, capture_output=True, text=True)
-            self.assertEqual(shown.stdout, wanted, given)
+        # An interactive login falls back and says so; nothing else changes.
+        for flags, given, wanted, told in (("-ic", "xterm-thermite-unknown", "xterm-256color", True),
+                                           ("-ic", "xterm", "xterm", False), ("-ic", "", "", False),
+                                           ("-c", "xterm-thermite-unknown", "xterm-thermite-unknown", False)):
+            shown = subprocess.run(["sh", flags, '. "$1"; printf %s "$TERM"', "term", str(script)],
+                                   env={"PATH": os.environ["PATH"], "TERM": given}, capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL)
+            self.assertEqual(shown.stdout, wanted, (flags, given))
+            notice = "TERM=xterm-thermite-unknown is unknown on this host; using xterm-256color instead."
+            self.assertEqual(notice in shown.stderr, told, (flags, given, shown.stderr))
 
 
 class FirstBoot(Scratch):

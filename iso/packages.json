@@ -45,7 +45,6 @@
     "nftables.service": "Arch's stock ruleset admits only SSH; Thermite loads its own native-port boundary",
     "rsyncd.service": "rsync runs over SSH; the daemon has no encryption",
     "rsyncd.socket": "rsync runs over SSH; the daemon has no encryption",
-    "smartd.service": "not shown to stay quiet on hosts without SMART devices; enable it by hand on real disks",
     "avahi-dnsconfd.service": "only avahi-daemon answers .local names",
     "gpm.service": "vim's console mouse, not needed",
     "lm_sensors.service": "sensors is read by hand",

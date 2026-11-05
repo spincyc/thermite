@@ -25,20 +25,29 @@ LOG = "var/log/thermite-install"
 #: What bootstrap.py reads from /opt/thermite-media; the installer's own
 #: runtime (Node.js, blessed, tui/) stays on the medium.
 BOOTSTRAP = ("payload.json", "bootstrap.py", "FIRST-BOOT.txt")
-#: Root never logs in over SSH; with the image's key, nobody uses a password.
-SSHD = "# Written by the Thermite installer.\nPermitRootLogin no\n"
+#: Root never logs in over SSH, nor does any account outside wheel (the
+#: owner's group); with the image's key, nobody uses a password.
+SSHD = "# Written by the Thermite installer.\nPermitRootLogin no\nAllowGroups wheel\n"
 SSHD_KEY_ONLY = "PasswordAuthentication no\nKbdInteractiveAuthentication no\n"
 SUDOERS = "# Written by the Thermite installer: the owner's sudo.\n%wheel ALL=(ALL:ALL) ALL\n"
 JOURNALD = "# Written by the Thermite installer.\n[Journal]\nSystemMaxUse=2G\n"
 #: A terminal this host has no terminfo for (a new emulator over SSH)
-#: still gets a usable one.
+#: still gets a usable one, in an interactive login, which says so.
 TERM_FALLBACK = """\
-# Written by the Thermite installer: a terminal without terminfo here gets xterm-256color.
-if [ -n "${TERM:-}" ] && command -v infocmp >/dev/null 2>&1 && ! infocmp "$TERM" >/dev/null 2>&1; then
-    TERM=xterm-256color
-    export TERM
-fi
+# Written by the Thermite installer: an interactive login from a terminal
+# without terminfo here gets xterm-256color, and is told so.
+case "$-" in
+    *i*)
+        if [ -n "${TERM:-}" ] && command -v infocmp >/dev/null 2>&1 && ! infocmp "$TERM" >/dev/null 2>&1; then
+            echo "TERM=$TERM is unknown on this host; using xterm-256color instead." >&2
+            TERM=xterm-256color
+            export TERM
+        fi
+        ;;
+esac
 """
+#: Enabled only when the installed disk reports SMART support.
+SMARTD = "smartd.service"
 
 
 def say(text: str) -> None:
@@ -111,7 +120,25 @@ def wifi_profile(wifi: dict) -> str:
             + f"{security}\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n")
 
 
-def configure(target: Path, media: Path, answers: dict, account: dict, wifi: dict | None) -> list[str]:
+def smart(disk: str, run=None) -> bool:
+    """Whether the disk reports SMART health data, as smartctl on this live
+    system reads it: SMART available and enabled, or an NVMe disk, whose
+    health log is part of the protocol."""
+    try:
+        completed = (run or subprocess.run)(["smartctl", "--json", "--info", disk], capture_output=True, text=True,
+                        stdin=subprocess.DEVNULL, timeout=60)
+        report = json.loads(completed.stdout)
+    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+        return False
+    # smartctl's status is a bit mask: 1 and 2 mean it could not read the disk.
+    if not isinstance(report, dict) or completed.returncode & 3: return False
+    support = report.get("smart_support")
+    if isinstance(support, dict): return bool(support.get("available") and support.get("enabled"))
+    return (report.get("device") or {}).get("protocol") == "NVMe"
+
+
+def configure(target: Path, media: Path, answers: dict, account: dict, wifi: dict | None,
+              smartd: bool = False) -> list[str]:
     """The installed system's settings; the units it kept from being enabled."""
     say("sudo for wheel, SSH without root logins")
     write(target / "etc/sudoers.d/10-thermite-wheel", SUDOERS, 0o440)
@@ -144,12 +171,14 @@ def configure(target: Path, media: Path, answers: dict, account: dict, wifi: dic
         say(f"Wi-Fi {wifi['ssid']}")
         name = "".join(ch if ch.isascii() and ch.isalnum() or ch in "-_" else "_" for ch in wifi["ssid"])
         write(target / f"etc/NetworkManager/system-connections/{name}.nmconnection", wifi_profile(wifi), 0o600)
-    # Units packages.json keeps disabled stay so, whatever a package did.
+    # Units packages.json keeps disabled stay so, whatever a package did;
+    # smartd too, unless the disk has SMART data to watch.
     document = json.loads((media / "packages.json").read_text())
     stopped = []
     for link in sorted((target / "etc/systemd/system").glob("*.wants/*")):
-        if link.name in document["keep_disabled"] and link.is_symlink():
+        if (link.name in document["keep_disabled"] or link.name == SMARTD and not smartd) and link.is_symlink():
             link.unlink(); stopped.append(link.name)
+    if smartd: chroot(target, "systemctl", "enable", SMARTD)
     return stopped
 
 
@@ -179,7 +208,11 @@ def finalize(target: Path, media: Path, state: Path) -> None:
         shutil.copyfile(media / name, destination / name)
     chroot(target, "/usr/bin/python3", "/opt/thermite-media/bootstrap.py")
     wifi_file = state / "wifi.json"
-    stopped = configure(target, media, answers, account, json.loads(wifi_file.read_text()) if wifi_file.is_file() else None)
+    smartd = smart(answers["disk"])
+    say(f"smartd {'enabled' if smartd else 'left disabled'}: {answers['disk']} "
+        f"{'reports' if smartd else 'does not report'} SMART health data")
+    stopped = configure(target, media, answers, account, json.loads(wifi_file.read_text()) if wifi_file.is_file() else None,
+                        smartd)
     say("the installation's records and the first boot")
     records = target / LOG
     records.mkdir(parents=True, exist_ok=True)
@@ -187,6 +220,8 @@ def finalize(target: Path, media: Path, state: Path) -> None:
                "application": payload["application"], "release": payload["release"],
                "installer": payload.get("installer", {}), "authorized_key": payload.get("authorized_key"),
                "kept_disabled": stopped,
+               "smartd": {"enabled": smartd, "why": f"{answers['disk']} {'reports' if smartd else 'does not report'} "
+                                                    "SMART health data"},
                "logs": {"installer": f"/{LOG}/installer.log", "archinstall": "/var/log/archinstall/install.log",
                         "first_boot": f"/{LOG}/first-boot.log"}}
     write(records / "receipt.json", json.dumps(receipt, indent=2) + "\n")
