@@ -52,6 +52,10 @@ class Case:
         return {"kind": self.kind, "tools": fakes.TOOLS, "items": fakes.desired_items(self.new, purge=self.purge),
                 "pulled": self.new.images}
 
+    def release(self):
+        """What the operator passes begin: none for an uninstall or purge."""
+        return fakes.release(self.new) if self.switch else None
+
     def paths(self):
         versions = [version for version in (self.old, self.new) if version]
         return fakes.managed_paths(*versions, pinned=len({version.pins.get(fakes.PROMETHEUS) for version in versions} - {None}) > 1)
@@ -113,14 +117,15 @@ def engine_on(disk, host, messages=None):
 def transaction(disk, host, case, *, gate=True):
     """One transaction as changeover runs it; `gate` False fails the gate."""
     run = engine_on(disk, host)
-    run.begin(ID, case.desired(), fakes.OPERATOR, current=case.current if case.bridge else None)
+    run.begin(ID, case.desired(), fakes.OPERATOR, current=case.current if case.bridge else None,
+              release=case.release())
     run.guard(ID)
     assert host.run(("systemctl", "stop", engine.TARGET, engine.SLICE)) == 0  # Halt
     run.collect(ID)
     if case.switch:
         fakes.switch(disk, host, case.new)
     if gate:
-        run.commit(ID, fakes.release(case.new) if case.switch else None)
+        run.commit(ID)
     else:
         run.rollback(ID)
 
@@ -262,7 +267,7 @@ class Faults(Harness):
         disk, host = make(case)
         before = fakes.world(disk, host, case.paths())
         run = engine_on(disk, host)
-        run.begin(ID, case.desired(), fakes.OPERATOR)
+        run.begin(ID, case.desired(), fakes.OPERATOR, release=case.release())
         run.guard(ID)
         host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
         run.collect(ID)
@@ -296,7 +301,7 @@ class Faults(Harness):
                          durable=True)
                 before = fakes.world(disk, host, case.paths())
                 run = engine_on(disk, host)
-                journal = run.begin(ID, case.desired(), fakes.OPERATOR)
+                journal = run.begin(ID, case.desired(), fakes.OPERATOR, release=case.release())
                 run.guard(ID)
                 host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
                 # Another writer fills the disk after the up-front check.
@@ -324,7 +329,7 @@ class Faults(Harness):
         disk, host = make(case)
         disk.budget["root"] = disk.used("root") + 1024
         with self.assertRaises(engine.SpaceShort) as raised:
-            engine_on(disk, host).begin(ID, case.desired(), fakes.OPERATOR)
+            engine_on(disk, host).begin(ID, case.desired(), fakes.OPERATOR, release=case.release())
         self.assertNotIn(f"{ROOT}/.transaction", disk.nodes)
         self.assertEqual(disk.count, 0)
         self.assertIn("Not enough space: nothing was stopped or changed.", str(raised.exception))
@@ -334,7 +339,7 @@ class Faults(Harness):
         disk, host = make(case)
         before = fakes.world(disk, host, case.paths())
         run = engine_on(disk, host)
-        run.begin(ID, case.desired(), fakes.OPERATOR)
+        run.begin(ID, case.desired(), fakes.OPERATOR, release=case.release())
         run.guard(ID)
         host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
         run.collect(ID)
@@ -355,7 +360,7 @@ class Faults(Harness):
         case = CASES["upgrade_same_pins"]
         disk, host = make(case)
         run = engine_on(disk, host)
-        run.begin(ID, case.desired(), fakes.OPERATOR)
+        run.begin(ID, case.desired(), fakes.OPERATOR, release=case.release())
         run.guard(ID)
         host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
         run.collect(ID)

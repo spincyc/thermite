@@ -403,10 +403,12 @@ class Begin(Step):
 
     def actions(self, system: System) -> list:
         transaction = self.transaction
-        current = ("--current", transaction.file("current.json")) if transaction.file("current.json").exists() else ()
+        optional = [(f"--{name}", transaction.file(f"{name}.json")) for name in ("current", "release")
+                    if transaction.file(f"{name}.json").exists()]
         return [Task("set aside the operator's own files and mark the transaction open", self.opened),
                 transaction.command("begin", "--desired", transaction.file("desired.json"),
-                                    "--operator", transaction.file("operator.json"), *current)]
+                                    "--operator", transaction.file("operator.json"),
+                                    *(word for option in optional for word in option))]
 
     def opened(self, system: System) -> int:
         self.transaction.set_aside(self.paths)
@@ -727,12 +729,11 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
         return refused(system, transaction)
     reinstate = [Engine(transaction, "reinstate", "Put the kept version back",
                         "its files, state and live rules, from the last transaction's asides")] if work.reinstate else []
-    commit = ("--release", transaction.file("release.json")) if work.release is not None else ()
     rest = [Engine(transaction, "guard", "Guard the boot", f"{oh_units.TARGET} stays disabled until the commit"),
             steps.Halt(context),
             Engine(transaction, "collect", "Set the installed version aside", "copies and moves, as the plan says"),
             *reinstate, *work.switching, *work.verification,
-            Engine(transaction, "commit", "Commit", "record what is installed now", *commit)]
+            Engine(transaction, "commit", "Commit", "record what is installed now")]
     failed = f"The {transaction.verb} rolls back transaction {transaction.id} now."
     try:
         code = runner.run(rest, system, context.area, first=first + len(opening), rerun=failed,

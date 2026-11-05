@@ -517,6 +517,9 @@ class Journal:
     space: dict
     entries: list[Entry]
     pulled: list[str]
+    #: What the commit records about the version it installs, decided at
+    #: begin (Engine.release).
+    release: dict
     phase: str = "planned"
     phases: list = dataclasses.field(default_factory=list)
     live: dict = dataclasses.field(default_factory=lambda: {"nft_checked": False, "nft": None})
@@ -985,10 +988,11 @@ class Engine:
 
     # Verbs ---------------------------------------------------------------
 
-    def begin(self, id, desired, operator, current=None) -> Journal:
+    def begin(self, id, desired, operator, current=None, release=None) -> Journal:
         """Record a transaction before anything changes: what each path's
-        collect action is, the boot target's state, and this engine's own
-        bytes, pinned beside the journal to run every later verb.
+        collect action is, the boot target's state, what its commit will
+        record (Engine.release), and this engine's own bytes, pinned beside
+        the journal to run every later verb.
 
         `current` describes the running version when no manifest is
         installed yet (the one-time bridge)."""
@@ -1027,6 +1031,8 @@ class Engine:
             space = self.space(entries, desired["extra"])
             if space["required"] > space["available"]:
                 raise SpaceShort(space, self.root)
+            kept = self.reverted() if desired["kind"] == "revert" else None
+            release = self.release(release, kept.current if kept is not None else installed, desired["items"])
             target = {"enabled": self.host.capture(("systemctl", "is-enabled", TARGET))[0] == 0,
                       "active": self.host.capture(("systemctl", "is-active", TARGET))[0] == 0}
             if self.disk.lstat(self.transactions) is None:
@@ -1040,16 +1046,34 @@ class Engine:
             self.disk.write_atomic(directory / "engine.py", self.source, 0o600)
             if raw is not None:
                 self.disk.write_atomic(directory / "manifest", raw, 0o600)
-            reverts = {"reverts": self.reverted().id} if desired["kind"] == "revert" else {}
+            reverts = {"reverts": kept.id} if kept is not None else {}
             journal = Journal(
                 id=id, kind=desired["kind"], installation=str(self.root),
                 engine_sha256=hashlib.sha256(self.source).hexdigest(), engine_path=str(directory / "engine.py"),
                 tools=desired["tools"], operator=operator, space=space, entries=entries, pulled=desired["pulled"],
-                before={"manifest": "manifest" if raw is not None else None, "source": source, "target": target,
+                release=release, before={"manifest": "manifest" if raw is not None else None, "source": source, "target": target,
                         "apparmor": apparmor, **reverts},
                 current=installed, desired=desired["items"], phases=[["planned", self.clock()]])
             self.save(journal)
             return journal
+
+    @staticmethod
+    def release(release, carried, desired) -> dict:
+        """What the commit records about the version it installs: `release`,
+        or without one (an uninstall or a revert) that of the version
+        `carried` describes, carried over. Its pins must be the desired
+        set's."""
+        if release is None:
+            carried = carried or {}
+            release = {"release": carried.get("release", {}), "pins": carried.get("pins", {}),
+                       "images": carried.get("images", {}).get("current", []),
+                       "application": carried.get("application", {}).get("current")}
+        release = validate_release(release)
+        for item in desired:
+            if item["class"] == "shared-pinned" and release["pins"].get(item["pin"]) != item["value"]:
+                raise EngineError(f"the release pins {item['pin']} to {release['pins'].get(item['pin'])!r}, "
+                                  f"but the desired set to {item['value']!r}")
+        return release
 
     def _run(self, *argv) -> None:
         if self.host.run(argv):
@@ -1228,13 +1252,11 @@ class Engine:
         self.disk.fsync_dir(destination.parent)
         self.disk.fsync_dir(source.parent)
 
-    def commit(self, id, release=None) -> Journal:
-        """Record what the new version installed, then commit: the durable
-        `committed` phase is the commit point (9-F1). After it, recovery
-        finishes the commit instead of undoing it.
-
-        Without `release`, the installed release, pins and images carry over
-        (an uninstall)."""
+    def commit(self, id) -> Journal:
+        """Record what the new version installed, with the release begin
+        recorded, then commit: the durable `committed` phase is the commit
+        point (9-F1). After it, recovery finishes the commit instead of
+        undoing it."""
         self.check_root()
         with self.disk.lock(self.root):
             journal = self._open(id)
@@ -1249,16 +1271,7 @@ class Engine:
                 if kept is None:
                     raise EngineError(f"transaction {journal.before['reverts']} is gone")
                 reverted = {item["path"]: item for item in kept.current["items"]}
-            if release is None:
-                carried = kept.current if journal.kind == "revert" else current
-                release = {"release": carried.get("release", {}), "pins": carried.get("pins", {}),
-                           "images": carried.get("images", {}).get("current", []),
-                           "application": carried.get("application", {}).get("current")}
-            release = validate_release(release)
-            for item in journal.desired:
-                if item["class"] == "shared-pinned" and release["pins"].get(item["pin"]) != item["value"]:
-                    raise EngineError(f"the release pins {item['pin']} to {release['pins'].get(item['pin'])!r}, "
-                                      f"but the desired set to {item['value']!r}")
+            release = journal.release
             items, devices = [], {}
             installed = {item["path"]: item for item in current.get("items", [])}
             for item in journal.desired:
@@ -1952,8 +1965,8 @@ FAILED, SHORT, ROLLED_BACK, STUCK = 1, 2, 3, 5
 
 
 def _input(disk, value) -> dict:
-    """An operator-written JSON input, read once; root reads no operator file
-    after begin."""
+    """An operator-written JSON input, read once by plan or begin; root reads
+    no operator file after begin."""
     path = Path(str(checked_path(value, "input file")))
     try:
         return json.loads(disk.read_bytes(path, 4 * 1024 * 1024))
@@ -2016,8 +2029,8 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("--current", help="a description of an installation without a manifest")
         if verb == "begin":
             command.add_argument("--operator", required=True, help="the operator's side, JSON")
-        if verb == "commit":
-            command.add_argument("--release", help="the release installed, JSON (none for an uninstall)")
+            command.add_argument("--release", help="the release it installs, JSON (none for an uninstall or a "
+                                                   "revert)")
         if verb == "rollback":
             shown = command.add_mutually_exclusive_group()
             shown.add_argument("--dry-run", action="store_true", help="say what a rollback would do")
@@ -2063,7 +2076,8 @@ def _main(args, argv, here) -> int:
                 print(describe_space(space, engine.root), file=sys.stderr)
                 return SHORT
             return 0
-        journal = engine.begin(args.id, desired, _input(engine.disk, args.operator), current)
+        release = _input(engine.disk, args.release) if args.verb == "begin" and args.release else None
+        journal = engine.begin(args.id, desired, _input(engine.disk, args.operator), current, release)
         print(json.dumps({"id": journal.id, "phase": journal.phase, "engine": journal.engine_path}))
         return 0
     if args.verb == "status":
@@ -2126,10 +2140,7 @@ def _main(args, argv, here) -> int:
             print(f"Rolled back, but the previous version did not start: {journal.outcome['error']}. "
                   f"Its files are back; start it with systemctl start {TARGET} and check its logs.", file=sys.stderr)
         return 0 if journal.phase == "kept" else ROLLED_BACK
-    if args.verb == "commit":
-        journal = engine.commit(id, _input(engine.disk, args.release) if args.release else None)
-    else:
-        journal = getattr(engine, args.verb)(id)
+    journal = getattr(engine, args.verb)(id)
     print(json.dumps({"id": journal.id, "phase": journal.phase}))
     return 0
 

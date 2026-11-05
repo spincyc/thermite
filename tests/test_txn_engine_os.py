@@ -431,17 +431,19 @@ esac
 
         # The changed copy begins the next transaction, pins itself, and commits.
         self.run_engine("begin", "--id", SECOND, "--desired", str(self.inputs["desired"]),
-                        "--operator", str(self.inputs["operator"]))
+                        "--operator", str(self.inputs["operator"]), "--release", str(self.inputs["release"]))
+        # Root reads no operator file after begin: the release it recorded
+        # is the one committed.
+        self.inputs["release"].write_text(json.dumps({"release": {"label": "changed"}, "pins": {}, "images": []}))
         self.run_engine("guard", "--id", SECOND)
         subprocess.run([self.tools["systemctl"], "stop", "thermite.target", "thermite.slice"], check=True, cwd="/")
         self.run_engine("collect", "--id", SECOND)
         self.switch(SECOND)
-        self.assertEqual(json.loads(self.run_engine("commit", "--id", SECOND, "--release",
-                                                    str(self.inputs["release"])).stdout),
+        self.assertEqual(json.loads(self.run_engine("commit", "--id", SECOND).stdout),
                          {"id": SECOND, "phase": "kept"})
         installed = engine.parse_manifest((self.system / "etc/thermite/installed.json").read_bytes(), root=self.root,
                                           system=self.system)
-        self.assertEqual(installed["transaction"], SECOND)
+        self.assertEqual((installed["transaction"], installed["release"]), (SECOND, {"label": "new"}))
         rules = next(item for item in installed["items"] if item["class"] == "nft")
         self.assertEqual(rules["sha256"], hashlib.sha256(self.files("new")[Path(rules["path"])]).hexdigest())
         self.assertTrue((self.wants / "thermite.target").is_symlink())

@@ -855,9 +855,8 @@ class FreshInstall(unittest.TestCase):
         if options.verb == "plan":
             return json.dumps(self.engine.plan(read(options.desired)))
         if options.verb == "begin":
-            self.engine.begin(options.id, read(options.desired), read(options.operator))
-        elif options.verb == "commit":
-            self.engine.commit(options.id, read(options.release) if options.release else None)
+            self.engine.begin(options.id, read(options.desired), read(options.operator),
+                              release=read(options.release) if options.release else None)
         else:
             getattr(self.engine, options.verb)(options.id)
         return ""

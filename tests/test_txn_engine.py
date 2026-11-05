@@ -230,7 +230,8 @@ def journal(**changes):
                   engine_path=f"{ROOT}/.transaction/{ID}/engine.py", tools=dict(TOOLS),
                   before={"manifest": None, "source": "none", "target": {"enabled": True, "active": True},
                           "apparmor": False},
-                  current=None, desired=[], operator={}, space={}, entries=[entry], pulled=[])
+                  current=None, desired=[], operator={}, space={}, entries=[entry], pulled=[],
+                  release={"release": {}, "pins": {}, "images": [], "application": None})
     fields.update(changes)
     return engine.Journal(**fields)
 
@@ -307,7 +308,8 @@ class Verbs(unittest.TestCase):
                 "pulled": (new or self.new).images}
 
     def begin(self, new=None, kind="upgrade", id=ID):
-        return self.engine.begin(id, self.desired(new, kind), fakes.OPERATOR)
+        release = fakes.release(new or self.new) if kind in ("install", "upgrade", "clean") else None
+        return self.engine.begin(id, self.desired(new, kind), fakes.OPERATOR, release=release)
 
     def through_switch(self, new=None, kind="upgrade", id=ID):
         self.begin(new, kind, id)
@@ -427,7 +429,7 @@ class Verbs(unittest.TestCase):
         """An engine of another journal format cannot read this journal, but
         the marker says it is finished: it begins, and its commit prunes it."""
         self.through_switch()
-        self.engine.commit(ID, fakes.release(self.new))
+        self.engine.commit(ID)
         path = f"{ROOT}/.transaction/{ID}"
         self.assertEqual(self.disk.nodes[f"{path}/terminal"].data, b"kept\n")
         data = json.loads(self.disk.nodes[f"{path}/journal.json"].data)
@@ -436,7 +438,7 @@ class Verbs(unittest.TestCase):
                          {"id": ID, "open": False, "phase": "kept", "error": None})
         later, newer = "20261201T090000Z-0000ab", fakes.version("newer")
         self.through_switch(newer, id=later)
-        self.engine.commit(later, fakes.release(newer))
+        self.engine.commit(later)
         self.assertEqual(self.engine.ids(), [later])
         # An unreadable transaction that is not marked still refuses.
         self.disk.put(f"{ROOT}/.transaction/{ID}/journal.json", data=b"{}", mode=0o600)
@@ -473,7 +475,7 @@ class Verbs(unittest.TestCase):
         self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
         self.engine.collect(ID)
         fakes.switch(self.disk, self.host, self.new)
-        self.assertEqual(self.engine.commit(ID, fakes.release(self.new)).phase, "kept")
+        self.assertEqual(self.engine.commit(ID).phase, "kept")
         self.assertTrue(self.host.enabled())
 
     def test_begin_refuses_a_null_tool_an_item_needs(self):
@@ -510,7 +512,7 @@ class Verbs(unittest.TestCase):
 
     def test_commit_records_what_is_on_disk_and_lifts_the_guard(self):
         self.through_switch()
-        journal = self.engine.commit(ID, fakes.release(self.new))
+        journal = self.engine.commit(ID)
         self.assertEqual(journal.phase, "kept")
         data = engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data, root=ROOT)
         items = {item["path"]: item for item in data["items"]}
@@ -532,7 +534,7 @@ class Verbs(unittest.TestCase):
     def test_commit_prunes_beyond_the_previous_version(self):
         two = fakes.version("new", prometheus="two")
         self.through_switch(two)
-        self.engine.commit(ID, fakes.release(two))
+        self.engine.commit(ID)
         failed_id, third = "20261105T120000Z-0000aa", "20261105T130000Z-0000bb"
         newer = fakes.version("newer", prometheus="three")
         # A rolled-back attempt that pulled an image, then a committed one.
@@ -552,7 +554,7 @@ class Verbs(unittest.TestCase):
             self.fail("an unreadable transaction must refuse begin")
         self.disk.drop(f"{ROOT}/.transaction/{stuck}")
         self.through_switch(newest, id=third)
-        self.engine.commit(third, fakes.release(newest))
+        self.engine.commit(third)
         self.assertEqual(self.engine.ids(), [third])
         self.assertEqual(sorted(self.disk.listdir(f"{ROOT}/access/releases")), [ID, third])
         # The first version's image is now beyond the previous one; the
@@ -577,7 +579,7 @@ class Verbs(unittest.TestCase):
                 new = fakes.version("new")
                 new.images = images
                 self.through_switch(new)
-                journal = self.engine.commit(ID, fakes.release(new))
+                journal = self.engine.commit(ID)
                 self.assertEqual(set(journal.manifest["images"]["current"] + journal.manifest["images"]["previous"]),
                                  {first, second})
                 self.assertEqual([argv for argv in self.host.log if argv[:2] == ("podman", "image")], [])
@@ -622,7 +624,7 @@ class Verbs(unittest.TestCase):
         fakes.empty(disk)
         host.table = "table inet thermite_native { # loaded by hand }\n"
         run = engine.Engine(disk, host, ROOT, source=fakes.SOURCE, clock=lambda: fakes.CLOCK)
-        run.begin(ID, self.desired(kind="install"), fakes.OPERATOR)
+        run.begin(ID, self.desired(kind="install"), fakes.OPERATOR, release=fakes.release(self.new))
         run.guard(ID)
         run.collect(ID)
         fakes.switch(disk, host, self.new)
@@ -638,7 +640,7 @@ class Verbs(unittest.TestCase):
         journal = self.engine.read(ID)
         # Stop right after the commit point.
         self.engine._finish = lambda journal: journal
-        commit(ID, fakes.release(self.new))
+        commit(ID)
         self.assertEqual(self.engine.read(ID).phase, "committed")
         self.assertFalse(self.host.enabled())
         del self.engine._finish
@@ -689,7 +691,7 @@ class Verbs(unittest.TestCase):
         # transaction without losing any of it.
         again = "20261106T090000Z-00a1b2"
         self.through_switch(kind="install", id=again)
-        self.engine.commit(again, fakes.release(self.new))
+        self.engine.commit(again)
         self.assertEqual(self.engine.ids(), [again])
         self.assertEqual(self.disk.nodes[f"{ROOT}/access/state/identity.sqlite3"].data, b"identity new")
         self.assertEqual(self.disk.nodes[f"{ROOT}/.transaction/{again}/trees/"
@@ -698,7 +700,7 @@ class Verbs(unittest.TestCase):
 
     def test_a_purge_leaves_nothing_thermite_made(self):
         self.through_switch()
-        self.engine.commit(ID, fakes.release(self.new))
+        self.engine.commit(ID)
         purge = "20261106T090000Z-00c3d4"
         with self.assertRaisesRegex(engine.EngineError, "a purge installs nothing and removes everything"):
             self.engine.begin(purge, {"kind": "purge", "tools": fakes.TOOLS,
@@ -741,22 +743,26 @@ class Verbs(unittest.TestCase):
                     self.assertEqual(self.engine.rollback(ID).phase, "rolled-back")
                     self.assertEqual(fakes.world(self.disk, self.host, fakes.managed_paths(self.old, new)), before)
                 else:
-                    self.engine.commit(ID, fakes.release(new))
+                    self.engine.commit(ID)
                     data = engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data, root=ROOT)
                     self.assertIn({"path": path, "class": "tree"}, data["items"])
 
-    def test_commit_refuses_a_release_whose_pins_are_not_the_desired_ones(self):
-        self.through_switch()
+    def test_begin_refuses_a_release_whose_pins_are_not_the_desired_ones(self):
         release = {**fakes.release(self.new), "pins": {PROMETHEUS: "sha256:other"}}
         with self.assertRaisesRegex(engine.EngineError, "the release pins prometheus to 'sha256:other', "
                                                         "but the desired set to 'sha256:one'"):
-            self.engine.commit(ID, release)
-        self.assertEqual(self.engine.read(ID).phase, "switching")
+            self.engine.begin(ID, self.desired(), fakes.OPERATOR, release=release)
+        self.assertIsNone(self.disk.lstat(f"{ROOT}/.transaction/{ID}"), "nothing was recorded")
+
+    def test_the_commit_records_the_release_begin_recorded(self):
+        self.through_switch()
+        self.assertEqual(self.engine.read(ID).release, engine.validate_release(fakes.release(self.new)))
+        self.assertEqual(self.engine.commit(ID).manifest["release"], {"label": "new"})
 
     def test_a_clean_install_records_its_new_trees(self):
         clean = fakes.version("new", tree_class="tree-move")
         self.through_switch(clean, "clean")
-        journal = self.engine.commit(ID, fakes.release(clean))
+        journal = self.engine.commit(ID)
         moved = [entry for entry in journal.entries if entry.cls == "tree-move"]
         self.assertEqual([entry.action for entry in moved], ["move", "move"])
         for entry in moved:
@@ -780,7 +786,7 @@ class Verbs(unittest.TestCase):
         live = self.host.state()
         newer = fakes.version("new", prometheus="two", extra_units=("thermite-extra.service",))
         self.through_switch(newer)
-        self.engine.commit(ID, fakes.release(newer))
+        self.engine.commit(ID)
         self.disk.put(f"{ROOT}/runtime/userdata/jsondb/written-since.json", data=b"lost", mode=0o640, uid=980,
                       gid=980)
         journal = self.revert()
@@ -804,7 +810,7 @@ class Verbs(unittest.TestCase):
 
     def test_a_failed_revert_rolls_back_to_the_version_it_would_have_replaced(self):
         self.through_switch()
-        self.engine.commit(ID, fakes.release(self.new))
+        self.engine.commit(ID)
         before = fakes.world(self.disk, self.host, fakes.managed_paths(self.old, self.new))
         journal = self.revert(finish=False)
         self.assertEqual(self.disk.nodes[f"{ROOT}/access/state/identity.sqlite3"].data, b"identity old")
@@ -816,7 +822,7 @@ class Verbs(unittest.TestCase):
         with self.assertRaisesRegex(engine.EngineError, f"transaction {fakes.OLD}, which the installed manifest keeps"):
             self.engine.plan(desired)
         self.through_switch()
-        self.engine.commit(ID, fakes.release(self.new))
+        self.engine.commit(ID)
         with self.assertRaisesRegex(engine.EngineError, "the desired set lists none"):
             self.engine.plan({**desired, "items": fakes.desired_items(self.old)})
         with self.assertRaisesRegex(engine.EngineError, "is an upgrade, not a revert"):
