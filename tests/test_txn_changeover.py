@@ -251,7 +251,7 @@ class RolledBack(Fixture):
         self.assertEqual(self.run_upgrade(verify=[("health", 1)], health=1), changeover.UNHEALTHY)
         self.assertNotIn("commit", self.log)
         self.assertEqual(self.log[-3:], ["rollback", f"history {txn_fakes.ID}", "old health"])
-        self.assertIn("It keeps running", self.said())
+        self.assertIn("It is left as it is", self.said())
 
     def test_a_refused_commit_rolls_back(self):
         self.assertEqual(self.run_upgrade(commit=1), changeover.ROLLED_BACK)

@@ -103,8 +103,8 @@ class Inventory(unittest.TestCase):
 
     def test_the_set_is_what_the_engine_accepts(self):
         items = [item.to_json() for item in declared().values()]
-        self.assertEqual(engine.validate_desired({"kind": "upgrade", "tools": dict.fromkeys(engine.TOOLS, "/usr/bin/true"),
-                                                  "items": items}, str(ROOT))["items"],
+        tools = {name: f"/usr/bin/{name}" for name in engine.TOOLS}
+        self.assertEqual(engine.validate_desired({"kind": "upgrade", "tools": tools, "items": items}, str(ROOT))["items"],
                          sorted(items, key=lambda item: item["path"]))
 
     def test_conflicting_or_nested_declarations_are_refused(self):
@@ -163,11 +163,15 @@ class Installed(unittest.TestCase):
                       "#a-missing-manifest"):
             self.assertIn(words, text)
 
-    def test_tools_are_absolute_and_found_in_roots_directories_first(self):
+    def test_tools_are_found_only_in_the_engines_program_directories(self):
         found = system()
         found.stat.side_effect = lambda path: Stat(0, 0, 0o755, False, 0) if str(path).startswith("/usr/sbin/") else None
-        found.which.return_value = None
+        found.which.return_value = "/usr/local/bin/podman"
         self.assertEqual(manifest.tools(found), {name: f"/usr/sbin/{name}" for name in engine.TOOLS})
+        engine.check_tools(manifest.tools(found))
+        found.stat.side_effect = lambda path: (Stat(0, 0, 0o755, False, 0) if str(path).startswith("/usr/bin/")
+                                               and path.name != "podman" else None)
+        self.assertIsNone(manifest.tools(found)["podman"], "never from PATH outside the program directories")
         found.stat.side_effect = lambda path: None
         with self.assertRaisesRegex(manifest.ManifestError, "no systemctl program"):
             manifest.tools(found)

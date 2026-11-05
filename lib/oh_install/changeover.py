@@ -622,9 +622,10 @@ def rolled_back(system: System, transaction: Transaction) -> int:
         system.say(f"Rolled back: transaction {transaction.id} is undone and the version that ran before runs "
                    "again, healthy.")
         return ROLLED_BACK
-    system.say(f"Rolled back: transaction {transaction.id} is undone and the version that ran before runs again, "
-               "but its health check does not pass (above). It keeps running: fix what health reports, or run "
-               "thermite health --production --installation to check again.")
+    system.say(f"Rolled back: transaction {transaction.id} is undone and the version that ran before is back, "
+               "but its health check does not pass (above); the engine says so above when it did not even start. "
+               f"It is left as it is: fix what health reports (systemctl start {oh_units.TARGET} if it did not "
+               "start), then run thermite health --production --installation to check again.")
     return UNHEALTHY
 
 

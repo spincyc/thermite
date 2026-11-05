@@ -33,9 +33,6 @@ INSTALLED = Path("/") / engine.MANIFEST
 #: Where systemd keeps what `systemctl enable` links into thermite.target.
 UNITS = Path("/etc/systemd/system")
 WANTS = UNITS / f"{oh_units.TARGET}.wants"
-#: Root's tool directories, searched before the operator's PATH: nft and
-#: apparmor_parser live in sbin on some distributions.
-SEARCH = ("/usr/sbin", "/usr/bin", "/sbin", "/bin")
 #: The version's container images, by their versions.json names.
 IMAGES = ("openhab", "atv_helper")
 
@@ -153,15 +150,13 @@ def missing_recovery(context: Context) -> str:
 
 
 def tools(system: System) -> dict:
-    """The programs the engine may run, by absolute path: found in root's
-    tool directories first. The engine checks that root owns each."""
+    """The programs the engine may run, by absolute path: only those named
+    for themselves in the system's program directories, the engine's
+    TOOL_DIRS, where it checks that root owns each."""
     found = {}
     for name in engine.TOOLS:
-        path = next((str(Path(directory) / name) for directory in SEARCH
+        path = next((str(Path(directory) / name) for directory in engine.TOOL_DIRS
                      if (info := system.stat(Path(directory) / name)) is not None and not info.is_dir), None)
-        if path is None:
-            path = system.which(name)
-            path = path if path and Path(path).is_absolute() else None
         if path is None and name not in engine.OPTIONAL_TOOLS:
             raise ManifestError(f"no {name} program here; the install engine needs it")
         found[name] = path
