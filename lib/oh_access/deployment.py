@@ -106,7 +106,9 @@ def adopt(config, destination, *, uid, gid, service_uid):
         material["callbacks.json"] = read(callback_path, maximum=256 * 1024, owner=service_uid)
     except FileNotFoundError:
         pass
-    result = {key: original[key] for key in ("state", "runtime_url", "allowed_hosts", "bind_host", "port", "timezone")}
+    # The installer derives the hosts, bind address and timezone from the host
+    # each run; the port is returned only to say when it moves.
+    result = {key: original[key] for key in ("state", "runtime_url", "port")}
     result.update(previous_release=str(config.parent), callbacks="callbacks.json" in material,
                   tls_cert=str(destination / "tls-cert.pem"), tls_key=str(destination / "tls-key.pem"))
     with directory(destination.parent) as parent:

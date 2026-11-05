@@ -39,6 +39,24 @@ def certificates(data: bytes) -> list[bytes]:
     return [block.replace(b"\r\n", b"\n") + b"\n" for block in _CERTIFICATE.findall(data)]
 
 
+def subject_names(hosts) -> set[str]:
+    """Certificate names as one set: addresses in canonical form, DNS names
+    without case."""
+    names = set()
+    for host in hosts:
+        try:
+            names.add("IP:" + str(ipaddress.ip_address(host)))
+        except ValueError:
+            names.add("DNS:" + host.lower())
+    return names
+
+
+def served_names(output: str) -> set[str]:
+    """The names `openssl x509 -noout -ext subjectAltName` lists."""
+    values = [value.strip() for line in output.splitlines() for value in line.split(",")]
+    return subject_names(value.split(":", 1)[1] for value in values if value.startswith(("DNS:", "IP Address:")))
+
+
 def openssl_config(hosts) -> str:
     """Extension profiles: a signing-only private authority and its server leaf."""
     names = []
@@ -209,6 +227,21 @@ class Gateway(Step):
                    runtime_credential_sha256=fingerprint, runtime_token_file=str(snapshot),
                    backup_suffix="-" + secrets.token_hex(6))
 
+    def _hosts(self):
+        """The names clients reach the gateway by: this host's name and LAN
+        address as found this run, then loopback."""
+        hosts = list(dict.fromkeys([self.context.hostname, *([self.context.address] if self.context.address else []),
+                                    "localhost", "127.0.0.1"]))
+        if any(not _HOST.fullmatch(host) for host in hosts):
+            raise AccessError("gateway TLS requires literal hostname/address inputs")
+        return hosts
+
+    def _derived(self):
+        """Settings derived from this host each run, as the ports are. An
+        upgrade never adopts them from the release it replaces."""
+        return {"allowed_hosts": self._hosts(), "bind_host": "0.0.0.0",
+                "port": oh_ports.gateway_port(self.context.host), "timezone": self.context.host["timezone"]}
+
     def _metadata(self, system, journal):
         if journal.get("metadata"):
             return journal["metadata"]
@@ -219,13 +252,15 @@ class Gateway(Step):
             self._helper(system, "adopt", Path(previous) / "config.json", destination,
                          "--uid", os.geteuid(), "--gid", os.getegid(), "--service-uid", uid)
             metadata = json.loads(read_private(destination / "adopted.json"))
-            # The HTTPS port is host.yaml's (gateway.port), as guest_http is,
-            # never the replaced release's: an upgrade can move it.
-            port = oh_ports.gateway_port(self.context.host)
-            if metadata["port"] != port:
-                system.say(f"   Gateway HTTPS moves from port {metadata['port']} to {port}: "
+            # Only identity state, TLS material and callbacks are adopted.
+            # The HTTPS port, hosts and timezone are this host's, as
+            # guest_http is, never the replaced release's: an upgrade can
+            # move the port, and the host can change its name or address.
+            derived = self._derived()
+            if metadata["port"] != derived["port"]:
+                system.say(f"   Gateway HTTPS moves from port {metadata['port']} to {derived['port']}: "
                            "update bookmarks, home-screen apps and terminal --url")
-            metadata["port"] = port
+            metadata.update(derived)
             metadata["callback_file"] = str(destination / "callbacks.json") if metadata["callbacks"] else None
             if metadata["callback_file"]:
                 self._relocate_callbacks(system, Path(metadata["callback_file"]))
@@ -234,16 +269,12 @@ class Gateway(Step):
                 raise AccessError("installed callback service has no recoverable exact callback map; refusing to retire it")
         else:
             inputs = private_directory(self.directory / "inputs")
-            hosts = list(dict.fromkeys([self.context.hostname, *([self.context.address] if self.context.address else []), "localhost", "127.0.0.1"]))
-            if any(not re.fullmatch(r"[A-Za-z0-9.:-]+", host) for host in hosts):
-                raise AccessError("gateway TLS requires literal hostname/address inputs")
+            derived = self._derived()
             certificate, key = inputs / "tls-cert.pem", inputs / "tls-key.pem"
-            authority = self._authority(system, hosts[0])
+            authority = self._authority(system, derived["allowed_hosts"][0])
             if not certificate.exists() or not key.exists():
-                self._issue(system, inputs, hosts, authority)
-            metadata = {"state": str(self.root / "state"), "allowed_hosts": hosts,
-                        "bind_host": "0.0.0.0", "port": oh_ports.gateway_port(self.context.host),
-                        "timezone": self.context.host["timezone"], "tls_cert": str(certificate),
+                self._issue(system, inputs, derived["allowed_hosts"], authority)
+            metadata = {"state": str(self.root / "state"), **derived, "tls_cert": str(certificate),
                         "tls_key": str(key), "tls_ca": str(authority[0]), "callbacks": False, "callback_file": None}
         self._save(journal, metadata=metadata, phase="inputs")
         return metadata
@@ -312,11 +343,13 @@ class Gateway(Step):
             path.unlink()
         return certificate, key
 
-    def _served(self, system, metadata, authority):
-        """None if the served certificate is current; else 'renew' or 'replace'.
+    def _served(self, system, metadata, authority, hosts):
+        """None if the served certificate is current; else 'renew', 'names'
+        or 'replace'.
 
-        Renewal keeps the authority clients already trust; replacement (the
-        former self-signed profile, or a lost authority) needs new client trust.
+        Renewal, and a leaf for this host's changed names, keep the authority
+        clients already trust; replacement (the former self-signed profile,
+        or a lost authority) needs new client trust.
         """
         try:
             served = certificates(Path(metadata["tls_cert"]).read_bytes())
@@ -328,10 +361,16 @@ class Gateway(Step):
                                       metadata["tls_cert"]))
         remaining, _ = system.capture(("openssl", "x509", "-noout", "-checkend", str(RENEW_SECONDS),
                                        "-in", metadata["tls_cert"]))
-        return None if verified == 0 and remaining == 0 else "renew"
+        if verified or remaining:
+            return "renew"
+        code, names = system.capture(("openssl", "x509", "-noout", "-ext", "subjectAltName", "-in", metadata["tls_cert"]))
+        if code or served_names(names) != subject_names(hosts) or metadata["allowed_hosts"] != hosts:
+            return "names"
+        return None
 
     def _certificate(self, system, journal, metadata):
-        """Serve only a current leaf of the private authority, reissuing when due.
+        """Serve only a current leaf of the private authority for this host's
+        names, reissuing when due or when the names changed.
 
         A staging attempt already under way keeps the certificate it copied;
         the next run reissues. A completed deployment is restaged, retaining
@@ -339,19 +378,23 @@ class Gateway(Step):
         """
         if (journal.get("plan") or journal.get("stage")) and journal.get("phase") != "complete":
             return metadata
-        authority = self._authority(system, metadata["allowed_hosts"][0])
-        reason = self._served(system, metadata, authority)
+        hosts = self._hosts()
+        authority = self._authority(system, hosts[0])
+        reason = self._served(system, metadata, authority, hosts)
         if reason is None:
             if metadata.get("tls_ca") != str(authority[0]):
                 metadata = {**metadata, "tls_ca": str(authority[0])}
                 self._save(journal, metadata=metadata)
             return metadata
-        certificate, key = self._issue(system, self.directory / ("tls-" + secrets.token_hex(6)),
-                                       metadata["allowed_hosts"], authority)
-        metadata = {**metadata, "tls_cert": str(certificate), "tls_key": str(key), "tls_ca": str(authority[0])}
+        certificate, key = self._issue(system, self.directory / ("tls-" + secrets.token_hex(6)), hosts, authority)
+        metadata = {**metadata, "allowed_hosts": hosts, "tls_cert": str(certificate), "tls_key": str(key),
+                    "tls_ca": str(authority[0])}
         trust = self.root / "tls-cert.pem"
         if reason == "renew":
             system.say(f"   Gateway TLS certificate renewed by its private authority; clients trusting {trust} need no change")
+        elif reason == "names":
+            system.say(f"   Gateway TLS certificate reissued by its private authority for {', '.join(hosts)}; "
+                       f"clients trusting {trust} need no change")
         else:
             system.say(f"   Gateway TLS now uses a new private certificate authority: trust {trust} once on every "
                        "browser and terminal client")

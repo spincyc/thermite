@@ -24,7 +24,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_ports
 from oh_access import AccessError, deployment, staging
 from oh_access.files import json_private, private_directory, atomic_private
-from oh_install.access import Gateway, installed_release, openssl_config, site_inputs
+from oh_install.access import Gateway, installed_release, openssl_config, served_names, site_inputs, subject_names
 from oh_install.system import UnitFile, UnitOrigin
 
 
@@ -191,7 +191,8 @@ class Adoption(PrivateFixture):
         self.private("existing-state/site-id", "permanent-site")
         result = deployment.adopt(release / "config.json", self.root / "adopted", uid=os.geteuid(), gid=os.getegid(), service_uid=os.geteuid())
         self.assertEqual(result["state"], str(state))
-        self.assertEqual(result["allowed_hosts"], ["house.example.test"])
+        self.assertFalse({"allowed_hosts", "bind_host", "timezone"} & set(result),
+                         "the installer derives them from the host each run")
         self.assertEqual((self.root / "adopted/tls-key.pem").read_text(), "existing private key")
         self.assertEqual((self.root / "adopted/callbacks.json").read_bytes(), (release / "callbacks.json").read_bytes())
         self.assertEqual((state / "site-id").read_text(), "permanent-site")
@@ -286,6 +287,10 @@ class StagedUpstream(PrivateFixture):
             deployment.upstream(config, expected, service=(uid, gid), connection_factory=factory)
 
 
+#: The names the fixture host's gateway derives: hostname, address, loopback.
+HOSTS = ["house.example.test", "192.0.2.10", "localhost", "127.0.0.1"]
+
+
 class Host:
     def __init__(self):
         self.commands, self.messages = [], []
@@ -335,6 +340,10 @@ class Host:
         return UnitFile(("[Service]\nUser=thermite\nGroup=thermite\nWorkingDirectory=" + str(self.installed) + "\n").encode(), 0, 0o644)
 
     def capture(self, argv, *, diagnostics=False):
+        if argv[0] == "openssl":
+            # Certificate checks read the fixture's real certificates.
+            result = subprocess.run(list(argv), capture_output=True, text=True, check=False)
+            return result.returncode, result.stdout
         if "--value" in argv:
             return 0, "123\n"
         return 0, "ActiveState=active\nMainPID=123\nUnitFileState=enabled\nNeedDaemonReload=no\n"
@@ -407,9 +416,9 @@ class Lifecycle(PrivateFixture):
         atomic_private(snapshot, token)
         system = real_openssl(Host())
         authority = gateway._authority(system, "house.example.test")
-        cert, key = gateway._issue(system, self.root / "tls", ["house.example.test"], authority)
+        cert, key = gateway._issue(system, self.root / "tls", HOSTS, authority)
         metadata = {"state": str(self.root / "state"), "tls_cert": str(cert), "tls_key": str(key),
-                    "tls_ca": str(authority[0]), "allowed_hosts": ["house.example.test"], "bind_host": "0.0.0.0",
+                    "tls_ca": str(authority[0]), "allowed_hosts": HOSTS, "bind_host": "0.0.0.0",
                     "port": 13601, "timezone": "UTC", "callback_file": None, "callbacks": False}
         release = str(self.root / "release")
         command = ["sudo", "-u", "thermite", "-g", "thermite", release + "/env/bin/python", release + "/program/bin/thermite", "access"]
@@ -522,11 +531,13 @@ class Lifecycle(PrivateFixture):
         served = json.loads(gateway.journal_path.read_bytes())["metadata"]
         # Installed when the native runtime had 13601 and the relay 13614.
         old = private_directory(self.root / "old-release")
+        # Its hosts, bind address and timezone are another host's.
         json_private(old / "config.json", {
             "version": 2, "state": served["state"], "contract_file": str(old / "contract.json"),
             "runtime_url": "http://127.0.0.1:13601", "runtime_token_file": str(old / "runtime-bearer"),
-            "allowed_hosts": served["allowed_hosts"], "bind_host": "0.0.0.0", "port": 13600,
-            "tls_cert": served["tls_cert"], "tls_key": served["tls_key"], "timezone": "UTC", "guest_http": None})
+            "allowed_hosts": ["old-name.example.test", "192.0.2.5"], "bind_host": "192.0.2.5", "port": 13600,
+            "tls_cert": served["tls_cert"], "tls_key": served["tls_key"], "timezone": "America/Chicago",
+            "guest_http": None})
         routes = {"/upnpcallback/dev/RINCON_02000000000101400_MR/svc/upnp-org/RenderingControl/event/cb": "192.0.2.40"}
         json_private(old / "callbacks.json", {"version": 1, "routes": routes, "upstream": "http://127.0.0.1:13601",
                                               "hosts": ["192.0.2.10:13614"], "bind_host": "192.0.2.10", "port": 13614})
@@ -540,6 +551,9 @@ class Lifecycle(PrivateFixture):
                 patch("oh_install.access.service_identity", return_value=(os.geteuid(), os.getegid())):
             metadata = gateway._metadata(system, {"previous_release": str(old)})
         self.assertEqual((metadata["port"], metadata["callbacks"]), (oh_ports.ACCESS_PORT, True))
+        self.assertEqual((metadata["allowed_hosts"], metadata["bind_host"], metadata["timezone"]),
+                         (HOSTS, "0.0.0.0", "UTC"), "derived from this host, never adopted")
+        self.assertEqual(metadata["state"], served["state"], "identity state is adopted")
         self.assertEqual(json.loads(Path(metadata["callback_file"]).read_bytes()), {
             "version": 1, "routes": routes, "upstream": "http://127.0.0.1:13602",
             "hosts": [f"192.0.2.10:{oh_ports.CALLBACK_PORT}"], "bind_host": "192.0.2.10", "port": oh_ports.CALLBACK_PORT})
@@ -888,6 +902,44 @@ class CertificateProfile(PrivateFixture):
         self.assertGreater(self.days(metadata["tls_cert"]), 800)
         self.assertTrue(any("renewed by its private authority" in message and "need no change" in message
                             for message in system.messages))
+
+    def test_a_name_change_reissues_the_leaf_from_the_same_authority(self):
+        gateway, system = self.gateway(), real_openssl(Host())
+        journal = self.adopted(gateway, system)
+        authority = Path(journal["metadata"]["tls_ca"])
+        before = authority.read_bytes()
+        self.assertEqual(gateway._certificate(system, journal, journal["metadata"]), journal["metadata"],
+                         "the same names need no new certificate")
+        self.assertEqual(system.messages, [])
+        gateway.context.hostname, gateway.context.address = "kitchen.example.test", "192.0.2.11"
+        hosts = ["kitchen.example.test", "192.0.2.11", "localhost", "127.0.0.1"]
+        served = journal["metadata"]["tls_cert"]
+        metadata = gateway._certificate(system, journal, journal["metadata"])
+        self.assertEqual(metadata["allowed_hosts"], hosts)
+        self.assertNotEqual(metadata["tls_cert"], served)
+        self.assertEqual((authority.read_bytes(), metadata["tls_ca"]), (before, str(authority)),
+                         "clients keep trusting the same authority")
+        listed = subprocess.run(["openssl", "x509", "-noout", "-ext", "subjectAltName", "-in", metadata["tls_cert"]],
+                                capture_output=True, text=True, check=True).stdout
+        self.assertEqual(served_names(listed), subject_names(hosts), "exactly this host's names, none of the old")
+        handshake(Path(metadata["tls_cert"]), Path(metadata["tls_key"]), authority, "kitchen.example.test")
+        self.assertEqual([message for message in system.messages if "Gateway TLS" in message], [
+            "   Gateway TLS certificate reissued by its private authority for " + ", ".join(hosts)
+            + "; clients trusting " + str(gateway.root / "tls-cert.pem") + " need no change"])
+        # A completed deployment restages with its rollback data retained.
+        saved = json.loads(gateway.journal_path.read_bytes())
+        self.assertEqual((saved["phase"], saved["metadata"]), ("inputs", metadata))
+        self.assertEqual(saved["previous_release"], str(system.installed))
+        system.messages.clear()
+        self.assertEqual(gateway._certificate(system, saved, saved["metadata"]), metadata)
+        self.assertEqual(system.messages, [])
+
+    def test_served_names_compare_addresses_canonically_and_names_without_case(self):
+        listed = ("X509v3 Subject Alternative Name: \n"
+                  "    DNS:House.example.test, IP Address:192.0.2.10, IP Address:2001:DB8:0:0:0:0:0:1, DNS:localhost\n")
+        self.assertEqual(served_names(listed), subject_names(["house.example.test", "192.0.2.10", "2001:db8::1", "localhost"]))
+        self.assertEqual(served_names("No extensions in certificate\n"), set())
+        self.assertNotEqual(served_names(listed), subject_names(["house.example.test", "192.0.2.10", "localhost"]))
 
     def test_staging_under_way_keeps_its_certificate_until_the_next_run(self):
         gateway, system = self.gateway(), real_openssl(Host())
