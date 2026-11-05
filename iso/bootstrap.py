@@ -21,7 +21,9 @@ import zipfile
 #: ~/.local/bin/thermite to the application it verified; putting that
 #: directory first lets it win over this image's frozen /usr/local/bin
 #: launcher. Prepending only when it is not already first keeps re-sourcing
-#: idempotent.
+#: idempotent. An interactive login shows the first boot's status
+#: (first-boot.py): while it runs or after it failed, every time; once it
+#: succeeded, until this user has seen it once.
 PROFILE = """\
 if [ -n "${HOME:-}" ]; then
     case ":${PATH:-}:" in
@@ -29,7 +31,19 @@ if [ -n "${HOME:-}" ]; then
         *) PATH="$HOME/.local/bin${PATH:+:$PATH}"; export PATH ;;
     esac
 fi
-case "$-" in *i*) cat /opt/thermite/FIRST-BOOT.txt ;; esac
+thermite_status=/var/lib/thermite-install/status.txt
+thermite_seen="${HOME:-/nonexistent}/.cache/thermite-install-seen"
+case "$-" in
+    *i*)
+        if [ -r "$thermite_status" ] && ! [ "$thermite_seen" -nt "$thermite_status" ]; then
+            cat "$thermite_status"
+            if grep -q '^Thermite is installed' "$thermite_status"; then
+                mkdir -p "${thermite_seen%/*}" 2>/dev/null && touch "$thermite_seen" 2>/dev/null
+            fi
+        fi
+        ;;
+esac
+unset thermite_status thermite_seen
 """
 
 

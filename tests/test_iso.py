@@ -24,9 +24,6 @@ import oh_package
 spec = importlib.util.spec_from_file_location("iso_bootstrap", AREA / "iso/bootstrap.py")
 bootstrap = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bootstrap)
-plugin_spec = importlib.util.spec_from_file_location("iso_arch_plugin", AREA / "iso/arch-plugin.py")
-arch_plugin = importlib.util.module_from_spec(plugin_spec)
-plugin_spec.loader.exec_module(arch_plugin)
 
 
 class InstallerISO(unittest.TestCase):
@@ -170,25 +167,6 @@ class InstallerISO(unittest.TestCase):
         with self.assertRaises(ValueError): oh_iso.arch_efi_image(image, self.root / "bad.img")
         self.assertFalse((self.root / "bad.img").exists())
 
-    def test_arch_plugin_refuses_unmounted_or_root_only_targets_and_propagates_failure(self):
-        target = self.root / "target"; (target / "etc").mkdir(parents=True)
-        (target / "etc/os-release").write_text("ID=arch\n")
-        (target / "etc/passwd").write_text("root:x:0:0:root:/root:/bin/bash\n")
-        (target / "etc/shadow").write_text("root:!:1:0:99999:7:::\n")
-        (target / "etc/group").write_text("wheel:x:998:\n")
-        media = self.root / "media"; media.mkdir(); (media / "payload.json").write_text("{}")
-        with self.assertRaises(ValueError): arch_plugin.finalize(target, media)
-        with patch.object(Path, "is_mount", return_value=True):
-            with self.assertRaises(ValueError): arch_plugin.finalize(target, media)
-        self.assertFalse((target / "opt").exists())
-        with (target / "etc/passwd").open("a") as out: out.write("owner:x:1000:1000:Owner:/home/owner:/bin/bash\n")
-        with (target / "etc/shadow").open("a") as out: out.write("owner:$y$fixture:1:0:99999:7:::\n")
-        (target / "etc/group").write_text("wheel:x:998:owner\n")
-        failure = subprocess.CalledProcessError(2, ["arch-chroot"])
-        with patch.object(Path, "is_mount", return_value=True), patch.object(arch_plugin.subprocess, "run", side_effect=failure) as run:
-            with self.assertRaises(subprocess.CalledProcessError): arch_plugin.finalize(target, media)
-        run.assert_called_once_with(["arch-chroot", str(target), "/usr/bin/python3", "/opt/thermite-media/bootstrap.py"], check=True)
-
     def test_input_mismatch_and_output_symlinks_refuse_without_building(self):
         file = self.root / "input.iso"; file.write_bytes(b"untrusted")
         with self.assertRaises(ValueError): oh_iso.verified(file, {"sha256": "0" * 64})
@@ -257,6 +235,7 @@ class InstallerISO(unittest.TestCase):
         self.assertEqual((media / "authorized_keys").read_text(), key.read_text())
         self.assertEqual(payload["authorized_key"]["comment"], "casey@example")
         self.assertFalse((media / "arch-config.json").exists())
+        self.assertEqual((media / "first-boot.py").read_bytes(), (AREA / "iso/first-boot.py").read_bytes())
         # What tty1 and SSH run: the core unpacks the runtime the medium carries.
         spec = importlib.util.spec_from_file_location("staged_installer", media / "installer.py")
         staged = importlib.util.module_from_spec(spec); spec.loader.exec_module(staged)

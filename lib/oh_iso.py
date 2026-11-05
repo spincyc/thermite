@@ -323,7 +323,7 @@ def stage(media: Path, cache: Path, *, base: str = "arch", authorized_key: dict 
     for source, name in (("bootstrap.py", "bootstrap.py"), ("first-boot.txt", "FIRST-BOOT.txt")):
         (media / name).write_bytes(public["iso/" + source])
     if base == "arch":
-        for name in ("arch-install.sh", "arch-plugin.py", "packages.json"):
+        for name in ("arch-install.sh", "arch-plugin.py", "first-boot.py", "packages.json"):
             (media / name).write_bytes(public["iso/" + name])
         # The installer and what it runs on: Node.js and blessed as pinned,
         # unpacked on the live system only after their digests match again.
