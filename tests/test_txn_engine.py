@@ -471,6 +471,28 @@ class Verbs(unittest.TestCase):
         self.assertEqual(removed, sorted({newer.images[0], self.old.images[0]}))
         self.assertEqual(self.messages, [])
 
+    def test_pruning_keeps_every_current_and_previous_image(self):
+        """An image the new manifest still lists as current or previous stays,
+        whether it was the old previous one or a rolled-back attempt's pull."""
+        first, second = "quay.io/fictional/app@sha256:aaaa", "quay.io/fictional/app@sha256:bbbb"
+        for label, images in (("a configuration-only upgrade", [second]),
+                              ("installing the previous site commit again", [first])):
+            with self.subTest(label):
+                self.setUp()
+                data = json.loads(self.disk.nodes["/etc/thermite/installed.json"].data)
+                data["images"] = {"current": [second], "previous": [first]}
+                self.disk.nodes["/etc/thermite/installed.json"].data = engine.render_manifest(
+                    engine.validate_manifest(data, root=ROOT))
+                self.host.images = {first, second}
+                new = fakes.version("new")
+                new.images = images
+                self.through_switch(new)
+                journal = self.engine.commit(ID, fakes.release(new))
+                self.assertEqual(set(journal.manifest["images"]["current"] + journal.manifest["images"]["previous"]),
+                                 {first, second})
+                self.assertEqual([argv for argv in self.host.log if argv[:2] == ("podman", "image")], [])
+                self.assertEqual(self.host.images, {first, second})
+
     def test_rollback_puts_the_old_version_back(self):
         before = fakes.world(self.disk, self.host, fakes.managed_paths(self.old, self.new))
         self.through_switch()

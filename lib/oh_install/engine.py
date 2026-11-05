@@ -1174,7 +1174,7 @@ class Engine:
         keep = set(images["current"]) | set(images["previous"])
         old = current.get("images", {}).get("previous", [])
         if journal.tools.get("podman"):
-            for ref in sorted(set(old) | set(pulled) - keep):
+            for ref in sorted((set(old) | set(pulled)) - keep):
                 if self.host.run(("podman", "image", "rm", "--ignore", "--", ref)):
                     self.say(f"warning: podman image rm {ref} failed")
 
