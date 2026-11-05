@@ -123,6 +123,25 @@ rollback. The unified deployment workflow uses a separate committed private site
   pages say so and resync when it returns. `/rest/events` is gone from the
   gateway, and a browser or terminal may hold 8 streams (was 12) and the
   gateway 48 (was 64). The policy worker subscribes with one wildcard too.
+- Monitoring answers "is the house OK?" first. House health, the new Grafana
+  home page, shows six tiles (control, rooms ready, remotes, alerts, phone
+  delivery, host), what needs attention now in plain words, every room's
+  source through the day and switching since yesterday evening; Switching &
+  remotes, Devices (one row per device), openHAB runtime, Host and Usage
+  follow. Colour means one thing everywhere, and state timelines show their
+  words again instead of "9+". Control health is now derived from one
+  `thermite:check` series per room, device and check, and alerts form a fixed
+  catalogue: a failing check alerts per room after five minutes, and new
+  alerts cover the gateway (probed over HTTPS with its own authority), starved
+  or timing-out remotes, quarantined routing, a stalled policy worker, down or
+  flapping services, broken monitoring and btrfs space, with critical and
+  warning severities and inhibition behind a runtime or gateway outage. The
+  gateway, policy worker and callback relay write their own metrics to
+  node_exporter textfiles (never `/metrics` on the LAN listener), remotes
+  report what they gave up waiting for through `POST /api/v1/telemetry`, and
+  the exporter adds the routing executor's switch times, outcomes, failures
+  and resends. `monitor: optional` keeps a device you know is broken out of
+  control health. Phone delivery is unchanged.
 - A locked room no longer blocks shared sources in other rooms: another room is
   refused only what would change the locked room's route, such as driving a
   device it is showing. Lock and Unlock live under Info on Remotes; the remote

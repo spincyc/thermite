@@ -60,7 +60,7 @@ devices:
       control: [sony_ip_control]
 ```
 
-`observe` lists interfaces thermite may read. `control` lists interfaces it may command. The sample address above is reserved for documentation; use the TV's actual address in your private site. `mac` is optional except for Sonos devices, and `notes` and `control4` are accepted for your own documentation. Unknown keys are refused with a "did you mean" hint; an invalid or missing file exits with status 2 and names the file, line and column.
+`observe` lists interfaces thermite may read. `control` lists interfaces it may command. The sample address above is reserved for documentation; use the TV's actual address in your private site. `mac` is optional except for Sonos devices, and `notes` and `control4` are accepted for your own documentation. `monitor: optional` keeps a device you know is broken out of control health and alerts; see [dashboards](dashboards.html). Unknown keys are refused with a "did you mean" hint; an invalid or missing file exits with status 2 and names the file, line and column.
 
 Create a private Git repository for that site. Commit real inventory, host settings, native version pins and `thermite-site.json`. Generated `conf/`, `metrics/` and `deploy/`, credentials and runtime state stay outside Git. The public application repository should contain only fictional examples.
 

@@ -71,7 +71,7 @@ devices:
     controls:
       observe: [sony_rest]
       control: [sony_ip_control]</code></pre>
-<p><code>observe</code> lists interfaces thermite may read. <code>control</code> lists interfaces it may command. The sample address above is reserved for documentation; use the TV's actual address in your private site. <code>mac</code> is optional except for Sonos devices, and <code>notes</code> and <code>control4</code> are accepted for your own documentation. Unknown keys are refused with a "did you mean" hint; an invalid or missing file exits with status 2 and names the file, line and column.</p>
+<p><code>observe</code> lists interfaces thermite may read. <code>control</code> lists interfaces it may command. The sample address above is reserved for documentation; use the TV's actual address in your private site. <code>mac</code> is optional except for Sonos devices, and <code>notes</code> and <code>control4</code> are accepted for your own documentation. <code>monitor: optional</code> keeps a device you know is broken out of control health and alerts; see <a href="dashboards.html">dashboards</a>. Unknown keys are refused with a "did you mean" hint; an invalid or missing file exits with status 2 and names the file, line and column.</p>
 <p>Create a private Git repository for that site. Commit real inventory, host settings, native version pins and <code>thermite-site.json</code>. Generated <code>conf/</code>, <code>metrics/</code> and <code>deploy/</code>, credentials and runtime state stay outside Git. The public application repository should contain only fictional examples.</p>
 <h2 id="check-and-deploy">Check and deploy</h2>
 <p>After editing the house file:</p>

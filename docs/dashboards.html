@@ -40,11 +40,28 @@
 <p>See device availability, room history and host health in Grafana, from a phone or computer on your network.</p>
 <h2 id="what-runs">What runs</h2>
 <p><code>thermite install</code> sets up these monitoring services from images pinned by digest. Their application processes run as the service account. Only Grafana accepts connections from other machines.</p>
-<table><thead><tr><th>Service</th><th>Port</th><th>What it does</th></tr></thead><tbody><tr><td>Prometheus</td><td>13606, this machine only</td><td>collects metrics every 30 seconds; retains 395 days or 12 GB, whichever comes first</td></tr><tr><td>node_exporter</td><td>13607, this machine only</td><td>the machine itself: CPU, memory, disks, temperatures, and thermite's services</td></tr><tr><td>blackbox_exporter</td><td>13608, this machine only</td><td>whether each device answers on the port thermite controls it through</td></tr><tr><td>thermite's exporter</td><td>13609, this machine only</td><td>each device's status, power, input and volume, by room</td></tr><tr><td>Grafana</td><td>13610, your network</td><td>the dashboards</td></tr><tr><td>Alertmanager</td><td>13611, this machine only</td><td>routes monitoring alerts</td></tr><tr><td>ntfy</td><td>13612, this machine only</td><td>keeps local notifications</td></tr><tr><td>Notification adapter</td><td>13613, this machine only</td><td>delivers known alert messages to ntfy</td></tr></tbody></table>
+<table><thead><tr><th>Service</th><th>Port</th><th>What it does</th></tr></thead><tbody><tr><td>Prometheus</td><td>13606, this machine only</td><td>collects metrics every 30 seconds; retains 395 days or 12 GB, whichever comes first</td></tr><tr><td>node_exporter</td><td>13607, this machine only</td><td>the machine itself: CPU, memory, disks, temperatures, and thermite's services; also the gateway's, policy worker's and callback relay's own metrics, which they write to files rather than serve</td></tr><tr><td>blackbox_exporter</td><td>13608, this machine only</td><td>whether each device answers on the port thermite controls it through, and whether the remote gateway answers over HTTPS</td></tr><tr><td>thermite's exporter</td><td>13609, this machine only</td><td>each device's status, power, input and volume, by room</td></tr><tr><td>Grafana</td><td>13610, your network</td><td>the dashboards</td></tr><tr><td>Alertmanager</td><td>13611, this machine only</td><td>routes monitoring alerts</td></tr><tr><td>ntfy</td><td>13612, this machine only</td><td>keeps local notifications</td></tr><tr><td>Notification adapter</td><td>13613, this machine only</td><td>delivers known alert messages to ntfy</td></tr></tbody></table>
 <p>Prometheus also reads runtime memory, threads, events and rule runs through the Metrics add-on. <code>thermite test boot</code> checks that it answers. See <a href="requirements.html#storage-and-metrics">storage requirements</a> for the retention budget.</p>
 <h2 id="what-you-see">What you see</h2>
-<p>Open <code>http://&lt;thermite's address&gt;:13610/</code>. Anyone on your network can look without logging in. Four dashboards come with it:</p>
-<ul><li><strong>House</strong>: every room and its devices, and what is down right now. It is the home page.</li><li><strong>Devices by kind</strong>: receivers, TVs, projectors, switchers and the rest, a row each.</li><li><strong>thermite runtime</strong>: memory, threads, events, rule runs, and Things that aren't online.</li><li><strong>Host</strong>: the machine, its disks, and every service and probe.</li></ul>
+<p>Open <code>http://&lt;thermite's address&gt;:13610/</code>. Anyone on your network can look without logging in. Six dashboards come with it:</p>
+<ul><li><strong>House health</strong>, the home page: is the house OK? Six tiles answer it at a glance: control, rooms ready, remotes, alerts firing, phone delivery and the host. Below them, <strong>Needs attention now</strong> names each room, problem and device in plain words; then every room's source through the day, switching since yesterday evening, and the alerts firing.</li><li><strong>Switching and remotes</strong>: how long source changes take and how they end, the routing executor and any quarantined device, the remote gateway's latency, answers and event streams, what remote pages gave up waiting for, and the room policy worker.</li><li><strong>Devices</strong>: one row per device, with its Thing, control port, problem and whether a room needs it now; then each room's power and source through the day, and listening levels.</li><li><strong>openHAB runtime</strong>: memory, thread pools, the thingHandler pool, events, the busiest rules, and Things that aren't online.</li><li><strong>Host</strong>: how many scrape targets are up and which are down, thermite's services and their restarts, alerts firing, CPU, memory, disk space and I/O.</li><li><strong>Usage</strong>: which sources the house used and for how long. It is not a health signal.</li></ul>
+<p>Colour means one thing on every dashboard: green is OK, amber a warning, red a failure, grey unknown, slate Off, and tan only "in use". Dashed lines mark service starts and deploys; switch them off at the top of a dashboard.</p>
+<p>A device a room needs only now and then, such as a sleeping TV, counts against control health only while a room's selected source uses it. To keep a device you know is broken on the dashboards but out of control health and alerts, mark it <code>monitor: optional</code> in the house file:</p>
+<pre><code class="language-yaml">rooms:
+  living_room: {label: Living Room}
+
+devices:
+  - id: living_room_tv
+    room: living_room
+    kind: tv
+    make: Sony
+    model: Example TV
+    name: Living Room TV
+    ip: 192.0.2.20
+    monitor: optional
+    controls:
+      observe: [sony_rest]
+      control: [sony_ip_control]</code></pre>
 <p>To change anything else in Grafana, log in as <code>admin</code>. <code>thermite install</code> generated the password and saved a copy for you next to thermite's API token. Grafana takes it the first time it starts; change it later on Grafana's profile page.</p>
 <h2 id="changing-them">Changing them</h2>
 <p>The dashboards are made from the house file, like thermite's configuration. Add a device or a room, then:</p>
@@ -69,7 +86,9 @@ thermite deploy          # installs them; the services pick them up by themselve
 thermite upgrade             # do it; it asks before anything that needs sudo
 thermite status              # Grafana's address and whether Prometheus reaches everything</code></pre>
 <h2 id="alerts">Alerts</h2>
-<p>Prometheus evaluates alerts for sustained control failures, missing runtime telemetry, low disk space and failed services. Alertmanager routes them through a local notification adapter to ntfy. These services listen only on this machine; phone push requires separate setup. A local heartbeat checks that alert evaluation and delivery are working.</p>
+<p>Prometheus evaluates a fixed set of alerts. Each names a room or service in plain words, and waits a few minutes so a blip doesn't alert:</p>
+<ul><li><strong>Critical</strong>: a required control check failing for five minutes (one alert per room), the runtime unavailable, the remote gateway down, remotes starved of connections, routing commands quarantined, the policy worker stalled, a service down, or the thingHandler pool saturated.</li><li><strong>Warnings</strong>: remotes timing out, a service restarting repeatedly, monitoring itself broken, low disk space, and the rest. A warning repeats every 12 hours at most.</li></ul>
+<p>When the runtime is down, alerts that follow from it are held back, and so are remote time-outs while the gateway is down. Alertmanager routes alerts through a local notification adapter to ntfy. These services listen only on this machine; phone push requires separate setup. A local heartbeat checks that alert evaluation and delivery are working.</p>
 <p>The <a href="ports.html">ports guide</a> lists every listener and its network exposure.</p>
 
   </main>
