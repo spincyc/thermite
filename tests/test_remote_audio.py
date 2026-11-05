@@ -23,6 +23,7 @@ from oh_conf import House  # noqa: E402
 import oh_render  # noqa: E402
 import oh_site_contract  # noqa: E402
 from oh_features import remote_model, routing  # noqa: E402
+from oh_integrations import denonmarantz_http  # noqa: E402
 
 AMP = {"kind": "streaming_amp", "make": "WiiM", "model": "Amp Pro",
        "controls": {"observe": ["wiim_http"], "control": ["wiim_http"]}}
@@ -172,6 +173,46 @@ console.info = () => {};
         env = {key: value for key, value in os.environ.items() if key != "THERMITE_REMOTE_HOUSE_FILE"}
         result = subprocess.run([shutil.which("node"), "-e", script], input=json.dumps(model), cwd=AREA, env=env,
                                 capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_receiver_holds_the_volume_sent_until_its_next_poll(self):
+        """A Marantz reports a command only at its next poll (READ_BACK), so
+        the remote steps from and shows what it sent until then."""
+        model, _ = compiled(zones())
+        self.assertEqual(model["devices"]["example_avr"]["control"]["readBack"], denonmarantz_http.READ_BACK)
+        hold = (denonmarantz_http.READ_BACK + 1) * 1000
+        script = r'''
+const assert = require("node:assert/strict"), fs = require("node:fs");
+const Shared = require("./tui/remote/shared");
+console.info = () => {};
+const HOLD = Number(process.argv[1]);
+(async () => {
+  const shared = Shared.load(), house = JSON.parse(fs.readFileSync(0, "utf8")), Remote = shared.Remote;
+  assert.equal(Remote.heldMs(null, 6000), 6000);
+  assert.equal(Remote.heldMs({ volume: {} }, 6000), 6000);
+  assert.equal(Remote.heldMs(Remote.controlOf(house, "example_avr"), 6000), HOLD);
+  const backend = Remote.create(house, { backend: "mock", latency: 0 });
+  const session = shared.Session.create({ backend, house, layouts: shared.layouts, volume: "slider",
+                                          now: () => Date.now() });
+  await session.start("example_cinema");
+  await session.chooseSource("example_computer");
+  assert.equal(session.audioView().audio.id, "example_avr");
+  // The receiver reports nothing until its next poll.
+  backend.setVolume = () => Promise.resolve({ sent: true, tag: "Mock" });
+  let t = Date.now();
+  Date.now = () => t;
+  backend.aim("example_avr", { field: "volume", volume: 41 });
+  t += HOLD - 1; assert.equal(backend.aimed("example_avr", "volume"), 41);
+  t += 1; assert.equal(backend.aimed("example_avr", "volume"), null);
+  const reported = session.audioView().value;
+  session.slide(reported + 5, true);
+  t += HOLD - 1; assert.equal(session.audioView().value, reported + 5);
+  t += 1; assert.equal(session.audioView().value, reported);
+})().then(() => process.exit(0), (error) => { console.error(error); process.exit(1); });
+'''
+        env = {key: value for key, value in os.environ.items() if key != "THERMITE_REMOTE_HOUSE_FILE"}
+        result = subprocess.run([shutil.which("node"), "-e", script, str(hold)], input=json.dumps(model), cwd=AREA,
+                                env=env, capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
 
 

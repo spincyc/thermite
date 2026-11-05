@@ -51,7 +51,7 @@
  * read back, as openHAB's routing.js does.
  *
  * aimed(device, field) is the volume or mute last sent to a device while it
- * is not read back yet (for at most AIM_MS[field]), else null.
+ * is not read back yet (for at most AIM_MS[field], or heldMs()), else null.
  *
  * RemoteBackend.controlsFor(house, room, value) lists what the room's buttons
  * can control while it shows `value`; remotes.js must be loaded first.
@@ -61,7 +61,10 @@
  * volume as the device does (52, or -28.0 dB on a receiver set to show dB).
  * A control's volume is the device's own scale: {item, min, max, step,
  * unit?, displayMode?}; nothing is rescaled, and the device's max is the
- * only limit.
+ * only limit. A control's readBack is the seconds its device takes to report
+ * a command, when it reports one only at its next poll (a Marantz receiver);
+ * heldMs(control, ms) is how long a value sent to it is held: ms, or that
+ * and a second when longer.
  *
  * create() picks OpenHabBackend when openHAB serves the page (conf/html/ is
  * /static/), and MockBackend otherwise (the page opened from disk or another
@@ -101,11 +104,16 @@
   // How long a choice waits to be read back: routing.js's RECENT_MS (15 s), and a second.
   const CONFIRM_MS = 16000;
   // How long a value sent is stepped or toggled from instead of the one read
-  // back: a held volume key repeats faster than a receiver reports, and a
-  // second Mute can come before the first is read back (at a receiver's next
-  // poll, a second after the command on a WiiM, or at its 10 s poll if that
-  // read is missed).
+  // back: a held volume key repeats faster than a device reports, and a
+  // second Mute can come before the first is read back (a second after the
+  // command on a WiiM, or at its next poll if that read is missed). A
+  // control's readBack lengthens both (heldMs).
   const AIM_MS = { volume: 3000, mute: 12000 };
+
+  function heldMs(control, ms) {
+    const readBack = control ? Number(control.readBack) : 0;
+    return readBack > 0 ? Math.max(ms, readBack * 1000 + 1000) : ms;
+  }
   const FIELDS = ["power", "volume", "mute", "input"];
   // The Item openHAB turns everything off on (lib/oh_features/all_off).
   const ALL_OFF = "house_all_off";
@@ -546,7 +554,7 @@
     // The volume or mute last sent, until the device reports it or AIM_MS pass.
     aimed: function (deviceId, field) {
       const aim = this.aims[deviceId + " " + field];
-      return aim && Date.now() - aim.at < AIM_MS[field] ? aim.value : null;
+      return aim && Date.now() - aim.at < heldMs(controlOf(this.house, deviceId), AIM_MS[field]) ? aim.value : null;
     },
     aim: function (deviceId, step) {
       if (!AIM_MS[step.field]) return;
@@ -1319,6 +1327,7 @@
     UNDEF: UNDEF,
     AUDIO: AUDIO,
     AIM_MS: AIM_MS,
+    heldMs: heldMs,
     ALL_OFF: ALL_OFF,
     MockBackend: MockBackend,
     OpenHabBackend: OpenHabBackend,

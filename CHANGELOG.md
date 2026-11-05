@@ -7,6 +7,18 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A Denon or Marantz receiver is polled every 15 s instead of every 5 s,
+  and its signal and volume-display readings every 30 s instead of 10 s;
+  the receiver closes every HTTP connection, so each poll's requests were
+  about 107 new connections a minute between two receivers, now about 35.
+  A change made on its front panel or from Control4 shows within 15 s.
+  Routing still reads its power and input back right after switching them.
+  A volume or mute it was sent is read back only at its next poll, so the
+  remote steps from and shows the value it sent until then (its control's
+  readBack, 16 s) instead of for 3 s and 6 s.
+- A WiiM is polled every 30 s instead of every 10 s, each poll a new TLS
+  connection; a command is still read back a second later.
+
 - The metrics probe each device's control ports every 2 minutes instead
   of every 30 s; each probe is a new connection to a device its integration
   already polls. They no longer probe an Android TV's remote port (6466) or

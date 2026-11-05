@@ -10,7 +10,7 @@ Items, per receiver:
   button id, KEYS) too.
 - On a verified SIGNAL_MODELS model, read-only `<id>_audio_signal` and
   `<id>_video_signal` String snapshots poll the advertised GetAudioInfo and
-  GetVideoInfo methods separately from the control binding, every 10 s.
+  GetVideoInfo methods separately from the control binding, every 30 s.
   They describe the main zone only, with controller acquisition timestamps.
 
 Under observe only, every Item is display-only (oh_conf.guard). Under control
@@ -49,12 +49,16 @@ ADDONS = (Addon("binding", "denonmarantz"), Addon("binding", "http"),
           Addon("automation", "jsscripting", "read-only receiver signal snapshots"))
 ASSETS: dict[str, str] = {}
 DEVICE_KEYS = ("zones",)
-#: Seconds between the binding's polls of the HTTP API, the shortest it
-#: takes (a Thing polling more often goes OFFLINE as a configuration error).
-#: It reads nothing after a command, so a command is read back at the next
-#: poll: READ_BACK. Telnet would report at once, but Control4 may hold the
-#: receiver's one telnet connection.
-POLL = 5
+#: Seconds between the binding's polls of the HTTP API. The receiver closes
+#: every connection, and each poll opens one for each of its requests, so it
+#: polls three times less often than the binding allows (5 s). It reads
+#: nothing after a command, so a command is read back at the next poll:
+#: READ_BACK, which the remote waits for (remote()'s readBack). The routing
+#: lifecycle reads power and input back itself after switching them
+#: (lifecycle_io.js denonWrite); without it, routing.js holds a choice's
+#: Source for RECENT_MS (15 s), about one poll. Telnet would report at once,
+#: but Control4 may hold the receiver's one telnet connection.
+POLL = 15
 READ_BACK = POLL
 #: The binding's zoneCount: the main zone plus up to three more.
 ZONES = range(1, 5)
@@ -114,7 +118,7 @@ KEYS = {
 # Only models whose advertised AppCommand0300 methods and response fields
 # have been checked. Older receivers may not implement these read APIs.
 SIGNAL_MODELS = frozenset({"CINEMA 60", "CINEMA 30"})
-SIGNAL_POLL = 10
+SIGNAL_POLL = 30
 SIGNAL_PATH = "/goform/AppCommand0300.xml"
 VOLUME_DISPLAY_PATH = "/ajax/globals/get_config?type=12"
 SIGNAL_FIELDS = {
@@ -175,7 +179,7 @@ def diagnostics(device: dict) -> dict | None:
     readings = [{"category": category, "label": label, "item": f"{device['id']}_{kind}_signal",
                  "path": ["values", field], "zone": "main", "media": kind}
                 for kind, (_, fields) in SIGNAL_FIELDS.items() for field, (category, label) in fields.items()]
-    return {"kind": NAME, "items": items, "maxAgeSeconds": 30, "readings": readings}
+    return {"kind": NAME, "items": items, "maxAgeSeconds": SIGNAL_POLL + 5, "readings": readings}
 
 
 def _render_signal(device: dict, house: House, out: YamlFile) -> None:
@@ -354,6 +358,7 @@ def remote(device: dict) -> dict | None:
                                  "relative": {"unit": "dB", "offset": DB_OFFSET, "precision": 1,
                                               "minimum": "---.- dB"}}}},
         "input": {"item": f"{ident}_main_input", "options": [list(pair) for pair in inputs(device)]},
+        "readBack": READ_BACK,
     }
     from . import heos
     if heos.enabled(device):

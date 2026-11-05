@@ -62,7 +62,8 @@
   const REPEAT_DELAY = 420;
   const REPEAT_EVERY = 150;
   // How often a slider being dragged sends, and how long it shows what it
-  // sent before what the device reports (a receiver reports every few seconds).
+  // sent before what the device reports (longer for a control with a
+  // readBack: Remote.heldMs).
   const SLIDE_EVERY = 250;
   const SLIDE_HOLD = 6000;
   // Power off and All off take a second press this soon after the first.
@@ -537,7 +538,7 @@
       if (button === "power" && control && !offConfirmed(target, control)) return Promise.resolve(null);
       return backend.press(current.id, target ? target.id : null, button)
         .then((result) => {
-          if (button === "mute") holdMute();
+          if (button === "mute") holdMute(result.device && result.device.id);
           if (result.volume !== undefined) {
             held(result.device.id, result.volume);
             fader.sent = null;
@@ -570,9 +571,9 @@
 
     // Mute lights for a press at once, as the slider holds a volume just set,
     // and shows what the device reports once it does or the hold ends.
-    function holdMute() {
+    function holdMute(deviceId) {
       cancel(muteRelease);
-      muteRelease = later(() => emit({ type: "audio" }), Remote.AIM_MS.mute + 50);
+      muteRelease = later(() => emit({ type: "audio" }), Remote.heldMs(Remote.controlOf(house, deviceId), Remote.AIM_MS.mute) + 50);
       emit({ type: "audio" });
     }
 
@@ -660,7 +661,7 @@
       // A device that ignored the volume (in standby) reports nothing, so the
       // slider goes back to what it last reported when the hold ends.
       cancel(fader.release);
-      fader.release = later(() => emit({ type: "audio" }), SLIDE_HOLD + 50);
+      fader.release = later(() => emit({ type: "audio" }), Remote.heldMs(Remote.controlOf(house, deviceId), SLIDE_HOLD) + 50);
       emit({ type: "audio" });
     }
 
@@ -712,7 +713,8 @@
       const control = audio ? Remote.controlOf(house, audio.id) : null;
       const state = audio ? devices[audio.id] : null;
       const volume = control && control.volume;
-      const recent = Boolean(audio) && fader.device === audio.id && (fader.dragging || now() - fader.at < SLIDE_HOLD);
+      const recent = Boolean(audio) && fader.device === audio.id
+        && (fader.dragging || now() - fader.at < Remote.heldMs(control, SLIDE_HOLD));
       const value = !volume ? null : recent ? fader.value : state ? state.level : null;
       const isMuted = Boolean(control && control.mute && state) && muted(audio, state);
       let caption = audio ? audio.short : "No audio";

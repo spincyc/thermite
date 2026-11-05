@@ -63,6 +63,9 @@ BASE_URL = "https://{ip}/httpapi.asp?"
 #: Seconds from a command to its read-back: the binding asks for
 #: getPlayerStatus again a second after a command (refreshAfterCommand).
 READ_BACK = 1
+#: Seconds between polls: how soon a change made in the WiiM app or on its
+#: own remote shows. Each poll is a new HTTPS connection and TLS handshake.
+REFRESH = 30
 #: The player's volume as getPlayerStatus reports it (vol) and setPlayerCmd
 #: takes it: 0-100 in whole steps. LinkPlay HTTP API, as openHAB linkplay
 #: 5.2.3 LinkPlayHTTPClient documents it: "setPlayerCmd:vol:{value} - Set
@@ -179,7 +182,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         "location": house.room_label(device["room"]),
         "config": {
             "baseURL": BASE_URL.format(ip=device["ip"]) + ("" if control else STATUS),
-            "refresh": 10,
+            "refresh": REFRESH,
             "timeout": 3000,
             "ignoreSSLErrors": True,
             "strictErrorHandling": True,

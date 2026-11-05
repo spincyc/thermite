@@ -18,7 +18,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_render  # noqa: E402
 from oh_conf import House, YamlFile, linked  # noqa: E402
-from oh_integrations import bk808_http, drhdmi_http, ukm404_http, vrroom_http  # noqa: E402
+from oh_integrations import bk808_http, denonmarantz_http, drhdmi_http, ukm404_http, vrroom_http  # noqa: E402
 from oh_room_policy import expected_plan  # noqa: E402
 
 MODULES = (bk808_http, ukm404_http, vrroom_http, drhdmi_http)
@@ -130,6 +130,18 @@ class PollTiming(unittest.TestCase):
                 with self.subTest(item=item):
                     config = self.things[self.items[item]][1]["config"]
                     self.assertLess(config["refresh"] + config["timeout"] / 1000, window)
+
+    def test_a_receivers_signal_snapshots_stay_fresh_between_polls(self):
+        receiver = device("example_avr", CINEMA, "avr", 23, make="Marantz", model="CINEMA 30",
+                          controls={"observe": ["denonmarantz_http"], "control": ["denonmarantz_http"]})
+        out = YamlFile(())
+        denonmarantz_http.render(receiver, House({**HOUSE, "devices": [*HOUSE["devices"], receiver]}), out)
+        window = denonmarantz_http.diagnostics(receiver)["maxAgeSeconds"]
+        for item in denonmarantz_http.diagnostics(receiver)["items"]:
+            with self.subTest(item=item):
+                uid = linked(out.items[item])[0].rpartition(":")[0]
+                config = out.things[uid]["config"]
+                self.assertLess(config["refresh"] + config["timeout"] / 1000, window)
 
 
 if __name__ == "__main__":
