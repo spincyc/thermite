@@ -1441,6 +1441,8 @@ class PendingRecord(unittest.TestCase):
 
 
 GATEWAY = "/srv/thermite/access/releases/0123456789abcdef01234567-a1b2c3"
+#: A state backup an upgrade took before the install engine.
+OLD_BACKUP = "/srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz"
 
 
 class DeployHistory(unittest.TestCase):
@@ -1453,13 +1455,14 @@ class DeployHistory(unittest.TestCase):
         return [json.loads(line) for line in deploy.history(self.layout, 0)]
 
     def test_entry_records_changes_triggers_and_the_digest_rollback_trusts(self):
-        first = self.install(how="upgrade", backup="/srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz")
+        first = self.install(how="upgrade")
         entry = self.lines()[-1]
         self.assertEqual(entry, first.history)
         record = deploy.read_record(self.layout)
-        self.assertEqual({key: entry[key] for key in ("commit", "deployed_at", "conf_digest", "how", "backup")},
+        self.assertEqual({key: entry[key] for key in ("commit", "deployed_at", "conf_digest", "how")},
                          {"commit": "c" * 40, "deployed_at": record["deployed_at"], "conf_digest": record["conf_digest"],
-                          "how": "upgrade", "backup": "/srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz"})
+                          "how": "upgrade"})
+        self.assertNotIn("backup", entry, "an install transaction, not a tar, is the way back")
         self.assertEqual(entry["changes"]["conf"], {"added": ["html/remote/index.html", "yaml/a.yaml"], "changed": [],
                                                     "removed": [], "truncated": False,
                                                     "counts": {"added": 2, "changed": 0, "removed": 0, "unchanged": 0}})
@@ -1552,21 +1555,20 @@ class DeployHistory(unittest.TestCase):
         self.install(how="install")
         older = GATEWAY.replace("a1b2c3", "000000")
         event = deploy.record_gateway(self.layout, {"commit": "c" * 40, "application": {"version": "1.2.3", "digest": "b" * 64},
-                                                    "release": GATEWAY, "previous_release": older,
-                                                    "backup": "/srv/thermite/access/backups/0123456789abcdef01234567-d4e5f6.tar.gz"})
+                                                    "release": GATEWAY, "previous_release": older})
         deploy.record_gateway(self.layout, {"commit": "d" * 40, "release": GATEWAY})
         with self.layout.history.open("a") as history:
             history.write(json.dumps({"event": "future", "commit": "c" * 40}) + "\n")
         entries = deploy.deploys(self.layout)
         self.assertEqual(len(entries), 1, "events are not deploys")
-        self.assertEqual(entries[0]["gateway"], [{key: event[key] for key in deploy.GATEWAY_EVENT}])
+        self.assertEqual(entries[0]["gateway"], [{key: event.get(key) for key in deploy.GATEWAY_EVENT}])
         self.assertEqual((entries[0]["gateway"][0]["release"], entries[0]["gateway"][0]["previous_release"]), (GATEWAY, older))
         self.assertTrue(entries[0]["current"])
 
     def test_gateway_events_are_validated(self):
         for event in ({"commit": "c" * 40}, {"commit": "c" * 12, "release": GATEWAY},
                       {"commit": "c" * 40, "release": "releases/relative"},
-                      {"commit": "c" * 40, "release": GATEWAY, "backup": GATEWAY + "\n{}"},
+                      {"commit": "c" * 40, "release": GATEWAY, "backup": "/srv/thermite/access/backups/old.tar.gz"},
                       {"commit": "c" * 40, "release": GATEWAY, "token": "x"},
                       {"commit": "c" * 40, "release": GATEWAY, "application": ["1.2.3"]}):
             with self.subTest(event=event), self.assertRaises(deploy.DeployError):
@@ -1575,9 +1577,13 @@ class DeployHistory(unittest.TestCase):
 
     def test_history_details_and_the_installers_gateway_record(self):
         from oh_cli import history as history_cli
-        self.install(how="upgrade", backup="/srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz")
+        self.install(how="upgrade")
+        # A line from before the install engine names the state backup that
+        # upgrade took; it is still shown.
+        [line] = self.lines()
+        self.layout.history.write_text(json.dumps({**line, "backup": OLD_BACKUP}) + "\n")
         event = {"commit": "c" * 40, "application": {"version": "1.2.3", "digest": "b" * 64}, "release": GATEWAY,
-                 "previous_release": None, "backup": "/srv/thermite/access/backups/0123456789abcdef01234567-d4e5f6.tar.gz"}
+                 "previous_release": None}
         state = ["--state", str(self.layout.root)]
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(history_cli.main([*state, "--_record-gateway", json.dumps(event)]), 0)
@@ -1594,9 +1600,9 @@ class DeployHistory(unittest.TestCase):
         self.assertEqual(details[0], "conf     2 added, 0 changed, 0 removed: +html/remote/index.html +yaml/a.yaml")
         self.assertTrue(details[1].startswith(f"helper   {len(deploy.ATV_APP)} added, 0 changed, 0 removed: +"))
         self.assertIn("reloads  thermite-atv-restart.path triggered", details)
-        self.assertIn("backup   /srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz", details)
+        self.assertIn(f"backup   {OLD_BACKUP}", details)
         self.assertRegex(details[-1], r"^gateway  \d{4}-\d\d-\d\d \d\d:\d\d:\d\d release 0123456789abcdef01234567-a1b2c3, "
-                                      r"replacing none; identity backup /srv/thermite/access/backups/\S+\.tar\.gz$")
+                                      r"replacing none$")
         with contextlib.redirect_stdout(io.StringIO()) as as_json:
             self.assertEqual(history_cli.main([*state, "--json"]), 0)
         self.assertEqual(json.loads(as_json.getvalue())[0]["gateway"][0]["release"], GATEWAY)
@@ -1782,17 +1788,17 @@ class CliApproval(unittest.TestCase):
             self.assertEqual(apply.call_args.kwargs["ownership_approved"], approved)
             self.assertEqual(apply.call_args.kwargs["dry_run"], dry_run)
             self.assertFalse(apply.call_args.kwargs["force"])
-            self.assertEqual((apply.call_args.kwargs["how"], apply.call_args.kwargs["backup"]), ("install", None))
+            self.assertEqual(apply.call_args.kwargs["how"], "install")
+            self.assertNotIn("backup", apply.call_args.kwargs)
             self.assertIs(apply.call_args.kwargs["marker"], deploy.journal_marker)
 
-    def test_the_installer_phase_names_an_upgrade_and_its_backup_for_the_history(self):
-        backup = "/srv/thermite/runtime/backups/20261104T120000Z-openhab-5.2.3.tar.gz"
+    def test_the_installer_phase_names_an_upgrade_for_the_history(self):
         with mock.patch.object(deploy_cli.deploy, "load", return_value=(VERSIONS, HOST)), \
                 mock.patch.object(deploy_cli.deploy, "deploy", side_effect=deploy.DeployError("fixture stop")) as apply, \
                 contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(deploy_cli.main(["--_configuration-phase", "--_how", "upgrade", "--_backup", backup]), 2)
-        self.assertEqual((apply.call_args.kwargs["how"], apply.call_args.kwargs["backup"]), ("upgrade", backup))
-        for arguments in (["--_how", "upgrade"], ["--_backup", backup]):
+            self.assertEqual(deploy_cli.main(["--_configuration-phase", "--_how", "upgrade"]), 2)
+        self.assertEqual(apply.call_args.kwargs["how"], "upgrade")
+        for arguments in (["--_how", "upgrade"],):
             with self.subTest(arguments=arguments), \
                     mock.patch.object(deploy_cli.deploy, "deploy") as apply, \
                     contextlib.redirect_stderr(io.StringIO()) as error:

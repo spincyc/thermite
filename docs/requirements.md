@@ -79,7 +79,10 @@ Upstream recommends keeping the retention limit at no more than 80–85% of
 allocated Prometheus storage. [Prometheus storage guidance](https://prometheus.io/docs/prometheus/latest/storage/)
 
 The remaining disk budget covers container images, runtime downloads,
-application releases, native state, logs and backup staging. On an existing
+application releases, native state, logs, and the version an upgrade sets
+aside under the installation root's `.transaction/`: up to a full copy of the
+state it keeps, held until the next upgrade commits. An upgrade shows that
+room, and refuses without it, before it stops anything. On an existing
 server, check free space on both the configured state filesystem and
 Podman's container-storage filesystem; free space on another mount does
 not satisfy either requirement. Retain backups outside this machine and

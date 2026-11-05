@@ -7,6 +7,33 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite upgrade` installs the new version as one install transaction. It
+  prepares packages, the boot test and the account, pulls every pinned image
+  and shows the room it needs while Thermite keeps running; too little room
+  refuses the upgrade before anything stops. Then the install engine, run as
+  root from a copy pinned at begin, guards the boot, stops Thermite, sets the
+  installed version aside under `/srv/thermite/.transaction/<id>/`, and the
+  new version is switched in, checked by `thermite health --production
+  --installation` and committed to `/etc/thermite/installed.json`. Any
+  failure from begin on rolls back in the same run: the previous version runs
+  again, the site's pin commit is undone, `thermite history` shows "rolled
+  back", and the owner command is switched only after a commit. Exit statuses
+  say how it ended: 0 committed, 1 refused, 3 rolled back, 4 rolled back but
+  unhealthy, 5 rollback stuck, 130 interrupted. A rerun first finishes or
+  rolls back an unfinished transaction, then stops and says so; `thermite
+  status` reports one, and install and uninstall refuse while one is open.
+  The first upgrade describes an installation from before the engine from
+  `/etc/thermite/units.json`; one without either manifest is refused with
+  the recovery steps (docs/installation.md#a-missing-manifest).
+- Upgrades no longer take tar backups: Thermite's state backups under
+  `runtime/backups/` (`*-openhab-*.tar.gz`) and the gateway's identity tars
+  under `access/backups/` are no longer written or read, and the printed
+  restore advice is gone. Existing archives stay where they are; delete them
+  when you no longer need them. The set-aside version is the way back.
+- The gateway's served TLS certificate, key and callback map live at fixed
+  paths in `access/inputs/`, and each run stages a release named after its
+  transaction, `access/releases/<id>`. The gateway keeps no resume journal of
+  its own; releases staged before stay until removed by hand.
 - The installer ISO's first-boot guide asks for your equipment and time zone
   in `instance/host.yaml`, not a state directory, which the fixed
   `/srv/thermite` layout removed. The Arch image's login profile puts
@@ -25,11 +52,11 @@ rollback. The unified deployment workflow uses a separate committed private site
   that nothing in the slice still runs, and then start every service again.
   A rerun with nothing to change stops nothing. This replaces restarting only
   the services whose units changed, and the listener record: nothing reads
-  the site's `var/listeners.json` any more; delete it. The upgrade's backup
-  and openHAB's offline preparation no longer stop services themselves, so
-  every upgrade that changes anything takes the backup and prepares openHAB
-  offline, and Grafana stays stopped until monitoring starts. A run that fails
-  after the stop starts `thermite.target` again. A test holds every unit
+  the site's `var/listeners.json` any more; delete it. openHAB's offline
+  preparation no longer stops services itself, so every run that changes
+  anything prepares openHAB offline, and Grafana stays stopped until
+  monitoring starts. An install that fails after the stop starts
+  `thermite.target` again; an upgrade rolls back instead. A test holds every unit
   Thermite installs to `PartOf=thermite.target`, `Slice=thermite.slice` and
   being wanted by the target alone; the native-port boundary, which only
   loads the firewall rules, stays outside both.

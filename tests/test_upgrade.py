@@ -19,7 +19,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_deploy as deploy  # noqa: E402
 import oh_units  # noqa: E402
 from oh_cli import upgrade as upgrade_cli  # noqa: E402
-from oh_install import bridge, changeover, manifest, ownership, runner, steps  # noqa: E402
+from oh_install import bridge, changeover, manifest, runner, steps  # noqa: E402
 from oh_install.model import Check  # noqa: E402
 from oh_install.system import Stat, System, Unit, UnitOrigin  # noqa: E402
 
@@ -48,26 +48,6 @@ class Upgrade(unittest.TestCase):
         self.system.interactive.return_value = True
         self.system.run.side_effect = AssertionError("unapproved fixture command")
 
-    @contextmanager
-    def planning(self):
-        with ExitStack() as scope:
-            scope.enter_context(patch.object(ownership, "inspect", return_value=ownership.Owned(recorded=True)))
-            scope.enter_context(patch.object(steps.Services, "plan", return_value=([], [], False)))
-            scope.enter_context(patch.object(steps.Units, "stale", return_value=()))
-            scope.enter_context(patch.object(steps.Token, "saved", return_value=True))
-            scope.enter_context(patch.object(steps.oh_apparmor, "enabled", return_value=False))
-            for kind in (steps.Target, steps.Packages, steps.NodeConfinement,
-                         steps.Preconditions, steps.Account, steps.NativePreparation):
-                scope.enter_context(patch.object(kind, "check", return_value=Check(True, "fixture current")))
-            scope.enter_context(patch.object(deploy, "unit_version", return_value="5.2.3"))
-            scope.enter_context(patch.object(deploy, "unit_image", return_value="fixture-image"))
-            scope.enter_context(patch.object(deploy, "image", return_value="fixture-image"))
-            yield
-
-    def plan(self):
-        with self.planning():
-            return steps.plan(self.context, self.system)
-
     def test_current_verification_needs_no_build_cache_and_preserves_group_approval(self):
         import oh_release
         program = self.site.parent / "installed-application"
@@ -88,30 +68,6 @@ class Upgrade(unittest.TestCase):
         self.system.ask.return_value = "n"
         self.assertIsNone(runner.perform(status, self.system, self.site))
         self.system.run.assert_not_called()
-
-    def test_new_commit_application_or_configuration_requires_deployment(self):
-        current = dict(self.record)
-        for changed in ({"commit": "d" * 40},
-                        {"application": {**self.application, "digest": "e" * 64}},
-                        {"conf_digest": "f" * 64}):
-            with self.subTest(changed=changed):
-                self.record = {**current, **changed}
-                plan = self.plan()
-                self.assertFalse(plan.current)
-                self.assertTrue(plan.deployment)
-                self.assertTrue(plan.restart_runtime)
-                self.assertEqual(plan.units, ())
-                self.assertEqual(plan.services, ())
-                self.assertIn("to deploy:", plan.describe())
-
-    def test_interrupted_restart_is_required_even_after_deploy_record_is_current(self):
-        self.record_time = 30
-        plan = self.plan()
-        self.assertFalse(plan.current)
-        self.assertIsNone(plan.deployment)
-        self.assertTrue(plan.restart_runtime)
-        self.runtime_time = 40
-        self.assertTrue(self.plan().current)
 
     @contextmanager
     def quiescing(self, *, change=None, running=True):
@@ -172,11 +128,6 @@ class Upgrade(unittest.TestCase):
             self.system.unit_origins.side_effect = lambda names: {
                 name: UnitOrigin(known=False, load_state="", active="unknown") for name in names}
             self.assertEqual(quiesce.stopped(self.system), 1, "an unknown state is never proof of a stop")
-
-    def test_planning_names_no_listener_record(self):
-        plan = self.plan()
-        self.assertTrue(plan.current)
-        self.assertFalse(any("listener" in item for item in plan.migration))
 
     def test_invalid_deployment_record_requires_redeployment(self):
         self.record = []

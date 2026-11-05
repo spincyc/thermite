@@ -28,7 +28,7 @@ commits its release requirement before applying the host workflow.
 
 One approval covers application setup, packages, the service account, native
 runtime and helpers, monitoring, HTTPS gateway, policy worker, verified device
-callbacks, private-state backups, schema migrations and readiness checks.
+callbacks, schema migrations and readiness checks.
 The native ports are restricted to this host. An existing gateway keeps its
 identity, accounts, certificates and callback routes; a fresh gateway creates
 its TLS certificate and starts with Security off. Enable Security on its page

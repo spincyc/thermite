@@ -20,7 +20,7 @@ import oh_service
 import oh_units
 import oh_ports
 import oh_metrics as metrics
-from oh_install import backup, manifest, ownership, progress
+from oh_install import manifest, ownership, progress
 from oh_install.access import Gateway
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
 from oh_install.model import Action, Check, Command, ReadinessStep, Step, Task
@@ -154,8 +154,6 @@ class UnitWatch:
 ACTIVE = ("active", "activating", "reloading", "deactivating")
 #: The install engine's transactions, in the installation root.
 TRANSACTIONS = ".transaction"
-#: Ends the name of a backup that holds Grafana's data, before .tar.gz.
-GRAFANA_TAG = "-grafana"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -830,19 +828,15 @@ class PairingLogging(Step):
 
 class Deploy(Step):
     title = "Deploy this commit"
-    #: What the deploy history calls it, and the Backup step whose state
-    #: backup the upgrade took before it (thermite upgrade sets both).
+    #: What the deploy history calls it (the upgrade sets "upgrade").
     how = "install"
-    backup = None
 
     def __init__(self, context: Context):
         self.context = context
         self.applied = False
 
     def trail(self) -> tuple[str, ...]:
-        taken = self.backup is not None and (self.backup.found or self.backup.target)
-        return (*(("--_how", self.how) if self.how != "install" else ()),
-                *(("--_backup", str(self.backup.file)) if taken else ()))
+        return ("--_how", self.how) if self.how != "install" else ()
 
     def check(self, system: System) -> Check:
         head, layout = self.context.head, self.context.layout
@@ -1192,7 +1186,7 @@ def state_owned(context: Context, system: System) -> bool:
 
 
 #: The installed files that define openHAB's own container: a change to them
-#: needs openHAB's offline preparation, and the upgrade's backup before it.
+#: needs openHAB's offline preparation.
 RUNTIME_FILES = (deploy.QUADLET, deploy.CONTAINER_DROPINS[oh_units.RUNTIME])
 
 
@@ -2044,245 +2038,16 @@ class Committed(Step):
         return Check(True, f"{detail}; HEAD, {self.context.head[:12]}, has every change")
 
 
-@dataclasses.dataclass(frozen=True)
-class Plan:
-    """What an upgrade changes: the units to install, the openHAB version
-    and image the installed unit runs against the pinned ones, and the
-    services not running on their installed unit."""
-
-    units: tuple[str, ...]
-    installed_version: str | None
-    pinned_version: str
-    installed_image: str | None
-    pinned_image: str
-    services: tuple[str, ...]
-    migration: tuple[str, ...] = ()
-    deployment: str | None = None
-    restart_runtime: bool = False
-
-    @property
-    def current(self) -> bool:
-        return not self.units and not self.services and not self.migration and not self.deployment and not self.restart_runtime
-
-    def describe(self) -> str:
-        parts = []
-        if self.units:
-            parts.append("to install: " + ", ".join(self.units))
-        if self.installed_image != self.pinned_image:
-            parts.append(f"openHAB {self.installed_version or '?'} -> {self.pinned_version} (image "
-                         f"{short_image(self.installed_image)} -> {short_image(self.pinned_image)})")
-        else:
-            parts.append(f"openHAB {self.pinned_version}, as pinned")
-        if self.services:
-            parts.append("not running on its installed unit: " + ", ".join(self.services))
-        if self.migration:
-            parts.append("to commission: " + ", ".join(self.migration))
-        if self.deployment:
-            parts.append("to deploy: " + self.deployment)
-        if self.restart_runtime:
-            parts.append("restart runtime on the deployed application and configuration")
-        return "; ".join(parts)
-
-
-def short_image(image: str | None) -> str:
-    if not image:
-        return "none"
-    digest = image.rsplit("@", 1)[-1]
-    return digest[:len("sha256:") + 12] if digest.startswith("sha256:") else image
-
-
-def plan(context: Context, system: System) -> Plan:
-    """What `thermite upgrade` would change on this host. The running
-    image needs root to inspect (the containers are rootful), so a service
-    counts as running the installed unit's image when it started after the
-    unit was installed."""
-    owned = ownership.inspect(context, system)
-    runtime = next((path for role, _, path in owned.entries
-                    if role == oh_units.RUNTIME and path.suffix == '.container'),
-                   deploy.INSTALLED[deploy.QUADLET])
-    text = (system.read_bytes(runtime) or b"").decode("utf-8", "replace")
-    services: list[str] = []
-    for step in (Services(context), MetricsServices(context)):
-        start, restart, enable = step.plan(system)
-        services += [*start, *restart, *([step.path_unit] if enable and step.path_unit not in start else [])]
-    migration = []
-    if not owned.recorded:
-        migration.append(f"unit ownership manifest {ownership.MANIFEST}")
-    if context.runtime_token_file is not None:
-        migration.append("explicit runtime credential import")
-    elif not Token(context).saved(system):
-        migration.append("private runtime access")
-    if not Target(context).check(system).done:
-        migration.append("Thermite boot target")
-    if not Packages().check(system).done:
-        migration.append("required host packages")
-    if not NodeConfinement(context).check(system).done or oh_apparmor.enabled(system):
-        migration.append("node exporter confinement")
-    if not Preconditions(context).check(system).done or not Account(context).check(system).done:
-        migration.append("thermite account and group")
-    if not NativePreparation(context).check(system).done:
-        migration.append("service ownership and offline native preparation")
-    deployment = Deploy(context).check(system)
-    record = system.stat(context.layout.record)
-    active = system.unit(oh_units.RUNTIME)
-    # Deploy precedes restart. If a previous run stopped between those steps,
-    # the current commit alone must not hide the unfinished runtime restart.
-    restart_runtime = (not deployment.done or record is not None
-                       and (active.since is None or record.mtime > active.since))
-    return Plan(tuple(Units(context).stale(system)), deploy.unit_version(text), context.versions["openhab"]["version"],
-                deploy.unit_image(text), deploy.image(context.versions), tuple(services), tuple(migration),
-                None if deployment.done else deployment.detail, restart_runtime)
-
-
-class WhatChanges(Step):
-    title = "What changes"
-    always = True
-
-    def __init__(self, plan_: Plan):
-        self.plan = plan_
-
-    def check(self, system: System) -> Check:
-        return Check(False, self.plan.describe())
-
-
-def backup_argv(layout: deploy.State, file: Path, grafana: bool = False) -> tuple[str, ...]:
-    """Prometheus' samples are left out: up to the retention size, and a
-    restored openHAB needs none of them."""
-    return backup.archive_argv(layout.root, file, grafana)
-
-
-def restore_argvs(layout: deploy.State, file: Path, stamp: str, grafana: bool = False) -> list[tuple[str, ...]]:
-    """The commands, all under sudo, that put a backup back: openHAB (and
-    Grafana, when the backup has its data) stopped, today's conf, userdata
-    and Grafana data moved aside (not deleted), the backup unpacked."""
-    root = layout.root
-    return [("systemctl", "stop", "thermite-openhab.service", *(["thermite-grafana.service"] if grafana else [])),
-            ("mv", str(layout.userdata), f"{root}/userdata.replaced-{stamp}"),
-            ("mv", str(layout.conf), f"{root}/conf.replaced-{stamp}"),
-            *([("mv", str(layout.grafana_data), f"{layout.grafana_data}.replaced-{stamp}")] if grafana else []),
-            ("tar", "--extract", "--gzip", "--same-owner", "--preserve-permissions", "--file", str(file),
-             "--directory", str(root))]
-
-
-class Backup(Step):
-    """openHAB's (and Grafana's) state as the installed version left it.
-
-    It follows Quiesce: whenever it has a backup to take (openHAB's units
-    change or its state needs offline preparation), Quiesce stopped all of
-    Thermite for that change, so nothing writes what it copies.
-    """
-    title = "State backup"
-
-    def __init__(self, context: Context, stamp: str, version: str | None):
-        self.context = context
-        self.stamp = stamp
-        self.version = version or "unknown"
-        #: Whether the backup holds Grafana's data, which exists once the
-        #: metrics are installed. Its name says so, since a rerun finds a
-        #: backup an earlier run took and the restore commands differ.
-        self.grafana = False
-        self.found: Path | None = None
-        self.target: Path | None = None
-
-    @property
-    def file(self) -> Path:
-        if self.found:
-            return self.found
-        if self.target:
-            return self.target
-        tag = GRAFANA_TAG if self.grafana else ""
-        return self.context.layout.backups / f"{self.stamp}-openhab-{self.version}{tag}.tar.gz"
-
-    def latest(self, system: System) -> Path | None:
-        """A backup of the installed version taken since thermite-openhab.service last ran, if one is there."""
-        names = ownership.inspect(self.context, system).units((oh_units.RUNTIME,))
-        states = [system.unit(name) for name in names]
-        unit = max(states, key=lambda value: value.since or 0) if states else system.unit(oh_units.RUNTIME)
-        if any(value.active in ACTIVE for value in states):
-            return None
-        if unit.active in ACTIVE:
-            return None
-        backups = self.context.layout.backups
-        endings = (f"-openhab-{self.version}.tar.gz", f"-openhab-{self.version}{GRAFANA_TAG}.tar.gz")
-        for name in reversed(system.listdir(backups)):
-            found = system.stat(backups / name)
-            if (name.endswith(endings) and found and found.mtime > (unit.since or 0)
-                    and self.completed(system, backups / name)):
-                return backups / name
-        return None
-
-    def completed(self, system: System, path: Path) -> bool:
-        """A successful helper publication, not a legacy or interrupted tar file.
-
-        Archives stay private to the service. The nonsecret receipt is readable
-        by its group and binds completion to the published archive's metadata.
-        Old backups without receipts are retained but never reused automatically.
-        """
-        host = self.context.host
-        archive, receipt = system.stat(path), system.stat(backup.receipt_path(path))
-        if (archive is None or archive.is_dir or receipt is None or receipt.is_dir
-                or (archive.uid, archive.gid, archive.mode) != (host["uid"], host["gid"], 0o600)
-                or (receipt.uid, receipt.gid, receipt.mode) != (host["uid"], host["gid"], 0o640)):
-            return False
-        return backup.completed(system.read_bytes(backup.receipt_path(path)), path.name, archive.mtime, size=archive.size)
-
-    def available(self, system: System) -> Path:
-        tag = GRAFANA_TAG if self.grafana else ""
-        occupied = set(system.listdir(self.context.layout.backups))
-        for attempt in range(1000):
-            suffix = f"-{attempt}" if attempt else ""
-            path = self.context.layout.backups / f"{self.stamp}{suffix}-openhab-{self.version}{tag}.tar.gz"
-            if path.name not in occupied and backup.receipt_path(path).name not in occupied:
-                return path
-        raise ValueError("too many occupied backup names; inspect the backup directory before retrying")
-
-    def check(self, system: System) -> Check:
-        if not Units(self.context).stale(system, RUNTIME_FILES) and NativePreparation(self.context).check(system).done:
-            return Check(True, "openHAB's units are installed already, so nothing changes that a backup would undo")
-        latest = self.latest(system)
-        if latest:
-            self.found, self.grafana = latest, latest.name.endswith(f"{GRAFANA_TAG}.tar.gz")
-            return Check(True, f"{latest}")
-        self.grafana = system.stat(self.context.layout.grafana_data) is not None
-        self.target = self.available(system)
-        return Check(False, f"to write {self.file} while Thermite is stopped"
-                            + (", with Grafana's data" if self.grafana else "")
-                            + "; not Prometheus' samples (up to the retention size, and nothing restores them)")
-
-    def actions(self, system: System) -> list[Action]:
-        PROGRAM = self.context.program
-        host, backups = self.context.host, self.context.layout.backups
-        self.grafana = system.stat(self.context.layout.grafana_data) is not None
-        actions: list[Action] = []
-        directory = system.stat(backups)
-        if directory is None or (directory.uid, directory.gid, directory.mode) != (host["uid"], host["gid"], 0o750):
-            actions.append(Command(("install", "-d", "-o", str(host["uid"]), "-g", str(host["gid"]), "-m", "0750",
-                                    str(backups)), root=True))
-        actions.append(Command(("python3", str(PROGRAM / "lib/oh_install/backup.py"), str(self.context.layout.root),
-                                "--name", self.file.name, "--uid", str(host["uid"]), "--gid", str(host["gid"]),
-                                *(("--grafana",) if self.grafana else ())), root=True))
-        return actions
-
-
-class Restart(Services):
-    title = "Runtime and helper restart"
-
-
-class MetricsRestart(MetricsServices):
-    title = "Monitoring restart"
-
-
-def metrics_steps(context: Context, restart: bool = False) -> list[Step]:
+def metrics_steps(context: Context) -> list[Step]:
     """Activate monitoring; readiness follows the final native lifecycle wait."""
-    return [MetricsToken(context), GrafanaPassword(context),
-            MetricsRestart(context) if restart else MetricsServices(context)]
+    return [MetricsToken(context), GrafanaPassword(context), MetricsServices(context)]
 
 
-def native_steps(context: Context, restart: bool = False) -> list[Step]:
+def native_steps(context: Context) -> list[Step]:
     """Runtime readiness through final native settlement, on one native deadline."""
     native = NativeDeadline.of(context)
     return [Answers(context, native), Token(context, native), *gateway_steps(context, native),
-            *metrics_steps(context, restart=restart), Target(context), NativeReady(context, native)]
+            *metrics_steps(context), Target(context), NativeReady(context, native)]
 
 
 def directory_steps(context: Context) -> list[Step]:
@@ -2290,16 +2055,6 @@ def directory_steps(context: Context) -> list[Step]:
     Units: a failed run starts thermite.target again, and systemd restarts
     a crashed service, on whichever units are installed by then."""
     return [Account(context), StateDirectories(context), MetricsDirectories(context)]
-
-
-def upgrade(context: Context, plan_: Plan, stamp: str) -> list[Step]:
-    """The upgrade's steps after its preconditions, in order. A host where
-    openHAB runs without the metrics gets them here."""
-    return [WhatChanges(plan_), Preconditions(context), *configuration_steps(context), Packages(), NativeIngressPrerequisites(context), NodeConfinement(context), BootTest(context),
-            Quiesce(context), Backup(context, stamp, plan_.installed_version),
-            *directory_steps(context), Units(context), NativePreparation(context), NativeIngress(context), Deploy(context),
-            Restart(context, restart_runtime=plan_.restart_runtime), *native_steps(context, restart=True), MetricsAnswer(context),
-            Verify(context)]
 
 
 # --------------------------------------------------------------------------

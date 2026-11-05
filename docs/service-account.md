@@ -64,10 +64,9 @@ Those directories deny access to other identities. An existing `0700` mode
 is retained; other private userdata files and credentials remain `0600`.
 The Apple TV helper checks its environment after package installation and
 on reuse, since wheel installers can set modes explicitly despite the umask.
-The backup directory lets trusted operators list and inspect archive metadata;
-the archive contents remain private to the service account. New backups have
-mode-0640 completion receipts readable by the trusted operator group. Permission
-maintenance preserves that mode without widening private files.
+Upgrades no longer write state backups to `runtime/backups/`; archives and
+mode-0640 completion receipts earlier releases wrote there keep their modes,
+and permission maintenance preserves them without widening private files.
 Before an operator's deploy or rollback writes, it asks for approval of the
 exact ownership-handoff command. When it needs that privilege, a
 noninteractive run refuses before writing. A successful deploy hands its
@@ -90,8 +89,9 @@ thermite upgrade --config /path/to/private-site
 ```
 
 The same command updates the application environment, native services and
-HTTPS gateway. Review the plan and keep a current backup before applying it.
-One approval covers the complete workflow.
+HTTPS gateway, as one install transaction that commits the new version or puts
+the installed one back. Review the plan before applying it. One approval
+covers the complete workflow.
 
 Before changing or removing a unit, the installer proves it is Thermite's.
 It records each unit file it installs, with its digest and the application
@@ -166,18 +166,24 @@ physical devices is still subject to those devices' protocol limits.
 HTTPS gateway, policy worker and verified callback relay together with the
 native services. Their releases and identity state live in the installation
 root's `access/`, beside the native `runtime/` and never inside it. `access/`
-and its `releases/` belong to the operator, mode 0755; private release files
-and the persistent identity in `state/` belong to `thermite:thermite`, mode
-0700. Root owns the installed unit copies, `backups/` (0700) and the trust
-certificate `tls-cert.pem`.
+and its `releases/` belong to the operator, mode 0755; each run stages a new
+release, `releases/<id>`, named after its install transaction. Private release
+files and the persistent identity in `state/` belong to `thermite:thermite`,
+mode 0700. The served TLS certificate and key and the verified callback map
+live in `inputs/`, private to the operator (0700), so a transaction can set
+them aside with the identity. Root owns the installed unit copies and the
+trust certificate `tls-cert.pem`; an installation from before the install
+engine also keeps its old identity `backups/` (0700), which nothing writes or
+reads any more.
 
 The gateway's private certificate authority is separate: it lives in the
 private site's `var/gateway/authority/`, owned by the operator (directory 0700,
 key 0600). Back it up with the site's other private state.
 
 The workflow retains existing identity and TLS state, stops gateway writers,
-backs up the complete private state, migrates the schema, starts the new
-services and verifies their live release and HTTPS response. It also seals
+migrates the schema, starts the new services and verifies their live release
+and HTTPS response. In an upgrade, the install transaction has set the
+identity state aside first, and a rollback puts it back. It also seals
 native ports and preserves verified callback routes. No separate staging or
 activation script is needed. See [installation and recovery](installation.md#update-or-remove).
 

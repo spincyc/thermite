@@ -1553,15 +1553,14 @@ class Deployed:
 def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bool = False,
            dry_run: bool = False, how: str = "deploy", host: dict | None = None,
            ownership_approved: bool = False, expected_conf_digest: str | None = None,
-           backup: str | None = None, marker=None) -> Deployed:
+           marker=None) -> Deployed:
     """Install commit `rev`'s conf/ into the state's conf and the helper's
     files into atv/app (and, once the state has their directories, its
     metrics/ into metrics and the exporter into exporter/app), then record
     it; host gives the metrics services' ports. Its conf must have passed
     `thermite test boot` on this host unless `force`; deploying HEAD needs
     a clean area, since make check has just tested the working tree.
-    `how` (deploy, install, upgrade or rollback) and `backup` (the state
-    backup the upgrade took first) go into the history.
+    `how` (deploy, install, upgrade or rollback) goes into the history.
 
     `marker(line, priority)` receives one start and one end line for the
     journal (journal_marker; the CLI passes it, tests and dry runs do not)."""
@@ -1571,8 +1570,7 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
         mark(marker_line("start", commit=commit, how=how, by=getpass.getuser()), "info")
     try:
         result = _deploy(area, layout, var, commit, force=force, dry_run=dry_run, how=how, host=host,
-                         ownership_approved=ownership_approved, expected_conf_digest=expected_conf_digest,
-                         backup=backup)
+                         ownership_approved=ownership_approved, expected_conf_digest=expected_conf_digest)
     except BaseException as exc:
         if mark is not None:
             mark(marker_line("end", commit=commit, how=how, outcome="failed", error=type(exc).__name__), "warning")
@@ -1583,8 +1581,7 @@ def deploy(area: Path, layout: State, var: Path, rev: str = "HEAD", *, force: bo
 
 
 def _deploy(area: Path, layout: State, var: Path, commit: str, *, force: bool, dry_run: bool, how: str,
-            host: dict | None, ownership_approved: bool, expected_conf_digest: str | None,
-            backup: str | None) -> Deployed:
+            host: dict | None, ownership_approved: bool, expected_conf_digest: str | None) -> Deployed:
     if commit == resolve(area, "HEAD"):
         dirt = uncommitted(area)
         if dirt:
@@ -1604,7 +1601,7 @@ def _deploy(area: Path, layout: State, var: Path, commit: str, *, force: bool, d
             host = committed_inputs(area, commit)[1]
     return install(files, commit, subject(area, commit), layout, var, force=force, dry_run=dry_run,
                    how=how, host=host, application=application,
-                   ownership_approved=ownership_approved, backup=backup)
+                   ownership_approved=ownership_approved)
 
 
 def deployment_files(area: Path, commit: str, var: Path) -> tuple[dict[str, Blob], dict | None]:
@@ -1744,7 +1741,7 @@ def gateway_trust(host: dict | None) -> Blob | None:
 def install(files: dict[str, Blob], commit: str, title: str, layout: State, var: Path, *,
             force: bool = False, dry_run: bool = False, how: str = "deploy",
             host: dict | None = None, post=None, application: dict | None = None,
-            ownership_approved: bool = False, backup: str | None = None) -> Deployed:
+            ownership_approved: bool = False) -> Deployed:
     """deploy() once the commit's files ({area path: Blob}) are exported."""
     conf = {path[len("conf/"):]: blob for path, blob in files.items() if path.startswith("conf/")}
     app = {path: files[path] for path in ATV_APP if path in files}
@@ -1810,7 +1807,7 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
         outcomes: list[dict] = []
         changes = {"conf": conf_changes, "atv_app": app_changes,
                    **({"metrics": metrics_changes, "exporter_app": exporter_changes} if synced else {})}
-        entry = history_entry(record, how, changes, outcomes, metrics_kept=kept, backup=backup)
+        entry = history_entry(record, how, changes, outcomes, metrics_kept=kept)
         if not dry_run:
             _replace(layout.record, (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"), FILE_MODE)
             _settle_pending(layout, commit, {key: paths for key, paths in pending.items() if key not in wanted})
@@ -1892,10 +1889,12 @@ def apply_metrics(layout: State, host: dict, metrics_changes: Changes, exporter_
 #: tree; its counts stay exact, and truncated says when it names fewer.
 HISTORY_PATHS = 50
 #: What a deploy's history line holds besides when, what, who, how and the
-#: boot test, in deploys written since the history recorded them.
+#: boot test, in deploys written since the history recorded them. Upgrades
+#: before the install engine also named the state backup they took.
 HISTORY_DETAILS = ("conf_digest", "application", "changes", "metrics_kept", "reloads", "backup")
 #: A completed gateway activation's line, written by the install or upgrade
 #: that activated it (oh_install.access.Gateway): {"event": "gateway", ...}.
+#: Activations before the install engine also named an identity backup.
 GATEWAY_EVENT = ("at", "by", "commit", "application", "release", "previous_release", "backup")
 #: An install transaction that rolled back, written by the upgrade that
 #: rolled it back (oh_install.changeover): {"event": "rolled-back", ...}.
@@ -1917,11 +1916,11 @@ def change_entry(changes: Changes, limit: int = HISTORY_PATHS) -> dict:
 
 
 def history_entry(record: dict, how: str, changes: dict[str, Changes], reloads: list[dict], *,
-                  metrics_kept: bool = False, backup: str | None = None) -> dict:
+                  metrics_kept: bool = False) -> dict:
     """A deploy's history line: deployed.json's who, when and what, how it
     came (deploy, install, upgrade or rollback), each synced tree's changes,
-    what became of the reloads and restarts they asked for (apply_metrics),
-    and the state backup an upgrade took before it."""
+    and what became of the reloads and restarts they asked for
+    (apply_metrics)."""
     entry = {key: record[key] for key in ("deployed_at", "commit", "by", "boot_checked", "conf_digest")}
     entry.update(how=how, subject=record["subject"])
     if "application" in record:
@@ -1930,8 +1929,6 @@ def history_entry(record: dict, how: str, changes: dict[str, Changes], reloads: 
     if metrics_kept:
         entry["metrics_kept"] = True
     entry["reloads"] = reloads
-    if backup is not None:
-        entry["backup"] = str(backup)
     return entry
 
 
@@ -1984,13 +1981,12 @@ def _optional_path(value: object, what: str) -> str | None:
 def record_gateway(layout: State, event: dict) -> dict:
     """Append a completed gateway activation to the history: the site
     commit and application it serves, its release, the release it
-    replaced (None on the first install) and the complete identity backup
-    taken before migrating. thermite history shows it with that commit's
-    latest deploy."""
-    unknown = set(event) - {"commit", "application", "release", "previous_release", "backup"}
+    replaced (None on the first install). thermite history shows it with
+    that commit's latest deploy."""
+    unknown = set(event) - {"commit", "application", "release", "previous_release"}
     if unknown or not _COMMIT.match(str(event.get("commit", ""))):
         raise DeployError("a gateway history event names a site commit and the gateway's release, "
-                          "previous release, backup and application only")
+                          "previous release and application only")
     application = event.get("application")
     if application is not None and not (isinstance(application, dict)
                                         and all(isinstance(value, str) for value in application.values())):
@@ -1998,8 +1994,7 @@ def record_gateway(layout: State, event: dict) -> dict:
     line = {"event": "gateway", "at": _now(), "by": getpass.getuser(), "commit": event["commit"],
             "application": application,
             "release": _optional_path(event.get("release"), "release"),
-            "previous_release": _optional_path(event.get("previous_release"), "previous release"),
-            "backup": _optional_path(event.get("backup"), "backup")}
+            "previous_release": _optional_path(event.get("previous_release"), "previous release")}
     if line["release"] is None:
         raise DeployError("a gateway history event needs the activated release")
     _shared_write(layout.history, json.dumps(line, sort_keys=True) + "\n", append=True)

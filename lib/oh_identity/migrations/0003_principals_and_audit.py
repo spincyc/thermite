@@ -11,7 +11,8 @@ def admins(apps, schema_editor):
 class Migration(migrations.Migration):
     """Roles and room grants are replaced by one admin flag; audit records
     gain the principal kind and a keyed peer label. Rolling back across this
-    migration means restoring the pre-upgrade state backup."""
+    migration means rolling back the upgrade's install transaction, which
+    puts the identity state from before it back."""
     dependencies = [("oh_identity", "0002_security_state")]
     operations = [
         migrations.AddField(model_name="user", name="admin", field=models.BooleanField(default=False)),

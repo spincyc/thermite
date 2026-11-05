@@ -183,16 +183,21 @@ installation root:
 ```text
 /srv/thermite/    root:root 0755; a btrfs subvolume when /srv is btrfs
 ├── runtime/      thermite 0750: the runtime state and the thermite account's home
-└── access/       you, 0755: the HTTPS gateway root
+├── access/       you, 0755: the HTTPS gateway root
+└── .transaction/ root 0700: the install engine's transactions
 ```
 
 `runtime/` holds the native runtime's configuration, userdata, logs and
-add-ons, the Apple TV helper, secrets, the deploy records, upgrade backups and
-the monitoring data. `access/` holds the gateway's `releases/`, its identity
-`state/` (thermite, 0700), its identity `backups/` (root, 0700) and the
-clients' trust certificate `tls-cert.pem`. Neither directory is inside the
-other, so the gateway's custody checks see only root- and operator-owned
-parents. On btrfs the installation root is the one subvolume to snapshot or
+add-ons, the Apple TV helper, secrets, the deploy records and the monitoring
+data. `access/` holds the gateway's `releases/` (one per install transaction,
+`releases/<id>`), its identity `state/` (thermite, 0700), its fixed `inputs/`
+(the served TLS certificate and key and the verified callback map; you, 0700)
+and the clients' trust certificate `tls-cert.pem`; an installation from before
+the install engine also keeps its old identity `backups/` (root, 0700), which
+nothing writes or reads any more. Neither directory is inside the other, so
+the gateway's custody checks see only root- and operator-owned parents.
+`.transaction/<id>/` holds the version an upgrade set aside, until the next
+upgrade commits; see [how an upgrade runs](#how-an-upgrade-runs). On btrfs the installation root is the one subvolume to snapshot or
 back up: `sudo btrfs subvolume snapshot -r /srv/thermite /srv/thermite-$(date +%F)`.
 
 openHAB's logs are in `runtime/logs/`, `/srv/thermite/runtime/logs` by
@@ -204,8 +209,8 @@ sudo; they write nothing there, anything else in it stays private, and the
 rest of `runtime/` gains no access. The pairing filter drops pairing codes on
 every logger before a line reaches a file. An installation upgraded from a
 release that logged inside userdata keeps those older logs in
-`runtime/userdata/logs`, readable only with sudo; the upgrade's backup holds
-them too, so they can be deleted.
+`runtime/userdata/logs`, readable only with sudo; delete them once you no
+longer need them.
 
 ```sh
 tail -F /srv/thermite/runtime/logs/openhab.log
@@ -554,71 +559,88 @@ thermite upgrade --config "$HOME/thermite-site"
 
 Upgrade fetches the official application's `main` branch after approval,
 prepares or reuses a verified private environment, updates and commits the
-site's exact application requirement, and runs the complete native and gateway
-workflow. It deploys shared application changes and restarts the runtime when
-needed, migrates identity state after a complete stopped-state backup, checks
-authentication and HTTPS, then switches the owner command. There is no separate
-pip, site-pin, native-runtime or access-release update sequence. For a reviewed
-local checkout or an explicit Git revision, use `--source DIR` or `--revision REV`;
+site's exact application requirement, and then installs the new version as
+one install transaction: it either commits the new version or puts the
+installed one back, in the same run. There is no separate pip, site-pin,
+native-runtime or access-release update sequence. For a reviewed local
+checkout or an explicit Git revision, use `--source DIR` or `--revision REV`;
 see [application releases](packaging.md#update-and-roll-back).
 
-When a run changes anything Thermite runs on (its units, openHAB's native
-state, the native-port firewall or the deployment), it first stops all of
-Thermite, `systemctl stop thermite.target thermite.slice`, and checks that
-nothing in the slice still runs; none of it ever runs beside a changed part.
-Then an upgrade takes its state backup, the run installs, prepares and deploys,
-and starts every service again, the HTTPS gateway after a fresh identity
-backup. A rerun with nothing to change stops nothing. Every unit Thermite
-installs is part of `thermite.target`, runs in `thermite.slice` and is wanted
-by the target alone. The native-port boundary is the exception: it only loads
-the firewall rules, so stopping Thermite leaves them loaded, and reapplying
-them does not restart openHAB, whose unit wants the boundary and loads the same
-rules itself before every start, so it never starts without them. The ownership
-repair covers only openHAB's trees unless the service-account receipt, account
-or a state directory is missing.
+### How an upgrade runs
+
+While Thermite keeps running, the upgrade prepares what belongs to the host
+rather than to Thermite: the configuration checks and boot test, required
+packages, AppArmor's own service and the `thermite` account. It pulls every
+pinned container image before anything stops. Then it shows the room the
+install engine needs to set the installed version aside:
+
+```text
+Room to set aside the current version, on /srv/thermite (free 41.2 GiB):
+  runtime/userdata                       1.4 GiB
+  runtime/conf                           3.0 MiB
+  access/state                          12.0 MiB
+  14 root files and links                 <1 MiB
+  the new release                      310.0 MiB
+  margin                               256.0 MiB
+  needed                                 2.0 GiB  (a full copy; cloning may use less)
+```
+
+Without that room the upgrade stops there, with exit status 1; nothing of
+Thermite was stopped or changed. Otherwise the transaction runs. The install
+engine runs as root from the copy pinned at begin,
+`sudo /usr/bin/python3 -I -S /srv/thermite/.transaction/<id>/engine.py`:
+
+1. **Begin**: the engine records the transaction and what it will set aside.
+2. **Guard**: `thermite.target` is disabled, so a reboot in the middle never
+   starts a half-installed version.
+3. **Stop**: `systemctl stop thermite.target thermite.slice`, then a check
+   that nothing in the slice still runs.
+4. **Collect**: the installed units, firewall rules, AppArmor policy and state
+   trees are copied or moved into `/srv/thermite/.transaction/<id>/`.
+5. **Switch**: the new version's units, native preparation, native-port
+   firewall, deployment, services, runtime access, HTTPS gateway (a new
+   release, `access/releases/<id>`) and monitoring; then `thermite.target`
+   starts.
+6. **Verify**: monitoring answers and `thermite health --production
+   --installation` passes.
+7. **Commit**: the engine records the new version in
+   `/etc/thermite/installed.json` and enables `thermite.target`. The version
+   before it stays set aside in `/srv/thermite/.transaction/<id>/` until the
+   next upgrade commits.
+
+Only after the commit does `~/.local/bin/thermite` switch to the new
+application. Thermite is down from the stop until the target starts again:
+for the copy of its state, which grows with `runtime/userdata`, and for the
+runtime's native startup. A rerun with nothing to change only checks health
+and stops nothing.
+
+Every unit Thermite installs is part of `thermite.target`, runs in
+`thermite.slice` and is wanted by the target alone. The native-port boundary
+is the exception: it only loads the firewall rules, so stopping Thermite
+leaves them loaded, and reapplying them does not restart openHAB, whose unit
+wants the boundary and loads the same rules itself before every start, so it
+never starts without them. The ownership repair covers only openHAB's trees
+unless the service-account receipt, account or a state directory is missing.
 
 The site's committed `versions.json` still selects native component versions.
 Updating Thermite does not silently replace those pins. Keep the private
-repository clean and retain `var/application-releases/`, `var/gateway/authority/`,
-previous application environments, gateway releases and the printed backup
-paths for recovery. Application environments install their dependencies from
-the hashed `lib/requirements-app.txt` and are rebuilt automatically after a
-Python minor-version upgrade; the previous environment is retained.
+repository clean and retain `var/application-releases/`, `var/gateway/authority/`
+and previous application environments for recovery. Application environments
+install their dependencies from the hashed `lib/requirements-app.txt` and are
+rebuilt automatically after a Python minor-version upgrade; the previous
+environment is retained.
 
-Preparation or validation failures restore the bounded site edits when safe;
-concurrent user edits are preserved. A host failure retains the committed
-candidate pin and previous owner launcher, and prints a Resume command that
-names the fetched commit with `--revision <commit>`. Rerun that command after
-fixing the cause. Until then, the installed `thermite` runs site commands with
-the site's pinned release from `var/application-releases/<digest>` and says so.
-
-If a run fails after stopping Thermite, it starts `thermite.target` again,
-which starts every service, and says so; the installation remains incomplete
-until a rerun succeeds. Ctrl-C lets the running host step stop its own commands
-and then prints the command that starts Thermite again, without running it.
-Before commissioning replaces a native service configuration, it saves the
-original privately in the gateway deployment directory.
-
-The launcher staying on its previous application does **not** undo services
-already changed, and does not restore native data or an identity database.
-To go back, follow the printed recovery advice: restore the printed backup
-when one was made, revert the site's release-pin commit, then run the older
-release's cached launcher, `python3 var/application-releases/<digest>/bin/thermite
-install --config DIR`; that install also reinstalls the release's units.
-Pinning a release older than the site's committed one requires
-`--allow-downgrade`, after deliberately restoring state the newer release may
-have migrated. Recover native and identity state from their corresponding
-backups only with the appropriate compatible application release; do not
-initialize new accounts or replace credentials merely to retry.
-
-`--dry-run` prints a provisional host plan only when the site pins the release
-that is running it; otherwise the host plan is resolved after approval.
+Upgrades no longer write tar backups of openHAB's and Grafana's state to
+`runtime/backups/`, and nothing reads the ones earlier releases wrote: the
+version set aside by the last commit is the way back. Keep or delete those
+archives as you see fit. openHAB's own updater still copies userdata to
+`runtime/backups/thermite-before-*.tar` before it migrates it to a new openHAB
+version.
 
 If a missing kernel module stopped an older installer after services were
 stopped, reboot into the installed kernel and then rerun the upgrade. The
 reboot alone does not complete deployment: the upgrade must install and verify
-the native-port boundary before starting the runtime. Keep the printed backup
-until the upgrade succeeds.
+the native-port boundary before starting the runtime.
 
 Runtime and monitoring readiness poll within their allowances. Once the
 required readiness or settling condition passes, that result completes the step;
@@ -626,6 +648,110 @@ an extra request outside the wait loop cannot fail it during a brief startup
 interruption. Each later check and deployment run still queries the running
 services. Dropped, refused or transiently failing native reads retry until the
 native deadline; writes are never repeated, and credentials are not replaced.
+
+### When an upgrade fails
+
+Preparation or validation failures restore the bounded site edits when safe;
+concurrent user edits are preserved. A failure before the transaction begins
+also undoes the site's pin commit, so the site pins the version that runs.
+
+Any failure from begin on, in a step, the health check or the commit, rolls
+the transaction back in the same run. The engine puts the set-aside version
+back and starts it, with `thermite.target` enabled as before. Then the upgrade
+puts back the files it keeps in the site's `var/` (the runtime token, the
+Grafana password, the runtime credentials and the gateway profile), undoes
+the site's pin commit when the site is still at it and clean, records the
+rollback in `thermite history`, and checks the reinstated version's health
+with the owner command it kept. Nothing starts a half-installed version again:
+the rollback is the only undo.
+
+| Exit status | Outcome |
+|---|---|
+| 0 | Committed, or nothing to change and healthy. |
+| 1 | Refused before the transaction began: nothing of Thermite was stopped or changed. |
+| 2 | Not started: no installed manifest (see [a missing manifest](#a-missing-manifest)), or invalid arguments. |
+| 3 | Rolled back: the version that ran before runs again, healthy. |
+| 4 | Rolled back: the version that ran before runs again, but its health check fails; it keeps running. |
+| 5 | The rollback is stuck: see [a stuck rollback](#a-stuck-rollback). |
+| 130 | Interrupted: see [an interrupted upgrade](#an-interrupted-upgrade). |
+
+After exit status 4, fix what health reports, then check again with
+`thermite health --production --installation`. When the site could not be
+reset (it moved on, or has uncommitted changes), the upgrade says so and
+prints the `git revert` that pins the version that runs.
+
+To go back to an older release after a commit, revert the site's
+release-pin commit, then run the older release's cached launcher,
+`python3 var/application-releases/<digest>/bin/thermite install --config DIR`;
+that install also reinstalls the release's units. Pinning a release older
+than the site's committed one requires `--allow-downgrade`, after
+deliberately restoring state the newer release may have migrated. Do not
+initialize new accounts or replace credentials merely to retry.
+
+`--dry-run` prints a provisional host plan only when the site pins the release
+that is running it; otherwise the host plan is resolved after approval.
+
+`thermite install` does not run as a transaction yet: when it fails after
+stopping Thermite, it starts `thermite.target` again and says so, and the
+installation remains incomplete until a rerun succeeds.
+
+### An interrupted upgrade
+
+Ctrl-C before the transaction begins changes nothing, and the site's pin
+commit is undone. After it began, the transaction stays open: Thermite may
+be stopped, with `thermite.target` kept from booting. `thermite status`
+reports it as a problem, and `thermite install` and `thermite uninstall`
+refuse to run. Run `thermite upgrade --config DIR` again: it first finishes a
+transaction the engine already committed, or rolls back any other, then
+stops without upgrading and says so. Run it once more to upgrade.
+
+### A stuck rollback
+
+Exit status 5 means the engine could not put something back, for example
+because the disk is full. Thermite stays stopped and `thermite.target` stays
+disabled; the transaction stays open and no other one can begin. Fix the
+cause the upgrade printed, then run `thermite upgrade --config DIR` again: the
+rollback continues from where it stopped.
+
+When the engine itself cannot run, it prints the commands it would run, for
+review and for running by hand as root:
+
+```sh
+sudo /usr/bin/python3 -I -S /srv/thermite/.transaction/<id>/engine.py \
+  rollback --root /srv/thermite --id <id> --print
+sudo /usr/bin/python3 -I -S /srv/thermite/.transaction/<id>/engine.py \
+  status --root /srv/thermite
+```
+
+The upgrade's message names the transaction and the engine copy; `status`
+lists every transaction and its phase. The engine's journal still records a
+transaction rolled back by hand as stuck, so keep
+`/srv/thermite/.transaction/<id>/` until a rerun of `thermite upgrade` has
+resolved it.
+
+### A missing manifest
+
+An installation from this release on records what it installed in
+`/etc/thermite/installed.json`. The first upgrade of an installation from
+before the install engine describes it instead from `/etc/thermite/units.json`
+and the fixed paths, and refuses before anything stops if any of them is not
+exactly what the installer wrote; that first transaction then sets it aside
+like any later one. Gateway releases staged before it stay in
+`access/releases/` until you remove them.
+
+When Thermite's units and files are here but neither manifest is, or
+`installed.json` is damaged, nothing can prove which of them this
+installation owns, so `thermite upgrade` refuses with exit status 2 and
+changes nothing. To recover, as root: stop Thermite
+(`systemctl stop thermite.target thermite.slice`); move its units
+(`/etc/systemd/system/thermite*`, `/etc/containers/systemd/thermite*` and
+their links in `/etc/systemd/system/multi-user.target.wants`), the native-port
+rule file `/etc/thermite-native.nft` and the node exporter's AppArmor files
+aside, out of those directories; run `systemctl daemon-reload`; then run
+`thermite install --config DIR`. The state under `/srv/thermite` stays where
+it is.
+
+### Remove
 
 `thermite uninstall --config "$HOME/thermite-site" --dry-run` shows service
 removal, including the boot-time `thermite-native-boundary.service`. The

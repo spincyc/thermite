@@ -147,9 +147,12 @@ repository. Pinning a release older than the site's committed one is refused
 unless `--allow-downgrade` is given after deliberate state recovery.
 
 The candidate then runs the complete native and access workflow: boot checks,
-native backups when required, deployment and service readiness, gateway
-staging, a complete stopped-state identity backup, schema migration, activation,
-native authentication and callback configuration, and live HTTPS verification.
+deployment and service readiness, gateway staging, schema migration,
+activation, native authentication and callback configuration, and live HTTPS
+verification. An upgrade runs it as one install transaction that sets the
+installed version aside first and either commits the new one or puts the
+installed one back in the same run; see
+[how an upgrade runs](installation.md#how-an-upgrade-runs).
 Existing identity, security settings, certificates and callback routes are
 adopted. The gateway's hosts, listening address and timezone come from the
 host on every run, and a certificate whose names no longer match is reissued
@@ -159,8 +162,8 @@ private certificate authority's certificate, which each client trusts once.
 The authority lives in the site's `var/gateway/authority/`; see
 [HTTPS and accounts](installation.md#set-up-https-and-accounts).
 
-Only a successful complete run selects the candidate through
-`~/.local/bin/thermite`. Keep that directory first on PATH; a successful run
+Only a successful complete run, for an upgrade a committed transaction,
+selects the candidate through `~/.local/bin/thermite`. Keep that directory first on PATH; a successful run
 warns when `thermite` on PATH is a different launcher. A recognized standard
 pip-installed owner entry point is backed up before adoption; a custom command
 is not overwritten. The one-time application bootstrap in the
@@ -177,27 +180,32 @@ not silently change them.
 
 Validation or commit failures restore only the upgrade's bounded site edits
 when those files have not changed concurrently. Concurrent edits are preserved
-for review. If a host phase fails, the committed candidate pin and candidate
-environment remain available, while the previous owner command stays selected.
-Rerun the printed Resume command, which names the fetched commit with
-`--revision`: it revalidates and reuses the candidate and resumes completed
-stages without a duplicate pin commit. Meanwhile the previous owner command
-runs site commands with the site's pinned release, verified from
-`var/application-releases/<digest>`, instead of refusing. A changed or damaged
-retained release is refused. `--dry-run` shows a provisional host plan only
-when the site pins the release that is running it.
+for review. An upgrade's host phase that ends without a commit says what
+happened and keeps the previous owner command selected: refused before its
+install transaction began (nothing of Thermite changed), rolled back (the
+version that ran before runs again), or stuck or interrupted (the next
+`thermite upgrade` resolves the transaction first). Once nothing began, or
+the rollback finished, it undoes the site's pin commit, so the site pins the
+version that runs; the candidate environment stays cached for the next run. See
+[when an upgrade fails](installation.md#when-an-upgrade-fails) for the exit
+statuses.
 
-Retaining the previous launcher is not an automatic rollback of services,
-native data or identity schemas. The native backup and complete identity
-backup have different recovery purposes. A failed cutover can leave services
-stopped; follow its recorded failure and backup paths. To go back to the
-previously deployed release, follow the printed advice: restore the backup when
-one was made, revert the site's release-pin commit, then run that release's
-cached `var/application-releases/<digest>/bin/thermite install --config DIR`.
-Before selecting an older gateway, establish that it supports the current
-schema, or restore the matching stopped-state identity backup as part of
-deliberate recovery. Do not bootstrap a new authority, reset accounts or
-replace credentials to retry.
+An install's host phase that fails keeps the committed candidate pin and
+candidate environment, while the previous owner command stays selected. Rerun
+the printed Resume command, which names the fetched commit with `--revision`:
+it revalidates and reuses the candidate without a duplicate pin commit.
+Meanwhile the previous owner command runs site commands with the site's pinned
+release, verified from `var/application-releases/<digest>`, instead of
+refusing. A changed or damaged retained release is refused. `--dry-run` shows
+a provisional host plan only when the site pins the release that is running
+it.
+
+To go back to an older release after an upgrade committed, revert the site's
+release-pin commit, then run that release's cached
+`var/application-releases/<digest>/bin/thermite install --config DIR`. Before
+selecting an older gateway, establish that it supports the current identity
+schema. Do not bootstrap a new authority, reset accounts or replace
+credentials to retry.
 
 Verified application releases are also cached under
 `var/application-releases/`. Keep that cache, `var/gateway/authority/`,

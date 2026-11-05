@@ -13,12 +13,19 @@ import unittest
 from unittest.mock import Mock, patch
 
 AREA = Path(__file__).resolve().parents[1]
+#: A fictional install transaction's id.
+TRANSACTION = "20261105T101500Z-3f9a2c"
+
+
+def upgrade_sequence(context):
+    """What thermite upgrade runs once Thermite is stopped and set aside."""
+    return [*changeover.switching(context, TRANSACTION), *changeover.verification(context)]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_application_update
 import oh_paths
 from oh_cli import deploy, install, upgrade
-from oh_install import runner, steps
+from oh_install import changeover, runner, steps
 from oh_install.access import Gateway
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites, unit_text
 from oh_install.model import Check, Task
@@ -135,34 +142,34 @@ class UnifiedInstall(unittest.TestCase):
                                 "a" * 40, "b" * 64, "fixture", None,
                                 prepared={"conf/services/addons.cfg": oh_deploy.Blob(b"binding = http\n")},
                                 application={"version": "0.1.0.dev0", "digest": "c" * 64})
-        plan = Mock()
-        for sequence in (steps.install(context), steps.upgrade(context, plan, "fixture")):
+        for sequence in (steps.install(context), upgrade_sequence(context)):
             types = [type(step) for step in sequence]
-            native = steps.Restart if steps.Restart in types else steps.Services
-            self.assertLess(types.index(NativeIngress), types.index(native))
+            target = steps.Target if steps.Target in types else steps.StartTarget
+            self.assertLess(types.index(NativeIngress), types.index(steps.Services))
             self.assertLess(types.index(steps.Answers), types.index(Gateway))
             self.assertLess(types.index(steps.Token), types.index(Gateway))
             self.assertLess(types.index(Gateway), types.index(steps.NativeReady))
-            self.assertLess(types.index(steps.Target), types.index(steps.NativeReady))
+            self.assertLess(types.index(target), types.index(steps.NativeReady))
             self.assertEqual(types.count(steps.NativeReady), 1, "one authoritative wait owns the deadline and recovery budget")
-            self.assertEqual(types.index(steps.NativeReady) + 1, types.index(steps.MetricsAnswer))
-            self.assertEqual(types.index(steps.MetricsAnswer) + 1, types.index(steps.Verify))
-            # Everything that needs no stop comes first; everything that
-            # changes what Thermite runs on, or starts it, comes after.
-            quiesce = types.index(steps.Quiesce)
-            self.assertEqual(types.count(steps.Quiesce), 1)
-            self.assertEqual(types.index(steps.BootTest) + 1, quiesce)
-            for changing in (steps.Backup, steps.Account, steps.StateDirectories, steps.MetricsDirectories,
-                             steps.Units, steps.NativePreparation, NativeIngress, steps.Deploy, native, Gateway,
-                             steps.Target):
-                if changing in types:
-                    self.assertLess(quiesce, types.index(changing), changing)
+            self.assertLess(types.index(steps.NativeReady), types.index(steps.MetricsAnswer))
+            self.assertIsInstance(sequence[-1], steps.Verify)
             self.assertTrue(sequence[types.index(Gateway)].stop_on_failure)
-        for sequence in (steps.install(context), steps.upgrade(context, plan, "fixture"), steps.clean_install(context)):
+        # Everything that needs no stop comes first; everything that changes
+        # what Thermite runs on, or starts it, comes after. The upgrade stops
+        # Thermite inside its install transaction, after its preparation.
+        types = [type(step) for step in steps.install(context)]
+        quiesce = types.index(steps.Quiesce)
+        self.assertEqual(types.count(steps.Quiesce), 1)
+        self.assertEqual(types.index(steps.BootTest) + 1, quiesce)
+        for changing in (steps.Account, steps.StateDirectories, steps.MetricsDirectories, steps.Units,
+                         steps.NativePreparation, NativeIngress, steps.Deploy, steps.Services, Gateway, steps.Target):
+            self.assertLess(quiesce, types.index(changing), changing)
+        upgrade = [*changeover.preparation(context), *upgrade_sequence(context)]
+        for sequence in (steps.install(context), upgrade, steps.clean_install(context)):
             types = [type(step) for step in sequence]
             probe = types.index(NativeIngressPrerequisites)
             self.assertLess(types.index(steps.Packages), probe)
-            for disruptive in (steps.BootTest, steps.Quiesce, steps.Backup, steps.Units, steps.NativePreparation,
+            for disruptive in (steps.BootTest, steps.Quiesce, steps.Units, steps.NativePreparation,
                                steps.Stop, steps.RemoveUnits, steps.Purge, steps.OperatorCredentialsReset):
                 if disruptive in types:
                     self.assertLess(probe, types.index(disruptive))
@@ -230,7 +237,7 @@ class GatewayReadinessLifecycle(unittest.TestCase):
             return 0
 
         system.native_probe.side_effect = probe
-        sequence = steps.install(context) if operation == "install" else steps.upgrade(context, Mock(), "fixture")
+        sequence = steps.install(context) if operation == "install" else upgrade_sequence(context)
         with ExitStack() as scope:
             scope.enter_context(patch.object(steps, "WAIT", 90))
             for step in sequence:

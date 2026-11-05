@@ -25,10 +25,10 @@ thermite rollback deploys the one before it.
 
 --details adds what each deploy recorded: the files it added (+), changed
 (~) and removed (-) in each tree, what became of the reloads and restarts
-they asked for, the state backup an upgrade took first, and each HTTPS
-gateway release an install or upgrade then activated, with the release it
-replaced and the identity backup taken before migrating, and each upgrade
-that rolled it back. --json has all of it, with up to 50 paths of each kind
+they asked for, each HTTPS gateway release an install or upgrade then
+activated, with the release it replaced, and each upgrade transaction that
+rolled it back. Upgrades before the install engine also show the state and
+identity backups they took; nothing writes or reads those any more. --json has all of it, with up to 50 paths of each kind
 per tree and exact counts.
 
 Deploys from before the history recorded the boot test show ? there,

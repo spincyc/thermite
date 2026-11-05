@@ -219,7 +219,8 @@ class NativeDeadlinePolicy(unittest.TestCase):
         self.assertEqual(native.remaining(system), 0, "an exhausted budget stays exhausted")
 
     def test_one_policy_object_spans_startup_commissioning_and_final_readiness(self):
-        for sequence in (steps.install(context()), steps.upgrade(context(), mock.Mock(), "fixture")):
+        from oh_install import changeover
+        for sequence in (steps.install(context()), changeover.switching(context(), "20261105T101500Z-3f9a2c")):
             types = [type(step) for step in sequence]
             settle, gateway = sequence[types.index(steps.NativeSettle)], sequence[types.index(Gateway)]
             self.assertEqual(types.index(steps.Token) + 1, types.index(steps.NativeSettle))
@@ -430,11 +431,9 @@ class Compensation(unittest.TestCase):
         system.unit.return_value = Unit("active", "enabled", 0, 1)
         system.stat.return_value = SimpleNamespace(uid=9001, gid=9001, mode=0o750, is_dir=True)
         with self.owned_everything(), mock.patch.object(deploy, "prepare_openhab_argv", return_value=("fixture-prepare",)):
-            backup = steps.Backup(context(), "fixture", "5.2.3")
-            backup.available = lambda system: Path("/fictional/backup.tar.gz")
             for receipt in (True, False):
                 with mock.patch.object(steps, "service_receipt", return_value=receipt):
-                    for step in (backup, steps.NativePreparation(context())):
+                    for step in (steps.NativePreparation(context()),):
                         with self.subTest(step=type(step).__name__, receipt=receipt):
                             self.assertFalse([action for action in step.actions(system) if action.argv[0] == "systemctl"],
                                              "Quiesce stopped all of Thermite before this step")
@@ -499,8 +498,6 @@ class Compensation(unittest.TestCase):
                 mock.patch.object(steps.NativeListeners, "check", return_value=Check(True, "fixture")):
             self.assertTrue(steps.NativePreparation(context()).check(system).done,
                             "a changed Apple TV helper unit restarts the helper, not openHAB")
-            backup = steps.Backup(context(), "fixture", "5.2.3")
-            self.assertTrue(backup.check(system).done)
 
 
 class Health(unittest.TestCase):

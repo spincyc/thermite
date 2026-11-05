@@ -445,7 +445,8 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
     transaction.git(site_root, "var", "GIT_AUTHOR_IDENT")
     transaction.git(site_root, "var", "GIT_COMMITTER_IDENT")
     say("This run includes application acquisition, the site release commit, native services, "
-        "the access gateway, backups when needed, sudo commands and readiness checks.")
+        "the access gateway, sudo commands and readiness checks"
+        + (", as one install transaction that commits or rolls back." if operation == "upgrade" else "."))
     if not approve():
         return 1
     key = None

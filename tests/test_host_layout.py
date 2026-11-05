@@ -180,9 +180,9 @@ class Mounts(unittest.TestCase):
                    for line in deploy.render_quadlet(VERSIONS, context().host).splitlines() if line.startswith("Volume=")}
         self.assertIn(layout.logs, sources)
         self.assertLessEqual(sources, made)
-        plan = steps.Plan((), "5.2.3", "5.2.3", None, "fixture", ())
-        for name, sequence in (("install", steps.install(context())),
-                               ("upgrade", steps.upgrade(context(), plan, "fixture"))):
+        from oh_install import changeover
+        upgrade = [*changeover.preparation(context()), *changeover.switching(context(), "20261105T101500Z-3f9a2c")]
+        for name, sequence in (("install", steps.install(context())), ("upgrade", upgrade)):
             types = [type(step) for step in sequence]
             for maker in (steps.Account, steps.StateDirectories, steps.MetricsDirectories):
                 with self.subTest(sequence=name, step=maker.__name__):
