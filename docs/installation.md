@@ -406,13 +406,16 @@ printing private native settings or credentials.
 The local terminal automatically uses the verified gateway URL and the
 authority certificate saved by installation. Run `thermite remote --config DIR` for
 ordinary controls without a login. To view cameras or administer the site, log in with
-`thermite access login --config DIR --user USER`. This creates a personal
-credential; installation itself creates no household account. Other computers
-need the server's URL and a copy of `tls-cert.pem`, passed once with
-`--ca-file`: `thermite tui --url URL --ca-file FILE` opens the terminal remote
-there without a private site (with no `--url` it opens `https://thermite:13601`;
-with `--config DIR` it uses that site's `gateway.port`), and
-`thermite access login` takes the same switches.
+`thermite access login --url HOST:PORT --user USER`, then open `thermite tui --url
+HOST:PORT`. This creates a personal credential, saved for that address;
+installation itself creates no household account. Neither needs the private
+site: only the server's own commands do. On the server they trust its
+installed gateway certificate. Other computers need the server's URL and a
+copy of `tls-cert.pem`, passed once with `--ca-file`: `thermite tui --url URL
+--ca-file FILE` opens the terminal remote there (with no `--url` it opens
+`https://thermite:13601`; with `--config DIR` it uses that site's
+`gateway.port` and installed address), and `thermite access login`, `logout`
+and `status` take the same switches.
 
 ## Guest access over plain HTTP
 

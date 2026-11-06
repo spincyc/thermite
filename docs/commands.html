@@ -2434,7 +2434,9 @@ Log this terminal into a site.
 
 options:
   -h, --help         show this help message and exit
-  --url URL          site&#x27;s HTTPS origin (default: this site&#x27;s verified installation)
+  --url URL          the gateway as https://HOST:PORT, HOST:PORT or HOST, as thermite
+                     tui takes it (default: a selected site&#x27;s installed gateway, else
+                     https://thermite:13601)
   --user USER        site username
   --ca-file CA_FILE  trusted private CA certificate file
   --json             print the report as JSON
@@ -2454,7 +2456,9 @@ Revoke this terminal&#x27;s site credential.
 
 options:
   -h, --help     show this help message and exit
-  --url URL      site&#x27;s HTTPS origin (default: this site&#x27;s verified installation)
+  --url URL      the gateway as https://HOST:PORT, HOST:PORT or HOST, as thermite tui
+                 takes it (default: a selected site&#x27;s installed gateway, else
+                 https://thermite:13601)
   --json         print the report as JSON
 
 switches every verb takes:
@@ -2472,7 +2476,9 @@ Read this terminal&#x27;s current site identity and policies.
 
 options:
   -h, --help     show this help message and exit
-  --url URL      site&#x27;s HTTPS origin (default: this site&#x27;s verified installation)
+  --url URL      the gateway as https://HOST:PORT, HOST:PORT or HOST, as thermite tui
+                 takes it (default: a selected site&#x27;s installed gateway, else
+                 https://thermite:13601)
   --room ROOM    also read this room&#x27;s policy (repeatable)
   --json         print the report as JSON
 

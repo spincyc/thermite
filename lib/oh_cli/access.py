@@ -24,6 +24,8 @@ the native network boundary. Stage, migrate, verify, serve and worker here
 are service and recovery primitives, not a separate deployment sequence.
 """
 
+#: The terminal's subcommands: like thermite tui, they need no private site.
+TERMINAL = ("login", "logout", "status")
 EXAMPLES = (("thermite access login --url https://thermite.example:13601 --user operator", "save this site's personal credential privately"),
             ("thermite access setup --config /srv/thermite/access/releases/RELEASE/config.json", "arm first admin setup on the HTTPS Security page"),
             ("thermite access migrate --config /srv/thermite/access/releases/RELEASE/config.json", "upgrade identity schema after stopping services and backing up state"),
@@ -95,9 +97,10 @@ def main(argv=None):
     oh_cli.add_json(sub)
     sub = oh_cli.action(commands, "callbacks", "run the explicitly configured plaintext UPnP NOTIFY listener", examples=[("thermite access callbacks --config /srv/thermite/access/releases/RELEASE/callbacks.json", "run only verified callback paths and peers")])
     sub.add_argument("--config", required=True, type=Path, help="private mode0600 callback-only configuration")
-    for name in ("login", "logout", "status"):
+    for name in TERMINAL:
         sub = oh_cli.action(commands, name, {"login": "log this terminal into a site", "logout": "revoke this terminal's site credential", "status": "read this terminal's current site identity and policies"}[name], examples=[("thermite access " + name + " --url https://thermite.example:13601" + (" --user operator" if name == "login" else ""), "use this site's private terminal credential")])
-        sub.add_argument("--url", metavar="URL", help="site's HTTPS origin (default: this site's verified installation)")
+        sub.add_argument("--url", metavar="URL", help="the gateway as https://HOST:PORT, HOST:PORT or HOST, as thermite tui "
+                         f"takes it (default: a selected site's installed gateway, else https://thermite:{oh_ports.ACCESS_PORT})")
         if name == "login":
             sub.add_argument("--user", required=True, help="site username")
             sub.add_argument("--ca-file", type=Path, help="trusted private CA certificate file")
@@ -123,15 +126,30 @@ def main(argv=None):
     sub.add_argument("--callbacks", type=Path, help="optional private mode0600 exact callback map; stage a separate disabled listener unit")
     oh_cli.add_json(sub)
     args = parser.parse_args(argv)
+    if args.command not in TERMINAL:
+        # The server's subcommands run on its private site, so they check it
+        # as a site verb's parser does; the terminal's need none.
+        import oh_paths
+        try:
+            oh_paths.require_compatible()
+        except ValueError as exc:
+            return oh_cli.usage_error(str(exc))
     try:
-        if args.command in {"login", "logout", "status"}:
+        if args.command in TERMINAL:
             from oh_access import client
-            profile = client.deployment(oh_cli.AREA)
-            args.url = args.url or (profile["url"] if profile else None)
-            if args.url is None:
-                raise AccessError("Select the installed private site with --config DIR, or supply --url")
+            from oh_cli import tui
+            # The gateway and its trust as thermite tui finds them, so both
+            # use the one credential saved for that address.
+            profile = tui.installed_profile()
+            try:
+                args.url = tui.gateway(args.url or (profile["url"] if profile else None))
+            except ValueError as exc:
+                raise AccessError(str(exc)) from None
             if args.command == "login":
-                ca = args.ca_file or (profile["ca_file"] if profile and profile["url"] == client.origin(args.url) else None)
+                try:
+                    ca, _ = tui.trust(args.url, args.ca_file)
+                except tui.Problem as exc:
+                    raise AccessError("; ".join(exc.args)) from None
                 result = client.login(args.url, args.user, hidden_password(), ca_file=ca)
             elif args.command == "logout":
                 result = client.logout(args.url)

@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite access login`, `logout` and `status` need no private site, as
+  `thermite tui` needs none: they take `--url` as `HOST`, `HOST:PORT` or
+  `https://HOST:PORT` and trust the gateway as `thermite tui` does (on the
+  server, its installed certificate), so `thermite access login --url
+  thermite.example:13601 --user USER` works from any directory. They used to
+  stop with "select a private site with --config DIR". With `--config DIR`
+  and no `--url` they still use that site's installed gateway. The server's
+  own `access` subcommands still check the site.
 - `thermite upgrade` installs the new version as one install transaction. It
   prepares packages, the boot test and the account, pulls every pinned image
   and shows the room it needs while Thermite keeps running; too little room

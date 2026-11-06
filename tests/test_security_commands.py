@@ -99,6 +99,75 @@ class TerminalCredentials(unittest.TestCase):
             self.client.request(self.url, "/api/v1/rooms/Den/policy")
 
 
+class TerminalWithoutSite(unittest.TestCase):
+    """login, logout and status reach a gateway as thermite tui does, with no
+    private site; the server's subcommands still need one."""
+
+    def run_access(self, argv):
+        import oh_paths
+        output, error = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(error), \
+                patch.object(oh_paths, "require_compatible", side_effect=oh_paths.SiteError("no site")) as check:
+            status = access.main(argv)
+        return status, check, error.getvalue()
+
+    def test_login_takes_the_address_and_trust_as_thermite_tui_does_without_a_site(self):
+        import oh_cli
+        from oh_access import client
+        from oh_cli import tui
+        self.assertFalse(oh_cli.VERBS["access"].site)
+        for given, url in (("thermite.example:13601", "https://thermite.example:13601"),
+                           ("192.0.2.50", "https://192.0.2.50:16301")):
+            with patch.object(tui, "installed_profile", return_value=None), \
+                    patch.object(tui, "default_port", return_value=16301), \
+                    patch.object(tui, "trust", return_value=("/trusted/site-ca.pem", "saved")) as trust, \
+                    patch.object(access, "hidden_password", return_value="synthetic"), \
+                    patch.object(client, "login", return_value={"user": "operator"}) as login:
+                status, check, error = self.run_access(["login", "--url", given, "--user", "operator"])
+            self.assertEqual(status, 0, error)
+            check.assert_not_called()
+            trust.assert_called_once_with(url, None)
+            login.assert_called_once_with(url, "operator", "synthetic", ca_file="/trusted/site-ca.pem")
+
+    def test_status_and_logout_need_no_site_either(self):
+        from oh_access import client
+        from oh_cli import tui
+        with patch.object(tui, "installed_profile", return_value=None), \
+                patch.object(client, "status", return_value={}) as status_call, \
+                patch.object(client, "logout", return_value={}) as logout:
+            self.assertEqual(self.run_access(["status", "--url", "thermite.example:13601"])[0], 0)
+            self.assertEqual(self.run_access(["logout", "--url", "thermite.example:13601"])[0], 0)
+        status_call.assert_called_once_with("https://thermite.example:13601", rooms=[])
+        logout.assert_called_once_with("https://thermite.example:13601")
+
+    def test_a_selected_sites_installed_gateway_is_the_default(self):
+        from oh_access import client
+        from oh_cli import tui
+        profile = {"url": "https://thermite.example:13601", "ca_file": "/site/tls-cert.pem"}
+        with patch.object(tui, "installed_profile", return_value=profile), \
+                patch.object(client, "status", return_value={}) as status_call:
+            self.assertEqual(self.run_access(["status"])[0], 0)
+        status_call.assert_called_once_with("https://thermite.example:13601", rooms=[])
+
+    def test_a_wrong_address_is_refused_before_anything_is_sent(self):
+        from oh_access import client
+        from oh_cli import tui
+        with patch.object(tui, "installed_profile", return_value=None), \
+                patch.object(client, "login") as login:
+            status, _, error = self.run_access(["login", "--url", "http://thermite.example", "--user", "operator"])
+        self.assertEqual(status, 2)
+        self.assertIn("plain http only reaches this computer", error)
+        login.assert_not_called()
+
+    def test_the_servers_subcommands_still_need_a_compatible_site(self):
+        with patch.object(service, "prune_policies") as prune:
+            status, check, error = self.run_access(["prune", "--config", "/unused/config.json"])
+        self.assertEqual(status, 2)
+        check.assert_called_once_with()
+        prune.assert_not_called()
+        self.assertIn("no site", error)
+
+
 class Audit(unittest.TestCase):
     ROWS = [{"at": "2026-11-04T18:00:00+00:00", "action": "login", "outcome": "denied", "principal": "anonymous",
              "actor": None, "user": None, "target": "2", "peer": "9c0d1e2f", "account": "operator"},

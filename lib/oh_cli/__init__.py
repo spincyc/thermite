@@ -90,7 +90,8 @@ VERBS = {
     "remote": Verb("use", "the house remote in a terminal"),
     "tui": Verb("use", "the house remote in a terminal on any computer, from its HTTPS gateway", site=False),
     "handheld": Verb("use", "handheld remotes: the bridge to the house, enrolling and forgetting them", site=False),
-    "access": Verb("use", "site login, local identity bootstrap, HTTPS service and room policies"),
+    # Its server subcommands check the site themselves (oh_cli.access).
+    "access": Verb("use", "site login, local identity bootstrap, HTTPS service and room policies", site=False),
     "theme": Verb("use", "the flaming bowl mark and color themes: show, check, export", site=False),
     "docs": Verb("use", "build the docs site, or export it to the thermite repository", site=False),
     "version": Verb("program", "thermite's version, and runtime's: pinned, and running here", site=False),
