@@ -21,7 +21,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_room_policy  # noqa: E402
 from oh_room_policy import (Field, Observation, Plan, PolicyError, conflicts, desired_at, due_boundaries,  # noqa: E402
                             expected_plan, local_instant, repair_plan, verify)
-from oh_room_policy.worker import PolicyRecord, Worker  # noqa: E402
+from oh_room_policy.worker import BACKOFF, SETTLED, PolicyRecord, Worker  # noqa: E402
 from oh_access import AccessError  # noqa: E402
 from oh_access.worker import OBSERVED, NativeCache, PolicyIO, Warnings, observe  # noqa: E402
 
@@ -445,6 +445,191 @@ class SharedResources(Harness, unittest.TestCase):
         self.assertEqual(conflicts(west, [east, north]), ["east"])
         self.assertEqual(conflicts(west, [plan(None, "east", "b"), north], boundary=True), [])
         self.assertEqual(conflicts(west, [west]), [])
+
+
+AVR, ZONE2, PROJECTOR = "avr_power", "avr_zone2_power", "projector_power"
+CINEMA = {"cinema": {"off": {AVR: ("OFF", "avr"), ZONE2: ("OFF", "avr"), PROJECTOR: ("OFF", "projector")},
+                     "tv": {AVR: ("ON", "avr"), ZONE2: ("OFF", "avr"), PROJECTOR: ("ON", "projector")}}}
+CINEMA_HOUSE = {"routing": {"rooms": {"cinema": {"sources": ["tv"]}}}}
+FRIDAY = MONDAY + timedelta(days=4)
+
+
+class Reported:
+    """Native I/O through the real NativeCache, fed only when a device
+    changes, as the denonmarantz binding and the sony_adcp rule report it, so
+    each reading ages from its device's last change. A report without a
+    value is a poll: the device reports its state, changed or not. A device
+    obeys a repair two seconds later unless it is deaf; one in `remote` is
+    turned back on that many seconds after it goes off. Every write asserts
+    that it acts on a fresh, mismatched reading."""
+
+    def __init__(self, test, clock, notify):
+        self.test, self.clock = test, clock
+        self.cache = NativeCache([Field(item, "OFF", "device:" + device, ("OFF", "ON"))
+                                  for item, (_, device) in CINEMA["cinema"]["off"].items()],
+                                 clock=clock, on_change=lambda item: notify("cinema"))
+        self.state, self.due, self.writes = {}, [], []
+        self.deaf, self.remote, self.broken = set(), {}, False
+
+    def report(self, item, value=None):
+        if value is None or self.state.get(item) != value:
+            self.state[item] = self.state.get(item) if value is None else value
+            self.cache.accept((item, self.state[item]))
+            if self.state[item] == "OFF" and item in self.remote:
+                self.due.append((self.clock() + timedelta(seconds=self.remote[item]), item, "ON"))
+
+    def read(self, items):
+        if self.broken:
+            raise OSError("native feed unavailable")
+        return self.cache.read(items)
+
+    def write(self, room, item, value, revision, origin="repair"):
+        reading = self.cache.read((item,))[item]
+        self.test.assertLessEqual((self.clock() - reading.observed_at).total_seconds(), 30, "repaired on a stale reading")
+        self.test.assertNotEqual(reading.value, value)
+        self.writes.append((self.clock(), item))
+        if item not in self.deaf:
+            self.due.append((self.clock() + timedelta(seconds=2), item, value))
+        return "c0ffee00"
+
+
+class QuietDevices(unittest.TestCase):
+    """A room locked Off whose devices report only when they change: it is
+    Unknown 30 s after each report, and each fresh mismatch is repaired."""
+
+    def setUp(self):
+        patcher = patch("oh_room_policy.worker.expected_plan", synthetic(CINEMA))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def start(self, now):
+        self.wall, self.mono = [now], [1000.0]
+        self.store = Store((policy("cinema", hold="off", enabled=False), now))
+        self.io = Reported(self, lambda: self.wall[0], lambda room: self.worker.notify(room))
+        self.worker = Worker(CINEMA_HOUSE, self.store, self.io, wall_clock=lambda: self.wall[0],
+                             monotonic=lambda: self.mono[0])
+        self.statuses = []
+
+    def run_until(self, until, *script):
+        """The supervisor: a pass, then a sleep until the worker is due or the
+        next device report, which wakes it as the native feed does."""
+        self.io.due.extend(script)
+        while self.wall[0] < until:
+            result = self.worker.step()
+            if "cinema" in result:  # Else the room was not due for a read.
+                self.statuses.append(result["cinema"])
+            wake = min(until, self.wall[0] + timedelta(seconds=self.worker.next_delay(5.0)))
+            self.io.due.sort(key=lambda report: report[0])
+            when = self.io.due[0][0] if self.io.due else None
+            seconds = ((when if when is not None and when <= wake else wake) - self.wall[0]).total_seconds()
+            self.wall[0] += timedelta(seconds=max(0.0, seconds))
+            self.mono[0] += max(0.0, seconds)
+            if when is not None and when <= wake:
+                self.io.report(*self.io.due.pop(0)[1:])
+
+    def writes(self, item=None):
+        return [(when, written) for when, written in self.io.writes if item in (None, written)]
+
+    def test_every_wait_ends_while_the_mismatch_it_waits_on_is_fresh(self):
+        # The longest step, after another Item's repair in the room.
+        self.assertLess(max(BACKOFF) + BACKOFF[0], Field(AVR, "OFF", "device:avr", ("OFF", "ON")).max_age)
+        self.assertGreater(SETTLED, max(BACKOFF))
+
+    def test_a_day_of_devices_turning_themselves_on_is_repaired_each_time(self):
+        """A day as one house lived it: each device turned itself on again,
+        and only a change reports. Unknown passes used to push the next write
+        out to 60 s, by which time the mismatch was stale too, so nothing was
+        sent: the receiver stayed on from 11:35:36, and both from 16:12."""
+        def friday(hour, minute, second=0):
+            return at(hour, minute, second, day=FRIDAY)
+        turned_on = [(friday(11, 29, 21), AVR), (friday(11, 29, 45), PROJECTOR), (friday(11, 31, 46), PROJECTOR),
+                     (friday(11, 32, 33), PROJECTOR), (friday(11, 33, 21), AVR), (friday(11, 33, 47), PROJECTOR),
+                     (friday(11, 33, 51), AVR), (friday(11, 34, 51), AVR), (friday(11, 35, 36), AVR),
+                     (friday(16, 12, 22), AVR), (friday(16, 12, 45), PROJECTOR)]
+        # Changes the devices made themselves; a repair's OFF follows it.
+        turned_off = [(friday(11, 32, 45), PROJECTOR), (friday(11, 33, 6), AVR), (friday(12, 12, 54), AVR),
+                      (friday(12, 13), PROJECTOR)]
+        self.start(friday(8, 0))
+        for item in (AVR, ZONE2, PROJECTOR):
+            self.io.report(item, "OFF")
+        self.run_until(friday(16, 30), *[(when, item, "ON") for when, item in turned_on],
+                       *[(when, item, "OFF") for when, item in turned_off])
+        self.assertEqual(self.writes(), turned_on)
+        self.assertEqual(self.io.state, {AVR: "OFF", ZONE2: "OFF", PROJECTOR: "OFF"})
+        status = self.statuses[-1]
+        self.assertEqual((status["phase"], status["state"], status["unknown"]),
+                         ("enforcing", "unknown", [AVR, ZONE2, PROJECTOR]))
+
+    def test_a_remote_that_undoes_every_repair_is_backed_off_per_item(self):
+        self.start(at(10))
+        self.io.report(ZONE2, "OFF")
+        self.io.report(PROJECTOR, "OFF")
+        self.io.remote[AVR] = 1
+        # Zone 2 and the projector are polled, so the room verifies between repairs.
+        polls = [(at(10) + timedelta(seconds=10 * n), item, None) for n in range(1, 64) for item in (ZONE2, PROJECTOR)]
+        with self.assertLogs("oh_room_policy.worker", "INFO") as logs:
+            self.run_until(at(10, 5), (at(10, 0, 1), AVR, "ON"), (at(10, 1, 35), ZONE2, "ON"),
+                           (at(10, 2, 15), PROJECTOR, "ON"), *polls)
+            self.io.remote.clear()
+            self.run_until(at(10, 10, 30), (at(10, 10), AVR, "ON"))
+        lines = trail(logs)
+        receiver = [line for line in lines if line.startswith("repair room=cinema item=avr_power")]
+        times = [when for when, _ in self.writes(AVR) if when < at(10, 5)]
+        gaps = [(later - earlier).total_seconds() for earlier, later in zip(times, times[1:])]
+        # The receiver is back on 3 s after each repair: the backoff, not
+        # the remote, sets the pace, and it stays at its longest step.
+        self.assertEqual(gaps, [max(3, BACKOFF[min(n, len(BACKOFF) - 1)]) for n in range(len(gaps))])
+        self.assertLessEqual(len(times), 20)
+        self.assertTrue(any("phase=verified" in line for line in lines), "the room verified between repairs")
+        # Neither the receiver's other zone nor the projector waits for the
+        # contested Item's backoff: each first repair is sent at once.
+        self.assertIn((at(10, 1, 35), ZONE2), self.writes())
+        self.assertIn((at(10, 2, 15), PROJECTOR), self.writes())
+        for item in (ZONE2, PROJECTOR):
+            self.assertIn(f"repair room=cinema item={item} value=OFF revision=1 cmd=c0ffee00 "
+                          "outcome=dispatched attempt=1", lines)
+        everything = [when for when, _ in self.writes()]
+        self.assertGreaterEqual(min((b - a).total_seconds() for a, b in zip(everything, everything[1:])), BACKOFF[0])
+        # Once the receiver has needed no repair for SETTLED, it starts over.
+        self.assertEqual(self.writes(AVR)[-1], (at(10, 10), AVR))
+        self.assertEqual(receiver[len(times) - 1].rsplit(" ", 1)[1], f"attempt={len(times)}")
+        self.assertEqual(receiver[-1].rsplit(" ", 1)[1], "attempt=1")
+
+    def test_a_mismatch_after_a_quiet_spell_is_repaired_at_once(self):
+        self.start(at(8))
+        self.io.report(AVR, "OFF")
+        self.io.report(PROJECTOR, "OFF")
+        self.run_until(at(9))
+        self.io.cache.clear()  # A reconnected feed: no reading at all.
+        self.run_until(at(10))
+        self.io.broken = True
+        self.run_until(at(11))
+        self.assertEqual(self.statuses[-1]["reason"], "native_read_unavailable")
+        self.io.broken = False
+        with self.assertLogs("oh_room_policy.worker", "INFO") as logs:
+            self.run_until(at(13, 40), (at(12), AVR, "ON"), (at(13), PROJECTOR, "ON"), (at(13, 30), AVR, "ON"))
+        self.assertEqual(self.writes(), [(at(12), AVR), (at(13), PROJECTOR), (at(13, 30), AVR)])
+        # Hours of Unknown passes, wake-ups and failed reads added no backoff.
+        self.assertEqual([line.rsplit(" ", 1)[1] for line in trail(logs) if line.startswith("repair")], ["attempt=1"] * 3)
+        self.assertEqual(self.statuses[-1]["retry_seconds"], 0)
+
+    def test_a_stale_reading_is_never_verified_or_repaired(self):
+        self.start(at(10))
+        self.io.deaf.add(AVR)  # It ignores repairs and reports nothing.
+        self.io.report(AVR, "ON")
+        self.io.report(PROJECTOR, "OFF")
+        self.run_until(at(14))
+        # Repairs stop once the reading is older than Field.max_age.
+        self.assertEqual(self.writes(), [(at(10) + timedelta(seconds=second), AVR) for second in (0, 2, 7, 17)])
+        self.assertNotIn("verified", {status["phase"] for status in self.statuses})
+        self.assertEqual((self.statuses[-1]["state"], self.statuses[-1]["unknown"]), ("unknown", [AVR, ZONE2, PROJECTOR]))
+        # A worker started while the receiver is on, with no report since,
+        # sends nothing until a device reports.
+        self.start(at(14))
+        self.io.state = {AVR: "ON", PROJECTOR: "ON"}
+        self.run_until(at(15), (at(14, 30), PROJECTOR, None))
+        self.assertEqual(self.writes(), [(at(14, 30), PROJECTOR)])
+        self.assertNotIn("verified", {status["phase"] for status in self.statuses})
 
 
 class UnreadablePolicies(Harness, unittest.TestCase):

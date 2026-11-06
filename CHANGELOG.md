@@ -7,6 +7,22 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A locked room whose receiver or projector changes by itself, such as one
+  turning back on in a room locked Off, is repaired as soon as the device
+  reports it, however long the room has shown Unknown. Every Unknown pass
+  used to push the next repair out, up to a minute, so by the time it was
+  due the device's report was older than the 30 seconds a reading counts,
+  and nothing was sent: a room locked Off could stay on for hours. Only
+  repair writes now count toward the backoff, and each Item backs off on
+  its own: 2, 5, 10, then 20 seconds between repeated repairs, starting
+  again after a minute without one. A remote or CEC that undoes every
+  repair is answered less and less often, down to once every 20 seconds,
+  even when the room verifies in between; there it used to be answered
+  within seconds every time. A stale reading still never verifies a room or
+  triggers a repair. A device that reports only when it changes (the
+  denonmarantz binding, the sony_adcp rule) is Unknown 30 seconds after
+  each change, and one already wrong when the worker starts is repaired once
+  it next reports.
 - `thermite access login`, `logout` and `status` need no private site, as
   `thermite tui` needs none: they take `--url` as `HOST`, `HOST:PORT` or
   `https://HOST:PORT` and trust the gateway as `thermite tui` does (on the

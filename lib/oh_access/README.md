@@ -160,8 +160,20 @@ stream disconnect, and never obtains observation timestamps from REST reads
 or command acknowledgements. Apple TV power additionally requires its
 provider's acquisition timestamp before the paired power update. A missing,
 stale or invalid timestamp stays Unknown; native drift can trigger only the
-engine's bounded mismatch repairs. Source boundary commands remain durably
-claimed once, with uncertain outcomes preserved after transport failure. A
+engine's bounded mismatch repairs. A reading is fresh for 30 seconds after its
+update (`Field.max_age`), and only a fresh mismatch is repaired: one Item per
+pass, in route order, once that Item's backoff allows. An Item's repeated
+repairs wait 2, 5, 10, then 20 seconds (`BACKOFF`), each inside those 30
+seconds, so a mismatch a device reports during a wait is still fresh when it
+ends; any two repairs in a room are at least 2 seconds apart. Only repair
+writes count, never reads, wake-ups or Unknown passes, and a room that
+verifies between two repairs does not reset it: an Item starts again at 2
+seconds after 60 seconds without a repair (`SETTLED`). A device that reports
+only when it changes is therefore Unknown 30 seconds after each change and is
+repaired whenever it reports drift; one already wrong when the worker starts
+or its feed reconnects is repaired once it next reports. Source boundary
+commands remain durably claimed once, with uncertain outcomes preserved after
+transport failure. A
 catch-up start reads the room's Source Item first and sends nothing when it
 already equals the target; that read is never an observation. Stream failures
 are logged at WARNING at most every five minutes, naming only the exception
@@ -171,7 +183,8 @@ Every command the worker sends has a `cmd` line in the command trail
 (`origin=schedule` or `origin=repair`; see `oh_identity`). The worker also
 logs, at INFO, one `boundary` line per boundary outcome (key, room, revision,
 event, target, status, reason, command ID), one `repair` line per repair write
-(room, item, value, revision, command ID, outcome, attempt) and one `phase`
+(room, item, value, revision, command ID, outcome, and attempt: that Item's
+repairs since it last settled) and one `phase`
 line when a room's phase or policy revision changes. The 10-second heartbeat
 logs nothing.
 

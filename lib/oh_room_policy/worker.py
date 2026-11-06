@@ -27,7 +27,16 @@ from .plan import Observation, Plan, conflicts, expected_plan, repair_plan, veri
 from .schedule import GRACE, Boundary, desired_at, due_boundaries, local_instant, utc
 
 LOG = logging.getLogger(__name__)
-BACKOFF = (2, 5, 15, 30, 60)
+# Seconds an Item's next repair waits after its first, second, ... repair.
+# Only repair writes count; reads, wake-ups and Unknown passes never do. Each
+# step is well inside Field.max_age (30 s), so a mismatch that a device
+# reports while its repair waits is still fresh when the wait ends. Any two
+# repairs in one room are at least BACKOFF[0] apart.
+BACKOFF = (2, 5, 10, 20)
+# An Item that needs no repair for this long starts again at BACKOFF[0]. It is
+# longer than BACKOFF[-1]: a remote or CEC that undoes each repair within the
+# longest step keeps it there, even if the room verifies between repairs.
+SETTLED = 60.0
 # Active enforcement republishes unchanged status at this interval, so a
 # status older than STALE_AFTER means the worker is not currently enforcing.
 RECONCILE_HEARTBEAT = 10.0
@@ -328,12 +337,25 @@ class Worker:
                 blocked.add(room)
         return blocked
 
-    def _retry(self, runtime, mono):
-        if mono >= runtime["write_due"]:
-            delay = BACKOFF[min(runtime["attempt"], len(BACKOFF) - 1)]
-            runtime["attempt"] += 1
-            runtime["write_due"] = mono + delay
-        runtime["read_due"] = min(runtime["write_due"], mono + self.read_interval)
+    @staticmethod
+    def _due(runtime, item):
+        return max(runtime["write_due"], runtime["repairs"].get(item, {}).get("due", 0))
+
+    def _sent(self, runtime, item, mono):
+        """Count one repair write of item and return its attempt number."""
+        previous = runtime["repairs"].get(item)
+        attempt = previous["attempt"] if previous and mono - previous["sent"] < SETTLED else 0
+        runtime["repairs"][item] = {"attempt": attempt + 1, "sent": mono,
+                                    "due": mono + BACKOFF[min(attempt, len(BACKOFF) - 1)]}
+        runtime["write_due"] = max(runtime["write_due"], mono + BACKOFF[0])
+        return attempt + 1
+
+    def _schedule(self, runtime, repair, mono):
+        """Read again within read_interval, or once a known mismatch's repair
+        falls due; return the seconds that repair still waits."""
+        waits = [due for due in (self._due(runtime, item) for item, _ in repair) if due > mono]
+        runtime["read_due"] = min([mono + self.read_interval, *waits])
+        return min(waits, default=mono) - mono
 
     def step(self) -> dict:
         """One bounded pass, callable by a supervised loop or pure fake-I/O test."""
@@ -427,7 +449,7 @@ class Worker:
                 continue
             runtime = self._runtime.get(room)
             if runtime is None or runtime["key"] != state["key"]:
-                runtime = self._runtime[room] = {"key": state["key"], "read_due": 0, "write_due": mono, "attempt": 0}
+                runtime = self._runtime[room] = {"key": state["key"], "read_due": 0, "write_due": mono, "repairs": {}}
             if attempted:
                 # Await normal routing's first report before any repair.
                 runtime["write_due"] = max(runtime["write_due"], self.monotonic() + BACKOFF[0])
@@ -435,6 +457,7 @@ class Worker:
                 continue
             plan = plans[room]
             status = {"phase": "enforcing", "desired": state["desired"]}
+            repair = []
             with self.locks.hold([*("room:" + name for name in revisions), *plan.resources]):
                 if not self._current(revisions):
                     return {"stale": True}
@@ -452,28 +475,31 @@ class Worker:
                     if conflicts(plan, list(plans.values())):
                         status.update(state="degraded", reason="shared_resource_conflict")
                         repair = []
-                    if repair and mono >= runtime["write_due"] and self._current(revisions) and self._scheduled(policies, states):
-                        item, value = repair[0]
+                    # Each Item backs off on its own repairs, so one that a
+                    # remote keeps undoing never holds up another's first. Not
+                    # per device: a second Item of a device would wait out the
+                    # first's step, and its reading would go stale meanwhile.
+                    ready = [(item, value) for item, value in repair if mono >= self._due(runtime, item)]
+                    if ready and self._current(revisions) and self._scheduled(policies, states):
+                        item, value = ready[0]
                         try:
                             command, outcome = self.io.write(room, item, value, revision, origin="repair"), "dispatched"
                             status["repair"] = item
                         except Exception as error:
                             command, outcome = getattr(error, "trail_id", None), "dispatch_unconfirmed"
                             status["reason"] = "dispatch_unconfirmed"
+                        attempt = self._sent(runtime, item, self.monotonic())
                         LOG.info(_line("repair", room=room, item=item, value=value, revision=revision, cmd=command,
-                                       outcome=outcome, attempt=runtime["attempt"] + 1))
-                        mono = self.monotonic()
+                                       outcome=outcome, attempt=attempt))
                     if verification["state"] == "verified" and not status.get("reason"):
                         status["phase"] = "verified"
-                        runtime.update(attempt=0, write_due=mono, read_due=mono + self.read_interval)
-                    else:
-                        self._retry(runtime, mono)
                 except Exception:
                     status.update(state="unknown", reason="native_read_unavailable")
-                    self._retry(runtime, self.monotonic())
+                    repair = []
+                retry = self._schedule(runtime, repair, self.monotonic())
             if not self._current(revisions) or not self._scheduled(policies, states):
                 return {"stale": True}
-            status["retry_seconds"] = max(0, runtime["write_due"] - self.monotonic())
+            status["retry_seconds"] = retry
             result[room] = status
             self._save(room, revision, status, occurrence=runtime["key"])
         return result
