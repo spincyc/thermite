@@ -365,18 +365,15 @@ CALLBACK_OUTCOMES = ("forwarded", "client_disconnected", "duplicate_header", "in
                      "xml_required", "native_unavailable", "relay_busy", "relay_not_started", "other")
 CALLBACK_COUNT = Counter("thermite_callbacks", "UPnP NOTIFY callbacks the relay handled, by outcome.", ["outcome"],
                          registry=CALLBACKS)
-CALLBACK_LAST = Gauge("thermite_callbacks_last_received_timestamp_seconds", "When the relay last forwarded a "
-                      "NOTIFY to the runtime.", registry=CALLBACKS)
 for _outcome in CALLBACK_OUTCOMES:
     CALLBACK_COUNT.labels(_outcome)
 
 
-def callback_receipt(receipt, clock=time.time):
+def callback_receipt(receipt):
     """oh_access.callbacks.CallbackRelay's receipt sink."""
     outcome = receipt.get("outcome")
     if outcome == "native_response":
         outcome = "forwarded"
-        CALLBACK_LAST.set(clock())
     CALLBACK_COUNT.labels(outcome if outcome in CALLBACK_OUTCOMES else "other").inc()
 
 # ---------------------------------------------------------------- the textfiles

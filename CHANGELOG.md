@@ -7,6 +7,18 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A gateway that has been reconnecting to the runtime's event feed for five
+  minutes fires ThermiteGatewayFeedDown (critical) and turns House health's
+  Remotes tile red, "Not live": every remote page shows states as they were
+  until it reconnects. The gateway reported the feed's state, but nothing
+  read it. The openHAB runtime board gains an "Items missing" tile (Items
+  the generated configuration has that the runtime does not), and
+  Switching & remotes' "Event stream failures" shows the streams the gateway
+  refused at its per-client or total limit; both were exported and shown
+  nowhere. The callback relay no longer exports
+  `thermite_callbacks_last_received_timestamp_seconds`: callbacks arrive
+  only when devices change, so the time of the last one said nothing about
+  the relay, and `thermite_callbacks_total{outcome="forwarded"}` counts them.
 - `thermite_item_unavailable` covers every Item the exporter keeps: a
   power, volume, mute, input or problem Item that is NULL or UNDEF reads 1
   there, as a selection Item does. Only selection Items used to; any other

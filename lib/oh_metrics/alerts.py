@@ -84,6 +84,7 @@ CATALOG = {
     "ThermiteServiceDown": ("A thermite service is not running", "A long-running thermite service has not been active for three minutes. Inspect it with systemctl status and its journal."),
     "ThermiteServiceFlapping": ("A thermite service keeps restarting", "A thermite service restarted three or more times in thirty minutes. Its journal says why; the Host dashboard shows restarts."),
     "ThermiteGatewayDown": ("The remote gateway is not answering", "The local HTTPS check of the gateway has failed for three minutes. Check thermite-access.service and its journal. If the gateway answers browsers, run thermite deploy so the check has the gateway's trust certificate."),
+    "ThermiteGatewayFeedDown": ("Remotes are not live", "For five minutes the gateway has been reconnecting to the runtime's event feed, so every remote page shows states as they were. Check the runtime and thermite-access.service's journal."),
     "ThermiteRemoteStarved": ("A remote holds too many HTTP/1.1 streams", "One client holds six or more event streams over HTTP/1.1, the browser's connection limit, so its controls can stall. Close extra remote pages on that device. Switching & remotes shows streams by HTTP version."),
     "ThermiteRemoteTimeouts": ("Remotes are timing out", "Remote pages reported repeated timeouts waiting for the gateway in the last fifteen minutes. Switching & remotes shows which requests and how long they waited."),
     "ThermiteRoutingTelemetryUnavailable": ("Routing telemetry is unreadable", "For five minutes the routing executor's status or routing's counts in the runtime have not been valid, so the dashboards cannot show switching, device failures or quarantined devices. Check the runtime's log for the routing rule and the routing executor."),
@@ -98,15 +99,16 @@ CATALOG = {
     "ThermiteWatchdog": ("Local monitoring heartbeat", "The local alert evaluation and delivery path completed. This does not prove phone delivery."),
 }
 #: Alerts that should push to a phone once delivery is commissioned.
-CRITICAL = frozenset({"ThermiteCheckFailing", "ThermiteRuntimeUnavailable", "ThermiteGatewayDown",
+CRITICAL = frozenset({"ThermiteCheckFailing", "ThermiteRuntimeUnavailable", "ThermiteGatewayDown", "ThermiteGatewayFeedDown",
                       "ThermiteRemoteStarved", "ThermiteServiceDown", "ThermiteRoutingQuarantined",
                       "ThermitePolicyWorkerStalled", "ThermitePolicyUnenforced", "ThermiteHandlerPoolSaturated"})
 #: (source, targets): while the source fires, the targets would only repeat it.
 INHIBITS = (
     ("ThermiteRuntimeUnavailable", ("ThermiteCheckFailing", "ThermiteControlUnknown", "ThermiteHandlerPoolSaturated",
                                     "ThermiteHandlerTelemetryUnavailable", "ThermiteRoutingQuarantined",
-                                    "ThermiteRoutingTelemetryUnavailable", "ThermitePolicyUnenforced")),
-    ("ThermiteGatewayDown", ("ThermiteRemoteStarved", "ThermiteRemoteTimeouts")),
+                                    "ThermiteRoutingTelemetryUnavailable", "ThermitePolicyUnenforced",
+                                    "ThermiteGatewayFeedDown")),
+    ("ThermiteGatewayDown", ("ThermiteGatewayFeedDown", "ThermiteRemoteStarved", "ThermiteRemoteTimeouts")),
     # A stalled worker's last textfile keeps its last states.
     ("ThermitePolicyWorkerStalled", ("ThermitePolicyUnenforced",)),
 )
@@ -238,6 +240,9 @@ def rules(mapping):
             alert("ThermiteServiceFlapping", 'increase(node_systemd_service_restart_total{job="node",name=~"thermite-.*"}[30m]) >= 3', "0s"),
             # Only where the gateway's unit exists: a house without one has nothing to probe.
             alert("ThermiteGatewayDown", f'(probe_success{{job="{GATEWAY_JOB}"}} == 0) and on() ({GATEWAY_INSTALLED})', "3m"),
+            # The gateway's one subscription to the runtime's events; `closed`
+            # is a gateway with no client stream, which needs none.
+            alert("ThermiteGatewayFeedDown", f'(thermite_gateway_upstream_state{{state="connecting"}} == 1) and on() ({GATEWAY_INSTALLED})', "5m"),
             alert("ThermiteRemoteStarved", f'thermite_gateway_sse_peer_streams_max{{http_version="1.1"}} >= {HTTP1_CONNECTIONS}', "1m"),
             alert("ThermiteRemoteTimeouts", f'sum(increase(thermite_client_events_total{{kind=~"{timeouts}"}}[15m])) >= 5', "5m"),
             alert("ThermiteRoutingQuarantined", "thermite_routing_quarantined > 0", "5m"),

@@ -111,7 +111,7 @@ PROBLEM = value_map({0: ("None", OK), 1: ("Reported", WARN)})
 NEEDED = value_map({0: ("No", OFF), 1: ("Yes", IN_USE)})
 CHECK_STATE = value_map({-1: ("Unknown", UNKNOWN), 0: ("OK", OK), 1: ("Failing", FAIL)})
 CONTROL = value_map({-1: ("Unknown", UNKNOWN), 0: ("Ready", OK), 1: ("Needs attention", FAIL)})
-REMOTES = value_map({0: ("OK", OK), 1: ("Timing out", WARN), 2: ("Gateway down", FAIL)})
+REMOTES = value_map({0: ("OK", OK), 1: ("Timing out", WARN), 2: ("Not live", FAIL), 3: ("Gateway down", FAIL)})
 #: NaN, as _known() gives for a count it cannot know, shown as Unknown.
 NAN_UNKNOWN = [{"type": "special", "options": {"match": "nan", "result": {"text": "Unknown", "color": UNKNOWN,
                                                                           "index": 0}}}]
@@ -578,12 +578,16 @@ def house(mapping: dict, probes: list[dict]) -> dict:
                                "that is Off and reports Off is ready."), 4, 4)
     # Only where the gateway is installed, as for ThermiteGatewayDown: elsewhere its probe always fails.
     down = f'(max(probe_success{{job="{alerts.GATEWAY_JOB}"}}) == bool 0) and on() ({alerts.GATEWAY_INSTALLED})'
-    timeouts = f'sum(increase(thermite_client_events_total{{kind=~"{TIMEOUTS}"}}[15m]))'
-    board.add(stat("Remotes", f"clamp_max((2 * ({down})) + (({timeouts} > bool 0) or vector(0)), 2)",
+    stale = 'max(min_over_time(thermite_gateway_upstream_state{state="connecting"}[5m])) or vector(0)'
+    timeouts = f'(sum(increase(thermite_client_events_total{{kind=~"{TIMEOUTS}"}}[15m])) > bool 0) or vector(0)'
+    # The worst of the three: 3 down, else 2 not live, else 1 timing out, else 0.
+    board.add(stat("Remotes", f"clamp_max(3 * ({down}) + clamp_min(2 * ({stale}), scalar({timeouts})), 3)",
                    mappings=REMOTES,
-                   description="Gateway down: the local HTTPS check of the gateway fails. Timing out: remote pages "
-                               "gave up waiting for the gateway in the last 15 minutes. Unknown: this host has no "
-                               "gateway, or nothing has checked it yet."), 4, 4)
+                   description="Gateway down: the local HTTPS check of the gateway fails. Not live: for 5 minutes "
+                               "the gateway has been reconnecting to the runtime's events, so remote pages show "
+                               "states as they were. Timing out: remote pages gave up waiting for the gateway in "
+                               "the last 15 minutes. Unknown: this host has no gateway, or nothing has checked it "
+                               "yet."), 4, 4)
     board.add(stat("Alerts firing", 'count(ALERTS{alertstate="firing",alertname!="ThermiteWatchdog"}) or vector(0)',
                    steps=((OK, None), (WARN, 1)), description="Alerts firing now, without the monitoring heartbeat."),
               4, 4)
@@ -740,9 +744,12 @@ def switching(mapping: dict) -> dict:
     board.add(streams, 8, 8)
     dropped = timeseries("Event stream failures", [
         (f'sum by (client, kind) (increase(thermite_client_events_total{{kind=~"{STREAM_FAILURES}"}}[1h])) > 0',
-         "{{client}} {{kind}}")], minimum=0, bars=True, stack=True,
+         "{{client}} {{kind}}"),
+        ("sum by (limit) (increase(thermite_gateway_sse_refused_total[1h])) > 0", "refused at the {{limit}} limit")],
+        minimum=0, bars=True, stack=True,
         description="Per hour: event streams remote pages and the terminal remote saw fail (stream_error, as at "
-                    "every gateway restart) or refused (stream_refused). They reconnect; it is not giving up.")
+                    "every gateway restart) or refused (stream_refused), and streams the gateway refused at its "
+                    "per-client (peer) or total limit. Remotes reconnect; it is not giving up.")
     dropped["fieldConfig"]["defaults"]["color"] = {"mode": "shades", "fixedColor": UNKNOWN}
     board.add(dropped, 8, 8)
     gave_up = timeseries("Remotes gave up", [
@@ -908,19 +915,22 @@ def openhab(mapping: dict | None = None) -> dict:
     job = 'job="openhab"'
     board = Board()
     board.add(stat("Scrape", f"up{{{job}}}", mappings=UP_DOWN), 4, 4)
-    board.add(stat("Things ONLINE", f"count({m['thing_state']}{{{job}}} == 3) or vector(0)"), 5, 4)
+    board.add(stat("Things ONLINE", f"count({m['thing_state']}{{{job}}} == 3) or vector(0)"), 4, 4)
     board.add(stat("Things not ONLINE", f"count({m['thing_state']}{{{job}}} != 3) or vector(0)",
                    steps=((OK, None), (WARN, 1)),
-                   description="Includes devices that are asleep or off; Devices says which are needed now."), 5, 4)
+                   description="Includes devices that are asleep or off; Devices says which are needed now."), 4, 4)
+    board.add(stat("Items missing", "thermite_items_missing", steps=((OK, None), (WARN, 1)),
+                   description="Items the generated configuration has that the runtime does not: a deploy it has "
+                               "not loaded, or an Item file it refused. Their checks read Unknown."), 4, 4)
     board.add(stat("Heap used",
                    f'sum({m["memory_used"]}{{{job},area="heap"}}) / sum({m["memory_max"]}{{{job},area="heap"}} > 0)',
-                   "percentunit", ((OK, None), (WARN, 0.8), (FAIL, 0.9))), 5, 4)
+                   "percentunit", ((OK, None), (WARN, 0.8), (FAIL, 0.9))), 4, 4)
     handler = bool((mapping or {}).get("handler_pool"))
     board.add(stat("thingHandler busy", "max(thermite_handler_pool_active_threads / "
                    "(thermite_handler_pool_core_threads > 0))", "percentunit", ((OK, None), (WARN, 0.75), (FAIL, 1)),
                    description="Busy share of the thingHandler pool, where bindings do device I/O. At 100% one "
                                "blocked connection delays every device." + ("" if handler else
-                               " This house does not report it.")), 5, 4)
+                               " This house does not report it.")), 4, 4)
     board.row("JVM and thread pools")
     board.add(timeseries("Heap", [(f'sum({m["memory_used"]}{{{job},area="heap"}})', "used"),
                                   (f'sum({m["memory_max"]}{{{job},area="heap"}} > 0)', "max")], "bytes",

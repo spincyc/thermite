@@ -420,6 +420,18 @@ class Alerting(unittest.TestCase):
             self.assertLessEqual(set(targets), set(alerts.CATALOG))
         self.assertEqual(len(config["inhibit_rules"]), len(alerts.INHIBITS))
 
+    def test_a_gateway_cut_off_from_the_runtimes_events_alerts_and_shows_on_the_remotes_tile(self):
+        rule = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteGatewayFeedDown")
+        self.assertEqual(rule["expr"], '(thermite_gateway_upstream_state{state="connecting"} == 1) and on() '
+                                       f'({alerts.GATEWAY_INSTALLED})')
+        self.assertEqual((rule["for"], rule["labels"]["severity"]), ("5m", "critical"))
+        silenced = {source for source, targets in alerts.INHIBITS if "ThermiteGatewayFeedDown" in targets}
+        self.assertEqual(silenced, {"ThermiteGatewayDown", "ThermiteRuntimeUnavailable"})
+        tile = next(panel for panel in panels(boards()[dashboards.HOUSE]) if panel["title"] == "Remotes")
+        self.assertIn('thermite_gateway_upstream_state{state="connecting"}[5m]', tile["targets"][0]["expr"])
+        words = {key: option["text"] for key, option in tile["fieldConfig"]["defaults"]["mappings"][0]["options"].items()}
+        self.assertEqual(words, {"0": "OK", "1": "Timing out", "2": "Not live", "3": "Gateway down"})
+
     def test_unreadable_routing_telemetry_alerts(self):
         rule = next(rule for rule in RULES["groups"][1]["rules"]
                     if rule.get("alert") == "ThermiteRoutingTelemetryUnavailable")
@@ -672,6 +684,15 @@ class Dashboards(unittest.TestCase):
                 self.assertIn(alerts.CHECK, head)
                 self.assertTrue(head.endswith("and on(device) thermite_device_info)"), query["expr"])
 
+    def test_items_the_runtime_lacks_and_refused_streams_are_shown(self):
+        openhab = boards()[dashboards.OPENHAB]
+        missing = next(panel for panel in panels(openhab) if panel["title"] == "Items missing")
+        self.assertEqual(missing["targets"][0]["expr"], "thermite_items_missing")
+        self.assertEqual(sum(panel["gridPos"]["w"] for panel in openhab["panels"] if panel["gridPos"]["y"] == 0), 24)
+        failures = next(panel for panel in panels(boards()[dashboards.SWITCHING])
+                        if panel["title"] == "Event stream failures")
+        self.assertIn("thermite_gateway_sse_refused_total", json.dumps(failures["targets"]))
+
     def test_host_board_counts_targets_and_shows_access_units(self):
         board = boards()[dashboards.HOST]
         targets = oh_metrics.scrape_targets(FILES[oh_metrics.PROMETHEUS_YML])
@@ -801,6 +822,16 @@ class Textfiles(unittest.TestCase):
                 continue
             for value in re.findall(r'="([^"]*)"', line):
                 self.assertRegex(value, r"^[a-z0-9_./+-]*$|^\+Inf$|^[0-9.e+-]+$", line)
+
+    def test_callbacks_are_counted_without_a_last_received_time(self):
+        """Callbacks come when devices change, so the last one's time says
+        nothing of the relay's health; the forwarded count says the rest."""
+        forwarded = self.metrics.CALLBACK_COUNT.labels("forwarded")
+        before = forwarded._value.get()
+        self.metrics.callback_receipt({"status": 200, "outcome": "native_response"})
+        self.assertEqual(forwarded._value.get(), before + 1)
+        text = self.metrics.prometheus_client.generate_latest(self.metrics.CALLBACKS).decode()
+        self.assertNotIn("thermite_callbacks_last_received_timestamp_seconds", text)
 
     def test_every_client_kind_is_a_timeout_or_a_stream_failure(self):
         self.assertEqual(sorted(alerts.TIMEOUT_KINDS + alerts.STREAM_KINDS), sorted(self.metrics.CLIENT_KINDS))
