@@ -226,10 +226,13 @@ test('a failed restore of the previous keystore stops retrying and shows failed 
 // levels; it answers GET OUT0 VS with every route, SET with the new route,
 // and a SET it refuses (`error`) with CMD ERR. `refuse` makes it accept a
 // connection and close it at once, `mute` close one at its next request,
-// unanswered; close() closes one while idle. `format` shapes each answer.
+// unanswered, and `hangup` close one at that request, unanswered. `silent`
+// takes a SET without answering it. close() closes every connection while
+// idle. `format` shapes each answer.
 function avpro({ send = true } = {}) {
   const clock = { now: 0 }, hooks = [];
-  const matrix = { refuse: false, mute: false, error: false, routes: [1, 1, 1, 1], opened: [], requests: [], links: [],
+  const matrix = { refuse: false, mute: false, hangup: null, silent: false, error: false, routes: [1, 1, 1, 1], opened: [],
+    requests: [], links: [],
     format: line => line, close() { for (const link of matrix.links) link.peerClosed = true; } };
   const listing = () => [...matrix.routes.map((input, i) => `OUT${i + 1} VS IN${input}`),
     ...matrix.routes.map((_, i) => `OUT${i + 1} EXAUD LEV100`)];
@@ -253,9 +256,10 @@ function avpro({ send = true } = {}) {
       if (link.closed || link.peerClosed) throw Error('closed');
       const request = text.replace(/\r\n$/, '');
       matrix.requests.push(request);
-      if (matrix.mute) { link.peerClosed = true; return; }
+      if (matrix.mute || request === matrix.hangup) { link.peerClosed = true; return; }
       const set = /^SET OUT(\d+) VS IN(\d+)$/.exec(request);
       if (set && matrix.error) link.lines.push('CMD ERR');
+      else if (set && matrix.silent) matrix.routes[set[1] - 1] = Number(set[2]);
       else if (set) { matrix.routes[set[1] - 1] = Number(set[2]); link.lines.push(matrix.format(`SET OUT${set[1]} VS IN${set[2]}`)); }
       else if (request === 'GET OUT0 VS') link.lines.push(...matrix.routes.map((input, i) => matrix.format(`OUT${i + 1} VS IN${input}`)));
     },
@@ -332,6 +336,33 @@ test('every AVPro poll posts each output\'s input, changed or not, so a reading 
   // A matrix that stops answering has UNDEF posted at each poll that tries it.
   r.matrix.mute = true; r.poll(); r.matrix.mute = false; r.matrix.refuse = true; r.poll();
   assert.deepEqual(posts('matrix_output4_input').slice(4), ['UNDEF', 'UNDEF']);
+});
+
+test('the AVPro routing provider is unsent before SET, refused on CMD ERR, unknown without its answer, applied once answered', () => {
+  const r = avpro(), provider = r.context.routingProvider();
+  r.poll();
+  assert.deepEqual(provider.execute('matrix_output4_input', '2'),
+    { outcome: 'applied', sample: { value: '2', fresh: true, basis: 'owned_native_read', observedAt: 10000 } });
+  // CMD ERR is the matrix declining: terminal, never re-read as a slow switch.
+  r.matrix.error = true;
+  assert.deepEqual(provider.execute('matrix_output4_input', '3'), { outcome: 'refused' });
+  assert.equal(r.items.matrix_output4_input, '2');
+  r.matrix.error = false;
+  // A SET with no answer, whether the matrix stays connected or hangs up, may
+  // still take effect: unknown, even when the read after it succeeds.
+  r.matrix.silent = true;
+  assert.deepEqual(provider.execute('matrix_output4_input', '3'), { outcome: 'unknown' });
+  r.matrix.silent = false; r.matrix.hangup = 'SET OUT4 VS IN4';
+  assert.deepEqual(provider.execute('matrix_output4_input', '4'), { outcome: 'unknown' });
+  // An answered SET whose read then fails is applied; the executor re-reads.
+  r.matrix.hangup = 'GET OUT0 VS';
+  assert.deepEqual(provider.execute('matrix_output4_input', '1'), { outcome: 'applied', sample: null });
+  assert.equal(r.matrix.routes[3], 1);
+  // No connection, so no SET byte: unsent.
+  r.matrix.hangup = null; r.matrix.refuse = true; r.matrix.close();
+  assert.deepEqual(provider.execute('matrix_output4_input', '2'), { outcome: 'unsent' });
+  assert.deepEqual(r.matrix.requests.filter(line => line.startsWith('SET')),
+    ['SET OUT4 VS IN2', 'SET OUT4 VS IN3', 'SET OUT4 VS IN3', 'SET OUT4 VS IN4', 'SET OUT4 VS IN1']);
 });
 
 test('a read-only copy connects to no AVPro matrix and only logs what it would send', () => {

@@ -7,6 +7,15 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A source switch that an AVPro HDMI matrix refuses with `CMD ERR` (or
+  `NO SUPPORT`) fails at once as refused by the device. It used to count as
+  applied: the routing executor re-read the matrix for about 6 seconds and
+  then called the switch unconfirmed. A switch the matrix does not answer
+  is now unknown, and the matrix is held until a read recovers it, even when
+  the read after it succeeds, since the matrix may still switch late; it used
+  to count as applied. A switch it answers is applied even when the read
+  after it fails, and the executor reads again; that used to hold the matrix
+  for at least a minute.
 - A locked room that uses an AVPro HDMI matrix (avpro_telnet) or a Sony TV
   under IP control (sony_ip_control) no longer shows Unknown 30 seconds
   after that device last changed. Their rules posted a reading only when it
