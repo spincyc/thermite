@@ -59,6 +59,14 @@ rollback. The unified deployment workflow uses a separate committed private site
   whose window starts on the source its locked leader shows is no longer
   refused as a shared-resource conflict; another room locked on that source
   still refuses it.
+- Under the routing lifecycle, an Item that briefly shows another value or
+  UNDEF (a late update, a failed poll) no longer stalls a route or leaves a
+  finished one looking not ready. Such a value used to discard the
+  planner's own reading with nothing to read it again: a projector's input
+  was never selected after a stale power OFF, and one UNDEF made a done
+  route's status not ready for good. The planner now reads the device once
+  more, only for a property a route rests on and once per change of the
+  Item; it writes nothing on that account.
 - A room locked with a Sony projector on ADCP no longer turns Unknown 30
   seconds after the projector last changed: the sony_adcp rule now posts
   every Item on each 15-second read, changed or not, and the room policy

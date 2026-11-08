@@ -776,6 +776,49 @@ test('an expired route warns once with what it waits for, its id and no free tex
   assert.equal(silent.coordinator.snapshot().endpoints.Desk.failures.deadline, 'deadline');
 });
 
+test('an Item contradicting what a route rests on is read again once, and a blip ends no readiness', () => {
+  const r = rig(); r.seed(); r.advance(10000);
+  const desk = () => r.coordinator.snapshot().endpoints.Desk;
+  assert(desk().pathReady); assert.equal(desk().active, false);
+  r.coordinator.observe('Display', null);
+  assert(!desk().pathReady);
+  // Further blips while that read is out add none.
+  r.coordinator.observe('Display', 'OFF'); r.coordinator.observe('Display', null); r.coordinator.observe('Display', 'ON');
+  assert.deepEqual(r.pending.map(entry => `${entry.operation.resource}:${entry.operation.phase}`), ['Display:recheck']);
+  r.drain();
+  assert(desk().pathReady); assert.deepEqual(r.reads, ['Display']); assert.deepEqual(r.writes, []);
+  // A real change is read once and left as it is.
+  r.actual.Display = 'OFF'; r.coordinator.observe('Display', 'OFF'); r.drain();
+  assert(!desk().pathReady); assert.equal(r.coordinator.snapshot().resources.Display.verified, 'OFF');
+  assert.deepEqual(r.reads, ['Display', 'Display']); assert.deepEqual(r.writes, []);
+  // A property no route rests on is not read.
+  r.coordinator.observe('UnusedHDMI', '0'); r.coordinator.observe('Zone', 'ON'); r.drain();
+  assert.deepEqual(r.reads, ['Display', 'Display']);
+  // An Off's deactivation, likewise; a failed read fails nothing.
+  const o = rig(); o.coordinator.request('Media', 'Off'); o.drain(); o.advance(10000);
+  const media = () => o.coordinator.snapshot().endpoints.Media;
+  assert.equal(media().endpointInactive, true);
+  const failures = media().failures;
+  o.coordinator.observe('Zone', null); assert.equal(media().endpointInactive, false);
+  const read = o.take(); o.begin(read); read.report({type: 'terminal', token: read.operation.token, admitted: true, reason: 'owned_probe_failed'});
+  assert.equal(o.pending.length, 0); assert.deepEqual(media().failures, failures);
+  assert.equal(o.coordinator.snapshot().resources.Zone.failure, null);
+  o.coordinator.observe('Zone', 'OFF'); o.drain();
+  assert.equal(media().endpointInactive, true);
+});
+
+test('a stale Item update during a route does not stall the step that needs the property', () => {
+  const r = rig(); r.seed();
+  r.coordinator.request('Desk', 'LocalComputer');
+  r.drain(operation => operation.resource === 'D1');
+  assert.equal(r.coordinator.snapshot().resources.BPower.verified, 'ON');
+  // A late report from before the power on, then the current one.
+  r.coordinator.observe('BPower', 'OFF'); r.coordinator.observe('BPower', 'ON');
+  r.drain();
+  assert(r.writes.includes('D1=H3')); assert(r.coordinator.snapshot().endpoints.Desk.pathReady);
+  assert.equal(r.writes.filter(write => write.startsWith('BPower')).length, 1);
+});
+
 // Settle (see the lifecycle.js header). A projector whose power command,
 // once accepted, shows only `lag` ms later and then passes through `phase`
 // ms of startup (toward ON) or cooling (toward OFF), read as a transition,
@@ -921,6 +964,17 @@ test('a reload keeps a pending power on, and an Off after it still turns the pro
   const late = theater({lag: 1e9});
   late.request('Movie'); late.run(30000); late.reload();
   assert.equal(late.coordinator.snapshot().resources.Power.pending.until, 60000);
+});
+
+test('Item observations never end, satisfy or shorten a settle wait', () => {
+  const r = theater();
+  r.request('Movie');
+  for (const value of ['ON', null, 'OFF', 'ON']) r.coordinator.observe('Power', value);
+  const power = r.coordinator.snapshot().resources.Power;
+  assert.equal(power.pending.value, 'ON'); assert.equal(power.verified, null); assert.equal(power.recheck, false);
+  r.run(60000);
+  assert.deepEqual(r.writes(), ['0 Power=ON', '25000 Input=hdmi1']);
+  assert(r.endpoint().pathReady);
 });
 
 test('an Off while the projector starts up waits for it to be on, then turns it off', () => {
