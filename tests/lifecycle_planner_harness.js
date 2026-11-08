@@ -1272,6 +1272,32 @@ test('a write applied without its readback replaces a transition with its own wa
   assert.equal(power.transition, null); assert.equal(power.pending.value, 'OFF');
 });
 
+test('a route\'s deadline covers its properties\' declared settle and transitions along their prerequisites, capped', () => {
+  // When a route that cannot finish (its write refused) ends, by its
+  // deadline log: deadlineMs (10 s here) plus the declared time.
+  const expiry = (config, choice) => {
+    const r = theater({config, lag: 0, device: {status: 'on', input: 'hdmi2'}});
+    r.intercept = entry => {
+      if (entry.operation.kind !== 'write') return false;
+      entry.report({type: 'terminal', token: entry.operation.token, admitted: true, refused: true, reason: 'device_refused'});
+      return true;
+    };
+    r.request(choice, '1a2b3c4d'); r.run(400000);
+    assert.equal(r.warnings.length, 1, r.warnings.join('\n'));
+    return Number(/ ms=(\d+) /.exec(r.warnings[0])[1]);
+  };
+  // Power on may first wait out cooling (30 s), then take 60 s to show; the
+  // input needs it on. Off may wait out startup (60 s), then take 30 s.
+  assert.equal(expiry(theaterDescriptor(), 'Movie'), 100000);
+  assert.equal(expiry(theaterDescriptor(), 'Off'), 100000);
+  // An input settle adds to the chain it ends.
+  const input = theaterDescriptor(); input.resources.Input.settleMs = {hdmi1: 5000};
+  assert.equal(expiry(input, 'Movie'), 105000);
+  // Without declarations, deadlineMs alone; at most SETTLE_MAX_MS more.
+  assert.equal(expiry(theaterDescriptor(null), 'Movie'), 10000);
+  assert.equal(expiry(theaterDescriptor({ON: 300000, OFF: 300000}), 'Movie'), 310000);
+});
+
 // Retry (see the lifecycle.js header).
 function patient(deadlineMs = 120000, settle) {
   const config = theaterDescriptor(settle); config.deadlineMs = deadlineMs; return config;
