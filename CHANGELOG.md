@@ -71,8 +71,10 @@ rollback. The unified deployment workflow uses a separate committed private site
   Grafana), since those checks name a job or service as their device.
 - A room whose lock cannot be held for ten minutes fires
   ThermitePolicyUnenforced (critical): its policy cannot be read, it
-  conflicts with another room over shared hardware, its devices cannot be
-  read, or a change on them has not been put back. Nothing alerted before;
+  conflicts with another room over shared hardware, openHAB does not answer
+  the worker's reads, or a change on its devices has not been put back. A
+  reading that is only too old to trust, as from a receiver that reports only
+  when it changes, leaves the lock held. Nothing alerted before;
   only the "Locked rooms" count showed it. Each zone's state is
   `thermite_policy_room_state{zone,state}`, and
   `thermite_policy_reconcile_age_seconds` labels the zone `zone`, as every

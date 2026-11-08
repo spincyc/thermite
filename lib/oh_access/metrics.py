@@ -328,7 +328,7 @@ POLICY_LOOP = Gauge("thermite_policy_loop_timestamp_seconds", "When the policy w
                     registry=WORKER)
 POLICY_ROOMS = Gauge("thermite_policy_rooms", "Routing zones by policy state: locked by hand or by schedule, "
                      "unlocked, or unavailable (a lock that cannot be enforced: an unreadable policy, a conflict "
-                     "over shared hardware, no reading, or a drift not yet repaired).", ["state"], registry=WORKER)
+                     "over shared hardware, openHAB not answering, or a drift not yet repaired).", ["state"], registry=WORKER)
 POLICY_ROOM_STATE = Gauge("thermite_policy_room_state", "1 for each routing zone's policy state (as "
                           "thermite_policy_rooms counts them), 0 for its other states.", ["zone", "state"],
                           registry=WORKER)

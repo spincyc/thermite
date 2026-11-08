@@ -890,25 +890,31 @@ class Textfiles(unittest.TestCase):
 
     def test_policy_metrics_name_routing_zones_and_each_zones_state(self):
         from oh_access import worker
-        zones = ("example_policy_west", "example_policy_east", "example_policy_den", "example_policy_hall")
+        zones = ("example_policy_west", "example_policy_east", "example_policy_den", "example_policy_hall",
+                 "example_policy_loft")
         telemetry = worker.Telemetry(zones, monotonic=lambda: 100.0)
         text = self.metrics.prometheus_client.generate_latest(self.metrics.WORKER).decode()
         for zone in zones:
             for state in self.metrics.ROOM_STATES:
                 self.assertIn(f'thermite_policy_room_state{{state="{state}",zone="{zone}"}} 0.0', text)
-        west, east, den, hall = zones
+        west, east, den, hall, loft = zones
         telemetry.stepped({
             west: {"phase": "invalid", "reason": "invalid_policy"},
-            # Locked, but every field it controls cannot be read.
+            # Locked, but openHAB did not answer the worker's read.
             east: {"phase": "enforcing", "state": "unknown", "reason": "native_read_unavailable"},
             # Locked with a passive display: held, with nothing else to check.
             den: {"phase": "enforcing", "state": "degraded", "matched": ["example_matrix_output3"],
                   "mismatched": [], "unknown": [], "limitations": ["passive_endpoint:example_den_tv"]},
             # Unlocked beside an unreadable policy: nothing of its own to enforce.
-            hall: {"phase": "unlocked", "state": "degraded", "reason": "invalid_policy"}})
+            hall: {"phase": "unlocked", "state": "degraded", "reason": "invalid_policy"},
+            # Locked, its receiver's last report too old to trust (it reports
+            # only on change): nothing is wrong, so the lock is held.
+            loft: {"phase": "enforcing", "state": "unknown", "matched": ["example_matrix_output4"],
+                   "mismatched": [], "unknown": ["example_loft_avr_power"]}})
         state = {zone: next(each for each in self.metrics.ROOM_STATES
                             if self.metrics.POLICY_ROOM_STATE.labels(zone, each)._value.get() == 1) for zone in zones}
-        self.assertEqual(state, {west: "unavailable", east: "unavailable", den: "scheduled", hall: "unlocked"})
+        self.assertEqual(state, {west: "unavailable", east: "unavailable", den: "scheduled", hall: "unlocked",
+                                 loft: "scheduled"})
         text = self.metrics.prometheus_client.generate_latest(self.metrics.WORKER).decode()
         self.assertIn(f'thermite_policy_reconcile_age_seconds{{zone="{den}"}} 0.0', text)
         self.assertNotIn('thermite_policy_reconcile_age_seconds{room=', text)

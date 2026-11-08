@@ -237,17 +237,19 @@ class Telemetry:
     def _state(self, room, status):
         """A room's policy state from its pass status. Unavailable: a policy
         it cannot read, or a lock it cannot hold now: a conflict over shared
-        hardware (an unreadable neighbour's, or another lock's), no reading,
-        or a drift not yet repaired. A passive endpoint, which the worker
-        never controls, leaves the lock held; an unlocked room has nothing
-        to enforce."""
+        hardware (an unreadable neighbour's, or another lock's), openHAB not
+        answering its read, or a drift not yet repaired. A reading too old to
+        trust (a device that reports only on change) leaves the lock held:
+        nothing is wrong, and its reconcile age shows how long since it was
+        checked. So does a passive endpoint, which the worker never controls;
+        an unlocked room has nothing to enforce."""
         phase = status.get("phase")
         if phase == "invalid":
             return "unavailable"
         if phase not in ("enforcing", "verified"):
             return "unlocked"
-        if (status.get("state") == "unknown" or status.get("mismatched")
-                or status.get("reason") in ("invalid_policy", "shared_resource_conflict")):
+        if status.get("mismatched") or status.get("reason") in (
+                "invalid_policy", "shared_resource_conflict", "native_read_unavailable"):
             return "unavailable"
         return "manual" if self._manual(room) else "scheduled"
 
