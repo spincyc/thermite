@@ -1147,6 +1147,99 @@ test('a settle keeps the route from expiring, up to its cap, and a transition is
   assert.equal(t.endpoint().failures.Input, 'device-refused');
 });
 
+test('an accepted write that never shows is trusted at the end of its wait as unconfirmed, and a new route writes again', () => {
+  const r = theater({lag: 1e9});
+  r.request('Movie'); r.run(59999);
+  let power = r.coordinator.snapshot().resources.Power;
+  assert.equal(power.pending.value, 'ON'); assert.deepEqual(r.endpoint().failures, {});
+  r.run(1);
+  power = r.coordinator.snapshot().resources.Power;
+  assert.equal(power.pending, null); assert.equal(power.verified, 'OFF');
+  assert.equal(r.endpoint().failures.Power, 'unconfirmed-write');
+  // Reads every step, the last one at the end of the wait.
+  assert.deepEqual(r.sent.filter(line => line.includes('Power?')).map(line => Number(line.split(' ')[0])),
+    [0, 5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000, 55000, 60000]);
+  r.run(40000); r.request('Movie');
+  assert.deepEqual(r.writes(), ['0 Power=ON', '100000 Power=ON']);
+});
+
+test('a wait that ends on a differing value marks the write unconfirmed even while the device still moves', () => {
+  // The power on never landed, and the projector has started cooling down
+  // instead: the read at the end of the wait fails the route at once, not
+  // after the cool-down.
+  const r = theater({lag: 1e9});
+  r.request('Movie'); r.run(59000);
+  Object.assign(r.device, {status: 'cooling', until: 1e9});
+  r.run(999);
+  assert.deepEqual(r.endpoint().failures, {});
+  r.run(1);
+  const power = r.coordinator.snapshot().resources.Power;
+  assert.equal(power.pending, null); assert.equal(power.transition.value, 'OFF');
+  assert.equal(r.endpoint().failures.Power, 'unconfirmed-write');
+  assert.deepEqual(r.writes(), ['0 Power=ON']);
+});
+
+test('a read that fails during a wait is tried again each step, and fails the route only after the wait', () => {
+  for (const failure of [{admitted: true, reason: 'owned_probe_failed'}, {admitted: false, reason: 'device_not_reached'}]) {
+    const r = theater({lag: 1e9});
+    r.request('Movie');
+    r.intercept = entry => {
+      if (entry.operation.kind !== 'probe') return false;
+      if (failure.admitted) entry.report({type: 'admitted', token: entry.operation.token});
+      r.sent.push(`${r.now()} ${entry.operation.resource}?failed`);
+      entry.report(Object.assign({type: 'terminal', token: entry.operation.token}, failure));
+      return true;
+    };
+    r.run(59999);
+    assert.deepEqual(r.endpoint().failures, {}, failure.reason);
+    assert.equal(r.sent.filter(line => line.endsWith('?failed')).length, 11, failure.reason);
+    r.run(1);
+    assert.equal(r.endpoint().failures.Power, failure.admitted ? 'probe-failed' : 'device_not_reached', failure.reason);
+    assert.equal(r.sent.filter(line => line.endsWith('?failed')).length, 12, failure.reason);
+  }
+});
+
+test('reads during a wait follow the step: at least 1.5 s apart, the last at its end', () => {
+  // settle/10 would be 0.5 s; the step is 1.5 s, and the last read comes
+  // when the wait ends, not a full step later.
+  const r = theater({settle: {ON: 5000, OFF: 5000}, lag: 1e9});
+  r.request('Movie'); r.run(10000);
+  assert.deepEqual(r.sent.filter(line => line.includes('Power?')), ['0 Power?OFF', '1500 Power?OFF', '3000 Power?OFF',
+    '4500 Power?OFF', '5000 Power?OFF']);
+});
+
+test('a source protection read during a wait follows the step too', () => {
+  // D1 is slow to show H3; until then source A may still be consumed through
+  // it (D1=H2), so A's protection wants D1 read as well as the route does.
+  // Both wait for the step: one read per step, not a loop.
+  const config = conditionalDescriptor(); config.resources.D1.settleMs = {H3: 20000};
+  const r = rig({config, actual: {DisplayInput: 'master'}}); r.seed();
+  r.coordinator.request('Desk', 'LocalComputer');
+  r.drain(operation => operation.resource === 'D1' && operation.kind === 'write');
+  const write = r.take(operation => operation.resource === 'D1' && operation.kind === 'write');
+  r.begin(write); r.complete(write, false);
+  assert.equal(r.coordinator.snapshot().resources.D1.pending.value, 'H3');
+  r.reads.length = 0; r.drain();
+  assert.deepEqual(r.reads.filter(resource => resource === 'D1'), []);
+  r.advance(2000); r.drain();
+  assert.deepEqual(r.reads.filter(resource => resource === 'D1'), ['D1']);
+  r.advance(2000); r.drain();
+  assert.deepEqual(r.reads.filter(resource => resource === 'D1'), ['D1', 'D1']);
+  assert.deepEqual(r.writes.filter(write => write.startsWith('APower')), []);
+});
+
+test('a write applied without its readback replaces a transition with its own wait', () => {
+  // A manual power off during startup, taken but not shown yet.
+  const r = theater({device: {status: 'startup', until: 12000}});
+  r.request('Off');
+  assert.equal(r.coordinator.snapshot().resources.Power.transition.value, 'ON');
+  r.coordinator.takeover('Power', 'OFF', true);
+  assert(r.coordinator.external({token: 'manual-1', resource: 'Power', value: 'OFF'}));
+  r.coordinator.report({type: 'terminal', token: 'manual-1', admitted: true});
+  const power = r.coordinator.snapshot().resources.Power;
+  assert.equal(power.transition, null); assert.equal(power.pending.value, 'OFF');
+});
+
 test('a settle must be a declared value with a positive finite ms of at most 300000', () => {
   const deps = {dispatch() {}, probe() {}, store: {load: () => null, save() {}}};
   for (const settle of [null, [], 'ON', {ON: 0}, {ON: -1}, {ON: 300001}, {ON: NaN}, {ON: Infinity}, {ON: '5000'}, {MAYBE: 1000}]) {
