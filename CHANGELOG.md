@@ -7,6 +7,21 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Each integration the routing lifecycle drives now declares its fields
+  itself, through a new `fields(device)` hook: the values each can be
+  commanded with, how a write is acknowledged, how long it may take to
+  show and how many manual commands its device's actor may hold. The
+  routing core no longer names any integration, so a new kind of device
+  needs only its own module. A Denon or Marantz receiver's routing actor
+  is now its integration's own rule, `denonmarantz_http_<id>.js`, in
+  place of `thermite_routing_io_<id>.js`; it sends and reads exactly what
+  the old one did, and is rendered for every receiver under control (it
+  does nothing in a house without the routing lifecycle). A room's Source
+  readback problem now reports a receiver's input when it is one the
+  room's devices read back (`SAT/CBL`, say) rather than leaving it out,
+  and leaves out any other value, where it used to pass any number,
+  `hdmiN` or `tv`. Every actor's fields, values, settle times and hold
+  limits are unchanged.
 - A house with several HEOS receivers has one HEOS bridge, named for the
   receiver it connects to: the one marked `heos_bridge: true`, else the
   first HEOS receiver in the house file. Every receiver's HEOS transport
