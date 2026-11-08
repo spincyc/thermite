@@ -1,10 +1,12 @@
 'use strict';
 // Runs production integration scripts against stub openHAB and Java types.
 // argv: heos.js globalcache_ir.js bk808_cec.js androidtv_googletv.js
-// avpro_telnet.js sony_adcp.js sony_ip_control.js. No device or network
-// access: HTTP and sockets are fixtures.
+// avpro_telnet.js sony_adcp.js sony_ip_control.js _device.js. No device or
+// network access: HTTP and sockets are fixtures. A script's thermiteIO is a
+// fixture too, but what the scripts share (_device.js) is embedded as the
+// renderer embeds it (_io.py).
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
-const [heosSource, irSource, cecSource, androidSource, avproSource, adcpSource, sonyTvSource] =
+const [heosSource, irSource, cecSource, androidSource, avproSource, adcpSource, sonyTvSource, deviceSource] =
   process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
@@ -27,13 +29,19 @@ function parseXml(text) {
   return wrap(root);
 }
 
-function openhabStub({ things = {}, items = {}, rules }) {
+// `strict` throws for a missing Item, as openhab-js does unless asked for
+// null; else one is made up.
+function openhabStub({ things = {}, items = {}, rules, strict = false }) {
   const posted = [];
   return {
     posted,
     module: {
       items: { getItem: (name, nullable) => {
-        if (!(name in items)) { if (nullable) return null; items[name] = 'NULL'; }
+        if (!(name in items)) {
+          if (nullable) return null;
+          if (strict) throw Error(`Item ${name} does not exist`);
+          items[name] = 'NULL';
+        }
         return { get state() { return items[name]; }, postUpdate(value) { posted.push([name, String(value)]); items[name] = String(value); } };
       } },
       things: { getThing: uid => things[uid] || null },
@@ -54,9 +62,9 @@ function thing(status, description = '', extra = {}) {
   return Object.assign(value, extra);
 }
 
-function run(source, table, { things, items, java = {}, clock, globals = {}, runtime = null }) {
+function run(source, table, { things, items, java = {}, clock, globals = {}, runtime = null, strict = false }) {
   const rules = {}, logs = [];
-  const openhab = openhabStub({ things, items, rules });
+  const openhab = openhabStub({ things, items, rules, strict });
   const types = Object.assign({
     'org.openhab.core.thing.ChannelUID': class { constructor(uid) { this.uid = uid; } },
     'org.openhab.core.library.types.StringType': class { constructor(value) { this.value = value; } },
@@ -71,7 +79,7 @@ function run(source, table, { things, items, java = {}, clock, globals = {}, run
     Date: { now: () => clock.now }, JSON, Map, Set, Object, String, Number, Boolean, Array, Error, Math, RegExp,
     ...globals,
   });
-  let text = source;
+  let text = source.replace('// THERMITE_DEVICE', () => deviceSource);
   for (const [mark, value] of Object.entries(table)) text = text.replace(`const ${mark} = null;`, `const ${mark} = ${JSON.stringify(value)};`);
   vm.runInContext(text, context);
   return { rules, logs, posted: openhab.posted, context };
@@ -651,6 +659,101 @@ test('every Sony TV poll posts its input, volume and mute, changed or not; its p
   assert.deepEqual(posts('tv_problem'), ['UNDEF']); assert.deepEqual(posts('tv_pairing_status'), ['paired']);
   assert.deepEqual(r.tv.requests.filter(request => request === 'getPlayingContentInfo').length, 4);
   assert.deepEqual(r.logs.filter(([level]) => level !== 'info'), []);
+});
+
+// _device.js alone, as the renderer embeds it after thermiteIO in a script
+// whose SEND it reads.
+function device({ send = true, items = {}, thermiteIO = {} } = {}) {
+  const rules = {}, logs = [], hooks = [], clock = { now: 5000 };
+  const openhab = openhabStub({ items, rules });
+  const context = vm.createContext({
+    require: name => name === '@runtime' ? { lifecycleTracker: { addDisposeHook: hook => hooks.push(hook) } }
+      : (assert.equal(name, 'openhab'), openhab.module),
+    console: { info: m => logs.push(['info', m]), warn: m => logs.push(['warn', m]) },
+    Date: { now: () => clock.now }, thermiteIO, Map, Set, Object, String, Math,
+  });
+  const helper = vm.runInContext(`const SEND = ${send};\n${deviceSource}\nthermiteDevice;`, context);
+  return { helper, rules, logs, hooks, clock, items, posted: openhab.posted };
+}
+
+test('the shared helper posts a reading at every read, the rule\'s own state only on change, and no missing Item', () => {
+  const r = device({ items: { tv_power: 'ON', tv_pairing_status: 'paired' } });
+  r.helper.reading('tv_power', 'ON'); r.helper.reading('tv_power', 'ON');
+  r.helper.status('tv_pairing_status', 'paired'); r.helper.status('tv_pairing_status', 'failed');
+  r.helper.status('tv_pairing_status', 'failed');
+  // A reload can load the rules before the Items: nothing to post to yet.
+  r.helper.reading('tv_input', 'hdmi1'); r.helper.status('tv_problem', 'UNDEF');
+  assert.deepEqual(r.posted, [['tv_power', 'ON'], ['tv_power', 'ON'], ['tv_pairing_status', 'failed']]);
+});
+
+test('the shared helper logs a device going down and coming back once each, and backs a failing one off', () => {
+  const r = device(), health = r.helper.health(4);
+  const tried = [];
+  for (let poll = 0; poll < 12; poll++) {
+    if (health.due('tv')) { tried.push(poll); health.failed('tv', 'does not answer'); }
+  }
+  // The next poll, then after 2 and 4, then every 4.
+  assert.deepEqual(tried, [0, 1, 3, 7, 11]);
+  health.answered('tv', 'answers again'); health.answered('tv', 'answers again');
+  assert.deepEqual(r.logs, [['warn', 'tv: does not answer'], ['info', 'tv: answers again']]);
+  assert(health.due('tv') && health.due('tv'));
+  // Without retryPolls a failing device is never left alone.
+  const steady = r.helper.health();
+  steady.failed('tv', 'down'); steady.failed('tv', 'down');
+  assert(steady.due('tv') && steady.due('tv'));
+});
+
+test('with SEND false the shared helper holds a command back and says so', () => {
+  const live = device(), copy = device({ send: false });
+  assert.equal(live.helper.withheld({ id: 'tv' }, 'sending power ON'), false);
+  assert.equal(copy.helper.withheld({ id: 'tv' }, 'sending power ON'), true);
+  assert.deepEqual(live.logs, []); assert.deepEqual(copy.logs, [['info', 'tv: SEND is false, not sending power ON']]);
+});
+
+test('the shared command rule hands a command to the routing actor once there is one, else sends it', () => {
+  const r = device(), direct = [], legacy = [];
+  let actor = null;
+  r.helper.commandRule({ id: 'x_tv_command', name: 'tv', items: ['tv_power', 'tv_pairing'], actor: () => actor,
+    direct: event => { direct.push(event.itemName); return 'sent'; } });
+  const rule = r.rules.x_tv_command;
+  assert.deepEqual(rule.triggers, [{ name: 'tv_power' }, { name: 'tv_pairing' }]);
+  assert.equal(rule.execute({ itemName: 'tv_power', receivedCommand: 'ON' }), 'sent');
+  actor = { legacy: (...args) => legacy.push(args) };
+  rule.execute({ itemName: 'tv_power', receivedCommand: { toString: () => 'OFF' }, eventSource: 'remote' });
+  rule.execute({ itemName: 'tv_pairing', receivedCommand: '1234' });
+  assert.deepEqual(direct, ['tv_power']);
+  assert.deepEqual(legacy, [['tv_power', 'OFF', false, 'remote'], ['tv_pairing', '1234', true, undefined]]);
+});
+
+test('the shared connections keep one per device, replace one closed while idle and close all on unload', () => {
+  const opened = [];
+  const thermiteIO = {
+    renew(link, end) { link.end = end; },
+    // Each kept link has one unasked line waiting, then is quiet.
+    line(link) { if (link.unasked.length) return link.unasked.shift(); if (link.peerClosed) { link.closed = true; return null; } throw Error('quiet'); },
+    quietTimeout: () => true,
+    close(link) { link.closed = true; },
+  };
+  const r = device({ thermiteIO });
+  const links = r.helper.links((dev, end) => { const link = { id: dev.id, end, closed: false, unasked: [] }; opened.push(link); return link; });
+  const tv = { id: 'tv' };
+  const first = links.connection(tv, 1);
+  first.unasked.push('late answer');
+  assert.equal(links.connection(tv, 2), first); assert.deepEqual(first.unasked, []); assert.equal(first.end, 2);
+  first.peerClosed = true;
+  const second = links.connection(tv, 3);
+  assert.notEqual(second, first); assert.equal(opened.length, 2);
+  links.drop(tv); assert(second.closed);
+  const third = links.connection(tv, 4);
+  r.hooks.forEach(hook => hook());
+  assert(third.closed); assert.equal(opened.length, 3);
+});
+
+test('the shared samples are fresh owned reads, and a command applied without one leaves the actor to read again', () => {
+  const r = device();
+  assert.deepEqual(r.helper.sample('ON'), { value: 'ON', fresh: true, basis: 'owned_native_read', observedAt: 5000 });
+  assert.deepEqual(r.helper.applied(() => r.helper.sample('hdmi1')).sample.value, 'hdmi1');
+  assert.deepEqual(r.helper.applied(() => { throw Error('unread'); }), { outcome: 'applied', sample: null });
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

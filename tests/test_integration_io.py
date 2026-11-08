@@ -10,7 +10,7 @@ from pathlib import Path
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 from oh_conf import House  # noqa: E402
-from oh_integrations import avpro_telnet, pyatv_http, sony_adcp, sony_ip_control  # noqa: E402
+from oh_integrations import _io, avpro_telnet, pyatv_http, sony_adcp, sony_ip_control  # noqa: E402
 from oh_testing import controls  # noqa: E402
 
 
@@ -35,6 +35,15 @@ def projectors():
                              "ip": "192.0.2.11",
                              "controls": {"observe": [sony_adcp.NAME]}})
     return house
+
+
+class Embedding(unittest.TestCase):
+    def test_the_shared_device_parts_are_optional_but_once_and_after_the_io(self):
+        self.assertEqual(_io.embed(f"a\n{_io.MARK}\nb\n"), f"a\n{_io.SOURCE.read_text()}\nb\n")
+        for bad in (f"{_io.MARK}\n{_io.DEVICE_MARK}\n{_io.DEVICE_MARK}\n", f"{_io.DEVICE_MARK}\n{_io.MARK}\n",
+                    f"{_io.MARK}\nx = 1; {_io.DEVICE_MARK}\n", f"{_io.DEVICE_MARK}\n"):
+            with self.subTest(source=bad), self.assertRaises(ValueError):
+                _io.embed(bad)
 
 
 class DeviceContexts(unittest.TestCase):

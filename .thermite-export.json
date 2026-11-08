@@ -249,6 +249,7 @@
     "lib/oh_install/steps.py",
     "lib/oh_install/system.py",
     "lib/oh_integrations/__init__.py",
+    "lib/oh_integrations/_device.js",
     "lib/oh_integrations/_diagnostics.py",
     "lib/oh_integrations/_instr.py",
     "lib/oh_integrations/_io.js",
