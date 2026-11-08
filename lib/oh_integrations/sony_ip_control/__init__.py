@@ -328,6 +328,14 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
     return {rule_path(device): rule([device]) for device in devices}
 
 
+def fields(device: dict) -> dict[str, dict]:
+    """The routing executor's fields (oh_integrations): power and the HDMI
+    input, driven by this integration's own rule. Its actor also takes
+    manual commands to the volume, mute, key and pairing Items."""
+    return {sony_rest.power_item(device): {"kind": "sony", "values": ["ON", "OFF"], "manual": 6},
+            f"{device['id']}_input": {"kind": "sony", "values": [value for value, _ in INPUTS], "manual": 6}}
+
+
 def stage(device: dict, zone: int | None) -> dict | None:
     """The TV's power and input Items and its inputs, for a room whose
     display it is (oh_features.routing); it has no zones."""

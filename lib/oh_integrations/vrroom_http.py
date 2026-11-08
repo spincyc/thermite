@@ -61,6 +61,14 @@ def input_item(device: dict) -> str:
     return f"{device['id']}_input"
 
 
+def fields(device: dict) -> dict[str, dict]:
+    """The routing executor's field (oh_integrations): TX0's input, written
+    and read through the Thing's own channel. The switch's answer to a
+    write is no acknowledgement; only a read showing the input is."""
+    return {input_item(device): {"kind": "http", "thing": thing_uid(device), "channel": "input",
+                                 "values": [str(n) for n in INPUTS], "ack": "readback"}}
+
+
 def diagnostics(device: dict) -> dict:
     """Reported signals and sink capabilities, sharing the existing GET.
 

@@ -20,9 +20,10 @@ drops INCREASE and DECREASE, which the binding would send as MVUP and
 MVDOWN; the two inputs' send only an INPUTS value; the key's turns a button
 id into its receiver command on the general#command channel and drops any
 other. A room's receiver in the routing is one zone of it (stage()):
-routing.js powers it and sets its input. Under the routing lifecycle a
-rule of the receiver's own, denonmarantz_http.js (rule_path()), writes the
-zones' power and input and reads them back over the HTTP API. A volume limit set on the receiver itself
+routing.js powers it and sets its input. Under the routing lifecycle the
+zones' power and input are the routing executor's fields (fields()), which
+a rule of the receiver's own, denonmarantz_http.js, writes and reads back
+over the HTTP API (rule_path()). A volume limit set on the receiver itself
 is the receiver's to apply; thermite sets none.
 """
 
@@ -370,6 +371,19 @@ def stage(device: dict, zone: int | None) -> dict | None:
                 "inputs": [value for value, _ in inputs(device, zone)]}
     return None
 
+
+def fields(device: dict) -> dict[str, dict]:
+    """The routing executor's fields (oh_integrations): each zone's power
+    and input (stage()), which the receiver's own rule (rule_path()) writes
+    and reads back over the HTTP API at the Thing's current address."""
+    out = {}
+    for zone in (None, 2):
+        staged = stage(device, zone)
+        if staged:
+            for point, values in (("power", ["ON", "OFF"]), ("input", staged["inputs"])):
+                out[staged[point]] = {"kind": "denon", "thing": thing_uid(device), "zone": zone or 1, "point": point,
+                                      "values": list(values)}
+    return out
 
 
 def remote(device: dict) -> dict | None:

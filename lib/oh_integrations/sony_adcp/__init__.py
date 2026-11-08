@@ -64,14 +64,6 @@ PROBED = False
 #: Seconds from a command to its read-back: none, the command's session
 #: reads the projector again on the same connection.
 READ_BACK = 0
-#: Under the routing lifecycle (oh_features/routing/lifecycle_io.py), the
-#: power field's settle in ms: how long an accepted `power "on"` may take to
-#: show in power_status and startup may last, and the same for `power "off"`
-#: and cooling. The VW915ES has stayed in standby for 6 s or more after an
-#: accepted `power "on"` and reported on by 21 s. A read that shows the value
-#: ends the wait early; startup and cooling1/cooling2 are read as transitions
-#: (sony_adcp.js routingProvider).
-SETTLE = {"power": {"ON": 60000, "OFF": 30000}}
 RULE = "automation/js/sony_adcp.js"
 SOURCE = Path(__file__).resolve().parent / "sony_adcp.js"
 #: The rule's markers: each line is replaced by its filled-in constant.
@@ -191,6 +183,23 @@ def rule_path(device: dict) -> str:
 def files(devices: list[dict], house: House) -> dict[str, str]:
     """The conf files rendered from all of this integration's devices."""
     return {rule_path(device): rule([device]) for device in devices}
+
+
+def fields(device: dict) -> dict[str, dict]:
+    """The routing executor's fields (oh_integrations): power and input,
+    driven by this integration's own rule. Its actor also takes manual
+    commands to the key Item.
+
+    Power's settle, in ms: how long an accepted `power "on"` may take to
+    show in power_status and startup may last, and the same for
+    `power "off"` and cooling. The VW915ES has stayed in standby for 6 s or
+    more after an accepted `power "on"` and reported on by 21 s. A read that
+    shows the value ends the wait early; startup and cooling1/cooling2 are
+    read as transitions (sony_adcp.js routingProvider)."""
+    ident = device["id"]
+    return {f"{ident}_power": {"kind": "adcp", "values": ["ON", "OFF"], "settle": {"ON": 60000, "OFF": 30000},
+                               "manual": 3},
+            f"{ident}_input": {"kind": "adcp", "values": [value for value, _ in INPUTS], "manual": 3}}
 
 
 def stage(device: dict, zone: int | None) -> dict | None:

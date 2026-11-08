@@ -170,6 +170,13 @@ def wake_item(device: dict) -> str | None:
     return f"{device['id']}_power" if uses(device, PHASE, NAME) else None
 
 
+def fields(device: dict) -> dict[str, dict]:
+    """The routing executor's field (oh_integrations): power, driven by
+    this integration's own rule. Its actor also takes manual commands to
+    the key and pairing Items."""
+    return {f"{device['id']}_power": {"kind": "pyatv", "values": ["ON", "OFF"], "manual": 3}}
+
+
 def native_power_observation(device: dict) -> dict | None:
     """Native power with its helper acquisition time, never a command ACK time."""
     if not uses(device, PHASE, NAME):

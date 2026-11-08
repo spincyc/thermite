@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -13,6 +14,7 @@ AREA=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(AREA/'lib'))
 from oh_conf import House, Conf, YamlFile  # noqa: E402
 from oh_features.routing import lifecycle_io  # noqa: E402
+import oh_integrations as integrations  # noqa: E402
 from oh_integrations import ukm404_http, avpro_telnet, sony_adcp, sony_ip_control, pyatv_http, sony_rest, denonmarantz_http  # noqa: E402
 from oh_testing import routing as routing_check  # noqa: E402
 
@@ -55,8 +57,11 @@ class Rendering(unittest.TestCase):
         resources=routing.table(data)['lifecycle']['resources']
         self.assertEqual(resources['example_projector_power']['settleMs'],{'ON':60000,'OFF':30000})
         self.assertEqual([name for name,row in resources.items() if 'settleMs' in row],['example_projector_power'])
-        for bad in ({'power':{'STANDBY':1000}},{'power':{'ON':0}},{'power':{'ON':300001}},{'power':{'ON':1.5}},{'power':{'ON':True}}):
-            with self.subTest(settle=bad),mock.patch.object(sony_adcp,'SETTLE',bad):
+        declared=sony_adcp.fields
+        for bad in ({'STANDBY':1000},{'ON':0},{'ON':300001},{'ON':1.5},{'ON':True}):
+            def fields(device,bad=bad):
+                out=declared(device);out[device['id']+'_power']['settle']=bad;return out
+            with self.subTest(settle=bad),mock.patch.object(sony_adcp,'fields',fields):
                 with self.assertRaisesRegex(ValueError,'sony_adcp declares an invalid settle for example_projector_power'):
                     lifecycle_io.capabilities(data)
 
@@ -101,6 +106,70 @@ class Rendering(unittest.TestCase):
                 aimed=module.aim(conf.files,device,'127.0.0.1:40123')
                 self.assertNotEqual(aimed[path],text)
                 self.assertEqual(next(line for line in aimed[path].splitlines() if line.startswith('const ROUTING_EXECUTOR = ')),config_line)
+
+
+def fictional(kind='http'):
+    """An integration no generic file knows: a relay whose one field is
+    driven by the generic HTTP actor, or (any other kind) by its own rule."""
+    module = types.ModuleType('example_relay_http')
+    module.NAME, module.PHASE, module.FILE = 'example_relay_http', 'control', 'yaml/example_relay.yaml'
+    uid = lambda device: f"http:url:{device['id']}"
+    def render(device, house, out):
+        out.things[uid(device)] = {'config': {'baseURL': f"http://{device['ip']}"}, 'channels': {'relay': {'config': {}}}}
+        out.items[f"{device['id']}_relay"] = {'type': 'Switch', 'tags': ['Control'], 'channel': f"{uid(device)}:relay"}
+    def fields(device):
+        declared = {'kind': kind, 'values': ['ON', 'OFF'], 'settle': {'ON': 5000}, 'manual': 4}
+        if kind == 'http':
+            declared = {'kind': kind, 'thing': uid(device), 'channel': 'relay', **declared, 'ack': 'result'}
+        return {f"{device['id']}_relay": declared}
+    module.render, module.fields = render, fields
+    if kind != 'http':
+        module.rule_path = lambda device: f"automation/js/example_relay_{device['id']}.js"
+        module.files = lambda devices, house: {module.rule_path(d): "const SEND = true;\n" + lifecycle_io.CUSTOM_MARK + "\n" for d in devices}
+    return module
+
+
+class Declarations(unittest.TestCase):
+    def inventory(self):
+        return {"version":1,"rooms":{"desk":{"label":"Desk","tag":"Room"}},"devices":[
+            {"id":"desk_relay","room":"desk","kind":"relay","ip":"192.0.2.20","controls":{"control":["example_relay_http"]}}]}
+
+    def test_a_new_integration_gets_an_executor_field_from_its_declaration_alone(self):
+        module = fictional()
+        data = self.inventory()
+        with mock.patch.object(integrations, 'REGISTRY', (*integrations.REGISTRY, module)):
+            caps = lifecycle_io.capabilities(data)
+            self.assertEqual(caps, {'desk_relay_relay': {
+                'key': 'desk_relay', 'provider': 'example_relay_http', 'terminal': True, 'probe': True, 'manual': 4,
+                'field': {'kind': 'http', 'thing': 'http:url:desk_relay', 'channel': 'relay', 'allowed': ['ON', 'OFF'],
+                          'settle': {'ON': 5000}, 'ack': 'result'}}})
+            house = House(data); conf = Conf(); out = conf.yaml_file(module.FILE, ())
+            module.render(data['devices'][0], house, out)
+            descriptor = {'resources': {'desk_relay_relay': {}}}
+            lifecycle_io.configure(house, conf, descriptor)
+        actor = conf.files['automation/js/thermite_routing_io_desk_relay.js']
+        config = json.loads(next(line for line in actor.splitlines() if line.startswith('const CONFIG = '))[len('const CONFIG = '):-1])
+        self.assertEqual(config['fields'], {'desk_relay_relay': caps['desk_relay_relay']['field']})
+        self.assertNotIn('192.0.2.20', actor)
+        # Its 4 manual Items, two holds per resource and 17 per actor.
+        self.assertEqual(descriptor['maxHolds'], 4 + 2 + 17)
+        self.assertEqual(out.things['http:url:desk_relay']['channels']['relay']['config']['mode'], 'READONLY')
+
+    def test_a_new_integration_with_a_rule_of_its_own_drives_its_fields(self):
+        module = fictional('relay')
+        data = self.inventory()
+        with mock.patch.object(integrations, 'REGISTRY', (*integrations.REGISTRY, module)):
+            house = House(data); conf = Conf(); out = conf.yaml_file(module.FILE, ())
+            module.render(data['devices'][0], house, out)
+            conf.files.update(module.files(data['devices'], house))
+            lifecycle_io.configure(house, conf, {'resources': {'desk_relay_relay': {}}})
+            text = conf.files['automation/js/example_relay_desk_relay.js']
+            self.assertNotIn(lifecycle_io.CUSTOM_MARK, text)
+            self.assertIn('"desk_relay_relay":{"kind":"relay","allowed":["ON","OFF"],"settle":{"ON":5000}}', text)
+            self.assertNotIn('automation/js/thermite_routing_io_desk_relay.js', conf.files)
+            del module.rule_path
+            with self.assertRaisesRegex(ValueError, 'routing executor adapter is absent'):
+                lifecycle_io.configure(house, Conf(), {'resources': {'desk_relay_relay': {}}})
 
 
 class Denon(unittest.TestCase):

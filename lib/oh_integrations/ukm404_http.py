@@ -41,6 +41,15 @@ def switch_item(device: dict, output: int) -> str:
     return f"{device['id']}_device{output}_host"
 
 
+def fields(device: dict) -> dict[str, dict]:
+    """The routing executor's fields (oh_integrations): each device port's
+    host, written and read through the Thing's own channel; the matrix
+    acknowledges a write with {"result": 1}."""
+    return {switch_item(device, port): {"kind": "http", "thing": thing_uid(device), "channel": f"device{port}_host",
+                                        "values": [str(n) for n in range(1, HOSTS + 1)], "ack": "result"}
+            for port in range(1, DEVICES + 1)}
+
+
 def validate(device: dict) -> list[str]:
     if uses(device, PHASE, NAME) and device.get("kind") not in KINDS:
         return [f"{device.get('id')}: {NAME} drives a usb_matrix, not a {device.get('kind')}"]

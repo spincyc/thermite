@@ -72,6 +72,14 @@ def switch_item(device: dict, output: int) -> str:
     return f"{device['id']}_output{output}_input"
 
 
+def fields(device: dict) -> dict[str, dict]:
+    """The routing executor's fields (oh_integrations): each output's
+    input, driven by this integration's own rule."""
+    inputs, outputs = ports(device)
+    return {switch_item(device, output): {"kind": "avpro", "values": [str(n) for n in range(1, inputs + 1)]}
+            for output in range(1, outputs + 1)}
+
+
 def validate(device: dict) -> list[str]:
     if uses(device, PHASE, NAME) and device.get("kind") not in KINDS:
         return [f"{device.get('id')}: {NAME} drives an hdmi_matrix, not a {device.get('kind')}"]

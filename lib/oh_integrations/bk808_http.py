@@ -87,6 +87,21 @@ def copy_edid(output: int) -> str:
     return f"copy-output-{output}"
 
 
+def fields(device: dict) -> dict[str, dict]:
+    """The routing executor's fields (oh_integrations): each output's input
+    and each input's EDID code, written and read through the Thing's own
+    channel; the matrix acknowledges a write with {"result": 1}."""
+    uid = thing_uid(device)
+    out = {switch_item(device, output): {"kind": "http", "thing": uid, "channel": f"output{output}_input",
+                                         "values": [str(n) for n in range(1, INPUTS + 1)], "ack": "result"}
+           for output in range(1, OUTPUTS + 1)}
+    codes = [str(code) for code in sorted(EDID.values())]
+    out.update({edid_item(device, input_): {"kind": "http", "thing": uid, "channel": f"input{input_}_edid",
+                                            "values": codes, "ack": "result"}
+                for input_ in range(1, INPUTS + 1)})
+    return out
+
+
 def diagnostics(device: dict) -> dict:
     """Read-back EDIDs and output settings; these are not negotiated video."""
     input_item, output_item = f"{device['id']}_input_signal", f"{device['id']}_output_signal"

@@ -76,6 +76,33 @@ receiver and display) provides
               takes; None for a zone the device lacks. routing.js sends
               these only to a device that lists the module under control
 
+A module whose fields the routing lifecycle's ordered executor drives
+(oh_features.routing.lifecycle_io) provides
+
+    fields(device) -> {Item: declaration}
+              each field of a device that lists the module under control,
+              declared as a dict of
+        kind      "http": the generic HTTP actor writes and reads it
+                  through its Thing's channel; any other kind: the
+                  module's own rule drives it (rule_path() below)
+        values    the values it can be commanded with
+        thing, channel
+                  its Thing's UID and channel id (http)
+        ack       what acknowledges a write (http): "result", an answer of
+                  {"result": 1}; "readback", only a read showing the value
+        settle    optional {value: ms}: how long an accepted write of the
+                  value may take to show in a read, and a transition toward
+                  it may last (at most 300000)
+        manual    optional: how many Items the device's actor takes manual
+                  commands on, when more than its fields
+              and any other key its own rule reads (zone, point); every
+              key but manual reaches the actor, values as `allowed`
+    rule_path(device) -> str
+              for any kind but http: its rule's path under conf/, which
+              its files() renders with the line
+              `const ROUTING_EXECUTOR = null;` once; the lifecycle fills it
+              in with the actor's configuration
+
 A module whose
 device has fixed settings also provides
 
