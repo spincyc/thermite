@@ -12,7 +12,8 @@ Each module owns everything about its integration and provides:
               problems with this integration's fields in one device; called
               for every device, so a field is checked wherever it appears
     render(device, house, out)
-              adds one device's Things and Items to out (an oh_conf.YamlFile)
+              adds one device's Things and Items to out (an oh_conf.YamlFile),
+              and, once, any Thing its devices share, such as a bridge
 
 Optional provider hooks preserve dormant integrations and validate gateways:
 

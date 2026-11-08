@@ -44,7 +44,10 @@ def observed_devices():
                     "GoogleTV: PIN Process Incomplete", kind="androidtv:googletv") for number in range(5)),
             thing("http:url:fixture_edid", "OFFLINE", "COMMUNICATION_ERROR", "No route to host"),
             thing("http:url:fixture_usb", "OFFLINE", "COMMUNICATION_ERROR", "Request timed out after 3000 ms"),
-            heos("heos:bridge:fixture_receiver_a"), heos("heos:bridge:fixture_receiver_b")]
+            # The house's one HEOS bridge, on the first receiver, and both receivers' players on it.
+            heos("heos:bridge:fixture_receiver_a"),
+            *(thing(f"heos:player:fixture_receiver_a:{ident}", kind="heos:player")
+              for ident in ("fixture_receiver_a", "fixture_receiver_b"))]
 
 
 class InstallationThingVerdicts(unittest.TestCase):
@@ -150,14 +153,14 @@ class Health(unittest.TestCase):
         strict = self.report(installation=False)
         self.assertEqual(installation["mode"], "installation")
         self.assertNotIn("mode", strict)
-        self.assertEqual(installation["things"]["count"], 94)
+        self.assertEqual(installation["things"]["count"], 95)
         self.assertEqual(installation["failures"], [])
         self.assertEqual(installation["things"]["failed"], [])
-        self.assertEqual(sum(row["verdict"] == "warn" for row in installation["things"]["things"]), 9)
+        self.assertEqual(sum(row["verdict"] == "warn" for row in installation["things"]["things"]), 8)
         self.assertFalse(any(row["verdict"] == "allowed" for row in installation["things"]["things"]))
         self.assertEqual(len(strict["things"]["failed"]), 7)
         self.assertTrue(strict["failures"])
-        self.assertEqual(sum(row["verdict"] == "warn" for row in strict["things"]["things"]), 2)
+        self.assertEqual(sum(row["verdict"] == "warn" for row in strict["things"]["things"]), 1)
 
     def test_only_known_offline_setup_and_communication_details_are_nonfatal(self):
         for detail in (None, "NONE", "COMMUNICATION_ERROR", "BRIDGE_OFFLINE"):

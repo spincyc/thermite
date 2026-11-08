@@ -7,6 +7,17 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A house with several HEOS receivers has one HEOS bridge, named for the
+  receiver it connects to: the one marked `heos_bridge: true`, else the
+  first HEOS receiver in the house file. Every receiver's HEOS transport
+  player is on that bridge, with its own player ID. Each receiver used to
+  get a bridge of its own, against the binding's guidance that one bridge
+  serves the whole HEOS network, so the house held a command connection,
+  an event connection, a keepalive and, once it was quiet for two hours, a
+  reconnect loop per receiver. The other bridges disappear when the house
+  is next generated. A receiver's HEOS player is now OFFLINE while the
+  receiver hosting the bridge is unreachable. `heos_bridge` on more than
+  one device, or on one without `heos`, is refused.
 - A house with no HDMI matrix, each source cabled straight to its room's
   display or receiver, now validates, generates, routes and gets its
   metrics and dashboards. `thermite generate` used to refuse it

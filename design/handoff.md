@@ -192,6 +192,11 @@ function. That replaces these, all found in the cold review:
   resetting a quiet event stream") is a one-commit branch,
   `heos-quiet-event-stream`. Its PR description is drafted. The owner
   reviews it before it is submitted.
+- Thermite used to render one HEOS bridge per receiver, against the
+  binding's guidance that one bridge serves the whole HEOS network; it now
+  renders one per house. The upstream reconnect-loop fix is still needed
+  either way, because the loop hits any HEOS system that is idle for two
+  hours.
 
 ## Development environment
 

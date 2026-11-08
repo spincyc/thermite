@@ -6,12 +6,13 @@ no Thing, channel, configuration, translation or protocol command changes.
 
 ## The defect
 
-Each HEOS bridge holds two telnet connections to the receiver's CLI on port
-1255: one for commands and one for change events. The keepalive job
-(30-second start delay, then every 60 seconds) sends a heartbeat on the
-command connection. In 5.2.3 it also resets the bridge when the event stream
-has delivered nothing for two hours (`LAST_EVENT_THRESHOLD`). The bridge then
-reconnects 15 seconds later.
+Each HEOS bridge holds two telnet connections to its receiver's CLI on port
+1255: one for commands and one for change events. Thermite renders one
+bridge per house, on its host receiver (`lib/oh_integrations/heos.py`).
+The keepalive job (30-second start delay, then every 60 seconds) sends a
+heartbeat on the command connection. In 5.2.3 it also resets the bridge
+when the event stream has delivered nothing for two hours
+(`LAST_EVENT_THRESHOLD`). The bridge then reconnects 15 seconds later.
 
 Three upstream defects combine:
 
@@ -104,8 +105,10 @@ writes only to `--output`: the JAR, `build.json`,
 against two loopback fake HEOS CLIs (`FakeHeosServer.java`) that answer every
 command and never send an event. A compressed scheduler divides every delay
 by 200. The listener reconnects on `CONNECTION_RESTORED` the same way
-`HeosBridgeHandler` does. A security manager refuses every non-loopback
-connection. The test backdates the last event past the threshold and asserts:
+`HeosBridgeHandler` does. Each fake CLI has a bridge of its own, and every
+assertion holds for each; Thermite itself renders one bridge per house. A
+security manager refuses every non-loopback connection. The test backdates
+the last event past the threshold and asserts:
 
 - exactly one reset per receiver, followed by six normal heartbeats;
 - exactly one reconnect: four sockets accepted in total, two open;
@@ -286,17 +289,21 @@ Applying HEOS after Android TV needs no special order.
 
 ## Post-deploy checks
 
-For each receiver, the bridge should hold exactly two established CLI
-connections, before and after the two-hour mark:
+The house's one bridge should hold exactly two established CLI connections,
+both to its host receiver (the address of the `heos:bridge:<host>` Thing),
+before and after the two-hour mark:
 
 ```sh
-ss -Htn state established '( dport = :1255 )' dst RECEIVER_ADDRESS | wc -l
+ss -Htn state established '( dport = :1255 )' dst HOST_ADDRESS | wc -l
+ss -Htn state established '( dport = :1255 )' | wc -l
 ```
 
-The unpatched binding raises this count by two about every 46 seconds once the
-event stream has been quiet for two hours. After at least 2 hours 5 minutes of
-uptime, openHAB's live thread count must also stay flat. In Thermite's
-Prometheus:
+Both must print 2: openHAB holds no HEOS connection to the other receivers.
+
+The unpatched binding raises these counts by two about every 46 seconds once
+the event stream has been quiet for two hours. After at least 2 hours 5
+minutes of uptime, openHAB's live thread count must also stay flat. In
+Thermite's Prometheus:
 
 ```text
 jvm_threads_live_threads{job="openhab"}
@@ -305,7 +312,7 @@ delta(jvm_threads_live_threads{job="openhab"}[30m])
 
 The first should hold steady; the second should stay near zero. The defect
 adds two reader threads per bridge about every 46 seconds, roughly 80 every
-30 minutes.
+30 minutes for the house's one bridge.
 
 ## Primary references
 
