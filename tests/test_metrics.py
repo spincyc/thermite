@@ -421,6 +421,19 @@ class Alerting(unittest.TestCase):
             job = next(job for job in prometheus["scrape_configs"] if job["job_name"] == name)
             self.assertEqual(job["metric_relabel_configs"][0]["action"], "drop")
 
+    def test_the_gateway_is_judged_only_where_it_is_installed(self):
+        """Every house probes the gateway; one without it must not read
+        Gateway down: the alert, the Remotes tile and Service probes all ask
+        whether its unit exists."""
+        alert = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteGatewayDown")
+        self.assertIn(alerts.GATEWAY_INSTALLED, alert["expr"])
+        probed = [(name, panel["title"], query["expr"]) for name, board in boards().items()
+                  for panel in panels(board) for query in panel.get("targets", [])
+                  if alerts.GATEWAY_JOB in query["expr"]]
+        self.assertEqual({title for _, title, _ in probed}, {"Remotes", "Service probes"})
+        for name, title, expr in probed:
+            self.assertIn(f"and on() ({alerts.GATEWAY_INSTALLED})", expr, (name, title))
+
     def test_session_and_tls_ports_are_not_probed(self):
         """A TCP probe would cost an AVPro a session and a listing, and an
         Android TV remote, Cast or WiiM port a TLS handshake."""

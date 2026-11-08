@@ -44,6 +44,10 @@ from .exporter import HOUSE_ROOM
 CORE_JOBS = ("openhab", "thermite", "node", "prometheus", "blackbox")
 SERVICES = ("openhab", "apple_tv_helper", "grafana")
 GATEWAY_JOB = "gateway_https"
+#: Whether this host has the gateway (its unit, as node_exporter sees it).
+#: prometheus.yml probes it in every house: whether it is installed is the
+#: host's state, which generated files never depend on.
+GATEWAY_INSTALLED = f'count(node_systemd_unit_state{{job="node",name="{oh_units.ACCESS}"}}) > 0'
 #: Plain words for each check, as dashboards show a failing one.
 CHECK_WORDS = {
     "runtime": "Runtime not answering",
@@ -228,7 +232,7 @@ def rules(mapping):
             alert("ThermiteServiceDown", f'(node_systemd_unit_state{{job="node",name=~{_q(daemons)},state="active"}} == 0) unless on(name) (node_systemd_unit_state{{job="node",state="failed"}} == 1)', "3m"),
             alert("ThermiteServiceFlapping", 'increase(node_systemd_service_restart_total{job="node",name=~"thermite-.*"}[30m]) >= 3', "0s"),
             # Only where the gateway's unit exists: a house without one has nothing to probe.
-            alert("ThermiteGatewayDown", f'(probe_success{{job="{GATEWAY_JOB}"}} == 0) and on() (count(node_systemd_unit_state{{job="node",name="{oh_units.ACCESS}"}}) > 0)', "3m"),
+            alert("ThermiteGatewayDown", f'(probe_success{{job="{GATEWAY_JOB}"}} == 0) and on() ({GATEWAY_INSTALLED})', "3m"),
             alert("ThermiteRemoteStarved", f'thermite_gateway_sse_peer_streams_max{{http_version="1.1"}} >= {HTTP1_CONNECTIONS}', "1m"),
             alert("ThermiteRemoteTimeouts", f'sum(increase(thermite_client_events_total{{kind=~"{timeouts}"}}[15m])) >= 5', "5m"),
             alert("ThermiteRoutingQuarantined", "thermite_routing_quarantined > 0", "5m"),

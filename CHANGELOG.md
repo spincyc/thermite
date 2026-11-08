@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A house without the remote gateway no longer shows "Gateway down" in red
+  on House health's Remotes tile, nor the gateway Down under the Host
+  board's Service probes. Prometheus probes the gateway in every house, and
+  the probe fails where nothing listens; only ThermiteGatewayDown asked
+  whether thermite-access.service exists. The tile and the row now ask the
+  same: without the gateway the tile reads Unknown and the row is absent.
 - The Devices table lists only devices. It used to end with seven rows with
   no room or name, Needed now "Yes", one for each house-wide check (openHAB,
   the exporter, node_exporter, Prometheus, blackbox, the Apple TV helper and

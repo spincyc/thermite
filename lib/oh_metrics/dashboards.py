@@ -529,13 +529,14 @@ def house(mapping: dict, probes: list[dict]) -> dict:
     board.add(stat("Rooms ready", ready, f"suffix: of {len(zones)}", steps=((WARN, None), (OK, len(zones) or 1)),
                    description="Routing zones whose source is known and whose required checks all pass. A zone "
                                "that is Off and reports Off is ready."), 4, 4)
-    gateway = f'max(probe_success{{job="{alerts.GATEWAY_JOB}"}})'
+    # Only where the gateway is installed, as for ThermiteGatewayDown: elsewhere its probe always fails.
+    down = f'(max(probe_success{{job="{alerts.GATEWAY_JOB}"}}) == bool 0) and on() ({alerts.GATEWAY_INSTALLED})'
     timeouts = f'sum(increase(thermite_client_events_total{{kind=~"{TIMEOUTS}"}}[15m]))'
-    board.add(stat("Remotes", f"clamp_max((2 * ({gateway} == bool 0)) + (({timeouts} > bool 0) or vector(0)), 2)",
+    board.add(stat("Remotes", f"clamp_max((2 * ({down})) + (({timeouts} > bool 0) or vector(0)), 2)",
                    mappings=REMOTES,
                    description="Gateway down: the local HTTPS check of the gateway fails. Timing out: remote pages "
-                               "gave up waiting for the gateway in the last 15 minutes. Unknown: no gateway check "
-                               "(no gateway, or no deploy since it was installed)."), 4, 4)
+                               "gave up waiting for the gateway in the last 15 minutes. Unknown: this host has no "
+                               "gateway, or nothing has checked it yet."), 4, 4)
     board.add(stat("Alerts firing", 'count(ALERTS{alertstate="firing",alertname!="ThermiteWatchdog"}) or vector(0)',
                    steps=((OK, None), (WARN, 1)), description="Alerts firing now, without the monitoring heartbeat."),
               4, 4)
@@ -941,7 +942,9 @@ def host(targets: int = 0, mapping: dict | None = None) -> dict:
     _column(restarts, "Value", {"id": "decimals", "value": 0})
     board.add(restarts, 8, max(8, len(UNITS) + 2))
     board.add(state_timeline("Service probes", [
-        ('probe_success{job=~"service_http|alerting_http|gateway_https"}', "{{service}}")], UP_DOWN), 12, 7)
+        ('probe_success{job=~"service_http|alerting_http"}', "{{service}}"),
+        (f'probe_success{{job="{alerts.GATEWAY_JOB}"}} and on() ({alerts.GATEWAY_INSTALLED})', "{{service}}")],
+        UP_DOWN, "Local services answering their checks; the gateway only where it is installed."), 12, 7)
     board.add(timeseries("Metrics textfiles age", [("time() - node_textfile_mtime_seconds", "{{file}}")], "s",
                          minimum=0, description="Seconds since each access service last wrote its metrics; it "
                                                 "writes every 10 s while it runs."), 12, 7)
