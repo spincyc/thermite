@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Prometheus names a routing zone one way: `thermite:check{zone}` (and so
+  ThermiteCheckFailing's `zone`) is the zone's id, `theater`, as in the
+  routing telemetry. It used to be the zone's source Item,
+  `loc_theater_source`, so a check never joined the routing series on
+  `zone`. New `thermite_zone_info{zone,room,label}` and
+  `thermite_room_info{room,label}` (with `house` for the house-wide checks)
+  give each zone's and room's name to `on(zone) group_left(label)` and
+  `on(room) group_left(label)`. A check's `room` is the room using the
+  device, which may not be the device's own: join `thermite_device_info` on
+  `device` alone.
 - The dashboards judge a source change against the house's own routing
   deadline, the one routing.js uses: 15 seconds, or longer when a room's
   receiver is read more slowly (20 seconds with a Denon or Marantz receiver).

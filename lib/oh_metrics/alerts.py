@@ -13,6 +13,12 @@ check, required} is 1 failing, 0 OK or -1 unknown, for
     problem   a device reports no problem
     power     a device on the active path is on
 
+`zone` is the routing zone's id, as in thermite_route_seconds and
+thermite_zone_info; `room` is the room the check is for: the zone's room
+for a zone's checks, the device's own room for infrastructure, and house
+for the house-wide ones. A device's room may differ from the room using
+it, so device facts (thermite_device_info) join on(device) alone.
+
 Device checks come from the exporter map's health_checks: routing
 infrastructure always, every other device only on a zone's active path
 (required="true" while the zone's source uses it, "false" otherwise, and
@@ -31,6 +37,8 @@ from __future__ import annotations
 import re
 
 import oh_units
+
+from .exporter import HOUSE_ROOM
 
 #: The Prometheus jobs and local HTTP services control depends on.
 CORE_JOBS = ("openhab", "thermite", "node", "prometheus", "blackbox")
@@ -120,6 +128,11 @@ def _zone_room(mapping: dict, item: str) -> str:
     return str(((mapping.get("items") or {}).get(item) or {}).get("room") or item)
 
 
+def _zone(mapping: dict, item: str) -> str:
+    """The routing zone id of a zone's source Item."""
+    return str(((mapping.get("paths") or {}).get(item) or {}).get("zone") or item)
+
+
 def checks(mapping: dict) -> tuple[list[dict], int]:
     """(thermite:check recording rules, how many required series always exist)."""
     rules: list[dict] = []
@@ -130,18 +143,18 @@ def checks(mapping: dict) -> tuple[list[dict], int]:
                   "required": "true" if required else "false"}
         rules.append({"record": CHECK, "expr": expr, "labels": {k: v for k, v in labels.items() if v}})
 
-    record("max(thermite_openhab_up == bool 0) or vector(-1)", "house", "openhab", "runtime", True)
+    record("max(thermite_openhab_up == bool 0) or vector(-1)", HOUSE_ROOM, "openhab", "runtime", True)
     for job in CORE_JOBS:
-        record(f"max(up{{job={_q(job)}}} == bool 0) or vector(-1)", "house", job, "scrape", True)
+        record(f"max(up{{job={_q(job)}}} == bool 0) or vector(-1)", HOUSE_ROOM, job, "scrape", True)
     for service in SERVICES:
         record(f'max(probe_success{{job="service_http",service={_q(service)}}} == bool 0) or vector(-1)',
-               "house", service, "service", True)
+               HOUSE_ROOM, service, "service", True)
     record('max(node_scrape_collector_success{job="node",collector="systemd"} == bool 0) or vector(-1)',
-           "house", "node", "systemd", True)
+           HOUSE_ROOM, "node", "systemd", True)
     always_required += 2 + len(CORE_JOBS) + len(SERVICES)
     for item in sorted((mapping.get("paths") or {})):
         record(f'(count(thermite_item_info{{item={_q(item)},value!="other"}}) * 0) or vector(-1)',
-               _zone_room(mapping, item), "", "source", True, item)
+               _zone_room(mapping, item), "", "source", True, _zone(mapping, item))
         always_required += 1
     # A zone's check reads only the series its own demands added: two rooms
     # on different zones of one receiver each check their own zone's power.
@@ -163,18 +176,18 @@ def checks(mapping: dict) -> tuple[list[dict], int]:
     devices = mapping.get("devices") or {}
     for (device, name), group in sorted(groups.items()):
         if group["always"]:
-            room = str((devices.get(device) or {}).get("room") or "house")
+            room = str((devices.get(device) or {}).get("room") or HOUSE_ROOM)
             record(_check_value(group["selectors"], group["bad"]), room, device, name, not group["optional"])
             always_required += not group["optional"]
             continue
-        for item, zone in sorted(group["zones"].items()):
-            value = _check_value(zone["selectors"], group["bad"])
-            room, used = _zone_room(mapping, item), _demand(zone["demands"])
+        for item, demanded in sorted(group["zones"].items()):
+            value = _check_value(demanded["selectors"], group["bad"])
+            room, zone, used = _zone_room(mapping, item), _zone(mapping, item), _demand(demanded["demands"])
             if group["optional"]:
-                record(value, room, device, name, False, item)
+                record(value, room, device, name, False, zone)
                 continue
-            record(f"({value}) and on() {used}", room, device, name, True, item)
-            record(f"({value}) unless on() {used}", room, device, name, False, item)
+            record(f"({value}) and on() {used}", room, device, name, True, zone)
+            record(f"({value}) unless on() {used}", room, device, name, False, zone)
     return rules, always_required
 
 

@@ -52,7 +52,8 @@ def panels(board):
 ROUTING_MAP = {"devices": {"example_matrix": {"room": "example_west", "kind": "hdmi_matrix"},
                            "example_tv": {"room": "example_west", "kind": "tv"}},
                "routing": {"status": "house_routing_io_status", "metrics": "house_routing_metrics",
-                           "zones": {"example_west": "example_west"}, "executors": ["example_matrix"]}}
+                           "zones": {"example_west": {"room": "example_west", "label": "Example West"}},
+                           "executors": ["example_matrix"]}}
 
 
 def items(**states):
@@ -259,7 +260,7 @@ class Checks(unittest.TestCase):
             self.assertIn("and on()" if rule["labels"]["required"] == "true" else "unless on()", rule["expr"])
             self.assertIn("vector(-1)", rule["expr"], "missing telemetry must read unknown")
         sources = [rule for rule in recorded if rule["labels"]["check"] == "source"]
-        self.assertEqual({rule["labels"]["zone"] for rule in sources}, set(MAP["paths"]))
+        self.assertEqual({rule["labels"]["zone"] for rule in sources}, set(MAP["routing"]["zones"]))
 
     def test_optional_devices_are_never_required(self):
         inventory = copy.deepcopy(INVENTORY)
@@ -302,7 +303,7 @@ class Checks(unittest.TestCase):
         power = {rule["labels"]["zone"]: rule["expr"] for rule in recorded
                  if rule["labels"].get("device") == "example_avr" and rule["labels"]["check"] == "power"
                  and rule["labels"]["required"] == "true"}
-        cinema, lounge = (f"loc_{room}_source" for room in (zones.CINEMA, zones.LOUNGE))
+        cinema, lounge = zones.CINEMA, zones.LOUNGE
         self.assertEqual(set(power), {cinema, lounge})
         # Each room needs only the zone it listens to: the Lounge is not
         # failing while the Cinema's main zone is off, nor the reverse.
@@ -310,6 +311,41 @@ class Checks(unittest.TestCase):
         self.assertNotIn("zone2", power[cinema])
         self.assertIn('"example_avr_zone2_power"', power[lounge])
         self.assertNotIn("main_power", power[lounge])
+
+    def test_checks_join_the_routing_telemetry_and_the_info_families(self):
+        """One zone id in every family, and info families a check joins
+        with on(zone), on(room) or on(device) alone, losing none."""
+        from tests import test_zone_sync as zones
+        files = rendered(zones.house())
+        mapping = json.loads(files[oh_metrics.EXPORTER_MAP])
+        checks = [rule["labels"] for rule in yaml.safe_load(files["prometheus/alerts.yml"])["groups"][0]["rules"]
+                  if rule.get("record") == alerts.CHECK]
+        data = {"version": 1, "route": {}, "operations": {}, "failures": {}, "resends": {}}
+        answer = [{"name": mapping["routing"]["metrics"], "state": json.dumps(data)}]
+        samples = exporter.collect(mapping, lambda path, timeout: answer if "items" in path else [])
+        family = {}
+        for name, labels, _ in samples:
+            family.setdefault(name, []).append(labels)
+        zone_info = {labels["zone"]: labels for labels in family["thermite_zone_info"]}
+        self.assertEqual(zone_info[zones.LOUNGE], {"zone": zones.LOUNGE, "room": zones.LOUNGE,
+                                                   "label": "Example Lounge"})
+        routed = {labels["zone"] for labels in family["thermite_route_seconds_count"]}
+        self.assertEqual(routed, set(zone_info))
+        self.assertEqual({labels["zone"] for labels in family["thermite_routing_resends_total"]}, set(zone_info))
+        zoned = {labels["zone"] for labels in checks if "zone" in labels}
+        self.assertEqual(zoned, set(zone_info))
+        room_info = {labels["room"]: labels["label"] for labels in family["thermite_room_info"]}
+        self.assertEqual(room_info, {"house": "House", zones.CINEMA: "Example Cinema", zones.LOUNGE: "Example Lounge"})
+        self.assertLessEqual({labels["room"] for labels in checks}, set(room_info))
+        # The Lounge's checks of the receiver are the Lounge's, though it is
+        # the Cinema's device: device facts join on(device) alone.
+        own = {labels["device"]: labels["room"] for labels in family["thermite_device_info"]}
+        lounge = [labels for labels in checks if labels.get("device") == "example_avr" and labels["room"] == zones.LOUNGE]
+        self.assertTrue(lounge)
+        self.assertEqual(own["example_avr"], zones.CINEMA)
+        for labels in checks:
+            if labels.get("device") in mapping["devices"]:
+                self.assertEqual(sum(each["device"] == labels["device"] for each in family["thermite_device_info"]), 1)
 
     def test_check_values_fail_first_then_need_every_series(self):
         one = alerts._check_value(['thermite_thing_online{thing="a"}'], 0)

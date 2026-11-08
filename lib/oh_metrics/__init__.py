@@ -495,23 +495,28 @@ def exporter_map(inventory: dict, conf=None) -> dict:
     from oh_features import threadpools
     if threadpools.enabled(house):
         result["handler_pool"] = dict(threadpools.ITEM_NAMES)
-    routing = routing_map(inventory, conf, items)
+    routing = routing_map(inventory, conf, items, paths)
     if routing:
         result["routing"] = routing
     return result
 
 
-def routing_map(inventory: dict, conf, items: dict) -> dict:
+def routing_map(inventory: dict, conf, items: dict, paths: dict) -> dict:
     """The routing executor's status Item and the routing telemetry Item,
-    when the house has them, with each routing zone's room and the devices
-    the executor commands (each executor actor's key): the exporter turns
-    their JSON into thermite_routing_* and thermite_route_seconds, with a
-    zero for every zone and executor device routing has not counted yet."""
+    when the house has them, with each routing zone's room and label and
+    the devices the executor commands (each executor actor's key): the
+    exporter turns their JSON into thermite_routing_* and
+    thermite_route_seconds, with a zero for every zone and executor device
+    routing has not counted yet, and writes thermite_zone_info."""
+    from oh_conf import House
     from oh_features import routing
     from oh_features.routing import lifecycle_io
 
+    house = House(inventory)
     present = {name for file in conf.yaml.values() for name in file.items}
-    zones = {name.removeprefix("loc_").removesuffix("_source"): spec["room"] for name, spec in items.items()
+    zones = {name.removeprefix("loc_").removesuffix("_source"): {
+                 "room": spec["room"], "label": (paths.get(name) or {}).get("label") or house.room_label(spec["room"])}
+             for name, spec in items.items()
              if spec.get("point") == "source" and name.startswith("loc_") and name.endswith("_source")}
     found = {key: name for key, name in (("status", lifecycle_io.STATUS_ITEM), ("metrics", routing.METRICS_ITEM))
              if name in present}
@@ -596,7 +601,7 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
     paths = {}
     for zone, entry in physical.items():
         name = routing.item_name(zone)
-        paths[name] = {"label": entry["label"], "sources": {}}
+        paths[name] = {"zone": zone, "label": entry["label"], "sources": {}}
         # The device the room's Volume and Mute drive (routing.rooms.<id>.audio)
         # is in use with every source, though no signal passes through it.
         audio = (routed.get(zone) or {}).get("audio")

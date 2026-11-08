@@ -53,7 +53,8 @@ LISTEN = f"127.0.0.1:{EXPORTER_PORT}"
 OPENHAB = oh_ports.NATIVE_URL
 MAP = Path("/etc/thermite-exporter/map.json")
 TOKEN = Path("/secrets/openhab-token")
-MAP_VERSION = 1
+#: 2: routing.zones gives each zone's room and label.
+MAP_VERSION = 2
 CACHE_SECONDS = 5.0
 #: Seconds a round's two REST calls share, under Prometheus' 10 s
 #: scrape_timeout: a slow openHAB gives thermite_openhab_up 0, not a failed scrape.
@@ -68,6 +69,8 @@ NUMBER = re.compile(r"^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)")
 PLAIN = re.compile(r"^[A-Za-z0-9_./:+ -]{1,32}$")
 OTHER = "other"
 DEVICE_LABELS = ("device", "room", "kind")
+#: The room house-wide checks name (oh_metrics.alerts), and its label.
+HOUSE_ROOM, HOUSE_LABEL = "house", "House"
 
 #: fetch(path, timeout): GET a path below openHAB and parse its JSON.
 Fetch = Callable[[str, float], object]
@@ -77,7 +80,11 @@ FAMILIES = {
     "thermite_openhab_endpoint_up": ("gauge", "1 when openHAB answered this REST request in the last round."),
     "thermite_scrape_duration_seconds": ("gauge", "Seconds the last REST round took."),
     "thermite_items_missing": ("gauge", "Mapped Items openHAB does not have."),
-    "thermite_device_info": ("gauge", "Each device of the house file, with its room, kind and label."),
+    "thermite_device_info": ("gauge", "Each device of the house file, with its own room, kind and label. A "
+                             "check's room is the room using the device: join device facts on(device)."),
+    "thermite_room_info": ("gauge", "Each room of the house file, and house for house-wide checks, with its label."),
+    "thermite_zone_info": ("gauge", "Each routing zone (a room's source selector), with the room it is in and its "
+                           "label."),
     "thermite_thing_online": ("gauge", "1 when the Thing is ONLINE."),
     "thermite_thing_status": ("gauge", "The Thing's status, as a label; always 1."),
     "thermite_item_value": ("gauge", "A numeric Item state: switches 1 or 0, numbers as they are."),
@@ -285,6 +292,11 @@ def collect(mapping: dict, fetch: Fetch, clock: Callable[[], float] = time.monot
         device = devices[ident]
         samples.append(("thermite_device_info", {**device_labels(mapping, ident),
                                                  "label": str(device.get("label", ident))}, 1.0))
+    rooms = {HOUSE_ROOM: HOUSE_LABEL, **(mapping.get("rooms") or {})}
+    samples += [("thermite_room_info", {"room": room, "label": str(rooms[room])}, 1.0) for room in sorted(rooms)]
+    zones = (mapping.get("routing") or {}).get("zones") or {}
+    samples += [("thermite_zone_info", {"zone": zone, "room": str(zones[zone].get("room", "")),
+                                        "label": str(zones[zone].get("label", zone))}, 1.0) for zone in sorted(zones)]
     if "things" in answers:
         samples += _things(mapping, answers["things"])
     if "items" in answers:
@@ -386,7 +398,7 @@ def _routing_metrics(spec: dict, data: object) -> list[Sample]:
             if parsed is None:
                 continue
             counts, total, count = parsed
-            labels = {"room": str(zones[zone]), "zone": zone, "outcome": outcome}
+            labels = {"room": str(zones[zone].get("room", "")), "zone": zone, "outcome": outcome}
             samples += [("thermite_route_seconds_bucket", {**labels, "le": format_value(le)}, bucket)
                         for le, bucket in zip(ROUTE_BUCKETS, counts)]
             samples += [("thermite_route_seconds_bucket", {**labels, "le": "+Inf"}, count),
@@ -411,7 +423,8 @@ def _routing_metrics(spec: dict, data: object) -> list[Sample]:
     for zone in sorted(zones):
         value = _count(resends.get(zone, 0))
         if value is not None:
-            samples.append(("thermite_routing_resends_total", {"room": str(zones[zone]), "zone": zone}, value))
+            samples.append(("thermite_routing_resends_total", {"room": str(zones[zone].get("room", "")), "zone": zone},
+                            value))
     return samples
 
 

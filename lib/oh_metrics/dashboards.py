@@ -40,7 +40,7 @@ import re
 import oh_units
 
 from . import alerts
-from .exporter import FAILURE_REASONS, OPERATION_OUTCOMES, ROUTE_BUCKETS
+from .exporter import FAILURE_REASONS, HOUSE_LABEL, HOUSE_ROOM, OPERATION_OUTCOMES, ROUTE_BUCKETS
 
 DATASOURCE_UID = "thermite-prometheus"
 DATASOURCE = {"type": "prometheus", "uid": DATASOURCE_UID}
@@ -389,10 +389,9 @@ def _zones(mapping: dict) -> list[tuple[str, str, str]]:
 
 
 def _zone_words(mapping: dict) -> dict:
-    """{zone id: label}: the routing telemetry's zone ids, and source Items."""
-    zones = _zones(mapping)
-    return {**{name.removeprefix("loc_").removesuffix("_source"): label for name, _, label in zones},
-            **{name: label for name, _, label in zones}}
+    """{zone id: label}: each routing zone, as zone labels name it."""
+    zones = (mapping.get("routing") or {}).get("zones") or {}
+    return {zone: str(spec.get("label", zone)) for zone, spec in zones.items()}
 
 
 def _source_words(mapping: dict) -> dict:
@@ -444,7 +443,7 @@ def _source_timeline(mapping: dict, zones: list[tuple[str, str, str]]) -> tuple[
 
 
 def _room_words(mapping: dict) -> dict:
-    return {"house": "House", **(mapping.get("rooms") or {})}
+    return {HOUSE_ROOM: HOUSE_LABEL, **(mapping.get("rooms") or {})}
 
 
 def _device_words(mapping: dict) -> dict:
@@ -646,9 +645,8 @@ def switching(mapping: dict) -> dict:
                     "taken them (often one still waking).")
     resends["fieldConfig"]["defaults"]["mappings"] = []
     for zone, label in zones.items():
-        if not zone.startswith("loc_"):
-            resends["fieldConfig"]["overrides"].append(
-                {"matcher": {"id": "byName", "options": zone}, "properties": [{"id": "displayName", "value": label}]})
+        resends["fieldConfig"]["overrides"].append(
+            {"matcher": {"id": "byName", "options": zone}, "properties": [{"id": "displayName", "value": label}]})
     board.add(resends, 8, 7)
     operations = timeseries("Operations by outcome", [
         ("sum by (outcome) (increase(thermite_routing_operations_total[1h])) > 0", "{{outcome}}")], minimum=0,
