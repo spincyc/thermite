@@ -262,6 +262,8 @@ test('each executor operation counts once at its final outcome, failures by devi
   f.submit('old', 'D1', '2'); f.submit('new', 'D1', '3'); f.run();
   f.provider.execute = () => ({ outcome: 'unsent' }); f.submit('offline', 'D1'); f.run();
   f.provider.execute = () => ({ outcome: 'refused' }); f.submit('declined', 'D2'); f.run();
+  // A device busy for now declined it too, but that is no failure of it.
+  f.provider.execute = () => ({ outcome: 'busy', retryAfterMs: 3000 }); f.submit('later', 'D2'); f.run();
   f.bridge.probe({ token: String('read'), key: 'switch', resource: 'D1' }, r => f.reports.push(r)); f.run();
   f.provider.probe = () => { throw Error('standby'); };
   f.bridge.probe({ token: String('unread'), key: 'switch', resource: 'D1' }, r => f.reports.push(r)); f.run();
@@ -272,7 +274,7 @@ test('each executor operation counts once at its final outcome, failures by devi
   f.provider.execute = () => { throw Error('lost reply'); }; f.submit('lost', 'D1'); f.run();
   f.submit('fenced', 'D2'); f.run();
   const counts = f.bridge.telemetry();
-  assert.deepEqual(counts.operations, { applied: 3, superseded: 1, unsent: 1, refused: 1, sampled: 1, probe_failed: 1,
+  assert.deepEqual(counts.operations, { applied: 3, superseded: 1, unsent: 1, refused: 1, busy: 1, sampled: 1, probe_failed: 1,
     journal_failed: 1, read_only: 1, unknown: 1, quarantined: 1 });
   assert.deepEqual(counts.failures, { switch: { unsent: 1, refused: 1, probe_failed: 1, journal_failed: 1, unknown: 1, quarantined: 1 } });
   const final = f.reports.filter(r => ['terminal', 'sample', 'uncertain'].includes(r.type)).length;
@@ -317,11 +319,11 @@ test('outcome and reason names are fixed, few and exporter-safe', () => {
   const { OPERATION_OUTCOMES, FAILURE_REASONS } = f.module.telemetryNames;
   for (const names of [OPERATION_OUTCOMES, FAILURE_REASONS]) {
     assert(Object.isFrozen(names));
-    assert(names.length <= 12);
+    assert(names.length <= 16);
     assert.equal(new Set(names).size, names.length);
     assert(names.every(name => NAME.test(name)), names.join());
   }
-  assert.deepEqual([...OPERATION_OUTCOMES], ['applied', 'sampled', 'probe_failed', 'unsent', 'refused', 'unknown',
+  assert.deepEqual([...OPERATION_OUTCOMES], ['applied', 'sampled', 'probe_failed', 'unsent', 'refused', 'busy', 'unknown',
     'quarantined', 'superseded', 'revoked', 'journal_failed', 'read_only', 'other']);
   assert.deepEqual([...FAILURE_REASONS], ['unsent', 'refused', 'unknown', 'quarantined', 'probe_failed', 'journal_failed',
     'recovery_failed']);

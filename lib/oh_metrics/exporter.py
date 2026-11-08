@@ -121,7 +121,7 @@ FAMILIES = {
 ROUTE_OUTCOMES = ("confirmed", "deadline", "superseded")
 #: The upper bounds routing.js counts route times in (its BUCKETS).
 ROUTE_BUCKETS = (1, 2, 4, 8, 15, 30, 60)
-OPERATION_OUTCOMES = ("applied", "sampled", "probe_failed", "unsent", "refused", "unknown", "quarantined",
+OPERATION_OUTCOMES = ("applied", "sampled", "probe_failed", "unsent", "refused", "busy", "unknown", "quarantined",
                       "superseded", "revoked", "journal_failed", "read_only", "other")
 FAILURE_REASONS = ("unsent", "refused", "unknown", "quarantined", "probe_failed", "journal_failed", "recovery_failed")
 #: Bytes of a routing Item's JSON the exporter reads; anything longer is invalid.

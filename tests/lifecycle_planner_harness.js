@@ -884,7 +884,8 @@ function theater(options = {}) {
     tick();
     if (resource === 'Input') return {value: device.input};
     const value = device.status === 'startup' || device.status === 'on' ? 'ON' : 'OFF';
-    return device.status === 'startup' || device.status === 'cooling' ? {value, transition: true} : {value};
+    // options.hidden: a projector whose reads never say it is on its way.
+    return !options.hidden && (device.status === 'startup' || device.status === 'cooling') ? {value, transition: true} : {value};
   }
   function write(resource, value) {
     tick();
@@ -907,7 +908,14 @@ function theater(options = {}) {
       return;
     }
     const taken = write(operation.resource, operation.value);
-    sent.push(`${time} ${operation.resource}=${operation.value}${taken ? '' : ' refused'}`);
+    // options.busy: what it declines it declines as busy, retry after that many ms.
+    const declined = options.busy === undefined ? ' refused' : ' busy';
+    sent.push(`${time} ${operation.resource}=${operation.value}${taken ? '' : declined}`);
+    if (!taken && options.busy !== undefined) {
+      entry.report(Object.assign({type: 'terminal', token: operation.token, admitted: true, busy: true, reason: 'device_busy'},
+        options.busy === null ? {} : {retryAfterMs: options.busy}));
+      return;
+    }
     if (!taken) { entry.report({type: 'terminal', token: operation.token, admitted: true, refused: true, reason: 'device_refused'}); return; }
     const sample = read(operation.resource);
     entry.report(Object.assign({type: 'terminal', token: operation.token, admitted: true},
@@ -1262,6 +1270,88 @@ test('a write applied without its readback replaces a transition with its own wa
   r.coordinator.report({type: 'terminal', token: String('manual-1'), admitted: true});
   const power = r.coordinator.snapshot().resources.Power;
   assert.equal(power.transition, null); assert.equal(power.pending.value, 'OFF');
+});
+
+// Retry (see the lifecycle.js header).
+function patient(deadlineMs = 120000, settle) {
+  const config = theaterDescriptor(settle); config.deadlineMs = deadlineMs; return config;
+}
+
+test('a write a busy projector declines is sent again after its retryAfterMs until it takes it', () => {
+  // On during cooling, then the input during startup: both declined as
+  // busy, both sent again every 3 s without a read in between.
+  const r = theater({config: patient(), hidden: true, busy: 3000, lag: 0, device: {status: 'cooling', until: 20000}});
+  r.request('Movie'); r.run(60000);
+  assert.deepEqual(r.writes(), ['0 Power=ON busy', '3000 Power=ON busy', '6000 Power=ON busy', '9000 Power=ON busy',
+    '12000 Power=ON busy', '15000 Power=ON busy', '18000 Power=ON busy', '21000 Power=ON',
+    '21000 Input=hdmi1 busy', '24000 Input=hdmi1 busy', '27000 Input=hdmi1 busy', '30000 Input=hdmi1 busy',
+    '33000 Input=hdmi1 busy', '36000 Input=hdmi1']);
+  assert.deepEqual(r.sent.filter(line => line.includes('?')), ['0 Power?OFF', '21000 Input?hdmi2']);
+  assert(r.endpoint().pathReady); assert.deepEqual(r.endpoint().failures, {});
+  assert.equal(r.device.status, 'on'); assert.equal(r.device.input, 'hdmi1');
+  assert.equal(r.coordinator.snapshot().resources.Power.retry, null);
+});
+
+test('a busy retry never goes past the deadline: the goal fails at once instead, and the log names why', () => {
+  const r = theater({config: patient(10000, null), hidden: true, busy: 4000, device: {status: 'cooling', until: 1e9}});
+  r.request('Movie', '1a2b3c4d'); r.run(5000);
+  assert.deepEqual(r.writes(), ['0 Power=ON busy', '4000 Power=ON busy']);
+  assert.equal(r.coordinator.snapshot().resources.Power.retry.at, 8000);
+  r.run(3000);
+  assert.deepEqual(r.writes(), ['0 Power=ON busy', '4000 Power=ON busy', '8000 Power=ON busy']);
+  assert.equal(r.endpoint().failures.Power, 'device-busy');
+  r.run(60000);
+  assert.equal(r.writes().length, 3);
+  assert.deepEqual(r.warnings, ['routing deadline room=Theater choice=Movie route=1a2b3c4d ms=10000 '
+    + 'waiting=Power:unverified,Input:unverified cleanup=- failed=Power:device-busy']);
+});
+
+test('a busy answer without a usable retryAfterMs is retried no sooner than 1 s, never in a loop', () => {
+  for (const busy of [null, 0, -5, 1]) {
+    const r = theater({config: patient(10000, null), hidden: true, busy, device: {status: 'cooling', until: 1e9}});
+    r.request('Movie'); r.run(20000);
+    const times = r.writes().map(line => Number(line.split(' ')[0]));
+    assert.deepEqual(times, [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000], `${busy}: ${r.sent.join()}`);
+    assert.equal(r.endpoint().failures.Power, 'device-busy');
+  }
+});
+
+test('a write that never reached the device is retried only when its outcome says transient', () => {
+  for (const transient of [true, false]) {
+    const r = theater({config: patient(), lag: 0});
+    r.intercept = entry => {
+      if (entry.operation.kind !== 'write' || r.lost) return false;
+      r.lost = true; r.sent.push(`${r.now()} ${entry.operation.resource}=${entry.operation.value} unsent`);
+      entry.report(Object.assign({type: 'terminal', token: entry.operation.token, admitted: false, reason: 'device_not_reached'},
+        transient ? {transient: true, retryAfterMs: 2000} : {}));
+      return true;
+    };
+    r.request('Movie'); r.run(60000);
+    if (transient) {
+      assert.deepEqual(r.writes(), ['0 Power=ON unsent', '2000 Power=ON', '17000 Input=hdmi1']);
+      assert(r.endpoint().pathReady);
+    } else {
+      assert.deepEqual(r.writes(), ['0 Power=ON unsent']);
+      assert.equal(r.endpoint().failures.Power, 'device_not_reached');
+    }
+  }
+});
+
+test('a busy retry belongs to its route: a newer route reads and writes afresh, and a manual busy retries nothing', () => {
+  const r = theater({config: patient(), hidden: true, busy: 5000, device: {status: 'cooling', until: 1e9}});
+  r.request('Movie'); r.run(2000);
+  assert.equal(r.coordinator.snapshot().resources.Power.retry.value, 'ON');
+  r.request('Off'); r.run(10000);
+  assert.deepEqual(r.writes(), ['0 Power=ON busy']);
+  assert.equal(r.coordinator.snapshot().resources.Power.retry, null);
+  assert(r.endpoint().endpointInactive);
+  // A manual command the device declines as busy: no retry, no failure.
+  r.coordinator.hold('legacy-1', {resources: ['Power', 'Input'], sources: ['S']});
+  r.coordinator.takeover('Power', 'ON', true);
+  assert(r.coordinator.external({token: String('legacy-1'), resource: 'Power', value: 'ON'}));
+  r.coordinator.report({type: 'terminal', token: String('legacy-1'), admitted: true, busy: true, reason: 'device_busy', retryAfterMs: 1000});
+  assert.equal(r.coordinator.snapshot().resources.Power.retry, null);
+  assert.equal(r.coordinator.snapshot().resources.Power.lastWrite, null);
 });
 
 test('a settle must be a declared value with a positive finite ms of at most 300000', () => {

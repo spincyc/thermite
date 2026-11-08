@@ -282,6 +282,27 @@ test('connect failure is terminal and unadmitted, refusal fails cleanly, only si
  assert(f.events.some(e=>e.token==='silent'&&e.type==='uncertain'));assert.equal(JSON.parse(f.broker.states.get('switch')).quarantine,'silent');
  assert.equal(f.logs.filter(l=>l[0]==='error'&&/quarantined/.test(l[1])).length,1);
 });
+test('busy and transient outcomes cross as terminal retries with a bounded wait, never quarantine',()=>{
+ const cases=[
+  [{outcome:'busy',retryAfterMs:2999.2},{type:'terminal',admitted:true,busy:true,reason:'device_busy',retryAfterMs:3000}],
+  [{outcome:'busy',retryAfterMs:1e9},{type:'terminal',admitted:true,busy:true,reason:'device_busy',retryAfterMs:300000}],
+  [{outcome:'busy',retryAfterMs:-1},{type:'terminal',admitted:true,busy:true,reason:'device_busy'}],
+  [{outcome:'busy',retryAfterMs:'5000'},{type:'terminal',admitted:true,busy:true,reason:'device_busy'}],
+  [{outcome:'unsent',transient:true,retryAfterMs:2000},{type:'terminal',admitted:false,reason:'device_not_reached',transient:true,retryAfterMs:2000}],
+  [{outcome:'unsent',transient:true},{type:'terminal',admitted:false,reason:'device_not_reached',transient:true}],
+  // Only `true` is transient; a wait alone makes no retry.
+  [{outcome:'unsent',transient:'yes',retryAfterMs:2000},{type:'terminal',admitted:false,reason:'device_not_reached'}],
+  [{outcome:'refused',retryAfterMs:2000},{type:'terminal',admitted:true,refused:true,reason:'device_refused'}],
+ ];
+ for(const [done,expected] of cases){
+  const f=setup();f.provider.execute=()=>done;f.submit('declined','D1');f.actor.drain();f.bridge.events();
+  const report=f.events.find(e=>e.token==='declined'&&e.type==='terminal');const {token,key,resource,legacy,managed,...rest}=report;
+  assert.deepEqual(rest,expected,JSON.stringify(done));
+  assert.equal(JSON.parse(f.broker.states.get('switch')).quarantine,null);
+  const row=fieldsOf(tickets(f)[0]);assert.equal(row.readback,'-');assert.equal(row.reason,expected.reason);
+  f.provider.execute=(r,v)=>{f.writes.push([r,v]);return {outcome:'applied'};};f.submit('next','D1');f.actor.drain();assert.equal(f.writes.length,1);
+ }
+});
 test('an applied write whose readback lags is re-read within a bounded window',()=>{
  const f=setup();let reads=0;f.provider.execute=()=>({outcome:'applied',sample:{value:'2',fresh:true}});
  f.provider.probe=()=>(++reads<2?{value:'2',fresh:true}:{value:'3',fresh:true,observedAt:7,privatePayload:'discard'});
