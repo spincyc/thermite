@@ -355,15 +355,16 @@ function connect(options) {
     }
     server = net.createServer((socket) => attach(socket, "on " + options.listen));
     server.on("error", (error) => log("cannot listen on " + options.listen + ": " + error.message));
-    server.listen(options.listen, () => {
-      try {
-        fs.chmodSync(options.listen, 0o600);
-      } catch (_) {
-        // the directory's permissions still hold
-      }
-      log("waiting for a simulated base on " + options.listen);
-      if (options.onListening) options.onListening();
-    });
+    // listen() binds before it returns, so the socket is 0600 from the start.
+    const umask = process.umask(0o177);
+    try {
+      server.listen(options.listen, () => {
+        log("waiting for a simulated base on " + options.listen);
+        if (options.onListening) options.onListening();
+      });
+    } finally {
+      process.umask(umask);
+    }
   } else {
     attempt();
   }
