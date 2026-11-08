@@ -540,6 +540,21 @@ class Dashboards(unittest.TestCase):
         self.assertEqual(table["transformations"][0]["id"], "merge")
         self.assertEqual(len(table["targets"]), 7)
 
+    def test_devices_table_has_no_row_for_a_house_wide_check(self):
+        """The house-wide checks name jobs and services (openhab, node...) as
+        their device; merged on device, each would be a row with no room or
+        name. Every query that reads thermite:check keeps only devices."""
+        house_wide = {rule["labels"]["device"] for rule in RULES["groups"][0]["rules"]
+                      if rule.get("record") == alerts.CHECK and rule["labels"]["room"] == "house"}
+        self.assertTrue(house_wide)
+        self.assertFalse(house_wide & set(MAP["devices"]))
+        table = next(panel for panel in panels(boards()[dashboards.DEVICES]) if panel["title"] == "Devices")
+        for query in table["targets"]:
+            if alerts.CHECK in query["expr"]:
+                head, _, _ = query["expr"].partition(" or ")
+                self.assertIn(alerts.CHECK, head)
+                self.assertTrue(head.endswith("and on(device) thermite_device_info)"), query["expr"])
+
     def test_host_board_counts_targets_and_shows_access_units(self):
         board = boards()[dashboards.HOST]
         targets = oh_metrics.scrape_targets(FILES[oh_metrics.PROMETHEUS_YML])

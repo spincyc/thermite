@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The Devices table lists only devices. It used to end with seven rows with
+  no room or name, Needed now "Yes", one for each house-wide check (openHAB,
+  the exporter, node_exporter, Prometheus, blackbox, the Apple TV helper and
+  Grafana), since those checks name a job or service as their device.
 - A room whose lock cannot be held for ten minutes fires
   ThermitePolicyUnenforced (critical): its policy cannot be read, it
   conflicts with another room over shared hardware, its devices cannot be

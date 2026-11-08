@@ -761,8 +761,9 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
                   names={"room": "Room", "label": "Device", "Value #B": "Thing", "Value #C": "Port",
                          "Value #D": "Probe", "Value #E": "Offline since", "Value #F": "Problem",
                          "Value #G": "Needed now"})
-    needed = (f'(count by (device) ({alerts.CHECK}{{required="true",device!=""}}) * 0 + 1) '
-              'or (count by (device) (thermite_device_info) * 0)')
+    # House-wide checks name a job or service as their device: no row of their own.
+    needed = (f'((count by (device) ({alerts.CHECK}{{required="true",device!=""}}) * 0 + 1) '
+              'and on(device) thermite_device_info) or (count by (device) (thermite_device_info) * 0)')
     last_online = ("max by (device) (max_over_time(timestamp(thermite_thing_online == 1)[7d:5m])) * 1000 "
                    "and on(device) (min by (device) (thermite_thing_online) == 0)")
     _table_queries(panel, [
