@@ -199,6 +199,18 @@ test('routing.js and lifecycle_io.js parse command sources identically', () => {
   }
 });
 
+test('a readback problem forwards only an input the room declares it reads back', () => {
+  const r = load();
+  const room = { diagnosis: { item: 'loc_den_source_problem', reported: ['1', 'SAT/CBL'],
+    checks: { den_avr_input: { device: 'den_avr', label: 'Den receiver', point: 'input' } } } };
+  const problem = (value) => { r.context.unavailable(room, 'den_avr_input', value); return room.readbackProblem; };
+  assert.deepEqual(problem('SAT/CBL'), { version: 1, device: 'den_avr', label: 'Den receiver', point: 'input',
+    item: 'den_avr_input', reason: 'unsupported_input', reported: 'SAT/CBL' });
+  // Anything else the device says is left out, whatever it looks like.
+  for (const value of ['3', 'hdmi2', 'tv', '<html>']) assert.equal(problem(value).reported, null, value);
+  assert.deepEqual([problem(null).reason, problem(null).reported], ['unavailable', null]);
+});
+
 test('the planner logs through the script console', () => {
   const r = load();
   r.deps().log.warn('routing deadline room=den');

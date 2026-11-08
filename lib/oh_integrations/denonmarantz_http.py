@@ -51,7 +51,7 @@ HEADER = (
     "input and remote keys through profiles that send only known values.",
 )
 ADDONS = (Addon("binding", "denonmarantz"), Addon("binding", "http"),
-          Addon("automation", "jsscripting", "read-only receiver signal snapshots"))
+          Addon("automation", "jsscripting", "receiver signal snapshots and the routing actor"))
 ASSETS: dict[str, str] = {}
 DEVICE_KEYS = ("zones",)
 #: Seconds between the binding's polls of the HTTP API. The receiver closes
