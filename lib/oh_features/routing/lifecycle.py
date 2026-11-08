@@ -26,8 +26,9 @@ def active_requirements(data: dict, room: str, choice: str) -> dict[str, str]:
     source = routing["sources"][choice]
     chosen_inputs = inputs(data, room, choice)
     input_items = {item for item, _ in chosen_inputs}
-    relevant_power = {stage["power"] for _, stage in stages(data, room) if stage["input"] in input_items}
-    wake_items = {item for item, _ in wake(data, choice)}
+    # A stage the choice does not pass through stays as it is.
+    bypassed_power = ({stage["power"] for _, stage in stages(data, room) if stage["input"] not in input_items}
+                      - {item for item, _ in wake(data, choice)})
     local_stage = any(choice in (entry.get(key, {}).get("sources") or {}) for key in STAGES)
     local_switch = choice in (entry.get("hdmi_switch", {}).get("inputs") or {})
     usb_items = set()
@@ -49,7 +50,7 @@ def active_requirements(data: dict, room: str, choice: str) -> dict[str, str]:
             continue
         if local_stage and switch_device and item.startswith(switch_device + "_"):
             continue
-        if item.endswith("_power") and item not in relevant_power | wake_items:
+        if item in bypassed_power:
             continue
         result[item] = str(value)
     return result
@@ -75,6 +76,8 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
     exclusive = set()
     stage_power = {stage["power"] for room in routing["rooms"] for _, stage in stages(data, room)}
     source_wakes = {source: wake(data, source) for source in sources}
+    # Every power Item a route switches: its stages' and its sources'.
+    power_items = stage_power | {item for steps in source_wakes.values() for item, _ in steps}
     # A USB cleanup policy must not replace ordinary source wake controls
     # with a stricter, firmware-dependent power-query contract. Only automatic
     # source standby opts source-only power into that execution authority.
@@ -275,7 +278,7 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
                 if not deactivation:
                     deactivation = {item: value for item, value in release.items() if item not in all_usb}
                 for item, value in raw["after"][choice]:
-                    if supported(item) and item.endswith("_power"):
+                    if supported(item) and item in power_items:
                         release[item] = str(value)
             for item, value in active.items():
                 include(item)
@@ -323,20 +326,21 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
     # AVR inputs are physical connectors shared by configured zones. A zone
     # can select another zone's local source or matrix feed from its own
     # front panel, independently of both Source menus and the donor's power.
-    # Denon's SOURCE selector additionally follows the current main input.
+    # A zone's `follows` input (stage()) additionally plays the current main
+    # input; another zone cannot select it as a connector.
     for zones in device_stages.values():
         main = zones.get(None)
         paths = [(donor, row) for donor in zones.values() for row in consumers if donor["input"] in row["requirements"]]
         for zone, stage in zones.items():
             for donor, path in paths:
                 value = path["requirements"][donor["input"]]
-                if donor["input"] != stage["input"] and value != "SOURCE" and value in stage["inputs"]:
+                if donor["input"] != stage["input"] and value != donor.get("follows") and value in stage["inputs"]:
                     requirements = {item: target for item, target in path["requirements"].items()
                                     if item not in (donor["power"], donor["input"])}
                     consumer(path["source"], {**requirements, stage["power"]: "ON", stage["input"]: value})
-                if main is not None and donor is main and zone is not None and "SOURCE" in stage["inputs"]:
+                if main is not None and donor is main and zone is not None and "follows" in stage:
                     requirements = {item: target for item, target in path["requirements"].items() if item != main["power"]}
-                    consumer(path["source"], {**requirements, stage["power"]: "ON", stage["input"]: "SOURCE"})
+                    consumer(path["source"], {**requirements, stage["power"]: "ON", stage["input"]: stage["follows"]})
 
     for item, resource in resources.items():
         resource["exclusive"] = item in exclusive

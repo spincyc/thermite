@@ -342,14 +342,10 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
     telemetry = Telemetry(adapter.contract.rooms)
     house = plain(adapter.contract.house)
     fields = observed_fields(house, adapter.contract.rooms)
-    import oh_integrations
-    native_power = {}
-    for device in house["devices"]:
-        for integration in oh_integrations.REGISTRY:
-            hook = getattr(integration, "native_power_observation", None)
-            descriptor = hook(device) if hook else None
-            if descriptor and descriptor["item"] in cache_items(fields):
-                native_power[descriptor["item"]] = descriptor["reported_at"]
+    from oh_room_policy.plan import native_power_observations
+    observed = cache_items(fields)
+    native_power = {item: reported_at for item, reported_at in native_power_observations(house["devices"]).items()
+                    if item in observed}
     cache = NativeCache(fields, native_power=native_power, clock=wall_clock)
     io = PolicyIO(adapter, store, cache, house)
     worker = Worker(house, telemetry.store(store), io, locks=locks, wall_clock=wall_clock)

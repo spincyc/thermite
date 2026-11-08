@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import re
 
+import oh_integrations as integrations
 from oh_features import routing
 
 from .model import PolicyError
@@ -57,6 +58,22 @@ class Plan:
         return tuple(dict.fromkeys(field.item for field in (*self.fields, *self.conditions)))
 
 
+def native_power_observations(devices) -> dict[str, str]:
+    """{power Item: the Item holding when it was read} for every native
+    power reading an integration declares (native_power_observation()). A
+    field on such an Item is verified only by a native power reading
+    (Field.native_power); the policy worker caches the same readings
+    (oh_access.worker)."""
+    out = {}
+    for device in devices:
+        for module in integrations.REGISTRY:
+            hook = getattr(module, "native_power_observation", None)
+            descriptor = hook(device) if hook else None
+            if descriptor:
+                out[descriptor["item"]] = descriptor["reported_at"]
+    return out
+
+
 def expected_plan(house, room: str, choice: str) -> Plan:
     """Use routing's command generators; never duplicate physical wiring.
 
@@ -84,11 +101,7 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     inputs = routing.inputs(data, room, choice)
     input_items = {name for name, _ in inputs}
     relevant_power = {stage["power"] for _, stage in stage_list if choice == "off" or stage["input"] in input_items}
-    native_items = set()
-    for ident, device in devices.items():
-        module = routing.waker(device)
-        if module is not None and module.NAME == "pyatv_http":
-            native_items.add(module.wake_item(device))
+    native_items = set(native_power_observations(devices.values()))
     # The room's controlled Items: its stages, the sources it wakes and every
     # port any of its choices commands. Only their after-steps are verified.
     controlled = {item for _, stage in stage_list for item in (stage["power"], stage["input"])}

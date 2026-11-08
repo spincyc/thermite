@@ -95,6 +95,7 @@ GAME_INPUTS = {"CINEMA 30": (("GAME1", "Game 1"), ("GAME2", "Game 2"))}
 INPUT_ALIASES = {"GAME": "GAME1"}
 #: The input of a zone other than the main one that plays whatever the main
 #: zone plays: such a zone reports it, and takes it as a command (Z2SOURCE).
+#: stage() declares it as the zone's `follows` input.
 ZONE_SOURCE = ("SOURCE", "Main Zone Source")
 #: The routing actor of one receiver (rule_path()), rendered for each one
 #: under control; its markers are filled in by files() and by the routing
@@ -361,14 +362,15 @@ def render(device: dict, house: House, out: YamlFile) -> None:
 def stage(device: dict, zone: int | None) -> dict | None:
     """The power and input Items of one zone (None: the main zone) and the
     inputs it takes, for a room whose receiver it is (oh_features.routing);
-    None for a zone the receiver lacks."""
+    None for a zone the receiver lacks. Zone 2 `follows` the main zone's
+    input on ZONE_SOURCE."""
     ident = device["id"]
     if zone is None:
         return {"power": f"{ident}_main_power", "input": f"{ident}_main_input",
                 "inputs": [value for value, _ in inputs(device)]}
     if zone == 2 and device.get("zones", DEFAULT_ZONES) >= 2:
         return {"power": f"{ident}_zone2_power", "input": f"{ident}_zone2_input",
-                "inputs": [value for value, _ in inputs(device, zone)]}
+                "inputs": [value for value, _ in inputs(device, zone)], "follows": ZONE_SOURCE[0]}
     return None
 
 

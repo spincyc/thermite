@@ -74,7 +74,9 @@ receiver and display) provides
               zone (None: the device's only or main one), the Item
               commanded with an input and read back, and the inputs it
               takes; None for a zone the device lacks. routing.js sends
-              these only to a device that lists the module under control
+              these only to a device that lists the module under control.
+              A zone that can play whatever the main zone plays adds
+              "follows": the input that does so
 
 A module whose fields the routing lifecycle's ordered executor drives
 (oh_features.routing.lifecycle_io) provides
