@@ -7,6 +7,13 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The dashboards judge a source change against the house's own routing
+  deadline, the one routing.js uses: 15 seconds, or longer when a room's
+  receiver is read more slowly (20 seconds with a Denon or Marantz receiver).
+  "Switch time by room" turns red at that deadline and amber at half of it,
+  and "Slow or missed" and the Deadline outcome say how long it is. They
+  used to say 15 seconds and turn red at 15 seconds in every house, so a
+  change that routing still counted as on time could read as failed.
 - The dashboards count the first source change of each room, and the first
   routing failure of each device, after routing.js loads (an openHAB restart
   or a deploy). The exporter wrote a room's switch-time series only once

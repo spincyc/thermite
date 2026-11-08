@@ -519,7 +519,11 @@ def routing_map(inventory: dict, conf, items: dict) -> dict:
         return {}
     capabilities = lifecycle_io.capabilities(inventory) if conf.executor_controls else {}
     executors = sorted({capabilities[item]["key"] for item in conf.executor_controls if item in capabilities})
-    return {**found, "zones": dict(sorted(zones.items())), "executors": executors}
+    # routing.js's deadline (RECENT_MS): a choice its readback has not shown
+    # by then counts as `deadline`.
+    deadline = routing.hold_ms(inventory) / 1000
+    return {**found, "zones": dict(sorted(zones.items())), "executors": executors,
+            "deadline_seconds": int(deadline) if deadline.is_integer() else deadline}
 
 
 def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:

@@ -204,6 +204,38 @@ class RoutingSeries(unittest.TestCase):
         self.assertEqual(MAP["routing"]["metrics"], "house_routing_metrics")
         self.assertEqual(set(MAP["routing"]["zones"]), {"example_east", "example_west"})
 
+    def test_the_deadline_is_the_houses_and_the_boards_follow_it(self):
+        """routing.js's deadline is the house's (routing.hold_ms): 20 s
+        with a receiver read every 15 s, not the dashboards' 15 s."""
+        from oh_features import routing
+        from tests import test_zone_sync as zones
+        self.assertEqual(MAP["routing"]["deadline_seconds"], routing.hold_ms(INVENTORY) / 1000)
+        files = rendered(zones.house())
+        mapping = json.loads(files[oh_metrics.EXPORTER_MAP])
+        self.assertEqual(mapping["routing"]["deadline_seconds"], 20)
+        found = {name.rsplit("/", 1)[1].removesuffix(".json"): json.loads(text)
+                 for name, text in files.items() if name.startswith(oh_metrics.GRAFANA_DASHBOARDS)}
+        text = json.dumps(found)
+        self.assertNotIn("15 s", text)
+        self.assertIn("not confirmed within 20 s", text)
+        self.assertIn("it did not within 20 s", text)
+        switch = next(panel for panel in panels(found[dashboards.HOUSE]) if panel["title"] == "Switch time by room")
+        steps = [prop["value"]["steps"] for override in switch["fieldConfig"]["overrides"]
+                 for prop in override["properties"] if prop["id"] == "thresholds"]
+        self.assertTrue(steps)
+        for each in steps:
+            self.assertEqual([(step["color"], step["value"]) for step in each],
+                             [(dashboards.OK, None), (dashboards.WARN, 10), (dashboards.FAIL, 20)])
+
+    def test_route_buckets_are_routing_js_and_one_is_above_the_deadline(self):
+        from oh_features import routing
+        from tests import test_zone_sync as zones
+        source = routing.SOURCE.read_text(encoding="utf-8")
+        counted = re.search(r"const BUCKETS = \[([^\]]*)\]", source).group(1)
+        self.assertEqual(tuple(int(value) for value in counted.split(",")), exporter.ROUTE_BUCKETS)
+        for inventory in (INVENTORY, zones.house()):
+            self.assertGreater(exporter.ROUTE_BUCKETS[-1], routing.hold_ms(inventory) / 1000)
+
 
 class Checks(unittest.TestCase):
     def test_rules_are_deterministic_and_record_every_check(self):

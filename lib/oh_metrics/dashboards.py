@@ -40,7 +40,7 @@ import re
 import oh_units
 
 from . import alerts
-from .exporter import FAILURE_REASONS, OPERATION_OUTCOMES
+from .exporter import FAILURE_REASONS, OPERATION_OUTCOMES, ROUTE_BUCKETS
 
 DATASOURCE_UID = "thermite-prometheus"
 DATASOURCE = {"type": "prometheus", "uid": DATASOURCE_UID}
@@ -455,6 +455,23 @@ def _points(mapping: dict, device: str) -> set[str]:
     return {spec["point"] for spec in (mapping.get("items") or {}).values() if spec.get("device") == device}
 
 
+def _deadline(mapping: dict) -> float | None:
+    """Seconds routing.js waits for a choice's readback (the map's
+    routing.deadline_seconds): one not shown by then counts as `deadline`."""
+    return (mapping.get("routing") or {}).get("deadline_seconds")
+
+
+def _within(mapping: dict) -> str:
+    deadline = _deadline(mapping)
+    return f"within {deadline:g} s" if deadline else "by its routing deadline"
+
+
+def _switch_thresholds(mapping: dict) -> dict:
+    """A switch time is amber from half the routing deadline, red from the deadline."""
+    deadline = _deadline(mapping)
+    return _thresholds((OK, None), *(((WARN, round(deadline / 2)), (FAIL, deadline)) if deadline else ()))
+
+
 # ---------------------------------------------------------------- house health
 
 
@@ -548,8 +565,8 @@ def house(mapping: dict, probes: list[dict]) -> dict:
     board.add(_attention(mapping), 14, 8)
     since = stat("Since yesterday evening", "", steps=((OK, None), (WARN, 1)),
                  description="Since 18:00 yesterday (browser time). Source changes: choices routing followed. "
-                             "Slow or missed: not confirmed within 15 s. Remotes gave up: requests remote pages "
-                             "stopped waiting for. Device failures: routing operations a device did not take. "
+                             f"Slow or missed: not confirmed {_within(mapping)}. Remotes gave up: requests remote "
+                             "pages stopped waiting for. Device failures: routing operations a device did not take. "
                              "Restarts: Thermite services systemd restarted.")
     since["targets"] = _targets([
         ("round(sum(increase(thermite_route_seconds_count[$__range]))) or vector(0)", "Source changes"),
@@ -576,8 +593,11 @@ def house(mapping: dict, probes: list[dict]) -> dict:
                 '{{outcome="confirmed"}}[$__range])))')
     switch = table("Switch time by room", "", ["zone", "Value #A", "Value #B", "Value #C"],
                    "Since 18:00 yesterday: how long a source change took until the room's readback showed it, "
-                   "median and 95th percentile of confirmed changes, estimated from 1, 2, 4, 8, 15, 30 and 60 s "
-                   "buckets.", names={"zone": "Room", "Value #A": "Median", "Value #B": "95th",
+                   "median and 95th percentile of confirmed changes, estimated from "
+                   f"{', '.join(map(str, ROUTE_BUCKETS[:-1]))} and {ROUTE_BUCKETS[-1]} s buckets. Amber from half "
+                   f"the routing deadline, red from the deadline: a change not confirmed {_within(mapping)} "
+                   "counts as slow or missed instead.",
+                   names={"zone": "Room", "Value #A": "Median", "Value #B": "95th",
                                       "Value #C": "Changes"}, no_value="No source changes")
     _table_queries(switch, [
         ("A", quantile.format(q=0.5)), ("B", quantile.format(q=0.95)),
@@ -585,7 +605,7 @@ def house(mapping: dict, probes: list[dict]) -> dict:
     _column(switch, "zone", {"id": "mappings", "value": _words(_zone_words(mapping))})
     for name in ("Value #A", "Value #B"):
         _column(switch, name, {"id": "unit", "value": "s"}, {"id": "decimals", "value": 1},
-                {"id": "thresholds", "value": _thresholds((OK, None), (WARN, 8), (FAIL, 15))},
+                {"id": "thresholds", "value": _switch_thresholds(mapping)},
                 {"id": "custom.cellOptions", "value": {"type": "color-text"}})
     _column(switch, "Value #C", {"id": "decimals", "value": 0})
     switch["options"]["sortBy"] = [{"displayName": "95th", "desc": True}]  # the slowest room first
@@ -609,7 +629,7 @@ def switching(mapping: dict) -> dict:
     outcomes = timeseries("Source changes by outcome", [
         ("sum by (outcome) (increase(thermite_route_seconds_count[1h]))", "{{outcome}}")], minimum=0, stack=True,
         bars=True, description="Per hour. Confirmed: the readback showed the choice. Deadline: it did not "
-                               "within 15 s. Superseded: a newer choice came first.")
+                               f"{_within(mapping)}. Superseded: a newer choice came first.")
     for name, color in (("confirmed", OK), ("deadline", FAIL), ("superseded", UNKNOWN)):
         _color(outcomes, name, color, name.capitalize())
     board.add(outcomes, 12, 8)

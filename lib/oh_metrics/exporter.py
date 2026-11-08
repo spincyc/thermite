@@ -98,7 +98,8 @@ FAMILIES = {
     "thermite_routing_device_quarantined": ("gauge", "1 for each device whose routing commands are quarantined."),
     "thermite_routing_metrics_up": ("gauge", "1 when the routing telemetry Item holds valid counts."),
     "thermite_route_seconds": ("histogram", "Seconds from a room's source choice until its readback confirmed it, "
-                               "its 15 s deadline passed, or a newer choice superseded it."),
+                               "its deadline (the map's routing.deadline_seconds) passed, or a newer choice "
+                               "superseded it."),
     "thermite_routing_operations_total": ("counter", "Routing executor operations by final outcome, since the routing script loaded."),
     "thermite_routing_endpoint_failures_total": ("counter", "Routing operations that failed at a device, by reason, since the routing script loaded."),
     "thermite_routing_resends_total": ("counter", "Resend rounds that sent a room's commands again, since the routing script loaded."),
@@ -106,6 +107,7 @@ FAMILIES = {
 #: The routing telemetry's fixed names (oh_features/routing/routing.js and
 #: lifecycle_io.js); anything else is ignored, never turned into a label.
 ROUTE_OUTCOMES = ("confirmed", "deadline", "superseded")
+#: The upper bounds routing.js counts route times in (its BUCKETS).
 ROUTE_BUCKETS = (1, 2, 4, 8, 15, 30, 60)
 OPERATION_OUTCOMES = ("applied", "sampled", "probe_failed", "unsent", "refused", "unknown", "quarantined",
                       "superseded", "revoked", "journal_failed", "read_only", "other")
