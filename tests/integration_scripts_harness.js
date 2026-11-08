@@ -590,6 +590,39 @@ test('the routing provider reads startup and cooling as power transitions toward
   assert.deepEqual(provider.execute('projector_power', 'OFF').sample.transition, true);
 });
 
+test('the routing provider answers busy to a command declined or ignored while the projector moves the other way', () => {
+  // The power field's declared settle (sony_adcp.fields()), as the actor's
+  // configuration carries it: busy for a tenth of the transition's.
+  const r = adcp(), provider = r.context.routingProvider({ projector_power: { settle: { ON: 60000, OFF: 30000 } } });
+  r.poll();
+  // On while it cools: err_inactive, as the VW915ES and the stand-in answer.
+  r.projector.power = 'cooling1'; r.projector.refuse = 'err_inactive';
+  assert.deepEqual(provider.execute('projector_power', 'ON'), { outcome: 'busy', retryAfterMs: 3000 });
+  // Off while it starts up, declined or taken and ignored.
+  r.projector.power = 'startup';
+  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'busy', retryAfterMs: 6000 });
+  r.projector.refuse = null; r.projector.after = { on: 'startup', off: 'startup' };
+  assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'busy', retryAfterMs: 6000 });
+  // An input while it starts up waits for it to be on.
+  r.projector.refuse = 'err_inactive';
+  assert.deepEqual(provider.execute('projector_input', 'hdmi2'), { outcome: 'busy', retryAfterMs: 6000 });
+  // Taken and under way: applied, its transition the readback.
+  r.projector.refuse = null; r.projector.power = 'on'; r.projector.after = { on: 'startup', off: 'cooling1' };
+  assert.equal(provider.execute('projector_power', 'OFF').outcome, 'applied');
+  // A command toward where it is already going, or one declined while it
+  // is still, means no.
+  r.projector.refuse = 'err_inactive';
+  for (const [status, resource, value] of [['cooling1', 'projector_power', 'OFF'], ['standby', 'projector_input', 'hdmi1'],
+    ['cooling2', 'projector_input', 'hdmi1'], ['on', 'projector_power', 'OFF'], ['standby', 'projector_power', 'ON']]) {
+    r.projector.power = status;
+    assert.deepEqual(provider.execute(resource, value), { outcome: 'refused' }, `${status} ${resource}=${value}`);
+  }
+  // Without a declared settle it is busy with no wait of its own.
+  const bare = adcp(), plain = bare.context.routingProvider();
+  bare.projector.power = 'cooling2'; bare.projector.refuse = 'err_inactive';
+  assert.deepEqual(plain.execute('projector_power', 'ON'), { outcome: 'busy' });
+});
+
 test('a read-only copy connects to no Sony projector and only logs what it would send', () => {
   const r = adcp({ send: false });
   r.poll(); r.poll(); r.command('power', 'OFF'); r.command('key', 'menu'); r.unload();
@@ -613,11 +646,13 @@ test('a projector or matrix read while a reload has an Item missing posts the re
 // A Sony BRAVIA TV on IP control, paired: its registration is in userdata.
 // It answers getPowerStatus with `power` (active or standby), and while it is
 // active getPlayingContentInfo with HDMI `input` and getVolumeInformation
-// with `volume` and `mute`; in standby Sony's error 40005. Its power Item is
+// with `volume` and `mute`; in standby Sony's error 40005. setPowerStatus
+// turns it on or off; while `boot` is above 0 its content API (avContent)
+// answers `bootError` instead, one request less each time. Its power Item is
 // sony_rest's, so a test sets it.
 function sonyTv() {
   const clock = { now: 0 }, day = 24 * 60 * 60 * 1000;
-  const tv = { power: 'active', input: 2, volume: 20, mute: false, requests: [] };
+  const tv = { power: 'active', input: 2, volume: 20, mute: false, boot: 0, bootError: [40005, 'Display Is Turned off'], requests: [] };
   const answer = body => ({ getStatus: () => 200, getContentAsString: () => JSON.stringify(Object.assign({ id: 1 }, body)),
     getHeaders: () => ({ getValuesList: () => ({ size: () => 0, get: () => null }) }) });
   const thermiteIO = {
@@ -626,7 +661,10 @@ function sonyTv() {
       const request = JSON.parse(body).method;
       tv.requests.push(request);
       if (request === 'getPowerStatus') return answer({ result: [{ status: tv.power }] });
+      if (request === 'setPowerStatus') { tv.power = JSON.parse(body).params[0].status ? 'active' : 'standby'; return answer({ result: [] }); }
       if (tv.power !== 'active') return answer({ error: [40005, 'Display Is Turned off'] });
+      if (tv.boot > 0 && url.endsWith('/avContent')) { tv.boot -= 1; return answer({ error: tv.bootError }); }
+      if (request === 'setPlayContent') { tv.input = Number(/port=(\d+)/.exec(JSON.parse(body).params[0].uri)[1]); return answer({ result: [] }); }
       if (request === 'getPlayingContentInfo') return answer({ result: [{ uri: `extInput:hdmi?port=${tv.input}` }] });
       if (request === 'getVolumeInformation') {
         return answer({ result: [[{ target: 'speaker', volume: tv.volume, mute: tv.mute, minVolume: 0, maxVolume: 100 }]] });
@@ -676,6 +714,40 @@ test('every Sony TV poll posts its input, volume and mute, changed or not; its p
 
 // _device.js alone, as the renderer embeds it after thermiteIO in a script
 // whose SEND it reads.
+test('a Sony TV whose content API still boots after power-on reads as on its way, and an input it declines then is busy', () => {
+  // Its power field's declared settle (sony_ip_control.fields()) bounds the boot.
+  const r = sonyTv(), provider = r.context.routingProvider({ tv_power: { settle: { ON: 30000 } } });
+  const sample = (value, extra = {}) => ({ value, fresh: true, basis: 'owned_native_read', observedAt: r.clock.now, ...extra });
+  r.tv.power = 'standby';
+  assert.deepEqual(provider.probe('tv_power'), sample('OFF'));
+  r.tv.boot = 3;
+  assert.deepEqual(provider.execute('tv_power', 'ON'), { outcome: 'applied', sample: sample('ON', { transition: true }) });
+  r.clock.now += 1000;
+  assert.deepEqual(provider.execute('tv_input', 'hdmi3'), { outcome: 'busy', retryAfterMs: 3000 });
+  assert.equal(r.tv.input, 2);
+  r.clock.now += 3000; r.tv.boot = 0;
+  assert.deepEqual(provider.probe('tv_power'), sample('ON'));
+  assert.deepEqual(provider.execute('tv_input', 'hdmi3'), { outcome: 'applied', sample: sample('hdmi3') });
+  // Past the boot window, or a TV in standby, a declined input means no.
+  r.clock.now += 30000; r.tv.boot = 5;
+  assert.deepEqual(provider.execute('tv_input', 'hdmi1'), { outcome: 'refused' });
+  assert.deepEqual(provider.probe('tv_power'), sample('ON'));
+  r.tv.boot = 0; r.tv.power = 'standby';
+  assert.equal(provider.probe('tv_power').value, 'OFF');
+  r.tv.power = 'active'; r.tv.boot = 5;
+  assert.deepEqual(provider.probe('tv_power'), sample('ON', { transition: true }));
+  r.tv.power = 'standby';
+  assert.deepEqual(provider.execute('tv_input', 'hdmi1'), { outcome: 'refused' });
+  // An answer naming no HDMI input (Sony's error 7) is a booted TV showing
+  // something else; without a declared settle nothing is a boot.
+  r.tv.power = 'active'; r.tv.boot = 5; r.tv.bootError = [7, 'Illegal State'];
+  assert.deepEqual(provider.probe('tv_power'), sample('ON'));
+  const bare = sonyTv(), plain = bare.context.routingProvider();
+  bare.tv.power = 'standby'; plain.probe('tv_power'); bare.tv.boot = 5;
+  assert.deepEqual(plain.execute('tv_power', 'ON').sample.transition, undefined);
+  assert.deepEqual(plain.execute('tv_input', 'hdmi1'), { outcome: 'refused' });
+});
+
 function device({ send = true, items = {}, thermiteIO = {} } = {}) {
   const rules = {}, logs = [], hooks = [], clock = { now: 5000 };
   const openhab = openhabStub({ items, rules });

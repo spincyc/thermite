@@ -195,7 +195,9 @@ def fields(device: dict) -> dict[str, dict]:
     `power "off"` and cooling. The VW915ES has stayed in standby for 6 s or
     more after an accepted `power "on"` and reported on by 21 s. A read that
     shows the value ends the wait early; startup and cooling1/cooling2 are
-    read as transitions (sony_adcp.js routingProvider)."""
+    read as transitions (sony_adcp.js routingProvider). A command declined
+    or ignored during a transition the other way is busy for a tenth of
+    the settle toward its end, then sent again."""
     ident = device["id"]
     return {f"{ident}_power": {"kind": "adcp", "values": ["ON", "OFF"], "settle": {"ON": 60000, "OFF": 30000},
                                "manual": 3},

@@ -57,7 +57,9 @@ class Rendering(unittest.TestCase):
         from oh_features import routing
         resources=routing.table(data)['lifecycle']['resources']
         self.assertEqual(resources['example_projector_power']['settleMs'],{'ON':60000,'OFF':30000})
-        self.assertEqual([name for name,row in resources.items() if 'settleMs' in row],['example_projector_power'])
+        # Only the fields that declare one: the projector's, and the Sony TV's boot.
+        self.assertEqual(sorted(name for name,row in resources.items() if 'settleMs' in row),['example_projector_power','example_screen_power'])
+        self.assertEqual(resources['example_screen_power']['settleMs'],{'ON':sony_ip_control.BOOT_MS})
         declared=sony_adcp.fields
         for bad in ({'STANDBY':1000},{'ON':0},{'ON':300001},{'ON':1.5},{'ON':True}):
             def fields(device,bad=bad):

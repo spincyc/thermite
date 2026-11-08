@@ -328,11 +328,21 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
     return {rule_path(device): rule([device]) for device in devices}
 
 
+#: The longest the TV's content API is taken to boot after it comes on
+#: (fields()).
+BOOT_MS = 30000
+
+
 def fields(device: dict) -> dict[str, dict]:
     """The routing executor's fields (oh_integrations): power and the HDMI
     input, driven by this integration's own rule. Its actor also takes
-    manual commands to the volume, mute, key and pairing Items."""
-    return {sony_rest.power_item(device): {"kind": "sony", "values": ["ON", "OFF"], "manual": 6},
+    manual commands to the volume, mute, key and pairing Items.
+
+    Power's settle toward ON, in ms, is how long after it comes on the TV's
+    content API may still be booting: a power read of ON while it answers
+    a Sony error is a transition, and an input it declines then is busy
+    (sony_ip_control.js routingProvider). Not yet timed on hardware."""
+    return {sony_rest.power_item(device): {"kind": "sony", "values": ["ON", "OFF"], "settle": {"ON": BOOT_MS}, "manual": 6},
             f"{device['id']}_input": {"kind": "sony", "values": [value for value, _ in INPUTS], "manual": 6}}
 
 

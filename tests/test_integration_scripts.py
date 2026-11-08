@@ -19,4 +19,4 @@ class IntegrationScripts(unittest.TestCase):
                                  *(str(AREA / "lib/oh_integrations" / name) for name in SCRIPTS)],
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 28)
+        self.assertEqual(json.loads(result.stdout)["passed"], 30)
