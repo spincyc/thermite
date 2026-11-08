@@ -97,10 +97,14 @@ rollback. The unified deployment workflow uses a separate committed private site
   the reload changed the routing configuration (for at most the new wait),
   and a power command whose result was lost (routing reloaded while the
   projector was answering, or its event queue overflowed) is waited for
-  once the projector answers again. A projector still starting up when its wait ends is used anyway and logged
-  once at warn (`routing settle ... outcome=still_moving`). Integrations
-  declare these waits per field (`SETTLE`, and transition reads); fields
-  without one behave as before.
+  once the projector answers again. A power command sent directly to the
+  projector's Item still goes out at once; if it reads back while an
+  earlier On or Off is still waited for, routing keeps waiting instead of
+  trusting that reading, so a later Off still turns the projector off once
+  the On lands. A projector still starting up when its wait ends is used
+  anyway and logged once at warn (`routing settle ... outcome=still_moving`).
+  Integrations declare these waits per field (`SETTLE`, and transition
+  reads); fields without one behave as before.
 - A locked room whose receiver or projector changes by itself, such as one
   turning back on in a room locked Off, is repaired as soon as the device
   reports it, however long the room has shown Unknown. Every Unknown pass

@@ -1228,6 +1228,30 @@ test('a source protection read during a wait follows the step too', () => {
   assert.deepEqual(r.writes.filter(write => write.startsWith('APower')), []);
 });
 
+test('a manual power off read back as off during a pending power on keeps the wait, and Off still turns the projector off', () => {
+  // The projector shows standby for a few seconds after accepting the on:
+  // a manual off sent then reads back OFF, and the device ignores it.
+  const r = theater();
+  r.request('Movie'); r.run(2000);
+  r.coordinator.hold('legacy-1', {resources: ['Power', 'Input'], sources: ['S']});
+  r.coordinator.takeover('Power', 'OFF', true);
+  assert(r.coordinator.external({token: 'legacy-1', resource: 'Power', value: 'OFF'}));
+  r.coordinator.report({type: 'terminal', token: 'legacy-1', admitted: true,
+    sample: {value: 'OFF', fresh: true, retired: true}});
+  r.coordinator.releaseHold('legacy-1');
+  let power = r.coordinator.snapshot().resources.Power;
+  assert.equal(power.pending.value, 'ON'); assert.equal(power.verified, null);
+  assert.deepEqual(power.possible.slice().sort(), ['OFF', 'ON']);
+  r.serveAll(); r.run(1000); r.request('Off');
+  r.run(120000);
+  // The on lands (startup at 6 s, on at 21 s): the off follows it.
+  assert.deepEqual(r.writes(), ['0 Power=ON', '22000 Power=OFF']);
+  assert.equal(r.device.status, 'standby');
+  power = r.coordinator.snapshot().resources.Power;
+  assert.equal(power.verified, 'OFF'); assert.equal(power.pending, null);
+  assert(r.endpoint().endpointInactive);
+});
+
 test('a write applied without its readback replaces a transition with its own wait', () => {
   // A manual power off during startup, taken but not shown yet.
   const r = theater({device: {status: 'startup', until: 12000}});
