@@ -776,6 +776,219 @@ test('an expired route warns once with what it waits for, its id and no free tex
   assert.equal(silent.coordinator.snapshot().endpoints.Desk.failures.deadline, 'deadline');
 });
 
+// Settle (see the lifecycle.js header). A projector whose power command,
+// once accepted, shows only `lag` ms later and then passes through `phase`
+// ms of startup (toward ON) or cooling (toward OFF), read as a transition,
+// as a Sony one on ADCP does. Its input needs it on, and power on is
+// refused while it cools. Each write's readback is attached only when it
+// already shows the value, as the executor's bounded re-read does.
+function theaterDescriptor(settle = {ON: 60000, OFF: 30000}) {
+  const power = {key: 'projector', values: ['ON', 'OFF'], release: 'OFF', capable: true};
+  if (settle) power.settleMs = settle;
+  return {version: 1, deadlineMs: 10000, maxInFlight: 8,
+    resources: {Power: power, Input: {key: 'projector', values: ['hdmi1', 'hdmi2'], capable: true,
+      requires: {hdmi1: {Power: 'ON'}, hdmi2: {Power: 'ON'}}}},
+    sources: {S: {idle: 'preserve'}},
+    endpoints: {Theater: {choices: {Movie: {requirements: {Power: 'ON', Input: 'hdmi1'}, uses: ['S']},
+      Off: {off: true, deactivate: {Power: 'OFF'}}}}}};
+}
+function theater(options = {}) {
+  const config = options.config || theaterDescriptor(options.settle);
+  const lag = options.lag === undefined ? 6000 : options.lag, phase = options.phase === undefined ? 15000 : options.phase;
+  const device = Object.assign({status: 'standby', until: 0, input: 'hdmi2', queued: null}, options.device || {});
+  let time = 0, sequence = 0, saved = null, coordinator = null;
+  const pending = [], sent = [], timers = new Map(), warnings = [];
+  function tick() {
+    if (device.queued && time >= device.queued.at) {
+      const {value, at} = device.queued, on = device.status === 'startup' || device.status === 'on';
+      device.queued = null;
+      if (value === 'ON' && device.status === 'standby') Object.assign(device, {status: 'startup', until: at + phase});
+      if (value === 'OFF' && on) Object.assign(device, {status: 'cooling', until: at + phase});
+    }
+    if (device.status === 'startup' && time >= device.until) device.status = 'on';
+    if (device.status === 'cooling' && time >= device.until) device.status = 'standby';
+  }
+  function read(resource) {
+    tick();
+    if (resource === 'Input') return {value: device.input};
+    const value = device.status === 'startup' || device.status === 'on' ? 'ON' : 'OFF';
+    return device.status === 'startup' || device.status === 'cooling' ? {value, transition: true} : {value};
+  }
+  function write(resource, value) {
+    tick();
+    if (resource === 'Input') { if (device.status !== 'on') return false; device.input = value; return true; }
+    if (value === 'ON' && device.status === 'cooling') return false;
+    const target = device.queued ? device.queued.value : device.status === 'startup' || device.status === 'on' ? 'ON' : 'OFF';
+    if (value !== target) { device.queued = {value, at: time + lag}; tick(); }
+    return true;
+  }
+  function serve(entry) {
+    const operation = entry.operation;
+    if (!operation.isCurrent()) { entry.report({type: 'terminal', token: operation.token, admitted: false}); return; }
+    entry.report({type: 'admitted', token: operation.token});
+    if (operation.kind === 'probe') {
+      const sample = read(operation.resource);
+      sent.push(`${time} ${operation.resource}?${sample.value}${sample.transition ? '~' : ''}`);
+      entry.report(Object.assign({type: 'sample', token: operation.token, fresh: true, retired: true}, sample));
+      return;
+    }
+    const taken = write(operation.resource, operation.value);
+    sent.push(`${time} ${operation.resource}=${operation.value}${taken ? '' : ' refused'}`);
+    if (!taken) { entry.report({type: 'terminal', token: operation.token, admitted: true, refused: true, reason: 'device_refused'}); return; }
+    const sample = read(operation.resource);
+    entry.report(Object.assign({type: 'terminal', token: operation.token, admitted: true},
+      sample.value === operation.value ? {sample: Object.assign({fresh: true, retired: true}, sample)} : {}));
+  }
+  function serveAll() {
+    for (let count = 0; count < 500; count++) { const entry = pending.shift(); if (!entry) return; serve(entry); }
+    throw new Error('planner failed to quiesce');
+  }
+  function start() {
+    timers.clear(); pending.length = 0;
+    coordinator = createCoordinator(config, {instanceId: 'theater', now: () => time,
+      store: {load: () => clone(saved), save: value => { saved = clone(value); }},
+      log: {error() {}, warn: message => warnings.push(message)},
+      dispatch: (operation, report) => pending.push({operation, report}),
+      probe: (operation, report) => pending.push({operation, report}),
+      setTimer: (action, delay) => { const id = ++sequence; timers.set(id, {at: time + delay, action}); return id; },
+      clearTimer: id => timers.delete(id)});
+  }
+  // Runs `ms` of time: each timer at its own instant, every operation
+  // answered at once.
+  function run(ms) {
+    const end = time + ms;
+    for (let count = 0; count < 10000; count++) {
+      serveAll();
+      const next = Math.min(...Array.from(timers.values(), timer => timer.at));
+      if (!(next <= end)) { time = end; tick(); serveAll(); return; }
+      time = Math.max(time, next);
+      for (const [id, timer] of Array.from(timers)) if (timer.at <= time) { timers.delete(id); timer.action(); }
+    }
+    throw new Error('planner timers never settle');
+  }
+  start();
+  const r = {device, sent, warnings, run, serveAll, now: () => time,
+    request: (choice, id) => { r.coordinator.request('Theater', choice, id); serveAll(); },
+    reload: () => { r.coordinator.close(); start(); r.coordinator = coordinator; },
+    endpoint: () => r.coordinator.snapshot().endpoints.Theater,
+    writes: () => sent.filter(line => line.includes('='))};
+  r.coordinator = coordinator;
+  return r;
+}
+
+test('an Off during a lagging accepted power on waits for it and then turns the projector off', () => {
+  const r = theater();
+  r.request('Movie');
+  assert.deepEqual(r.writes(), ['0 Power=ON']);
+  assert.equal(r.coordinator.snapshot().resources.Power.pending.value, 'ON');
+  r.run(2000); r.request('Off');
+  r.run(120000);
+  // Nothing is written while the on is pending or the projector warms up.
+  assert.deepEqual(r.writes(), ['0 Power=ON', '25000 Power=OFF']);
+  assert.equal(r.device.status, 'standby');
+  const status = r.endpoint();
+  assert.deepEqual(status.failures, {}); assert(status.endpointInactive); assert.equal(status.active, false);
+  assert.equal(r.coordinator.snapshot().resources.Power.verified, 'OFF');
+  // Reads came every step (60000 / 10, at most 5 s), never in a burst.
+  const reads = r.sent.filter(line => line.includes('Power?')).map(line => Number(line.split(' ')[0]));
+  for (let index = 1; index < reads.length; index++) assert(reads[index] - reads[index - 1] >= 1500, r.sent.join('\n'));
+  assert.deepEqual(r.warnings, []);
+});
+
+test('a route writes the input once its lagging power on is confirmed and stable', () => {
+  const r = theater();
+  r.request('Movie'); r.run(60000);
+  assert.deepEqual(r.writes(), ['0 Power=ON', '25000 Input=hdmi1']);
+  assert.equal(r.device.input, 'hdmi1');
+  const status = r.endpoint();
+  assert(status.pathReady); assert.deepEqual(status.failures, {});
+  const power = r.coordinator.snapshot().resources.Power;
+  assert.equal(power.verified, 'ON'); assert.equal(power.pending, null); assert.equal(power.transition, null);
+});
+
+test('a reload keeps a pending power on, and an Off after it still turns the projector off', () => {
+  const r = theater();
+  r.request('Movie'); r.run(1000);
+  r.reload();
+  const power = r.coordinator.snapshot().resources.Power;
+  assert.equal(power.pending.value, 'ON'); assert.equal(power.pending.until, 60000);
+  assert.deepEqual(power.lastWrite, {value: 'ON', origins: {Theater: 1}});
+  r.request('Off'); r.run(120000);
+  assert.deepEqual(r.writes(), ['0 Power=ON', '21000 Power=OFF']);
+  assert.equal(r.device.status, 'standby'); assert.deepEqual(r.endpoint().failures, {});
+  // What was left when last journaled is restored, never more than the
+  // declared settle.
+  const late = theater({lag: 1e9});
+  late.request('Movie'); late.run(30000); late.reload();
+  assert.equal(late.coordinator.snapshot().resources.Power.pending.until, 60000);
+});
+
+test('an Off while the projector starts up waits for it to be on, then turns it off', () => {
+  const r = theater({device: {status: 'startup', until: 12000}});
+  r.request('Off');
+  assert.deepEqual(r.sent, ['0 Power?ON~']);
+  r.run(60000);
+  assert.deepEqual(r.writes(), ['15000 Power=OFF']);
+  assert.equal(r.device.status, 'standby'); assert.deepEqual(r.endpoint().failures, {});
+});
+
+test('an On while the projector cools waits for standby, then turns it on and selects the input', () => {
+  const r = theater({device: {status: 'cooling', until: 20000}, lag: 0});
+  r.request('Movie');
+  r.run(90000);
+  assert.deepEqual(r.writes(), ['21000 Power=ON', '36000 Input=hdmi1']);
+  assert.equal(r.device.status, 'on'); assert.equal(r.device.input, 'hdmi1');
+  assert(r.endpoint().pathReady); assert.deepEqual(r.endpoint().failures, {});
+});
+
+test('a field without settle trusts its first read, as before', () => {
+  const r = theater({settle: null});
+  r.request('Movie');
+  assert.deepEqual(r.writes(), ['0 Power=ON']);
+  // The lagging on is read at once and marked unconfirmed; the input waits
+  // for nothing and the route fails at its deadline.
+  assert.deepEqual(r.sent, ['0 Power?OFF', '0 Power=ON', '0 Power?OFF']);
+  assert.equal(r.endpoint().failures.Power, 'unconfirmed-write');
+  const power = r.coordinator.snapshot().resources.Power;
+  assert.equal(power.pending, null); assert.equal(power.transition, null); assert.equal(power.probeAt, null);
+  // A transition sample of an undeclared value is trusted on its first read.
+  const s = theater({settle: null, device: {status: 'startup', until: 12000}});
+  s.request('Off');
+  assert.deepEqual(s.writes(), ['0 Power=OFF']);
+  assert.equal(s.coordinator.snapshot().resources.Power.transition, null);
+});
+
+test('a settle keeps the route from expiring, up to its cap, and a transition is trusted once its settle passes', () => {
+  // Power on lands after 200 s and startup never ends: 300 s of pending,
+  // then 300 s of transition, but the deadline moves at most 300 s.
+  const r = theater({settle: {ON: 300000, OFF: 30000}, lag: 200000, phase: 1e9});
+  r.request('Movie', '1a2b3c4d');
+  r.run(10000); assert.equal(r.endpoint().active, true);
+  r.run(299999); assert.equal(r.endpoint().active, true); assert.deepEqual(r.endpoint().failures, {});
+  r.run(1);
+  assert.equal(r.endpoint().failures.deadline, 'deadline');
+  assert.deepEqual(r.warnings, ['routing deadline room=Theater choice=Movie route=1a2b3c4d ms=310000 '
+    + 'waiting=Power:settling,Input:unverified cleanup=- failed=-']);
+  // Within the cap: a transition that outlasts its settle is trusted then,
+  // logged once, and the route goes on.
+  const t = theater({lag: 0, phase: 1e9});
+  t.request('Movie'); t.run(59999);
+  assert.deepEqual(t.writes(), ['0 Power=ON']); assert(t.endpoint().active);
+  t.run(1);
+  assert.deepEqual(t.warnings, ['routing settle resource=Power value=ON ms=60000 outcome=still_moving']);
+  assert.deepEqual(t.writes(), ['0 Power=ON', '60000 Input=hdmi1 refused']);
+  assert.equal(t.endpoint().failures.Input, 'device-refused');
+});
+
+test('a settle must be a declared value with a positive finite ms of at most 300000', () => {
+  const deps = {dispatch() {}, probe() {}, store: {load: () => null, save() {}}};
+  for (const settle of [null, [], 'ON', {ON: 0}, {ON: -1}, {ON: 300001}, {ON: NaN}, {ON: Infinity}, {ON: '5000'}, {MAYBE: 1000}]) {
+    const config = theaterDescriptor(); config.resources.Power.settleMs = settle;
+    assert.throws(() => createCoordinator(config, deps), /^Error: invalid lifecycle (settle|property\/value): Power/, JSON.stringify(settle));
+  }
+  createCoordinator(theaterDescriptor({ON: 300000, OFF: 1}), deps).close();
+});
+
 let failed = 0;
 for (const [name, action] of tests) {
   try { action(); }

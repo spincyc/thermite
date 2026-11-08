@@ -92,6 +92,8 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
             cap = caps[item]
             resources[item] = {"key": cap["key"], "values": list(map(str, cap["field"]["allowed"])),
                                "capable": True, "exclusive": False, "uses": {}, "requires": {}}
+            if "settle" in cap["field"]:
+                resources[item]["settleMs"] = dict(cap["field"]["settle"])
         return True
 
     def missing(source, items):

@@ -59,6 +59,20 @@ rollback. The unified deployment workflow uses a separate committed private site
   whose window starts on the source its locked leader shows is no longer
   refused as a shared-resource conflict; another room locked on that source
   still refuses it.
+- Under the routing lifecycle, a Sony projector on ADCP that is slow to
+  turn on or off is waited for. Off pressed while an accepted On had not
+  shown yet used to read standby, send nothing, and leave the projector on
+  once the On landed; a route used to fail with an unconfirmed power write
+  instead of selecting the input; On during cooling was refused. Now an
+  accepted power command is waited for until the projector shows it (at
+  most 60 seconds for On, 30 for Off), startup and cooling are waited out,
+  and the projector is read every few seconds meanwhile; only then is its
+  next power or input command sent. A route's deadline moves with the wait,
+  by at most 5 minutes, and a wait still open at a reload is resumed. A
+  projector still starting up when its wait ends is used anyway and logged
+  once at warn (`routing settle ... outcome=still_moving`). Integrations
+  declare these waits per field (`SETTLE`, and transition reads); fields
+  without one behave as before.
 - A locked room whose receiver or projector changes by itself, such as one
   turning back on in a room locked Off, is repaired as soon as the device
   reports it, however long the room has shown Unknown. Every Unknown pass

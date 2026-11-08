@@ -63,6 +63,14 @@ PROBED = False
 #: Seconds from a command to its read-back: none, the command's session
 #: reads the projector again on the same connection.
 READ_BACK = 0
+#: Under the routing lifecycle (oh_features/routing/lifecycle_io.py), the
+#: power field's settle in ms: how long an accepted `power "on"` may take to
+#: show in power_status and startup may last, and the same for `power "off"`
+#: and cooling. The VW915ES has stayed in standby for 6 s or more after an
+#: accepted `power "on"` and reported on by 21 s. A read that shows the value
+#: ends the wait early; startup and cooling1/cooling2 are read as transitions
+#: (sony_adcp.js routingProvider).
+SETTLE = {"power": {"ON": 60000, "OFF": 30000}}
 RULE = "automation/js/sony_adcp.js"
 SOURCE = Path(__file__).resolve().parent / "sony_adcp.js"
 #: The rule's markers: each line is replaced by its filled-in constant.

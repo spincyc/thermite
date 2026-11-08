@@ -22,6 +22,8 @@ STATUS_ITEM = "house_routing_io_status"
 HTTP = (bk808_http, ukm404_http, vrroom_http)
 CUSTOM = (pyatv_http, sony_ip_control, sony_adcp, avpro_telnet)
 CUSTOM_MARK = "const ROUTING_EXECUTOR = null;"
+#: The longest settle a field may declare (lifecycle.js SETTLE_MAX_MS).
+SETTLE_MAX_MS = 300000
 
 
 def _provider(device):
@@ -29,7 +31,19 @@ def _provider(device):
                  if uses(device, "control", module.NAME)), None)
 
 
+def _settle(module, item: str, settle: dict, allowed: list) -> dict:
+    """A field's declared settle, {value: ms}: how long an accepted write of
+    each value may take to show in a read, and a transition toward it may
+    last (lifecycle.js, Settle)."""
+    for value, ms in settle.items():
+        if value not in allowed or type(ms) is not int or not 0 < ms <= SETTLE_MAX_MS:
+            raise ValueError(f"{module.NAME} declares an invalid settle for {item}: {value}={ms!r}")
+    return dict(settle)
+
+
 def capabilities(data: dict) -> dict:
+    """Each executor field, by Item. An integration's SETTLE, {point:
+    {value: ms}}, gives the field `<id>_<point>` its `settle`."""
     result = {}
     for device in data.get("devices", []):
         module = _provider(device)
@@ -69,6 +83,10 @@ def capabilities(data: dict) -> dict:
             inputs, outputs = module.ports(device)
             for output in range(1, outputs + 1):
                 fields[module.switch_item(device, output)] = {"kind": "avpro", "allowed": [str(n) for n in range(1, inputs + 1)]}
+        for point, settle in getattr(module, "SETTLE", {}).items():
+            item = f"{ident}_{point}"
+            if item in fields:
+                fields[item]["settle"] = _settle(module, item, settle, fields[item]["allowed"])
         for item, field in fields.items():
             result[item] = {"key": ident, "provider": module.NAME, "terminal": True,
                             "probe": True, "field": field}

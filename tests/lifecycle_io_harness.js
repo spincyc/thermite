@@ -294,6 +294,20 @@ test('an applied write whose readback lags is re-read within a bounded window',(
  g.actor.legacy('menu_key','UP');g.bridge.events();g.actor.drain();g.bridge.events();
  assert(manual.some(e=>e.type==='terminal'&&e.admitted));assert.equal(g.sleeps.length,0);
 });
+test('a transitional read crosses the broker as data, on a probe and on the post-write readback',()=>{
+ const f=setup();f.provider.probe=()=>({value:'3',fresh:true,transition:true});
+ f.bridge.probe({token:String('warming'),key:'switch',resource:'D1'},r=>f.events.push({...r}));f.actor.drain();f.bridge.events();
+ assert(f.events.some(e=>e.token==='warming'&&e.type==='sample'&&e.value==='3'&&e.transition===true));
+ // A transitional readback of the written value confirms the write, flagged.
+ f.provider.execute=()=>({outcome:'applied',sample:{value:'3',fresh:true,transition:true,observedAt:5}});
+ f.submit('warming-write','D1','3');f.actor.drain();f.bridge.events();
+ assert.deepEqual(f.events.find(e=>e.token==='warming-write'&&e.type==='terminal').sample,
+  {value:'3',fresh:true,retired:true,basis:'owned_post_write_read',observedAt:5,transition:true});
+ // Only `true` is carried; a stable readback has no flag at all.
+ f.provider.execute=()=>({outcome:'applied',sample:{value:'3',fresh:true,transition:'yes'}});
+ f.submit('odd','D1','3');f.actor.drain();f.bridge.events();
+ assert.deepEqual(f.events.find(e=>e.token==='odd'&&e.type==='terminal').sample,{value:'3',fresh:true,retired:true,basis:'owned_post_write_read'});
+});
 test('quarantine recovers from one fresh in-domain read after the window, then survives no restart',()=>{
  let time=1000;const f=setup(null,source,{now:()=>time}),proof=[];f.bridge.onLegacy(e=>proof.push(e));
  f.provider.execute=()=>{throw Error('lost reply');};f.submit('unknown','D2','4');f.actor.drain();f.bridge.events();

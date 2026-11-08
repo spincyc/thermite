@@ -381,18 +381,19 @@ test('a read-only copy connects to no AVPro matrix and only logs what it would s
 // of that many coming connections; such an answer comes late, after the
 // read that waited for it gave up. `errors` answers that many requests
 // err_cmd, and `hangup` closes a connection at that request, unanswered.
+// `after` is the power_status a power "on" / "off" leaves (on, standby).
 // close() closes every connection while idle; cycle() forgets them, as a
 // power cycle does, so that the next request on one is reset.
 function adcp({ send = true } = {}) {
   const clock = { now: 0 }, hooks = [];
   const projector = { power: 'on', input: 'hdmi1', mode: 'reference', greeting: 'NOKEY', refuse: null, down: false,
-    mute: false, asleep: 0, wake: 0, errors: 0, hangup: null, opened: [], requests: [], links: [],
+    mute: false, asleep: 0, wake: 0, errors: 0, hangup: null, after: {on: 'on', off: 'standby'}, opened: [], requests: [], links: [],
     close() { for (const link of projector.links) link.peerClosed = true; },
     cycle() { for (const link of projector.links) link.forgotten = true; } };
   function answer(request) {
     const set = /^(power|input|key) "([^"]*)"$/.exec(request);
     if (set && projector.refuse) return projector.refuse;
-    if (set && set[1] === 'power') projector.power = set[2] === 'on' ? 'on' : 'standby';
+    if (set && set[1] === 'power') projector.power = projector.after[set[2] === 'on' ? 'on' : 'off'];
     else if (set && set[1] === 'input') projector.input = set[2];
     if (set) return 'ok';
     if (request === 'power_status ?') return `"${projector.power}"`;
@@ -544,6 +545,29 @@ test('the routing provider is unsent before the command line, refused or unknown
   assert.deepEqual(provider.execute('projector_power', 'OFF'), { outcome: 'applied', sample: null });
   assert.deepEqual(r.projector.requests.filter(line => !line.endsWith(' ?')),
     ['input "hdmi2"', 'input "hdmi1"', 'input "hdmi1"', 'power "off"']);
+});
+
+test('the routing provider reads startup and cooling as power transitions toward ON and OFF', () => {
+  const r = adcp(), provider = r.context.routingProvider();
+  r.poll();
+  const read = (status, resource = 'projector_power') => { r.projector.power = status; return provider.probe(resource); };
+  assert.deepEqual(read('startup'), { value: 'ON', fresh: true, basis: 'owned_native_read', observedAt: 15000, transition: true });
+  assert.deepEqual(read('cooling1'), { value: 'OFF', fresh: true, basis: 'owned_native_read', observedAt: 15000, transition: true });
+  assert.equal(read('cooling2').transition, true);
+  // Settled power, and the input at any time, carry no flag.
+  assert(!('transition' in read('on'))); assert(!('transition' in read('standby')));
+  assert(!('transition' in read('startup', 'projector_input')));
+  // The Items keep their display mapping and the raw power_status.
+  assert.deepEqual([r.items.projector_power, r.items.projector_power_state], ['ON', 'startup']);
+  read('cooling2');
+  assert.deepEqual([r.items.projector_power, r.items.projector_power_state], ['OFF', 'cooling2']);
+  // A power command the projector answers with its startup or cooling is
+  // applied, with that transition as its readback.
+  r.projector.power = 'standby'; r.projector.after = { on: 'startup', off: 'cooling1' };
+  assert.deepEqual(provider.execute('projector_power', 'ON'),
+    { outcome: 'applied', sample: { value: 'ON', fresh: true, basis: 'owned_native_read', observedAt: 15000, transition: true } });
+  r.projector.power = 'on';
+  assert.deepEqual(provider.execute('projector_power', 'OFF').sample.transition, true);
 });
 
 test('a read-only copy connects to no Sony projector and only logs what it would send', () => {

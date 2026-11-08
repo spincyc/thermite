@@ -42,6 +42,24 @@ class Rendering(unittest.TestCase):
             self.assertEqual(next(iter(item['channels'].values()))['toItemScript'],'|input')
         self.assertTrue(all(c['config']['mode']=='READONLY' for t in out.things.values() for c in t['channels'].values()))
 
+    def test_an_integration_settle_reaches_its_field_and_the_planner_resource(self):
+        from tests.test_zone_sync import LOUNGE, device, house
+        data=house()
+        data['devices'].append(device('example_projector',LOUNGE,'projector',29,make='Sony',model='Example Projector',
+                                      controls={'observe':[sony_adcp.NAME],'control':[sony_adcp.NAME]}))
+        data['routing']['rooms'][LOUNGE]['display']={'device':'example_projector','input':'hdmi1'}
+        cap=lifecycle_io.capabilities(data)
+        self.assertEqual(cap['example_projector_power']['field']['settle'],{'ON':60000,'OFF':30000})
+        self.assertNotIn('settle',cap['example_projector_input']['field'])
+        from oh_features import routing
+        resources=routing.table(data)['lifecycle']['resources']
+        self.assertEqual(resources['example_projector_power']['settleMs'],{'ON':60000,'OFF':30000})
+        self.assertEqual([name for name,row in resources.items() if 'settleMs' in row],['example_projector_power'])
+        for bad in ({'power':{'STANDBY':1000}},{'power':{'ON':0}},{'power':{'ON':300001}},{'power':{'ON':1.5}},{'power':{'ON':True}}):
+            with self.subTest(settle=bad),mock.patch.object(sony_adcp,'SETTLE',bad):
+                with self.assertRaisesRegex(ValueError,'sony_adcp declares an invalid settle for example_projector_power'):
+                    lifecycle_io.capabilities(data)
+
     def test_unsupported_resources_are_rejected_before_rendering(self):
         with self.assertRaisesRegex(ValueError,'no ordered executor'):
             lifecycle_io.configure(House(self.inventory()),Conf(),{'resources':{'unknown_power':{}}})
@@ -90,7 +108,7 @@ class Broker(unittest.TestCase):
     def test_actual_executor_source(self):
         result=subprocess.run([shutil.which('node'),str(AREA/'tests/lifecycle_io_harness.js'),str(lifecycle_io.SOURCE),str(pyatv_http.SOURCE)],capture_output=True,text=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(json.loads(result.stdout)['passed'],41)
+        self.assertEqual(json.loads(result.stdout)['passed'],42)
 
 
 class Quiescence(unittest.TestCase):

@@ -519,12 +519,14 @@ the wait for the room's lock. In openHAB's journal, `routing command` is the
 routing rule receiving it, each `routing ticket` line one device step (its
 `resource`, `value`, `outcome`, `reason`, whether a read-back confirmed it,
 `ms`, `wait` in the queue, `polls`, and an HTTP status or exception class),
-and a `routing deadline` warning names the steps still waiting, cleaning up or
-failed when the route's time ran out:
+a `routing deadline` warning names the steps still waiting, cleaning up or
+failed when the route's time ran out, and a `routing settle` warning a device
+still starting up or cooling down when the wait its integration declares for
+that ended (a route waits for it, `settling`, before its next step):
 
 ```sh
 journalctl -u thermite-openhab.service -g 'routing ticket .*(reason=[a-z]|readback=unconfirmed)'
-journalctl -u thermite-openhab.service -g 'routing (deadline|ticket .* ms=[0-9]{4,})'
+journalctl -u thermite-openhab.service -g 'routing (deadline|settle|ticket .* ms=[0-9]{4,})'
 ```
 
 Which lock blocked a command, and who set it:
