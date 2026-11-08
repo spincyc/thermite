@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -108,6 +109,12 @@ class Rendering(unittest.TestCase):
                 self.assertEqual(next(line for line in aimed[path].splitlines() if line.startswith('const ROUTING_EXECUTOR = ')),config_line)
 
 
+#: The routing core, which reads only the integrations' declarations.
+GENERIC = ('lib/oh_features/routing/lifecycle_io.py', 'lib/oh_features/routing/lifecycle_io.js',
+           'lib/oh_features/routing/lifecycle.py', 'lib/oh_features/routing/lifecycle.js',
+           'lib/oh_features/routing/routing.js', 'lib/oh_room_policy/plan.py')
+
+
 def fictional(kind='http'):
     """An integration no generic file knows: a relay whose one field is
     driven by the generic HTTP actor, or (any other kind) by its own rule."""
@@ -133,6 +140,23 @@ class Declarations(unittest.TestCase):
     def inventory(self):
         return {"version":1,"rooms":{"desk":{"label":"Desk","tag":"Room"}},"devices":[
             {"id":"desk_relay","room":"desk","kind":"relay","ip":"192.0.2.20","controls":{"control":["example_relay_http"]}}]}
+
+    def test_the_generic_routing_core_names_no_integration(self):
+        vendors = ('denon', 'marantz', 'pyatv', 'apple', 'sony', 'bravia', 'adcp', 'avpro', 'vrroom', 'hdfury', 'bk808', 'ukm404', 'orei')
+        for path in GENERIC:
+            text = (AREA / path).read_text(encoding='utf-8')
+            for name in sorted(module.NAME for module in integrations.REGISTRY):
+                with self.subTest(path=path, name=name):
+                    self.assertIsNone(re.search(rf'\b{name}\b', text))
+            for vendor in vendors:
+                with self.subTest(path=path, vendor=vendor):
+                    self.assertIsNone(re.search(rf'\b{vendor}', text, re.I))
+            # Vendor values: Denon's zone source and game alias, an Item-name
+            # suffix taken for power, the Sony inputs a diagnosis forwarded,
+            # one matrix's EDID codes.
+            for literal in ('"SOURCE"', "'SOURCE'", "'GAME", '"GAME', 'endswith("_power")', "endswith('_power')", 'hdmi\\d', 'range(1, 48)'):
+                with self.subTest(path=path, literal=literal):
+                    self.assertFalse(literal in text, literal)
 
     def test_a_new_integration_gets_an_executor_field_from_its_declaration_alone(self):
         module = fictional()
