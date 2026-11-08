@@ -77,7 +77,8 @@ rollback. The unified deployment workflow uses a separate committed private site
   was never selected after a stale power OFF, and one UNDEF made a done
   route's status not ready for good. The planner now reads the device once
   more, only for a property a route rests on and once per change of the
-  Item; it writes nothing on that account.
+  Item, again at each step while the projector is still starting up or
+  cooling down, until it settles; it writes nothing on that account.
 - A room locked with a Sony projector on ADCP no longer turns Unknown 30
   seconds after the projector last changed: the sony_adcp rule now posts
   every Item on each 15-second read, changed or not, and the room policy

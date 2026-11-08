@@ -1072,6 +1072,24 @@ test('Item observations never end, satisfy or shorten a settle wait', () => {
   assert(r.endpoint().pathReady);
 });
 
+test('a recheck that lands on a transition is repeated each step until the projector settles', () => {
+  const r = theater({lag: 0});
+  r.request('Movie'); r.run(60000);
+  assert(r.endpoint().pathReady); assert.equal(r.sent.length, 7);
+  // Another controller turns it off and on again. Its power Item shows OFF,
+  // then ON for startup and on alike, so it never changes again.
+  Object.assign(r.device, {status: 'cooling', until: r.now() + 10000});
+  r.coordinator.observe('Power', 'OFF'); r.run(12000);
+  Object.assign(r.device, {status: 'startup', until: r.now() + 15000});
+  r.coordinator.observe('Power', 'ON'); r.run(600000);
+  // One read per step (3 s toward OFF, 5 s toward ON) until each is stable.
+  assert.deepEqual(r.sent.slice(7), ['60000 Power?OFF~', '63000 Power?OFF~', '66000 Power?OFF~', '69000 Power?OFF~',
+    '72000 Power?OFF', '72000 Power?ON~', '77000 Power?ON~', '82000 Power?ON~', '87000 Power?ON']);
+  const power = r.coordinator.snapshot().resources.Power;
+  assert.equal(power.verified, 'ON'); assert.equal(power.recheck, false); assert.equal(power.transition, null);
+  assert(r.endpoint().pathReady); assert.deepEqual(r.writes(), ['0 Power=ON', '15000 Input=hdmi1']);
+});
+
 test('an Off while the projector starts up waits for it to be on, then turns it off', () => {
   const r = theater({device: {status: 'startup', until: 12000}});
   r.request('Off');
