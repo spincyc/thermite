@@ -7,6 +7,15 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The dashboards count the first source change of each room, and the first
+  routing failure of each device, after routing.js loads (an openHAB restart
+  or a deploy). The exporter wrote a room's switch-time series only once
+  routing had counted that outcome, and a device's failure series only once
+  it had failed, so `increase()` took each series' first event for the
+  series appearing and counted nothing: "Since yesterday evening" and
+  Switching & remotes missed it. Every routing zone and outcome, and every
+  device the routing executor commands with every failure reason, now reads
+  0 from routing's first report on.
 - Grafana's "Rooms through the day" and "Source mix" name each source as
   the remotes do (`routing.sources.<id>.label`), adding the device's room
   where two sources share a name: "Apple TV (Theater)". They used to show the

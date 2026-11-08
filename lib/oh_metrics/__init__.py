@@ -495,16 +495,18 @@ def exporter_map(inventory: dict, conf=None) -> dict:
     from oh_features import threadpools
     if threadpools.enabled(house):
         result["handler_pool"] = dict(threadpools.ITEM_NAMES)
-    routing = routing_map(conf, items)
+    routing = routing_map(inventory, conf, items)
     if routing:
         result["routing"] = routing
     return result
 
 
-def routing_map(conf, items: dict) -> dict:
+def routing_map(inventory: dict, conf, items: dict) -> dict:
     """The routing executor's status Item and the routing telemetry Item,
-    when the house has them, with each routing zone's room: the exporter
-    turns their JSON into thermite_routing_* and thermite_route_seconds."""
+    when the house has them, with each routing zone's room and the devices
+    the executor commands (each executor actor's key): the exporter turns
+    their JSON into thermite_routing_* and thermite_route_seconds, with a
+    zero for every zone and executor device routing has not counted yet."""
     from oh_features import routing
     from oh_features.routing import lifecycle_io
 
@@ -513,7 +515,11 @@ def routing_map(conf, items: dict) -> dict:
              if spec.get("point") == "source" and name.startswith("loc_") and name.endswith("_source")}
     found = {key: name for key, name in (("status", lifecycle_io.STATUS_ITEM), ("metrics", routing.METRICS_ITEM))
              if name in present}
-    return {**found, "zones": dict(sorted(zones.items()))} if found else {}
+    if not found:
+        return {}
+    capabilities = lifecycle_io.capabilities(inventory) if conf.executor_controls else {}
+    executors = sorted({capabilities[item]["key"] for item in conf.executor_controls if item in capabilities})
+    return {**found, "zones": dict(sorted(zones.items())), "executors": executors}
 
 
 def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:

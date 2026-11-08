@@ -364,16 +364,23 @@ def _histogram(value: object) -> tuple[list[float], float, float] | None:
 
 
 def _routing_metrics(spec: dict, data: object) -> list[Sample]:
+    """The routing telemetry. Every zone x outcome of the map and every
+    executor device x reason has a series from the first valid report on,
+    zero until routing counts one, so increase() sees a series' first event;
+    a histogram or count that is there but invalid is left out."""
     if not isinstance(data, dict) or data.get("version") != 1:
         return [("thermite_routing_metrics_up", {}, 0.0)]
     samples: list[Sample] = [("thermite_routing_metrics_up", {}, 1.0)]
     zones = spec.get("zones") or {}
     devices = spec.get("devices") or {}
     route = data.get("route") if isinstance(data.get("route"), dict) else {}
-    for zone in sorted(set(route) & set(zones)):
-        outcomes = route[zone] if isinstance(route[zone], dict) else {}
+    none = ([0.0] * len(ROUTE_BUCKETS), 0.0, 0.0)
+    for zone in sorted(zones):
+        outcomes = route.get(zone, {})
+        if not isinstance(outcomes, dict):
+            continue
         for outcome in ROUTE_OUTCOMES:
-            parsed = _histogram(outcomes.get(outcome))
+            parsed = none if outcomes.get(outcome) is None else _histogram(outcomes[outcome])
             if parsed is None:
                 continue
             counts, total, count = parsed
@@ -389,10 +396,11 @@ def _routing_metrics(spec: dict, data: object) -> list[Sample]:
         if value is not None:
             samples.append(("thermite_routing_operations_total", {"outcome": outcome}, value))
     failures = data.get("failures") if isinstance(data.get("failures"), dict) else {}
-    for device in sorted(set(failures) & set(devices)):
-        reasons = failures[device] if isinstance(failures[device], dict) else {}
+    executors = set(spec.get("executors") or ()) | set(failures)
+    for device in sorted(executors & set(devices)):
+        reasons = failures.get(device) if isinstance(failures.get(device), dict) else {}
         for reason in FAILURE_REASONS:
-            value = _count(reasons.get(reason))
+            value = _count(reasons.get(reason, 0))
             if value is not None:
                 samples.append(("thermite_routing_endpoint_failures_total",
                                 {"device": device, "room": str(devices[device].get("room", "")),

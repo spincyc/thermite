@@ -49,9 +49,10 @@ def panels(board):
         yield from panel.get("panels", [])
 
 
-ROUTING_MAP = {"devices": {"example_matrix": {"room": "example_west", "kind": "hdmi_matrix"}},
+ROUTING_MAP = {"devices": {"example_matrix": {"room": "example_west", "kind": "hdmi_matrix"},
+                           "example_tv": {"room": "example_west", "kind": "tv"}},
                "routing": {"status": "house_routing_io_status", "metrics": "house_routing_metrics",
-                           "zones": {"example_west": "example_west"}}}
+                           "zones": {"example_west": "example_west"}, "executors": ["example_matrix"]}}
 
 
 def items(**states):
@@ -109,7 +110,8 @@ class RoutingSeries(unittest.TestCase):
     def series(self, **states):
         """The samples of a house with only the routing Items given."""
         keys = {"house_routing_io_status": "status", "house_routing_metrics": "metrics"}
-        routing = {"zones": ROUTING_MAP["routing"]["zones"], **{keys[name]: name for name in states}}
+        routing = {"zones": ROUTING_MAP["routing"]["zones"], "executors": ROUTING_MAP["routing"]["executors"],
+                   **{keys[name]: name for name in states}}
         return exporter._routing({**ROUTING_MAP, "routing": routing}, items(**states))
 
     def test_status_counts_and_only_the_houses_quarantined_devices(self):
@@ -167,7 +169,32 @@ class RoutingSeries(unittest.TestCase):
             with self.subTest(histogram=histogram):
                 data = {"version": 1, "route": {"example_west": {"confirmed": histogram}}}
                 samples = self.series(house_routing_metrics=json.dumps(data))
-                self.assertFalse([s for s in samples if s[0].startswith("thermite_route_seconds")])
+                outcomes = {labels["outcome"] for name, labels, _ in samples
+                            if name.startswith("thermite_route_seconds")}
+                self.assertEqual(outcomes, {"deadline", "superseded"})
+
+    def test_every_zone_and_executor_device_starts_at_zero(self):
+        """routing.js posts its counts at load, before any choice: every
+        series is there at zero, so increase() counts each one's first event."""
+        data = {"version": 1, "route": {}, "operations": {}, "failures": {}, "resends": {}}
+        samples = self.series(house_routing_metrics=json.dumps(data))
+        counts = {(labels["zone"], labels["outcome"]): value for name, labels, value in samples
+                  if name == "thermite_route_seconds_count"}
+        self.assertEqual(counts, {("example_west", outcome): 0 for outcome in exporter.ROUTE_OUTCOMES})
+        buckets = [labels["le"] for name, labels, value in samples
+                   if name == "thermite_route_seconds_bucket" and labels["outcome"] == "confirmed"]
+        self.assertEqual(len(buckets), len(exporter.ROUTE_BUCKETS) + 1)
+        failures = {(labels["device"], labels["reason"]): value for name, labels, value in samples
+                    if name == "thermite_routing_endpoint_failures_total"}
+        self.assertEqual(failures, {("example_matrix", reason): 0 for reason in exporter.FAILURE_REASONS})
+
+    def test_the_map_names_the_devices_the_executor_commands(self):
+        from tests import test_zone_sync as zones
+        mapping = json.loads(rendered(zones.house())[oh_metrics.EXPORTER_MAP])
+        self.assertEqual(mapping["routing"]["executors"],
+                         ["example_avr", "example_matrix", "example_screen", "example_tv", "example_usb"])
+        self.assertLessEqual(set(mapping["routing"]["executors"]), set(mapping["devices"]))
+        self.assertEqual(MAP["routing"]["executors"], [], "the example house has no routing executor")
 
     def test_wrong_version_is_down(self):
         self.assertEqual(self.series(house_routing_metrics=json.dumps({"version": 2})),
