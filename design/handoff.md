@@ -1,9 +1,8 @@
 # Thermite work handoff
 
-Updated 2026-11-08. `main` is at fca2412, CI green on Python 3.11–3.14;
-the owner's house runs 44de41d until its next upgrade. The plan for what follows is
-[device-contract.md](device-contract.md): stage 1 is done; stages 2 and 3
-are not started. House-specific work (devices to check in person, owner
+Updated 2026-11-08. CI is green on Python 3.11–3.14. The plan for what
+follows is [device-contract.md](device-contract.md): stages 1 and 2a are
+done; 2b, 2c and 3 are not started. House-specific work (devices to check in person, owner
 settings, live tests) is in the private site's handoff, not here.
 
 ## Owner directions
@@ -41,22 +40,31 @@ settings, live tests) is in the private site's handoff, not here.
 - The handheld bridge's `--listen` socket is created owner-only, closing
   a race its test caught on CI.
 
-## Next: stage 2a, integration declarations
+## Stage 2a, done
 
-- One hook, `fields(device)`, through which each integration declares its
-  fields. Generic code then names no integration.
-- Remove the per-integration `if/elif` chain in
-  `lib/oh_features/routing/lifecycle_io.py` `capabilities()`.
-- Move the Denon/Marantz wire format out of the generic HTTP actor in
-  `lifecycle_io.js`, and `SOURCE` and the `_power` suffix out of
-  `lifecycle.py`.
-- Remove pyatv from `oh_room_policy/plan.py` (`Field.native_power` is
-  hard-coded to it, while the worker uses the generic hook).
-- Also generic code that knows one vendor: the Sony names regex, the
-  matrix EDID catalog (1–47), the VRROOM acknowledgement, `legacy_fields`,
-  and GAME→GAME1, which is duplicated.
-- About 150 lines of session and provider boilerplate are copied into each
-  script integration, with five diverging `update()` copies. Share them.
+- Each integration the routing executor drives declares its fields through
+  `fields(device)`: `kind`, `values`, `thing`/`channel`, `ack`, `zone`/
+  `point`, `settle` and `manual`. `lifecycle_io.py`, `lifecycle_io.js`,
+  `lifecycle.py`, `routing.js` and `oh_room_policy/plan.py` name no
+  integration, and a test keeps it so.
+- The Denon/Marantz routing actor is the integration's own rule,
+  `denonmarantz_http.js`; GAME→GAME1 exists once, in `INPUT_ALIASES`.
+- The script integrations share `lib/oh_integrations/_device.js`: posting
+  readings at every poll and their own state on change, down/up logging,
+  backoff, kept connections, the command rule and routing samples.
+- Left as they are, worth doing when the code is next touched:
+  - `manual` is per device but declared on every field;
+  - the actor still receives `values` under the key `allowed`;
+  - `httpActor`'s `config()` repeats `http.thing()`, and
+    `denonmarantz_http.js` repeats `get()`;
+  - `configure()` in `lifecycle_io.py` looks a path up only to raise
+    "adapter is absent"; raise directly;
+  - androidtv_googletv, and the 6-line `drop()` in bk808_cec and
+    globalcache_ir, are not on the shared helper.
+- `tests/lifecycle_io/NativeLifecycleTest.java`, the only test that runs the
+  Denon rule in GraalJS with the real XML parser, needs `THERMITE_JAVA`,
+  `THERMITE_ECJ`, `THERMITE_RUNTIME` and `THERMITE_GRAAL` and was not run.
+  The owner's-house controls check drove it end to end instead.
 
 ## Stage 2b: outcomes, retries, deadlines
 
@@ -212,5 +220,16 @@ function. That replaces these, all found in the cold review:
   `TMPDIR` set to a short directory, such as one from `mktemp -d /tmp/t.XXXX`.
 - A local-only failure: an occasional atime flake in
   `test_repeated_current_application_reuses_environment_and_keeps_launcher_and_commit`.
+- The warmed userdata template `thermite test` boots from is keyed on the
+  whole rendered `addons.cfg`, comments included, so rewording an add-on's
+  reason (an `Addon(..., why)`) rebuilds it and downloads the same add-ons
+  again, on the owner's host at the next deploy too. Keying it on the
+  add-on list alone would avoid that.
+- `thermite test routing` and `controls` run on the owner's host beside the
+  live runtime. Under load, routing can leave a port unconfirmed at a round
+  check (or quarantine a matrix whose write timed out), and controls can
+  see a Sonos press take about 1 s against its 0.5 s allowance. Unchanged
+  `main` fails the same way at such times; compare with a run of `main`
+  before blaming a change.
 - Reviews and fixes ran as lanes in worktrees under `.scratch/`. Everything
   listed as shipped is on `main`.
