@@ -38,6 +38,19 @@ rollback. The unified deployment workflow uses a separate committed private site
   zone 2 while the main zone's room was off read as failing, turned the
   dashboards' control health red and fired ThermiteCheckFailing although
   nothing was wrong.
+- Routing: a room synced with its leader (`receiver.sync_with`) no longer
+  rewrites the EDID of the source both rooms show. Choosing the source the
+  leader shows used to give the source the follower's EDID, so the source
+  renegotiated: the leader's picture went blank and both screens got the
+  follower's mode; leaving it wrote the leader's EDID back, a second blank.
+  A synced choice now writes no EDID, and a follower that claimed the source
+  while the leader's output was still switching hands the claim back as it
+  syncs. When the sync ends and the follower stays on the source, the
+  source takes the follower's EDID as its zone changes input, since its own
+  receiver input then carries the picture. Room locks follow: a follower
+  whose window starts on the source its locked leader shows is no longer
+  refused as a shared-resource conflict; another room locked on that source
+  still refuses it.
 - A locked room whose receiver or projector changes by itself, such as one
   turning back on in a room locked Off, is repaired as soon as the device
   reports it, however long the room has shown Unknown. Every Unknown pass

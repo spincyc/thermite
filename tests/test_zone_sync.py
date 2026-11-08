@@ -28,9 +28,9 @@ from oh_features import routing  # noqa: E402
 from oh_testing import routing as routing_check  # noqa: E402
 from oh_room_policy import Field, Observation, PolicyError, conflicts, expected_plan, repair_plan, verify  # noqa: E402
 from oh_access.worker import NativeCache, observed_fields  # noqa: E402
-from tests.test_room_policy_worker import Harness, at, policy  # noqa: E402
+from tests.test_room_policy_worker import Harness, at, policy, window  # noqa: E402
 
-CINEMA, LOUNGE = "example_cinema", "example_lounge"
+CINEMA, LOUNGE, DEN = "example_cinema", "example_lounge", "example_den"
 COMPUTER, DISC, GAME, PLAYER = "example_computer", "example_disc", "example_game", "example_player"
 OUT1, OUT2, ZONE2 = "example_matrix_output1_input", "example_matrix_output2_input", "example_avr_zone2_input"
 MAIN, PLAYER_POWER = "example_avr_main_input", "example_player_power"
@@ -94,6 +94,14 @@ def shared(rooms, data, idle="standby"):
     rooms[LOUNGE]["receiver"]["sources"] = {PLAYER: "MPLAY"}
     next(d for d in data["devices"] if d["id"] == PLAYER)["controls"] = {"control": ["pyatv_http"]}
     data["routing"]["sources"][PLAYER]["idle"] = idle
+
+
+def den(rooms, data):
+    """A third room on the matrix, with no receiver: it shares the computer
+    and the disc, and syncs with no one."""
+    data["rooms"][DEN] = {"label": "Example Den", "tag": "Room"}
+    data["devices"].append(device("example_den_tv", DEN, "tv", 29, **copy.deepcopy(TV)))
+    rooms[DEN] = {"hdmi_output": 3, "sources": [COMPUTER, DISC], "display": {"device": "example_den_tv", "input": "hdmi1"}}
 
 
 def rendered_table(data):
@@ -222,6 +230,23 @@ class RoutingCheck(unittest.TestCase):
         self.assertEqual(sent({CINEMA: DISC, LOUNGE: DISC})[ZONE2], "BD")
         self.assertNotIn(ZONE2, sent({LOUNGE: routing.OFF}))
 
+    def test_the_hand_over_expects_no_claim_from_a_follower_synced_with_the_first_room(self):
+        check = self.check
+        check.edid = routing.table(house())["edid"]
+        check.turn_off = check.command = lambda *_: None
+        check.expect_routed = lambda what, choices: check.chosen.update(choices) or True
+        expected = []
+        check.expect_edid = lambda what, number, code: expected.append((number, code)) or True
+        check.step_hand_over()
+        # The Cinema first, its follower second: the Cinema's code throughout.
+        self.assertEqual(expected, [(1, 40), (1, 40), (1, 40), (1, None)])
+        # The follower first: the Cinema's claim wins, then the Lounge's own
+        # comes back as its sync ends.
+        expected.clear()
+        check.table = dict(reversed(check.table.items()))
+        check.step_hand_over()
+        self.assertEqual(expected, [(1, 41), (1, 40), (1, 41), (1, None)])
+
 
 class Descriptor(unittest.TestCase):
     def setUp(self):
@@ -298,6 +323,41 @@ class Policy(unittest.TestCase):
         self.assertIsInstance(fields[0], Field)
 
 
+class SyncedEdid(unittest.TestCase):
+    """A synced route claims no EDID (routing.js), so a follower synced with
+    its leader never contends for its source's EDID; unsynced it claims it
+    as any room does."""
+
+    def plans(self, choice=COMPUTER):
+        data = house(den)
+        return {room: expected_plan(data, room, choice) for room in (CINEMA, LOUNGE, DEN)}
+
+    def test_the_followers_claim_applies_only_while_no_leader_route_syncs_it(self):
+        self.assertEqual(oh_render.validate(house(den)), [])
+        plans = self.plans()
+        lounge = plans[LOUNGE]
+        edid = ("example_matrix_input1_edid", "41")
+        self.assertNotIn(edid, lounge.boundary_effects)
+        self.assertEqual((lounge.leader, lounge.unsynced_effects), (CINEMA, (edid,)))
+        self.assertIn(("example_matrix_input1_edid", "40"), plans[CINEMA].boundary_effects)
+        self.assertEqual((plans[CINEMA].leader, plans[CINEMA].unsynced_effects), (None, ()))
+        self.assertEqual(expected_plan(house(den), LOUNGE, "off").unsynced_effects, ())
+
+    def test_a_held_leader_and_its_follower_on_one_source_never_conflict(self):
+        plans = self.plans()
+        cinema, lounge, other = plans[CINEMA], plans[LOUNGE], plans[DEN]
+        self.assertEqual(conflicts(lounge, [cinema], boundary=True), [])
+        self.assertEqual(conflicts(cinema, [lounge], boundary=True), [])
+        # Unsynced, the follower claims the input against any other room.
+        self.assertEqual(conflicts(other, [lounge], boundary=True), [LOUNGE])
+        self.assertEqual(conflicts(lounge, [other], boundary=True), [DEN])
+        self.assertEqual(conflicts(other, [lounge, cinema], boundary=True), [CINEMA])
+        self.assertEqual(conflicts(lounge, [cinema, other], boundary=True), [])
+        # The leader elsewhere: the follower claims its own source's input.
+        self.assertEqual(conflicts(lounge, [self.plans(DISC)[CINEMA]], boundary=True), [])
+        self.assertEqual(conflicts(lounge, [self.plans(DISC)[CINEMA], other], boundary=True), [DEN])
+
+
 class LockedFollower(Harness, unittest.TestCase):
     def worker(self, zone, leader):
         plan = expected_plan(house(), LOUNGE, COMPUTER)
@@ -320,6 +380,23 @@ class LockedFollower(Harness, unittest.TestCase):
         status = self.step()[LOUNGE]
         self.assertEqual(self.devices.writes, [(LOUNGE, ZONE2, "AUX2")], "never the leader output itself")
         self.assertEqual(status["repair"], ZONE2)
+
+    def start(self, data, held):
+        """The Lounge's window starts on the computer while `held` is held on it."""
+        observed = {field.item: field.value for field in expected_plan(data, held, COMPUTER).fields}
+        self.make((policy(held, hold=COMPUTER, enabled=False), at(8)),
+                  (policy(LOUNGE, locks=[window("10:00", "11:00", COMPUTER)]), at(9)),
+                  house=data, now=at(10, 0, 30), observed=observed)
+        self.step()
+        return self.store.claims[f"{LOUNGE}:1:window:2026-11-02:start"]
+
+    def test_a_held_leader_lets_its_follower_start_the_source_it_shows(self):
+        self.assertEqual(self.start(house(den), CINEMA), ("applied", "dispatched"))
+        self.assertIn((LOUNGE, f"loc_{LOUNGE}_source", COMPUTER), self.devices.writes)
+        # Another room held on it still refuses the start: unsynced, the
+        # Lounge would give the computer its own EDID.
+        self.assertEqual(self.start(house(den), DEN), ("skipped", "shared_resource_conflict"))
+        self.assertNotIn((LOUNGE, f"loc_{LOUNGE}_source", COMPUTER), self.devices.writes)
 
 
 class SharedSource(unittest.TestCase):
@@ -410,7 +487,7 @@ class Runtime(unittest.TestCase):
                                 input=json.dumps(tables), capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual((report["passed"], report["failed"]), (19, 0))
+        self.assertEqual((report["passed"], report["failed"]), (23, 0))
 
 
 if __name__ == "__main__":

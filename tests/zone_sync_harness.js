@@ -60,7 +60,7 @@ function load(table, options = {}) {
     world.items.set(name, { name, state: has(options.states || {}, name) ? options.states[name] : has(OFF, name) ? OFF[name] : 'NULL',
       sendCommand(value) {
         world.sent.push([name, String(value)]); world.log.push(`send ${name}=${value}`);
-        if (has(OFF, name)) world.effects.push([name, String(value)]);
+        if (has(OFF, name) || name.endsWith('_edid')) world.effects.push([name, String(value)]);
       },
       postUpdate(value) { this.state = String(value); } });
   }
@@ -167,8 +167,8 @@ function load(table, options = {}) {
 function has(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
 
 // Cinema on `choice`, then the lounge on `lounge`, each settled.
-function both(choice, lounge = choice, options = {}) {
-  const w = load(TABLES.lifecycle, options);
+function both(choice, lounge = choice, options = {}, table = 'lifecycle') {
+  const w = load(TABLES[table], options);
   w.command(CINEMA, choice); w.settle();
   w.command(LOUNGE, lounge); w.settle();
   w.clear();
@@ -482,6 +482,85 @@ test('(12) a shared receiver source whose power has no ordered executor is woken
   w.command(LOUNGE, 'off'); w.settle();
   assert(!w.sent.some(([name, value]) => name === PLAYER_POWER && value === 'OFF'), JSON.stringify(w.sent));
   assert.equal(w.state(PLAYER_POWER), 'ON');
+});
+
+// EDIDs: the computer's input copies output 1 (the Cinema, 40) or output 2
+// (the Lounge, 41); the disc's input is 2. Sent straight to the matrix.
+const EDID1 = 'example_matrix_input1_edid', EDID2 = 'example_matrix_input2_edid';
+const edids = (w) => w.sent.filter(([name]) => name.endsWith('_edid'));
+
+test('(13) a synced follower claims no EDID: it syncs and leaves without writing its source input', () => {
+  for (const table of ['lifecycle', 'plain']) {
+    const w = load(TABLES[table]);
+    w.command(CINEMA, COMPUTER); w.settle();
+    assert.deepEqual(edids(w), [[EDID1, '40']], `${table}: the leader claims its source`);
+    w.clear();
+    w.command(LOUNGE, COMPUTER); w.settle();
+    assert.equal(w.state(ZONE2), 'BD', table);
+    assert.deepEqual(edids(w), [], `${table}: syncing writes no EDID`);
+    // Long after the leader's claim: the matrix's EDID Item says what it is.
+    w.advance(60000);
+    w.command(LOUNGE, 'off'); w.settle();
+    assert.deepEqual(edids(w), [], `${table}: nor does leaving it`);
+    w.command(LOUNGE, COMPUTER); w.settle();
+    w.command(LOUNGE, DISC); w.settle();
+    assert.deepEqual(edids(w), [[EDID2, '41']], `${table}: only its own route's claim`);
+  }
+});
+
+test('(14) a follower whose sync ends on the source claims its EDID once, as its zone changes input', () => {
+  for (const table of ['lifecycle', 'plain']) {
+    // The leader moves: break before.
+    const w = both(COMPUTER, COMPUTER, {}, table);
+    w.command(CINEMA, DISC); w.settle();
+    assert.deepEqual(edids(w), [[EDID1, '41'], [EDID2, '40']], `${table}: ${JSON.stringify(edids(w))}`);
+    assert.deepEqual([w.state(ZONE2), w.state(OUT2), w.source(LOUNGE)], ['AUX2', '1', COMPUTER], table);
+    w.command(LOUNGE, 'off'); w.settle();
+    assert.deepEqual(edids(w).length, 2, `${table}: leaving it after is a plain leave`);
+    // The leader's output switched elsewhere (front panel): the reconcile.
+    const elsewhere = both(COMPUTER, COMPUTER, {}, table);
+    elsewhere.apply(OUT1, '3'); elsewhere.settle();
+    assert.equal(elsewhere.state(ZONE2), 'AUX2', table);
+    assert.deepEqual(edids(elsewhere), [[EDID1, '41']], table);
+    // Leader Off: the same claim.
+    const off = both(COMPUTER, COMPUTER, {}, table);
+    off.command(CINEMA, 'off'); off.settle();
+    assert.deepEqual(edids(off), [[EDID1, '41']], table);
+  }
+});
+
+test('(15) unsynced, a follower and its leader each claim their source as any room does', () => {
+  for (const table of ['lifecycle', 'plain']) {
+    const w = load(TABLES[table]);
+    w.command(LOUNGE, COMPUTER); w.settle();
+    assert.deepEqual(edids(w), [[EDID1, '41']], `${table}: the follower alone`);
+    w.clear();
+    // The leader joins: it claims, the last room to choose wins, and the
+    // follower then syncs with no write of its own.
+    w.command(CINEMA, COMPUTER); w.settle();
+    assert.equal(w.state(ZONE2), 'BD', table);
+    assert.deepEqual(edids(w), [[EDID1, '40']], table);
+    w.clear();
+    // Synced from make after, it leaves: nothing to hand back.
+    w.command(LOUNGE, DISC); w.settle();
+    assert.deepEqual(edids(w), [[EDID2, '41']], table);
+    w.clear();
+    w.command(CINEMA, GAME); w.settle();
+    assert.deepEqual(edids(w), [['example_matrix_input3_edid', '40']], `${table}: the leader alone`);
+  }
+});
+
+test('(16) a follower that claimed the source before its leader showed it hands it back once synced', () => {
+  for (const table of ['lifecycle', 'plain']) {
+    const w = load(TABLES[table]);
+    w.command(CINEMA, COMPUTER);
+    w.command(LOUNGE, COMPUTER);
+    assert.deepEqual(edids(w), [[EDID1, '40'], [EDID1, '41']], `${table}: its own route while the leader output switches`);
+    w.settle();
+    assert.equal(w.state(ZONE2), 'BD', table);
+    assert.deepEqual(edids(w).slice(2), [[EDID1, '40']], `${table}: synced, the leader's code is back`);
+    assert.equal(w.state(EDID1), '40', table);
+  }
 });
 
 let failed = 0;

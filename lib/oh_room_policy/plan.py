@@ -35,7 +35,11 @@ class Observation:
 @dataclass(frozen=True)
 class Plan:
     """`conditions` are Items the fields' alternatives depend on: observed
-    with the fields, never repaired or compared for conflicts."""
+    with the fields, never repaired or compared for conflicts.
+
+    A follower's route that can sync with `leader` claims its source's EDID
+    only while it is not synced: its `unsynced_effects` are boundary effects
+    except beside its leader's route for the same target (conflicts())."""
     room: str
     target: str
     source_item: str
@@ -44,6 +48,8 @@ class Plan:
     boundary_effects: tuple[tuple[str, str], ...]
     limitations: tuple[str, ...] = ()
     conditions: tuple[Field, ...] = ()
+    leader: str | None = None
+    unsynced_effects: tuple[tuple[str, str], ...] = ()
 
     def observed(self) -> tuple[str, ...]:
         """Every Item verify() reads: the fields', then the conditions'."""
@@ -57,7 +63,8 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     for a local source does not add that matrix's health as a dependency.
     Boundary effects include one-shot actions/EDID, but fields never do.
     A room whose receiver syncs with a leader also accepts its zone on the
-    leader's input while the leader's matrix output shows the source.
+    leader's input while the leader's matrix output shows the source, and
+    its source's EDID is an unsynced effect (Plan).
     """
     data = house.data if hasattr(house, "data") else house
     if not isinstance(data, dict) or "routing" not in data or "devices" not in data:
@@ -127,12 +134,16 @@ def expected_plan(house, room: str, choice: str) -> Plan:
     local_stage = any(choice in (entry.get(key, {}).get("sources") or {}) for key in ("receiver", "display"))
     local_switch = choice in (entry.get("hdmi_switch", {}).get("inputs") or {})
     source = config["sources"].get(choice, {})
+    claim = []
     if choice != "off" and not local_stage and not local_switch and edid and source.get("hdmi_input") is not None:
         name = edid["inputs"].get(str(source["hdmi_input"]))
         if name and raw["hdmi"] in edid["outputs"]:
-            effects = effects + [[name, edid["outputs"][raw["hdmi"]]]]
+            claim = [[name, edid["outputs"][raw["hdmi"]]]]
+    # A synced route claims no EDID: the follower shows its leader's output.
+    unsynced = claim if synced else []
+    effects = effects + ([] if synced else claim)
     resources = {field.resource for field in fields}
-    for item, _ in effects:
+    for item, _ in effects + unsynced:
         if ident := owner(item):
             resources.add("device:" + ident)
     limits = ["passive_endpoint:" + entry[key]["device"] for key in ("receiver", "display")
@@ -143,7 +154,8 @@ def expected_plan(house, room: str, choice: str) -> Plan:
         numbers = tuple(sorted(str(n) for n in range(1, routing.switcher(matrix).ports(matrix)[0] + 1)))
         conditions = (Field(sync["hdmi"], leader_input, "device:" + matrix["id"], numbers),)
     return Plan(room, choice, raw["item"], tuple(fields), tuple(sorted(resources)),
-                tuple((item, str(value)) for item, value in effects), tuple(limits), conditions)
+                tuple((item, str(value)) for item, value in effects), tuple(limits), conditions,
+                sync["leader"] if synced else None, tuple((item, str(value)) for item, value in unsynced))
 
 
 def _value(value: object, allowed: tuple[str, ...]) -> str | None:
@@ -208,14 +220,22 @@ def repair_plan(plan: Plan, verification: dict) -> list[tuple[str, str]]:
     return [(field.item, field.value) for field in plan.fields if field.item in mismatch]
 
 
+def _effects(plan: Plan, plans: list[Plan]) -> dict[str, str]:
+    """A plan's boundary effects among `plans`: a follower beside its
+    leader's route for the same target syncs, so it claims no EDID."""
+    synced = any(other.room == plan.leader and other.target == plan.target for other in plans)
+    return dict(plan.boundary_effects if synced else (*plan.boundary_effects, *plan.unsynced_effects))
+
+
 def conflicts(plan: Plan, protected: list[Plan], *, boundary: bool = False) -> list[str]:
     """Reject incompatible shared fields, including boundary-only EDID effects."""
-    wanted = dict(plan.boundary_effects) if boundary else {field.item: field.value for field in plan.fields}
+    compared = [plan, *protected]
+    wanted = _effects(plan, compared) if boundary else {field.item: field.value for field in plan.fields}
     conflict = set()
     for other in protected:
         if other.room == plan.room:
             continue
-        constraints = dict(other.boundary_effects) if boundary else {field.item: field.value for field in other.fields}
+        constraints = _effects(other, compared) if boundary else {field.item: field.value for field in other.fields}
         if any(item in constraints and constraints[item] != value for item, value in wanted.items()):
             conflict.add(other.room)
     return sorted(conflict)

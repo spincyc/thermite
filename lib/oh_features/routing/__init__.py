@@ -48,7 +48,9 @@ one picture. Both rooms need an `hdmi_output` and neither an
 `hdmi_audio_output`; the leader needs no `hdmi_switch` and no `sync_with` of
 its own. A synced route is the room's own for that source with its zone on
 the leader's input: its own matrix output stays on the source, so going
-back is only an input change. Off is never synced. routing.js moves a
+back is only an input change. Under `edid` a synced route claims no EDID:
+the source keeps the leader's, and gets the follower's only once the sync
+ends while the follower stays on it. Off is never synced. routing.js moves a
 follower off the leader's output before the leader's next choice is
 claimed (break before), and onto it only once the leader chose the same
 source and its output shows it (make after); a follower turned off or

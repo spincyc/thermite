@@ -425,7 +425,8 @@ and check that:
 4. with two rooms on one source, the last to choose it wins, the first
    gets it back when that room turns off, and the idle EDID follows once
    neither shows it; a room whose receiver zone follows the other&#x27;s
-   (sync_with) takes the other&#x27;s zone input instead of its own;
+   (sync_with) takes the other&#x27;s zone input instead of its own and claims
+   no EDID while it does;
 5. the rooms go UNDEF while the HDMI matrix, or their HDMI switch, does not
    answer, and recover without a write;
 6. the remote page (web/remote) is served at /static/remote/ and, with no

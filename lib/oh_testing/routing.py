@@ -49,7 +49,8 @@ and check that:
 4. with two rooms on one source, the last to choose it wins, the first
    gets it back when that room turns off, and the idle EDID follows once
    neither shows it; a room whose receiver zone follows the other's
-   (sync_with) takes the other's zone input instead of its own;
+   (sync_with) takes the other's zone input instead of its own and claims
+   no EDID while it does;
 5. the rooms go UNDEF while the HDMI matrix, or their HDMI switch, does not
    answer, and recover without a write;
 6. the remote page (web/remote) is served at /static/remote/ and, with no
@@ -768,7 +769,9 @@ class Check:
         """Two rooms on one source: the last to choose it wins; when it
         turns off, the source gets the first room's EDID back, and once
         neither shows it, the idle EDID. A second room whose zone follows
-        the first's takes the first's zone input (expect_routed)."""
+        the first's takes the first's zone input (expect_routed) and claims
+        no EDID; a first room that follows the second gets its own back as
+        its sync ends."""
         pairs = ((a, b, s) for a in self.table for b in self.table if a != b
                  for s in self.table[a]["choices"]
                  if s != routing.OFF and s in self.table[b]["choices"] and self.number(s) is not None)
@@ -778,8 +781,11 @@ class Check:
         first, second, source = found
         self.turn_off(list(self.table))
         number = self.number(source)
+        sync = self.table[second].get("sync")
+        follows = bool(sync) and sync["leader"] == first and source in sync["choices"]
         for room, choice, code, what in (
                 (first, source, self.code(first), "the first room to choose it"),
+                (second, source, self.code(first), "a follower synced with it claims none") if follows else
                 (second, source, self.code(second), "the last room to choose it wins"),
                 (second, routing.OFF, self.code(first), "handed back when that room turns off"),
                 (first, routing.OFF, self.edid["idle"], "the idle EDID once no room shows it")):
