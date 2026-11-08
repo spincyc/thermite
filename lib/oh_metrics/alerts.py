@@ -64,7 +64,11 @@ CHECK = "thermite:check"
 HEALTH = "thermite:control_health"
 #: A browser opens at most six HTTP/1.1 connections to one origin.
 HTTP1_CONNECTIONS = 6
+#: The client events (oh_access.metrics.CLIENT_KINDS) that are a remote
+#: giving up on the gateway, and those that are its event stream failing:
+#: an SSE drop (as at every gateway restart) or refusal is not giving up.
 TIMEOUT_KINDS = ("policy_timeout", "locks_timeout", "command_timeout", "snapshot_timeout")
+STREAM_KINDS = ("stream_error", "stream_refused")
 #: Unallocated btrfs space below which a new metadata chunk may not fit.
 BTRFS_UNALLOCATED = 5 * 2**30
 

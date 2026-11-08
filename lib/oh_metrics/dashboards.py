@@ -121,6 +121,7 @@ SEVERITY = [{"type": "value", "options": {"critical": {"text": "Critical", "colo
 CHECK_WORDS = {**alerts.CHECK_WORDS, "quarantined": "Commands quarantined"}
 HTTP1_LIMIT = alerts.HTTP1_CONNECTIONS
 TIMEOUTS = "|".join(alerts.TIMEOUT_KINDS)
+STREAM_FAILURES = "|".join(alerts.STREAM_KINDS)
 #: Executor outcomes that are a device failing to take an operation.
 FAILED_OPERATIONS = tuple(outcome for outcome in OPERATION_OUTCOMES if outcome in FAILURE_REASONS)
 #: Gateway route classes a remote waits on (oh_access.metrics.ROUTES).
@@ -625,7 +626,8 @@ def house(mapping: dict, probes: list[dict]) -> dict:
          "Source changes"),
         (_known('round(sum(increase(thermite_route_seconds_count{outcome="deadline"}[$__range]))) or vector(0)',
                 ROUTING_COUNTS_VALID), "Slow or missed"),
-        ("round(sum(increase(thermite_client_events_total[$__range]))) or vector(0)", "Remotes gave up"),
+        (f'round(sum(increase(thermite_client_events_total{{kind=~"{TIMEOUTS}"}}[$__range]))) or vector(0)',
+         "Remotes gave up"),
         *([(_known("round(sum(increase(thermite_routing_endpoint_failures_total[$__range]))) or vector(0)", counted),
             "Device failures")] if executor else []),
         ('round(sum(increase(node_systemd_service_restart_total{job="node",name=~"thermite-.*"}[$__range]))) '
@@ -735,14 +737,22 @@ def switching(mapping: dict) -> dict:
                                "streams starves its own requests (the red band).")
     streams["fieldConfig"]["defaults"]["custom"]["thresholdsStyle"] = {"mode": "line+area"}
     streams["fieldConfig"]["defaults"]["thresholds"] = _thresholds(("transparent", None), (FAIL, HTTP1_LIMIT))
-    board.add(streams, 12, 8)
+    board.add(streams, 8, 8)
+    dropped = timeseries("Event stream failures", [
+        (f'sum by (client, kind) (increase(thermite_client_events_total{{kind=~"{STREAM_FAILURES}"}}[1h])) > 0',
+         "{{client}} {{kind}}")], minimum=0, bars=True, stack=True,
+        description="Per hour: event streams remote pages and the terminal remote saw fail (stream_error, as at "
+                    "every gateway restart) or refused (stream_refused). They reconnect; it is not giving up.")
+    dropped["fieldConfig"]["defaults"]["color"] = {"mode": "shades", "fixedColor": UNKNOWN}
+    board.add(dropped, 8, 8)
     gave_up = timeseries("Remotes gave up", [
-        ("sum by (client, kind) (increase(thermite_client_events_total[1h])) > 0", "{{client}} {{kind}}")],
+        (f'sum by (client, kind) (increase(thermite_client_events_total{{kind=~"{TIMEOUTS}"}}[1h])) > 0',
+         "{{client}} {{kind}}")],
         minimum=0, bars=True, stack=True,
-        description="Per hour: what remote pages and the terminal remote stopped waiting for, as they reported "
-                    "it on their next answered request.")
+        description="Per hour: requests remote pages and the terminal remote stopped waiting for (timeouts), as "
+                    "they reported them on their next answered request.")
     gave_up["fieldConfig"]["defaults"]["color"] = {"mode": "shades", "fixedColor": WARN}
-    board.add(gave_up, 12, 8)
+    board.add(gave_up, 8, 8)
     board.add(timeseries("Gateway latency", [
         ('histogram_quantile(0.95, sum by (le, route) (rate(thermite_gateway_request_seconds_bucket'
          f'{{route=~"{"|".join(WAITED_ROUTES)}"}}[5m]))) > 0', "{{route}} 95th"),
@@ -751,8 +761,8 @@ def switching(mapping: dict) -> dict:
         description="95th percentile time to the first byte of the answer for the requests remotes wait on, "
                     "and of the gateway's own requests to the runtime."), 12, 8)
     board.add(timeseries("Waited before giving up", [
-        ('histogram_quantile(0.95, sum by (le, kind) (rate(thermite_client_wait_seconds_bucket[1h]))) > 0',
-         "{{kind}} 95th")], "s", minimum=0,
+        ('histogram_quantile(0.95, sum by (le, kind) (rate(thermite_client_wait_seconds_bucket'
+         f'{{kind=~"{TIMEOUTS}"}}[1h]))) > 0', "{{kind}} 95th")], "s", minimum=0,
         description="How long remotes had waited, queued and in flight, when they gave up."), 12, 8)
     requests = timeseries("Requests by answer", [
         ("sum by (code_class) (rate(thermite_gateway_requests_total[5m])) > 0", "{{code_class}}")], "reqps",

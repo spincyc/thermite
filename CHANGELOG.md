@@ -7,6 +7,13 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- "Remotes gave up" counts only requests remotes stopped waiting for
+  (timeouts), as the Remotes tile and ThermiteRemoteTimeouts do, on House
+  health's "Since yesterday evening" and on Switching & remotes, as does
+  "Waited before giving up". They used to count event stream failures too,
+  so every gateway restart, which drops each remote's stream, read as
+  remotes giving up. Stream failures and refusals have their own "Event
+  stream failures" panel on Switching & remotes.
 - House health's "Needs attention now" has a Zone column, and "Alerts
   firing" (also on the Host board) Zone and Check columns. A room with two
   zones, such as a desk and a TV, used to list two identical rows when both

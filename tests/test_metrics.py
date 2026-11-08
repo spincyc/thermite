@@ -555,6 +555,25 @@ class Dashboards(unittest.TestCase):
             self.assertEqual(words["zone"]["example_east"]["text"], "Example East", title)
             self.assertEqual(words["check"]["power"]["text"], "Off while in use", title)
 
+    def test_giving_up_means_a_timeout_everywhere(self):
+        """A stream_error (an SSE drop, as at every gateway restart) is not a
+        remote giving up: the alert, the Remotes tile, Since yesterday
+        evening and the Switching board count the same timeout kinds."""
+        alert = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteRemoteTimeouts")
+        timeouts = f'kind=~"{dashboards.TIMEOUTS}"'
+        self.assertIn(timeouts, alert["expr"])
+        found = []
+        for name, board in boards().items():
+            for panel in panels(board):
+                for query in panel.get("targets", []):
+                    if re.search(r"thermite_client_(events_total|wait_seconds)", query["expr"]):
+                        found.append((panel["title"], query.get("legendFormat"), query["expr"]))
+        for title, legend, expr in found:
+            wanted = f'kind=~"{dashboards.STREAM_FAILURES}"' if title == "Event stream failures" else timeouts
+            self.assertIn(wanted, expr, (title, legend))
+        self.assertLessEqual({"Remotes", "Since yesterday evening", "Remotes gave up", "Waited before giving up",
+                              "Event stream failures"}, {title for title, _, _ in found})
+
     def test_colours_have_one_meaning(self):
         for name, board in boards().items():
             for panel in panels(board):
@@ -756,6 +775,9 @@ class Textfiles(unittest.TestCase):
                 continue
             for value in re.findall(r'="([^"]*)"', line):
                 self.assertRegex(value, r"^[a-z0-9_./+-]*$|^\+Inf$|^[0-9.e+-]+$", line)
+
+    def test_every_client_kind_is_a_timeout_or_a_stream_failure(self):
+        self.assertEqual(sorted(alerts.TIMEOUT_KINDS + alerts.STREAM_KINDS), sorted(self.metrics.CLIENT_KINDS))
 
     def test_dashboards_name_only_the_gateways_route_classes(self):
         self.assertLessEqual(set(dashboards.WAITED_ROUTES), set(self.metrics.ROUTES))
