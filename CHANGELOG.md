@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A house with no HDMI matrix, each source cabled straight to its room's
+  display or receiver, now validates, generates, routes and gets its
+  metrics and dashboards. `thermite generate` used to refuse it
+  (`routing.hdmi_matrix: 'None' is not a device id`), and its routing
+  could not be compiled without a matrix. `routing.hdmi_matrix` and
+  `routing.hdmi_off_input` are now needed only when a source has an
+  `hdmi_input`, a room an `hdmi_output` or the house `routing.edid`, and
+  `routing.usb_off_host` only when a room has USB matrix ports.
 - A gateway that has been reconnecting to the runtime's event feed for five
   minutes fires ThermiteGatewayFeedDown (critical) and turns House health's
   Remotes tile red, "Not live": every remote page shows states as they were

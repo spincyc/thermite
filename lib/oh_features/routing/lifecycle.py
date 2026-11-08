@@ -144,7 +144,8 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
         if "hdmi_input" in definition:
             matrix_sources[routing["hdmi_matrix"]][source].add(definition["hdmi_input"])
     for entry in routing["rooms"].values():
-        matrix_outputs[routing["hdmi_matrix"]].update(entry[key] for key in ("hdmi_output", "hdmi_audio_output") if key in entry)
+        if "hdmi_output" in entry:
+            matrix_outputs[routing["hdmi_matrix"]].update(entry[key] for key in ("hdmi_output", "hdmi_audio_output") if key in entry)
         switch = entry.get("hdmi_switch", {})
         if "output" in switch:
             matrix_outputs[switch["device"]].add(switch["output"])

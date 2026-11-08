@@ -18,7 +18,9 @@ lights, say), which dedicated sources explicitly enter standby on Off
 `edid`, whether a source's input follows the EDID of the room display it is
 turned on in. A room without an `hdmi_output` offers only sources cabled
 to it, and one whose id is not a room's names its room (`room`), as the
-example beside the Office's desk screen does.
+example beside the Office's desk screen does. A house with no HDMI matrix
+leaves out `hdmi_matrix` and `hdmi_off_input`, and one with no USB matrix
+`usb_off_host`: each room then offers only the sources cabled to it.
 
 A room's Volume and Mute on the remote drive its `audio` device when it
 names one: a soundbar or streaming amplifier in a room it covers
@@ -254,9 +256,13 @@ def validate(data: object) -> list[str]:
             return False
         return True
 
-    hdmi = matrix("routing.hdmi_matrix", routing.get("hdmi_matrix"), "hdmi_matrix")
+    # A house with no HDMI matrix leaves out hdmi_matrix and hdmi_off_input;
+    # a source's hdmi_input, a room's hdmi_output or routing.edid needs both.
+    hdmi = None
+    if _on_matrix(routing):
+        hdmi = matrix("routing.hdmi_matrix", routing.get("hdmi_matrix"), "hdmi_matrix")
+        port("routing.hdmi_off_input", routing.get("hdmi_off_input"), hdmi[0] if hdmi else None)
     hdmi_inputs, hdmi_outputs = hdmi or (None, None)
-    port("routing.hdmi_off_input", routing.get("hdmi_off_input"), hdmi_inputs)
 
     rooms_section = routing.get("rooms")
     if not isinstance(rooms_section, dict) or not rooms_section:
@@ -271,7 +277,8 @@ def validate(data: object) -> list[str]:
                 usb_sizes[matrix_id] = matrix(f"routing.rooms.{room}.usb", matrix_id, "usb_matrix")
     usb_hosts = min((size[0] for size in usb_sizes.values() if size), default=None)
     off_host = routing.get("usb_off_host")
-    port("routing.usb_off_host", off_host, usb_hosts)
+    if usb_sizes or off_host is not None:
+        port("routing.usb_off_host", off_host, usb_hosts)
 
     edid_names = _edid_names(routing, devices, hdmi is not None, problems)
 
@@ -855,6 +862,16 @@ def _usb_only_problems(where: str, only: object, offered: list, usb: dict) -> li
     return problems
 
 
+def _on_matrix(routing: dict) -> bool:
+    """Whether the routing section names or cables anything to an HDMI matrix."""
+    sources = routing.get("sources") if isinstance(routing.get("sources"), dict) else {}
+    rooms = routing.get("rooms") if isinstance(routing.get("rooms"), dict) else {}
+    return (any(key in routing for key in ("hdmi_matrix", "hdmi_off_input", "edid"))
+            or any(isinstance(entry, dict) and "hdmi_input" in entry for entry in sources.values())
+            or any(isinstance(entry, dict) and ("hdmi_output" in entry or "hdmi_audio_output" in entry)
+                   for entry in rooms.values()))
+
+
 def _edid_names(routing: dict, devices: dict, hdmi_ok: bool, problems: list[str]) -> dict | None:
     """The HDMI matrix's EDID names, checking routing.edid (None if unknown)."""
     edid = routing.get("edid")
@@ -910,8 +927,8 @@ def commands(data: dict, room: str, choice: str) -> list[list]:
     source = routing["sources"].get(choice, {}) if choice != OFF else {}
     switch = entry.get("hdmi_switch")
     local = switch is not None and choice in switch["inputs"]
-    hdmi_input = routing["hdmi_off_input"] if choice in _local(entry) else source.get("hdmi_input",
-                                                                                         routing["hdmi_off_input"])
+    off = routing.get("hdmi_off_input")
+    hdmi_input = off if choice in _local(entry) else source.get("hdmi_input", off)
     out = []
     for key in ("hdmi_output", "hdmi_audio_output"):
         if key in entry:
@@ -1200,16 +1217,17 @@ def render(house: House, conf: Conf) -> None:
     out.items[METRICS_ITEM] = {"type": "String", "label": "Routing telemetry", "autoupdate": False,
                                "metadata": {"stateDescription": {"config": {"readOnly": True}}}}
     sources = routing["sources"].values()
-    _label_ports(conf, devices[routing["hdmi_matrix"]],
-                 {routing["hdmi_off_input"]: "Off",
-                  **{s["hdmi_input"]: s["label"] for s in sources if "hdmi_input" in s}})
+    if "hdmi_matrix" in routing:
+        _label_ports(conf, devices[routing["hdmi_matrix"]],
+                     {routing["hdmi_off_input"]: "Off",
+                      **{s["hdmi_input"]: s["label"] for s in sources if "hdmi_input" in s}})
     for entry in routing["rooms"].values():
         if "hdmi_switch" in entry:
             switch = entry["hdmi_switch"]
             labels = {switch["matrix_input"]: "HDMI matrix"} if "matrix_input" in switch else {}
             labels.update({n: routing["sources"][s]["label"] for s, n in switch["inputs"].items()})
             _label(conf, _switch_item(devices, switch), labels)
-    off_host = routing["usb_off_host"]
+    off_host = routing.get("usb_off_host")
     for matrix_id in dict.fromkeys(m for e in routing["rooms"].values() for m in e.get("usb") or {}):
         labels = {off_host: "None"}
         labels.update({usb_host(s, matrix_id, off_host): s["label"] for s in sources

@@ -20,8 +20,10 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy  # noqa: E402
+from oh_features import routing  # noqa: E402
 import oh_inventory  # noqa: E402
 import oh_metrics  # noqa: E402
+import oh_render  # noqa: E402
 import oh_units  # noqa: E402
 from oh_metrics import alerts, dashboards, exporter, notifications  # noqa: E402
 
@@ -720,6 +722,48 @@ class Dashboards(unittest.TestCase):
                 dashed = {override["matcher"]["options"] for override in panel["fieldConfig"]["overrides"]
                           if {"id": "noValue", "value": "—"} in override["properties"]}
                 self.assertTrue(dashed, (name, panel["title"]))
+
+
+def without_matrix(idle=None):
+    """The example house with its HDMI matrix taken out: each room's source
+    is cabled straight to its display."""
+    data = copy.deepcopy(INVENTORY)
+    data["devices"] = [device for device in data["devices"] if device["id"] != "example_matrix"]
+    data["routing"] = {
+        "sources": {"example_player": {"label": "Player", **({"idle": idle} if idle else {})},
+                    "example_computer": {"label": "Computer"}},
+        "rooms": {"example_west": {"sources": ["example_player"],
+                                   "display": {"device": "example_tv", "sources": {"example_player": "hdmi1"}}},
+                  "example_east": {"sources": ["example_computer"],
+                                   "display": {"device": "example_display", "sources": {"example_computer": "hdmi2"}}}}}
+    return data
+
+
+class NoMatrix(unittest.TestCase):
+    def test_a_house_without_an_hdmi_matrix_generates_routes_and_is_measured(self):
+        for idle in (None, "standby"):
+            with self.subTest(idle=idle):
+                data = without_matrix(idle)
+                self.assertEqual(oh_render.validate(data), [])
+                text = oh_render.render(copy.deepcopy(data))[routing.RULE]
+                start = text.index("const TABLE = ") + len("const TABLE = ")
+                table = json.JSONDecoder().raw_decode(text, start)[0]
+                self.assertEqual("lifecycle" in table, idle == "standby")
+                west = table["rooms"]["example_west"]
+                self.assertIsNone(west["hdmi"])
+                self.assertEqual(west["inputs"]["example_player"], [["example_tv_input", "hdmi1"]])
+                self.assertEqual(table["rooms"]["example_east"]["inputs"]["example_computer"],
+                                 [["example_display_input", "hdmi2"]])
+                mapping = json.loads(rendered(data)[oh_metrics.EXPORTER_MAP])
+                self.assertEqual(sorted(mapping["routing"]["zones"]), ["example_east", "example_west"])
+                self.assertNotIn("example_matrix", mapping["devices"])
+
+    def test_a_source_on_matrix_ports_still_needs_the_matrix(self):
+        data = without_matrix()
+        data["routing"]["sources"]["example_computer"]["hdmi_input"] = 1
+        problems = routing.validate(data)
+        self.assertIn("routing.hdmi_matrix: 'None' is not a device id", problems)
+        self.assertIn("routing.hdmi_off_input: None is not a positive number", problems)
 
 
 class Units(unittest.TestCase):
