@@ -269,6 +269,16 @@ class RoutingSeries(unittest.TestCase):
             self.assertTrue(expr.endswith(f" and on (zone) ({changes})"), expr)
         self.assertEqual(switch["fieldConfig"]["defaults"]["noValue"], "No source changes")
 
+    def test_no_quantile_on_the_boards_reads_nan(self):
+        """A quantile of a histogram that counted nothing in its window is
+        NaN, and these histograms are there at zero: every quantile query
+        keeps only the series that counted something."""
+        exprs = [target["expr"] for board in boards().values() for panel in panels(board)
+                 for target in panel.get("targets", []) if "histogram_quantile(" in target.get("expr", "")]
+        self.assertGreater(len(exprs), 4)
+        for expr in exprs:
+            self.assertRegex(expr, r"(?: > 0| and on \(zone\) \(.* > 0\))$")
+
     def test_route_buckets_are_routing_js_and_one_is_above_the_deadline(self):
         from oh_features import routing
         from tests import test_zone_sync as zones

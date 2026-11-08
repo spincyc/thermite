@@ -807,7 +807,7 @@ def switching(mapping: dict) -> dict:
     board.add(timeseries("Worker", [
         ("time() - thermite_policy_loop_timestamp_seconds", "Since last pass"),
         ("max(thermite_policy_reconcile_age_seconds)", "Oldest locked-room check"),
-        ("histogram_quantile(0.95, sum by (le) (rate(thermite_policy_boundary_lag_seconds_bucket[1h])))",
+        ("histogram_quantile(0.95, sum by (le) (rate(thermite_policy_boundary_lag_seconds_bucket[1h]))) > 0",
          "Schedule lag 95th")], "s", minimum=0,
         description="Seconds since the worker's last pass (it runs every 5 s), since it last verified the "
                     "longest-unchecked locked room, and how late schedule boundaries were applied."), 8, 7)
