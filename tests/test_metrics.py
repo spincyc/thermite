@@ -394,6 +394,12 @@ class Alerting(unittest.TestCase):
             self.assertLessEqual(set(targets), set(alerts.CATALOG))
         self.assertEqual(len(config["inhibit_rules"]), len(alerts.INHIBITS))
 
+    def test_unreadable_routing_telemetry_alerts(self):
+        rule = next(rule for rule in RULES["groups"][1]["rules"]
+                    if rule.get("alert") == "ThermiteRoutingTelemetryUnavailable")
+        self.assertEqual(rule["expr"], "(thermite_routing_executor_up == 0) or (thermite_routing_metrics_up == 0)")
+        self.assertEqual((rule["for"], rule["labels"]["severity"]), ("5m", "warning"))
+
     def test_a_lock_that_cannot_be_held_alerts_unless_the_worker_or_runtime_explains_it(self):
         rule = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermitePolicyUnenforced")
         self.assertEqual(rule["expr"], 'thermite_policy_room_state{state="unavailable"} == 1')
@@ -511,6 +517,25 @@ class Dashboards(unittest.TestCase):
         names = {annotation["name"] for annotation in house["annotations"]["list"]}
         self.assertLessEqual({"Service starts", "Deploys"}, names)
         self.assertNotIn("hour()", json.dumps(boards()), "hour() is UTC only")
+
+    def test_routing_counts_read_unknown_not_zero_while_telemetry_is_unreadable(self):
+        from tests import test_zone_sync as zones
+        for files, executor in ((FILES, False), (rendered(zones.house()), True)):
+            board = json.loads(files[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.HOUSE}.json"])
+            since = next(panel for panel in panels(board) if panel["title"] == "Since yesterday evening")
+            exprs = {target["legendFormat"]: target["expr"] for target in since["targets"]}
+            for name in ("Source changes", "Slow or missed"):
+                self.assertTrue(exprs[name].endswith(
+                    f") and on() {dashboards.ROUTING_COUNTS_VALID}) or vector(NaN)"), name)
+            self.assertEqual(since["fieldConfig"]["defaults"]["mappings"], dashboards.NAN_UNKNOWN)
+            self.assertEqual(dashboards.NAN_UNKNOWN[0]["options"]["result"]["text"], "Unknown")
+            if executor:
+                self.assertTrue(exprs["Device failures"].endswith(
+                    f"and on() {dashboards.ROUTING_COUNTS_VALID} and on() {dashboards.EXECUTOR_VALID}) "
+                    "or vector(NaN)"))
+            else:
+                # Without an executor nothing counts device failures: no 0 that means nothing.
+                self.assertNotIn("Device failures", exprs)
 
     def test_colours_have_one_meaning(self):
         for name, board in boards().items():

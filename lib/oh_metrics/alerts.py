@@ -82,6 +82,7 @@ CATALOG = {
     "ThermiteGatewayDown": ("The remote gateway is not answering", "The local HTTPS check of the gateway has failed for three minutes. Check thermite-access.service and its journal. If the gateway answers browsers, run thermite deploy so the check has the gateway's trust certificate."),
     "ThermiteRemoteStarved": ("A remote holds too many HTTP/1.1 streams", "One client holds six or more event streams over HTTP/1.1, the browser's connection limit, so its controls can stall. Close extra remote pages on that device. Switching & remotes shows streams by HTTP version."),
     "ThermiteRemoteTimeouts": ("Remotes are timing out", "Remote pages reported repeated timeouts waiting for the gateway in the last fifteen minutes. Switching & remotes shows which requests and how long they waited."),
+    "ThermiteRoutingTelemetryUnavailable": ("Routing telemetry is unreadable", "For five minutes the routing executor's status or routing's counts in the runtime have not been valid, so the dashboards cannot show switching, device failures or quarantined devices. Check the runtime's log for the routing rule and the routing executor."),
     "ThermiteRoutingQuarantined": ("Routing commands are quarantined", "The routing executor has refused commands to a device for five minutes after an uncertain outcome, and its recovery reads have not succeeded. Devices shows which device; check that it is powered and on its network."),
     "ThermitePolicyWorkerStalled": ("Room schedules are not being applied", "The room policy worker has not completed a pass for three minutes, so schedules and locks are not enforced. Check thermite-access-worker.service and its journal."),
     "ThermitePolicyUnenforced": ("A room's lock is not being enforced", "For ten minutes a locked room's lock could not be held: its policy cannot be read, it conflicts with another room over shared hardware, its devices cannot be read, or a change on them has not been put back. Switching & remotes shows locked rooms by state; check the room's devices and thermite-access-worker.service's journal."),
@@ -100,7 +101,7 @@ CRITICAL = frozenset({"ThermiteCheckFailing", "ThermiteRuntimeUnavailable", "The
 INHIBITS = (
     ("ThermiteRuntimeUnavailable", ("ThermiteCheckFailing", "ThermiteControlUnknown", "ThermiteHandlerPoolSaturated",
                                     "ThermiteHandlerTelemetryUnavailable", "ThermiteRoutingQuarantined",
-                                    "ThermitePolicyUnenforced")),
+                                    "ThermiteRoutingTelemetryUnavailable", "ThermitePolicyUnenforced")),
     ("ThermiteGatewayDown", ("ThermiteRemoteStarved", "ThermiteRemoteTimeouts")),
     # A stalled worker's last textfile keeps its last states.
     ("ThermitePolicyWorkerStalled", ("ThermitePolicyUnenforced",)),
@@ -236,6 +237,8 @@ def rules(mapping):
             alert("ThermiteRemoteStarved", f'thermite_gateway_sse_peer_streams_max{{http_version="1.1"}} >= {HTTP1_CONNECTIONS}', "1m"),
             alert("ThermiteRemoteTimeouts", f'sum(increase(thermite_client_events_total{{kind=~"{timeouts}"}}[15m])) >= 5', "5m"),
             alert("ThermiteRoutingQuarantined", "thermite_routing_quarantined > 0", "5m"),
+            alert("ThermiteRoutingTelemetryUnavailable",
+                  "(thermite_routing_executor_up == 0) or (thermite_routing_metrics_up == 0)", "5m"),
             alert("ThermitePolicyWorkerStalled", "time() - thermite_policy_loop_timestamp_seconds > 120", "1m"),
             alert("ThermitePolicyUnenforced", 'thermite_policy_room_state{state="unavailable"} == 1', "10m"),
             *([alert("ThermiteHandlerPoolSaturated", '(thermite_handler_pool_active_threads >= thermite_handler_pool_core_threads) and (thermite_handler_pool_probe_overdue_seconds > 30)', "2m"),

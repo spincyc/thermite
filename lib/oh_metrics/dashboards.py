@@ -112,6 +112,9 @@ NEEDED = value_map({0: ("No", OFF), 1: ("Yes", IN_USE)})
 CHECK_STATE = value_map({-1: ("Unknown", UNKNOWN), 0: ("OK", OK), 1: ("Failing", FAIL)})
 CONTROL = value_map({-1: ("Unknown", UNKNOWN), 0: ("Ready", OK), 1: ("Needs attention", FAIL)})
 REMOTES = value_map({0: ("OK", OK), 1: ("Timing out", WARN), 2: ("Gateway down", FAIL)})
+#: NaN, as _known() gives for a count it cannot know, shown as Unknown.
+NAN_UNKNOWN = [{"type": "special", "options": {"match": "nan", "result": {"text": "Unknown", "color": UNKNOWN,
+                                                                          "index": 0}}}]
 SEVERITY = [{"type": "value", "options": {"critical": {"text": "Critical", "color": FAIL, "index": 0},
                                           "warning": {"text": "Warning", "color": WARN, "index": 1}}}]
 #: The plain words of each check, and of a quarantined device.
@@ -122,6 +125,10 @@ TIMEOUTS = "|".join(alerts.TIMEOUT_KINDS)
 FAILED_OPERATIONS = tuple(outcome for outcome in OPERATION_OUTCOMES if outcome in FAILURE_REASONS)
 #: Gateway route classes a remote waits on (oh_access.metrics.ROUTES).
 WAITED_ROUTES = ("command", "policy", "locks", "items")
+#: Routing's counts and the executor's status are valid now: a count of 0
+#: means none only then.
+ROUTING_COUNTS_VALID = "(max(thermite_routing_metrics_up) == 1)"
+EXECUTOR_VALID = "(max(thermite_routing_executor_up) == 1)"
 
 
 # ---------------------------------------------------------------- panels
@@ -536,6 +543,11 @@ def _firing(mapping: dict) -> dict:
     return panel
 
 
+def _known(expr: str, valid: str) -> str:
+    """`expr` while `valid` holds, else NaN, which NAN_UNKNOWN shows as Unknown."""
+    return f"(({expr}) and on() {valid}) or vector(NaN)"
+
+
 def _since(panel: dict) -> dict:
     panel["timeFrom"] = SINCE_EVENING
     panel["hideTimeOverride"] = True
@@ -589,19 +601,28 @@ def house(mapping: dict, probes: list[dict]) -> dict:
     host_tile["fieldConfig"]["defaults"]["thresholds"] = _thresholds((OK, None), (FAIL, 1))
     board.add(host_tile, 4, 4)
     board.add(_attention(mapping), 14, 8)
+    # Routing's counts read 0 only while its telemetry is valid, else
+    # Unknown; device failures only where an executor counts them, while its
+    # status is valid too.
+    executor = bool((mapping.get("routing") or {}).get("status"))
+    counted = ROUTING_COUNTS_VALID + (f" and on() {EXECUTOR_VALID}" if executor else "")
     since = stat("Since yesterday evening", "", steps=((OK, None), (WARN, 1)),
                  description="Since 18:00 yesterday (browser time). Source changes: choices routing followed. "
                              f"Slow or missed: not confirmed {_within(mapping)}. Remotes gave up: requests remote "
-                             "pages stopped waiting for. Device failures: routing operations a device did not take. "
-                             "Restarts: Thermite services systemd restarted.")
+                             "pages stopped waiting for. " + ("Device failures: routing operations a device did not "
+                             "take. " if executor else "") + "Restarts: Thermite services systemd restarted. Unknown: "
+                             "routing's telemetry is unreadable now.")
     since["targets"] = _targets([
-        ("round(sum(increase(thermite_route_seconds_count[$__range]))) or vector(0)", "Source changes"),
-        ('round(sum(increase(thermite_route_seconds_count{outcome="deadline"}[$__range]))) or vector(0)',
-         "Slow or missed"),
+        (_known("round(sum(increase(thermite_route_seconds_count[$__range]))) or vector(0)", ROUTING_COUNTS_VALID),
+         "Source changes"),
+        (_known('round(sum(increase(thermite_route_seconds_count{outcome="deadline"}[$__range]))) or vector(0)',
+                ROUTING_COUNTS_VALID), "Slow or missed"),
         ("round(sum(increase(thermite_client_events_total[$__range]))) or vector(0)", "Remotes gave up"),
-        ("round(sum(increase(thermite_routing_endpoint_failures_total[$__range]))) or vector(0)", "Device failures"),
+        *([(_known("round(sum(increase(thermite_routing_endpoint_failures_total[$__range]))) or vector(0)", counted),
+            "Device failures")] if executor else []),
         ('round(sum(increase(node_systemd_service_restart_total{job="node",name=~"thermite-.*"}[$__range]))) '
          'or vector(0)', "Restarts")], instant=True)
+    since["fieldConfig"]["defaults"]["mappings"] = NAN_UNKNOWN
     _color(since, "Source changes", IN_USE)
     since["options"].update(textMode="value_and_name", colorMode="value", orientation="horizontal",
                             text={"titleSize": 12, "valueSize": 20})
