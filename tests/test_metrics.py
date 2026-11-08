@@ -256,6 +256,19 @@ class RoutingSeries(unittest.TestCase):
             self.assertEqual([(step["color"], step["value"]) for step in each],
                              [(dashboards.OK, None), (dashboards.WARN, 10), (dashboards.FAIL, 20)])
 
+    def test_switch_time_lists_only_rooms_that_changed(self):
+        """Every zone's route series is there at zero, and the quantile of
+        no changes is NaN: the table's rows are the rooms with a confirmed
+        change in the range, so an idle house shows its no-value text."""
+        switch = next(panel for panel in panels(boards()[dashboards.HOUSE]) if panel["title"] == "Switch time by room")
+        changes = 'round(sum by (zone) (increase(thermite_route_seconds_count{outcome="confirmed"}[$__range]))) > 0'
+        median, worst, count = (target["expr"] for target in switch["targets"])
+        self.assertEqual(count, changes)
+        for expr in (median, worst):
+            self.assertTrue(expr.startswith("histogram_quantile("), expr)
+            self.assertTrue(expr.endswith(f" and on (zone) ({changes})"), expr)
+        self.assertEqual(switch["fieldConfig"]["defaults"]["noValue"], "No source changes")
+
     def test_route_buckets_are_routing_js_and_one_is_above_the_deadline(self):
         from oh_features import routing
         from tests import test_zone_sync as zones

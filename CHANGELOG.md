@@ -119,7 +119,9 @@ rollback. The unified deployment workflow uses a separate committed private site
   series appearing and counted nothing: "Since yesterday evening" and
   Switching & remotes missed it. Every routing zone and outcome, and every
   device the routing executor commands with every failure reason, now reads
-  0 from routing's first report on.
+  0 from routing's first report on. "Switch time by room" lists only the
+  rooms with a confirmed change in its range, so a room without one has no
+  row instead of a NaN median, and an idle house reads "No source changes".
 - Grafana's "Rooms through the day" and "Source mix" name each source as
   the remotes do (`routing.sources.<id>.label`), adding the device's room
   where two sources share a name: "Apple TV (Theater)". They used to show the

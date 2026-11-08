@@ -650,8 +650,12 @@ def house(mapping: dict, probes: list[dict]) -> dict:
                   24, max(6, len(queries) + 2))
     else:
         board.add(note("No routing zones", "This house has no routed source Items; Devices shows each device."), 24, 3)
+    # Every zone's series is there at zero from routing's first report, and the quantile of no changes is
+    # NaN: only a room with a confirmed change in the range gets a row, so an idle house reads "No source
+    # changes".
+    changes = 'round(sum by (zone) (increase(thermite_route_seconds_count{outcome="confirmed"}[$__range]))) > 0'
     quantile = ("histogram_quantile({q}, sum by (le, zone) (increase(thermite_route_seconds_bucket"
-                '{{outcome="confirmed"}}[$__range])))')
+                '{{outcome="confirmed"}}[$__range]))) and on (zone) ({changes})')
     switch = table("Switch time by room", "", ["zone", "Value #A", "Value #B", "Value #C"],
                    "Since 18:00 yesterday: how long a source change took until the room's readback showed it, "
                    "median and 95th percentile of confirmed changes, estimated from "
@@ -661,8 +665,8 @@ def house(mapping: dict, probes: list[dict]) -> dict:
                    names={"zone": "Room", "Value #A": "Median", "Value #B": "95th",
                                       "Value #C": "Changes"}, no_value="No source changes")
     _table_queries(switch, [
-        ("A", quantile.format(q=0.5)), ("B", quantile.format(q=0.95)),
-        ("C", 'round(sum by (zone) (increase(thermite_route_seconds_count{outcome="confirmed"}[$__range])))')])
+        ("A", quantile.format(q=0.5, changes=changes)), ("B", quantile.format(q=0.95, changes=changes)),
+        ("C", changes)])
     _column(switch, "zone", {"id": "mappings", "value": _words(_zone_words(mapping))})
     for name in ("Value #A", "Value #B"):
         _column(switch, name, {"id": "unit", "value": "s"}, {"id": "decimals", "value": 1},
