@@ -454,6 +454,32 @@ def _points(mapping: dict, device: str) -> set[str]:
     return {spec["point"] for spec in (mapping.get("items") or {}).values() if spec.get("device") == device}
 
 
+def _power_rows(mapping: dict) -> list[tuple[str, str, str]]:
+    """(room, power Item, row label) of every device power Item. An Item a
+    zone's route needs on (its power check) shows in that zone's room, so a
+    receiver's zone 2 shows where zone 2 plays; one that several rooms need,
+    or none, shows in its device's room. A device with several power Items
+    names each row by its Item ("Receiver · Zone 2")."""
+    items = mapping.get("items") or {}
+    devices = mapping.get("devices") or {}
+    needed: dict[str, set[str]] = {}
+    for check in mapping.get("health_checks") or []:
+        if check.get("check") == "power" and "item" in check.get("labels", {}):
+            needed.setdefault(check["labels"]["item"], set()).update(
+                str((items.get(demand["item"]) or {}).get("room", "")) for demand in check["required"])
+    power = {name: spec for name, spec in items.items() if spec.get("point") == "power" and spec.get("device")}
+    rows = []
+    for name, spec in power.items():
+        ident = spec["device"]
+        label = str((devices.get(ident) or {}).get("label", ident))
+        if sum(each["device"] == ident for each in power.values()) > 1:
+            part = name.removeprefix(f"{ident}_").removesuffix("_power").replace("_", " ")
+            label += " · " + re.sub(r"([a-z])([0-9])", r"\1 \2", part).capitalize()
+        rooms = needed.get(name, set())
+        rows.append((rooms.pop() if len(rooms) == 1 else str(spec.get("room", "")), name, label))
+    return sorted(rows, key=lambda row: (row[2], row[1]))
+
+
 def _deadline(mapping: dict) -> float | None:
     """Seconds routing.js waits for a choice's readback (the map's
     routing.deadline_seconds): one not shown by then counts as `deadline`."""
@@ -792,10 +818,8 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
     for (name, room, label), (query, _) in zip(zones, queries):
         by_room.setdefault(room, []).append((query, "Source · " + label))
         sources.add("Source · " + label)
-    for ident, device in sorted(known.items(), key=lambda pair: (pair[1].get("label", pair[0]), pair[0])):
-        if "power" in _points(mapping, ident):
-            by_room.setdefault(device.get("room", ""), []).append(
-                (f'max(thermite_item_value{{device={_q(ident)},point="power"}})', device.get("label", ident)))
+    for room, item, label in _power_rows(mapping):
+        by_room.setdefault(room, []).append((f"max(thermite_item_value{{item={_q(item)}}})", label))
     rooms = mapping.get("rooms") or {}
     if by_room:
         board.row("Power and source by room")

@@ -553,6 +553,22 @@ class Dashboards(unittest.TestCase):
         self.assertEqual(table["transformations"][0]["id"], "merge")
         self.assertEqual(len(table["targets"]), 7)
 
+    def test_a_shared_receivers_power_shows_in_the_room_each_zone_plays_in(self):
+        from tests import test_zone_sync as zones
+        files = rendered(zones.house())
+        board = json.loads(files[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.DEVICES}.json"])
+        rows = {panel["title"]: {target["legendFormat"]: target["expr"] for target in panel["targets"]}
+                for panel in panels(board) if panel["type"] == "state-timeline"}
+        cinema, lounge = rows["Example Cinema"], rows["Example Lounge"]
+        avr = "Example Avr (Marantz CINEMA 30)"
+        self.assertEqual(cinema[f"{avr} · Main"], 'max(thermite_item_value{item="example_avr_main_power"})')
+        self.assertEqual(lounge[f"{avr} · Zone 2"], 'max(thermite_item_value{item="example_avr_zone2_power"})')
+        self.assertFalse([label for label in cinema if "Zone 2" in label])
+        self.assertFalse([label for label in lounge if avr in label and "Zone 2" not in label])
+        # A device with one power Item keeps its name, in the room of the zone that needs it.
+        self.assertIn("Example Tv", lounge)
+        self.assertIn("Example Screen (Sony Example TV)", cinema)
+
     def test_devices_table_has_no_row_for_a_house_wide_check(self):
         """The house-wide checks name jobs and services (openhab, node...) as
         their device; merged on device, each would be a row with no room or

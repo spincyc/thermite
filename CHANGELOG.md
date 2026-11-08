@@ -7,6 +7,13 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The Devices board shows a receiver whose zones serve different rooms in
+  each of those rooms: zone 2's power in the room zone 2 plays in, the main
+  zone's where it plays, each row named for its zone ("· Zone 2"). It used
+  to be one row on the receiver's own room that read On while any zone was
+  on, so the room listening to zone 2 showed no receiver at all. A power
+  Item that one room's route needs shows in that room; one that several
+  rooms need, or none, stays in its device's room.
 - A house without the remote gateway no longer shows "Gateway down" in red
   on House health's Remotes tile, nor the gateway Down under the Host
   board's Service probes. Prometheus probes the gateway in every house, and
