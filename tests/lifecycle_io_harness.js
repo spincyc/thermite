@@ -86,6 +86,8 @@ test('source provider requires correlated native evidence, never cached GET or A
   console:{info(){},warn(){}},thermiteIO:{http(url,method,body){const payload=JSON.parse(body);requests.push([url,method,payload]);return {getStatus:()=>status,getContentAsString:()=>JSON.stringify(typeof answer==='function'?answer(payload):answer)};}},
   require(name){assert.equal(name,'openhab');return {rules:{JSRule(){}},triggers:{GenericCronTrigger(){},ItemCommandTrigger(){}},items:{getItem:()=>({state:'UNDEF',postUpdate(){}})}};}});
  let driver=fs.readFileSync(process.argv[3],'utf8').replace('const DEVICES = null;',`const DEVICES = [{id:'source',host:'192.0.2.1',helper:'http://owned'}];`).replace('const PRESSES = null;','const PRESSES = {};').replace('const APPS = null;','const APPS = {};');
+ // Embedded as _io.py embeds it; thermiteIO stays the fixture above.
+ driver=driver.replace('// THERMITE_DEVICE',()=>fs.readFileSync(path.join(path.dirname(process.argv[3]),'..','_device.js'),'utf8'));
  vm.runInContext(driver,context);
  const provider=vm.runInContext('routingProvider()',context), op={token:String('native'),value:'OFF'};
  assert.equal(provider.execute('source_power','OFF',op).outcome,'applied');

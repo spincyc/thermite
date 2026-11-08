@@ -22,6 +22,14 @@ rollback. The unified deployment workflow uses a separate committed private site
   and leaves out any other value, where it used to pass any number,
   `hdmiN` or `tv`. Every actor's fields, values, settle times and hold
   limits are unchanged.
+- A Sony projector or AVPro matrix read while a reload has loaded its rule
+  before its Items now posts the Items that are there and keeps its
+  connection, as the Apple TV and Sony TV rules already did. It used to
+  count the missing Item as the device failing: it closed the connection,
+  logged that the device does not answer, backed it off for the next polls
+  and failed the rule. The four script integrations now share their
+  posting, failure logging, backoff, kept connections and command rule
+  (`lib/oh_integrations/_device.js`); nothing else changes.
 - A house with several HEOS receivers has one HEOS bridge, named for the
   receiver it connects to: the one marked `heos_bridge: true`, else the
   first HEOS receiver in the house file. Every receiver's HEOS transport

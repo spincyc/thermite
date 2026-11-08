@@ -38,6 +38,17 @@ def projectors():
 
 
 class Embedding(unittest.TestCase):
+    def test_each_device_script_carries_the_io_then_the_shared_device_parts_once(self):
+        for module in (avpro_telnet, pyatv_http, sony_adcp, sony_ip_control):
+            with self.subTest(integration=module.NAME):
+                house = inventory(module)
+                text = module.files(house["devices"], House(house))[module.rule_path(house["devices"][0])]
+                self.assertNotIn(_io.MARK, text)
+                self.assertNotIn(_io.DEVICE_MARK, text)
+                self.assertEqual(text.count("const thermiteIO = "), 1)
+                self.assertEqual(text.count("const thermiteDevice = "), 1)
+                self.assertLess(text.index("const thermiteIO = "), text.index("const thermiteDevice = "))
+
     def test_the_shared_device_parts_are_optional_but_once_and_after_the_io(self):
         self.assertEqual(_io.embed(f"a\n{_io.MARK}\nb\n"), f"a\n{_io.SOURCE.read_text()}\nb\n")
         for bad in (f"{_io.MARK}\n{_io.DEVICE_MARK}\n{_io.DEVICE_MARK}\n", f"{_io.DEVICE_MARK}\n{_io.MARK}\n",

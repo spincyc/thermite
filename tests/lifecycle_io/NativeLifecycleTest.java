@@ -233,6 +233,7 @@ public class NativeLifecycleTest {
         // without pairing. A refused power attempt must leave pairing usable.
         shared.clear();
         String sonySource=Files.readString(Path.of(args[3])).replace("// THERMITE_BOUNDED_IO",Files.readString(Path.of(args[1])))
+            .replace("// THERMITE_DEVICE",Files.readString(Path.of(args[1]).resolveSibling("_device.js")))
             .replace("const DEVICES = null;","const DEVICES = [{id:'receiver',host:'127.0.0.1',speakerAudio:true}];")
             .replace("const PRESSES = null;","const PRESSES = {};");
         try(Context root=context(shared,common,new Thing(url),source,descriptor);
