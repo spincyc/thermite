@@ -6,7 +6,8 @@ conf/automation/js/sony_adcp_<device>.js, sony_adcp.js beside this file with the
 device table filled in. It keeps one ADCP connection open per projector,
 and every 15 seconds, well inside the projector's 60-second connection
 time-out, reads `power_status ?`, `input ?` and, while the projector is on,
-`picture_mode ?` on it and posts them to the Items. A device that also lists
+`picture_mode ?` on it and posts them to the Items, changed or not, so a
+reading stays fresh for the room policy. A device that also lists
 sony_adcp under control has its power, input and key Items turned into ADCP
 lines (LINES) on that connection. A projector that does not answer, or
 closes the connection while answering, gets UNDEF and is reconnected after

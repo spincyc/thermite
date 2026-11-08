@@ -469,6 +469,17 @@ test('a Sony projector is read every 15 s and commanded on one kept ADCP connect
   assert(r.projector.links[0].closed);
 });
 
+test('every read posts each projector Item, changed or not, so a reading that holds stays fresh', () => {
+  const r = adcp();
+  r.poll(); r.poll(); r.poll();
+  const posts = name => r.posted.filter(([item]) => item === `projector_${name}`).map(([, state]) => state);
+  assert.deepEqual(posts('power'), ['ON', 'ON', 'ON']); assert.deepEqual(posts('power_state'), ['on', 'on', 'on']);
+  assert.deepEqual(posts('input'), ['hdmi1', 'hdmi1', 'hdmi1']); assert.deepEqual(posts('picture_mode'), Array(3).fill('reference'));
+  // A command's reads post as well.
+  r.command('input', 'hdmi1');
+  assert.deepEqual(posts('input'), Array(4).fill('hdmi1'));
+});
+
 test('a connection the projector closed while idle, or lost to a power cycle, is replaced within the poll', () => {
   const r = adcp();
   r.poll(); r.poll();

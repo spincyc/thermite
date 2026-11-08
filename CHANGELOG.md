@@ -59,6 +59,11 @@ rollback. The unified deployment workflow uses a separate committed private site
   whose window starts on the source its locked leader shows is no longer
   refused as a shared-resource conflict; another room locked on that source
   still refuses it.
+- A room locked with a Sony projector on ADCP no longer turns Unknown 30
+  seconds after the projector last changed: the sony_adcp rule now posts
+  every Item on each 15-second read, changed or not, and the room policy
+  counts a reading for 30 seconds from its last update. It used to post a
+  value only when it changed.
 - Under the routing lifecycle, a Sony projector on ADCP that is slow to
   turn on or off is waited for. Off pressed while an accepted On had not
   shown yet used to read standby, send nothing, and leave the projector on
@@ -86,7 +91,7 @@ rollback. The unified deployment workflow uses a separate committed private site
   even when the room verifies in between; there it used to be answered
   within seconds every time. A stale reading still never verifies a room or
   triggers a repair. A device that reports only when it changes (the
-  denonmarantz binding, the sony_adcp rule) is Unknown 30 seconds after
+  denonmarantz binding) is Unknown 30 seconds after
   each change, and one already wrong when the worker starts is repaired once
   it next reports.
 - `thermite access login`, `logout` and `status` need no private site, as
