@@ -8,7 +8,8 @@ with its tables filled in. It turns commands to the TV's Items into the
 TV's own requests (system setPowerStatus, avContent setPlayContent, audio
 setAudioVolume and setAudioMute, and IRCC for the remote's keys) and reads
 them back at once, and every 15 seconds it reads the input, volume and mute
-of each TV that is on.
+of each TV that is on and posts them, changed or not, since the room policy
+worker counts a reading not updated for 30 seconds as unknown.
 
 The TV takes those requests only from a client it has registered. Pairing
 (the Pairing page, web/remote/pair.html, or bin/thermite pair <id>) asks it

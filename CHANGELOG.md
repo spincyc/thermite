@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A locked room that uses an AVPro HDMI matrix (avpro_telnet) or a Sony TV
+  under IP control (sony_ip_control) no longer shows Unknown 30 seconds
+  after that device last changed. Their rules posted a reading only when it
+  changed, and the room policy worker counts a reading not updated for 30
+  seconds as unknown, so a room that stayed as it was could be neither
+  verified nor repaired. Every poll now posts each reading, changed or not:
+  each matrix output's input every 10 seconds, and each TV's input, volume
+  and mute every 15 seconds (UNDEF in standby). A TV's problem and pairing
+  status are still posted only when they change. Rules that wait for a
+  change, such as the routing planner's, see no more events than before.
 - A room whose devices cannot be read keeps its row in "Rooms through the
   day", grey and labelled Unavailable, for as long as its readback is NULL
   or UNDEF. The exporter dropped those states, so a room whose HDMI switch

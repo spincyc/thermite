@@ -9,9 +9,10 @@ settings unasked. No binding speaks it, so a rule does:
 conf/automation/js/avpro_telnet_<device>.js, avpro_telnet.js beside this file with
 the device table filled in. It keeps one connection open per matrix, as
 AVPro's own control drivers do: it waits for that listing to end, and every
-10 seconds asks `GET OUT0 VS` and posts each output's input. A command to
-an output's Item is sent as SET on that connection, followed by the same
-read. A matrix that does not answer, or closes the connection, gets UNDEF
+10 seconds asks `GET OUT0 VS` and posts each output's input, changed or not,
+since the room policy worker counts a reading not updated for 30 seconds as
+unknown. A command to an output's Item is sent as SET on that connection,
+followed by the same read. A matrix that does not answer, or closes the connection, gets UNDEF
 and is reconnected after 10, 20 and 40 seconds, then every minute.
 
 Items, per matrix:

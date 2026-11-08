@@ -1,10 +1,10 @@
 'use strict';
 // Runs production integration scripts against stub openHAB and Java types.
 // argv: heos.js globalcache_ir.js bk808_cec.js androidtv_googletv.js
-// avpro_telnet.js sony_adcp.js. No device or network access: HTTP and
-// sockets are fixtures.
+// avpro_telnet.js sony_adcp.js sony_ip_control.js. No device or network
+// access: HTTP and sockets are fixtures.
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
-const [heosSource, irSource, cecSource, androidSource, avproSource, adcpSource] =
+const [heosSource, irSource, cecSource, androidSource, avproSource, adcpSource, sonyTvSource] =
   process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
@@ -322,6 +322,18 @@ test('AVPro answers may carry A00, repeat SET or zero-pad; CMD ERR and a matrix 
   assert.deepEqual(r.matrix.opened, [0, 1]); assert.equal(r.items.matrix_output4_input, '3');
 });
 
+test('every AVPro poll posts each output\'s input, changed or not, so a reading stays fresh', () => {
+  const r = avpro();
+  const posts = name => r.posted.filter(([item]) => item === name).map(([, value]) => value);
+  r.poll(); r.poll(); r.poll();
+  for (let output = 1; output <= 4; output++) assert.deepEqual(posts(`matrix_output${output}_input`), ['1', '1', '1']);
+  r.matrix.routes[3] = 2; r.poll();
+  assert.deepEqual(posts('matrix_output4_input'), ['1', '1', '1', '2']);
+  // A matrix that stops answering has UNDEF posted at each poll that tries it.
+  r.matrix.mute = true; r.poll(); r.matrix.mute = false; r.matrix.refuse = true; r.poll();
+  assert.deepEqual(posts('matrix_output4_input').slice(4), ['UNDEF', 'UNDEF']);
+});
+
 test('a read-only copy connects to no AVPro matrix and only logs what it would send', () => {
   const r = avpro({ send: false });
   r.poll(); r.poll(); r.command(4, 2);
@@ -509,6 +521,70 @@ test('a read-only copy connects to no Sony projector and only logs what it would
   assert.deepEqual(r.projector.opened, []); assert.deepEqual(r.posted, []);
   assert.deepEqual(r.logs, [['info', 'projector: SEND is false, not sending power "off"'],
     ['info', 'projector: SEND is false, not sending key "menu"']]);
+});
+
+// A Sony BRAVIA TV on IP control, paired: its registration is in userdata.
+// It answers getPowerStatus with `power` (active or standby), and while it is
+// active getPlayingContentInfo with HDMI `input` and getVolumeInformation
+// with `volume` and `mute`; in standby Sony's error 40005. Its power Item is
+// sony_rest's, so a test sets it.
+function sonyTv() {
+  const clock = { now: 0 }, day = 24 * 60 * 60 * 1000;
+  const tv = { power: 'active', input: 2, volume: 20, mute: false, requests: [] };
+  const answer = body => ({ getStatus: () => 200, getContentAsString: () => JSON.stringify(Object.assign({ id: 1 }, body)),
+    getHeaders: () => ({ getValuesList: () => ({ size: () => 0, get: () => null }) }) });
+  const thermiteIO = {
+    unreached: () => false,
+    http(url, method, body) {
+      const request = JSON.parse(body).method;
+      tv.requests.push(request);
+      if (request === 'getPowerStatus') return answer({ result: [{ status: tv.power }] });
+      if (tv.power !== 'active') return answer({ error: [40005, 'Display Is Turned off'] });
+      if (request === 'getPlayingContentInfo') return answer({ result: [{ uri: `extInput:hdmi?port=${tv.input}` }] });
+      if (request === 'getVolumeInformation') {
+        return answer({ result: [[{ target: 'speaker', volume: tv.volume, mute: tv.mute, minVolume: 0, maxVolume: 100 }]] });
+      }
+      return answer({ result: [] });
+    },
+  };
+  // A fictional session id; no PIN is stored, and none is needed to read.
+  const session = '00000000-0000-4000-8000-000000000002';
+  const registration = JSON.stringify({ clientid: 'openHAB:00000000-0000-4000-8000-000000000000', nickname: 'thermite',
+    pin: null, cookie: session, expires: 30 * day, refused: false });
+  const path = { resolve: () => path, toString: () => 'userdata/sony_ip_control/tv.json' };
+  const java = {
+    'java.nio.file.Files': { exists: () => true, readString: () => registration },
+    'java.nio.file.Paths': { get: () => path },
+    'java.nio.file.StandardCopyOption': {},
+    'java.nio.file.attribute.PosixFilePermissions': {},
+    'java.util.UUID': { randomUUID: () => '00000000-0000-4000-8000-000000000001' },
+    'org.openhab.core.OpenHAB': { getUserDataFolder: () => 'userdata' },
+  };
+  const items = Object.fromEntries(['input', 'volume', 'mute', 'key', 'pairing', 'pairing_status', 'pairing_result', 'problem']
+    .map(point => [`tv_${point}`, 'NULL']));
+  items.tv_power = 'ON';
+  const loaded = run(sonyTvSource.replace('// THERMITE_BOUNDED_IO', ''), {
+    DEVICES: [{ id: 'tv', address: '192.0.2.40', inputs: [1, 2, 3, 4], volume: { min: 0, max: 100, step: 1 }, speakerAudio: true }],
+    PRESSES: { home: 'AAAAAQAAAAEAAABgAw==' } }, { items, clock, java, globals: { thermiteIO } });
+  return { ...loaded, clock, tv, items, poll: () => { loaded.rules.sony_ip_control_tv_poll.execute(); clock.now += 15000; } };
+}
+
+test('every Sony TV poll posts its input, volume and mute, changed or not; its problem and pairing only on change', () => {
+  const r = sonyTv();
+  const posts = name => r.posted.filter(([item]) => item === name).map(([, value]) => value);
+  r.poll(); r.poll(); r.poll();
+  assert.deepEqual(posts('tv_input'), ['hdmi2', 'hdmi2', 'hdmi2']);
+  assert.deepEqual(posts('tv_volume'), ['20', '20', '20']);
+  assert.deepEqual(posts('tv_mute'), ['OFF', 'OFF', 'OFF']);
+  r.tv.input = 3; r.poll();
+  assert.deepEqual(posts('tv_input').slice(3), ['hdmi3']);
+  // In standby the cleared readings are posted at each poll too.
+  r.tv.power = 'standby'; r.items.tv_power = 'OFF'; r.poll(); r.poll();
+  assert.deepEqual(posts('tv_input').slice(4), ['UNDEF', 'UNDEF']);
+  assert.deepEqual(posts('tv_mute').slice(4), ['UNDEF', 'UNDEF']);
+  assert.deepEqual(posts('tv_problem'), ['UNDEF']); assert.deepEqual(posts('tv_pairing_status'), ['paired']);
+  assert.deepEqual(r.tv.requests.filter(request => request === 'getPlayingContentInfo').length, 4);
+  assert.deepEqual(r.logs.filter(([level]) => level !== 'info'), []);
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));
