@@ -395,16 +395,39 @@ def _zone_words(mapping: dict) -> dict:
             **{name: label for name, _, label in zones}}
 
 
+def _source_words(mapping: dict) -> dict:
+    """{source id: label}: each source as the remotes name it. Where two
+    share a label, each adds its device's room ("Apple TV (Theater)"), and
+    where that is shared too, its device's label. A value that is no routed
+    source keeps its device's label."""
+    devices = mapping.get("devices") or {}
+    rooms = _room_words(mapping)
+    labels = mapping.get("sources") or {}
+
+    def shared(words):
+        texts = list(words.values())
+        return [ident for ident, text in words.items() if texts.count(text) > 1 and ident in devices]
+
+    words = dict(labels)
+    for ident in shared(words):
+        room = devices[ident]["room"]
+        words[ident] = f"{labels[ident]} ({rooms.get(room, room)})"
+    for ident in shared(words):
+        words[ident] = f"{labels[ident]} ({devices[ident].get('label', ident)})"
+    return {**{ident: device.get("label", ident) for ident, device in devices.items()}, **words}
+
+
 #: A source timeline's number for a zone whose readback is NULL or UNDEF.
 UNAVAILABLE = -1
 
 
 def _source_timeline(mapping: dict, zones: list[tuple[str, str, str]]) -> tuple[list[tuple[str, str]], list[dict]]:
     """The queries and the value mapping of a source timeline: each source a
-    number, shown as its device's label in tan, Off in slate, and a readback
-    that could not be read as Unavailable in grey, so that a zone whose
-    devices stopped answering keeps its row instead of vanishing."""
-    devices = mapping.get("devices") or {}
+    number, shown as the remotes name it (_source_words) in tan, Off in
+    slate, and a readback that could not be read as Unavailable in grey, so
+    that a zone whose devices stopped answering keeps its row instead of
+    vanishing."""
+    words = _source_words(mapping)
     numbers: dict[str, int] = {}
     queries = []
     for name, _, label in zones:
@@ -415,7 +438,7 @@ def _source_timeline(mapping: dict, zones: list[tuple[str, str, str]]) -> tuple[
         if terms:
             terms.append(f'thermite_item_unavailable{{item={_q(name)}}} * {UNAVAILABLE}')
             queries.append((f'sum without (value) ({" or ".join(terms)})', label))
-    names = {number: ("Off", OFF) if value == "off" else (devices.get(value, {}).get("label", value), IN_USE)
+    names = {number: ("Off", OFF) if value == "off" else (words.get(value, value), IN_USE)
              for value, number in sorted(numbers.items(), key=lambda pair: pair[1])}
     return queries, value_map({UNAVAILABLE: ("Unavailable", UNKNOWN), **names})
 
@@ -975,7 +998,7 @@ def usage(mapping: dict) -> dict:
                    "source selected in the selected range: samples times the 30-second scrape interval. "
                    "Overlapping zones add; gaps are not extrapolated. Selected-source time, not people or playback.",
                    horizontal=True), 12, 9)
-    devices = mapping.get("devices") or {}
+    words = _source_words(mapping)
     mix_expr = f"sum by (value) (count_over_time({active}[$__range])) * {SAMPLE_SECONDS} >= 60"
     mix = timeseries("Source mix", [(mix_expr, "{{value}}")], "dtdurations",
                      description="Share of observed in-use zone time by source. The same source in two zones "
@@ -988,7 +1011,7 @@ def usage(mapping: dict) -> dict:
                                    "values": ["value", "percent"]}, "tooltip": {"mode": "single", "sort": "desc"}})
     for value in sorted({v for name, _, _ in zones for v in mapping["items"][name].get("options") or []} - {"off"}):
         mix["fieldConfig"]["overrides"].append({"matcher": {"id": "byName", "options": value}, "properties": [
-            {"id": "displayName", "value": devices.get(value, {}).get("label", value)}]})
+            {"id": "displayName", "value": words.get(value, value)}]})
     board.add(mix, 12, 9)
     return dashboard(USAGE, board, "How the house is used: zones in use, where time went and the source mix. "
                      "Off is normal; missing observations stay unknown.", annotations=False)

@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Grafana's "Rooms through the day" and "Source mix" name each source as
+  the remotes do (`routing.sources.<id>.label`), adding the device's room
+  where two sources share a name: "Apple TV (Theater)". They used to show the
+  device's inventory name and model, such as "Theater (AppleTV14,1)".
 - A source switch that an AVPro HDMI matrix refuses with `CMD ERR` (or
   `NO SUPPORT`) fails at once as refused by the device. It used to count as
   applied: the routing executor re-read the matrix for about 6 seconds and

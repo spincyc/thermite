@@ -85,6 +85,25 @@ class Selections(unittest.TestCase):
                  for option in mapping["options"].values()}
         self.assertIn("Unavailable", texts)
 
+    def test_sources_are_named_as_the_remotes_name_them(self):
+        timeline = next(panel for board in boards().values() for panel in panels(board)
+                        if panel.get("title") == "Rooms through the day")
+        texts = {option["text"] for mapping in timeline["fieldConfig"]["defaults"]["mappings"]
+                 for option in mapping["options"].values()}
+        self.assertEqual(MAP["sources"], {"example_computer": "Computer", "example_player": "Player"})
+        self.assertLessEqual({"Player", "Computer", "Off"}, texts)
+        self.assertNotIn("Example Player", texts)
+
+    def test_a_shared_source_label_adds_the_room_then_the_device(self):
+        mapping = {**MAP, "sources": {**MAP["sources"], "example_computer": "Player"}}
+        self.assertEqual({ident: dashboards._source_words(mapping)[ident] for ident in mapping["sources"]},
+                         {"example_computer": "Player (Example East)", "example_player": "Player (Example West)"})
+        devices = {**MAP["devices"], "example_computer": {**MAP["devices"]["example_computer"],
+                                                          "room": "example_west"}}
+        words = dashboards._source_words({**mapping, "devices": devices})
+        self.assertEqual((words["example_computer"], words["example_player"]),
+                         ("Player (Example Computer)", "Player (Example Player)"))
+
 
 class RoutingSeries(unittest.TestCase):
     def series(self, **states):

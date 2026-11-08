@@ -486,8 +486,12 @@ def exporter_map(inventory: dict, conf=None) -> dict:
                                "convert": "enum", "options": _options(item)}
     rooms = {room: house.room_label(room) for room in house.rooms}
     paths, checks = health_paths(inventory, conf, items)
-    result = {"version": MAP_VERSION, "rooms": rooms, "devices": devices, "items": dict(sorted(items.items())),
-              "paths": paths, "health_checks": checks}
+    # Each routed source as the remotes name it (routing.sources.<id>.label).
+    sources = {ident: str(entry["label"]) for ident, entry in
+               ((inventory.get("routing") or {}).get("sources") or {}).items()
+               if isinstance(entry, dict) and entry.get("label")}
+    result = {"version": MAP_VERSION, "rooms": rooms, "devices": devices, "sources": sources,
+              "items": dict(sorted(items.items())), "paths": paths, "health_checks": checks}
     from oh_features import threadpools
     if threadpools.enabled(house):
         result["handler_pool"] = dict(threadpools.ITEM_NAMES)
