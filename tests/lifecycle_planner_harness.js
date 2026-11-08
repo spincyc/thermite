@@ -1235,8 +1235,8 @@ test('a manual power off read back as off during a pending power on keeps the wa
   r.request('Movie'); r.run(2000);
   r.coordinator.hold('legacy-1', {resources: ['Power', 'Input'], sources: ['S']});
   r.coordinator.takeover('Power', 'OFF', true);
-  assert(r.coordinator.external({token: 'legacy-1', resource: 'Power', value: 'OFF'}));
-  r.coordinator.report({type: 'terminal', token: 'legacy-1', admitted: true,
+  assert(r.coordinator.external({token: String('legacy-1'), resource: 'Power', value: 'OFF'}));
+  r.coordinator.report({type: 'terminal', token: String('legacy-1'), admitted: true,
     sample: {value: 'OFF', fresh: true, retired: true}});
   r.coordinator.releaseHold('legacy-1');
   let power = r.coordinator.snapshot().resources.Power;
@@ -1258,8 +1258,8 @@ test('a write applied without its readback replaces a transition with its own wa
   r.request('Off');
   assert.equal(r.coordinator.snapshot().resources.Power.transition.value, 'ON');
   r.coordinator.takeover('Power', 'OFF', true);
-  assert(r.coordinator.external({token: 'manual-1', resource: 'Power', value: 'OFF'}));
-  r.coordinator.report({type: 'terminal', token: 'manual-1', admitted: true});
+  assert(r.coordinator.external({token: String('manual-1'), resource: 'Power', value: 'OFF'}));
+  r.coordinator.report({type: 'terminal', token: String('manual-1'), admitted: true});
   const power = r.coordinator.snapshot().resources.Power;
   assert.equal(power.transition, null); assert.equal(power.pending.value, 'OFF');
 });
