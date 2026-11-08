@@ -273,10 +273,10 @@ function avpro({ send = true } = {}) {
     },
     close(link) { link.closed = true; },
   };
-  const items = {};
+  const items = Object.fromEntries([1, 2, 3, 4].map(output => [`matrix_output${output}_input`, 'NULL']));
   const source = send ? avproSource : avproSource.replace('const SEND = true;', 'const SEND = false;');
   const loaded = run(source.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: [{ id: 'matrix', host: '192.0.2.30', port: 23,
-    inputs: 4, outputs: 4 }] }, { items, clock, globals: { thermiteIO },
+    inputs: 4, outputs: 4 }] }, { items, clock, globals: { thermiteIO }, strict: true,
     runtime: { lifecycleTracker: { addDisposeHook: hook => hooks.push(hook) } } });
   const warnings = () => loaded.logs.filter(([level]) => level === 'warn').map(([, message]) => message);
   return { ...loaded, clock, matrix, items, warnings, unload: () => hooks.forEach(hook => hook()),
@@ -445,10 +445,11 @@ function adcp({ send = true } = {}) {
     },
     close(link) { link.closed = true; },
   };
-  const items = {};
+  const items = Object.fromEntries(['power', 'power_state', 'input', 'picture_mode', 'key']
+    .map(point => [`projector_${point}`, 'NULL']));
   const source = send ? adcpSource : adcpSource.replace('const SEND = true;', 'const SEND = false;');
   const loaded = run(source.replace('// THERMITE_BOUNDED_IO', ''), { DEVICES: [{ id: 'projector', host: '192.0.2.31',
-    port: 53595, control: true }], KEYS: { menu: 'menu' }, INPUTS: ['hdmi1', 'hdmi2'] }, { items, clock, globals: { thermiteIO },
+    port: 53595, control: true }], KEYS: { menu: 'menu' }, INPUTS: ['hdmi1', 'hdmi2'] }, { items, clock, globals: { thermiteIO }, strict: true,
     runtime: { lifecycleTracker: { addDisposeHook: hook => hooks.push(hook) } } });
   const warnings = () => loaded.logs.filter(([level]) => level === 'warn').map(([, message]) => message);
   return { ...loaded, clock, projector, items, warnings, unload: () => hooks.forEach(hook => hook()),
@@ -595,6 +596,18 @@ test('a read-only copy connects to no Sony projector and only logs what it would
   assert.deepEqual(r.projector.opened, []); assert.deepEqual(r.posted, []);
   assert.deepEqual(r.logs, [['info', 'projector: SEND is false, not sending power "off"'],
     ['info', 'projector: SEND is false, not sending key "menu"']]);
+});
+
+test('a projector or matrix read while a reload has an Item missing posts the rest and stays connected', () => {
+  // The rules can load before the Items. Such a read used to throw, drop
+  // the connection, back the device off and warn that it does not answer.
+  const projector = adcp(), matrix = avpro();
+  delete projector.items.projector_picture_mode; delete matrix.items.matrix_output4_input;
+  projector.poll(); projector.poll(); matrix.poll(); matrix.poll();
+  assert.deepEqual(projector.warnings(), []); assert.deepEqual(matrix.warnings(), []);
+  assert.deepEqual(projector.projector.opened, [0]); assert.deepEqual(matrix.matrix.opened, [0]);
+  assert.equal(projector.items.projector_input, 'hdmi1'); assert.equal(matrix.items.matrix_output3_input, '1');
+  assert(!('projector_picture_mode' in projector.items)); assert(!('matrix_output4_input' in matrix.items));
 });
 
 // A Sony BRAVIA TV on IP control, paired: its registration is in userdata.
