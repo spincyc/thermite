@@ -160,7 +160,12 @@ stream disconnect, and never obtains observation timestamps from REST reads
 or command acknowledgements. Apple TV power additionally requires its
 provider's acquisition timestamp before the paired power update. A missing,
 stale or invalid timestamp stays Unknown; native drift can trigger only the
-engine's bounded mismatch repairs. A reading is fresh for 30 seconds after its
+engine's bounded mismatch repairs. Any value an Item reports counts: one no
+route uses, such as a TV's home screen (`tv`) or a receiver input the room
+does not offer, is a mismatch, and its repair writes only the route's own
+value. NULL, UNDEF and an empty, non-string or longer than 128-character
+value are Unknown. Numbers compare by value, so a matrix output's `3.0` is
+`3` (`oh_room_policy.canonical`). A reading is fresh for 30 seconds after its
 update (`Field.max_age`), and only a fresh mismatch is repaired: one Item per
 pass, in route order, once that Item's backoff allows. An Item's repeated
 repairs wait 2, 5, 10, then 20 seconds (`BACKOFF`), each inside those 30

@@ -22,6 +22,10 @@ class NativeCache:
     ItemStateUpdatedEvent is acquired when its trusted loopback SSE frame arrives.
     Apple TV additionally requires the provider's actual power_reported_at;
     repeated cached updates never advance that native acquisition timestamp.
+
+    A field keeps whatever its Item reports, as verify() compares it
+    (oh_room_policy.canonical): a value no route uses is a mismatch, while
+    NULL, UNDEF or a non-string or over-long value is None, Unknown.
     """
 
     def __init__(self, fields, *, native_power=None, clock=None, on_change=None):
@@ -59,19 +63,21 @@ class NativeCache:
             payload = json.loads(event.get("payload"))
         except (ValueError, TypeError):
             return None
-        value = payload.get("value") if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("value")
+        if item in self.fields:
+            from oh_room_policy import canonical
+            return item, canonical(value)
         if not isinstance(value, str) or len(value) > 128:
             return None
-        if item in self.fields and value not in {*self.fields[item].allowed, "NULL", "UNDEF"}:
-            return None
-        if item not in self.fields:
-            try:
-                stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                if stamp.tzinfo is None:
-                    raise ValueError()
-            except ValueError:
-                if value not in {"NULL", "UNDEF"}:
-                    return None
+        try:
+            stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                raise ValueError()
+        except ValueError:
+            if value not in {"NULL", "UNDEF"}:
+                return None
         return item, value
 
     def accept(self, frame):

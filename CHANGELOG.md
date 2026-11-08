@@ -38,6 +38,14 @@ rollback. The unified deployment workflow uses a separate committed private site
   zone 2 while the main zone's room was off read as failing, turned the
   dashboards' control health red and fired ThermiteCheckFailing although
   nothing was wrong.
+- A locked room is put back when one of its devices shows something no route
+  uses, such as a Sony TV's home screen or apps (`tv`) or a receiver input
+  outside the room's sources. Such a value used to be dropped: the room
+  stayed Verified for up to 30 seconds, then Unknown for good, and was never
+  repaired, so one press of Home on the remote defeated the lock. Any fresh
+  value other than the route's own is now a mismatch, repaired with the
+  route's value only; NULL, UNDEF and an empty or overlong value stay
+  Unknown. A matrix output reporting `3.0` matches `3`.
 - Routing: a room synced with its leader (`receiver.sync_with`) no longer
   rewrites the EDID of the source both rooms show. Choosing the source the
   leader shows used to give the source the follower's EDID, so the source

@@ -19,8 +19,8 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
 
 import oh_room_policy  # noqa: E402
-from oh_room_policy import (Field, Observation, Plan, PolicyError, conflicts, desired_at, due_boundaries,  # noqa: E402
-                            expected_plan, local_instant, repair_plan, verify)
+from oh_room_policy import (Field, Observation, Plan, PolicyError, canonical, conflicts, desired_at,  # noqa: E402
+                            due_boundaries, expected_plan, local_instant, repair_plan, verify)
 from oh_room_policy.worker import BACKOFF, SETTLED, PolicyRecord, Worker  # noqa: E402
 from oh_access import AccessError  # noqa: E402
 from oh_access.worker import OBSERVED, NativeCache, PolicyIO, Warnings, observe  # noqa: E402
@@ -404,8 +404,7 @@ def synthetic(table):
     def plan(house, room, choice):
         if room not in table or choice not in table[room]:
             raise PolicyError("invalid_room_source")
-        fields = tuple(Field(item, value, "device:" + device, ("0", "1", "2", "OFF", "ON"))
-                       for item, (value, device) in table[room][choice].items())
+        fields = tuple(Field(item, value, "device:" + device) for item, (value, device) in table[room][choice].items())
         return Plan(room, choice, room + "_source", fields, tuple(sorted({field.resource for field in fields})),
                     tuple((field.item, field.value) for field in fields))
     return plan
@@ -465,8 +464,7 @@ class Reported:
 
     def __init__(self, test, clock, notify):
         self.test, self.clock = test, clock
-        self.cache = NativeCache([Field(item, "OFF", "device:" + device, ("OFF", "ON"))
-                                  for item, (_, device) in CINEMA["cinema"]["off"].items()],
+        self.cache = NativeCache([Field(item, "OFF", "device:" + device) for item, (_, device) in CINEMA["cinema"]["off"].items()],
                                  clock=clock, on_change=lambda item: notify("cinema"))
         self.state, self.due, self.writes = {}, [], []
         self.deaf, self.remote, self.broken = set(), {}, False
@@ -532,7 +530,7 @@ class QuietDevices(unittest.TestCase):
 
     def test_every_wait_ends_while_the_mismatch_it_waits_on_is_fresh(self):
         # The longest step, after another Item's repair in the room.
-        self.assertLess(max(BACKOFF) + BACKOFF[0], Field(AVR, "OFF", "device:avr", ("OFF", "ON")).max_age)
+        self.assertLess(max(BACKOFF) + BACKOFF[0], Field(AVR, "OFF", "device:avr").max_age)
         self.assertGreater(SETTLED, max(BACKOFF))
 
     def test_a_day_of_devices_turning_themselves_on_is_repaired_each_time(self):
@@ -689,6 +687,36 @@ class RouteVerification(unittest.TestCase):
         self.assertEqual(verify(plan, observations, now)["state"], "verified")
         self.assertEqual(verify(plan, observations, now + timedelta(seconds=31))["state"], "unknown")
 
+    def test_a_value_no_route_uses_is_a_mismatch_and_only_the_target_is_written(self):
+        plan = expected_plan(HOUSE, WEST, PLAYER)
+        now = at(10)
+        observations = {item: Observation(value, now, basis="native_power" if item == "example_player_power" else "native")
+                        for item, value in PLAYER_ROUTE.items()}
+        # A Sony TV on its home screen or an app reports `tv`.
+        for value in ("tv", "hdmi9", "HDMI1", " hdmi1"):
+            with self.subTest(value=value):
+                result = verify(plan, {**observations, "example_tv_input": Observation(value, now)}, now)
+                self.assertEqual((result["state"], result["mismatched"]), ("degraded", ["example_tv_input"]))
+                self.assertEqual(repair_plan(plan, result), [("example_tv_input", "hdmi1")])
+        for value in ("NULL", "UNDEF", "", "x" * 129, None, 1, ["hdmi1"]):
+            with self.subTest(value=value):
+                result = verify(plan, {**observations, "example_tv_input": Observation(value, now)}, now)
+                self.assertEqual((result["state"], result["unknown"], result["mismatched"]),
+                                 ("unknown", ["example_tv_input"], []))
+                self.assertEqual(repair_plan(plan, result), [])
+
+    def test_a_number_item_matches_by_value(self):
+        plan = expected_plan(HOUSE, WEST, COMPUTER)
+        now = at(10)
+        observed = {item: Observation(value, now) for item, value in COMPUTER_ROUTE.items()}
+        for value, state in (("1", "verified"), ("1.0", "verified"), ("01.00", "verified"), ("1.5", "degraded"),
+                             ("2", "degraded"), ("-1", "degraded"), ("0", "degraded")):
+            with self.subTest(value=value):
+                result = verify(plan, {**observed, "example_matrix_output1_input": Observation(value, now)}, now)
+                self.assertEqual(result["state"], state)
+        self.assertEqual([canonical(value) for value in ("3.0", "3", "03", "-0.0", "-2.50", "10", "3e0", "3.")],
+                         ["3", "3", "3", "0", "-2.5", "10", "3e0", "3."])
+
 
 class Cache(unittest.TestCase):
     def fields(self):
@@ -697,13 +725,17 @@ class Cache(unittest.TestCase):
     def event(self, item, value, kind="ItemStateUpdatedEvent"):
         return {"topic": f"openhab/items/{item}/stateupdated", "type": kind, "payload": json.dumps({"value": value})}
 
-    def test_projection_keeps_only_compiled_values_and_valid_timestamps(self):
+    def test_projection_keeps_every_field_value_as_verify_reads_it_and_valid_timestamps(self):
         cache = NativeCache(self.fields(), native_power={"example_player_power": "example_player_reported_at"})
         self.assertIn("openhab/items/example_player_reported_at/stateupdated", cache.topics)
-        self.assertEqual(cache.project(self.event("example_tv_input", "hdmi1")), ("example_tv_input", "hdmi1"))
-        for event in (self.event("example_tv_input", "hdmi9"), self.event("example_tv_input", "hdmi1", "ItemStateChangedEvent"),
-                      self.event("unrelated_item", "ON"), self.event("example_tv_input", "x" * 129),
-                      self.event("example_player_reported_at", "yesterday"), {**self.event("example_tv_power", "ON"), "payload": "{"}):
+        for value, kept in (("hdmi1", "hdmi1"), ("tv", "tv"), ("hdmi9", "hdmi9"), ("NULL", None), ("UNDEF", None),
+                            ("", None), ("x" * 129, None), (3, None), (None, None)):
+            with self.subTest(value=value):
+                self.assertEqual(cache.project(self.event("example_tv_input", value)), ("example_tv_input", kept))
+        self.assertEqual(cache.project(self.event("example_matrix_output1_input", "1.0")), ("example_matrix_output1_input", "1"))
+        for event in (self.event("example_tv_input", "hdmi1", "ItemStateChangedEvent"), self.event("unrelated_item", "ON"),
+                      self.event("example_player_reported_at", "yesterday"), {**self.event("example_tv_power", "ON"), "payload": "{"},
+                      {**self.event("example_tv_power", "ON"), "payload": "[]"}):
             self.assertIsNone(cache.project(event))
         self.assertIsNotNone(cache.project(self.event("example_player_reported_at", "2026-11-02T10:00:00Z")))
 
@@ -726,6 +758,47 @@ class Cache(unittest.TestCase):
         cache.clear()
         self.assertEqual(cache.read(("example_tv_power",)), {})
         self.assertEqual(changed.count("example_tv_power"), 2)
+
+
+class OutsideTheRoute(Harness, unittest.TestCase):
+    """A room held on the player: its TV goes to its home screen, which no
+    route uses, and the lock switches it back. Through the native cache, as
+    the worker service reads it."""
+
+    def report(self, item, value):
+        frame = self.cache.project({"topic": f"openhab/items/{item}/stateupdated", "type": "ItemStateUpdatedEvent",
+                                    "payload": json.dumps({"type": "String", "value": value})})
+        self.cache.accept(frame)
+
+    def poll(self, tv_input):
+        """One report from each of the room's devices, as their providers poll."""
+        self.report("example_tv_power", "ON")
+        self.report("example_tv_input", tv_input)
+        self.report("example_player_reported_at", self.wall[0].isoformat())
+        self.report("example_player_power", "ON")
+
+    def test_a_tv_on_its_home_screen_is_switched_back_and_an_unknown_input_is_not(self):
+        self.make((policy(WEST, hold=PLAYER, enabled=False), at(8)))
+        fields = [field for choice in ("off", PLAYER, COMPUTER) for field in expected_plan(HOUSE, WEST, choice).fields]
+        self.cache = NativeCache(fields, native_power={"example_player_power": "example_player_reported_at"},
+                                 clock=lambda: self.wall[0])
+        self.devices.read = self.cache.read
+        self.poll("hdmi1")
+        self.assertEqual(self.step()[WEST]["phase"], "verified")
+        self.advance(5)
+        self.poll("tv")
+        status = self.step()[WEST]
+        self.assertEqual((status["state"], status["mismatched"], status["repair"]),
+                         ("degraded", ["example_tv_input"], "example_tv_input"))
+        self.assertEqual(self.devices.writes, [(WEST, "example_tv_input", "hdmi1")])
+        self.advance(5)
+        self.poll("hdmi1")
+        self.assertEqual(self.step()[WEST]["phase"], "verified")
+        self.advance(5)
+        self.poll("UNDEF")
+        status = self.step()[WEST]
+        self.assertEqual((status["state"], status["unknown"]), ("unknown", ["example_tv_input"]))
+        self.assertEqual(len(self.devices.writes), 1, "an Unknown input is never repaired")
 
 
 class Transport:
@@ -796,7 +869,7 @@ class Observer(unittest.TestCase):
         import threading
         stop = threading.Event()
         changed = []
-        cache = NativeCache([Field("example_tv_power", "ON", "device:example_tv", ("ON", "OFF"))], on_change=changed.append)
+        cache = NativeCache([Field("example_tv_power", "ON", "device:example_tv")], on_change=changed.append)
         delays = []
 
         async def sleep(delay):
@@ -826,7 +899,7 @@ class Observer(unittest.TestCase):
 
 class Wildcard(unittest.TestCase):
     def test_only_observed_topics_are_kept_before_their_payload_is_read(self):
-        cache = NativeCache([Field("tv_power", "ON", "device:tv", ("ON", "OFF"), True)], native_power={"tv_power": "tv_reported_at"})
+        cache = NativeCache([Field("tv_power", "ON", "device:tv", native_power=True)], native_power={"tv_power": "tv_reported_at"})
         self.assertEqual(OBSERVED, ["openhab/items/*/stateupdated"])
         self.assertIsNone(cache.project({"topic": "openhab/items/private_token/stateupdated", "type": "ItemStateUpdatedEvent",
                                          "payload": "not json"}))

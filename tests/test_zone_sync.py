@@ -304,7 +304,13 @@ class Policy(unittest.TestCase):
                  ({"zone": "BD", "leader": "2"}, "degraded", [ZONE2]),
                  ({"zone": "BD", "leader": "1", "leader_age": 31}, "unknown", []),
                  ({"zone": "BD", "leader": None}, "unknown", []),
-                 ({"zone": "TV", "leader": "1"}, "degraded", [ZONE2])]
+                 ({"zone": "BD", "leader": "UNDEF"}, "unknown", []),
+                 ({"zone": "BD", "leader": "1.0"}, "verified", []),
+                 # A leader output on an input no route uses shows something else.
+                 ({"zone": "BD", "leader": "9"}, "degraded", [ZONE2]),
+                 ({"zone": "TV", "leader": "1"}, "degraded", [ZONE2]),
+                 ({"zone": "NET", "leader": "1"}, "degraded", [ZONE2]),
+                 ({"zone": "NULL", "leader": "1"}, "unknown", [])]
         for arguments, state, mismatched in cases:
             with self.subTest(**arguments):
                 result = verify(plan, self.observations(now, **arguments), now)
@@ -320,6 +326,10 @@ class Policy(unittest.TestCase):
                  "payload": json.dumps({"value": "1"})}
         cache.accept(cache.project(event))
         self.assertEqual(cache.read((OUT1,))[OUT1].value, "1")
+        # A Number Item's "1.0" is "1", and one no route uses is kept.
+        for value, kept in (("1.0", "1"), ("9", "9"), ("UNDEF", None)):
+            cache.accept(cache.project({**event, "payload": json.dumps({"value": value})}))
+            self.assertEqual(cache.read((OUT1,))[OUT1].value, kept)
         self.assertIsInstance(fields[0], Field)
 
 
