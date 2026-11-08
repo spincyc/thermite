@@ -512,15 +512,19 @@ def _attention(mapping: dict) -> dict:
     quarantined devices, in words."""
     failing = f'{alerts.CHECK}{{required="true"}} != 0'
     quarantined = 'label_replace(thermite_routing_device_quarantined == 1, "check", "quarantined", "", "")'
-    panel = table("Needs attention now", f"({failing}) or ({quarantined})", ["room", "check", "device", "Value"],
+    panel = table("Needs attention now", f"({failing}) or ({quarantined})",
+                  ["room", "zone", "check", "device", "Value"],
                   "Required control checks that fail or have no report, and devices whose routing commands are "
                   "quarantined. A device is required while a room's selected source uses it; routing "
-                  "infrastructure always is. A sleeping device that no room uses is never listed.",
-                  names={"room": "Room", "device": "Device", "check": "Problem", "Value": "State"},
+                  "infrastructure always is. A sleeping device that no room uses is never listed. Zone: which of "
+                  "the room's source selectors needs it.",
+                  names={"room": "Room", "zone": "Zone", "device": "Device", "check": "Problem", "Value": "State"},
                   no_value="Nothing needs attention")
-    # Room and problem first: a phone shows those, and scrolls to the rest.
+    # Room, zone and problem first: a phone shows those, and scrolls to the rest.
     _column(panel, "room", {"id": "mappings", "value": _words(_room_words(mapping))},
-            {"id": "custom.width", "value": 140})
+            {"id": "custom.width", "value": 130})
+    _column(panel, "zone", {"id": "mappings", "value": _words(_zone_words(mapping))},
+            {"id": "custom.width", "value": 130})
     _column(panel, "check", {"id": "mappings", "value": _words(CHECK_WORDS)})
     _column(panel, "device", {"id": "mappings", "value": _words(_device_words(mapping))})
     _column(panel, "Value", *_mapped_cells(CHECK_STATE), {"id": "custom.width", "value": 100})
@@ -530,15 +534,19 @@ def _attention(mapping: dict) -> dict:
 
 def _firing(mapping: dict) -> dict:
     panel = table("Alerts firing", 'ALERTS{alertstate="firing",alertname!="ThermiteWatchdog"}',
-                  ["alertname", "room", "device", "severity"], "Alerts firing now. Critical ones will push to a "
-                  "phone once phone delivery is set up; warnings will wait for a digest.",
-                  names={"alertname": "Alert", "room": "Room", "device": "Device", "severity": "Severity"},
+                  ["alertname", "room", "zone", "device", "check", "severity"], "Alerts firing now. Critical ones "
+                  "will push to a phone once phone delivery is set up; warnings will wait for a digest.",
+                  names={"alertname": "Alert", "room": "Room", "zone": "Zone", "device": "Device", "check": "Check",
+                         "severity": "Severity"},
                   no_value="No alerts")
     _column(panel, "alertname", {"id": "mappings", "value": _words(
         {name: title for name, (title, _) in alerts.CATALOG.items()})})
     _column(panel, "room", {"id": "mappings", "value": _words(_room_words(mapping))},
-            {"id": "custom.width", "value": 150})
+            {"id": "custom.width", "value": 130})
+    _column(panel, "zone", {"id": "mappings", "value": _words(_zone_words(mapping))},
+            {"id": "custom.width", "value": 130})
     _column(panel, "device", {"id": "mappings", "value": _words(_device_words(mapping))})
+    _column(panel, "check", {"id": "mappings", "value": _words(CHECK_WORDS)})
     _column(panel, "severity", *_mapped_cells(SEVERITY), {"id": "custom.width", "value": 90})
     return panel
 

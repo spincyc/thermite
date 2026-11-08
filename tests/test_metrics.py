@@ -537,6 +537,24 @@ class Dashboards(unittest.TestCase):
                 # Without an executor nothing counts device failures: no 0 that means nothing.
                 self.assertNotIn("Device failures", exprs)
 
+    def test_two_zones_of_a_room_and_two_checks_of_a_device_read_apart(self):
+        """A room with two zones (a desk and a TV) has rows in Needs
+        attention now that differ only by zone, and a device's alerts differ
+        only by check."""
+        house = boards()[dashboards.HOUSE]
+        for title, columns in (("Needs attention now", {"zone": "Zone", "check": "Problem"}),
+                               ("Alerts firing", {"zone": "Zone", "check": "Check"})):
+            panel = next(panel for panel in panels(house) if panel["title"] == title and panel["type"] == "table")
+            organize = panel["transformations"][-1]["options"]
+            for label, name in columns.items():
+                self.assertIn(label, organize["includeByName"], title)
+                self.assertEqual(organize["renameByName"][label], name, title)
+            words = {override["matcher"]["options"]: prop["value"][0]["options"]
+                     for override in panel["fieldConfig"]["overrides"] for prop in override["properties"]
+                     if prop["id"] == "mappings"}
+            self.assertEqual(words["zone"]["example_east"]["text"], "Example East", title)
+            self.assertEqual(words["check"]["power"]["text"], "Off while in use", title)
+
     def test_colours_have_one_meaning(self):
         for name, board in boards().items():
             for panel in panels(board):

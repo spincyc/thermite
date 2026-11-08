@@ -7,6 +7,11 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- House health's "Needs attention now" has a Zone column, and "Alerts
+  firing" (also on the Host board) Zone and Check columns. A room with two
+  zones, such as a desk and a TV, used to list two identical rows when both
+  failed the same check, and two failing checks of one device were two
+  identical alert rows.
 - House health's "Since yesterday evening" reads Unknown, not 0, for source
   changes, slow or missed changes and device failures while routing's
   telemetry in the runtime is unreadable, and ThermiteRoutingTelemetryUnavailable
