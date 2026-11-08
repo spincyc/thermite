@@ -58,6 +58,34 @@ def items(**states):
     return [{"name": name, "state": state} for name, state in states.items()]
 
 
+class Selections(unittest.TestCase):
+    MAPPING = {"items": {"loc_example_west_source": {"room": "example_west", "point": "source", "convert": "enum",
+                                                     "options": ["off", "example_player"]}}}
+
+    def test_an_unreadable_selection_is_reported_unavailable(self):
+        labels = {"device": "", "room": "example_west", "kind": "", "item": "loc_example_west_source",
+                  "point": "source"}
+        for state in ("UNDEF", "NULL"):
+            samples = exporter._items(self.MAPPING, items(loc_example_west_source=state))
+            self.assertNotIn("thermite_item_info", [name for name, _, _ in samples])
+            self.assertIn(("thermite_item_unavailable", labels, 1.0), samples)
+        shown = exporter._items(self.MAPPING, items(loc_example_west_source="off"))
+        self.assertIn(("thermite_item_info", {**labels, "value": "off"}, 1.0), shown)
+        self.assertNotIn("thermite_item_unavailable", [name for name, _, _ in shown])
+        self.assertIn("thermite_item_unavailable", exporter.FAMILIES)
+
+    def test_a_room_that_cannot_be_read_keeps_its_row(self):
+        timeline = next(panel for board in boards().values() for panel in panels(board)
+                        if panel.get("title") == "Rooms through the day")
+        self.assertTrue(timeline["targets"])
+        for target in timeline["targets"]:
+            item = re.search(r'item="([^"]+)"', target["expr"]).group(1)
+            self.assertIn(f'thermite_item_unavailable{{item="{item}"}}', target["expr"])
+        texts = {option["text"] for mapping in timeline["fieldConfig"]["defaults"]["mappings"]
+                 for option in mapping["options"].values()}
+        self.assertIn("Unavailable", texts)
+
+
 class RoutingSeries(unittest.TestCase):
     def series(self, **states):
         """The samples of a house with only the routing Items given."""

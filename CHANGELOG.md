@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A room whose devices cannot be read keeps its row in "Rooms through the
+  day", grey and labelled Unavailable, for as long as its readback is NULL
+  or UNDEF. The exporter dropped those states, so a room whose HDMI switch
+  had stopped answering for a day vanished from the panel. The exporter
+  now writes `thermite_item_unavailable` for any selection Item it cannot
+  read; a gap now means only that there was no data.
 - A receiver whose zones serve different rooms is checked per zone: each
   room's power check reads only the zone that room listens to. Every room
   on the receiver used to need all of its zones on, so a room playing on

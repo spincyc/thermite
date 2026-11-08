@@ -82,6 +82,7 @@ FAMILIES = {
     "thermite_thing_status": ("gauge", "The Thing's status, as a label; always 1."),
     "thermite_item_value": ("gauge", "A numeric Item state: switches 1 or 0, numbers as they are."),
     "thermite_item_info": ("gauge", "A selection Item's state, as a label; always 1."),
+    "thermite_item_unavailable": ("gauge", "1 while a selection Item is NULL or UNDEF: what it reads is unavailable."),
     "thermite_device_problem": ("gauge", "1 while the device's problem Item has a text."),
     "thermite_handler_pool_up": ("gauge", "1 when thingHandler telemetry is complete and at most 60 seconds old."),
     "thermite_handler_pool_observation_age_seconds": ("gauge", "Age of the native thingHandler telemetry sample."),
@@ -462,6 +463,8 @@ def _items(mapping: dict, answer: list) -> list[Sample]:
             text = to_label(state, spec.get("options"))
             if text is not None:
                 samples.append(("thermite_item_info", {**labels, "value": text}, 1.0))
+            else:
+                samples.append(("thermite_item_unavailable", labels, 1.0))
         elif convert in ("switch", "number"):
             value = to_number(state, convert)
             if value is not None:

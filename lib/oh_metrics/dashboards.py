@@ -395,9 +395,15 @@ def _zone_words(mapping: dict) -> dict:
             **{name: label for name, _, label in zones}}
 
 
+#: A source timeline's number for a zone whose readback is NULL or UNDEF.
+UNAVAILABLE = -1
+
+
 def _source_timeline(mapping: dict, zones: list[tuple[str, str, str]]) -> tuple[list[tuple[str, str]], list[dict]]:
     """The queries and the value mapping of a source timeline: each source a
-    number, shown as its device's label in tan, and Off in slate."""
+    number, shown as its device's label in tan, Off in slate, and a readback
+    that could not be read as Unavailable in grey, so that a zone whose
+    devices stopped answering keeps its row instead of vanishing."""
     devices = mapping.get("devices") or {}
     numbers: dict[str, int] = {}
     queries = []
@@ -407,10 +413,11 @@ def _source_timeline(mapping: dict, zones: list[tuple[str, str, str]]) -> tuple[
             numbers.setdefault(value, len(numbers))
             terms.append(f'thermite_item_info{{item={_q(name)},value={_q(value)}}} * {numbers[value]}')
         if terms:
+            terms.append(f'thermite_item_unavailable{{item={_q(name)}}} * {UNAVAILABLE}')
             queries.append((f'sum without (value) ({" or ".join(terms)})', label))
     names = {number: ("Off", OFF) if value == "off" else (devices.get(value, {}).get("label", value), IN_USE)
              for value, number in sorted(numbers.items(), key=lambda pair: pair[1])}
-    return queries, value_map(names)
+    return queries, value_map({UNAVAILABLE: ("Unavailable", UNKNOWN), **names})
 
 
 def _room_words(mapping: dict) -> dict:
@@ -537,7 +544,8 @@ def house(mapping: dict, probes: list[dict]) -> dict:
     if queries:
         board.add(state_timeline("Rooms through the day", queries, names,
                                  "Each zone's confirmed source readback, sampled every 30 s; not the requested "
-                                 "source. Tan: a source is selected. Slate: Off. A gap: unknown.", show_values=True),
+                                 "source. Tan: a source is selected. Slate: Off. Grey: Unavailable, the room's "
+                                 "devices could not be read. A gap: no data.", show_values=True),
                   24, max(6, len(queries) + 2))
     else:
         board.add(note("No routing zones", "This house has no routed source Items; Devices shows each device."), 24, 3)
