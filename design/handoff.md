@@ -1,7 +1,7 @@
 # Thermite work handoff
 
-Updated 2026-11-08. `main` is at 44de41d, CI green on Python 3.11–3.14, and
-deployed on the owner's house. The plan for what follows is
+Updated 2026-11-08. `main` is at fca2412, CI green on Python 3.11–3.14;
+the owner's house runs 44de41d until its next upgrade. The plan for what follows is
 [device-contract.md](device-contract.md): stage 1 is done; stages 2 and 3
 are not started. House-specific work (devices to check in person, owner
 settings, live tests) is in the private site's handoff, not here.
@@ -19,7 +19,7 @@ settings, live tests) is in the private site's handoff, not here.
 - Each stage ships on its own, tested, with `make check` run on the exact
   commit before it is published.
 
-## Shipped in this round (70b5836..44de41d)
+## Shipped in this round (70b5836..fca2412)
 
 - Routing planner: per-device settle declarations (`SETTLE`), a journaled
   `pending` wait that also survives reloads, overflows and descriptor
@@ -36,6 +36,10 @@ settings, live tests) is in the private site's handoff, not here.
   pre-zeroed counters, the house's own deadline, new alerts
   ThermitePolicyUnenforced, ThermiteRoutingTelemetryUnavailable and
   ThermiteGatewayFeedDown); a house without an HDMI matrix generates.
+- HEOS: one bridge per house, not one per receiver; `heos_bridge: true`
+  picks the receiver it connects through.
+- The handheld bridge's `--listen` socket is created owner-only, closing
+  a race its test caught on CI.
 
 ## Next: stage 2a, integration declarations
 
@@ -188,10 +192,10 @@ function. That replaces these, all found in the cold review:
 ## Upstream
 
 - openHAB HEOS binding: thermite ships a patched 5.2.3 binding for the
-  reconnect leak. The upstream fix for the reconnect loop ("[heos] Stop
-  resetting a quiet event stream") is a one-commit branch,
-  `heos-quiet-event-stream`. Its PR description is drafted. The owner
-  reviews it before it is submitted.
+  reconnect leak. The upstream fix for the reconnect loop is
+  [openhab-addons#22234](https://github.com/openhab/openhab-addons/pull/22234),
+  "[heos] Stop resetting a quiet event stream". Once a release carries it
+  and #21781, the patched binding can go.
 - Thermite used to render one HEOS bridge per receiver, against the
   binding's guidance that one bridge serves the whole HEOS network; it now
   renders one per house. The upstream reconnect-loop fix is still needed
@@ -203,10 +207,10 @@ function. That replaces these, all found in the cold review:
 - System `python3` lacks `prometheus_client` and Django. Run `make check
   PYTHON=<venv>` and the identity tests with a virtualenv that has both.
   The identity state directory must be created with mode 0700.
-- Local-only failures:
-  - the two `tests.test_handheld.Serve` socket tests, whose Unix socket
-    path is too long under a deep worktree;
-  - an occasional atime flake in
-    `test_repeated_current_application_reuses_environment_and_keeps_launcher_and_commit`.
+- Under a deep worktree the Unix socket path of the two
+  `tests.test_handheld.Serve` tests is too long. Run `make check` with
+  `TMPDIR` set to a short directory, such as one from `mktemp -d /tmp/t.XXXX`.
+- A local-only failure: an occasional atime flake in
+  `test_repeated_current_application_reuses_environment_and_keeps_launcher_and_commit`.
 - Reviews and fixes ran as lanes in worktrees under `.scratch/`. Everything
   listed as shipped is on `main`.
