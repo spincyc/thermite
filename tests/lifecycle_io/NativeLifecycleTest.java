@@ -50,13 +50,19 @@ public class NativeLifecycleTest {
         ctx.getBindings("js").putMember("nativeThing",thing);
         ctx.eval("js", "const hooks=[], reports=[], updates=[], wakes=[]; const module={exports:{}};"+
             "function require(name){if(name==='@runtime/cache')return {sharedCache:runtimeCache};if(name==='@runtime')return {lifecycleTracker:{addDisposeHook:h=>hooks.push(h)}};"+
-            "if(name!=='openhab')throw Error(name);return {cache:{shared:{get:()=>{throw Error('unsafe jsifying cache wrapper');}}},"+
+            "if(name==='thermite-routing-io')return module.exports;if(name!=='openhab')throw Error(name);return {cache:{shared:{get:()=>{throw Error('unsafe jsifying cache wrapper');}}},"+
             "osgi:{getService:()=>({getCommonHttpClient:()=>common})},things:{getThing:()=>({rawThing:nativeThing})},"+
             "rules:{JSRule(){}},triggers:{GenericCronTrigger(){},ItemCommandTrigger(){}},"+
             "items:{getItem:name=>({state:'UNDEF',postUpdate:value=>updates.push([name,value]),sendCommand:value=>wakes.push([name,value])})}};}"+
             "const descriptor="+descriptor+";");
         ctx.eval("js",source);
         return ctx;
+    }
+    private static String denonSource;
+    // The receiver's own rule (denonmarantz_http.js, rendered) as its actor's provider.
+    private static String denon(String fields) {
+        return "const executor=(()=>{"+denonSource+";const fields="+fields+";"+
+            "return module.exports.actor({key:'receiver',io:descriptor.io,fields},routingProvider(module.exports,fields),{noRules:true});})();";
     }
     private static String operation(String token,String key,String resource,String value) {
         return "{token:String('"+token+"'),key:'"+key+"',resource:'"+resource+"',value:'"+value+"',phase:'acquire',isCurrent:()=>true}";
@@ -67,6 +73,7 @@ public class NativeLifecycleTest {
     public static void main(String[] args) throws Exception {
         System.setProperty("openhab.userdata",args[2]);
         String source=Files.readString(Path.of(args[0])).replace("// THERMITE_BOUNDED_IO",Files.readString(Path.of(args[1])));
+        denonSource=Files.readString(Path.of(args[4]));
         String descriptor="{io:{epoch:'native-test',wake:'events',actors:{slow:{wake:'slow_wake',resources:['slow_D1']},fast:{wake:'fast_wake',resources:['fast_D1']},receiver:{wake:'receiver_wake',resources:['receiver_power','receiver_input']}}}}";
         var shared=new ConcurrentHashMap<String,Object>();
         var pool=Executors.newCachedThreadPool();
@@ -195,7 +202,7 @@ public class NativeLifecycleTest {
         try(Context root=context(shared,common,new Thing(url),source,descriptor);
             Context receiver=context(shared,common,new Thing(url),source,descriptor)) {
             root.eval("js","const bridge=module.exports.create(descriptor);function report(e){reports.push(e);}");
-            receiver.eval("js","const executor=module.exports.httpActor({key:'receiver',io:descriptor.io,fields:{receiver_power:{kind:'denon',thing:'owned',zone:1,point:'power',allowed:['ON','OFF']},receiver_input:{kind:'denon',thing:'owned',zone:1,point:'input',allowed:['SAT/CBL','MPLAY']}}},{noRules:true});");
+            receiver.eval("js",denon("{receiver_power:{kind:'denon',thing:'owned',zone:1,point:'power',allowed:['ON','OFF']},receiver_input:{kind:'denon',thing:'owned',zone:1,point:'input',allowed:['SAT/CBL','MPLAY']}}"));
             root.eval("js","bridge.probe({token:String('receiver-input'),key:'receiver',resource:'receiver_input'},report);");
             receiver.eval("js","executor.drain();");
             root.eval("js","bridge.events();if(!reports.some(e=>e.token==='receiver-input'&&e.type==='sample'&&e.value==='SAT/CBL'&&e.fresh&&e.retired))throw Error('main input not read with accepted wire format');");
@@ -216,7 +223,7 @@ public class NativeLifecycleTest {
         try(Context root=context(shared,common,new Thing(url),source,descriptor);
             Context receiver=context(shared,common,new Thing(url),source,descriptor)) {
             root.eval("js","const bridge=module.exports.create(descriptor);function report(e){reports.push(e);}");
-            receiver.eval("js","const executor=module.exports.httpActor({key:'receiver',io:descriptor.io,fields:{receiver_power:{kind:'denon',thing:'owned',zone:1,point:'power',allowed:['ON','OFF']}}},{noRules:true});");
+            receiver.eval("js",denon("{receiver_power:{kind:'denon',thing:'owned',zone:1,point:'power',allowed:['ON','OFF']}}"));
             root.eval("js","bridge.probe({token:String('entity-xml'),key:'receiver',resource:'receiver_power'},report);");
             receiver.eval("js","executor.drain();");
             root.eval("js","bridge.events();if(!reports.some(e=>e.token==='entity-xml'&&e.type==='terminal'&&e.reason==='owned_probe_failed'))throw Error('entity XML accepted');");

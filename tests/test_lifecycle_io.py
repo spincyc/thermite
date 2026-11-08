@@ -13,7 +13,7 @@ AREA=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(AREA/'lib'))
 from oh_conf import House, Conf, YamlFile  # noqa: E402
 from oh_features.routing import lifecycle_io  # noqa: E402
-from oh_integrations import ukm404_http, avpro_telnet, sony_adcp, sony_ip_control, pyatv_http, sony_rest  # noqa: E402
+from oh_integrations import ukm404_http, avpro_telnet, sony_adcp, sony_ip_control, pyatv_http, sony_rest, denonmarantz_http  # noqa: E402
 from oh_testing import routing as routing_check  # noqa: E402
 
 
@@ -103,12 +103,57 @@ class Rendering(unittest.TestCase):
                 self.assertEqual(next(line for line in aimed[path].splitlines() if line.startswith('const ROUTING_EXECUTOR = ')),config_line)
 
 
+class Denon(unittest.TestCase):
+    """The receiver's routing actor is its integration's own rule."""
+
+    def test_its_rule_renders_the_aliases_its_module_declares(self):
+        text = denonmarantz_http.rule()
+        line = next(line for line in text.splitlines() if line.startswith('const INPUT_ALIASES = '))
+        self.assertEqual(json.loads(line[len('const INPUT_ALIASES = '):-1]), denonmarantz_http.INPUT_ALIASES)
+        self.assertEqual(text.splitlines().count(lifecycle_io.CUSTOM_MARK), 1)
+        self.assertEqual(text.count('const SEND = true;'), 1)
+        self.assertNotIn('GAME', denonmarantz_http.SOURCE.read_text(encoding='utf-8'))
+
+    def test_files_render_one_actor_per_receiver_under_control(self):
+        from tests.test_zone_sync import HOUSE
+        avr = next(device for device in HOUSE['devices'] if device['id'] == 'example_avr')
+        watched = {**avr, 'id': 'example_watched', 'controls': {'observe': [denonmarantz_http.NAME]}}
+        files = denonmarantz_http.files([avr, watched], House(HOUSE))
+        self.assertIn(denonmarantz_http.rule_path(avr), files)
+        self.assertNotIn(denonmarantz_http.rule_path(watched), files)
+
+    def test_the_lifecycle_fills_its_rule_with_each_zone(self):
+        import oh_render
+        from tests.test_zone_sync import house
+        files = oh_render.render(house())
+        text = files[denonmarantz_http.rule_path({'id': 'example_avr'})]
+        self.assertNotIn('automation/js/thermite_routing_io_example_avr.js', files)
+        config = json.loads(next(line for line in text.splitlines() if line.startswith('const ROUTING_EXECUTOR = '))[len('const ROUTING_EXECUTOR = '):-1])
+        self.assertEqual({item: (field['zone'], field['point']) for item, field in config['fields'].items()},
+                         {'example_avr_main_power': (1, 'power'), 'example_avr_main_input': (1, 'input'),
+                          'example_avr_zone2_power': (2, 'power'), 'example_avr_zone2_input': (2, 'input')})
+        self.assertIn('SOURCE', config['fields']['example_avr_zone2_input']['allowed'])
+        self.assertNotIn('SOURCE', config['fields']['example_avr_main_input']['allowed'])
+        self.assertTrue(all(field == {'kind': 'denon', 'thing': 'denonmarantz:avr:example_avr', **{k: field[k] for k in ('zone', 'point', 'allowed')}}
+                            for field in config['fields'].values()))
+
+    @unittest.skipUnless(shutil.which('node'), 'node required')
+    def test_its_provider_on_the_generic_executor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rule = Path(directory) / 'denonmarantz_http.js'
+            rule.write_text(denonmarantz_http.rule(), encoding='utf-8')
+            result = subprocess.run([shutil.which('node'), str(AREA / 'tests/denonmarantz_http_harness.js'), str(lifecycle_io.SOURCE), str(rule)],
+                                    capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['passed'], 12)
+
+
 @unittest.skipUnless(shutil.which('node'),'node required')
 class Broker(unittest.TestCase):
     def test_actual_executor_source(self):
         result=subprocess.run([shutil.which('node'),str(AREA/'tests/lifecycle_io_harness.js'),str(lifecycle_io.SOURCE),str(pyatv_http.SOURCE)],capture_output=True,text=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(json.loads(result.stdout)['passed'],42)
+        self.assertEqual(json.loads(result.stdout)['passed'],41)
 
 
 class Quiescence(unittest.TestCase):
@@ -165,9 +210,11 @@ class NativeBroker(unittest.TestCase):
             compiled=subprocess.run([java,'-jar',os.environ['THERMITE_ECJ'],'-21','-proc:none','-cp',classpath,'-d',temporary,
                                      str(AREA/'tests/lifecycle_io/NativeLifecycleTest.java')],capture_output=True,text=True,timeout=30)
             self.assertEqual(compiled.returncode,0,compiled.stdout+compiled.stderr)
+            denon=directory/'denonmarantz_http.js';denon.write_text(denonmarantz_http.rule(),encoding='utf-8')
             try:
                 result=subprocess.run([java,'-cp',temporary+os.pathsep+classpath,'NativeLifecycleTest',str(lifecycle_io.SOURCE),
-                                       str(AREA/'lib/oh_integrations/_io.js'),str(directory/'userdata'),str(sony_ip_control.SOURCE)],capture_output=True,text=True,timeout=35)
+                                       str(AREA/'lib/oh_integrations/_io.js'),str(directory/'userdata'),str(sony_ip_control.SOURCE),str(denon)],
+                                      capture_output=True,text=True,timeout=35)
             except subprocess.TimeoutExpired as error:
                 self.fail('native broker timeout: '+str(error.stdout)+' '+str(error.stderr))
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)

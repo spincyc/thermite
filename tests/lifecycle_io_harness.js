@@ -189,31 +189,6 @@ test('VRROOM requires owned matching readback without inventing an ACK response 
  const lagging=run('',2,'readback');assert(lagging.reports.some(e=>e.type==='terminal'&&e.admitted&&!e.sample));assert.equal(lagging.requests.length,6);
  assert(run('',3,'result').reports.some(e=>e.type==='uncertain'));
 });
-test('Denon main-zone probes keep the firmware UTF-8 CRLF serialization',()=>{
- const f=setup(),requests=[],reports=[];
- const nativeThing={getConfiguration:()=>new Map([['host','192.0.2.1'],['httpPort',8080]])};
- const openhab={things:{getThing:()=>({rawThing:nativeThing})},items:{getItem:()=>({postUpdate(){}})}};
- const context=vm.createContext({module:{exports:{}},require(name){assert.equal(name,'openhab');return openhab;},
-  thermiteIO:{http(url,method,body,headers){requests.push({url,method,body,headers});throw Error('fixture stops after the outbound read');}}});
- vm.runInContext(source,context);const module=context.module.exports,bridge=module.create(f.descriptor,f.env);
- const actor=module.httpActor({key:'switch',io:f.descriptor.io,fields:{
-  D1:{kind:'denon',thing:'native',zone:1,point:'power',allowed:['ON','OFF']},
-  D2:{kind:'denon',thing:'native',zone:1,point:'input',allowed:['SAT/CBL','MPLAY']}}},{...f.env,journal:{load:()=>null,save(){}}});
- for(const resource of ['D1','D2']) {
-  bridge.probe({token:String('wire-'+resource),key:'switch',resource},row=>reports.push(row));actor.drain();bridge.events();
- }
- assert.equal(requests.length,2);
- for(const [index,name] of ['GetAllZonePowerStatus','GetSourceStatus'].entries()) {
-  const request=requests[index];
-  assert.equal(request.url,'http://192.0.2.1:8080/goform/AppCommand.xml');assert.equal(request.method,'POST');
-  assert.equal(request.headers['Content-Type'],'application/xml');
-  assert.equal(request.body,'<?xml version="1.0" encoding="utf-8"?>\r\n<tx>\r\n<cmd id="1">'+name+'</cmd>\r\n</tx>\r\n');
- }
- assert.equal(reports.filter(row=>row.type==='terminal'&&row.reason==='owned_probe_failed').length,2);
- assert.equal(JSON.parse(f.broker.states.get('switch')).quarantine,null);
- // The failed reads are logged by their error's name, never its message.
- const lines=tickets(f);assert.equal(lines.length,2);assert(lines.every(line=>line.endsWith(' exc=Error')&&!line.includes('fixture')));
-});
 test('superseded manual proposal cannot take over current intent but its receipt survives',()=>{
  const f=setup(),manual=[];f.bridge.onLegacy(e=>{manual.push(e);if(e.type==='legacy'){assert(f.broker.lock.depth>0);f.bridge.authorizeLegacy(e.token);}});
  f.actor.legacy('D1','3');f.submit('new-intent','D1','2');f.bridge.events();
