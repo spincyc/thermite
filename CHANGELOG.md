@@ -92,8 +92,11 @@ rollback. The unified deployment workflow uses a separate committed private site
   most 60 seconds for On, 30 for Off), startup and cooling are waited out,
   and the projector is read every few seconds meanwhile; only then is its
   next power or input command sent. A route's deadline moves with the wait,
-  by at most 5 minutes, and a wait still open at a reload is resumed. A
-  projector still starting up when its wait ends is used anyway and logged
+  by at most 5 minutes. A wait still open at a reload is resumed, also when
+  the reload changed the routing configuration (for at most the new wait),
+  and a power command whose result was lost (routing reloaded while the
+  projector was answering, or its event queue overflowed) is waited for
+  once the projector answers again. A projector still starting up when its wait ends is used anyway and logged
   once at warn (`routing settle ... outcome=still_moving`). Integrations
   declare these waits per field (`SETTLE`, and transition reads); fields
   without one behave as before.

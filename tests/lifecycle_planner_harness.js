@@ -865,7 +865,7 @@ function theaterDescriptor(settle = {ON: 60000, OFF: 30000}) {
       Off: {off: true, deactivate: {Power: 'OFF'}}}}}};
 }
 function theater(options = {}) {
-  const config = options.config || theaterDescriptor(options.settle);
+  let config = options.config || theaterDescriptor(options.settle);
   const lag = options.lag === undefined ? 6000 : options.lag, phase = options.phase === undefined ? 15000 : options.phase;
   const device = Object.assign({status: 'standby', until: 0, input: 'hdmi2', queued: null}, options.device || {});
   let time = 0, sequence = 0, saved = null, coordinator = null;
@@ -896,6 +896,8 @@ function theater(options = {}) {
   }
   function serve(entry) {
     const operation = entry.operation;
+    // A test may answer an operation itself (r.intercept returns true).
+    if (r.intercept && r.intercept(entry)) return;
     if (!operation.isCurrent()) { entry.report({type: 'terminal', token: operation.token, admitted: false}); return; }
     entry.report({type: 'admitted', token: operation.token});
     if (operation.kind === 'probe') {
@@ -941,7 +943,7 @@ function theater(options = {}) {
   start();
   const r = {device, sent, warnings, run, serveAll, now: () => time,
     request: (choice, id) => { r.coordinator.request('Theater', choice, id); serveAll(); },
-    reload: () => { r.coordinator.close(); start(); r.coordinator = coordinator; },
+    reload: next => { r.coordinator.close(); if (next) config = next; start(); r.coordinator = coordinator; },
     endpoint: () => r.coordinator.snapshot().endpoints.Theater,
     writes: () => sent.filter(line => line.includes('='))};
   r.coordinator = coordinator;
@@ -993,6 +995,70 @@ test('a reload keeps a pending power on, and an Off after it still turns the pro
   const late = theater({lag: 1e9});
   late.request('Movie'); late.run(30000); late.reload();
   assert.equal(late.coordinator.snapshot().resources.Power.pending.until, 60000);
+});
+
+test('a reload that changes the descriptor keeps a pending power on while it still declares a settle', () => {
+  const r = theater();
+  r.request('Movie'); r.run(1000);
+  const changed = theaterDescriptor(); changed.deadlineMs = 11000;
+  r.reload(changed);
+  assert.deepEqual(r.coordinator.snapshot().resources.Power.pending, {value: 'ON', until: 60000});
+  r.request('Off'); r.run(120000);
+  assert.deepEqual(r.writes(), ['0 Power=ON', '21000 Power=OFF']);
+  assert.equal(r.device.status, 'standby'); assert.deepEqual(r.endpoint().failures, {});
+  // At most the new settle; none once the value declares none.
+  const shorter = theater(); shorter.request('Movie'); shorter.run(1000);
+  shorter.reload(theaterDescriptor({ON: 20000, OFF: 30000}));
+  assert.deepEqual(shorter.coordinator.snapshot().resources.Power.pending, {value: 'ON', until: 21000});
+  const dropped = theater(); dropped.request('Movie'); dropped.run(1000);
+  dropped.reload(theaterDescriptor({OFF: 30000}));
+  assert.equal(dropped.coordinator.snapshot().resources.Power.pending, null);
+});
+
+test('a power on whose result was lost is waited for once its device recovers, and Off still turns it off', () => {
+  // The projector takes the on (it shows 6 s later), but the planner hears
+  // only an overflow's uncertain report; the actor's readiness then ends
+  // the quarantine (routing.js calls recover()).
+  const r = theater();
+  r.intercept = entry => {
+    if (entry.operation.kind !== 'write' || r.lost) return false;
+    r.lost = entry; entry.report({type: 'admitted', token: entry.operation.token});
+    r.device.queued = {value: 'ON', at: r.now() + 6000};
+    entry.report({type: 'uncertain', token: entry.operation.token, reason: 'executor_event_overflow'});
+    return true;
+  };
+  r.request('Movie'); r.run(500);
+  r.coordinator.recover('projector', {terminal: true});
+  const power = r.coordinator.snapshot().resources.Power;
+  assert.deepEqual(power.pending, {value: 'ON', until: 60500}); assert.equal(power.lastWrite.value, 'ON');
+  r.request('Off'); r.run(120000);
+  assert.deepEqual(r.writes(), ['25500 Power=OFF']); assert.equal(r.device.status, 'standby');
+  assert.deepEqual(r.endpoint().failures, {});
+  // Reloaded while the on was still in its actor: restored as
+  // restart-uncertain, then recovered the same way.
+  const s = theater({lag: 15000});
+  s.intercept = entry => {
+    if (entry.operation.kind !== 'write' || s.lost) return false;
+    s.lost = entry; entry.report({type: 'admitted', token: entry.operation.token});
+    s.device.queued = {value: 'ON', at: s.now() + 15000};
+    return true;
+  };
+  s.request('Movie'); s.run(2000); s.reload();
+  assert.equal(s.coordinator.snapshot().slots.projector.quarantine, 'restart-uncertain');
+  s.run(6000); s.coordinator.recover('projector', {terminal: true});
+  assert.deepEqual(s.coordinator.snapshot().resources.Power.pending, {value: 'ON', until: 68000});
+  s.request('Off'); s.run(120000);
+  assert.deepEqual(s.writes(), ['33000 Power=OFF']); assert.equal(s.device.status, 'standby');
+  // A recovered key without a lost write, or a write with no settle, starts no wait.
+  const t = theater({settle: null});
+  t.intercept = entry => {
+    if (entry.operation.kind !== 'write' || t.lost) return false;
+    t.lost = entry; entry.report({type: 'admitted', token: entry.operation.token});
+    entry.report({type: 'uncertain', token: entry.operation.token, reason: 'executor_event_overflow'});
+    return true;
+  };
+  t.request('Movie'); t.coordinator.recover('projector', {terminal: true});
+  assert.equal(t.coordinator.snapshot().resources.Power.pending, null);
 });
 
 test('Item observations never end, satisfy or shorten a settle wait', () => {
