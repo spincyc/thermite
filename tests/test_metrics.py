@@ -189,6 +189,22 @@ class Checks(unittest.TestCase):
         self.assertTrue(amp)
         self.assertEqual({rule["labels"]["required"] for rule in amp}, {"true", "false"})
 
+    def test_a_shared_receivers_power_is_checked_per_zone(self):
+        from tests import test_zone_sync as zones
+        mapping = json.loads(rendered(zones.house())[oh_metrics.EXPORTER_MAP])
+        recorded, _ = alerts.checks(mapping)
+        power = {rule["labels"]["zone"]: rule["expr"] for rule in recorded
+                 if rule["labels"].get("device") == "example_avr" and rule["labels"]["check"] == "power"
+                 and rule["labels"]["required"] == "true"}
+        cinema, lounge = (f"loc_{room}_source" for room in (zones.CINEMA, zones.LOUNGE))
+        self.assertEqual(set(power), {cinema, lounge})
+        # Each room needs only the zone it listens to: the Lounge is not
+        # failing while the Cinema's main zone is off, nor the reverse.
+        self.assertIn('"example_avr_main_power"', power[cinema])
+        self.assertNotIn("zone2", power[cinema])
+        self.assertIn('"example_avr_zone2_power"', power[lounge])
+        self.assertNotIn("main_power", power[lounge])
+
     def test_check_values_fail_first_then_need_every_series(self):
         one = alerts._check_value(['thermite_thing_online{thing="a"}'], 0)
         self.assertEqual(one, 'max(thermite_thing_online{thing="a"} == bool 0) or vector(-1)')

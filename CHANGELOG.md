@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A receiver whose zones serve different rooms is checked per zone: each
+  room's power check reads only the zone that room listens to. Every room
+  on the receiver used to need all of its zones on, so a room playing on
+  zone 2 while the main zone's room was off read as failing, turned the
+  dashboards' control health red and fired ThermiteCheckFailing although
+  nothing was wrong.
 - A locked room whose receiver or projector changes by itself, such as one
   turning back on in a room locked Off, is repaired as soon as the device
   reports it, however long the room has shown Unknown. Every Unknown pass

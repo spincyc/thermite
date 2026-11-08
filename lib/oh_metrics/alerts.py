@@ -143,28 +143,33 @@ def checks(mapping: dict) -> tuple[list[dict], int]:
         record(f'(count(thermite_item_info{{item={_q(item)},value!="other"}}) * 0) or vector(-1)',
                _zone_room(mapping, item), "", "source", True, item)
         always_required += 1
+    # A zone's check reads only the series its own demands added: two rooms
+    # on different zones of one receiver each check their own zone's power.
     groups: dict[tuple[str, str], dict] = {}
     for check in mapping.get("health_checks") or []:
         device, name = check.get("device", ""), check.get("check", check["metric"])
         group = groups.setdefault((device, name), {"selectors": [], "bad": check["bad"], "always": False,
-                                                   "demands": [], "optional": bool(check.get("optional"))})
+                                                   "zones": {}, "optional": bool(check.get("optional"))})
         selector = ",".join(f"{key}={_q(value)}" for key, value in check["labels"].items())
-        group["selectors"].append(f"{check['metric']}{{{selector}}}")
+        selector = f"{check['metric']}{{{selector}}}"
+        group["selectors"].append(selector)
         group["always"] |= bool(check["always"])
-        group["demands"] += [demand for demand in check["required"] if demand not in group["demands"]]
+        for demand in check["required"]:
+            zone = group["zones"].setdefault(demand["item"], {"selectors": [], "demands": []})
+            if selector not in zone["selectors"]:
+                zone["selectors"].append(selector)
+            if demand not in zone["demands"]:
+                zone["demands"].append(demand)
     devices = mapping.get("devices") or {}
     for (device, name), group in sorted(groups.items()):
-        value = _check_value(group["selectors"], group["bad"])
         if group["always"]:
             room = str((devices.get(device) or {}).get("room") or "house")
-            record(value, room, device, name, not group["optional"])
+            record(_check_value(group["selectors"], group["bad"]), room, device, name, not group["optional"])
             always_required += not group["optional"]
             continue
-        by_zone: dict[str, list[dict]] = {}
-        for demand in group["demands"]:
-            by_zone.setdefault(demand["item"], []).append(demand)
-        for item, demands in sorted(by_zone.items()):
-            room, used = _zone_room(mapping, item), _demand(demands)
+        for item, zone in sorted(group["zones"].items()):
+            value = _check_value(zone["selectors"], group["bad"])
+            room, used = _zone_room(mapping, item), _demand(zone["demands"])
             if group["optional"]:
                 record(value, room, device, name, False, item)
                 continue
