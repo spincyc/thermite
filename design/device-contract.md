@@ -97,8 +97,8 @@ declarations, not by a house-wide flag.
 |---|---|---|
 | 1 | Fixes for this house: synced EDID; post every poll; out-of-set values are mismatches; quarantine reason table; observation re-read; AVPro refusals; projector settle and transitions (the first `settle`/`transitions` terms) | Done |
 | 2a | The `fields(device)` hook; move Denon into its integration; remove the integration chain from `lifecycle_io.py` and pyatv from `plan.py` | |
-| 2b | `busy`/`transient` outcomes and retries; deadlines from declarations; route outcome published | |
-| 2c | `feedback` and freshness drive the room policy; `reports` normalization; `power` kinds (SHIELD wake); `recovery`. The VRROOM is the first integration on the full contract: control over telnet (push with `ipinterrupt`, acknowledged `set insel`, `set reboot` as recovery), HTTP kept only for the diagnostics telnet lacks (+5 V, hot-plug, eARC) | |
+| 2b | `busy`/`transient` outcomes and retries; deadlines from declarations; route outcome published; the planner's own quarantine and every quarantine reason exported as metrics | |
+| 2c | `feedback` and freshness drive the room policy; `reports` normalization; `power` kinds (SHIELD wake); `recovery`; availability from `feedback`, so a script-driven device that stops answering fails its check, not only goes Unknown (today an AVPro matrix has no check at all, and an Apple TV or projector only a power check). The VRROOM is the first integration on the full contract: control over telnet (push with `ipinterrupt`, acknowledged `set insel`, `set reboot` as recovery), HTTP kept only for the diagnostics telnet lacks (+5 V, hot-plug, eARC) | |
 | 3a | The hop room model and its single derivation; the routing check uses it | |
 | 3b | Policy fence and command origin; clients show route outcome, `partial`, and a live-connection watchdog | |
 
