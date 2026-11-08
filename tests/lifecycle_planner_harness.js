@@ -4,7 +4,7 @@
 // Its terminal/sample events implement the declared executor contract; native
 // value-only observations deliberately do not. No device or network access.
 const assert = require('assert');
-const {createCoordinator} = require('../lib/oh_features/routing/lifecycle.js');
+const {createCoordinator, QUARANTINE_REASONS} = require('../lib/oh_features/routing/lifecycle.js');
 const clone = value => JSON.parse(JSON.stringify(value));
 const tests = [];
 function test(name, action) { tests.push([name, action]); }
@@ -451,12 +451,41 @@ test('a descriptor change retains recognized old writers instead of forgetting t
   const first = rig(); first.seed(); first.coordinator.request('Desk', 'LocalComputer');
   first.drain(operation => operation.resource === 'D1' && operation.kind === 'write');
   const old = first.take(operation => operation.resource === 'D1' && operation.kind === 'write'); assert(old);
+  first.coordinator.hold('manual_effect:D2', {resources: ['D2'], sources: ['A']});
+  const saved = first.saved();
+  // A key whose old slot no longer names a known write, and a hold naming a
+  // property the new descriptor lacks.
+  saved.slots.display = {operation: null, successor: null, quarantine: 'provider_outcome_unknown', untracked: false};
+  saved.holds.gone = {sources: [], resources: ['Removed']};
   const config = descriptor(); config.deadlineMs = 11000;
-  const r = rig({config, saved: first.saved(), actual: first.actual, instanceId: 'changed'});
-  assert.equal(r.coordinator.snapshot().slots.usb.operation.token, old.operation.token);
-  assert.equal(r.coordinator.snapshot().slots.usb.quarantine, 'incompatible-journal');
+  const r = rig({config, saved, actual: first.actual, instanceId: 'changed'});
+  const status = r.coordinator.snapshot();
+  assert.equal(status.slots.usb.operation.token, old.operation.token);
+  // It waits as after any restart, so the device's actor can end it.
+  assert.equal(status.slots.usb.quarantine, 'restart-uncertain');
+  assert.equal(status.slots.display.quarantine, 'incompatible-journal'); assert(status.slots.display.untracked);
+  assert.deepEqual(Object.keys(status.holds), ['manual_effect:D2']);
   assert.equal(r.pending.length, 0);
   r.coordinator.request('Desk', 'Other'); r.drain(); assert(!r.writes.includes('D1=H1'));
+});
+
+test('every quarantine reason the planner or executor gives is in the table routing.js recovers by', () => {
+  const r = rig(); r.coordinator.request('Media', 'SharedComputer');
+  const zone = r.take(operation => operation.resource === 'Zone'); r.begin(zone);
+  zone.report({type: 'uncertain', token: zone.operation.token, reason: 'device said: secret'});
+  assert.equal(r.coordinator.snapshot().slots.receiver.quarantine, 'uncertain');
+  const read = name => require('fs').readFileSync(require('path').join(__dirname, '../lib/oh_features/routing', name), 'utf8');
+  const given = new Set();
+  for (const [, reason] of read('lifecycle.js').matchAll(/quarantine = '([a-z_-]+)'/g)) given.add(reason);
+  for (const [, reason] of read('lifecycle.js').matchAll(/type: 'uncertain', token: [\w.]+, reason: '([a-z_-]+)'/g)) given.add(reason);
+  for (const line of read('lifecycle_io.js').split('\n')) {
+    const at = line.search(/type: ?'uncertain'/);
+    if (at < 0) continue;
+    const tail = line.slice(line.indexOf('reason:', at));
+    for (const [, reason] of tail.slice(0, tail.indexOf('}')).matchAll(/'([a-z_]+)'/g)) given.add(reason);
+  }
+  assert(given.size >= 8, Array.from(given).join());
+  for (const reason of given) assert(QUARANTINE_REASONS.includes(reason), reason);
 });
 
 test('failure to invalidate queued authority prevents new dispatch', () => {

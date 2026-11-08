@@ -59,6 +59,13 @@ rollback. The unified deployment workflow uses a separate committed private site
   whose window starts on the source its locked leader shows is no longer
   refused as a shared-resource conflict; another room locked on that source
   still refuses it.
+- Under the routing lifecycle, a device whose command was cut short by a
+  deploy that changed the routing configuration is usable again as soon as
+  its device script answers, as after any restart. It used to stay blocked
+  until a second reload, and a manual change to a device (a remote, a key
+  press) stopped protecting it at that deploy. The same now holds for a
+  command the planner could not hand over or whose start was reported out
+  of order. The planner and routing.js now share one list of these reasons.
 - Under the routing lifecycle, an Item that briefly shows another value or
   UNDEF (a late update, a failed poll) no longer stalls a route or leaves a
   finished one looking not ready. Such a value used to discard the

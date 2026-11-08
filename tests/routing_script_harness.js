@@ -3,6 +3,8 @@
 // stub openHAB, executor and planner modules. No device or network access.
 const fs = require('fs'), path = require('path'), vm = require('vm'), assert = require('assert');
 const source = fs.readFileSync(process.argv[2], 'utf8');
+// The planner's own reason table, as routing.js reads it in production.
+const {QUARANTINE_REASONS} = require(path.join(path.dirname(path.resolve(process.argv[2])), 'lifecycle.js'));
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
 
@@ -60,7 +62,8 @@ function load(options = {}) {
       triggers: { ItemCommandTrigger: name => ({ name }), ItemStateChangeTrigger: name => ({ name }) },
     },
     'thermite-routing-io': { create: () => executor, nativeJournal: () => ({ load: () => null, save() {}, path: '/userdata/thermite-routing/executor_coordinator.json' }) },
-    'thermite-routing-lifecycle': { createCoordinator(descriptor, dependencies) { deps = dependencies; return lifecycle; } },
+    'thermite-routing-lifecycle': { QUARANTINE_REASONS,
+      createCoordinator(descriptor, dependencies) { deps = dependencies; return lifecycle; } },
     '@runtime': { lifecycleTracker: { addDisposeHook() {} } },
   };
   const context = vm.createContext({
@@ -121,10 +124,12 @@ test('other planner errors still surface, before anything is sent', () => {
   assert.deepEqual(r.sent, []);
 });
 
-test('actor readiness clears only quarantine the executor caused', () => {
-  for (const [reason, cleared] of [['restart-uncertain', true], ['provider_outcome_unknown', true], ['journal_or_admission_failed', true],
-    ['executor_quarantined', true], ['executor_event_overflow', true], ['adapter-threw', false],
-    ['unordered-external-admission', false], ['incompatible-journal', false]]) {
+test('actor readiness clears every quarantine reason in the planner table, and nothing else', () => {
+  // A deploy's incompatible journal, a thrown adapter and an out-of-order
+  // admission used to wait for a second reload.
+  for (const reason of ['incompatible-journal', 'adapter-threw', 'unordered-external-admission'])
+    assert(QUARANTINE_REASONS.includes(reason), reason);
+  for (const [reason, cleared] of [...QUARANTINE_REASONS.map(reason => [reason, true]), ['not-a-planner-reason', false]]) {
     const r = load({ slots: { matrix: { quarantine: reason } } });
     r.legacy({ type: 'retired', legacy: true, recovered: true, key: 'matrix', token: null });
     assert.deepEqual(r.calls.filter(call => call.startsWith('recover')), cleared ? ['recover matrix true'] : [], reason);
