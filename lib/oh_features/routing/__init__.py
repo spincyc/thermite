@@ -217,6 +217,13 @@ def action_item(devices: dict, device_id: str) -> str:
     return module.action_item(device) if module else f"{device_id}_action"
 
 
+def readback_inputs(devices) -> list[str]:
+    """Every input value the devices' integrations read back
+    (READBACK_INPUTS): what a room's route diagnosis may report."""
+    return list(dict.fromkeys(value for device in devices for module in integrations.REGISTRY
+                              if uses(device, module.PHASE, module.NAME) for value in getattr(module, "READBACK_INPUTS", ())))
+
+
 def usb_host(source: dict, matrix_id: str, off_host: int) -> int:
     """The host a source is cabled to on one USB matrix (off_host if none)."""
     host = source.get("usb_host", off_host)
@@ -1132,7 +1139,8 @@ def table(data: dict) -> dict:
                 device = devices[ident]
                 checks[item] = {"device": ident, "label": device.get("name") or device.get("model") or ident,
                                 "model": device.get("model") or "", "action": action}
-        raw["diagnosis"] = {"item": problem_item_name(room), "checks": checks}
+        raw["diagnosis"] = {"item": problem_item_name(room), "checks": checks,
+                            "reported": readback_inputs(devices[row["device"]] for row in checks.values())}
     for room, raw in rooms.items():
         if "sync" in raw:
             rooms[raw["sync"]["leader"]].setdefault("followers", []).append(room)

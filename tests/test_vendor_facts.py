@@ -23,7 +23,7 @@ import oh_inventory  # noqa: E402
 import oh_metrics  # noqa: E402
 import oh_render  # noqa: E402
 import oh_site_contract  # noqa: E402
-from oh_features import remote_diagnostics, threadpools  # noqa: E402
+from oh_features import remote_diagnostics, routing, threadpools  # noqa: E402
 from oh_integrations import androidtv_googletv, unifi_protect  # noqa: E402
 
 EXAMPLE = json.loads((AREA / "instance/devices.yaml").read_text())
@@ -158,6 +158,11 @@ class Readback(unittest.TestCase):
         for values in reported.values():
             self.assertEqual(values, [None, *matrix.READBACK_INPUTS, *tv.READBACK_INPUTS])
         self.assertEqual(tv.READBACK_INPUTS, ("tv", "hdmi1", "hdmi2", "hdmi3", "hdmi4"))
+        # routing.js forwards exactly what the contract accepts.
+        table = routing.table(data)
+        for room in data["routing"]["rooms"]:
+            diagnosis = table["rooms"][room]["diagnosis"]
+            self.assertEqual([None, *diagnosis["reported"]], reported[diagnosis["item"]])
 
 
 class Manifests(unittest.TestCase):

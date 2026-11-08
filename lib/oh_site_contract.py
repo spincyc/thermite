@@ -10,8 +10,7 @@ import copy
 import re
 from pathlib import Path
 
-import oh_integrations as integrations
-from oh_conf import Conf, House, is_guarded, parse_options, uses
+from oh_conf import Conf, House, is_guarded, parse_options
 from oh_features import remote, remote_activity, remote_cameras, remote_diagnostics, remote_model, remote_system, routing
 
 PRIVATE = re.compile(r"(?:^|_)(?:password|passwd|secret|token|psk|credential|authorization|auth)(?:_|$)", re.I)
@@ -66,12 +65,6 @@ def _state(name, item):
         return copy.deepcopy(TEXT)
     # A declared String without a finite recipe is deliberately unreadable.
     return None
-
-
-def readback(devices) -> list[str]:
-    """Every input value the devices' integrations read back (READBACK_INPUTS)."""
-    return list(dict.fromkeys(value for device in devices for module in integrations.REGISTRY
-                              if uses(device, module.PHASE, module.NAME) for value in getattr(module, "READBACK_INPUTS", ())))
 
 
 def _json_leaf(states, item, path, leaf):
@@ -226,7 +219,7 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict
                 "item": {"kind": "enum", "values": list(checks)},
                 "action": {"kind": "enum", "values": ["read selected input", "read matrix output input", "read power"]},
                 "reason": {"kind": "enum", "values": ["unavailable", "unsupported_input"]},
-                "reported": {"kind": "enum", "nullable": True, "values": [None, *readback(devices[row["device"]] for row in checks.values())]}}}
+                "reported": {"kind": "enum", "nullable": True, "values": [None, *diagnosis["reported"]]}}}
 
     for description in remote_diagnostics.providers(house).values():
         for reading in description.get("readings", ()):
