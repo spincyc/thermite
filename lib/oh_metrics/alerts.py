@@ -80,6 +80,7 @@ CATALOG = {
     "ThermiteRemoteTimeouts": ("Remotes are timing out", "Remote pages reported repeated timeouts waiting for the gateway in the last fifteen minutes. Switching & remotes shows which requests and how long they waited."),
     "ThermiteRoutingQuarantined": ("Routing commands are quarantined", "The routing executor has refused commands to a device for five minutes after an uncertain outcome, and its recovery reads have not succeeded. Devices shows which device; check that it is powered and on its network."),
     "ThermitePolicyWorkerStalled": ("Room schedules are not being applied", "The room policy worker has not completed a pass for three minutes, so schedules and locks are not enforced. Check thermite-access-worker.service and its journal."),
+    "ThermitePolicyUnenforced": ("A room's lock is not being enforced", "For ten minutes a locked room's lock could not be held: its policy cannot be read, it conflicts with another room over shared hardware, its devices cannot be read, or a change on them has not been put back. Switching & remotes shows locked rooms by state; check the room's devices and thermite-access-worker.service's journal."),
     "ThermiteHandlerPoolSaturated": ("Device dispatch is saturated", "Device dispatch has no idle workers and a ready probe is overdue. Inspect blocked binding connections."),
     "ThermiteHandlerTelemetryUnavailable": ("Device dispatch telemetry is unavailable", "The native scheduler observation is missing, incomplete or stale. Check the runtime telemetry rule."),
     "ThermiteMonitoringBroken": ("Monitoring is not working fully", "Prometheus failed to evaluate a rule or to hand alerts over, Alertmanager failed a delivery, or node_exporter could not read a metrics textfile. Check their journals."),
@@ -90,12 +91,15 @@ CATALOG = {
 #: Alerts that should push to a phone once delivery is commissioned.
 CRITICAL = frozenset({"ThermiteCheckFailing", "ThermiteRuntimeUnavailable", "ThermiteGatewayDown",
                       "ThermiteRemoteStarved", "ThermiteServiceDown", "ThermiteRoutingQuarantined",
-                      "ThermitePolicyWorkerStalled", "ThermiteHandlerPoolSaturated"})
+                      "ThermitePolicyWorkerStalled", "ThermitePolicyUnenforced", "ThermiteHandlerPoolSaturated"})
 #: (source, targets): while the source fires, the targets would only repeat it.
 INHIBITS = (
     ("ThermiteRuntimeUnavailable", ("ThermiteCheckFailing", "ThermiteControlUnknown", "ThermiteHandlerPoolSaturated",
-                                    "ThermiteHandlerTelemetryUnavailable", "ThermiteRoutingQuarantined")),
+                                    "ThermiteHandlerTelemetryUnavailable", "ThermiteRoutingQuarantined",
+                                    "ThermitePolicyUnenforced")),
     ("ThermiteGatewayDown", ("ThermiteRemoteStarved", "ThermiteRemoteTimeouts")),
+    # A stalled worker's last textfile keeps its last states.
+    ("ThermitePolicyWorkerStalled", ("ThermitePolicyUnenforced",)),
 )
 
 
@@ -229,6 +233,7 @@ def rules(mapping):
             alert("ThermiteRemoteTimeouts", f'sum(increase(thermite_client_events_total{{kind=~"{timeouts}"}}[15m])) >= 5', "5m"),
             alert("ThermiteRoutingQuarantined", "thermite_routing_quarantined > 0", "5m"),
             alert("ThermitePolicyWorkerStalled", "time() - thermite_policy_loop_timestamp_seconds > 120", "1m"),
+            alert("ThermitePolicyUnenforced", 'thermite_policy_room_state{state="unavailable"} == 1', "10m"),
             *([alert("ThermiteHandlerPoolSaturated", '(thermite_handler_pool_active_threads >= thermite_handler_pool_core_threads) and (thermite_handler_pool_probe_overdue_seconds > 30)', "2m"),
                alert("ThermiteHandlerTelemetryUnavailable", 'thermite_handler_pool_up == 0', "5m")]
               if mapping.get("handler_pool") else []),

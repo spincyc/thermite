@@ -720,8 +720,9 @@ def switching(mapping: dict) -> dict:
     board.row("Room policy worker")
     policies = timeseries("Locked rooms", [('thermite_policy_rooms{state!="unlocked"}', "{{state}}")], minimum=0,
                           stack=True, description="Rooms locked by hand (manual) or by a schedule (scheduled), and "
-                                                  "rooms whose policy cannot be applied (unavailable). The other "
-                                                  "rooms are unlocked.")
+                                                  "rooms whose lock cannot be held now (unavailable): an unreadable "
+                                                  "policy, a conflict over shared hardware, no reading, or a change "
+                                                  "not yet put back. The other rooms are unlocked.")
     policies["fieldConfig"]["defaults"]["decimals"] = 0
     _color(policies, "manual", IN_USE)
     _color(policies, "unavailable", FAIL)

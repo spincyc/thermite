@@ -7,6 +7,18 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A room whose lock cannot be held for ten minutes fires
+  ThermitePolicyUnenforced (critical): its policy cannot be read, it
+  conflicts with another room over shared hardware, its devices cannot be
+  read, or a change on them has not been put back. Nothing alerted before;
+  only the "Locked rooms" count showed it. Each zone's state is
+  `thermite_policy_room_state{zone,state}`, and
+  `thermite_policy_reconcile_age_seconds` labels the zone `zone`, as every
+  other series does, instead of `room`. A locked room with a passive
+  display (`passive: true`) now counts as locked and verified when the rest
+  of its route reads back; it used to count as unavailable for as long as
+  it was locked. An unlocked room beside an unreadable policy counts as
+  unlocked, not unavailable.
 - Prometheus names a routing zone one way: `thermite:check{zone}` (and so
   ThermiteCheckFailing's `zone`) is the zone's id, `theater`, as in the
   routing telemetry. It used to be the zone's source Item,

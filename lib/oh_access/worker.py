@@ -190,13 +190,18 @@ OBSERVED = ["openhab/items/*/stateupdated"]
 class Telemetry:
     """The policy worker's metrics (oh_access.metrics), from what it already
     does: boundaries through its store, everything else from each pass's
-    result. A room a pass did not reach keeps its last state."""
+    result. A room a pass did not reach keeps its last state. The worker's
+    rooms are routing zones, so their metrics label them `zone`."""
 
     def __init__(self, rooms, *, clock=time.time, monotonic=time.monotonic):
         self.clock, self.monotonic = clock, monotonic
         self.states = dict.fromkeys(rooms, "unlocked")
         self.verified = {}
         self.records = ()
+        # Every zone's states exist from the first write; none is 1 before a pass.
+        for room in self.states:
+            for state in metrics.ROOM_STATES:
+                metrics.POLICY_ROOM_STATE.labels(room, state).set(0)
 
     def store(self, store):
         telemetry = self
@@ -229,22 +234,44 @@ class Telemetry:
                 return config.get("manual_lock") is not None
         return False
 
+    def _state(self, room, status):
+        """A room's policy state from its pass status. Unavailable: a policy
+        it cannot read, or a lock it cannot hold now: a conflict over shared
+        hardware (an unreadable neighbour's, or another lock's), no reading,
+        or a drift not yet repaired. A passive endpoint, which the worker
+        never controls, leaves the lock held; an unlocked room has nothing
+        to enforce."""
+        phase = status.get("phase")
+        if phase == "invalid":
+            return "unavailable"
+        if phase not in ("enforcing", "verified"):
+            return "unlocked"
+        if (status.get("state") == "unknown" or status.get("mismatched")
+                or status.get("reason") in ("invalid_policy", "shared_resource_conflict")):
+            return "unavailable"
+        return "manual" if self._manual(room) else "scheduled"
+
+    @staticmethod
+    def _verified(status):
+        """Whether a pass verified the lock: every field it controls read
+        back as locked. A passive endpoint's limitation keeps the pass's
+        phase short of verified, though nothing else is left to check."""
+        if status.get("phase") == "verified":
+            return True
+        return (status.get("phase") == "enforcing" and status.get("state") == "degraded"
+                and bool(status.get("limitations")) and bool(status.get("matched"))
+                and not status.get("mismatched") and not status.get("unknown") and not status.get("reason"))
+
     def stepped(self, result):
         now = self.monotonic()
         for room, status in result.items() if isinstance(result, dict) else ():
             if room not in self.states or not isinstance(status, dict):
                 continue
-            phase = status.get("phase")
-            if phase == "invalid" or status.get("state") in ("degraded", "unknown"):
-                state = "unavailable"
-            elif phase in ("enforcing", "verified"):
-                state = "manual" if self._manual(room) else "scheduled"
-            else:
-                state = "unlocked"
+            state = self._state(room, status)
             if state in ("manual", "scheduled") and self.states[room] not in ("manual", "scheduled"):
                 self.verified[room] = now  # A new lock is measured from its start.
             self.states[room] = state
-            if phase == "verified":
+            if self._verified(status):
                 self.verified[room] = now
             if "repair" in status:
                 metrics.POLICY_REPAIRS.labels("sent").inc()
@@ -255,6 +282,8 @@ class Telemetry:
         for state in metrics.ROOM_STATES:
             metrics.POLICY_ROOMS.labels(state).set(sum(each == state for each in self.states.values()))
         for room, state in self.states.items():
+            for each in metrics.ROOM_STATES:
+                metrics.POLICY_ROOM_STATE.labels(room, each).set(1 if each == state else 0)
             if state in ("manual", "scheduled"):
                 metrics.POLICY_RECONCILE_AGE.labels(room).set(max(0.0, now - self.verified.get(room, now)))
             else:

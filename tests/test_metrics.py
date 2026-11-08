@@ -394,6 +394,13 @@ class Alerting(unittest.TestCase):
             self.assertLessEqual(set(targets), set(alerts.CATALOG))
         self.assertEqual(len(config["inhibit_rules"]), len(alerts.INHIBITS))
 
+    def test_a_lock_that_cannot_be_held_alerts_unless_the_worker_or_runtime_explains_it(self):
+        rule = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermitePolicyUnenforced")
+        self.assertEqual(rule["expr"], 'thermite_policy_room_state{state="unavailable"} == 1')
+        self.assertEqual((rule["for"], rule["labels"]["severity"]), ("10m", "critical"))
+        silenced = {source for source, targets in alerts.INHIBITS if "ThermitePolicyUnenforced" in targets}
+        self.assertEqual(silenced, {"ThermitePolicyWorkerStalled", "ThermiteRuntimeUnavailable"})
+
     def test_service_down_watches_every_daemon_with_escaped_names(self):
         rule = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteServiceDown")
         for unit in oh_units.ACCESS_UNITS:
@@ -670,6 +677,35 @@ class Textfiles(unittest.TestCase):
             self.assertIn(route, switching)
         self.assertEqual(set(dashboards.FAILED_OPERATIONS),
                          set(exporter.OPERATION_OUTCOMES) & set(exporter.FAILURE_REASONS))
+
+    def test_policy_metrics_name_routing_zones_and_each_zones_state(self):
+        from oh_access import worker
+        zones = ("example_policy_west", "example_policy_east", "example_policy_den", "example_policy_hall")
+        telemetry = worker.Telemetry(zones, monotonic=lambda: 100.0)
+        text = self.metrics.prometheus_client.generate_latest(self.metrics.WORKER).decode()
+        for zone in zones:
+            for state in self.metrics.ROOM_STATES:
+                self.assertIn(f'thermite_policy_room_state{{state="{state}",zone="{zone}"}} 0.0', text)
+        west, east, den, hall = zones
+        telemetry.stepped({
+            west: {"phase": "invalid", "reason": "invalid_policy"},
+            # Locked, but every field it controls cannot be read.
+            east: {"phase": "enforcing", "state": "unknown", "reason": "native_read_unavailable"},
+            # Locked with a passive display: held, with nothing else to check.
+            den: {"phase": "enforcing", "state": "degraded", "matched": ["example_matrix_output3"],
+                  "mismatched": [], "unknown": [], "limitations": ["passive_endpoint:example_den_tv"]},
+            # Unlocked beside an unreadable policy: nothing of its own to enforce.
+            hall: {"phase": "unlocked", "state": "degraded", "reason": "invalid_policy"}})
+        state = {zone: next(each for each in self.metrics.ROOM_STATES
+                            if self.metrics.POLICY_ROOM_STATE.labels(zone, each)._value.get() == 1) for zone in zones}
+        self.assertEqual(state, {west: "unavailable", east: "unavailable", den: "scheduled", hall: "unlocked"})
+        text = self.metrics.prometheus_client.generate_latest(self.metrics.WORKER).decode()
+        self.assertIn(f'thermite_policy_reconcile_age_seconds{{zone="{den}"}} 0.0', text)
+        self.assertNotIn('thermite_policy_reconcile_age_seconds{room=', text)
+        # A drift that is not put back is a lock not held.
+        telemetry.stepped({den: {"phase": "enforcing", "state": "degraded", "matched": [],
+                                 "mismatched": ["example_matrix_output3"], "unknown": [], "limitations": []}})
+        self.assertEqual(self.metrics.POLICY_ROOM_STATE.labels(den, "unavailable")._value.get(), 1)
 
     def test_route_classes_never_carry_the_path(self):
         route = self.metrics.route_class
