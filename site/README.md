@@ -40,6 +40,7 @@ Use an always-on x86-64 host. The [system requirements](https://spincyc.github.i
 - [Commands](https://spincyc.github.io/thermite/commands.html): every command, with examples. `thermite help <command>` works in your shell.
 - [Questions](FAQ.md): requirements, privacy and upgrades.
 - [Colors](https://spincyc.github.io/thermite/colors.html): light and dark modes, accessible themes and the bowl mark.
+- [Device contract](design/device-contract.md): the planned device behaviour contract and room model.
 - [Hardware endpoint design](design/hardware-endpoints.md): proposed standalone USB and IR endpoints.
 - [Handheld remote](handheld/README.md): a battery remote on its own radio link, served by `thermite handheld`.
 - [Handheld remote research](design/handheld-remote.md): flashable remote hardware and its radio link.

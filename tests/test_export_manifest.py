@@ -16,6 +16,7 @@ MANIFEST = AREA / ".thermite-export.json"
 
 #: Reviewed files that Git carries but releases deliberately omit, with why.
 EXCLUDED = {
+    "design/device-contract.md": "the planned device contract and room model, not part of the application",
     "design/handheld-remote-handoff.md": "handheld remote work status, not part of the application",
     "design/handheld-remote.md": "handheld remote hardware research, not part of the application",
     "design/hardware-endpoints.md": "proposed hardware design notes, not part of the application",
