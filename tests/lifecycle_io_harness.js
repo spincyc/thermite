@@ -143,6 +143,33 @@ test('new controller learns when admitted old work truly retires',()=>{
  f.provider.execute=()=>{replacement=f.module.create(f.descriptor,f.env);replacement.onLegacy(e=>proof.push(e));return {outcome:'applied'};};
  f.submit('old-admitted','D1');f.actor.drain();replacement.events();assert(proof.some(e=>e.type==='retired'&&e.token==='old-admitted'));
 });
+test('a replacement actor ends a flight its dead predecessor left, so recovery and new work go on',()=>{
+ // The old actor's context dies between admission and its final broker
+ // transaction (emulated: the broker is put back as it was mid-flight).
+ let time=1000;const f=setup(null,source,{now:()=>time});let frozen=null;
+ f.provider.execute=()=>{frozen={states:new Map(f.broker.states),active:f.broker.active.n,journal:JSON.parse(JSON.stringify(f.journal.data))};return {outcome:'applied'};};
+ f.submit('lost','D1','3');f.actor.drain();
+ f.broker.states.clear();for(const [key,value] of frozen.states)f.broker.states.put(key,value);
+ f.broker.active.n=frozen.active;f.journal.data=frozen.journal;f.broker.events.rows.length=0;f.events.length=0;
+ assert.equal(JSON.parse(f.broker.states.get('switch')).flight.token,'lost');assert.equal(f.broker.active.get(),1);
+ const writes=[];const provider={...f.provider,execute(r,v){writes.push([r,v]);return {outcome:'applied',sample:{value:String(v),fresh:true}};},probe:()=>({value:'3',fresh:true})};
+ const replacement=f.module.actor({key:'switch',io:f.descriptor.io},provider,{...f.env,journal:f.journal});
+ let row=JSON.parse(f.broker.states.get('switch'));
+ assert.equal(row.flight,null);assert.equal(row.quarantine,'lost');assert.equal(f.broker.active.get(),0);
+ // The planner hears that the lost ticket's outcome is unknown.
+ f.bridge.events();assert(f.events.some(e=>e.token==='lost'&&e.type==='uncertain'&&e.reason==='provider_outcome_unknown'));
+ time+=61000;assert.equal(replacement.recover(),true);
+ f.submit('after','D2','4');replacement.drain();f.bridge.events();
+ assert.deepEqual(writes,[['D2','4']]);assert.equal(f.broker.active.get(),0);
+ assert(f.events.some(e=>e.token==='after'&&e.type==='terminal'&&e.admitted===true));
+ // An old actor that was only slow, not dead, finishing after its
+ // replacement took over, releases nothing twice.
+ const g=setup();let late=null;
+ g.provider.execute=()=>{late=g.module.actor({key:'switch',io:g.descriptor.io},g.provider,{...g.env,journal:g.journal});return {outcome:'applied'};};
+ g.submit('slow','D1','3');g.actor.drain();
+ assert(late);assert.equal(g.broker.active.get(),0);row=JSON.parse(g.broker.states.get('switch'));
+ assert.equal(row.flight,null);assert.equal(row.quarantine,'slow');
+});
 test('failed pure read retires without a sample and permits later wake',()=>{
  const f=setup();f.provider.probe=()=>{throw Error('unavailable in standby');};
  f.bridge.probe({token:String('failed-read'),key:'switch',resource:'D1'},e=>f.events.push(e));f.actor.drain();f.bridge.events();
