@@ -17,11 +17,12 @@ volume, input...) and conversion:
              the value itself when it is short and plain, else `other`
     problem  1 while the problem text is set, 0 when it is empty
 
-NULL, UNDEF and anything unparsable are absent, never stale. The explicit
-clear_state descriptor is the sole exception: a problem Item whose
-integration declares a PROBLEM_CLEAR_STATE (Sony's: UNDEF) uses that present
-state to mean "nothing wrong", which becomes 0. Missing/NULL never
-becomes healthy. A scrape makes
+An Item whose state is NULL or UNDEF has no value but
+thermite_item_unavailable 1, whatever its conversion; anything unparsable is
+absent, never stale. The explicit clear_state descriptor is the sole
+exception: a problem Item whose integration declares a PROBLEM_CLEAR_STATE
+(Sony's: UNDEF) uses that present state to mean "nothing wrong", which
+becomes 0. Missing/NULL never becomes healthy. A scrape makes
 at most one REST round (GET /rest/things and /rest/items, ROUND_SECONDS
 for both), shared by scrapes within CACHE_SECONDS. When openHAB does not answer,
 thermite_openhab_up is 0 and no Thing or Item series is reported. The API
@@ -68,6 +69,8 @@ NUMBER = re.compile(r"^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)")
 #: An enum value without options is kept only if it looks like a code, not prose.
 PLAIN = re.compile(r"^[A-Za-z0-9_./:+ -]{1,32}$")
 OTHER = "other"
+#: The states openHAB gives an Item it has no value for.
+UNAVAILABLE = ("NULL", "UNDEF")
 DEVICE_LABELS = ("device", "room", "kind")
 #: The room house-wide checks name (oh_metrics.alerts), and its label.
 HOUSE_ROOM, HOUSE_LABEL = "house", "House"
@@ -89,7 +92,8 @@ FAMILIES = {
     "thermite_thing_status": ("gauge", "The Thing's status, as a label; always 1."),
     "thermite_item_value": ("gauge", "A numeric Item state: switches 1 or 0, numbers as they are."),
     "thermite_item_info": ("gauge", "A selection Item's state, as a label; always 1."),
-    "thermite_item_unavailable": ("gauge", "1 while a selection Item is NULL or UNDEF: what it reads is unavailable."),
+    "thermite_item_unavailable": ("gauge", "1 while a kept Item is NULL or UNDEF (a selection also while empty): "
+                                  "what it reads is unavailable."),
     "thermite_device_problem": ("gauge", "1 while the device's problem Item has a text."),
     "thermite_handler_pool_up": ("gauge", "1 when thingHandler telemetry is complete and at most 60 seconds old."),
     "thermite_handler_pool_observation_age_seconds": ("gauge", "Age of the native thingHandler telemetry sample."),
@@ -475,23 +479,25 @@ def _items(mapping: dict, answer: list) -> list[Sample]:
         state = state_of[name]
         device = str(spec.get("device") or "")
         labels = {"device": device, "room": str(spec.get("room", "")), "kind": str(spec.get("kind", ""))}
+        item = {**labels, "item": name, "point": str(spec.get("point", ""))}
         convert = spec.get("convert")
-        if convert == "problem":
-            value = to_number(state, convert, spec.get("clear_state"))
-            if value is not None:
-                samples.append(("thermite_device_problem", labels, value))
-            continue
-        labels = {**labels, "item": name, "point": str(spec.get("point", ""))}
         if convert == "enum":
             text = to_label(state, spec.get("options"))
-            if text is not None:
-                samples.append(("thermite_item_info", {**labels, "value": text}, 1.0))
-            else:
-                samples.append(("thermite_item_unavailable", labels, 1.0))
+            samples.append(("thermite_item_info", {**item, "value": text}, 1.0) if text is not None
+                           else ("thermite_item_unavailable", item, 1.0))
+            continue
+        if convert == "problem":
+            value = to_number(state, convert, spec.get("clear_state"))
+            sample = ("thermite_device_problem", labels, value)
         elif convert in ("switch", "number"):
             value = to_number(state, convert)
-            if value is not None:
-                samples.append(("thermite_item_value", labels, value))
+            sample = ("thermite_item_value", item, value)
+        else:
+            continue
+        if value is not None:
+            samples.append(sample)
+        elif state in UNAVAILABLE:
+            samples.append(("thermite_item_unavailable", item, 1.0))
     samples.append(("thermite_items_missing", {}, float(missing)))
     return samples
 

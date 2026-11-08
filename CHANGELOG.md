@@ -7,6 +7,11 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite_item_unavailable` covers every Item the exporter keeps: a
+  power, volume, mute, input or problem Item that is NULL or UNDEF reads 1
+  there, as a selection Item does. Only selection Items used to; any other
+  Item without a value just had no series, the same as one openHAB does
+  not have, so "this device cannot be read" was told two ways.
 - "Remotes gave up" counts only requests remotes stopped waiting for
   (timeouts), as the Remotes tile and ThermiteRemoteTimeouts do, on House
   health's "Since yesterday evening" and on Switching & remotes, as does

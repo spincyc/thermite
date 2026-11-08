@@ -76,6 +76,32 @@ class Selections(unittest.TestCase):
         self.assertNotIn("thermite_item_unavailable", [name for name, _, _ in shown])
         self.assertIn("thermite_item_unavailable", exporter.FAMILIES)
 
+    def test_every_kept_item_without_a_value_is_unavailable(self):
+        """NULL and UNDEF read the same for every conversion, not only for
+        selections; a problem Item's declared clear state stays 0."""
+        mapping = {"items": {
+            "example_tv_power": {"device": "example_tv", "room": "example_west", "kind": "tv", "point": "power",
+                                 "convert": "switch"},
+            "example_tv_volume": {"device": "example_tv", "room": "example_west", "kind": "tv", "point": "volume",
+                                  "convert": "number"},
+            "example_tv_problem": {"device": "example_tv", "room": "example_west", "kind": "tv", "point": "problem",
+                                   "convert": "problem"},
+            "example_display_problem": {"device": "example_display", "room": "example_east", "kind": "tv",
+                                        "point": "problem", "convert": "problem", "clear_state": "UNDEF"}}}
+        samples = exporter._items(mapping, items(example_tv_power="UNDEF", example_tv_volume="NULL",
+                                                 example_tv_problem="UNDEF", example_display_problem="UNDEF"))
+        unavailable = {labels["item"]: labels["point"] for name, labels, _ in samples
+                       if name == "thermite_item_unavailable"}
+        self.assertEqual(unavailable, {"example_tv_power": "power", "example_tv_volume": "volume",
+                                       "example_tv_problem": "problem"})
+        self.assertIn(("thermite_device_problem", {"device": "example_display", "room": "example_east", "kind": "tv"},
+                       0.0), samples)
+        self.assertNotIn("thermite_item_value", [name for name, _, _ in samples])
+        # An unparsable value is no value, not an unavailable reading.
+        samples = exporter._items(mapping, items(example_tv_power="ON", example_tv_volume="loud",
+                                                 example_tv_problem="", example_display_problem="UNDEF"))
+        self.assertNotIn("thermite_item_unavailable", [name for name, _, _ in samples])
+
     def test_a_room_that_cannot_be_read_keeps_its_row(self):
         timeline = next(panel for board in boards().values() for panel in panels(board)
                         if panel.get("title") == "Rooms through the day")
