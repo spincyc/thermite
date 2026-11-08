@@ -6,6 +6,8 @@ encodes one house's devices and room shapes, and that its state handling
 breaks at device transitions. This note sets out the contract that replaces
 those assumptions, and the order in which it lands.
 
+The status of each stage and every open item is in [handoff.md](handoff.md).
+
 ## Problems this replaces
 
 | Area | Today | Consequence |
