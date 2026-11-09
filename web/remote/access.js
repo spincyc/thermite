@@ -26,6 +26,10 @@
     client_timeout: "thermite did not answer in time. Try again in a moment.",
     origin_mismatch: "The terminal credential belongs to a different address.", secure_connection_required: "Use your site’s HTTPS address to sign in.", connection_failed: "Could not reach thermite."
   };
+  // The gateway sends a stream frame at least this often: a heartbeat,
+  // {"type":"heartbeat"}, while it has nothing else (oh_identity.streams.HEARTBEAT).
+  const STREAM_HEARTBEAT_MS = 5000;
+  const HEARTBEAT_FRAME = '{"type":"heartbeat"}';
   function problem(code, status) {
     const error = new Error(MESSAGES[code] || "The action could not be completed.");
     error.code = Object.prototype.hasOwnProperty.call(MESSAGES, code) ? code : "access_unavailable";
@@ -91,6 +95,8 @@
     let security = null, discovering = null, csrfCookie = null, probing = null;
     let user = null, csrf = null, loading = null, ended = false, policyRoom = null, authRevision = 0;
     let active = typeof document === "undefined" || document.visibilityState !== "hidden";
+    // The open event streams, each with its liveness watchdog (eventSource).
+    const streams = new Set(), streamLiveness = config.streamLiveness || 3 * STREAM_HEARTBEAT_MS;
     // Every room's lock in one read, for the room lists. The watched room's
     // detailed policy (policies) still decides whether its controls are held back.
     let lockRooms = null, locksAt = 0, locksWatched = false, lockReads = 0;
@@ -114,9 +120,9 @@
         }
       };
     }
-    // Client telemetry: what this client gave up on (timeouts, failed or
-    // refused event streams), which the gateway never sees. Counted here
-    // (1000 a kind, the latest 16 waits in seconds) and posted to
+    // Client telemetry: what this client gave up on (timeouts, failed,
+    // refused or silent event streams), which the gateway never sees. Counted
+    // here (1000 a kind, the latest 16 waits in seconds) and posted to
     // /api/v1/telemetry after the next answered request, at most every 15 s
     // and one at a time, or as a beacon when the page hides. 204 clears what
     // was sent, other 4xx drop it, 408/429/5xx and network failures keep it
@@ -456,8 +462,15 @@
       watchRoom(room) { policyRoom = room; return policyPoll.start(); },
       // A room list on show asks for every room's lock; nothing is read otherwise.
       watchLocks(on) { locksWatched = Boolean(on); return lockPoll.start(); },
-      setActive(value) { active = Boolean(value); policyPoll.start(); lockPoll.start(); },
-      stop() { active = false; policyPoll.stop(); lockPoll.stop(); },
+      // A page shown again (visibilitychange or pageshow, even with no hide
+      // between) checks its streams at once: one that went silent while the
+      // page was away, as a phone's can, is reopened now, not a watchdog later.
+      setActive(value) {
+        const next = Boolean(value);
+        active = next; policyPoll.start(); lockPoll.start();
+        streams.forEach((stream) => stream.watch());
+      },
+      stop() { active = false; policyPoll.stop(); lockPoll.stop(); streams.forEach((stream) => stream.watch()); },
       async allOff() { await ready(); return json("/api/v1/all-off", "POST", {}); },
       async login(username, password) {
         const address = new URL(origin);
@@ -485,41 +498,88 @@
         notify("security"); return security;
       },
       clear: lost,
+      // The gateway's event streams, each behind the client's credential and
+      // a liveness watchdog. The gateway sends a frame at least every
+      // STREAM_HEARTBEAT_MS, so a stream that shows none for streamLiveness
+      // (three heartbeats) while the page is shown is dead, even when the
+      // EventSource has not noticed (a phone back from the background, a
+      // network that dropped without a word). It is closed, counted as a
+      // stream_error and opened again at once; its listener sees an error
+      // (readyState CONNECTING), then the new stream's open and snapshot, as
+      // after a browser's own reconnection. Heartbeats reach no listener.
       eventSource(Source) {
         return class AuthorizedEvents {
           constructor(url) {
-            this.url = url; this.readyState = 0; this.closed = false; this.source = null;
+            this.url = url; this.readyState = 0; this.closed = false; this.source = null; this.heard = now(); this.timer = null;
             ready().then(() => {
               if (this.closed) return;
               const target = new URL(url, origin);
               if (target.origin !== origin) throw problem("origin_mismatch");
-              const source = new Source(url, token ? { headers: { Authorization: "Bearer " + token } } : undefined);  // lint: allow — Bearer scheme prefix; token comes from private custody
-              this.source = source;
-              let started = now(), opened = false;
-              source.onopen = (event) => { this.readyState = 1; opened = true; if (this.onopen) this.onopen(event); };
-              source.onmessage = (event) => { if (this.onmessage) this.onmessage(event); };
-              source.onerror = (event) => {
-                this.readyState = source.readyState;
-                // Only the terminal's EventSource sees a status: 429 is too_many_streams.
-                if (!this.closed && active) record(event?.status === 429 ? "stream_refused" : "stream_error",
-                  opened || event?.status === 429 ? undefined : (now() - started) / 1000, url, source.protocol);
-                started = now(); opened = false;
-                if (event && [401, 403].includes(event.status)) lost("session_expired");
-                // One credential probe per outage, however many streams report it.
-                else if (!token && !probing) probing = data("/api/v1/me", null, true).catch(() => {}).finally(() => { probing = null; });
-                if (this.onerror) this.onerror(event);
-              };
+              streams.add(this);
+              this.connect();
             }).catch((error) => { this.readyState = 2; if (this.onerror) this.onerror({ status: error.status || 0 }); });
             this.unsubscribe = client.subscribe((event) => { if (event.type === "unauthorized") this.close(); });
           }
-          close() { this.closed = true; this.readyState = 2; if (this.source) this.source.close(); if (this.unsubscribe) this.unsubscribe(); }
+          connect() {
+            const url = this.url, source = new Source(url, token ? { headers: { Authorization: "Bearer " + token } } : undefined);  // lint: allow — Bearer scheme prefix; token comes from private custody
+            this.source = source; this.heard = now(); this.watch();
+            const current = () => this.source === source && !this.closed;
+            let started = now(), opened = false;
+            source.onopen = (event) => {
+              if (!current()) return;
+              this.readyState = 1; opened = true; this.heard = now();
+              if (this.onopen) this.onopen(event);
+            };
+            source.onmessage = (event) => {
+              if (!current()) return;
+              this.heard = now();
+              if (event?.data !== HEARTBEAT_FRAME && this.onmessage) this.onmessage(event);
+            };
+            source.onerror = (event) => {
+              if (!current()) return;
+              this.readyState = source.readyState;
+              // Only the terminal's EventSource sees a status: 429 is too_many_streams.
+              if (active) record(event?.status === 429 ? "stream_refused" : "stream_error",
+                opened || event?.status === 429 ? undefined : (now() - started) / 1000, url, source.protocol);
+              started = now(); opened = false;
+              // A stream closed for good is its listener's to reopen; one reconnecting is watched.
+              if (source.readyState === 2) { clearTimeout(this.timer); this.timer = null; }
+              if (event && [401, 403].includes(event.status)) lost("session_expired");
+              // One credential probe per outage, however many streams report it.
+              else if (!token && !probing) probing = data("/api/v1/me", null, true).catch(() => {}).finally(() => { probing = null; });
+              if (this.onerror) this.onerror(event);
+            };
+          }
+          // Wakes when the stream would have been silent for streamLiveness,
+          // and reconnects it if it was; never while the page is hidden.
+          watch() {
+            clearTimeout(this.timer); this.timer = null;
+            if (this.closed || !this.source || this.source.readyState === 2 || !active) return;
+            const left = streamLiveness - (now() - this.heard);
+            if (left <= 0) { this.stalled(); return; }
+            this.timer = setTimeout(() => { this.timer = null; this.watch(); }, left);
+            // A watchdog alone need not keep a terminal process alive.
+            if (this.timer.unref) this.timer.unref();
+          }
+          stalled() {
+            const source = this.source;
+            this.source = null; this.readyState = 0; source.close();
+            record("stream_error", undefined, this.url, source.protocol);
+            if (this.onerror) this.onerror({ type: "error", status: 0, stalled: true });
+            if (!this.closed) this.connect();
+          }
+          close() {
+            this.closed = true; this.readyState = 2; clearTimeout(this.timer); this.timer = null; streams.delete(this);
+            if (this.source) this.source.close();
+            if (this.unsubscribe) this.unsubscribe();
+          }
           addEventListener(type, fn) { this["on" + type] = fn; }
         };
       }
     };
     return client;
   }
-  const exported = { create, problem, returnTo, secureOrigin, MESSAGES, client: null };
+  const exported = { create, problem, returnTo, secureOrigin, MESSAGES, STREAM_HEARTBEAT_MS, client: null };
   global.ThermiteAccess = exported;
   if (typeof module !== "undefined" && module.exports) module.exports = exported;
   if (typeof document === "undefined") return;

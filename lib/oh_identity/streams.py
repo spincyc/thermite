@@ -20,7 +20,13 @@ from .runtime import get_adapter
 from .services import Problem
 from .topics import VIEWS, views as view_topics
 
+#: Seconds a client stream may stay quiet before the gateway sends a
+#: heartbeat. It is a data frame, {"type":"heartbeat"}, not an SSE comment:
+#: an EventSource hides comments, and the clients' watchdogs
+#: (web/remote/access.js STREAM_HEARTBEAT_MS) reopen a stream that shows no
+#: frame for three heartbeats.
 HEARTBEAT = 5
+HEARTBEAT_FRAME = b'data: {"type":"heartbeat"}\n\n'
 # A busy stream rechecks its credential at most this often; a quiet one at
 # every heartbeat.
 REVALIDATE = 1.0
@@ -123,7 +129,8 @@ def closed(meta, seconds, reason):
 
 async def stream(adapter, view, snapshot, release=None, meta=None):
     """One client stream of a view: the hub's snapshot, then the view's events,
-    with heartbeats while quiet. Ends when the credential is revoked."""
+    with a heartbeat frame after each HEARTBEAT seconds without one. Ends when
+    the credential is revoked."""
     meta = meta or {"view": view}
     hub = subscriber = None
     started, reason = clock(), "client"
@@ -145,7 +152,7 @@ async def stream(adapter, view, snapshot, release=None, meta=None):
                     reason = "revoked"
                     return
                 checked = clock()
-            yield b": heartbeat\n\n" if data is None else data
+            yield HEARTBEAT_FRAME if data is None else data
     except asyncio.CancelledError:
         raise
     except Exception:

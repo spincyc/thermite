@@ -20,7 +20,9 @@ from oh_identity.tests.test_core import PASSPHRASE
 WILDCARDS = ["openhab/items/*/stateupdated", "openhab/items/*/statechanged", "openhab/items/*/command"]
 #: A pairing code the runtime holds, which no client frame may carry.
 CODE = "1234"
-HEARTBEAT = b": heartbeat\n\n"
+#: A quiet stream's heartbeat: a data frame, which an EventSource delivers
+#: (a comment it would hide), so a client can tell a quiet stream from a dead one.
+HEARTBEAT = {"type": "heartbeat"}
 
 
 def contract():

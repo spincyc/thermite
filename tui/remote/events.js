@@ -7,7 +7,8 @@
  * 404 before its REST resources finish starting. Authentication failures,
  * a deliberate 204 stop and a successful answer that is not an event stream
  * give up (onerror, readyState CLOSED). Unlike fetch, it never times out a
- * quiet stream.
+ * quiet stream itself: access.js's eventSource() watches the gateway's
+ * heartbeats and replaces one that goes silent.
  */
 "use strict";
 
