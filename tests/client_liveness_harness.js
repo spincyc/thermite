@@ -1,5 +1,6 @@
-// The shared access client's event-stream watchdog, against fake streams, a
-// fake clock and fake timers. Nothing leaves the process.
+// The shared access client's event-stream watchdog, and the pairing backend's
+// snapshots, against fake streams, a fake clock and fake timers. Nothing
+// leaves the process.
 "use strict";
 const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
 const area = path.resolve(__dirname, "..");
@@ -137,6 +138,43 @@ function sources() {
     assert.deepEqual(await counted(), { stream_error: { count: 2, waits: [] } }, "each silent stream counts as a stream_error");
     stream.close();
     proof.resume = true;
+  }
+
+  // ---- the pairing page ------------------------------------------------------
+
+  {
+    const box = sandbox(["web/remote/pair.js"]), Pairing = box.context.PairingBackend;
+    const list = [
+      { name: "tv_pairing", state: "NULL", metadata: { pairing: { value: "sony_ip_control", config: {
+        device: "tv", label: "TV", room: "Den", status: "tv_pairing_status", length: 4, chars: "digits" } } } },
+      { name: "tv_pairing_status", state: "paired" },
+      { name: "box_pairing", state: "NULL", metadata: { pairing: { value: "pyatv_http", config: {
+        device: "box", label: "Box", room: "Den", status: "box_pairing_status", length: 4, chars: "digits" } } } },
+      { name: "box_pairing_status", state: "unpaired" }];
+    const posts = [];
+    const fetch = async (url, init = {}) => {
+      if ((init.method || "GET") === "GET") return { ok: true, status: 200, text: async () => JSON.stringify(list) };
+      return new Promise((resolve, reject) => {
+        const entry = { url, aborted: false };
+        init.signal?.addEventListener("abort", () => { entry.aborted = true; reject(new Error("aborted")); });
+        posts.push(entry);
+      });
+    };
+    const { Source, live } = sources();
+    const backend = new Pairing.Backend({ fetch, EventSource: Source, native: false, now: () => box.clock.now,
+      setTimeout: box.context.setTimeout, clearTimeout: box.context.clearTimeout });
+    await backend.start();
+    live()[0].open();
+    live()[0].send({ type: "snapshot", view: "pair", states: { tv_pairing_status: "paired", box_pairing_status: "unpaired" } });
+    assert.equal(backend.device("tv").status, "paired");
+    // A reconnect's snapshot replaces the statuses: one it lacks is unknown, not as before.
+    live()[0].onerror({});
+    live()[0].open(); live()[0].send({ type: "snapshot", view: "pair", states: { box_pairing_status: "paired" } });
+    assert.equal(backend.device("tv").status, "unknown");
+    assert.equal(backend.device("box").status, "paired");
+    proof.pairSnapshot = true;
+
+    backend.stop();
   }
 
   process.stdout.write(JSON.stringify(proof));

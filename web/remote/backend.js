@@ -77,9 +77,11 @@
  * Sources as statechanged, no activity feed). Through the gateway the stream
  * is GET /api/v1/events/<view>, whose first frame is a snapshot of the view's
  * Items, {"type":"snapshot","states":{item: value}}, sent again after any gap,
- * and {"type":"unavailable"} while openHAB is not answering it. Served by
- * openHAB itself (native), it is /rest/events with wildcard topics, and the
- * snapshot one GET /rest/items?fields=name,state when the stream opens.
+ * and {"type":"unavailable"} while openHAB is not answering it; access.js
+ * reopens a stream that goes silent past its heartbeats. Served by openHAB
+ * itself (native), it is /rest/events with wildcard topics, and the snapshot
+ * one GET /rest/items?fields=name,state when the stream opens. Each snapshot
+ * replaces what the page knew: an Item it lacks reads as "NULL" (not known).
  *   getState   the room as the snapshot and the events since say; it waits
  *              for the first snapshot (up to SNAPSHOT_TIMEOUT)
  *   choose     POST /rest/items/loc_<room>_source, text/plain body "off" or a source id;
@@ -1003,19 +1005,29 @@
   };
 
   // The view's Items as the gateway (or openHAB) holds them now: after a
-  // (re)connection, all the page shows. An Item an event has reported since
-  // a native read began keeps that newer value.
+  // (re)connection, all the page shows. The snapshot replaces what the page
+  // knew: an Item it lacks reads as not known ("NULL": a room "unknown", a
+  // device field "NULL", no problem), never as its value before the gap.
+  // An Item an event has reported since a native read began keeps that
+  // newer value.
   OpenHabBackend.prototype.applySnapshot = function (states, touched) {
-    const fresh = (item) => Object.prototype.hasOwnProperty.call(states, item) && typeof states[item] === "string"
-      && !(touched && touched.has(item));
+    const own = (item) => Object.prototype.hasOwnProperty.call(states, item) && typeof states[item] === "string";
+    const fresh = (item) => !(touched && touched.has(item));
+    const read = (item) => own(item) ? states[item] : NULL_STATE;
+    Object.keys(this.values).forEach((item) => {
+      if (own(item) || !fresh(item)) return;
+      delete this.values[item];
+      // The feed forgets it too: its next report is a baseline, not a change.
+      if (this.activity) this.activity.seed(item, undefined, true);
+    });
     Object.keys(states).forEach((item) => {
-      if (!fresh(item)) return;
+      if (!own(item) || !fresh(item)) return;
       this.values[item] = states[item];
       // What the feed reports next is a change from this, not from before the gap.
       if (this.activity) this.activity.seed(item, states[item], true);
     });
-    this.watched().forEach((item) => { if (fresh(item)) this.updateItem(item, states[item]); });
-    Object.keys(this.byItem).forEach((item) => { if (fresh(item)) this.update(this.byItem[item], states[item]); });
+    this.watched().forEach((item) => { if (fresh(item)) this.updateItem(item, read(item)); });
+    Object.keys(this.byItem).forEach((item) => { if (fresh(item)) this.update(this.byItem[item], read(item)); });
     this.synced = true;
     this.reconnected();
     this.release();

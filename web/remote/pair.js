@@ -731,10 +731,13 @@
   };
 
   // The pair view's states now, as merge() takes a list's: statuses, then
-  // results that only settle what they answer.
+  // results that only settle what they answer. The snapshot replaces what
+  // the page knew: a status it lacks reads as unknown ("Checking"), never as
+  // the status before the gap. A result it lacks changes nothing; a result
+  // only ever settles the command it answers.
   Backend.prototype.applySnapshot = function (states) {
-    Object.keys(states).forEach((item) => {
-      if (this.byStatus[item] && typeof states[item] === "string") this.applyStatus(this.byStatus[item], states[item]);
+    Object.keys(this.byStatus).forEach((item) => {
+      this.applyStatus(this.byStatus[item], typeof states[item] === "string" && Object.prototype.hasOwnProperty.call(states, item) ? states[item] : "unknown");
     });
     Object.keys(states).forEach((item) => {
       if (this.byResult[item] && typeof states[item] === "string") this.applyResult(this.byResult[item], resultOf(states[item]), false);

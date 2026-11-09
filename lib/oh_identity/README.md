@@ -173,11 +173,13 @@ as `stateupdated` is never also sent as `statechanged`. The first frame is a
 snapshot, `{"type":"snapshot","view":...,"states":{item: value}}`, of the
 view's projected values; events follow in openHAB's own shape. While openHAB
 is not answering, the stream stays open and sends `{"type":"unavailable"}`,
-then a fresh snapshot once it is back. A stream quiet for 5 s sends a
-heartbeat, `{"type":"heartbeat"}`, as a data frame (an `EventSource` hides
-comments); the clients' watchdog (`web/remote/access.js`) reopens a stream
-that shows no frame for three heartbeats while its page is shown, and checks
-at once when a page is shown again. A stream checks the user,
+then a fresh snapshot once it is back. A client replaces what it knew with
+each snapshot: an Item a snapshot lacks reads as not known, never as its
+value before the gap. A stream quiet for 5 s sends a heartbeat,
+`{"type":"heartbeat"}`, as a data frame (an `EventSource` hides comments);
+the clients' watchdog (`web/remote/access.js`) reopens a stream that shows
+no frame for three heartbeats while its page is shown, and checks at once
+when a page is shown again. A stream checks the user,
 session/token existence, expiry and revision when it opens, at most once per
 second while events flow, and at every quiet-stream heartbeat (5 s), and ends
 when one fails. Each peer bucket may hold 8 streams (a page each, a terminal

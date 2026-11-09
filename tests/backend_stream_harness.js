@@ -201,6 +201,32 @@ async function probe(name, run, options) {
     return { reconnects: 20, gets: c.reads.length };
   });
 
+  // A reconnect's snapshot replaces what the page knew: an Item it lacks
+  // reads as not known, never as its value before the gap.
+  await probe("reconnect_snapshot_replaces_state", async c => {
+    c.live()[0].open();
+    c.live()[0].send({ type: "snapshot", view: "remote", states: snapshotStates("remote", { display_2_problem: "No answer",
+      loc_room_3_source: "UNDEF", loc_room_3_source_problem: "{}" }) });
+    assert.equal(c.backend.devices.display_1.power, "ON"); assert.equal(c.backend.problemOf("display_2"), "No answer");
+    c.live()[0].onerror({});
+    c.live()[0].open();
+    const states = snapshotStates("remote");
+    ["loc_room_2_source", "display_1_power", "display_2_problem", "loc_room_3_source_problem"].forEach(item => delete states[item]);
+    c.live()[0].send({ type: "snapshot", view: "remote", states: Object.assign(states, { loc_room_3_source: "UNDEF" }) });
+    assert.equal(c.backend.snapshot("room_2").value, "NULL"); assert.equal(c.backend.snapshot("room_2").status, "unknown");
+    assert.equal(c.backend.devices.display_1.power, "NULL");
+    assert.equal(c.backend.problemOf("display_2"), null);
+    assert.equal(c.backend.snapshot("room_3").reason, "No current source readback; waiting for device diagnostics");
+    assert(!("display_1_power" in c.backend.values));
+    assert.equal(c.backend.snapshot("room_4").value, "source");
+    // So does one after the gateway lost openHAB, on a stream that stayed open.
+    c.live()[0].send({ type: "unavailable" });
+    c.live()[0].send({ type: "snapshot", view: "remote", states: {} });
+    assert(c.backend.house.rooms.every(room => c.backend.snapshot(room.id).status === "unknown"));
+    assert.equal(c.reads.length, 0);
+    return { unknown: 9 };
+  });
+
   await probe("hidden_page_holds_no_stream", async c => {
     c.backend.setActive(false);
     assert.equal(c.live().length, 0);

@@ -116,9 +116,10 @@
       push(desc, "state", value ? "Reported: " + value.text : "Reported value changed (value hidden)", value && value.tone);
     }
     // The value an Item's next report is compared with; replace, after a
-    // snapshot, even one already seen.
+    // snapshot, even one already seen. An undefined value forgets it.
     function seed(name, value, replace) {
       if (!own(descriptors, name) || previous[name] !== undefined && !replace) return;
+      if (value === undefined) { delete previous[name]; return; }
       const projected = valueOf(descriptors[name], value, false);
       previous[name] = projected ? projected.valueKey : "unknown";
     }
