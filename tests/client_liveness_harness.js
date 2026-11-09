@@ -12,27 +12,32 @@ const admin = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest:
 const answer = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value, text: async () => JSON.stringify(value),
   clone() { return answer(value, status); }, headers: { get: () => null, getSetCookie: () => [] } });
 
-// A script in a context of its own, with a fake clock and timers.
+// A script in a context of its own, with fake timers and two fake clocks:
+// the wall clock (now, which can be stepped) and a monotonic one
+// (performance.now), which timers follow.
 function sandbox(files) {
-  const clock = { now: 1_000_000 }, timers = new Map(); let next = 0;
+  const clock = { now: 1_000_000, mono: 5_000 }, timers = new Map(); let next = 0;
   const context = vm.createContext({ URL, URLSearchParams, Headers, AbortController, Blob, console,
-    setTimeout(fn, ms) { timers.set(++next, { fn, ms, at: clock.now + ms }); return next; },
+    performance: { now: () => clock.mono },
+    setTimeout(fn, ms) { timers.set(++next, { fn, ms, at: clock.mono + ms }); return next; },
     clearTimeout(id) { timers.delete(id); } });
   files.forEach(name => vm.runInContext(read(name), context));
   return {
     context, clock, timers,
     // The timers set for ms, as a list of their delays.
     delays: () => [...timers.values()].map(timer => timer.ms).sort((a, b) => a - b),
-    // Moves the clock on and runs every timer that falls due, as time would.
+    // Moves both clocks on and runs every timer that falls due, as time would.
     advance(ms) {
-      const until = clock.now + ms;
+      const until = clock.mono + ms;
       for (;;) {
         const due = [...timers].filter(([, timer]) => timer.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
         if (!due) break;
-        timers.delete(due[0]); clock.now = Math.max(clock.now, due[1].at); due[1].fn();
+        timers.delete(due[0]); clock.now += Math.max(0, due[1].at - clock.mono); clock.mono = Math.max(clock.mono, due[1].at); due[1].fn();
       }
-      clock.now = until;
-    }
+      clock.now += until - clock.mono; clock.mono = until;
+    },
+    // Moves both clocks on with no timer running, as on a suspended phone.
+    suspend(ms) { clock.now += ms; clock.mono += ms; }
   };
 }
 
@@ -118,6 +123,21 @@ function sources() {
   }
 
   {
+    // The wall clock stepped back an hour as a stream dies (an NTP fix, a
+    // phone's network time) does not hide the silence: it is timed by the
+    // monotonic clock.
+    const { box, client } = accessClient();
+    const { Source, opened } = sources(), Events = client.eventSource(Source);
+    const stream = new Events("/api/v1/events/remote"); stream.onerror = () => {};
+    for (let turn = 0; turn < 10 && !opened.length; turn++) await tick();
+    opened[0].open(); box.advance(1000);
+    box.clock.now -= 3600 * 1000;
+    box.advance(14000); assert.equal(opened.length, 2, "reopened 15 s after its last frame");
+    stream.close();
+    proof.clockStep = true;
+  }
+
+  {
     // A page shown again checks at once: a stream silent past the bound is
     // reopened then, whether or not the page saw itself hidden.
     const { box, client, counted } = accessClient();
@@ -130,9 +150,9 @@ function sources() {
     assert.equal(box.timers.size, 0, "no watchdog runs while hidden");
     client.setActive(true); assert.equal(opened.length, 2, "reopened as the page is shown");
     // pageshow with no hide before it (a phone back from the background).
-    live()[0].open(); box.clock.now += 4000;
+    live()[0].open(); box.suspend(4000);
     client.setActive(true); assert.equal(opened.length, 2, "a stream heard from within the bound is kept");
-    box.clock.now += 20000;
+    box.suspend(20000);
     client.setActive(true); assert.equal(opened.length, 3, "a stream silent past the bound is reopened at once");
     assert.equal(live().length, 1);
     assert.deepEqual(await counted(), { stream_error: { count: 2, waits: [] } }, "each silent stream counts as a stream_error");

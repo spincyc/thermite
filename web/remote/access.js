@@ -109,6 +109,14 @@
     let visibleSince = active ? -Infinity : Infinity;
     // The open event streams, each with its liveness watchdog (eventSource).
     const streams = new Set(), streamLiveness = config.streamLiveness || 3 * STREAM_HEARTBEAT_MS;
+    // The watchdog times silence by the monotonic clock (performance.now,
+    // in browsers and node alike), so a wall clock stepped back cannot hide a
+    // dead stream; and by the wall clock as well, taking the longer, since a
+    // phone's monotonic clock can stand still while the phone sleeps. A wall
+    // clock stepped forward costs at most one needless reconnection.
+    const monotonic = typeof global.performance?.now === "function" ? () => global.performance.now() : () => now();
+    const stamp = () => ({ wall: now(), mono: monotonic() });
+    const silence = (since) => Math.max(monotonic() - since.mono, now() - since.wall);
     const commandDeadline = config.commandDeadline || COMMAND_DEADLINE_MS;
     // Every room's lock in one read, for the room lists. The watched room's
     // detailed policy (policies) still decides whether its controls are held back.
@@ -537,7 +545,7 @@
       eventSource(Source) {
         return class AuthorizedEvents {
           constructor(url) {
-            this.url = url; this.readyState = 0; this.closed = false; this.source = null; this.heard = now(); this.timer = null;
+            this.url = url; this.readyState = 0; this.closed = false; this.source = null; this.heard = stamp(); this.timer = null;
             ready().then(() => {
               if (this.closed) return;
               const target = new URL(url, origin);
@@ -549,17 +557,17 @@
           }
           connect() {
             const url = this.url, source = new Source(url, token ? { headers: { Authorization: "Bearer " + token } } : undefined);  // lint: allow — Bearer scheme prefix; token comes from private custody
-            this.source = source; this.heard = now(); this.watch();
+            this.source = source; this.heard = stamp(); this.watch();
             const current = () => this.source === source && !this.closed;
             let started = now(), opened = false;
             source.onopen = (event) => {
               if (!current()) return;
-              this.readyState = 1; opened = true; this.heard = now();
+              this.readyState = 1; opened = true; this.heard = stamp();
               if (this.onopen) this.onopen(event);
             };
             source.onmessage = (event) => {
               if (!current()) return;
-              this.heard = now();
+              this.heard = stamp();
               if (event?.data !== HEARTBEAT_FRAME && this.onmessage) this.onmessage(event);
             };
             source.onerror = (event) => {
@@ -582,7 +590,7 @@
           watch() {
             clearTimeout(this.timer); this.timer = null;
             if (this.closed || !this.source || this.source.readyState === 2 || !active) return;
-            const left = streamLiveness - (now() - this.heard);
+            const left = streamLiveness - silence(this.heard);
             if (left <= 0) { this.stalled(); return; }
             this.timer = setTimeout(() => { this.timer = null; this.watch(); }, left);
             // A watchdog alone need not keep a terminal process alive.
