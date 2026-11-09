@@ -842,7 +842,8 @@ def switching(mapping: dict) -> dict:
         ("histogram_quantile(0.95, sum by (le) (rate(thermite_policy_boundary_lag_seconds_bucket[1h]))) > 0",
          "Schedule lag 95th")], "s", minimum=0,
         description="Seconds since the worker's last pass (it runs every 5 s), since it last verified the "
-                    "longest-unchecked locked room, and how late schedule boundaries were applied."), 8, 7)
+                    "longest-unchecked locked room, a lock it cannot hold now included, and how late schedule "
+                    "boundaries were applied."), 8, 7)
     board.add(timeseries("Worker events", [
         ("sum by (outcome) (increase(thermite_policy_boundaries_total[1h])) > 0", "boundary {{outcome}}"),
         ("sum by (outcome) (increase(thermite_policy_repairs_total[1h])) > 0", "repair {{outcome}}"),

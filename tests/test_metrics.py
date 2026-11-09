@@ -1046,6 +1046,36 @@ class Textfiles(unittest.TestCase):
                                  "mismatched": ["example_matrix_output3"], "unknown": [], "limitations": []}})
         self.assertEqual(self.metrics.POLICY_ROOM_STATE.labels(den, "unavailable")._value.get(), 1)
 
+    def test_a_lock_that_cannot_be_held_keeps_its_reconcile_age(self):
+        """An unavailable lock is a lock not verified: its age keeps growing
+        until a pass verifies it, and only unlocking removes it."""
+        from oh_access import worker
+        held, broken = "example_age_held", "example_age_broken"
+        now = [100.0]
+        telemetry = worker.Telemetry((held, broken), monotonic=lambda: now[0])
+        verified = {"phase": "verified", "state": "verified"}
+        unreadable = {"phase": "enforcing", "state": "unknown", "reason": "native_read_unavailable"}
+
+        def age(zone):
+            text = self.metrics.prometheus_client.generate_latest(self.metrics.WORKER).decode()
+            found = re.search(rf'thermite_policy_reconcile_age_seconds{{zone="{zone}"}} (\S+)', text)
+            return float(found.group(1)) if found else None
+
+        telemetry.stepped({held: verified, broken: {"phase": "invalid", "reason": "invalid_policy"}})
+        self.assertEqual((age(held), age(broken)), (0.0, 0.0))
+        now[0] = 130.0
+        telemetry.stepped({held: unreadable, broken: {"phase": "invalid", "reason": "invalid_policy"}})
+        self.assertEqual(self.metrics.POLICY_ROOM_STATE.labels(held, "unavailable")._value.get(), 1)
+        self.assertEqual((age(held), age(broken)), (30.0, 30.0))
+        now[0] = 160.0
+        # Held again but not yet verified: still measured from the last verification.
+        telemetry.stepped({held: {"phase": "enforcing", "state": "unknown", "matched": [], "mismatched": [],
+                                  "unknown": ["example_age_power"]}})
+        self.assertEqual((age(held), age(broken)), (60.0, 60.0))
+        now[0] = 170.0
+        telemetry.stepped({held: verified, broken: {"phase": "unlocked"}})
+        self.assertEqual((age(held), age(broken)), (0.0, None))
+
     def test_route_classes_never_carry_the_path(self):
         route = self.metrics.route_class
         self.assertEqual(route("/api/v1/rooms/example_west/commands"), "command")

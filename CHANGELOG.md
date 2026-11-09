@@ -38,6 +38,12 @@ rollback. The unified deployment workflow uses a separate committed private site
   page. A page that hides sends its counts as a keepalive request and keeps
   them until it is answered; it used to send a beacon and forget them once
   the beacon was queued, so they were lost if it never arrived.
+- `thermite_policy_reconcile_age_seconds` stays while a locked room's lock
+  cannot be held (`unavailable`), and keeps growing until the worker
+  verifies the lock again. It used to vanish then, so Switching & remotes'
+  "Oldest locked-room check" left out exactly the rooms whose locks were
+  not being checked, and the age started again from 0 once the lock was
+  held, though nothing had verified it.
 - Every series the exporter and the remote gateway write is now read
   somewhere. The Devices board lists the Things that are not online and in
   what status, so a sleeping device (Offline) reads apart from one whose

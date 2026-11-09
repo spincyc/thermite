@@ -339,7 +339,8 @@ POLICY_LAG = Histogram("thermite_policy_boundary_lag_seconds", "Seconds from a b
 POLICY_REPAIRS = Counter("thermite_policy_repairs", "Repair commands for a locked room that drifted, by outcome.",
                          ["outcome"], registry=WORKER)
 POLICY_RECONCILE_AGE = Gauge("thermite_policy_reconcile_age_seconds", "Seconds since the worker last verified a "
-                             "locked routing zone; only locked zones have one.", ["zone"], registry=WORKER)
+                             "locked routing zone, one whose lock cannot be held now (unavailable) included; "
+                             "unlocked zones have none.", ["zone"], registry=WORKER)
 POLICY_ERRORS = Counter("thermite_policy_errors", "Policy worker failures by stage.", ["stage"], registry=WORKER)
 
 for _state in ROOM_STATES:

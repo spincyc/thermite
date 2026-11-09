@@ -191,7 +191,9 @@ class Telemetry:
     """The policy worker's metrics (oh_access.metrics), from what it already
     does: boundaries through its store, everything else from each pass's
     result. A room a pass did not reach keeps its last state. The worker's
-    rooms are routing zones, so their metrics label them `zone`."""
+    rooms are routing zones, so their metrics label them `zone`. A locked
+    zone's reconcile age grows until a pass verifies it, while its lock
+    cannot be held too; only unlocking removes it."""
 
     def __init__(self, rooms, *, clock=time.time, monotonic=time.monotonic):
         self.clock, self.monotonic = clock, monotonic
@@ -270,7 +272,7 @@ class Telemetry:
             if room not in self.states or not isinstance(status, dict):
                 continue
             state = self._state(room, status)
-            if state in ("manual", "scheduled") and self.states[room] not in ("manual", "scheduled"):
+            if state != "unlocked" and self.states[room] == "unlocked":
                 self.verified[room] = now  # A new lock is measured from its start.
             self.states[room] = state
             if self._verified(status):
@@ -286,7 +288,9 @@ class Telemetry:
         for room, state in self.states.items():
             for each in metrics.ROOM_STATES:
                 metrics.POLICY_ROOM_STATE.labels(room, each).set(1 if each == state else 0)
-            if state in ("manual", "scheduled"):
+            # A lock that cannot be held now keeps its age, which grows
+            # until a pass verifies it again.
+            if state != "unlocked":
                 metrics.POLICY_RECONCILE_AGE.labels(room).set(max(0.0, now - self.verified.get(room, now)))
             else:
                 self.verified.pop(room, None)
