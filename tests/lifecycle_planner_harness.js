@@ -1468,6 +1468,14 @@ test('a journal from before or after a property became independent restores its 
   r = rig({saved: first.saved(), actual: first.actual, instanceId: 'joined'});
   assert.equal(r.coordinator.snapshot().slots.usb.quarantine, 'restart-uncertain');
   assert.equal(r.coordinator.snapshot().slots.usb.operation.token, write.operation.token);
+  // Shared before, and now independent beside a field still shared: the
+  // write waits on its own slot, and the shared one is not held for it.
+  ({first, write} = capture(descriptor()));
+  const mixed = descriptor(); mixed.resources.D1.independent = true;
+  r = rig({config: mixed, saved: first.saved(), actual: first.actual, instanceId: 'mixed'});
+  slots = r.coordinator.snapshot().slots;
+  assert.equal(slots['usb#D1'].quarantine, 'restart-uncertain'); assert.equal(slots['usb#D1'].operation.token, write.operation.token);
+  assert.equal(slots.usb.quarantine, null); assert(!slots.usb.untracked);
   // A saved quarantine without a write it can place covers every slot of its device.
   const shared = rig(); shared.seed();
   const journal = shared.saved(); journal.slots.usb = {operation: null, successor: null, quarantine: 'provider_outcome_unknown', untracked: false};
