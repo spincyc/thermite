@@ -161,19 +161,18 @@ function. That replaces these, all found in the cold review:
 
 ## Metrics left over
 
-- `thermite_item_info` for source Items has no `zone` label, so a check
-  joins its source's value only on `room`, which is many-to-many in a room
-  with two zones.
-- Exported but shown nowhere:
-  - `endpoint_up`
-  - the scrape duration
-  - `thermite_thing_status`, which is info-style but lacks the `_info`
-    suffix
-  - SSE frames and overflows
-  - the upstream counters
-  - requests in flight
-  - SSE stream seconds
-- The policy reconcile-age gauge is dropped while a lock is unavailable.
+- The gateway exports `thermite_gateway_upstream_connects_total` and
+  `thermite_gateway_upstream_resyncs_total` (`Hub.COUNTERS` in
+  `lib/oh_access/metrics.py`, from `oh_identity.hub`), which nothing reads:
+  opening the runtime feed is routine (the first remote page opens it) and
+  a resync follows every connect; Switching & remotes shows the feed's
+  failures. Stop exporting both, then drop them from `UNREAD` in
+  `tests/test_metrics.py`.
+- The notification adapter's `thermite_notification_delivered_total`,
+  `_errors_total` and `_last_heartbeat_timestamp_seconds` are read nowhere.
+  Alertmanager already counts a failed delivery to the adapter
+  (ThermiteMonitoringBroken), and the heartbeat's age is its own series.
+  `test_every_exporter_family_is_read` does not cover them yet.
 
 ## To verify on hardware
 
