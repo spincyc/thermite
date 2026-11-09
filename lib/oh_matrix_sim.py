@@ -1,16 +1,17 @@
-"""Stand-ins for the matrices' JSON API (oh_integrations._instr), the
-HDFury VRROOM's web API (oh_integrations.vrroom_http) and the AVPro
-matrix's telnet (oh_integrations.avpro_telnet), for
-bin/thermite test routing and the tests.
+"""Stand-ins for the matrices' JSON API (oh_integrations._instr) and the
+telnet of the HDFury VRROOM (oh_integrations.vrroom_telnet) and the AVPro
+matrix (oh_integrations.avpro_telnet), for bin/thermite test routing and
+the tests.
 
 Each answers like the BK-808, UKM-404, VRROOM or AVPro it stands in for
-(`POST /cgi-bin/instr`, the VRROOM's GETs, the AVPro's lines): the same
-comheads, replies of the same shape (tests/fixtures/matrices holds the real
-ones) and, over HTTP, one request at a time. Every request is recorded, so
-a check can prove what openHAB sent. Over HTTP, to a comhead it does not
-know, or while muted, it closes the connection unanswered at once, where
-the real CGI keeps the client waiting until it times out (and stalls the
-next request too).
+(`POST /cgi-bin/instr`, the VRROOM's and the AVPro's lines): the same
+comheads, replies of the same shape and, over HTTP, one request at a time.
+Every request is recorded, so a check can prove what openHAB sent. Over
+HTTP, to a comhead it does not know, or while muted, it closes the
+connection unanswered at once, where the real CGI keeps the client waiting
+until it times out (and stalls the next request too). Over telnet, a line
+it does not know gets no answer, and while muted a connection is closed at
+its next line.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import re
 import socket
 import socketserver
 import threading
-import urllib.parse
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from oh_integrations import _instr as instr
@@ -70,10 +71,6 @@ class Matrix:
 
     def handlers(self) -> dict:
         raise NotImplementedError
-
-    def parse_get(self, path: str) -> dict | None:
-        """The request a GET of `path` makes; None: it takes no GETs."""
-        return None
 
     def get(self, port: int) -> int:
         raise NotImplementedError
@@ -210,60 +207,158 @@ class UKM404(Matrix):
             self.status["all_host"][port - 1] = value
 
 
-class VRROOM(Matrix):
-    """HDFury VRROOM (oh_integrations.vrroom_http): inputs 0-3 on TX0 and
-    TX1, over GET. Its ports are its outputs, 0 for TX0 and 1 for TX1, each
-    holding an input or COPY (a copy of the other output). It records
-    GET /ssi/<page> as "get <page>" and GET /cmd?<name>=<value> as <name>;
-    a /cmd it refuses gets a 404, as the real one's do."""
+class TelnetMatrix(Matrix):
+    """A stand-in that speaks telnet: serve() gives it a TelnetServer. Each
+    line it is sent is a request (parse_line()); its reply's "lines" are
+    the answer, and no reply, none."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        #: Seconds an idle connection stays open.
+        self.idle_s = 60.0
+        #: The open connections' senders, for what it says unasked.
+        self.links: set = set()
+        self.links_lock = threading.Lock()
+
+    def listing(self) -> list[str]:
+        """What it sends on connect."""
+        return []
+
+    def parse_line(self, line: str) -> dict:
+        raise NotImplementedError
+
+    def accepts(self) -> bool:
+        """Whether a new connection is served (else closed at once)."""
+        return not self.muted
+
+    def attach(self, link) -> None:
+        with self.links_lock:
+            self.links.add(link)
+
+    def detach(self, link) -> None:
+        with self.links_lock:
+            self.links.discard(link)
+
+    def tell(self, lines: list[str]) -> None:
+        """Say `lines` unasked on every open connection."""
+        with self.links_lock:
+            links = list(self.links)
+        for link in links:
+            link.send(lines)
+
+    def hang_up(self) -> None:
+        """Close every open connection."""
+        with self.links_lock:
+            links = list(self.links)
+        for link in links:
+            link.close()
+
+
+class VRROOM(TelnetMatrix):
+    """HDFury VRROOM (oh_integrations.vrroom_telnet): inputs 0-3 on TX0 and
+    TX1, over telnet on its port 2222. Its ports are its outputs, 0 for TX0
+    and 1 for TX1, each holding an input or COPY (a copy of the other
+    output). It answers `get insel` with `insel <tx0> <tx1>`, and `get
+    ipinterrupt` with `ipinterrupt on` or `off`; a set of either with the
+    line a get would now answer (the real one's acknowledgement of set
+    insel is not recorded word for word), and a set it refuses, or any line
+    it does not know (an upper-case one too), with nothing. While its
+    ipinterrupt is on (a setting, off at first, that a reboot keeps) it says
+    `int` on every connection shortly after an output's input changes,
+    whoever changed it. `set reboot` gets no answer: shortly after, it
+    closes every connection and refuses new ones for reboot_s seconds,
+    keeping its settings. It records each request as its first two words
+    (`get insel`, `set insel`, `get ipinterrupt`, `set ipinterrupt`, `set
+    reboot`) and any other line whole."""
 
     INPUTS = range(0, 4)
     COPY = 4
+    COMMAND = re.compile(r"(get|set) (insel|ipinterrupt|reboot)((?: [a-z0-9]+)*)")
+    #: Seconds from a change to its `int`, and from `set reboot` to the
+    #: restart.
+    DELAY_S = 0.05
 
-    def __init__(self, status: dict | None = None) -> None:
+    def __init__(self, insel: list[int] | None = None) -> None:
         super().__init__()
-        self.status = copy.deepcopy(status) if status else self.default_status()
+        self.insel = list(insel or [0, self.COPY])
+        self.interrupts = False
+        self.reboot_s = 15.0
+        self.reboots = 0
+        self.down_until = 0.0
 
-    @classmethod
-    def default_status(cls) -> dict:
-        fields = ("AUD0", "AUD1", "AUDOUT", "EARCRX", "EDIDA0", "EDIDA1", "EDIDA2", "RX0", "RX1", "SINK0", "SINK1",
-                  "SINK2", "SPDASC", "SPDASC1", "TX0", "TX1", "arcst", "earcout5v", "earcst", "opmode", "pcbv",
-                  "portseltx0", "portseltx1", "rx0in5v", "rx1in5v", "rx2in5v", "rx3in5v", "tx0hpd", "tx0ns",
-                  "tx0rs", "tx0scerr", "tx0tmds", "tx1hpd", "tx1ns", "tx1rs", "tx1scerr", "tx1tmds", "txaudhpd",
-                  "txaudrs")
-        return {**dict.fromkeys(fields, "0"), "portseltx1": str(cls.COPY), "pcbv": "3"}
+    def accepts(self) -> bool:
+        return super().accepts() and time.monotonic() >= self.down_until
 
-    def parse_get(self, path: str) -> dict:
-        url = urllib.parse.urlsplit(path)
-        if url.path.startswith("/ssi/"):
-            return {"comhead": f"get {url.path[len('/ssi/'):]}"}
-        query = urllib.parse.parse_qsl(url.query, keep_blank_values=True)
-        if url.path == "/cmd" and len(query) == 1:
-            name, value = query[0]
-            return {"comhead": name, name: value}
-        return {"comhead": f"GET {path}"}
+    def parse_line(self, line: str) -> dict:
+        match = self.COMMAND.fullmatch(line)
+        if match is None:
+            return {"comhead": line}
+        verb, name, values = match.groups()
+        return {"comhead": f"{verb} {name}", "values": values.split()}
 
     def handlers(self) -> dict:
-        return {"get infopage.ssi": lambda r: copy.deepcopy(self.status), "insel": self._insel}
+        return {"get insel": self._get_insel, "set insel": self._set_insel,
+                "get ipinterrupt": self._get_interrupts, "set ipinterrupt": self._set_interrupts,
+                "set reboot": self._reboot}
 
-    def _insel(self, request: dict) -> dict:
-        values = str(request.get("insel")).split(" ")
+    def _reply(self, request: dict, lines: list[str], ok: bool = True) -> dict:
+        return {"comhead": request["comhead"], "result": int(ok), "lines": lines if ok else []}
+
+    def _get_insel(self, request: dict) -> dict:
+        return self._reply(request, [f"insel {self.insel[0]} {self.insel[1]}"], not request["values"])
+
+    def _set_insel(self, request: dict) -> dict:
         allowed = {str(n) for n in [*self.INPUTS, self.COPY]}
+        values = request["values"]
         if len(values) != 2 or not set(values) <= allowed or values == [str(self.COPY)] * 2:
-            return {"comhead": "insel", "result": 0}
-        self.status["portseltx0"], self.status["portseltx1"] = values
-        return {"comhead": "insel", "result": 1}
+            return self._reply(request, [], False)
+        self._route([int(value) for value in values])
+        return self._get_insel({**request, "values": []})
+
+    def _interrupts(self) -> list[str]:
+        return [f"ipinterrupt {'on' if self.interrupts else 'off'}"]
+
+    def _get_interrupts(self, request: dict) -> dict:
+        return self._reply(request, self._interrupts(), not request["values"])
+
+    def _set_interrupts(self, request: dict) -> dict:
+        if request["values"] not in (["on"], ["off"]):
+            return self._reply(request, [], False)
+        self.interrupts = request["values"] == ["on"]
+        return self._reply(request, self._interrupts())
+
+    def _reboot(self, request: dict) -> dict:
+        if request["values"]:
+            return self._reply(request, [], False)
+        self.reboots += 1
+        threading.Timer(self.DELAY_S, self._restart).start()
+        return self._reply(request, [])
+
+    def _restart(self) -> None:
+        with self.lock:
+            self.down_until = time.monotonic() + self.reboot_s
+        self.hang_up()
+
+    def _route(self, insel: list[int]) -> None:
+        """Change the outputs' inputs (the lock held), and say so if asked to."""
+        changed = insel != self.insel
+        self.insel = insel
+        if changed and self.interrupts:
+            threading.Timer(self.DELAY_S, self.tell, args=(["int"],)).start()
 
     def get(self, port: int) -> int:
         """The input output `port` (0 for TX0) shows."""
         with self.lock:
-            return int(self.status[f"portseltx{port}"])
+            return self.insel[port]
 
     def set(self, port: int, value: int) -> None:
         with self.lock:
-            self.status[f"portseltx{port}"] = str(value)
+            insel = list(self.insel)
+            insel[port] = value
+            self._route(insel)
 
-class AVPro(Matrix):
+
+class AVPro(TelnetMatrix):
     """AVPro Edge AC-MX-44X (oh_integrations.avpro_telnet): 4 inputs, 4
     outputs, over telnet (serve() gives it a TelnetServer). Its ports are
     its outputs, each holding the input routed to it. On connect it lists
@@ -281,8 +376,6 @@ class AVPro(Matrix):
     def __init__(self, routes: list[int] | None = None) -> None:
         super().__init__()
         self.routes = list(routes or [1] * self.OUTPUTS)
-        #: Seconds an idle connection stays open.
-        self.idle_s = 60.0
 
     def listing(self) -> list[str]:
         """What it sends on connect."""
@@ -332,7 +425,7 @@ class AVPro(Matrix):
 
 
 #: The stand-in for each matrix integration, by its NAME.
-SIMS = {"bk808_http": BK808, "ukm404_http": UKM404, "vrroom_http": VRROOM, "avpro_telnet": AVPro}
+SIMS = {"bk808_http": BK808, "ukm404_http": UKM404, "vrroom_telnet": VRROOM, "avpro_telnet": AVPro}
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -343,15 +436,6 @@ class _Handler(BaseHTTPRequestHandler):
         super().setup()
         # The connection in hand, for stop() to end.
         self.server.connection = self.connection
-
-    def do_GET(self) -> None:  # noqa: N802 (http.server's name)
-        matrix = self.server.matrix
-        request = None if matrix.muted else matrix.parse_get(self.path)
-        reply = None if request is None else matrix.answer(request)
-        if reply is None:
-            self.close_connection = True
-            return
-        self._send(404 if reply.get("result") == 0 else 200, reply)
 
     def do_POST(self) -> None:  # noqa: N802 (http.server's name)
         # A length that is not a byte count up to MAX_BODY is refused before
@@ -439,10 +523,18 @@ class _TelnetHandler(socketserver.StreamRequestHandler):
 
     def handle(self) -> None:
         matrix = self.server.matrix
-        if matrix.muted:
+        if not matrix.accepts():
             return
+        self.sending = threading.Lock()
         self.connection.settimeout(matrix.idle_s)
-        self._send(matrix.listing())
+        self.send(matrix.listing())
+        matrix.attach(self)
+        try:
+            self._serve(matrix)
+        finally:
+            matrix.detach(self)
+
+    def _serve(self, matrix: TelnetMatrix) -> None:
         while True:
             try:
                 raw = self.rfile.readline(513)
@@ -456,28 +548,37 @@ class _TelnetHandler(socketserver.StreamRequestHandler):
             if matrix.muted:
                 return
             reply = matrix.answer(matrix.parse_line(line))
-            self._send(reply["lines"] if reply else [])
+            self.send(reply["lines"] if reply else [])
 
-    def _send(self, lines: list[str]) -> None:
+    def send(self, lines: list[str]) -> None:
+        if not lines:
+            return
         try:
-            self.wfile.write(b"".join(line.encode("ascii") + b"\r\n" for line in lines))
+            with self.sending:
+                self.wfile.write(b"".join(line.encode("ascii") + b"\r\n" for line in lines))
         except OSError:
             # The client has gone; what it missed is its loss.
+            pass
+
+    def close(self) -> None:
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
             pass
 
 
 class _TelnetServer(socketserver.ThreadingTCPServer):
     daemon_threads = True
     allow_reuse_address = True
-    matrix: AVPro
+    matrix: TelnetMatrix
 
 
 class TelnetServer:
-    """One stand-in that speaks telnet (AVPro) served on 127.0.0.1; it
-    takes several connections at once. A muted one closes each connection
-    at once, unanswered."""
+    """One stand-in that speaks telnet (VRROOM, AVPro) served on 127.0.0.1;
+    it takes several connections at once. A muted one closes each
+    connection at once, unanswered."""
 
-    def __init__(self, matrix: AVPro, port: int = 0) -> None:
+    def __init__(self, matrix: TelnetMatrix, port: int = 0) -> None:
         self.matrix = matrix
         self.tcp = _TelnetServer(("127.0.0.1", port), _TelnetHandler)
         self.tcp.matrix = matrix
@@ -508,13 +609,13 @@ class TelnetServer:
 
 def serve(matrix: Matrix) -> "Server | TelnetServer":
     """A server for the stand-in, over the protocol its matrix speaks."""
-    return TelnetServer(matrix) if isinstance(matrix, AVPro) else Server(matrix)
+    return TelnetServer(matrix) if isinstance(matrix, TelnetMatrix) else Server(matrix)
 
 
 def exchange(address: str, lines: list[str], timeout: float = 0.3) -> tuple[list[str], list[list[str]]]:
     """(listing, answers) of one telnet connection sending `lines` in turn
-    to an AVPro at HOST:PORT: every line that came before the first was
-    sent, and after each, until none came for `timeout` seconds."""
+    to a telnet stand-in at HOST:PORT: every line that came before the
+    first was sent, and after each, until none came for `timeout` seconds."""
     host, _, port = address.rpartition(":")
     with socket.create_connection((host, int(port)), timeout=timeout) as conn:
         # Not conn.makefile(): a file object that timed out once reads no more.

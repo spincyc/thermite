@@ -36,6 +36,10 @@ A module that switches a matrix also provides
               is commanded with an input number
     COMHEADS  all it ever sends, named as its stand-in from
               lib/oh_matrix_sim.SIMS[NAME] records it
+    SETUP_COMHEADS
+              optional: those of COMHEADS that set up a connection and
+              move no port (bin/thermite test routing counts every other
+              comhead but a get as a write)
     thing_uid(device), url(address)
               the Thing's UID and the URL of a matrix at HOST[:PORT]
               (bin/thermite test routing points the Thing at the stand-in),
@@ -64,8 +68,8 @@ and switch_item(),
               the Number Item holding the input shown; it is commanded with
               an input number
 
-and COMHEADS, thing_uid() and url() as a matrix does; a room's hdmi_switch
-may also be one output of a matrix. A module that
+and COMHEADS with thing_uid() and url(), or aim(), as a matrix does; a
+room's hdmi_switch may also be one output of a matrix. A module that
 powers a room's receiver or display and sets its input (routing.rooms.<room>
 receiver and display) provides
 
@@ -187,12 +191,12 @@ integrations, not integrations.
 from __future__ import annotations
 
 from . import (androidtv_googletv, avpro_telnet, bk808_cec, bk808_http, cast, denonmarantz_http, drhdmi_http, globalcache_ir, heos, network_ping, pyatv_http, sonos,
-               sony_adcp, sony_ip_control, sony_rest, ukm404_http, unifi_protect, vrroom_http, wiim_http)
+               sony_adcp, sony_ip_control, sony_rest, ukm404_http, unifi_protect, vrroom_http, vrroom_telnet, wiim_http)
 
 #: Implemented integrations, in render order; a room page lists each device's
 #: points in this order.
 REGISTRY = (network_ping, sony_rest, sony_ip_control, cast, androidtv_googletv, pyatv_http, sonos, denonmarantz_http, heos,
-            wiim_http, sony_adcp, bk808_http, ukm404_http, vrroom_http, avpro_telnet, unifi_protect, drhdmi_http, globalcache_ir, bk808_cec)
+            wiim_http, sony_adcp, bk808_http, ukm404_http, vrroom_http, vrroom_telnet, avpro_telnet, unifi_protect, drhdmi_http, globalcache_ir, bk808_cec)
 
 PHASES = ("observe", "control")
 

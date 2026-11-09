@@ -29,9 +29,9 @@ It runs on var/sandbox/conf, a copy of conf/ in which every HTTP binding
 channel is READONLY, every Item linked to a channel that could command a
 device is display-only and every rule's SEND is off (oh_render.read_only):
 it reads the matrices and the devices under control but cannot command them.
-It leaves every session to the runtime: the AVPro, which serves few telnet
-sessions, and the Sony projector, which answers one ADCP request at a time,
-because SEND is off; and HEOS, Cast, the Android TV remote and Sonos, whose
+It leaves every session to the runtime: the AVPro and the VRROOM, which
+serve few telnet sessions, and the Sony projector, which answers one ADCP
+request at a time, because SEND is off; and HEOS, Cast, the Android TV remote and Sonos, whose
 Things are addressed nowhere, with UPnP off (oh_render.unaddressed).
 `reload` refreshes the copy after `thermite generate`; the running sandbox
 picks the change up.

@@ -1,5 +1,5 @@
 """Poll timing of the HTTP binding Things of the HDMI and USB matrices
-(oh_integrations._instr), the HDMI switch and the Dr. HDMI.
+(oh_integrations._instr), the HDMI switch's diagnostics and the Dr. HDMI.
 
 A fictional house with documentation addresses. openHAB's HTTP binding
 starts each poll on a fixed delay and does not wait for the last one, so a
@@ -43,7 +43,7 @@ HOUSE = {
                controls={"control": ["bk808_http"]}),
         device("example_usb", CINEMA, "usb_matrix", 21, model="UKM-404", controls={"control": ["ukm404_http"]}),
         device("example_switch", CINEMA, "hdmi_switch", 22, make="HDFury", model="VRROOM",
-               controls={"control": ["vrroom_http"]}),
+               controls={"observe": ["vrroom_http"], "control": ["vrroom_telnet"]}),
         device("example_probe", LOUNGE, "hdmi_processor", 23, make="HDFury", model="Dr.HDMI",
                controls={"observe": ["drhdmi_http"]}),
         device(COMPUTER, CINEMA, "computer", 26, model="Computer"),
@@ -120,7 +120,8 @@ class PollTiming(unittest.TestCase):
                 refresh, timeout = thing["config"]["refresh"], thing["config"]["timeout"] / 1000
                 self.assertLessEqual(refresh, ROUTED_REFRESH)
                 self.assertLess(refresh + timeout, field.max_age)
-        self.assertEqual(set(polled), {bk808_http, ukm404_http, vrroom_http})
+        # The HDMI switch's input is read over telnet (vrroom_telnet), not here.
+        self.assertEqual(set(polled), {bk808_http, ukm404_http})
 
     def test_signal_snapshots_stay_fresh_between_polls(self):
         for module in (bk808_http, vrroom_http, drhdmi_http):

@@ -19,7 +19,7 @@ import oh_cli
 import oh_render as render
 import oh_sandbox as lib
 from oh_features import all_off, remote, routing
-from oh_integrations import _instr as instr, vrroom_http
+from oh_integrations import _instr as instr, vrroom_telnet
 
 SUMMARY = "the room Source selectors end to end, against simulated matrices"
 
@@ -85,9 +85,9 @@ STAND_INS = "yaml/routing-check.yaml"
 COMMAND = re.compile(r"Item '([^']+)' received command (.*?)(?: \(source: .*\))?$")
 STOP_TIMEOUT = 3
 SIGNAL_WAIT = 30
-#: Seconds a step may take: a poll of a matrix or HDMI switch Thing and its
-#: timeout, a command and its re-read.
-STEP = max(instr.REFRESH, vrroom_http.REFRESH) + 10
+#: Seconds a step may take: a poll of a matrix Thing or HDMI switch rule and
+#: its timeout, a command and its re-read.
+STEP = max(instr.REFRESH, vrroom_telnet.POLL_S) + 10
 EXECUTOR_QUIET = 0.25
 #: The room Sources' updates, as the remote page follows them when openHAB
 #: serves it (web/remote/backend.js NATIVE_TOPICS) and the gateway's hub does.
@@ -590,7 +590,8 @@ class Check:
                 self.failures.append(f"an unoffered choice in {room} reached {ident}")
 
     def _writes(self, ident: str) -> int:
-        reads = {c for c in self.modules[ident].COMHEADS if c.startswith("get")}
+        module = self.modules[ident]
+        reads = {c for c in module.COMHEADS if c.startswith("get")} | set(getattr(module, "SETUP_COMHEADS", ()))
         return sum(1 for c in self.sims[ident].comheads() if c not in reads)
 
     def expect_edid(self, what: str, number: int, code: int | None) -> bool:

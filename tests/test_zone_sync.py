@@ -126,7 +126,7 @@ class Validation(unittest.TestCase):
 
         def switch(rooms, data):
             data["devices"].append(device("example_switch", CINEMA, "hdmi_switch", 29, make="HDFury", model="VRROOM",
-                                          controls={"control": ["vrroom_http"]}))
+                                          controls={"control": ["vrroom_telnet"]}))
             rooms[CINEMA]["hdmi_switch"] = {"device": "example_switch", "matrix_input": 1, "inputs": {DISC: 2}}
 
         cases = {

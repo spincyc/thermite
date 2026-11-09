@@ -1,13 +1,10 @@
-"""HDFury VRROOM HDMI switch over its web API.
+"""HDFury VRROOM diagnostics over its web API.
 
-One Number point, `<id>_input`: the input (0-3, the VRROOM's own numbers)
-shown on TX0, read back at each poll (REFRESH) and switched by commanding
-the Item. The VRROOM answers GET /ssi/infopage.ssi with its state as JSON
-(`portseltx0` is TX0's input) and switches on GET /cmd?insel=<TX0> <TX1>,
-as its own web page does; TX1 is sent as a copy of TX0 (4), which in
-splitter mode it always is. Neither needs a login. A read-only String
-`<id>_signal` reuses the same status response for measured input/output
-video and audio, and separately labelled sink EDID capabilities.
+One read-only String point, `<id>_signal`: what the VRROOM's telnet API
+does not report, read from GET /ssi/infopage.ssi, its state as JSON, about
+once a minute: measured input and output video and audio, and separately
+labelled sink EDID capabilities. No login is needed. The switch is controlled
+over telnet (vrroom_telnet, under control); nothing here can command it.
 """
 
 from __future__ import annotations
@@ -17,56 +14,33 @@ from oh_conf import Addon, House, YamlFile, uses
 from . import _diagnostics as diag
 
 NAME = "vrroom_http"
-PHASE = "control"
+PHASE = "observe"
 FILE = "yaml/vrroom.yaml"
 HEADER = (
-    "HDMI switching over the HDFury VRROOM's web API (HTTP binding). TX0's",
-    "input is polled with GET /ssi/infopage.ssi and switched with GET",
-    "/cmd?insel=<input> 4. Items are autoupdate off: they show only what the",
-    "switch reports.",
+    "HDFury VRROOM diagnostics over its web API (HTTP binding): a read-only",
+    "snapshot of GET /ssi/infopage.ssi, polled about once a minute. The switch",
+    "is controlled over telnet (vrroom_telnet).",
 )
 ADDONS = (
     Addon("binding", "http"),
-    Addon("transformation", "jsonpath"),
-    Addon("automation", "jsscripting", "the inline JS that builds matrix commands"),
+    Addon("automation", "jsscripting", "the VRROOM signal snapshot transform"),
 )
 ASSETS: dict[str, str] = {}
 KINDS = {"hdmi_switch"}
-#: The input numbers TX0 can show (RX0-RX3).
-INPUTS = range(0, 4)
-READBACK_INPUTS = tuple(str(number) for number in INPUTS)
-#: The insel value that makes one output copy the other.
-COPY = 4
 STATUS = "/ssi/infopage.ssi"
-#: All that the Thing ever sends, named as lib/oh_matrix_sim's stand-in
-#: records it: the status page and the insel command.
-COMHEADS = frozenset({"get infopage.ssi", "insel"})
-#: Seconds between polls and the request timeout in ms, as for the matrices
-#: (oh_integrations._instr explains both): TX0's input is routed state.
-REFRESH = 10
+#: Seconds between polls and the request timeout in ms. Nothing routed is
+#: read here, so about once a minute; the snapshot's window (maxAgeSeconds)
+#: covers two polls and a timeout.
+REFRESH = 60
 TIMEOUT = 2000
+MAX_AGE = 2 * REFRESH + 5
+#: The infopage fields a snapshot keeps.
+FIELDS = ["portseltx0", "portseltx1", "RX0", "RX1", "TX0", "TX1", "AUD0", "AUD1", "AUDOUT", "EARCRX",
+          "SINK0", "SINK1", "EDIDA0", "EDIDA1"]
 
 
 def thing_uid(device: dict) -> str:
     return f"http:url:{device['id']}"
-
-
-def url(address: str) -> str:
-    """The web API URL of a VRROOM at HOST[:PORT]."""
-    return f"http://{address}"
-
-
-def input_item(device: dict) -> str:
-    """The Item holding the input TX0 shows."""
-    return f"{device['id']}_input"
-
-
-def fields(device: dict) -> dict[str, dict]:
-    """The routing executor's field (oh_integrations): TX0's input, written
-    and read through the Thing's own channel. The switch's answer to a
-    write is no acknowledgement; only a read showing the input is."""
-    return {input_item(device): {"kind": "http", "thing": thing_uid(device), "channel": "input",
-                                 "values": [str(n) for n in INPUTS], "ack": "readback"}}
 
 
 def diagnostics(device: dict) -> dict:
@@ -89,13 +63,11 @@ physical input sockets. See HDfury VRROOM manual, INFO section, page 19.
                              "port": {"direction": "output", "number": output}})
     for label, key in (("Audio extractor output", "AUDOUT"), ("eARC return audio", "EARCRX")):
         readings.append({"category": "audio", "label": label, "item": item, "path": ["values", key]})
-    return {"kind": NAME, "items": [item], "maxAgeSeconds": 15, "readings": readings}
+    return {"kind": NAME, "items": [item], "maxAgeSeconds": MAX_AGE, "readings": readings}
 
 
 def signal_js() -> str:
-    fields = ["portseltx0", "portseltx1", "RX0", "RX1", "TX0", "TX1", "AUD0", "AUD1", "AUDOUT", "EARCRX",
-              "SINK0", "SINK1", "EDIDA0", "EDIDA1"]
-    return diag.json_snapshot(fields, required="portseltx0")
+    return diag.json_snapshot(FIELDS, required="portseltx0")
 
 
 def files(devices: list[dict], house: House) -> dict[str, str]:
@@ -104,7 +76,7 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
 
 def validate(device: dict) -> list[str]:
     if uses(device, PHASE, NAME) and device.get("kind") not in KINDS:
-        return [f"{device.get('id')}: {NAME} drives an hdmi_switch, not a {device.get('kind')}"]
+        return [f"{device.get('id')}: {NAME} observes an hdmi_switch, not a {device.get('kind')}"]
     return []
 
 
@@ -114,7 +86,7 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         "label": f"{house.label(device)} web API",
         "location": house.room_label(device["room"]),
         "config": {
-            "baseURL": url(device["ip"]),
+            "baseURL": f"http://{device['ip']}",
             "refresh": REFRESH,
             "timeout": TIMEOUT,
             "delay": 100,
@@ -123,32 +95,6 @@ def render(device: dict, house: House, out: YamlFile) -> None:
             # Offline and UNDEF when the switch stops answering, never stale.
             "strictErrorHandling": True,
         },
-        "channels": {
-            "input": {
-                "type": "number",
-                "label": "TX0 input",
-                "config": {
-                    "stateExtension": STATUS,
-                    "stateTransformation": ["JSONPATH($.portseltx0)"],
-                    # The binding escapes the space in "<input> 4" itself.
-                    "commandExtension": "/cmd?insel=%2$s",
-                    "commandTransformation": [f"JS(|parseInt(input) + ' {COPY}')"],
-                    "refreshAfterCommand": True,
-                },
-            },
-        },
+        "channels": {"signal": diag.channel("HDMI signal snapshot", "vrroom-signal.js", stateExtension=STATUS)},
     }
-    out.items[input_item(device)] = {
-        "type": "Number",
-        "label": "TX0 input",
-        "icon": "video",
-        "groups": [device["id"]],
-        "tags": ["Control"],
-        "autoupdate": False,
-        "channel": f"{uid}:input",
-    }
-    # Identical stateExtension: the HTTP binding reuses the input poll's
-    # cached response instead of making a second request.
-    out.things[uid]["channels"]["signal"] = diag.channel(
-        "HDMI signal snapshot", "vrroom-signal.js", stateExtension=STATUS, refreshAfterCommand=True)
     out.items[diagnostics(device)["items"][0]] = diag.snapshot_item(device, uid, "signal", "HDMI signal snapshot")

@@ -39,6 +39,7 @@ DEVICE = {
     "bk808_http": {"kind": "hdmi_matrix", "make": "BZBGEAR", "model": "BK-808"},
     "ukm404_http": {"kind": "usb_matrix", "model": "UKM-404"},
     "vrroom_http": {"kind": "hdmi_switch", "make": "HDFury", "model": "VRROOM"},
+    "vrroom_telnet": {"kind": "hdmi_switch", "make": "HDFury", "model": "VRROOM"},
     "avpro_telnet": {"kind": "hdmi_matrix", "make": "AVPro Edge", "model": "AC-MX-44X"},
     "unifi_protect": {"kind": "camera", "make": "Ubiquiti", "model": "G4 Bullet",
                       "protect": {"device_id": "0123456789abcdef01234567"}},
