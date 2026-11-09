@@ -44,6 +44,9 @@ class ClientTelemetry(unittest.TestCase):
         for key in ("protocol", "keepaliveReport", "heldUntilAnswered"):
             self.assertTrue(self.proof[key], key)
 
+    def test_a_report_sent_as_the_page_hides_is_never_given_up_and_sent_twice(self):
+        self.assertTrue(self.proof["leavingNoDuplicate"])
+
     def test_nothing_is_counted_while_the_page_is_hidden_or_across_a_hidden_spell(self):
         self.assertTrue(self.proof["hiddenNotCounted"])
 

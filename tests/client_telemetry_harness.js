@@ -39,7 +39,8 @@ const sent = site => site.calls.filter(call => call === "POST " + TELEMETRY).len
 // access.js as a page loads it: its own globals, visibilitychange and all.
 function page(options = {}) {
   const handlers = {}, beacons = [], fetches = [], reports = options.reports || (() => answer(null, 204));
-  const context = { URL, URLSearchParams, Headers, Blob, AbortController, setTimeout, clearTimeout, console,
+  const context = { URL, URLSearchParams, Headers, Blob, AbortController, console,
+    setTimeout: options.timers ? options.timers.set : setTimeout, clearTimeout: options.timers ? options.timers.clear : clearTimeout,
     location: { href: origin + "/remotes/?" + (options.query || ""), origin, search: "?" + (options.query || ""), replace() {} },
     document: { visibilityState: "visible", body: { dataset: { thermitePage: "remotes" } }, querySelectorAll: () => [],
       addEventListener: (name, fn) => { handlers[name] = fn; } },
@@ -47,7 +48,7 @@ function page(options = {}) {
     fetch: async (url, init = {}) => {
       fetches.push({ route: new URL(url).pathname, init });
       if (new URL(url).pathname === "/api/v1/security") return answer({ enabled: false, revision: 1, bootstrap_required: false, setup_available: false, csrf });
-      if (new URL(url).pathname === TELEMETRY) return reports();
+      if (new URL(url).pathname === TELEMETRY) return reports(init);
       return answer(null, 204);
     } };
   if ("performance" in options) context.performance = options.performance;
@@ -236,6 +237,28 @@ function page(options = {}) {
   deliver(204); await tick(); await tick();
   view.show(); view.hide(); await tick(); assert.equal(view.posted().length, 2);
   proof.keepaliveReport = proof.heldUntilAnswered = true;
+
+  // The report sent as the page hides has no deadline of its own: on a phone
+  // back from the background a 10 s abort could fire before the answer the
+  // gateway already sent is delivered, and the counts it took would be sent
+  // again. It ends with its answer, or a network failure, which keeps them.
+  {
+    const pending = new Map(); let id = 0;
+    const timers = { set: (fn, ms) => { pending.set(++id, { fn, ms }); return id; }, clear: handle => pending.delete(handle) };
+    let deliver;
+    view = page({ timers, reports: init => new Promise((resolve, reject) => {
+      deliver = status => resolve(answer(null, status));
+      init.signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+    }) });
+    view.client.record("stream_error", 4); view.hide(); await tick();
+    [...pending.values()].forEach(timer => timer.fn()); pending.clear(); await tick(); await tick();
+    view.show(); view.hide(); await tick();
+    assert.equal(view.posted().length, 1, "the hidden page's report is not given up and sent again");
+    deliver(204); await tick(); await tick();
+    view.show(); view.hide(); await tick();
+    assert.equal(view.posted().length, 1, "answered: nothing left to send");
+  }
+  proof.leavingNoDuplicate = true;
 
   // Nothing is counted while the page is hidden, nor any wait that spanned a
   // hidden (perhaps suspended) page: it measured the page, not the gateway.

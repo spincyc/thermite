@@ -152,8 +152,9 @@
     // answered request, at most every 15 s and one at a time, or as the page
     // hides, as a keepalive request that may outlive the page. What is posted
     // is held until its answer: 2xx clears it, other 4xx drop it, and
-    // 408/429/5xx, network failures and no answer within 10 s return it for
-    // later. A telemetry POST's own failure is never recorded.
+    // 408/429/5xx, network failures and (but for the report as the page
+    // hides) no answer within 10 s return it for later. A telemetry POST's
+    // own failure is never recorded.
     const TELEMETRY = "/api/v1/telemetry", KINDS = ["policy_timeout", "locks_timeout", "command_timeout", "stream_error", "stream_refused", "snapshot_timeout"];
     // The gateway counts reports by kind (oh_identity.telemetry): web or tui, never a
     // client's own label (tui/<host>, which names it in the command trail).
@@ -204,9 +205,14 @@
       // queued beacon may never be delivered. A keepalive request can outlive
       // the page too, and its answer says whether the counts arrived.
       if (!leaving) { reporting = true; reportAfter = now() + 15000; }
-      const controller = typeof AbortController === "function" ? new AbortController() : null;
-      const timer = setTimeout(() => controller?.abort(), 10000);
-      if (timer.unref) timer.unref();
+      // An ordinary report gives up after 10 s and keeps its counts. The one
+      // sent as the page hides has no deadline: a phone may be suspended past
+      // it, and an abort on resume could come before the answer the gateway
+      // already sent, so the counts it took would go again. It ends with its
+      // answer or a network failure (a quitting terminal waits a second).
+      const controller = !leaving && typeof AbortController === "function" ? new AbortController() : null;
+      const timer = leaving ? null : setTimeout(() => controller?.abort(), 10000);
+      if (timer?.unref) timer.unref();
       try {
         const response = await raw(TELEMETRY, { method: "POST", keepalive: leaving === true, headers: { "Content-Type": "application/json" }, body,
           ...(controller ? { signal: controller.signal } : {}) }).catch(() => null);
