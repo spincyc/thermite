@@ -162,8 +162,6 @@ function. That replaces these, all found in the cold review:
   Commands are never aborted, and snapshot gaps keep stale values.
 - Client telemetry counts in-flight requests while the page is hidden, and
   a beacon that is only queued clears the counts.
-- The policy worker's float `retry_seconds` defeats the save
-  de-duplication.
 
 ## Metrics left over
 

@@ -13,6 +13,11 @@ rollback. The unified deployment workflow uses a separate committed private site
   locked, since the display can never be read. The display is still
   reported, as `passive_endpoint:<id>` in the status's `limitations`, and
   a change on the rest of the route still degrades it and is put back.
+- The policy worker saves a locked room's status only when it changes, or
+  every 10 s, as intended, also while a repair waits out its backoff. A
+  status then differed from the last at every pass in how many seconds
+  the repair still waited (`retry_seconds`), so it was saved again each
+  time. The saved count still ends when the repair is due.
 - Each integration the routing lifecycle drives now declares its fields
   itself, through a new `fields(device)` hook: the values each can be
   commanded with, how a write is acknowledged, how long it may take to

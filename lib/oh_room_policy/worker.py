@@ -196,10 +196,16 @@ class Worker:
             return batch(tuple(revisions)) == revisions
         return all(self.store.current_revision(room) == revision for room, revision in revisions.items())
 
-    def _save(self, room, revision, state, *, occurrence=None):
+    def _save(self, room, revision, state, *, occurrence=None, retry_at=None):
+        """retry_seconds counts down from the save to retry_at, the waiting
+        repair's monotonic time: a status that differs only in that count,
+        with the same retry_at, is unchanged, and its saved count still
+        ends at the same moment."""
         previous = self._persisted.get(room)
         now = self.monotonic()
-        if previous and previous[0] == revision and previous[1] == state and previous[3] == occurrence:
+        compared = {key: value for key, value in state.items() if key != "retry_seconds"}
+        if (previous and previous[0] == revision and previous[1] == compared
+                and previous[3] == (occurrence, retry_at)):
             # Unlocked rows are not freshness evidence. Their next mutation or
             # revision publishes immediately; active enforcement retains a
             # bounded heartbeat even when all observations still match.
@@ -207,7 +213,7 @@ class Worker:
                 return True
         if not self.store.save_reconcile(room, revision, state):
             return False
-        self._persisted[room] = (revision, copy.deepcopy(state), now, occurrence)
+        self._persisted[room] = (revision, copy.deepcopy(compared), now, (occurrence, retry_at))
         before = self._phases.get(room)
         if before != (revision, state.get("phase")):
             self._phases[room] = (revision, state.get("phase"))
@@ -352,10 +358,10 @@ class Worker:
 
     def _schedule(self, runtime, repair, mono):
         """Read again within read_interval, or once a known mismatch's repair
-        falls due; return the seconds that repair still waits."""
+        falls due; return the monotonic time that repair waits for, or None."""
         waits = [due for due in (self._due(runtime, item) for item, _ in repair) if due > mono]
         runtime["read_due"] = min([mono + self.read_interval, *waits])
-        return min(waits, default=mono) - mono
+        return min(waits, default=None)
 
     def step(self) -> dict:
         """One bounded pass, callable by a supervised loop or pure fake-I/O test."""
@@ -496,10 +502,12 @@ class Worker:
                 except Exception:
                     status.update(state="unknown", reason="native_read_unavailable")
                     repair = []
-                retry = self._schedule(runtime, repair, self.monotonic())
+                mono = self.monotonic()
+                retry_at = self._schedule(runtime, repair, mono)
+                retry = 0 if retry_at is None else retry_at - mono
             if not self._current(revisions) or not self._scheduled(policies, states):
                 return {"stale": True}
             status["retry_seconds"] = retry
             result[room] = status
-            self._save(room, revision, status, occurrence=runtime["key"])
+            self._save(room, revision, status, occurrence=runtime["key"], retry_at=retry_at)
         return result

@@ -21,7 +21,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_room_policy  # noqa: E402
 from oh_room_policy import (Field, Observation, Plan, PolicyError, canonical, conflicts, desired_at,  # noqa: E402
                             due_boundaries, expected_plan, local_instant, repair_plan, verify)
-from oh_room_policy.worker import BACKOFF, SETTLED, PolicyRecord, Worker  # noqa: E402
+from oh_room_policy.worker import BACKOFF, RECONCILE_HEARTBEAT, SETTLED, PolicyRecord, Worker  # noqa: E402
 from oh_access import AccessError  # noqa: E402
 from oh_access.worker import OBSERVED, NativeCache, PolicyIO, Warnings, observe  # noqa: E402
 
@@ -66,7 +66,7 @@ class Store:
     def __init__(self, *records, log=None):
         self.records = list(records)
         self.log = log if log is not None else []
-        self.claims, self.saved = {}, {}
+        self.claims, self.saved, self.saves = {}, {}, []
 
     def set(self, *records):
         self.records = list(records)
@@ -94,6 +94,7 @@ class Store:
 
     def save_reconcile(self, room, revision, state):
         self.saved[room] = (revision, copy.deepcopy(state))
+        self.saves.append(room)
         return True
 
 
@@ -256,6 +257,30 @@ class Trail(Harness, unittest.TestCase):
                 self.advance(6)
                 self.step()
         self.assertEqual(self.store.saved[WEST][1]["phase"], "verified")
+
+    def test_a_status_that_only_counts_down_to_its_retry_is_not_saved_again(self):
+        """retry_seconds counts down from a saved status's update to its
+        waiting repair. A pass that changes only that count saves nothing
+        before the heartbeat; a new wait (a repair sent again) saves."""
+        self.make((policy(WEST, hold=PLAYER, enabled=False), at(8)), observed={**PLAYER_ROUTE, "example_tv_power": "OFF"})
+
+        def woken(seconds):  # A pass a feed change wakes, the TV still off.
+            self.advance(seconds)
+            self.worker.notify(WEST)
+            return self.step()[WEST]
+
+        self.step()  # The first repair, which waits BACKOFF[0] for another.
+        self.assertNotIn("repair", woken(0.5))
+        saves, saved = len(self.store.saves), self.store.saved[WEST]
+        self.assertEqual(saved[1]["retry_seconds"], BACKOFF[0] - 0.5)
+        self.assertEqual([woken(0.5)["retry_seconds"] for _ in range(2)], [BACKOFF[0] - 1, BACKOFF[0] - 1.5])
+        self.assertEqual((len(self.store.saves), self.store.saved[WEST]), (saves, saved))
+        status = woken(0.5)  # The second repair, and a longer wait.
+        self.assertEqual((status["repair"], status["retry_seconds"]), ("example_tv_power", BACKOFF[1]))
+        self.assertEqual((len(self.store.saves), self.store.saved[WEST][1]), (saves + 1, status))
+        woken(1)  # It no longer names a repair sent: saved.
+        self.assertEqual((woken(1)["retry_seconds"], len(self.store.saves)), (BACKOFF[1] - 2, saves + 2))
+        self.assertLess(BACKOFF[0], RECONCILE_HEARTBEAT)  # Else a heartbeat would save it.
 
     def test_boundary_outcomes_name_their_key_status_reason_and_command(self):
         config = policy(WEST, locks=[window("10:00", "11:00", COMPUTER)])
