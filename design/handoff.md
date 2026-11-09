@@ -217,11 +217,6 @@ function. That replaces these, all found in the cold review:
   `TMPDIR` set to a short directory, such as one from `mktemp -d /tmp/t.XXXX`.
 - A local-only failure: an occasional atime flake in
   `test_repeated_current_application_reuses_environment_and_keeps_launcher_and_commit`.
-- The warmed userdata template `thermite test` boots from is keyed on the
-  whole rendered `addons.cfg`, comments included, so rewording an add-on's
-  reason (an `Addon(..., why)`) rebuilds it and downloads the same add-ons
-  again, on the owner's host at the next deploy too. Keying it on the
-  add-on list alone would avoid that.
 - `thermite test routing` and `controls` run on the owner's host beside the
   live runtime. Under load, routing can leave a port unconfirmed at a round
   check (or quarantine a matrix whose write timed out), and controls can

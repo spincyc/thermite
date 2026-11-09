@@ -320,14 +320,12 @@ def _conf_file(data: bytes) -> str | bytes:
 # addons.cfg
 
 
-def parse_addons_cfg(text: str) -> dict[str, list[str]]:
-    """Parse openHAB's services/addons.cfg into {category: [addon, ...]}.
-
-    Accepts `key = a, b`, optional `org.openhab.addons:` PID prefixes and
-    backslash continuation lines. Unknown keys (remote, includeIncompatible,
-    suggestionFinder*) are ignored.
-    """
-    result: dict[str, list[str]] = {}
+def addons_settings(text: str) -> dict[str, str]:
+    """Every setting in openHAB's services/addons.cfg as {key: value}, both
+    stripped and the key without its `org.openhab.addons:` PID prefix; a
+    later line for a key wins. Comments, blank lines and the layout of
+    backslash continuation lines are left out."""
+    result: dict[str, str] = {}
     logical: list[str] = []
     buffer = ""
     for raw in text.splitlines():
@@ -351,10 +349,21 @@ def parse_addons_cfg(text: str) -> dict[str, list[str]]:
         key = key.strip()
         if ":" in key:
             key = key.rsplit(":", 1)[1].strip()
-        if key not in ADDON_CATEGORIES:
-            continue
+        result[key] = value.strip()
+    return result
+
+
+def parse_addons_cfg(text: str) -> dict[str, list[str]]:
+    """Parse openHAB's services/addons.cfg into {category: [addon, ...]}.
+
+    Accepts `key = a, b`, optional `org.openhab.addons:` PID prefixes and
+    backslash continuation lines. Unknown keys (remote, includeIncompatible,
+    suggestionFinder*) are ignored.
+    """
+    result: dict[str, list[str]] = {}
+    for key, value in addons_settings(text).items():
         names = [n.strip() for n in value.split(",") if n.strip()]
-        if names:
+        if key in ADDON_CATEGORIES and names:
             result[key] = names
     return result
 
@@ -1386,12 +1395,19 @@ TEMPLATE_SCRUB = ("logs", "jsondb/backup", "jsondb/org.openhab.core.config.disco
 
 
 def template_key(rt: Runtime, addons_cfg: str) -> str:
-    """Name a warmed userdata after everything that shapes it."""
+    """Name a warmed userdata after everything that shapes it: of
+    addons.cfg, the add-ons in each category, in any order, and every other
+    setting (remote, say), never a comment. Each add-on's reason is a
+    comment, so rewording one reuses the template rather than installing
+    the same add-ons again."""
+    requested = parse_addons_cfg(addons_cfg)
+    settings = {key: value for key, value in addons_settings(addons_cfg).items() if key not in ADDON_CATEGORIES}
     material = json.dumps({
         "format": TEMPLATE_FORMAT,
         "openhab": rt.openhab_version,
         "java": rt.java_home.name,
-        "addons.cfg": addons_cfg,
+        "addons": {category: sorted(set(names)) for category, names in requested.items()},
+        "settings": settings,
         "features": FEATURES_PROCESSING,
     }, sort_keys=True)
     return hashlib.sha256(material.encode()).hexdigest()[:16]

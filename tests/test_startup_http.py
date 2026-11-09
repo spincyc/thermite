@@ -227,5 +227,40 @@ class StartupHttp(unittest.TestCase):
                                      (200, {"ready": True}))
 
 
+class TemplateKey(unittest.TestCase):
+    """A warmed userdata is keyed on the add-ons and settings addons.cfg
+    asks for, never its comments, so a reworded reason reuses it."""
+
+    def setUp(self):
+        import oh_render
+        house = json.loads((AREA / "instance" / "devices.yaml").read_text(encoding="utf-8"))
+        self.cfg = oh_render.render(house)["services/addons.cfg"]
+        self.rt = lib.Runtime("5.2.3", Path("/nonexistent/distribution"), Path("/nonexistent/jre-21"))
+        self.key = lib.template_key(self.rt, self.cfg)
+
+    def test_comments_and_layout_keep_the_key(self):
+        self.assertIn("# jsscripting:", self.cfg)
+        reworded = "\n".join("# Reworded, " + line[2:] if line.startswith("# ") else line
+                             for line in self.cfg.splitlines()) + "\n# one more\n! and another\n"
+        laid_out = self.cfg.replace("transformation = jsonpath", "org.openhab.addons:transformation=\\\n  jsonpath")
+        for text in (reworded, laid_out, self.cfg.replace("\n\n", "\n")):
+            with self.subTest(text=text):
+                self.assertNotEqual(text, self.cfg)
+                self.assertEqual(lib.template_key(self.rt, text), self.key)
+
+    def test_the_addons_settings_and_runtime_change_the_key(self):
+        changed = {
+            "an add-on more": self.cfg.replace("binding = http", "binding = http,network"),
+            "an add-on less": self.cfg.replace("misc = metrics", ""),
+            "a setting": self.cfg + "remote = false\n",
+        }
+        for what, text in changed.items():
+            with self.subTest(what=what):
+                self.assertNotEqual(lib.template_key(self.rt, text), self.key)
+        self.assertEqual(lib.template_key(self.rt, self.cfg.replace("binding = http", "binding = http,network")),
+                         lib.template_key(self.rt, self.cfg.replace("binding = http", "binding = network, http")))
+        self.assertNotEqual(lib.template_key(lib.Runtime("5.2.4", self.rt.dist, self.rt.java_home), self.cfg), self.key)
+
+
 if __name__ == "__main__":
     unittest.main()

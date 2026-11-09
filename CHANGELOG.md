@@ -18,6 +18,10 @@ rollback. The unified deployment workflow uses a separate committed private site
   status then differed from the last at every pass in how many seconds
   the repair still waited (`retry_seconds`), so it was saved again each
   time. The saved count still ends when the repair is due.
+- The warmed openHAB userdata `thermite test` boots from is named after
+  the add-ons and settings `addons.cfg` asks for, no longer its whole text,
+  so rewording an add-on's reason no longer rebuilds it and downloads the
+  same add-ons again. Templates warmed before this are built once more.
 - Each integration the routing lifecycle drives now declares its fields
   itself, through a new `fields(device)` hook: the values each can be
   commanded with, how a write is acknowledged, how long it may take to
