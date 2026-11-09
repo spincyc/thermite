@@ -158,6 +158,11 @@ function. That replaces these, all found in the cold review:
   client's route is settling.
 - `shown()` reports Off whenever any stage's power is OFF, so a failed
   choice, or a display that turned itself on, reads as Off. Show `partial`.
+- Known and left unfixed in the clients: a newer `thermite tui` or handheld
+  bridge against an older gateway, whose heartbeat is a comment, reconnects
+  every 15 s (one install ships both, so no compatibility); and a command's
+  15 s deadline runs while iOS suspends the app, so it can report
+  unconfirmed on resume (its message says it may still take effect).
 
 ## Metrics left over
 
