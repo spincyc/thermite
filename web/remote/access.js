@@ -104,6 +104,9 @@
     let security = null, discovering = null, csrfCookie = null, probing = null;
     let user = null, csrf = null, loading = null, ended = false, policyRoom = null, authRevision = 0;
     let active = typeof document === "undefined" || document.visibilityState !== "hidden";
+    // When the page was last shown: a wait that began before it spanned a
+    // hidden (perhaps suspended) page, and is not counted.
+    let visibleSince = active ? -Infinity : Infinity;
     // The open event streams, each with its liveness watchdog (eventSource).
     const streams = new Set(), streamLiveness = config.streamLiveness || 3 * STREAM_HEARTBEAT_MS;
     const commandDeadline = config.commandDeadline || COMMAND_DEADLINE_MS;
@@ -132,11 +135,14 @@
     }
     // Client telemetry: what this client gave up on (timeouts, failed,
     // refused or silent event streams), which the gateway never sees. Counted
-    // here (1000 a kind, the latest 16 waits in seconds) and posted to
-    // /api/v1/telemetry after the next answered request, at most every 15 s
-    // and one at a time, or as a beacon when the page hides. 204 clears what
-    // was sent, other 4xx drop it, 408/429/5xx and network failures keep it
-    // for later. A telemetry POST's own failure is never recorded.
+    // here (1000 a kind, the latest 16 waits in seconds) while the page is
+    // shown; a wait that spanned a hidden page measured the page, not the
+    // gateway, and is not counted. Posted to /api/v1/telemetry after the next
+    // answered request, at most every 15 s and one at a time, or as the page
+    // hides, as a keepalive request that may outlive the page. What is posted
+    // is held until its answer: 2xx clears it, other 4xx drop it, and
+    // 408/429/5xx, network failures and no answer within 10 s return it for
+    // later. A telemetry POST's own failure is never recorded.
     const TELEMETRY = "/api/v1/telemetry", KINDS = ["policy_timeout", "locks_timeout", "command_timeout", "stream_error", "stream_refused", "snapshot_timeout"];
     // The gateway counts reports by kind (oh_identity.telemetry): web or tui, never a
     // client's own label (tui/<host>, which names it in the command trail).
@@ -156,7 +162,9 @@
     }
     // seconds: from starting the request (queueing included) until giving up; omitted when meaningless.
     function record(kind, seconds, url, protocol) {
-      if (legacy || mock || !KINDS.includes(kind)) return;
+      if (legacy || mock || !KINDS.includes(kind) || !active) return;
+      // A millisecond's grace for the arithmetic: a wait from the moment the page was shown counts.
+      if (Number.isFinite(seconds) && now() - seconds * 1000 < visibleSince - 1) return;
       const entry = telemetry[kind] || (telemetry[kind] = { count: 0, waits: [] });
       entry.count = Math.min(1000, entry.count + 1);
       if (Number.isFinite(seconds)) entry.waits = entry.waits.concat(Math.round(Math.min(600, Math.max(0, seconds)) * 1000) / 1000).slice(-16);
@@ -181,9 +189,10 @@
       // ASCII only, and about 1.1 KB at most (six kinds of 1000 with 16 waits
       // of 600 s), inside the gateway's 2048 bytes; the tests hold it there.
       const body = JSON.stringify(report);
-      if (leaving) {
-        try { if (global.navigator.sendBeacon(new URL(TELEMETRY, origin).href, new Blob([body], { type: "application/json" })) === true) return true; } catch (_) { /* fetch below */ }
-      } else { reporting = true; reportAfter = now() + 15000; }
+      // Not sendBeacon: it reports only that a beacon was queued, and a
+      // queued beacon may never be delivered. A keepalive request can outlive
+      // the page too, and its answer says whether the counts arrived.
+      if (!leaving) { reporting = true; reportAfter = now() + 15000; }
       const controller = typeof AbortController === "function" ? new AbortController() : null;
       const timer = setTimeout(() => controller?.abort(), 10000);
       if (timer.unref) timer.unref();
@@ -484,6 +493,7 @@
       // page was away, as a phone's can, is reopened now, not a watchdog later.
       setActive(value) {
         const next = Boolean(value);
+        if (next && !active) visibleSince = now();
         active = next; policyPoll.start(); lockPoll.start();
         streams.forEach((stream) => stream.watch());
       },
@@ -556,7 +566,7 @@
               if (!current()) return;
               this.readyState = source.readyState;
               // Only the terminal's EventSource sees a status: 429 is too_many_streams.
-              if (active) record(event?.status === 429 ? "stream_refused" : "stream_error",
+              record(event?.status === 429 ? "stream_refused" : "stream_error",
                 opened || event?.status === 429 ? undefined : (now() - started) / 1000, url, source.protocol);
               started = now(); opened = false;
               // A stream closed for good is its listener's to reopen; one reconnecting is watched.

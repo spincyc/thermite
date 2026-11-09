@@ -40,9 +40,12 @@ class ClientTelemetry(unittest.TestCase):
         for key in ("commandTimeout", "streams", "terminalStream"):
             self.assertTrue(self.proof[key], key)
 
-    def test_the_page_reports_its_normalised_protocol_and_beacons_as_it_hides(self):
-        for key in ("protocol", "beacon", "beaconFallback"):
+    def test_the_page_reports_its_normalised_protocol_as_it_hides_and_keeps_counts_until_answered(self):
+        for key in ("protocol", "keepaliveReport", "heldUntilAnswered"):
             self.assertTrue(self.proof[key], key)
+
+    def test_nothing_is_counted_while_the_page_is_hidden_or_across_a_hidden_spell(self):
+        self.assertTrue(self.proof["hiddenNotCounted"])
 
     def test_mock_and_native_modes_send_nothing(self):
         self.assertTrue(self.proof["quietModes"])

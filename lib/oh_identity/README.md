@@ -196,13 +196,14 @@ give-ups and stream failures of requests that never reached it. Its schema is
 finite and carries no free text: at most 2 KB of `{"client": "web"|"tui",
 "protocol", "events": {<kind>: {"count", "waits"}}}` with fixed kinds, counts
 of 1–1000 and at most 16 waits of 0–600 s. Guests report too, so it needs no
-identity; `sendBeacon` cannot send a CSRF header, so it is CSRF-exempt, but it
-changes only counters, accepts only `application/json` and refuses a foreign
-Origin (on a Guest listener, that listener's origins). Each peer bucket may
-report 6 times a minute and all peers together 120; more answer 429
-`telemetry_throttled` with `Retry-After`. An accepted report answers 204 and
-becomes `thermite_client_*` series and one journal line naming the client,
-protocol, a keyed digest of the peer bucket and the counts, never the address.
+identity; a report can go out before its page holds a CSRF token, so it is
+CSRF-exempt, but it changes only counters, accepts only `application/json`
+and refuses a foreign Origin (on a Guest listener, that listener's origins).
+Each peer bucket may report 6 times a minute and all peers together 120;
+more answer 429 `telemetry_throttled` with `Retry-After`. An accepted report
+answers 204 and becomes `thermite_client_*` series and one journal line naming
+the client, protocol, a keyed digest of the peer bucket and the counts, never
+the address.
 Every problem code the app answers with is in `auth.PROBLEMS`; the gateway
 counts each by code, and anything else as `other`.
 

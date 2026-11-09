@@ -38,7 +38,7 @@ const sent = site => site.calls.filter(call => call === "POST " + TELEMETRY).len
 
 // access.js as a page loads it: its own globals, visibilitychange and all.
 function page(options = {}) {
-  const handlers = {}, beacons = [], fetches = [];
+  const handlers = {}, beacons = [], fetches = [], reports = options.reports || (() => answer(null, 204));
   const context = { URL, URLSearchParams, Headers, Blob, AbortController, setTimeout, clearTimeout, console,
     location: { href: origin + "/remotes/?" + (options.query || ""), origin, search: "?" + (options.query || ""), replace() {} },
     document: { visibilityState: "visible", body: { dataset: { thermitePage: "remotes" } }, querySelectorAll: () => [],
@@ -47,13 +47,16 @@ function page(options = {}) {
     fetch: async (url, init = {}) => {
       fetches.push({ route: new URL(url).pathname, init });
       if (new URL(url).pathname === "/api/v1/security") return answer({ enabled: false, revision: 1, bootstrap_required: false, setup_available: false, csrf });
+      if (new URL(url).pathname === TELEMETRY) return reports();
       return answer(null, 204);
     } };
   if ("performance" in options) context.performance = options.performance;
   if (options.sendBeacon) context.navigator = { sendBeacon(url, blob) { beacons.push({ url, blob }); return options.sendBeacon(url, blob); } };
   vm.createContext(context); vm.runInContext(SOURCE, context);
   return { context, client: context.ThermiteAccess.client, beacons, fetches,
-    hide() { context.document.visibilityState = "hidden"; handlers.visibilitychange(); } };
+    posted: () => fetches.filter(call => call.route === TELEMETRY).map(call => JSON.parse(call.init.body)),
+    hide() { context.document.visibilityState = "hidden"; handlers.visibilitychange(); },
+    show() { context.document.visibilityState = "visible"; handlers.visibilitychange(); } };
 }
 
 (async () => {
@@ -197,36 +200,73 @@ function page(options = {}) {
     [entries([], [resource("/a", "h2"), { name: "https://other.example/b", nextHopProtocol: "http/1.1" }]), "h2"],
     [entries([resource("/x", "")], [resource("/a", "http/1.1"), resource("/b", "")]), "http/1.1"],
     [{ getEntriesByName() { throw new Error("no timing"); } }, "unknown"], [undefined, "unknown"]]) {
-    const view = page({ performance: timing, sendBeacon: () => true });
-    view.client.record("stream_error", 1, "/api/v1/events/remote"); view.hide();
-    assert.equal(JSON.parse(await view.beacons[0].blob.text()).protocol, expected, expected);
+    const view = page({ performance: timing });
+    view.client.record("stream_error", 1, "/api/v1/events/remote"); view.hide(); await tick();
+    assert.equal(view.posted()[0].protocol, expected, expected);
   }
   proof.protocol = true;
 
-  // Hiding the page sends a beacon as JSON; a refused, failing or missing
-  // beacon falls back to a keepalive POST.
+  // Hiding the page posts the counts as a keepalive JSON request, never a
+  // beacon: a beacon is only queued, and may never arrive. The counts are
+  // held until the answer: 204 clears them, a failure or no answer returns
+  // them for the next report.
   let view = page({ sendBeacon: () => true });
-  view.client.record("snapshot_timeout", 8, "/api/v1/events/remote"); view.hide(); await tick();
-  assert.equal(view.beacons.length, 1); assert.equal(view.beacons[0].url, origin + TELEMETRY); assert.equal(view.beacons[0].blob.type, "application/json");
-  assert.deepEqual(JSON.parse(await view.beacons[0].blob.text()), { client: "web", protocol: "unknown", events: { snapshot_timeout: { count: 1, waits: [8] } } });
-  assert(!view.fetches.some(call => call.route === TELEMETRY));
-  view.hide(); assert.equal(view.beacons.length, 1, "nothing left to send");
-  for (const sendBeacon of [() => false, () => { throw new TypeError("blocked"); }, null]) {
-    view = page(sendBeacon ? { sendBeacon } : {});
+  view.client.record("snapshot_timeout", 8, "/api/v1/events/remote"); view.hide(); await tick(); await tick();
+  assert.equal(view.beacons.length, 0, "no beacon");
+  let posted = view.fetches.filter(call => call.route === TELEMETRY);
+  assert.equal(posted.length, 1); assert.equal(posted[0].init.method, "POST"); assert.equal(posted[0].init.keepalive, true);
+  assert.equal(posted[0].init.headers.get("Content-Type"), "application/json");
+  assert.deepEqual(JSON.parse(posted[0].init.body), { client: "web", protocol: "unknown", events: { snapshot_timeout: { count: 1, waits: [8] } } });
+  view.hide(); await tick(); assert.equal(view.posted().length, 1, "204 cleared them: nothing left to send");
+  for (const failing of [() => answer({ error: "unavailable" }, 503), () => { throw new TypeError("network down"); }]) {
+    let fail = true;
+    view = page({ reports: () => fail ? failing() : answer(null, 204) });
     view.client.record("stream_error", 2); view.hide(); await tick(); await tick();
-    const posted = view.fetches.filter(call => call.route === TELEMETRY);
-    assert.equal(posted.length, 1); assert.equal(posted[0].init.method, "POST"); assert.equal(posted[0].init.keepalive, true);
-    assert.equal(posted[0].init.headers.get("Content-Type"), "application/json");
-    assert.deepEqual(JSON.parse(posted[0].init.body).events, { stream_error: { count: 1, waits: [2] } });
+    fail = false; view.show(); view.hide(); await tick(); await tick();
+    assert.deepEqual(view.posted().map(report => report.events), [{ stream_error: { count: 1, waits: [2] } }, { stream_error: { count: 1, waits: [2] } }],
+      "an undelivered report is sent again");
+    view.hide(); await tick(); assert.equal(view.posted().length, 2);
   }
-  proof.beacon = proof.beaconFallback = true;
+  // A report the page hid before its answer is held, not lost, while it is in flight.
+  let deliver; view = page({ reports: () => new Promise(resolve => { deliver = status => resolve(answer(null, status)); }) });
+  view.client.record("stream_error", 3); view.hide(); await tick();
+  deliver(503); await tick(); await tick();
+  deliver = null; view.show(); view.hide(); await tick();
+  assert.equal(view.posted().length, 2); assert.deepEqual(view.posted()[1].events, { stream_error: { count: 1, waits: [3] } });
+  deliver(204); await tick(); await tick();
+  view.show(); view.hide(); await tick(); assert.equal(view.posted().length, 2);
+  proof.keepaliveReport = proof.heldUntilAnswered = true;
+
+  // Nothing is counted while the page is hidden, nor any wait that spanned a
+  // hidden (perhaps suspended) page: it measured the page, not the gateway.
+  view = page();
+  view.hide(); view.client.record("stream_error", 1); view.client.record("snapshot_timeout", 8); view.client.record("stream_refused");
+  view.show(); view.hide(); await tick();
+  assert.equal(view.posted().length, 0, "nothing recorded while hidden");
+  site = gateway();
+  const held = [];
+  site.fetch = (original => async (url, init) => new URL(url).pathname.endsWith("/commands")
+    ? new Promise(resolve => held.push(() => resolve(answer({ accepted: true }, 202)))) : original(url, init))(site.fetch);
+  client = create(site); await client.ready(); await client.loadPolicy("den");
+  // Overdue while hidden: not counted.
+  let pending = client.command("den", "source", "off"); await tick(); await tick();
+  client.setActive(false); site.clock += 9000; await wait(40); held.shift()(); await pending;
+  // Sent before the page hid, overdue after it was shown again: not counted.
+  client.setActive(true); pending = client.command("den", "source", "off"); await tick(); await tick();
+  client.setActive(false); site.clock += 2000; client.setActive(true); site.clock += 7000; await wait(40); held.shift()(); await pending;
+  // Sent and overdue while shown: counted.
+  site.clock += 1000; pending = client.command("den", "source", "off"); await tick(); await tick();
+  site.clock += 8000; await wait(40); held.shift()(); await pending;
+  site.clock += 60000; await client.loadLocks(); await tick();
+  assert.deepEqual(site.reports.map(report => report.body.events), [{ command_timeout: { count: 1, waits: [8] } }]);
+  proof.hiddenNotCounted = true;
 
   // Mock and native pages, and mock or native clients, record and send nothing.
   for (const query of ["backend=mock", "backend=native"]) {
-    view = page({ query, sendBeacon: () => true });
+    view = page({ query });
     view.client.record("stream_error", 1); view.hide(); await tick();
     assert.equal(await view.client.flushTelemetry(), false);
-    assert.equal(view.beacons.length, 0); assert(!view.fetches.some(call => call.route === TELEMETRY));
+    assert(!view.fetches.some(call => call.route === TELEMETRY));
   }
   for (const options of [{ mock: true }, { native: true }]) {
     site = gateway(); client = create(site, options);

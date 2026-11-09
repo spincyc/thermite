@@ -2,17 +2,21 @@
 
 A browser that gives up on a request it never managed to send (a full
 HTTP/1.1 connection pool, a stalled stream) leaves no trace on the server.
-Clients therefore count their own give-ups and stream failures and report
-them on their next successful request, or with sendBeacon when a page is
-hidden. Reports become oh_access.metrics series and one journal line each.
+Clients therefore count their own give-ups and stream failures (a stream
+silent past their watchdog included) and report them on their next
+successful request, or with a keepalive request as a page hides; a client
+keeps its counts until a report of them is answered. Reports become
+oh_access.metrics series and one journal line each.
 Guest-listener pages report too (oh_identity.guest.ROUTES), under that
 listener's Origin and JSON checks.
 
 The schema is finite and carries no free text: at most REPORT_BYTES of
 {"client": "web"|"tui", "protocol": <the HTTP protocol last used>,
 "events": {<kind>: {"count": 1..1000, "waits": [seconds, ...]}}}. Guests
-report too, so the endpoint needs no identity, and sendBeacon cannot send
-a CSRF header, so it is CSRF-exempt: it changes nothing but counters,
+report too, so the endpoint needs no identity, and a report can go out
+before its page holds a CSRF token (it follows the first answered request,
+which may be the one that brings the token), so it is CSRF-exempt: it
+changes nothing but counters,
 accepts only application/json (which a cross-site page cannot send without
 a preflight this site never answers) and refuses a foreign Origin. Each
 peer (oh_identity.addresses.peer_bucket) may report PEER_REPORTS times per
