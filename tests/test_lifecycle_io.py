@@ -68,6 +68,34 @@ class Rendering(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'sony_adcp declares an invalid settle for example_projector_power'):
                     lifecycle_io.capabilities(data)
 
+    def test_matrix_outputs_are_independent_from_field_to_planner_resource(self):
+        from tests.test_zone_sync import house
+        from oh_integrations import bk808_http
+        data=house()
+        cap=lifecycle_io.capabilities(data)
+        matrices={'example_matrix','example_usb'}
+        for item,row in cap.items():
+            with self.subTest(item=item):
+                self.assertIs(row['field'].get('independent'),True if row['key'] in matrices else None)
+        self.assertTrue(any(row['key']=='example_matrix' and item.endswith('_edid') for item,row in cap.items()))
+        avpro={'id':'example_avpro','kind':'hdmi_matrix'}
+        self.assertTrue(all(field['independent'] is True for field in avpro_telnet.fields(avpro).values()))
+        from oh_features import routing
+        resources=routing.table(data)['lifecycle']['resources']
+        independent=sorted(name for name,row in resources.items() if 'independent' in row)
+        self.assertTrue(independent)
+        self.assertEqual(independent,sorted(name for name,row in resources.items() if row['key'] in matrices))
+        self.assertTrue(all(resources[name]['independent'] is True for name in independent))
+        declared=bk808_http.fields
+        for bad in ('yes',1,None):
+            def fields(device,bad=bad):
+                out=declared(device)
+                for field in out.values(): field['independent']=bad
+                return out
+            with self.subTest(independent=bad),mock.patch.object(bk808_http,'fields',fields):
+                with self.assertRaisesRegex(ValueError,'bk808_http declares an invalid independent for example_matrix_'):
+                    lifecycle_io.capabilities(data)
+
     def test_unsupported_resources_are_rejected_before_rendering(self):
         with self.assertRaisesRegex(ValueError,'no ordered executor'):
             lifecycle_io.configure(House(self.inventory()),Conf(),{'resources':{'unknown_power':{}}})

@@ -74,9 +74,12 @@ def switch_item(device: dict, output: int) -> str:
 
 def fields(device: dict) -> dict[str, dict]:
     """The routing executor's fields (oh_integrations): each output's
-    input, driven by this integration's own rule."""
+    input, driven by this integration's own rule. Each is independent: a
+    SET names its one output, so a lost answer leaves the others as they
+    were."""
     inputs, outputs = ports(device)
-    return {switch_item(device, output): {"kind": "avpro", "values": [str(n) for n in range(1, inputs + 1)]}
+    return {switch_item(device, output): {"kind": "avpro", "values": [str(n) for n in range(1, inputs + 1)],
+                                          "independent": True}
             for output in range(1, outputs + 1)}
 
 

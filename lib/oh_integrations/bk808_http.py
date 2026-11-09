@@ -90,14 +90,17 @@ def copy_edid(output: int) -> str:
 def fields(device: dict) -> dict[str, dict]:
     """The routing executor's fields (oh_integrations): each output's input
     and each input's EDID code, written and read through the Thing's own
-    channel; the matrix acknowledges a write with {"result": 1}."""
+    channel; the matrix acknowledges a write with {"result": 1}. Each is
+    independent: a request names its one port, so a lost answer leaves the
+    other ports as they were."""
     uid = thing_uid(device)
     out = {switch_item(device, output): {"kind": "http", "thing": uid, "channel": f"output{output}_input",
-                                         "values": [str(n) for n in range(1, INPUTS + 1)], "ack": "result"}
+                                         "values": [str(n) for n in range(1, INPUTS + 1)], "ack": "result",
+                                         "independent": True}
            for output in range(1, OUTPUTS + 1)}
     codes = [str(code) for code in sorted(EDID.values())]
     out.update({edid_item(device, input_): {"kind": "http", "thing": uid, "channel": f"input{input_}_edid",
-                                            "values": codes, "ack": "result"}
+                                            "values": codes, "ack": "result", "independent": True}
                 for input_ in range(1, INPUTS + 1)})
     return out
 

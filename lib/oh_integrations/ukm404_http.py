@@ -44,9 +44,12 @@ def switch_item(device: dict, output: int) -> str:
 def fields(device: dict) -> dict[str, dict]:
     """The routing executor's fields (oh_integrations): each device port's
     host, written and read through the Thing's own channel; the matrix
-    acknowledges a write with {"result": 1}."""
+    acknowledges a write with {"result": 1}. Each is independent: a
+    host_switch names its one port, so a lost answer leaves the other ports
+    as they were."""
     return {switch_item(device, port): {"kind": "http", "thing": thing_uid(device), "channel": f"device{port}_host",
-                                        "values": [str(n) for n in range(1, HOSTS + 1)], "ack": "result"}
+                                        "values": [str(n) for n in range(1, HOSTS + 1)], "ack": "result",
+                                        "independent": True}
             for port in range(1, DEVICES + 1)}
 
 
