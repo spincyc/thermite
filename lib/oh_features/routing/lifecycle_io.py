@@ -59,6 +59,8 @@ def capabilities(data: dict) -> dict:
             field["allowed"] = list(field["allowed"])
             if "settle" in field:
                 field["settle"] = _settle(module, item, field["settle"], field["allowed"])
+            if "independent" in field and type(field["independent"]) is not bool:
+                raise ValueError(f"{module.NAME} declares an invalid independent for {item}: {field['independent']!r}")
             result[item] = {"key": device["id"], "provider": module.NAME, "terminal": True, "probe": True,
                             "field": field, **({"manual": declared["manual"]} if "manual" in declared else {})}
     return result

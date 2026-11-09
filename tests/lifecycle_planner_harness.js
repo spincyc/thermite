@@ -1389,6 +1389,102 @@ test('a settle must be a declared value with a positive finite ms of at most 300
   createCoordinator(theaterDescriptor({ON: 300000, OFF: 1}), deps).close();
 });
 
+function independent() {
+  const config = descriptor();
+  config.resources.D1.independent = true; config.resources.D2.independent = true;
+  return config;
+}
+
+test('an unknown outcome on an independent property quarantines it alone, and its own proof ends it', () => {
+  for (const separate of [false, true]) {
+    const r = rig(separate ? {config: independent()} : {}); r.seed();
+    r.coordinator.request('Desk', 'LocalComputer');
+    r.drain(operation => operation.kind === 'write' && ['D1', 'D2'].includes(operation.resource));
+    // Sharing the key's slot, the outputs are written one at a time.
+    const lost = r.take(operation => operation.kind === 'write' && (separate ? operation.resource === 'D1' :
+      ['D1', 'D2'].includes(operation.resource)));
+    assert(r.begin(lost));
+    lost.report({type: 'uncertain', token: lost.operation.token, reason: 'provider_outcome_unknown'});
+    r.drain();
+    const slots = r.coordinator.snapshot().slots;
+    if (!separate) {
+      // The other output waits with it.
+      assert.equal(slots.usb.quarantine, 'provider_outcome_unknown');
+      assert(!r.writes.some(write => /^D[12]=/.test(write)), r.writes.join());
+      continue;
+    }
+    assert.deepEqual(Object.keys(slots).filter(id => id.startsWith('usb')).sort(), ['usb#D1', 'usb#D2']);
+    assert.equal(slots['usb#D1'].quarantine, 'provider_outcome_unknown');
+    assert.equal(slots['usb#D2'].quarantine, null);
+    assert(r.writes.includes('D2=H4'), r.writes.join());
+    assert(!r.coordinator.snapshot().endpoints.Desk.pathReady);
+    // The other output's proof says nothing of this one.
+    r.coordinator.recover('usb', {terminal: true, resource: 'D2'}); r.drain();
+    assert.equal(r.coordinator.snapshot().slots['usb#D1'].quarantine, 'provider_outcome_unknown');
+    assert.throws(() => r.coordinator.recover('usb', {terminal: true, resource: 'Display'}), /unknown property/);
+    r.coordinator.recover('usb', {terminal: true, resource: 'D1'}); r.drain();
+    assert.equal(r.coordinator.snapshot().slots['usb#D1'].quarantine, null);
+    // As on any device, the unknown outcome failed the route; asked again, it completes.
+    r.coordinator.request('Desk', 'LocalComputer'); r.drain();
+    assert.equal(r.actual.D1, 'H3'); assert(r.coordinator.snapshot().endpoints.Desk.pathReady);
+  }
+});
+
+test('a property proof ends nothing on a shared slot, and a device proof leaves live work alone', () => {
+  const shared = rig(); shared.seed(); shared.coordinator.request('Desk', 'LocalComputer');
+  shared.drain(operation => operation.resource === 'D1' && operation.kind === 'write');
+  const lost = shared.take(operation => operation.resource === 'D1' && operation.kind === 'write'); shared.begin(lost);
+  lost.report({type: 'uncertain', token: lost.operation.token, reason: 'provider_outcome_unknown'});
+  shared.coordinator.recover('usb', {terminal: true, resource: 'D1'});
+  assert.equal(shared.coordinator.snapshot().slots.usb.quarantine, 'provider_outcome_unknown');
+  // A device proof ends the quarantined slot and keeps the other's admitted write.
+  const r = rig({config: independent()}); r.seed(); r.coordinator.request('Desk', 'LocalComputer');
+  r.drain(operation => operation.kind === 'write' && ['D1', 'D2'].includes(operation.resource));
+  const one = r.take(operation => operation.resource === 'D1' && operation.kind === 'write'); r.begin(one);
+  const two = r.take(operation => operation.resource === 'D2' && operation.kind === 'write'); r.begin(two);
+  one.report({type: 'uncertain', token: one.operation.token, reason: 'provider_outcome_unknown'});
+  r.coordinator.recover('usb', {terminal: true});
+  const slots = r.coordinator.snapshot().slots;
+  assert.equal(slots['usb#D1'].quarantine, null); assert.equal(slots['usb#D2'].operation.token, two.operation.token);
+  r.complete(two); assert.equal(r.actual.D2, 'H4');
+  r.coordinator.request('Desk', 'LocalComputer'); r.drain(); assert(r.coordinator.snapshot().endpoints.Desk.pathReady);
+});
+
+test('a journal from before or after a property became independent restores its write to its slot, or quarantines the device', () => {
+  const capture = config => {
+    const first = rig({config}); first.seed(); first.coordinator.request('Desk', 'LocalComputer');
+    first.drain(operation => operation.resource === 'D1' && operation.kind === 'write');
+    const write = first.take(operation => operation.resource === 'D1' && operation.kind === 'write'); first.begin(write);
+    return {first, write};
+  };
+  // Shared before, independent now: the write waits on its own slot.
+  let {first, write} = capture(descriptor());
+  let r = rig({config: independent(), saved: first.saved(), actual: first.actual, instanceId: 'split'});
+  let slots = r.coordinator.snapshot().slots;
+  assert.equal(slots['usb#D1'].quarantine, 'restart-uncertain'); assert.equal(slots['usb#D1'].operation.token, write.operation.token);
+  assert.equal(slots['usb#D2'].quarantine, null); assert.equal(r.pending.length, 0);
+  // Independent before, shared now: it waits on the device's slot.
+  ({first, write} = capture(independent()));
+  r = rig({saved: first.saved(), actual: first.actual, instanceId: 'joined'});
+  assert.equal(r.coordinator.snapshot().slots.usb.quarantine, 'restart-uncertain');
+  assert.equal(r.coordinator.snapshot().slots.usb.operation.token, write.operation.token);
+  // A saved quarantine without a write it can place covers every slot of its device.
+  const shared = rig(); shared.seed();
+  const journal = shared.saved(); journal.slots.usb = {operation: null, successor: null, quarantine: 'provider_outcome_unknown', untracked: false};
+  r = rig({config: independent(), saved: journal, instanceId: 'split'});
+  slots = r.coordinator.snapshot().slots;
+  for (const id of ['usb#D1', 'usb#D2']) { assert.equal(slots[id].quarantine, 'incompatible-journal'); assert(slots[id].untracked); }
+  assert.equal(slots.display.quarantine, null);
+});
+
+test('independence must be a boolean', () => {
+  const deps = {dispatch() {}, probe() {}, store: {load: () => null, save() {}}};
+  for (const value of ['yes', 1, null]) {
+    const config = descriptor(); config.resources.D1.independent = value;
+    assert.throws(() => createCoordinator(config, deps), /^Error: invalid lifecycle independence: D1/, String(value));
+  }
+});
+
 let failed = 0;
 for (const [name, action] of tests) {
   try { action(); }

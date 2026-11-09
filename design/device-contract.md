@@ -36,7 +36,7 @@ no integration.
 | `transitions` | raw states + eta | Warm-up, cooling and boot. A transitional reading is neither verified nor a reason to write; the planner reads again later |
 | `busy` | outcome + `retryAfterMs` | The device declined because it was busy; retried within the route's deadline |
 | `power` | `absolute`, `toggle`, `wake-only` | Toggles and wake-only power go only through an actor that reads first |
-| `independent` | bool | Whether one field's unknown outcome quarantines only that field (matrix outputs) or the whole device |
+| `independent` | bool | Whether one field's unknown outcome quarantines only that field until a read of it answers (matrix outputs) or the whole device |
 | `recovery` | detection + action | A failure the integration can recognise and undo without power. Example: a hung HDFury VRROOM resets every HTTP request, but `set reboot` on its telnet API brings it back in about 15 s |
 
 A house may override timing per device (for example `settle` for a slower

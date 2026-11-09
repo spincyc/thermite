@@ -97,6 +97,9 @@ def compile_descriptor(data: dict, base_table: dict, caps: dict) -> dict:
                                "capable": True, "exclusive": False, "uses": {}, "requires": {}}
             if "settle" in cap["field"]:
                 resources[item]["settleMs"] = dict(cap["field"]["settle"])
+            # Optional, as settle: only a declared one changes the descriptor.
+            if cap["field"].get("independent") is True:
+                resources[item]["independent"] = True
         return True
 
     def missing(source, items):

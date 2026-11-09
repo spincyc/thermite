@@ -10,7 +10,7 @@ AREA = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which("node"), "node is required for the production routing script")
 class RoutingScript(unittest.TestCase):
-    def test_route_claims_first_and_recovers_only_executor_quarantine(self):
+    def test_route_claims_first_and_hands_recovery_proof_to_the_planner(self):
         result = subprocess.run([shutil.which("node"), str(AREA / "tests/routing_script_harness.js"),
                                  str(AREA / "lib/oh_features/routing/routing.js")],
                                 capture_output=True, text=True, timeout=30)

@@ -354,6 +354,51 @@ test('quarantine recovers from one fresh in-domain read after the window, then s
  assert.deepEqual(f.writes,[['D1','3']]);
  assert.equal(JSON.parse(setup(f.journal.data).broker.states.get('switch')).quarantine,null);
 });
+test('an unknown outcome on an independent field quarantines it alone, across a restart, until a read of it',()=>{
+ let time=1000;const f=setup(null,source,{now:()=>time}),proof=[];f.bridge.onLegacy(e=>proof.push(e));
+ const fields={D1:{independent:true},D2:{independent:true}};
+ const actor=f.module.actor({key:'switch',io:f.descriptor.io,fields},f.provider,{...f.env,journal:f.journal});
+ f.provider.execute=(r,v)=>{if(r==='D1')throw Error('lost reply');f.writes.push([r,v]);return {outcome:'applied',sample:{value:String(v),fresh:true}};};
+ f.submit('lost','D1','3');actor.drain();f.bridge.events();
+ assert(f.events.some(e=>e.token==='lost'&&e.type==='uncertain'&&e.reason==='provider_outcome_unknown'));
+ let row=JSON.parse(f.broker.states.get('switch'));
+ assert.equal(row.quarantine,null);assert.deepEqual(row.fences,{D1:{token:String('lost'),at:1000}});
+ assert(f.logs.some(l=>l[0]==='error'&&l[1].startsWith('switch: routing quarantined D1: D1 had an unknown outcome')));
+ // The other field goes on; this one refuses routed and manual commands.
+ f.submit('other','D2','4');actor.drain();f.bridge.events();assert.deepEqual(f.writes,[['D2','4']]);
+ f.submit('again','D1','2');actor.drain();f.bridge.events();
+ assert(f.events.some(e=>e.token==='again'&&e.type==='uncertain'&&e.reason==='executor_quarantined'));
+ assert.equal(actor.legacy('D1','2'),false);assert.equal(f.writes.length,1);
+ assert.deepEqual(f.bridge.status().quarantinedKeys,['switch']);
+ // The journal keeps it though a later ticket retired: a restart fences
+ // the field again, or, where it is no longer independent, the device.
+ assert.equal(f.journal.data.status,'retired');assert.deepEqual(f.journal.data.fences,{D1:'lost'});
+ const g=setup();g.journal.data=f.journal.data;
+ g.module.actor({key:'switch',io:g.descriptor.io,fields},g.provider,{...g.env,journal:g.journal});
+ row=JSON.parse(g.broker.states.get('switch'));assert.equal(row.quarantine,null);assert.equal(row.fences.D1.token,'lost');
+ assert.equal(JSON.parse(setup(f.journal.data).broker.states.get('switch')).quarantine,'lost');
+ // Recovery reads that field alone, from the window on, and says so.
+ const reads=[];f.provider.probe=r=>{reads.push(r);return {value:'3',fresh:true};};
+ time+=59999;assert.equal(actor.recover(),false);assert.deepEqual(reads,[]);
+ time+=1;f.events.length=0;proof.length=0;assert.equal(actor.recover(),true);assert.deepEqual(reads,['D1']);
+ row=JSON.parse(f.broker.states.get('switch'));assert(!('fences' in row));assert.equal(row.quarantine,null);
+ assert.deepEqual(f.journal.data.fences,{});assert.equal(f.journal.data.status,'retired');
+ assert(f.logs.some(l=>l[0]==='info'&&l[1]==='switch: routing quarantine of D1 cleared: a fresh read of D1 answered; commands are sent again'));
+ f.bridge.events();
+ assert(proof.some(e=>e.type==='retired'&&e.recovered&&e.key==='switch'&&e.resource==='D1'&&e.token==='lost'));
+ assert(proof.some(e=>e.type==='retired'&&e.recovered&&e.key==='switch'&&!('resource' in e)),'the whole device, once nothing is left');
+ f.provider.execute=(r,v)=>{f.writes.push([r,v]);return {outcome:'applied'};};f.submit('after','D1','3');actor.drain();
+ assert.deepEqual(f.writes.at(-1),['D1','3']);
+ // A field's readiness proves nothing while it is fenced again or flying.
+ proof.length=0;row=JSON.parse(f.broker.states.get('switch'));row.fences={D1:{token:String('next'),at:time}};f.broker.states.put('switch',JSON.stringify(row));
+ f.broker.events.offer(JSON.stringify({type:'ready',key:'switch',actor:row.actor,resource:'D1',token:String('lost')}));
+ f.broker.events.offer(JSON.stringify({type:'ready',key:'switch',actor:row.actor}));f.bridge.events();
+ assert.deepEqual(proof,[]);
+ // A field not declared independent still quarantines the whole device.
+ const h=setup(),only=h.module.actor({key:'switch',io:h.descriptor.io,fields:{D1:{independent:true}}},h.provider,{...h.env,journal:h.journal});
+ h.provider.execute=()=>{throw Error('lost reply');};h.submit('whole','D2','3');only.drain();
+ row=JSON.parse(h.broker.states.get('switch'));assert.equal(row.quarantine,'whole');assert(!row.fences);
+});
 test('event overflow reports live tickets uncertain, revokes unadmitted work when drained, then resumes',()=>{
  const f=setup(),proof=[];f.bridge.onLegacy(e=>{proof.push(e);if(e.type==='legacy')f.bridge.authorizeLegacy(e.token);});
  f.actor.legacy('D2','2');f.submit('lost','D1','3');f.broker.overflow.set(true);f.actor.drain();assert.equal(f.writes.length,0);

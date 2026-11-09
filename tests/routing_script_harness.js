@@ -48,7 +48,8 @@ function load(options = {}) {
       if (options.refuse && options.refuse[id]) throw new Error(options.refuse[id]);
       return 1;
     },
-    observe() {}, snapshot: () => ({ slots, holds: {}, endpoints: {} }), recover(key, evidence) { calls.push(`recover ${key} ${evidence.terminal}`); },
+    observe() {}, snapshot: () => ({ slots, holds: options.holds || {}, endpoints: {} }),
+    recover(key, evidence) { calls.push(`recover ${key} ${evidence.terminal} ${evidence.resource || '-'}`); },
     releaseHold(id) { calls.push('release ' + id); }, hold(id) { calls.push('hold ' + id); }, takeover: () => [], external() {},
     report(event) { calls.push(`report ${event.type} ${event.token}`); }, close() {},
   };
@@ -124,16 +125,22 @@ test('other planner errors still surface, before anything is sent', () => {
   assert.deepEqual(r.sent, []);
 });
 
-test('actor readiness clears every quarantine reason in the planner table, and nothing else', () => {
+test('actor readiness hands the planner its proof, a property\'s alone for an independent one', () => {
   // A deploy's incompatible journal, a thrown adapter and an out-of-order
-  // admission used to wait for a second reload.
+  // admission used to wait for a second reload; the planner ends those in
+  // its table (lifecycle_planner_harness.js).
   for (const reason of ['incompatible-journal', 'adapter-threw', 'unordered-external-admission'])
     assert(QUARANTINE_REASONS.includes(reason), reason);
-  for (const [reason, cleared] of [...QUARANTINE_REASONS.map(reason => [reason, true]), ['not-a-planner-reason', false]]) {
-    const r = load({ slots: { matrix: { quarantine: reason } } });
-    r.legacy({ type: 'retired', legacy: true, recovered: true, key: 'matrix', token: null });
-    assert.deepEqual(r.calls.filter(call => call.startsWith('recover')), cleared ? ['recover matrix true'] : [], reason);
-  }
+  const orphan = ['legacy', 'orphan'].join('-');
+  const holds = { [orphan]: { resources: ['matrix_output1_input'], sources: [] } };
+  const device = load({ holds });
+  device.legacy({ type: 'retired', legacy: true, recovered: true, key: 'matrix', token: null });
+  assert.deepEqual(device.calls.filter(call => /^(recover|release)/.test(call)), ['release ' + orphan, 'recover matrix true -']);
+  // A property's proof says nothing of the rest of the device, where an
+  // orphaned command may still be on its way.
+  const field = load({ holds });
+  field.legacy({ type: 'retired', legacy: true, recovered: true, key: 'matrix', resource: 'matrix_output1_input', token: null });
+  assert.deepEqual(field.calls.filter(call => /^(recover|release)/.test(call)), ['recover matrix true matrix_output1_input']);
 });
 
 test('recovery retires the manual command whose outcome was unknown, and only that one', () => {

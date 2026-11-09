@@ -95,6 +95,11 @@ A module whose fields the routing lifecycle's ordered executor drives
         settle    optional {value: ms}: how long an accepted write of the
                   value may take to show in a read, and a transition toward
                   it may last (at most 300000)
+        independent
+                  optional, True when a command to it can change no other
+                  field of the device (a matrix output a command names
+                  alone): its unknown outcome quarantines it alone, until
+                  a read of it answers; otherwise the whole device waits
         manual    optional: how many Items the device's actor takes manual
                   commands on, when more than its fields
               and any other key its own rule reads (zone, point); every
