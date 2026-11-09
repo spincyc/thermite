@@ -170,6 +170,28 @@ test('a replacement actor ends a flight its dead predecessor left, so recovery a
  assert(late);assert.equal(g.broker.active.get(),0);row=JSON.parse(g.broker.states.get('switch'));
  assert.equal(row.flight,null);assert.equal(row.quarantine,'slow');
 });
+test('an old actor finishing a flight its replacement took changes nothing shared: no quarantine, journal or report',()=>{
+ for(const [ending,fields] of [['applied',undefined],['lost',undefined],['lost',{D1:{independent:true}}]]){
+  let time=1000;const g=setup(null,source,{now:()=>time});let after=null;
+  if(fields)g.actor=g.module.actor({key:'switch',io:g.descriptor.io,fields},g.provider,{...g.env,journal:g.journal});
+  g.provider.execute=()=>{
+   // A replacement takes the flight, and recovers the key before the old one returns.
+   const late=g.module.actor({key:'switch',io:g.descriptor.io,...(fields?{fields}:{})},g.provider,{...g.env,journal:g.journal});
+   time+=61000;assert.equal(late.recover(),true);
+   after={state:g.broker.states.get('switch'),journal:JSON.stringify(g.journal.data),queued:g.broker.events.rows.length,
+    active:g.broker.active.get(),errors:g.logs.filter(l=>l[0]==='error').length};
+   if(ending==='lost')throw Error('lost reply');return {outcome:'applied',sample:{value:'3',fresh:true}};
+  };
+  g.submit(String('slow'),'D1','3');g.actor.drain();
+  const label=ending+(fields?' independent':'');
+  assert(after,label);
+  assert.equal(g.broker.states.get('switch'),after.state,label);
+  assert.equal(JSON.stringify(g.journal.data),after.journal,label);
+  assert.equal(g.broker.events.rows.length,after.queued,label);
+  assert.equal(g.broker.active.get(),after.active,label);
+  assert.equal(g.logs.filter(l=>l[0]==='error').length,after.errors,label);
+ }
+});
 test('failed pure read retires without a sample and permits later wake',()=>{
  const f=setup();f.provider.probe=()=>{throw Error('unavailable in standby');};
  f.bridge.probe({token:String('failed-read'),key:'switch',resource:'D1'},e=>f.events.push(e));f.actor.drain();f.bridge.events();
