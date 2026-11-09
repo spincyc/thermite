@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A locked room with a passive display (`passive: true`) is now verified
+  once everything else on its route reads back, and the policy page says
+  so. It used to stay degraded ("needs attention") for as long as it was
+  locked, since the display can never be read. The display is still
+  reported, as `passive_endpoint:<id>` in the status's `limitations`, and
+  a change on the rest of the route still degrades it and is put back.
 - Each integration the routing lifecycle drives now declares its fields
   itself, through a new `fields(device)` hook: the values each can be
   commanded with, how a write is acknowledged, how long it may take to

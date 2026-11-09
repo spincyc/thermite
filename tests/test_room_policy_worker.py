@@ -29,6 +29,19 @@ HOUSE = json.loads((AREA / "instance/devices.yaml").read_text())
 WEST, EAST = "example_west", "example_east"
 PLAYER, COMPUTER = "example_player", "example_computer"
 MONDAY = datetime(2026, 11, 2, tzinfo=timezone.utc)  # weekday 0
+PASSIVE = "passive_endpoint:example_display"
+EAST_OUTPUT = "example_matrix_output2_input"
+
+
+def passive_east(house):
+    """The house with example_east's display passive: configured, but never
+    read or controlled, so only the matrix output is left to verify."""
+    house = copy.deepcopy(house)
+    house["routing"]["rooms"][EAST]["display"] = {"device": "example_display", "passive": True}
+    for device in house["devices"]:
+        if device["id"] == "example_display":
+            device.pop("controls", None)
+    return house
 
 
 def at(hour, minute=0, second=0, day=MONDAY):
@@ -154,6 +167,15 @@ class ManualHolds(Harness, unittest.TestCase):
         self.devices.read = lambda items: {"example_tv_power": Observation("OFF", self.wall[0] - timedelta(seconds=31))}
         status = self.step()[WEST]
         self.assertEqual(status["state"], "unknown")
+        self.assertEqual(self.devices.writes, [])
+
+    def test_a_passive_display_leaves_the_room_verified_on_what_it_can_read(self):
+        self.make((policy(EAST, hold=COMPUTER, enabled=False), at(8)), house=passive_east(HOUSE),
+                  observed={EAST_OUTPUT: "1"})
+        status = self.step()[EAST]
+        self.assertEqual((status["phase"], status["state"], status["matched"], status["limitations"]),
+                         ("verified", "verified", [EAST_OUTPUT], [PASSIVE]))
+        self.assertEqual(self.store.saved[EAST][1]["limitations"], [PASSIVE])
         self.assertEqual(self.devices.writes, [])
 
     def test_hold_overrides_schedule_and_disabled_schedule(self):
@@ -686,6 +708,18 @@ class RouteVerification(unittest.TestCase):
         observations["example_tv_input"] = Observation("hdmi1", now - timedelta(seconds=10))
         self.assertEqual(verify(plan, observations, now)["state"], "verified")
         self.assertEqual(verify(plan, observations, now + timedelta(seconds=31))["state"], "unknown")
+
+    def test_a_passive_endpoint_is_reported_but_never_holds_the_room_short_of_verified(self):
+        """A passive display is never read: the room is verified, degraded or
+        unknown on the fields it can read, and its limitation is always reported."""
+        plan = expected_plan(passive_east(HOUSE), EAST, COMPUTER)
+        self.assertEqual((plan.limitations, plan.observed()), ((PASSIVE,), (EAST_OUTPUT,)))
+        now = at(10)
+        for value, state in (("1", "verified"), ("2", "degraded"), ("UNDEF", "unknown")):
+            with self.subTest(value=value):
+                result = verify(plan, {EAST_OUTPUT: Observation(value, now)}, now)
+                self.assertEqual((result["state"], result["limitations"]), (state, [PASSIVE]))
+        self.assertEqual(verify(plan, {}, now)["state"], "unknown")
 
     def test_a_value_no_route_uses_is_a_mismatch_and_only_the_target_is_written(self):
         plan = expected_plan(HOUSE, WEST, PLAYER)

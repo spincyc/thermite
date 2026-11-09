@@ -283,7 +283,7 @@ def run(args):
             updated = state.get("updated_at")
             if not updated or datetime.fromisoformat(updated.replace("Z", "+00:00")) <= changed:
                 return False
-            return state if (row["effective"]["locked"] and state.get("state") == "degraded"
+            return state if (row["effective"]["locked"] and state.get("state") == "verified"
                              and FIELD in state.get("matched", []) and not state.get("mismatched")
                              and LIMITATION in state.get("limitations", [])
                              and state.get("scope") == "configured_native_controls") else False

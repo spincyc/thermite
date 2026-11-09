@@ -198,11 +198,15 @@ def _fresh(field: Field, observations: dict[str, Observation], now: datetime) ->
 
 
 def verify(plan: Plan, observations: dict[str, Observation], now_utc: datetime) -> dict:
-    """No ACK/receipt, stale/unknown reading, or passive endpoint is success.
-    Any fresh, definite reading other than the target mismatches, even one
-    no route uses (a TV's home screen). A field on an alternative matches
-    while its condition is freshly observed at its value, is unknown while
-    the condition is, and else mismatches."""
+    """No ACK/receipt or stale/unknown reading is success. Any fresh,
+    definite reading other than the target mismatches, even one no route
+    uses (a TV's home screen). A field on an alternative matches while its
+    condition is freshly observed at its value, is unknown while the
+    condition is, and else mismatches.
+
+    A passive endpoint has no field: it cannot be read or repaired. The
+    state covers the fields alone (`scope`), so a room with one is verified
+    once they all read back; its limitation is reported in every state."""
     now = utc(now_utc)
     conditions = {condition.item: _fresh(condition, observations, now) for condition in plan.conditions}
     matched, mismatched, unknown = [], [], []
@@ -218,7 +222,7 @@ def verify(plan: Plan, observations: dict[str, Observation], now_utc: datetime) 
             mismatched.append(field.item)
         else:
             matched.append(field.item)
-    state = "degraded" if mismatched or plan.limitations else "unknown" if unknown or not plan.fields else "verified"
+    state = "degraded" if mismatched else "unknown" if unknown or not plan.fields else "verified"
     return {"state": state, "matched": matched, "mismatched": mismatched, "unknown": unknown,
             "limitations": list(plan.limitations), "scope": "configured_native_controls"}
 

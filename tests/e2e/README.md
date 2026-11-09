@@ -246,8 +246,9 @@ It performs two password logins. Reuse the CLI credential after reboot and
 respect the real login throttle when repeating checks; do not bypass it.
 
 The matrix must read input 8 for Off and input 1 for Computer. The Sony display
-is passive: `passive_endpoint:example_tv` must remain an enforcement limitation,
-and enforcement remains **degraded**, even when the matrix is matched. Never
+is passive: `passive_endpoint:example_tv` must remain an enforcement limitation.
+Enforcement is **verified** once the matrix is matched: the state covers only
+the configured native controls (`scope`), and the display is never read. Never
 label this a verified physical display, a tested real device or a capacity
 benchmark. The simulator resets its own device state when restarted.
 
