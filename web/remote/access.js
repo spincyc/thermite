@@ -117,6 +117,9 @@
     const monotonic = typeof global.performance?.now === "function" ? () => global.performance.now() : () => now();
     const stamp = () => ({ wall: now(), mono: monotonic() });
     const silence = (since) => Math.max(monotonic() - since.mono, now() - since.wall);
+    // When the page was last shown, by the monotonic clock: a stream's
+    // silence that began before it is not counted (record, visibleSince).
+    let shownAt = active ? -Infinity : Infinity;
     const commandDeadline = config.commandDeadline || COMMAND_DEADLINE_MS;
     // Every room's lock in one read, for the room lists. The watched room's
     // detailed policy (policies) still decides whether its controls are held back.
@@ -514,7 +517,7 @@
       // page was away, as a phone's can, is reopened now, not a watchdog later.
       setActive(value) {
         const next = Boolean(value);
-        if (next && !active) visibleSince = now();
+        if (next && !active) { visibleSince = now(); shownAt = monotonic(); }
         active = next; policyPoll.start(); lockPoll.start();
         streams.forEach((stream) => stream.watch());
       },
@@ -612,7 +615,9 @@
           stalled() {
             const source = this.source;
             this.source = null; this.readyState = 0; source.close();
-            record("stream_error", undefined, this.url, source.protocol);
+            // A silence that began while the page was hidden measured the page,
+            // not the gateway: the stream is reopened all the same, but not counted.
+            if (this.heard.mono >= shownAt) record("stream_error", undefined, this.url, source.protocol);
             if (this.onerror) this.onerror({ type: "error", status: 0, stalled: true });
             if (!this.closed) this.connect();
           }

@@ -177,7 +177,9 @@ function sources() {
     box.suspend(20000);
     client.setActive(true); assert.equal(opened.length, 3, "a stream silent past the bound is reopened at once");
     assert.equal(live().length, 1);
-    assert.deepEqual(await counted(), { stream_error: { count: 2, waits: [] } }, "each silent stream counts as a stream_error");
+    // The first silence began while the page was hidden: it measured the
+    // page, not the gateway, and is not counted. The second, on a shown page, is.
+    assert.deepEqual(await counted(), { stream_error: { count: 1, waits: [] } }, "only a silence on a shown page counts");
     stream.close();
     proof.resume = true;
   }
