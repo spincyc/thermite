@@ -66,6 +66,39 @@ rollback. The unified deployment workflow uses a separate committed private site
   desk: a check joined with its source on `room` found both of the room's
   sources, which Prometheus refuses. Join a check and its source
   `on(zone)`.
+- A matrix port whose command got no answer now stops only that port. A
+  BK-808 output or EDID input, a UKM-404 device port and an AVPro output
+  each declare themselves `independent` in their integration, since each
+  request names its one port; an unknown outcome on one quarantines it
+  alone, across a reload, until a read of it answers about a minute
+  later, and every other room on the matrix goes on switching. It used to
+  stop the whole matrix, so one lost answer held every room on it.
+- A route's deadline now covers the declared settle times of what it
+  writes: 30 s plus, for each property it writes, the longest settle away
+  from the value, the value's own settle and the same for what that value
+  needs first, at most 300 s more. A route that turns the Sony projector
+  on and selects its input has 120 s. Every route used to have 30 s, so
+  one waiting on a projector to warm up expired with its input unset.
+- A device that declines a routed write because it is busy is now sent it
+  again, after the wait it asks for (at least 1 s, at most 300 s), until
+  the route's deadline, and only while that route is still the room's
+  current one. A Sony projector asked to turn off while it warms up, or on
+  while it cools, or to change input while it warms up, now answers busy
+  and is asked again a tenth of its declared settle later (6 s while
+  warming, 3 s while cooling); a Sony TV whose input change fails with a
+  JSON-RPC error just after it was turned on, while its content API is
+  still starting, is asked again 3 s later. Such a write used to fail its
+  route at once. A refusal still fails the route, and a write whose
+  outcome is unknown still quarantines its device.
+- A Sony TV now declares that turning on may take 30 s to settle (its
+  content API starts after its power state reads on), and reads as still
+  turning on while that API answers with an error, so a route waits for it
+  before it reads or writes the input. Not yet timed on hardware.
+- A routing actor that replaces one that died mid-command, after a reload,
+  now ends that command as unknown, so its device recovers after a minute
+  and new commands go on. The replacement used to leave the dead actor's
+  command on the device, which then took no command until openHAB
+  restarted.
 - Each integration the routing lifecycle drives now declares its fields
   itself, through a new `fields(device)` hook: the values each can be
   commanded with, how a write is acknowledged, how long it may take to
