@@ -1298,6 +1298,22 @@ test('a route\'s deadline covers its properties\' declared settle and transition
   assert.equal(expiry(theaterDescriptor({ON: 300000, OFF: 300000}), 'Movie'), 310000);
 });
 
+test('a route\'s deadline counts each prerequisite chain in full where two share a prerequisite', () => {
+  // X (5 s) needs A and B, which both need C: A's chain is C's 50 s, B's
+  // is its own 10 s plus C's, so X's is 5 + 60 s.
+  const property = (settleMs, requires) => ({key: 'k' + Math.random(), values: ['ON', 'OFF'], capable: true,
+    ...(settleMs ? {settleMs: {ON: settleMs}} : {}), ...(requires ? {requires: {ON: requires}} : {})});
+  const config = {version: 1, deadlineMs: 10000, maxInFlight: 8, sources: {},
+    resources: {X: property(5000, {A: 'ON', B: 'ON'}), A: property(0, {C: 'ON'}), B: property(10000, {C: 'ON'}), C: property(50000)},
+    endpoints: {Room: {choices: {On: {requirements: {X: 'ON', A: 'ON', B: 'ON', C: 'ON'}}}}}};
+  const warnings = [];
+  const r = rig({config, log: {error() {}, warn: line => warnings.push(line)}});
+  r.coordinator.request('Room', 'On');
+  for (let step = 0; step < 200 && !warnings.length; step++) r.advance(1000);
+  assert.equal(warnings.length, 1);
+  assert.equal(Number(/ ms=(\d+) /.exec(warnings[0])[1]), 75000);
+});
+
 // Retry (see the lifecycle.js header).
 function patient(deadlineMs = 120000, settle) {
   const config = theaterDescriptor(settle); config.deadlineMs = deadlineMs; return config;
