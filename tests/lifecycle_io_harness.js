@@ -221,6 +221,17 @@ test('root event wakeups coalesce and callbacks yield after eight outcomes',()=>
  while(!f.broker.events.isEmpty())f.bridge.events();
  assert.equal(seen,40);assert.equal(f.wakes.filter(name=>name==='events').length,4);
 });
+test('an event whose handling throws is logged and dropped, and the events after it are still handled',()=>{
+ const f=setup();const seen=[];
+ f.bridge.onLegacy(e=>{seen.push(e.token);if(e.token==='bad')throw Error('recovery names an unknown property');});
+ f.bridge.probe({token:String('other-read'),key:'other',resource:'P'},e=>seen.push('report:'+e.type));
+ for(const token of ['bad','next'])f.broker.events.offer(JSON.stringify({type:'terminal',legacy:true,key:'switch',token}));
+ f.broker.events.offer(JSON.stringify({type:'terminal',key:'other',token:String('other-read')}));
+ f.bridge.events();
+ assert.deepEqual(seen,['bad','next','report:terminal']);assert(f.broker.events.isEmpty());
+ const errors=f.logs.filter(l=>l[0]==='error').map(l=>l[1]);
+ assert.deepEqual(errors,['routing executor could not handle a terminal event for switch (Error); the events after it go on']);
+});
 test('VRROOM requires owned matching readback without inventing an ACK response shape',()=>{
  function run(writeBody,observed,ack){
   const f=setup(),reports=[],requests=[];
