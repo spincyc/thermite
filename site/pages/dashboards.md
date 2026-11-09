@@ -24,9 +24,9 @@ Prometheus also reads runtime memory, threads, events and rule runs through the 
 Open `http://<thermite's address>:13611/`. Anyone on your network can look without logging in. Six dashboards come with it:
 
 - **House health**, the home page: is the house OK? Six tiles answer it at a glance: control, rooms ready, remotes, alerts firing, phone delivery and the host. Below them, **Needs attention now** names each room, problem and device in plain words; then every room's source through the day, switching since yesterday evening, and the alerts firing.
-- **Switching and remotes**: how long source changes take and how they end, the routing executor and any quarantined device, the remote gateway's latency, answers and event streams, what remote pages gave up waiting for, and the room policy worker.
-- **Devices**: one row per device, with its Thing, control port, problem and whether a room needs it now; then each room's power and source through the day, and listening levels.
-- **openHAB runtime**: memory, thread pools, the thingHandler pool, events, the busiest rules, and Things that aren't online.
+- **Switching and remotes**: how long source changes take and how they end, the routing executor and any quarantined device, the remote gateway's latency, answers, requests in flight and event streams (how many, how long they last, what fails them, and the live updates they carry), what remote pages gave up waiting for, and the room policy worker.
+- **Devices**: one row per device, with its Thing, control port, problem and whether a room needs it now; the Things that aren't online, and in what status; then each room's power and source through the day, and listening levels.
+- **openHAB runtime**: memory, thread pools, the thingHandler pool, how long its REST API takes to answer, events, the busiest rules, and Things that aren't online.
 - **Host**: how many scrape targets are up and which are down, thermite's services and their restarts, alerts firing, CPU, memory, disk space and I/O.
 - **Usage**: which sources the house used and for how long. It is not a health signal.
 

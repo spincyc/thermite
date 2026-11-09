@@ -40,7 +40,7 @@ import re
 import oh_units
 
 from . import alerts
-from .exporter import FAILURE_REASONS, HOUSE_LABEL, HOUSE_ROOM, OPERATION_OUTCOMES, ROUTE_BUCKETS
+from .exporter import FAILURE_REASONS, HOUSE_LABEL, HOUSE_ROOM, OPERATION_OUTCOMES, ROUND_SECONDS, ROUTE_BUCKETS
 
 DATASOURCE_UID = "thermite-prometheus"
 DATASOURCE = {"type": "prometheus", "uid": DATASOURCE_UID}
@@ -126,6 +126,9 @@ STREAM_FAILURES = "|".join(alerts.STREAM_KINDS)
 FAILED_OPERATIONS = tuple(outcome for outcome in OPERATION_OUTCOMES if outcome in FAILURE_REASONS)
 #: Gateway route classes a remote waits on (oh_access.metrics.ROUTES).
 WAITED_ROUTES = ("command", "policy", "locks", "items")
+#: HTTP requests the gateway serves at once before it answers 503
+#: (oh_access.service.MAX_REQUESTS); each open event stream is one.
+GATEWAY_MAX_REQUESTS = 100
 #: Routing's counts and the executor's status are valid now: a count of 0
 #: means none only then.
 ROUTING_COUNTS_VALID = "(max(thermite_routing_metrics_up) == 1)"
@@ -749,11 +752,16 @@ def switching(mapping: dict) -> dict:
     dropped = timeseries("Event stream failures", [
         (f'sum by (client, kind) (increase(thermite_client_events_total{{kind=~"{STREAM_FAILURES}"}}[1h])) > 0',
          "{{client}} {{kind}}"),
-        ("sum by (limit) (increase(thermite_gateway_sse_refused_total[1h])) > 0", "refused at the {{limit}} limit")],
+        ("sum by (limit) (increase(thermite_gateway_sse_refused_total[1h])) > 0", "refused at the {{limit}} limit"),
+        ("sum(increase(thermite_gateway_sse_overflows_total[1h])) > 0", "fell behind, sent a fresh snapshot"),
+        ("sum(increase(thermite_gateway_upstream_failures_total[1h])) > 0", "the gateway's runtime feed failed")],
         minimum=0, bars=True, stack=True,
         description="Per hour: event streams remote pages and the terminal remote saw fail (stream_error, as at "
-                    "every gateway restart) or refused (stream_refused), and streams the gateway refused at its "
-                    "per-client (peer) or total limit. Remotes reconnect; it is not giving up.")
+                    "every gateway restart) or refused (stream_refused); streams the gateway refused at its "
+                    "per-client (peer) or total limit; streams that fell so far behind that the gateway dropped "
+                    "their queued changes and sent a fresh snapshot; and the gateway's one subscription to the "
+                    "runtime's events failing, after which it reconnects and every page gets a fresh snapshot. "
+                    "Remotes reconnect; it is not giving up.")
     dropped["fieldConfig"]["defaults"]["color"] = {"mode": "shades", "fixedColor": UNKNOWN}
     board.add(dropped, 8, 8)
     gave_up = timeseries("Remotes gave up", [
@@ -794,6 +802,30 @@ def switching(mapping: dict) -> dict:
         minimum=0, bars=True, stack=True,
         description="Per hour, the HTTP protocol of remotes that reported: h2 shares one connection, while "
                     "http/1.1 allows a browser six."), 8, 8)
+    board.add(timeseries("Event stream lifetimes", [
+        ("histogram_quantile(0.5, sum by (le, end) (increase(thermite_gateway_sse_stream_seconds_bucket[1h]))) > 0",
+         "{{end}} median")], "s", minimum=0,
+        description="Per hour, the median time event streams that ended stayed open, by how they ended: client "
+                    "(the page closed or the gateway stopped), revoked (its sign-in was revoked) or error. Streams "
+                    "that keep ending after the same short time point to something cutting them, such as an idle "
+                    "timeout on the way. Hours in which no stream ended are left out."), 8, 8)
+    in_flight = timeseries("Requests in flight", [
+        ("sum by (route) (thermite_gateway_requests_in_flight) > 0", "{{route}}")], minimum=0, stack=True,
+        description="Requests the gateway was serving at its last 10-second sample, by route class; an open event "
+                    f"stream is one for as long as it lasts. From {GATEWAY_MAX_REQUESTS} at once (the red band) "
+                    "it answers 503 to any more.")
+    in_flight["fieldConfig"]["defaults"]["decimals"] = 0
+    in_flight["fieldConfig"]["defaults"]["custom"]["thresholdsStyle"] = {"mode": "line+area"}
+    in_flight["fieldConfig"]["defaults"]["thresholds"] = _thresholds(("transparent", None),
+                                                                     (FAIL, GATEWAY_MAX_REQUESTS))
+    board.add(in_flight, 8, 8)
+    board.add(timeseries("Live updates", [
+        ("sum(rate(thermite_gateway_upstream_events_total[5m])) * 60", "runtime changes taken"),
+        ("sum(rate(thermite_gateway_sse_frames_total[5m])) * 60", "frames sent to pages")], minimum=0,
+        description="Per minute: the runtime's changes the gateway took on its one subscription, which is open "
+                    "only while a remote page is, and the frames it sent on pages' event streams: each change once "
+                    "to every open page that shows it, and a snapshot to each page that joins or reconnects."),
+              8, 8)
     board.row("Room policy worker")
     policies = timeseries("Locked rooms", [('thermite_policy_rooms{state!="unlocked"}', "{{state}}")], minimum=0,
                           stack=True, description="Rooms locked by hand (manual) or by a schedule (scheduled), and "
@@ -826,13 +858,34 @@ def switching(mapping: dict) -> dict:
 # ---------------------------------------------------------------- devices
 
 
+def _things_not_online(mapping: dict) -> dict:
+    """The house's device Things that are not ONLINE, with their status in
+    words: OFFLINE is often a device asleep, UNINITIALIZED a setup fault."""
+    panel = table("Things not online", 'thermite_thing_status_info{status!="ONLINE"}',
+                  ["room", "device", "thing", "status"],
+                  "Each device's Things the runtime does not have ONLINE, and in what status. Offline: the device "
+                  "does not answer, as a sleeping one often does. Unknown or initializing: the runtime is still "
+                  "connecting. Uninitialized: its binding or settings are missing or wrong, which waking the "
+                  "device will not mend. Room: the device's own.",
+                  names={"room": "Room", "device": "Device", "thing": "Thing", "status": "Status"},
+                  no_value="Every Thing is online")
+    _column(panel, "room", {"id": "mappings", "value": _words(_room_words(mapping))},
+            {"id": "custom.width", "value": 150})
+    _column(panel, "device", {"id": "mappings", "value": _words(_device_words(mapping))})
+    words = value_map({name: (name.capitalize(), _thing_colour(name)) for name in THING_STATE_NAMES})
+    _column(panel, "status", *_mapped_cells(words), {"id": "custom.width", "value": 130})
+    panel["options"]["sortBy"] = [{"displayName": "Room", "desc": False}]
+    return panel
+
+
 def devices(mapping: dict, probes: list[dict]) -> dict:
     board = Board()
     known = mapping.get("devices") or {}
     panel = table("Devices", "", ["room", "label", "Value #B", "Value #C", "Value #D", "Value #E", "Value #F",
                                   "Value #G"],
-                  "One row per device. Thing: the runtime's connection to it. Port: its control port accepts a TCP "
-                  "connection; Probe: how long that took. Offline since: when its Thing was last online, within "
+                  "One row per device. Thing: the runtime's connection to it (Things not online says in what "
+                  "status). Port: its control port accepts a TCP connection; Probe: how long that took. Offline "
+                  "since: when its Thing was last online, within "
                   "a week. Needed now: a room's selected source uses it, or it is routing infrastructure. An "
                   "offline device no room needs is usually asleep.",
                   names={"room": "Room", "label": "Device", "Value #B": "Thing", "Value #C": "Port",
@@ -861,6 +914,7 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
     _column(panel, "Value #E", {"id": "unit", "value": "dateTimeFromNow"}, {"id": "custom.width", "value": 130})
     panel["options"]["sortBy"] = [{"displayName": "Room", "desc": False}]
     board.add(panel, 24, min(30, max(8, len(known) + 2)))
+    board.add(_things_not_online(mapping), 24, 6)
     zones = _zones(mapping)
     queries, names = _source_timeline(mapping, zones)
     by_room: dict[str, list[tuple[str, str]]] = {}
@@ -955,9 +1009,18 @@ def openhab(mapping: dict | None = None) -> dict:
     board.add(timeseries("thingHandler pool", [
         ("thermite_handler_pool_active_threads", "busy"), ("thermite_handler_pool_core_threads", "size"),
         ("thermite_handler_pool_queued_tasks", "queued"),
-        ("thermite_handler_pool_probe_overdue_seconds", "probe overdue (s)")], minimum=0,
+        ("thermite_handler_pool_probe_overdue_seconds", "probe overdue (s)"),
+        ("thermite_handler_pool_observation_age_seconds", "sample age (s)")], minimum=0,
         description="Where bindings do device I/O. A probe overdue while every thread is busy means a blocked "
-                    "connection is delaying other devices."), 24, 8)
+                    "connection is delaying other devices. Sample age: how old the runtime's last report of the "
+                    "pool is; over 60 s the pool's numbers are left out as stale."), 16, 8)
+    rest = timeseries("REST answer time", [("max(thermite_scrape_duration_seconds)", "Things and Items")], "s",
+                      minimum=0, description="How long the runtime took to answer the exporter's two REST reads, "
+                      f"its Things and its Items, every 30 s. At {ROUND_SECONDS:g} s (the red band) the exporter "
+                      "stops waiting and counts the runtime as not answering.")
+    rest["fieldConfig"]["defaults"]["custom"]["thresholdsStyle"] = {"mode": "line+area"}
+    rest["fieldConfig"]["defaults"]["thresholds"] = _thresholds(("transparent", None), (FAIL, ROUND_SECONDS))
+    board.add(rest, 8, 8)
     board.row("Events and rules")
     board.add(timeseries("Events per second", [(f"sum(rate({m['event_count']}{{{job}}}[5m]))", "all")],
                          "ops", minimum=0), 8, 8)

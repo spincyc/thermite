@@ -62,6 +62,24 @@ def items(**states):
     return [{"name": name, "state": state} for name, state in states.items()]
 
 
+#: Families no rule or board reads, each for its reason. The info families
+#: are facts to join a check with (on(zone), on(room) group_left(label)).
+#: The gateway's subscriptions opened and resyncs repeat its connects, which
+#: are routine (the first remote page opens it): its failures are what
+#: matters, and the gateway is to stop exporting both (handoff).
+UNREAD = {"thermite_room_info", "thermite_zone_info",
+          "thermite_gateway_upstream_connects_total", "thermite_gateway_upstream_resyncs_total"}
+
+
+def read_families():
+    """The text of every rule and board, in houses with and without the
+    routing executor and the thingHandler pool telemetry."""
+    from tests import test_zone_sync as zones
+    texts = [*FILES.values(), *rendered(zones.house()).values(),
+             yaml.safe_dump(alerts.rules({**MAP, "handler_pool": {"observed": "example_observed"}}))]
+    return "\n".join(texts)
+
+
 class Selections(unittest.TestCase):
     MAPPING = {"items": {"loc_example_west_source": {"room": "example_west", "zone": "example_west", "point": "source",
                                                      "convert": "enum", "options": ["off", "example_player"]}}}
@@ -769,6 +787,38 @@ class Dashboards(unittest.TestCase):
             # One set of series for the whole range, not a new top set at every step.
             self.assertRegex(expr, r" and topk\(6, sum by \(\w+\) \(increase\(.+\[\$__range\] @ end\(\)\)\)\)$")
 
+    def test_every_exporter_family_is_read(self):
+        read = read_families()
+        for name in exporter.FAMILIES:
+            if name not in UNREAD:
+                self.assertIn(name, read)
+        self.assertNotIn("thermite_openhab_endpoint_up", exporter.FAMILIES)
+        self.assertNotIn("thermite_thing_status", exporter.FAMILIES)
+
+    def test_a_things_status_is_an_info_series_shown_with_its_device(self):
+        mapping = {"devices": {"example_tv": {"room": "example_west", "kind": "tv",
+                                              "things": ["example:tv:example_tv"]}}}
+        samples = exporter._things(mapping, [{"UID": "example:tv:example_tv", "statusInfo": {"status": "OFFLINE"}}])
+        labels = {"device": "example_tv", "room": "example_west", "kind": "tv", "thing": "example:tv:example_tv"}
+        self.assertEqual(samples, [("thermite_thing_online", labels, 0.0),
+                                   ("thermite_thing_status_info", {**labels, "status": "OFFLINE"}, 1.0)])
+        table = next(panel for panel in panels(boards()[dashboards.DEVICES]) if panel["title"] == "Things not online")
+        self.assertEqual(table["targets"][0]["expr"], 'thermite_thing_status_info{status!="ONLINE"}')
+        self.assertEqual(table["fieldConfig"]["defaults"]["noValue"], "Every Thing is online")
+        words = {override["matcher"]["options"]: prop["value"][0]["options"]
+                 for override in table["fieldConfig"]["overrides"] for prop in override["properties"]
+                 if prop["id"] == "mappings"}
+        self.assertEqual(words["status"]["UNINITIALIZED"]["text"], "Uninitialized")
+        self.assertEqual(set(words["status"]), set(exporter.THING_STATUSES))
+        self.assertIn("example_west", words["room"])
+
+    def test_the_rest_round_is_judged_against_the_exporters_budget(self):
+        rest = next(panel for panel in panels(boards()[dashboards.OPENHAB]) if panel["title"] == "REST answer time")
+        self.assertEqual(rest["targets"][0]["expr"], "max(thermite_scrape_duration_seconds)")
+        steps = rest["fieldConfig"]["defaults"]["thresholds"]["steps"]
+        self.assertEqual(steps[-1], {"color": dashboards.FAIL, "value": exporter.ROUND_SECONDS})
+        self.assertIn(f"At {exporter.ROUND_SECONDS:g} s", rest["description"])
+
     def test_tables_say_why_they_are_empty_and_dash_a_missing_label(self):
         for name, board in boards().items():
             for panel in panels(board):
@@ -934,6 +984,24 @@ class Textfiles(unittest.TestCase):
 
     def test_every_client_kind_is_a_timeout_or_a_stream_failure(self):
         self.assertEqual(sorted(alerts.TIMEOUT_KINDS + alerts.STREAM_KINDS), sorted(self.metrics.CLIENT_KINDS))
+
+    def test_every_access_service_family_is_read(self):
+        """The gateway's, the policy worker's and the callback relay's
+        series each answer something on a board or in an alert."""
+        read = read_families()
+        for registry in (self.metrics.GATEWAY, self.metrics.WORKER, self.metrics.CALLBACKS):
+            for family in registry.collect():
+                name = family.name + ("_total" if family.type == "counter" else "")
+                if name not in UNREAD:
+                    self.assertIn(name, read)
+
+    def test_requests_in_flight_are_judged_against_the_gateways_limit(self):
+        from oh_access import service
+        self.assertEqual(dashboards.GATEWAY_MAX_REQUESTS, service.MAX_REQUESTS)
+        panel = next(panel for panel in panels(boards()[dashboards.SWITCHING])
+                     if panel["title"] == "Requests in flight")
+        steps = panel["fieldConfig"]["defaults"]["thresholds"]["steps"]
+        self.assertEqual(steps[-1], {"color": dashboards.FAIL, "value": service.MAX_REQUESTS})
 
     def test_dashboards_name_only_the_gateways_route_classes(self):
         self.assertLessEqual(set(dashboards.WAITED_ROUTES), set(self.metrics.ROUTES))

@@ -80,8 +80,8 @@ Fetch = Callable[[str, float], object]
 
 FAMILIES = {
     "thermite_openhab_up": ("gauge", "1 when openHAB answered both REST requests of the last round."),
-    "thermite_openhab_endpoint_up": ("gauge", "1 when openHAB answered this REST request in the last round."),
-    "thermite_scrape_duration_seconds": ("gauge", "Seconds the last REST round took."),
+    "thermite_scrape_duration_seconds": ("gauge", "Seconds the last REST round took; at ROUND_SECONDS openHAB "
+                                         "counts as not answering."),
     "thermite_items_missing": ("gauge", "Mapped Items openHAB does not have."),
     "thermite_device_info": ("gauge", "Each device of the house file, with its own room, kind and label. A "
                              "check's room is the room using the device: join device facts on(device)."),
@@ -89,7 +89,7 @@ FAMILIES = {
     "thermite_zone_info": ("gauge", "Each routing zone (a room's source selector), with the room it is in and its "
                            "label."),
     "thermite_thing_online": ("gauge", "1 when the Thing is ONLINE."),
-    "thermite_thing_status": ("gauge", "The Thing's status, as a label; always 1."),
+    "thermite_thing_status_info": ("gauge", "The Thing's status, as a label; always 1."),
     "thermite_item_value": ("gauge", "A numeric Item state: switches 1 or 0, numbers as they are."),
     "thermite_item_info": ("gauge", "A selection Item's state, as a label; always 1. A routing zone's source Item "
                            "names its zone too: join it with a check on(zone), as a room may have two zones."),
@@ -289,7 +289,6 @@ def collect(mapping: dict, fetch: Fetch, clock: Callable[[], float] = time.monot
     duration = max(0.0, clock() - started)
     samples: list[Sample] = [
         ("thermite_openhab_up", {}, 1.0 if len(answers) == 2 else 0.0),
-        *(("thermite_openhab_endpoint_up", {"endpoint": e}, 1.0 if e in answers else 0.0) for e in ("things", "items")),
         ("thermite_scrape_duration_seconds", {}, duration),
     ]
     devices = mapping.get("devices") or {}
@@ -464,7 +463,7 @@ def _things(mapping: dict, answer: list) -> list[Sample]:
                 continue
             labels = {**device_labels(mapping, ident), "thing": uid}
             samples.append(("thermite_thing_online", labels, 1.0 if status == "ONLINE" else 0.0))
-            samples.append(("thermite_thing_status", {**labels, "status": status}, 1.0))
+            samples.append(("thermite_thing_status_info", {**labels, "status": status}, 1.0))
     return samples
 
 

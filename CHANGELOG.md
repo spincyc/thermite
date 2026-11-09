@@ -38,6 +38,21 @@ rollback. The unified deployment workflow uses a separate committed private site
   page. A page that hides sends its counts as a keepalive request and keeps
   them until it is answered; it used to send a beacon and forget them once
   the beacon was queued, so they were lost if it never arrived.
+- Every series the exporter and the remote gateway write is now read
+  somewhere. The Devices board lists the Things that are not online and in
+  what status, so a sleeping device (Offline) reads apart from one whose
+  binding or settings are wrong (Uninitialized); the series is now
+  `thermite_thing_status_info`, after `thermite_thing_status`. The openHAB
+  runtime board shows how long the runtime takes to answer the exporter's
+  REST reads, against the 8 seconds after which it counts as not
+  answering, and how old the thingHandler pool's last sample is. Switching
+  & remotes shows the gateway's requests in flight against its limit of
+  100, how long event streams last before they end, the runtime changes
+  the gateway takes and the frames it sends to remote pages, and, among
+  event stream failures, streams that fell behind and were sent a fresh
+  snapshot and failures of the gateway's own feed from the runtime.
+  `thermite_openhab_endpoint_up` is gone: `thermite_openhab_up` reads 0
+  when either REST read fails, and the exporter's log says which.
 - A routing zone's source Item names its zone in Prometheus:
   `thermite_item_info` and `thermite_item_unavailable` of `loc_<zone>_source`
   carry `zone`, as `thermite:check` and the routing series do. They had only
