@@ -33,6 +33,9 @@
   const CODE_OPEN_MS = 5 * 60 * 1000;
   const ANSWER_MS = 30 * 1000;
   const POLL_MS = 5000;
+  // How long a request (a code, Pair again, Cancel) may go unanswered before
+  // it is aborted: access.js COMMAND_DEADLINE_MS.
+  const POST_MS = 15000;
   // Errors in a row, with no open between, before the stream is given up for polling.
   const STREAM_FAILURES = 3;
   const LAST = Number.MAX_SAFE_INTEGER;
@@ -71,7 +74,8 @@
     failedAgain: "Code not accepted. Restoring the previous pairing.",
     restored: "Previous pairing restored. The remote is ready.",
     repairing: "Enter the new code to restore control. Cancel keeps the previous pairing.",
-    offline: "Could not reach thermite. Check that this phone is on the home Wi-Fi."
+    offline: "Could not reach thermite. Check that this phone is on the home Wi-Fi.",
+    unanswered: "thermite did not answer in time. Check the device's status before trying again."
   };
 
   // ---- reading the list ----------------------------------------------------
@@ -213,6 +217,7 @@
     this.pollMs = config.pollMs != null ? config.pollMs : POLL_MS;
     this.codeOpenMs = config.codeOpenMs != null ? config.codeOpenMs : CODE_OPEN_MS;
     this.answerMs = config.answerMs != null ? config.answerMs : ANSWER_MS;
+    this.postMs = config.postMs != null ? config.postMs : POST_MS;
     this.mock = Boolean(config.mock);
     if (this.mock) {
       this.server = new MockServer(this, config.mockDelay != null ? config.mockDelay : 300);
@@ -457,15 +462,29 @@
     this.cancel(id, "asked");
   };
 
+  // A request is aborted after postMs, so the device's busy state ends with
+  // a note rather than never.
   Backend.prototype.post = function (item, body) {
     const url = this.base + "/rest/items/" + encodeURIComponent(item);
-    return Promise.resolve()
-      .then(() => this.fetch(url, { method: "POST", headers: { "Content-Type": "text/plain", Accept: "application/json" }, body: body }))
+    const controller = global.AbortController ? new global.AbortController() : null;
+    let timer = null;
+    const deadline = new Promise((_, reject) => {
+      timer = this.setTimeout(() => {
+        timer = null;
+        if (controller) controller.abort();
+        reject(new Error(MESSAGES.unanswered));
+      }, this.postMs);
+    });
+    const init = { method: "POST", headers: { "Content-Type": "text/plain", Accept: "application/json" }, body: body };
+    if (controller) init.signal = controller.signal;
+    const sent = Promise.resolve()
+      .then(() => this.fetch(url, init))
       .then((response) => {
         if (!response.ok) throw new Error("thermite did not take the request (HTTP " + response.status + ")");
       }, () => {
         throw new Error(MESSAGES.offline);
       });
+    return Promise.race([sent, deadline]).finally(() => { if (timer !== null) this.clearTimeout(timer); });
   };
 
   /** Asks the device to show a code (Pair, Pair again, Ask for a new code). */

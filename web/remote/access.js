@@ -24,12 +24,21 @@
     invalid_setup_code: "The setup code was not accepted or has expired. Generate a new code on the thermite host.",
     access_not_configured: "Access is not configured at this address.", invalid_response: "The access service could not answer.",
     client_timeout: "thermite did not answer in time. Try again in a moment.",
+    command_unconfirmed: "thermite did not answer in time. The command may still take effect; check before trying again.",
     origin_mismatch: "The terminal credential belongs to a different address.", secure_connection_required: "Use your site’s HTTPS address to sign in.", connection_failed: "Could not reach thermite."
   };
   // The gateway sends a stream frame at least this often: a heartbeat,
   // {"type":"heartbeat"}, while it has nothing else (oh_identity.streams.HEARTBEAT).
   const STREAM_HEARTBEAT_MS = 5000;
   const HEARTBEAT_FRAME = '{"type":"heartbeat"}';
+  // How long a command (a room command, a lock switch) may go unanswered
+  // before it is aborted and reported as unconfirmed. The gateway answers one
+  // in well under a second, and its own call to openHAB gives up after 5 s
+  // at each step (oh_identity.transport); 15 s is long past a healthy answer
+  // and about as long as a choice waits to be read back (backend.js
+  // confirmMs). All off, up to two waves of rooms on the gateway's four
+  // command workers (oh_identity.batches), has twice as long.
+  const COMMAND_DEADLINE_MS = 15000;
   function problem(code, status) {
     const error = new Error(MESSAGES[code] || "The action could not be completed.");
     error.code = Object.prototype.hasOwnProperty.call(MESSAGES, code) ? code : "access_unavailable";
@@ -97,6 +106,7 @@
     let active = typeof document === "undefined" || document.visibilityState !== "hidden";
     // The open event streams, each with its liveness watchdog (eventSource).
     const streams = new Set(), streamLiveness = config.streamLiveness || 3 * STREAM_HEARTBEAT_MS;
+    const commandDeadline = config.commandDeadline || COMMAND_DEADLINE_MS;
     // Every room's lock in one read, for the room lists. The watched room's
     // detailed policy (policies) still decides whether its controls are held back.
     let lockRooms = null, locksAt = 0, locksWatched = false, lockReads = 0;
@@ -332,19 +342,26 @@
       if (value !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(value); }
       return data(path, init, true);
     }
-    // A lock read that gives up after policyTimeout, so one hung request cannot
-    // stall its poll. Giving up is client_timeout with status 0, no server
-    // answer, and is counted as kind; the caller shows the lock as unavailable.
-    function timedGet(path, kind) {
+    // A JSON request that gives up after ms: its fetch is aborted, it rejects
+    // with code and status 0 (no server answer), and kind, when given, is
+    // counted. Nothing waits on it longer than ms, however the gateway fares.
+    function bounded(path, method, value, ms, code, kind) {
       const controller = typeof AbortController === "function" ? new AbortController() : null, started = now();
       let timer;
       return Promise.race([
-        json(path, "GET", undefined, controller ? { signal: controller.signal } : {}),
+        json(path, method, value, controller ? { signal: controller.signal } : {}),
         new Promise((_, reject) => { timer = setTimeout(() => {
-          controller?.abort(); record(kind, (now() - started) / 1000, path); reject(problem("client_timeout"));
-        }, config.policyTimeout || 8000); })
+          controller?.abort(); if (kind) record(kind, (now() - started) / 1000, path); reject(problem(code));
+        }, ms); })
       ]).finally(() => clearTimeout(timer));
     }
+    // A lock read that gives up after policyTimeout, so one hung request cannot
+    // stall its poll. Giving up is client_timeout, counted as kind; the caller
+    // shows the lock as unavailable.
+    const timedGet = (path, kind) => bounded(path, "GET", undefined, config.policyTimeout || 8000, "client_timeout", kind);
+    // A command aborted after commandDeadline rejects as command_unconfirmed:
+    // the gateway may still have sent it, so the caller says so, never that it failed.
+    const commandRequest = (path, method, value, ms) => bounded(path, method, value, ms || commandDeadline, "command_unconfirmed");
     const client = {
       native: legacy, mock, guestOnly, base, origin, ready, fetch: fetchAuth, json, loadSecurity, record, flushTelemetry,
       // The HTTPS site's origin, which the Guest listener names; else null.
@@ -438,7 +455,7 @@
         if (policyWrites.has(room)) return null;
         policyWrites.add(room); policyReads[room] = (policyReads[room] || 0) + 1;
         try {
-          const saved = await json("/api/v1/rooms/" + encodeURIComponent(room) + "/lock", "PUT",
+          const saved = await commandRequest("/api/v1/rooms/" + encodeURIComponent(room) + "/lock", "PUT",
             desired === undefined ? { revision, locked } : { revision, locked, desired });
           stale(authority);
           if (saved.room !== room || !Number.isInteger(saved.revision) || typeof saved.effective?.allowed !== "boolean"
@@ -456,7 +473,7 @@
         if (!client.canControl(room)) throw problem(policies[room]?.effective?.reason === "policy_unavailable" ? "policy_unavailable" : "room_locked", 403);
         // A refusal means the lock shown may be out of date: read it again.
         const path = "/api/v1/rooms/" + encodeURIComponent(room) + "/commands";
-        try { return await overdue("command_timeout", path, json(path, "POST", { action, value }), config.commandTimeout || 8000); }
+        try { return await overdue("command_timeout", path, commandRequest(path, "POST", { action, value }), config.commandTimeout || 8000); }
         catch (error) { if ([403, 423].includes(error.status) || error.code === "policy_unavailable") client.loadPolicy(room).catch(() => {}); throw error; }
       },
       watchRoom(room) { policyRoom = room; return policyPoll.start(); },
@@ -471,7 +488,7 @@
         streams.forEach((stream) => stream.watch());
       },
       stop() { active = false; policyPoll.stop(); lockPoll.stop(); streams.forEach((stream) => stream.watch()); },
-      async allOff() { await ready(); return json("/api/v1/all-off", "POST", {}); },
+      async allOff() { await ready(); return commandRequest("/api/v1/all-off", "POST", {}, 2 * commandDeadline); },
       async login(username, password) {
         const address = new URL(origin);
         if (guestOnly || address.protocol !== "https:" && !["127.0.0.1", "localhost", "[::1]"].includes(address.hostname)) throw problem("secure_connection_required");
@@ -579,7 +596,7 @@
     };
     return client;
   }
-  const exported = { create, problem, returnTo, secureOrigin, MESSAGES, STREAM_HEARTBEAT_MS, client: null };
+  const exported = { create, problem, returnTo, secureOrigin, MESSAGES, STREAM_HEARTBEAT_MS, COMMAND_DEADLINE_MS, client: null };
   global.ThermiteAccess = exported;
   if (typeof module !== "undefined" && module.exports) module.exports = exported;
   if (typeof document === "undefined") return;

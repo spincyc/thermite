@@ -38,6 +38,9 @@ class BackendStream(unittest.TestCase):
     def test_a_reconnects_snapshot_replaces_state_and_what_it_lacks_is_unknown(self):
         self.assertEqual(self.cases["reconnect_snapshot_replaces_state"], {"unknown": 9})
 
+    def test_a_native_command_is_aborted_when_unanswered(self):
+        self.assertEqual(self.cases["native_command_deadline"], {"deadline_ms": 15000})
+
     def test_commands_never_wait_for_the_snapshot(self):
         for name in ("gateway_command_before_snapshot", "native_command_before_snapshot"):
             self.assertEqual(self.cases[name]["commands"], 2, name)

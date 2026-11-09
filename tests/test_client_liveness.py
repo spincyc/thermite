@@ -1,4 +1,4 @@
-"""Clients notice a dead event stream and replace what they knew with each snapshot."""
+"""Clients notice a dead event stream and never wait on a command for ever."""
 import json
 from pathlib import Path
 import re
@@ -37,5 +37,11 @@ class ClientLiveness(unittest.TestCase):
     def test_a_page_shown_again_reopens_a_silent_stream_at_once_and_none_while_hidden(self):
         self.assertTrue(self.proof["resume"])
 
+    def test_commands_lock_switches_and_all_off_are_aborted_when_unanswered(self):
+        self.assertEqual(self.proof["commandDeadline"], {"command_ms": 15000, "all_off_ms": 30000, "lock_ms": 15000})
+
     def test_the_pairing_page_replaces_its_statuses_with_each_snapshot(self):
         self.assertTrue(self.proof["pairSnapshot"])
+
+    def test_the_pairing_page_aborts_a_request_left_unanswered(self):
+        self.assertEqual(self.proof["pairDeadline"], {"post_ms": 15000})

@@ -1,6 +1,6 @@
-// The shared access client's event-stream watchdog, and the pairing backend's
-// snapshots, against fake streams, a fake clock and fake timers. Nothing
-// leaves the process.
+// The shared access client's event-stream watchdog and command deadlines, and
+// the pairing backend's, against fake streams, a fake gateway, a fake clock
+// and fake timers. Nothing leaves the process.
 "use strict";
 const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
 const area = path.resolve(__dirname, "..");
@@ -140,6 +140,34 @@ function sources() {
     proof.resume = true;
   }
 
+  // ---- command deadlines -----------------------------------------------------
+
+  {
+    const { box, site, client, Access } = accessClient();
+    assert.equal(Access.COMMAND_DEADLINE_MS, 15000);
+    await client.ready(); await client.loadPolicy("den");
+    site.hold.add("/api/v1/rooms/den/commands");
+    let settled = null;
+    const command = client.command("den", "source", "off").then(value => { settled = value; }, error => { settled = error; });
+    for (let turn = 0; turn < 10 && !site.held.length; turn++) await tick();
+    assert.equal(site.held.length, 1);
+    box.advance(14999); await tick(); assert.equal(settled, null, "still waiting before 15 s");
+    box.advance(1); await command;
+    assert.equal(settled.code, "command_unconfirmed"); assert.equal(settled.status, 0);
+    assert.equal(settled.message, Access.MESSAGES.command_unconfirmed);
+    assert(site.held[0].aborted, "the request is aborted");
+    // All off has twice as long; a lock switch as long as a command.
+    site.hold.add("/api/v1/all-off"); site.hold.add("/api/v1/rooms/den/lock");
+    const allOff = client.allOff().catch(error => error);
+    for (let turn = 0; turn < 10 && site.held.length < 2; turn++) await tick();
+    box.advance(29999); await tick(); assert.equal(site.held[1].aborted, false);
+    box.advance(1); assert.equal((await allOff).code, "command_unconfirmed"); assert(site.held[1].aborted);
+    const lock = client.setRoomLock("den", 0, true).catch(error => error);
+    for (let turn = 0; turn < 10 && site.held.length < 3; turn++) await tick();
+    box.advance(15000); assert.equal((await lock).code, "command_unconfirmed"); assert(site.held[2].aborted);
+    proof.commandDeadline = { command_ms: 15000, all_off_ms: 30000, lock_ms: 15000 };
+  }
+
   // ---- the pairing page ------------------------------------------------------
 
   {
@@ -174,7 +202,16 @@ function sources() {
     assert.equal(backend.device("box").status, "paired");
     proof.pairSnapshot = true;
 
+    // A request that goes unanswered ends after 15 s with a note, never busy for ever.
+    const asking = backend.request("tv").catch(error => error);
+    for (let turn = 0; turn < 10 && !posts.length; turn++) await tick();
+    assert.equal(backend.localOf("tv").busy, "request");
+    box.advance(15000);
+    assert.equal((await asking).message, Pairing.MESSAGES.unanswered);
+    assert(posts[0].aborted);
+    assert.equal(backend.localOf("tv").busy, null);
     backend.stop();
+    proof.pairDeadline = { post_ms: 15000 };
   }
 
   process.stdout.write(JSON.stringify(proof));

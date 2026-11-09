@@ -48,7 +48,9 @@
  *                         returns an unsubscribe function
  *
  * A choice is never assumed: the room shows "switching" until the matrix is
- * read back, as openHAB's routing.js does.
+ * read back, as openHAB's routing.js does. A command left unanswered is
+ * aborted (access.js COMMAND_DEADLINE_MS, or COMMAND_TIMEOUT native) and its
+ * promise rejects with a message that it may still take effect.
  *
  * aimed(device, field) is the volume or mute last sent to a device while it
  * is not read back yet (for at most AIM_MS[field], or heldMs()), else null.
@@ -142,6 +144,10 @@
   // holds one for its stream. Commands never enter this queue.
   const BACKGROUND_READS = 2;
   const SNAPSHOT_TIMEOUT = 8000;
+  // How long a command sent to openHAB itself (native) may go unanswered:
+  // access.js COMMAND_DEADLINE_MS, which bounds those sent through the gateway.
+  const COMMAND_TIMEOUT = 15000;
+  const UNCONFIRMED = "thermite did not answer in time. The command may still take effect; check before trying again.";
 
   // A choice is never shown as made, but its buttons are offered at once.
   function showing(state) {
@@ -783,6 +789,7 @@
     this.readQueue = [];
     this.runningReads = new Set();
     this.snapshotTimeout = config.snapshotTimeout || SNAPSHOT_TIMEOUT;
+    this.commandTimeout = config.commandTimeout || COMMAND_TIMEOUT;
     this.synced = false;
     this.syncWaiters = [];
     this.touched = null;
@@ -850,6 +857,19 @@
         return text;
       });
     });
+  };
+
+  // A command to openHAB itself, aborted after commandTimeout: the caller
+  // then shows it as unconfirmed rather than waiting for ever.
+  OpenHabBackend.prototype.post = function (path, body) {
+    const controller = global.AbortController ? new global.AbortController() : null;
+    let timer;
+    return Promise.race([
+      this.request("POST", path, body, controller && controller.signal),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => { if (controller) controller.abort(); reject(new Error(UNCONFIRMED)); }, this.commandTimeout);
+      })
+    ]).finally(() => clearTimeout(timer));
   };
 
   // Background GETs share BACKGROUND_READS slots, each with a deadline that
@@ -1234,7 +1254,7 @@
     }
     const confirmed = this.expectChoice(roomId, sourceId);
     return (this.access && !this.access.native ? this.access.command(roomId, "source", sourceId)
-      : this.request("POST", "/rest/items/" + sourceItem(roomId), sourceId)).then(() => {
+      : this.post("/rest/items/" + sourceItem(roomId), sourceId)).then(() => {
       this.choiceSent(roomId, sourceId);
       return confirmed;
     }, (error) => {
@@ -1289,7 +1309,7 @@
     });
     const rooms = this.notOff();
     rooms.forEach((roomId) => this.expectChoice(roomId, OFF));
-    return this.request("POST", "/rest/items/" + ALL_OFF, "ON").then(() => {
+    return this.post("/rest/items/" + ALL_OFF, "ON").then(() => {
       rooms.forEach((roomId) => this.choiceSent(roomId, OFF));
       const result = allOffResult(this.house);
       result.sent = true;
@@ -1323,7 +1343,7 @@
     this.aim(deviceId, step);
     return (this.access && !this.access.native
       ? this.access.command(result.room, deviceId + "." + step.field, step.field === "volume" ? Number(step.command) : step.command)
-      : this.request("POST", "/rest/items/" + step.item, step.command)).then(() => {
+      : this.post("/rest/items/" + step.item, step.command)).then(() => {
       result.sent = true;
       return result;
     }, (error) => {

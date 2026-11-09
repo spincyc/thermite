@@ -63,8 +63,10 @@ function client(options = {}) {
     ...(options.diagnostics ? { diagnosticsManifest: diagnosticManifest } : {}),
     fetch(url, init) {
       if (init.method !== "GET") {
-        writes.push({ url, value: init.body });
-        return Promise.resolve({ ok: true, text: async () => "" });
+        const write = { url, value: init.body, aborted: false };
+        writes.push(write);
+        if (!options.hangWrites) return Promise.resolve({ ok: true, text: async () => "" });
+        return new Promise((_, reject) => init.signal.addEventListener("abort", () => { write.aborted = true; reject(new Error("aborted")); }));
       }
       let resolve, reject;
       const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -227,6 +229,20 @@ async function probe(name, run, options) {
     return { unknown: 9 };
   });
 
+  // A command openHAB itself never answers is aborted at 15 s; the room stops switching.
+  await probe("native_command_deadline", async c => {
+    let failure = null;
+    const choosing = c.backend.choose("room_0", "other").catch(error => { failure = error; });
+    await tick();
+    assert.equal(c.backend.snapshot("room_0").status, "switching");
+    assert(c.fire(15000), "a command deadline is set");
+    await choosing;
+    assert(c.writes[0].aborted);
+    assert.match(failure.message, /did not answer in time/);
+    assert.equal(c.backend.snapshot("room_0").pending, null);
+    return { deadline_ms: 15000 };
+  }, { native: true, hangWrites: true });
+
   await probe("hidden_page_holds_no_stream", async c => {
     c.backend.setActive(false);
     assert.equal(c.live().length, 0);
@@ -254,7 +270,7 @@ async function probe(name, run, options) {
     await tick();
     const sent = native ? c.writes : c.authorized;
     assert.equal(sent.length, 1, "a command never waits for the snapshot");
-    if (native) assert.deepEqual(sent[0], { url: "/rest/items/loc_room_0_source", value: "other" });
+    if (native) assert.deepEqual(sent[0], { url: "/rest/items/loc_room_0_source", value: "other", aborted: false });
     else assert.deepEqual(sent[0], { room: "room_0", action: "source", value: "other" });
     c.live()[0].open();
     c.event("loc_room_0_source", "other");
