@@ -4,7 +4,8 @@
 const fs = require('fs'), path = require('path'), vm = require('vm'), assert = require('assert');
 const source = fs.readFileSync(process.argv[2], 'utf8');
 // The planner's own reason table, as routing.js reads it in production.
-const {QUARANTINE_REASONS} = require(path.join(path.dirname(path.resolve(process.argv[2])), 'lifecycle.js'));
+const planner = require(path.join(path.dirname(path.resolve(process.argv[2])), 'lifecycle.js'));
+const {QUARANTINE_REASONS} = planner;
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
 
@@ -26,9 +27,21 @@ const TABLE = {
     io: { wake: 'house_routing_io_events' }, consumers: [] },
 };
 
+// The same rooms over a descriptor the real planner takes (load({real})):
+// a matrix whose outputs are independent, and a receiver whose fields are not.
+const REAL = { ...TABLE, lifecycle: { version: 1, deadlineMs: 30000, sources: {}, endpoints: {},
+  resources: {
+    matrix_output1_input: { key: 'matrix', values: ['1', '9'], capable: true, independent: true },
+    matrix_output2_input: { key: 'matrix', values: ['1', '9'], capable: true, independent: true },
+    receiver_input: { key: 'receiver', values: ['1', '2'], capable: true },
+    receiver_power: { key: 'receiver', values: ['ON', 'OFF'], capable: true },
+  },
+  io: { wake: 'house_routing_io_events' }, consumers: [] } };
+
 function load(options = {}) {
   const items = new Map(), sent = [], posted = [], rules = {}, logs = [], calls = [], routes = [];
-  let onLegacy = null, deps = null;
+  const table = options.real ? REAL : TABLE;
+  let onLegacy = null, deps = null, real = null;
   const slots = options.slots || {};
   const item = (name, state = 'NULL') => {
     if (!items.has(name)) items.set(name, { state, sendCommand(value) { sent.push([name, String(value)]); calls.push('send ' + name); },
@@ -41,6 +54,7 @@ function load(options = {}) {
     item(r.hdmi, '9');
   }
   item('matrix_input1_edid', '5');
+  for (const name of Object.keys(table.lifecycle.resources)) item(name);
   const lifecycle = {
     request(id, choice, route) {
       calls.push(`request ${id} ${choice}`);
@@ -64,7 +78,11 @@ function load(options = {}) {
     },
     'thermite-routing-io': { create: () => executor, nativeJournal: () => ({ load: () => null, save() {}, path: '/userdata/thermite-routing/executor_coordinator.json' }) },
     'thermite-routing-lifecycle': { QUARANTINE_REASONS,
-      createCoordinator(descriptor, dependencies) { deps = dependencies; return lifecycle; } },
+      createCoordinator(descriptor, dependencies) {
+        deps = dependencies;
+        if (options.real) real = planner.createCoordinator(descriptor, dependencies);
+        return real || lifecycle;
+      } },
     '@runtime': { lifecycleTracker: { addDisposeHook() {} } },
   };
   const context = vm.createContext({
@@ -72,10 +90,10 @@ function load(options = {}) {
     console: { info: m => logs.push(['info', m]), warn: m => logs.push(['warn', m]), error: m => logs.push(['error', m]) },
     setTimeout: () => 0, clearTimeout() {}, Date, JSON, Map, Set, Object, String, Number, Error, Math,
   });
-  vm.runInContext(source.replace('const TABLE = null;', 'const TABLE = ' + JSON.stringify(TABLE) + ';'), context);
+  vm.runInContext(source.replace('const TABLE = null;', 'const TABLE = ' + JSON.stringify(table) + ';'), context);
   posted.length = 0; calls.length = 0; logs.length = 0;
   const command = (id, value, eventSource) => rules[`routing_${id}_command`].execute({ receivedCommand: value, eventSource });
-  return { sent, posted, logs, calls, routes, command, context, deps: () => deps, legacy: event => onLegacy(event) };
+  return { sent, posted, logs, calls, routes, command, context, deps: () => deps, legacy: event => onLegacy(event), planner: () => real };
 }
 
 // Sources a command can carry: what openHAB's REST API makes of the
@@ -131,16 +149,23 @@ test('actor readiness hands the planner its proof, a property\'s alone for an in
   // its table (lifecycle_planner_harness.js).
   for (const reason of ['incompatible-journal', 'adapter-threw', 'unordered-external-admission'])
     assert(QUARANTINE_REASONS.includes(reason), reason);
-  const orphan = ['legacy', 'orphan'].join('-');
-  const holds = { [orphan]: { resources: ['matrix_output1_input'], sources: [] } };
+  const [orphan, port] = ['orphan', 'port'].map(name => ['legacy', name].join('-'));
+  const holds = { [orphan]: { resources: ['matrix_output1_input', 'matrix_output2_input'], sources: [] },
+    [port]: { resources: ['matrix_output1_input'], sources: [] } };
   const device = load({ holds });
   device.legacy({ type: 'retired', legacy: true, recovered: true, key: 'matrix', token: null });
-  assert.deepEqual(device.calls.filter(call => /^(recover|release)/.test(call)), ['release ' + orphan, 'recover matrix true -']);
-  // A property's proof says nothing of the rest of the device, where an
-  // orphaned command may still be on its way.
+  assert.deepEqual(device.calls.filter(call => /^(recover|release)/.test(call)),
+    ['release ' + orphan, 'release ' + port, 'recover matrix true -']);
+  // A property's proof ends an orphaned command on it alone, and says
+  // nothing of the rest of the device, where another may still be on its way.
   const field = load({ holds });
   field.legacy({ type: 'retired', legacy: true, recovered: true, key: 'matrix', resource: 'matrix_output1_input', token: null });
-  assert.deepEqual(field.calls.filter(call => /^(recover|release)/.test(call)), ['recover matrix true matrix_output1_input']);
+  assert.deepEqual(field.calls.filter(call => /^(recover|release)/.test(call)),
+    ['release ' + port, 'recover matrix true matrix_output1_input']);
+  // Nor is a property the planner does not manage its to hear.
+  const other = load({ holds });
+  other.legacy({ type: 'retired', legacy: true, recovered: true, key: 'matrix', resource: 'matrix_input1_edid', token: null });
+  assert.deepEqual(other.calls.filter(call => /^(recover|release)/.test(call)), []);
 });
 
 test('recovery retires the manual command whose outcome was unknown, and only that one', () => {
@@ -152,6 +177,35 @@ test('recovery retires the manual command whose outcome was unknown, and only th
   assert(!r.calls.includes('release legacy-lost'));
   r.legacy({ type: 'retired', legacy: true, recovered: true, key: 'matrix', token: lost });
   assert(r.calls.includes('release legacy-lost')); assert(!r.calls.includes('release legacy-live'));
+});
+
+test('with the real planner, a manual command to an independent field holds and quarantines that field alone', () => {
+  const r = load({ real: true }), status = () => r.planner().snapshot();
+  // An EDID input is independent at its actor but no planner property: its
+  // readiness is not the planner's to hear.
+  r.legacy({ type: 'retired', legacy: true, recovered: true, key: 'matrix', resource: 'matrix_input1_edid', token: null });
+  const [one, edid, shared] = ['one', 'edid', 'shared'].map(name => ['legacy', name].join('-'));
+  r.legacy({ type: 'legacy', token: one, key: 'matrix', resource: 'matrix_output1_input', value: '1', managed: true,
+    independent: true, effectResources: [] });
+  r.legacy({ type: 'legacy', token: edid, key: 'matrix', resource: 'matrix_input1_edid', value: '5', managed: false,
+    independent: true, effectResources: [] });
+  r.legacy({ type: 'legacy', token: shared, key: 'receiver', resource: 'receiver_input', value: '2', managed: true, effectResources: [] });
+  assert.deepEqual(status().holds[one].resources, ['matrix_output1_input']);
+  assert(!(edid in status().holds));
+  assert.deepEqual(status().holds[shared].resources.sort(), ['receiver_input', 'receiver_power']);
+  // Its unknown outcome quarantines its slot alone; the EDID's ends quietly.
+  r.legacy({ type: 'admitted', token: one, key: 'matrix', legacy: true, managed: true, resource: 'matrix_output1_input' });
+  r.legacy({ type: 'uncertain', token: one, key: 'matrix', legacy: true, managed: true, reason: 'provider_outcome_unknown' });
+  r.legacy({ type: 'uncertain', token: edid, key: 'matrix', legacy: true, reason: 'provider_outcome_unknown' });
+  assert.equal(status().slots['matrix#matrix_output1_input'].quarantine, 'provider_outcome_unknown');
+  assert.equal(status().slots['matrix#matrix_output2_input'].quarantine, null);
+  r.legacy({ type: 'retired', legacy: true, recovered: true, key: 'matrix', resource: 'matrix_input1_edid', token: edid });
+  assert.equal(status().slots['matrix#matrix_output1_input'].quarantine, 'provider_outcome_unknown');
+  // Its own readiness ends both its hold and its quarantine.
+  r.legacy({ type: 'retired', legacy: true, recovered: true, key: 'matrix', resource: 'matrix_output1_input', token: one });
+  assert(!(one in status().holds));
+  assert.equal(status().slots['matrix#matrix_output1_input'].quarantine, null);
+  assert.deepEqual(r.logs.filter(([level]) => level === 'error'), []);
 });
 
 test('the planner is told where its journal is', () => {

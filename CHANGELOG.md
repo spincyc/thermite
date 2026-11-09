@@ -71,8 +71,11 @@ rollback. The unified deployment workflow uses a separate committed private site
   each declare themselves `independent` in their integration, since each
   request names its one port; an unknown outcome on one quarantines it
   alone, across a reload, until a read of it answers about a minute
-  later, and every other room on the matrix goes on switching. It used to
-  stop the whole matrix, so one lost answer held every room on it.
+  later, and every other room on the matrix goes on switching. A manual
+  command to one of these ports, an EDID change among them, likewise
+  keeps routes off that port alone while it is out, and off nothing when
+  no route uses the port. It used to stop the whole matrix, so one lost
+  answer or one manual command held every room on it.
 - A route's deadline now covers the declared settle times of what it
   writes: 30 s plus, for each property it writes, the longest settle away
   from the value, the value's own settle and the same for what that value

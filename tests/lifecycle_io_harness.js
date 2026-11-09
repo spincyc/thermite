@@ -221,6 +221,12 @@ test('root event wakeups coalesce and callbacks yield after eight outcomes',()=>
  while(!f.broker.events.isEmpty())f.bridge.events();
  assert.equal(seen,40);assert.equal(f.wakes.filter(name=>name==='events').length,4);
 });
+test('a manual command says whether its field is independent, so routing holds that field alone',()=>{
+ const f=setup();const actor=f.module.actor({key:'switch',io:f.descriptor.io,fields:{D1:{independent:true}}},f.provider,{...f.env,journal:f.journal});
+ const seen=[];f.bridge.onLegacy(e=>{if(e.type==='legacy')seen.push([e.resource,e.independent===true]);});
+ actor.legacy('D1','3');actor.legacy('D2','3');f.bridge.events();
+ assert.deepEqual(seen,[['D1',true],['D2',false]]);
+});
 test('an event whose handling throws is logged and dropped, and the events after it are still handled',()=>{
  const f=setup();const seen=[];
  f.bridge.onLegacy(e=>{seen.push(e.token);if(e.token==='bad')throw Error('recovery names an unknown property');});
