@@ -258,13 +258,9 @@ class Telemetry:
     @staticmethod
     def _verified(status):
         """Whether a pass verified the lock: every field it controls read
-        back as locked. A passive endpoint's limitation keeps the pass's
-        phase short of verified, though nothing else is left to check."""
-        if status.get("phase") == "verified":
-            return True
-        return (status.get("phase") == "enforcing" and status.get("state") == "degraded"
-                and bool(status.get("limitations")) and bool(status.get("matched"))
-                and not status.get("mismatched") and not status.get("unknown") and not status.get("reason"))
+        back as locked. A passive endpoint has no field, so it does not
+        stand in the way."""
+        return status.get("phase") == "verified"
 
     def stepped(self, result):
         now = self.monotonic()

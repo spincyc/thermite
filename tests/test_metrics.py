@@ -1025,8 +1025,8 @@ class Textfiles(unittest.TestCase):
             west: {"phase": "invalid", "reason": "invalid_policy"},
             # Locked, but openHAB did not answer the worker's read.
             east: {"phase": "enforcing", "state": "unknown", "reason": "native_read_unavailable"},
-            # Locked with a passive display: held, with nothing else to check.
-            den: {"phase": "enforcing", "state": "degraded", "matched": ["example_matrix_output3"],
+            # Locked with a passive display: verified on what it can read.
+            den: {"phase": "verified", "state": "verified", "matched": ["example_matrix_output3"],
                   "mismatched": [], "unknown": [], "limitations": ["passive_endpoint:example_den_tv"]},
             # Unlocked beside an unreadable policy: nothing of its own to enforce.
             hall: {"phase": "unlocked", "state": "degraded", "reason": "invalid_policy"},
