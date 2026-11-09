@@ -114,11 +114,13 @@ rollback. The unified deployment workflow uses a separate committed private site
   reboot`: the VRROOM restarts in about 15 s with its settings kept and no
   power cycle. Nothing sends it unasked, and each one is logged.
   `vrroom_http` now only observes: it reads the diagnostics snapshot once a
-  minute instead of every 10 s, and has no input Item. A house file that
-  lists `vrroom_http` under control is refused; list it under observe and
-  `vrroom_telnet` under control. `thermite test routing` drives the VRROOM
-  over telnet, against a stand-in that acknowledges what it knows, ignores
-  anything else and says `int` after a change, as the real one does.
+  minute instead of every 10 s, now with each input's +5 V, the outputs'
+  hot-plug and the eARC and ARC states, and has no input Item. A house
+  file that lists `vrroom_http` under control is refused; list it under
+  observe and `vrroom_telnet` under control. `thermite test routing` drives
+  the VRROOM over telnet, against a stand-in that acknowledges what it
+  knows, ignores anything else and says `int` after a change, as the real
+  one does.
 - Each integration the routing lifecycle drives now declares its fields
   itself, through a new `fields(device)` hook: the values each can be
   commanded with, how a write is acknowledged, how long it may take to

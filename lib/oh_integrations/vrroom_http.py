@@ -2,8 +2,9 @@
 
 One read-only String point, `<id>_signal`: what the VRROOM's telnet API
 does not report, read from GET /ssi/infopage.ssi, its state as JSON, about
-once a minute: measured input and output video and audio, and separately
-labelled sink EDID capabilities. No login is needed. The switch is controlled
+once a minute: measured input and output video and audio, separately
+labelled sink EDID capabilities, each input's +5 V, the outputs' hot-plug
+and the eARC and ARC states. No login is needed. The switch is controlled
 over telnet (vrroom_telnet, under control); nothing here can command it.
 """
 
@@ -36,7 +37,8 @@ TIMEOUT = 2000
 MAX_AGE = 2 * REFRESH + 5
 #: The infopage fields a snapshot keeps.
 FIELDS = ["portseltx0", "portseltx1", "RX0", "RX1", "TX0", "TX1", "AUD0", "AUD1", "AUDOUT", "EARCRX",
-          "SINK0", "SINK1", "EDIDA0", "EDIDA1"]
+          "SINK0", "SINK1", "EDIDA0", "EDIDA1", "rx0in5v", "rx1in5v", "rx2in5v", "rx3in5v",
+          "tx0hpd", "tx1hpd", "txaudhpd", "earcout5v", "earcst", "arcst"]
 
 
 def thing_uid(device: dict) -> str:
@@ -44,7 +46,7 @@ def thing_uid(device: dict) -> str:
 
 
 def diagnostics(device: dict) -> dict:
-    """Reported signals and sink capabilities, sharing the existing GET.
+    """Reported signals and sink capabilities, +5 V, hot-plug and eARC.
 
 RX0/RX1 are the original signals for the TX0/TX1 processing paths, not
 physical input sockets. See HDfury VRROOM manual, INFO section, page 19.
@@ -61,7 +63,15 @@ physical input sockets. See HDfury VRROOM manual, INFO section, page 19.
             readings.append({"category": category, "label": f"TX{output} {label.lower()}",
                              "item": item, "path": ["values", key],
                              "port": {"direction": "output", "number": output}})
-    for label, key in (("Audio extractor output", "AUDOUT"), ("eARC return audio", "EARCRX")):
+        readings.append({"category": "video", "label": f"TX{output} hot-plug (as reported)", "item": item,
+                         "path": ["values", f"tx{output}hpd"], "port": {"direction": "output", "number": output}})
+    for number in range(4):
+        readings.append({"category": "video", "label": f"Input {number} +5 V (as reported)", "item": item,
+                         "path": ["values", f"rx{number}in5v"], "port": {"direction": "input", "number": number}})
+    for label, key in (("Audio extractor output", "AUDOUT"), ("eARC return audio", "EARCRX"),
+                       ("Audio output hot-plug (as reported)", "txaudhpd"),
+                       ("eARC output +5 V (as reported)", "earcout5v"),
+                       ("eARC state (as reported)", "earcst"), ("ARC state (as reported)", "arcst")):
         readings.append({"category": "audio", "label": label, "item": item, "path": ["values", key]})
     return {"kind": NAME, "items": [item], "maxAgeSeconds": MAX_AGE, "readings": readings}
 

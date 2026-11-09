@@ -91,6 +91,7 @@ class Rendering(unittest.TestCase):
         window = vrroom_http.diagnostics(SWITCH)["maxAgeSeconds"]
         self.assertLess(2 * thing["config"]["refresh"] + thing["config"]["timeout"] / 1000, window)
         keys = {reading["path"][1] for reading in vrroom_http.diagnostics(SWITCH)["readings"]}
+        self.assertLessEqual({"rx0in5v", "rx3in5v", "tx0hpd", "tx1hpd", "earcst"}, keys)
         self.assertLessEqual(keys, set(vrroom_http.FIELDS))
 
     def test_the_rule_and_its_items(self):
