@@ -22,6 +22,22 @@ rollback. The unified deployment workflow uses a separate committed private site
   the add-ons and settings `addons.cfg` asks for, no longer its whole text,
   so rewording an add-on's reason no longer rebuilds it and downloads the
   same add-ons again. Templates warmed before this are built once more.
+- The remotes notice a dead event stream. The gateway's heartbeat, sent
+  after 5 s without a frame, is now a data frame that a browser shows to
+  the page, where it used to be a comment a browser hides. The web remote,
+  the terminal remote, the pairing page and the handheld bridge reconnect
+  a stream that has shown nothing for 15 s, and a page shown again (the
+  iPhone app back from the background) reconnects at once if its stream
+  has been silent that long. Each reconnection's snapshot now replaces
+  what the remote knew: a value the gateway does not have shows as
+  unknown, where it used to keep its value from before the gap. A room
+  command or lock switch the gateway has not answered after 15 s (All off:
+  30 s; a pairing request: 15 s) is aborted and the remote says it may
+  still take effect, where it used to wait for ever. Client telemetry no
+  longer counts while a page is hidden, nor a wait that spanned a hidden
+  page. A page that hides sends its counts as a keepalive request and keeps
+  them until it is answered; it used to send a beacon and forget them once
+  the beacon was queued, so they were lost if it never arrived.
 - Each integration the routing lifecycle drives now declares its fields
   itself, through a new `fields(device)` hook: the values each can be
   commanded with, how a write is acknowledged, how long it may take to

@@ -46,10 +46,18 @@ the device itself is the device's to apply.
 Source previews use the fictional sample. Add `?backend=mock` to simulate
 controls without sending commands.
 
+A page that hears nothing on its event stream for 15 s (the gateway sends a
+heartbeat every 5 s) reconnects it, and one shown again, such as the iPhone
+app back from the background, reconnects at once if its stream went silent.
+Each reconnection reads the house afresh: anything the gateway does not know
+shows as unknown, not as it was. A command unanswered after 15 s (All off: 30
+s) stops waiting and says it may still take effect.
+
 When a page gives up waiting on the gateway (a lock read, a room command, an
-event stream or its first snapshot), it counts that and reports the counts, never
-their content, to the gateway after its next answered request, or as the page
-is hidden. Pages opened with `?backend=mock` or in native mode report nothing.
+event stream or its first snapshot), it counts that while it is shown and
+reports the counts, never their content, to the gateway after its next
+answered request, or as the page is hidden; it keeps them until a report is
+answered. Pages opened with `?backend=mock` or in native mode report nothing.
 
 Below 1180 pixels a bar runs across the top: ☰ opens every view and the
 light/dark switch, followed by the page title, the page's actions and the

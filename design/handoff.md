@@ -158,10 +158,6 @@ function. That replaces these, all found in the cold review:
   client's route is settling.
 - `shown()` reports Off whenever any stage's power is OFF, so a failed
   choice, or a display that turned itself on, reads as Off. Show `partial`.
-- The SSE heartbeat is a comment, so clients have no liveness watchdog.
-  Commands are never aborted, and snapshot gaps keep stale values.
-- Client telemetry counts in-flight requests while the page is hidden, and
-  a beacon that is only queued clears the counts.
 
 ## Metrics left over
 
