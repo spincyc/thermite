@@ -40,6 +40,9 @@ class ClientLiveness(unittest.TestCase):
     def test_silence_is_timed_by_a_monotonic_clock_not_the_wall_clock(self):
         self.assertTrue(self.proof["clockStep"])
 
+    def test_a_stream_whose_first_load_hangs_is_given_up_and_can_be_reopened(self):
+        self.assertEqual(self.proof["hungLoad"], {"read_ms": 8000})
+
     def test_commands_lock_switches_and_all_off_are_aborted_when_unanswered(self):
         self.assertEqual(self.proof["commandDeadline"], {"command_ms": 15000, "all_off_ms": 30000, "lock_ms": 15000})
 

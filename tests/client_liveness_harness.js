@@ -138,6 +138,28 @@ function sources() {
   }
 
   {
+    // A stream whose first load hangs (/api/v1/me never answers) is not
+    // left waiting for good: the read gives up and the stream reports it
+    // closed, so its listener reopens it, which reads again.
+    const { box, site, client } = accessClient();
+    site.hold.add("/api/v1/me");
+    const { Source, opened } = sources(), Events = client.eventSource(Source);
+    const errors = [], stream = new Events("/api/v1/events/remote");
+    stream.onerror = event => errors.push({ status: event.status, readyState: stream.readyState });
+    for (let turn = 0; turn < 10 && !site.held.length; turn++) await tick();
+    assert.equal(site.held.length, 1);
+    box.advance(8000); for (let turn = 0; turn < 10 && !errors.length; turn++) await tick();
+    assert(site.held[0].aborted, "the hung read is aborted");
+    assert.deepEqual(errors, [{ status: 0, readyState: 2 }], "the listener sees the stream closed");
+    site.hold.clear();
+    const again = new Events("/api/v1/events/remote");
+    for (let turn = 0; turn < 20 && !opened.length; turn++) await tick();
+    assert.equal(opened.length, 1, "a new stream reads afresh and opens");
+    again.close(); stream.close();
+    proof.hungLoad = { read_ms: 8000 };
+  }
+
+  {
     // A page shown again checks at once: a stream silent past the bound is
     // reopened then, whether or not the page saw itself hidden.
     const { box, client, counted } = accessClient();

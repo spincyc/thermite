@@ -296,6 +296,19 @@
       if (!response.ok) throw problem(response.status === 404 && ["/api/v1/session", "/api/v1/security"].includes(path) ? "access_not_configured" : value.error, response.status);
       return value;
     }
+    // The reads every request and stream waits on first: the security
+    // status, the session and who is signed in. Each gives up after
+    // readTimeout as client_timeout, so a first load that hangs fails, and
+    // the next request, or the stream its listener reopens, reads afresh
+    // rather than waiting on it for good.
+    function firstRead(path, check, publicRequest) {
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      let timer;
+      return Promise.race([
+        data(path, controller ? { signal: controller.signal } : null, check, publicRequest),
+        new Promise((_, reject) => { timer = setTimeout(() => { controller?.abort(); reject(problem("client_timeout")); }, config.readTimeout || 8000); })
+      ]).finally(() => clearTimeout(timer));
+    }
     function securityStatus(value) {
       if (!value || typeof value.enabled !== "boolean" || !Number.isInteger(value.revision) || value.revision < 0
           || typeof value.bootstrap_required !== "boolean" || typeof value.setup_available !== "boolean") throw problem("invalid_response");
@@ -306,7 +319,7 @@
       if (legacy) return null;
       if (mock) return security || (security = { enabled: true, revision: 0, bootstrap_required: false, setup_available: false });
       if (!discovering) discovering = (async () => {
-        const revision = authRevision, answer = await data("/api/v1/security", null, false, true); stale(revision);
+        const revision = authRevision, answer = await firstRead("/api/v1/security", false, true); stale(revision);
         const next = securityStatus(answer), changed = security && security.revision !== next.revision;
         security = next;
         if (changed) lost("session_expired");
@@ -324,9 +337,9 @@
         const mode = security || await loadSecurity(), revision = authRevision;
         if (mode.enabled && !token && config.getToken) token = config.getToken();
         if (mode.enabled && !token && !guestOnly) {
-          const answer = await data("/api/v1/session"); csrf = answer.csrf;
+          const answer = await firstRead("/api/v1/session"); csrf = answer.csrf;
         }
-        const answer = principal(await data("/api/v1/me", null, true)); stale(revision);
+        const answer = principal(await firstRead("/api/v1/me", true)); stale(revision);
         if (answer.auth_enabled !== mode.enabled) { lost("session_expired"); throw problem("session_expired", 401); }
         user = answer; notify("change"); return user;
       })().catch((error) => { if (error.status === 401 && !ended && !error.stale) lost(error.code); throw error; })
@@ -581,7 +594,7 @@
               if (source.readyState === 2) { clearTimeout(this.timer); this.timer = null; }
               if (event && [401, 403].includes(event.status)) lost("session_expired");
               // One credential probe per outage, however many streams report it.
-              else if (!token && !probing) probing = data("/api/v1/me", null, true).catch(() => {}).finally(() => { probing = null; });
+              else if (!token && !probing) probing = firstRead("/api/v1/me", true).catch(() => {}).finally(() => { probing = null; });
               if (this.onerror) this.onerror(event);
             };
           }
