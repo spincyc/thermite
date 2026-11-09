@@ -91,9 +91,10 @@ FAMILIES = {
     "thermite_thing_online": ("gauge", "1 when the Thing is ONLINE."),
     "thermite_thing_status": ("gauge", "The Thing's status, as a label; always 1."),
     "thermite_item_value": ("gauge", "A numeric Item state: switches 1 or 0, numbers as they are."),
-    "thermite_item_info": ("gauge", "A selection Item's state, as a label; always 1."),
+    "thermite_item_info": ("gauge", "A selection Item's state, as a label; always 1. A routing zone's source Item "
+                           "names its zone too: join it with a check on(zone), as a room may have two zones."),
     "thermite_item_unavailable": ("gauge", "1 while a kept Item is NULL or UNDEF (a selection also while empty): "
-                                  "what it reads is unavailable."),
+                                  "what it reads is unavailable. A source Item names its zone."),
     "thermite_device_problem": ("gauge", "1 while the device's problem Item has a text."),
     "thermite_handler_pool_up": ("gauge", "1 when thingHandler telemetry is complete and at most 60 seconds old."),
     "thermite_handler_pool_observation_age_seconds": ("gauge", "Age of the native thingHandler telemetry sample."),
@@ -480,6 +481,10 @@ def _items(mapping: dict, answer: list) -> list[Sample]:
         device = str(spec.get("device") or "")
         labels = {"device": device, "room": str(spec.get("room", "")), "kind": str(spec.get("kind", ""))}
         item = {**labels, "item": name, "point": str(spec.get("point", ""))}
+        if spec.get("zone"):
+            # A room may have two zones (a receiver's zone 2): only the zone
+            # joins a source Item with that zone's checks one to one.
+            item["zone"] = str(spec["zone"])
         convert = spec.get("convert")
         if convert == "enum":
             text = to_label(state, spec.get("options"))

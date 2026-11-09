@@ -38,6 +38,13 @@ rollback. The unified deployment workflow uses a separate committed private site
   page. A page that hides sends its counts as a keepalive request and keeps
   them until it is answered; it used to send a beacon and forget them once
   the beacon was queued, so they were lost if it never arrived.
+- A routing zone's source Item names its zone in Prometheus:
+  `thermite_item_info` and `thermite_item_unavailable` of `loc_<zone>_source`
+  carry `zone`, as `thermite:check` and the routing series do. They had only
+  `room`, and a room may have two zones, such as a receiver's zone 2 at a
+  desk: a check joined with its source on `room` found both of the room's
+  sources, which Prometheus refuses. Join a check and its source
+  `on(zone)`.
 - Each integration the routing lifecycle drives now declares its fields
   itself, through a new `fields(device)` hook: the values each can be
   commanded with, how a write is acknowledged, how long it may take to

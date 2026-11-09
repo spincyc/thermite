@@ -482,8 +482,11 @@ def exporter_map(inventory: dict, conf=None) -> dict:
             groups = item.get("groups") or []
             if (name.startswith("loc_") and name.endswith("_source") and item.get("type") == "String"
                     and groups and str(groups[0]).startswith("loc_")):
-                items[name] = {"device": "", "room": str(groups[0])[4:], "kind": "", "point": "source",
-                               "convert": "enum", "options": _options(item)}
+                # The routing zone (routing.item_name()), which the exporter
+                # adds to the Item's series: a room may have two zones.
+                items[name] = {"device": "", "room": str(groups[0])[4:],
+                               "zone": name.removeprefix("loc_").removesuffix("_source"), "kind": "",
+                               "point": "source", "convert": "enum", "options": _options(item)}
     rooms = {room: house.room_label(room) for room in house.rooms}
     paths, checks = health_paths(inventory, conf, items)
     # Each routed source as the remotes name it (routing.sources.<id>.label).
@@ -514,10 +517,9 @@ def routing_map(inventory: dict, conf, items: dict, paths: dict) -> dict:
 
     house = House(inventory)
     present = {name for file in conf.yaml.values() for name in file.items}
-    zones = {name.removeprefix("loc_").removesuffix("_source"): {
+    zones = {spec["zone"]: {
                  "room": spec["room"], "label": (paths.get(name) or {}).get("label") or house.room_label(spec["room"])}
-             for name, spec in items.items()
-             if spec.get("point") == "source" and name.startswith("loc_") and name.endswith("_source")}
+             for name, spec in items.items() if spec.get("point") == "source"}
     found = {key: name for key, name in (("status", lifecycle_io.STATUS_ITEM), ("metrics", routing.METRICS_ITEM))
              if name in present}
     if not found:

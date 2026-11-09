@@ -63,12 +63,12 @@ def items(**states):
 
 
 class Selections(unittest.TestCase):
-    MAPPING = {"items": {"loc_example_west_source": {"room": "example_west", "point": "source", "convert": "enum",
-                                                     "options": ["off", "example_player"]}}}
+    MAPPING = {"items": {"loc_example_west_source": {"room": "example_west", "zone": "example_west", "point": "source",
+                                                     "convert": "enum", "options": ["off", "example_player"]}}}
 
     def test_an_unreadable_selection_is_reported_unavailable(self):
         labels = {"device": "", "room": "example_west", "kind": "", "item": "loc_example_west_source",
-                  "point": "source"}
+                  "point": "source", "zone": "example_west"}
         for state in ("UNDEF", "NULL"):
             samples = exporter._items(self.MAPPING, items(loc_example_west_source=state))
             self.assertNotIn("thermite_item_info", [name for name, _, _ in samples])
@@ -103,6 +103,38 @@ class Selections(unittest.TestCase):
         samples = exporter._items(mapping, items(example_tv_power="ON", example_tv_volume="loud",
                                                  example_tv_problem="", example_display_problem="UNDEF"))
         self.assertNotIn("thermite_item_unavailable", [name for name, _, _ in samples])
+
+    def test_a_rooms_two_zones_join_their_checks_on_zone(self):
+        """A receiver's zone 2 in the main zone's room: the room has two
+        source Items. Each carries its zone, so a zone's checks find
+        exactly their own source on(zone), where on(room) finds both."""
+        from tests import test_zone_sync as zones
+
+        def zone2_at_home(rooms, _):
+            rooms[zones.LOUNGE].update(room=zones.CINEMA, label="Example Cinema Zone 2")
+
+        data = zones.house(zone2_at_home)
+        self.assertEqual(oh_render.validate(data), [])
+        files = rendered(data)
+        mapping = json.loads(files[oh_metrics.EXPORTER_MAP])
+        answer = items(loc_example_cinema_source="example_disc", loc_example_lounge_source="UNDEF")
+        samples = exporter.collect(mapping, lambda path, timeout: answer if "items" in path else [])
+        sources = [labels for name, labels, _ in samples
+                   if name in ("thermite_item_info", "thermite_item_unavailable") and labels["point"] == "source"]
+        self.assertEqual({labels["room"] for labels in sources}, {zones.CINEMA})
+        self.assertEqual(sorted(labels["zone"] for labels in sources), [zones.CINEMA, zones.LOUNGE])
+        zone_info = {labels["zone"] for name, labels, _ in samples if name == "thermite_zone_info"}
+        self.assertEqual({labels["zone"] for labels in sources}, zone_info)
+        checks = [rule["labels"] for rule in yaml.safe_load(files["prometheus/alerts.yml"])["groups"][0]["rules"]
+                  if rule.get("record") == alerts.CHECK and rule["labels"].get("zone")]
+        self.assertEqual({labels["zone"] for labels in checks}, zone_info)
+        for labels in checks:
+            self.assertEqual(sum(source["zone"] == labels["zone"] for source in sources), 1, labels)
+        self.assertEqual(sum(source["room"] == zones.CINEMA for source in sources), 2, "on(room) is many-to-many")
+        # Every query reads a source Item by its own name, or joins on zone.
+        for text in files.values():
+            self.assertNotRegex(text, r"on ?\(room\)[^\n]*thermite_item_(info|unavailable)")
+            self.assertNotRegex(text, r"thermite_item_(info|unavailable)[^\n]*on ?\(room\)")
 
     def test_a_room_that_cannot_be_read_keeps_its_row(self):
         timeline = next(panel for board in boards().values() for panel in panels(board)
