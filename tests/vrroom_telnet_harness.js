@@ -10,8 +10,11 @@ function test(name, fn) { fn(); tests.push(name); }
 
 // A VRROOM on telnet. It answers get insel with `insel <tx0> <tx1>`, get
 // and set ipinterrupt with `ipinterrupt on|off`, set insel with the new
-// insel line (`decline`: with the old one), and says nothing to anything
-// else; with ipinterrupt on, `int` follows a change of input. `refuse`
+// insel line (`decline`: with the old one; `err`: refused, as the firmware
+// says it, `insel err`), and says nothing to anything else; `echo` repeats
+// each request before answering it, and `answers` maps a request to the
+// line that answers it instead. With ipinterrupt on, `int` follows a
+// change of input. `refuse`
 // makes it accept a connection and close it at once, `mute` close one at
 // its next request, unanswered, and `hangup` close one at that request,
 // unanswered. `silent` takes set insel without answering it, and a request
@@ -20,8 +23,9 @@ function test(name, fn) { fn(); tests.push(name); }
 // `format` shapes each answer.
 function vrroom({ send = true, interrupts = false } = {}) {
   const clock = { now: 0 }, hooks = [];
-  const vr = { refuse: false, mute: false, hangup: null, silent: false, decline: false, insel: [0, 4], interrupts,
-    opened: [], requests: [], links: [], unanswered: new Set(), format: line => line,
+  const vr = { refuse: false, mute: false, hangup: null, silent: false, decline: false, err: false, echo: false,
+    insel: [0, 4], interrupts,
+    opened: [], requests: [], links: [], unanswered: new Set(), answers: {}, format: line => line,
     close() { for (const link of vr.links) link.peerClosed = true; },
     notice(line = 'int') { for (const link of vr.links) if (!link.closed && !link.peerClosed) link.lines.push(line); } };
   const thermiteIO = {
@@ -46,12 +50,15 @@ function vrroom({ send = true, interrupts = false } = {}) {
       const request = text.slice(0, -1);
       vr.requests.push(request);
       if (vr.mute || request === vr.hangup) { link.peerClosed = true; return; }
+      if (vr.echo) link.lines.push(request);
       if (vr.unanswered.has(request)) return;
+      if (request in vr.answers) { link.lines.push(vr.answers[request]); return; }
       const set = /^set insel (\d) (\d)$/.exec(request);
       const insel = () => vr.format(`insel ${vr.insel[0]} ${vr.insel[1]}`);
       if (request === 'get insel') link.lines.push(insel());
       else if (request === 'get ipinterrupt') link.lines.push(`ipinterrupt ${vr.interrupts ? 'on' : 'off'}`);
       else if (request === 'set ipinterrupt on') { vr.interrupts = true; link.lines.push('ipinterrupt on'); }
+      else if (set && vr.err) link.lines.push(vr.format('insel err'));
       else if (set && vr.decline) link.lines.push(insel());
       else if (set) {
         const changed = Number(set[1]) !== vr.insel[0];
@@ -247,6 +254,35 @@ test('a connection turns ipinterrupt on only when the switch says it is off, nev
   assert.equal(r.vr.interrupts, false);
   r.vr.unanswered.clear(); r.vr.close(); r.tick();
   assert.deepEqual(r.vr.requests.slice(2), ['get ipinterrupt', 'set ipinterrupt on', 'get insel']);
+});
+
+test('set insel is applied only on an insel answer naming it: insel err or another input is refused, any other line skipped, none unknown', () => {
+  const r = vrroom({ interrupts: true }), provider = r.context.routingProvider(), link = () => r.vr.links[0];
+  r.tick();
+  r.vr.err = true;
+  assert.deepEqual(provider.execute('switch_input', '2'), { outcome: 'refused' });
+  assert.deepEqual(r.warnings(), ['switch: answered set insel 2 4 with insel err']);
+  r.vr.format = line => line.slice(1);
+  assert.deepEqual(provider.execute('switch_input', '2'), { outcome: 'refused' });
+  r.vr.format = line => line; r.vr.err = false;
+  // Stale or unrelated lines before a silent switch are no acknowledgement.
+  r.vr.silent = true;
+  for (const stale of ['ipinterrupt on', 'nt', 'interrupt', 'int', 'reboot']) {
+    link().lines.push(stale);
+    assert.deepEqual(provider.execute('switch_input', '3'), { outcome: 'unknown' }, stale);
+  }
+  r.vr.silent = false; r.vr.insel = [0, 4];
+  // An echo of the command is not its answer; the answer that follows is.
+  r.vr.echo = true; r.vr.decline = true;
+  assert.deepEqual(provider.execute('switch_input', '1'), { outcome: 'refused' });
+  r.vr.decline = false;
+  assert.deepEqual(provider.execute('switch_input', '1'),
+    { outcome: 'applied', sample: { value: '1', fresh: true, basis: 'owned_native_read', observedAt: 10000 } });
+  // A get ipinterrupt answered with an error turns nothing on.
+  r.vr.echo = false; r.vr.interrupts = false; r.vr.answers['get ipinterrupt'] = 'ipinterrupt err'; r.vr.close();
+  const asked = r.vr.requests.length;
+  r.tick();
+  assert.deepEqual(r.vr.requests.slice(asked), ['get ipinterrupt', 'get insel']);
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

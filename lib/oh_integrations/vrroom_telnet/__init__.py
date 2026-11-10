@@ -13,7 +13,8 @@ every 10 seconds asks `get insel` and posts TX0's input, changed or not,
 since the room policy worker counts a reading not updated for 30 seconds as
 unknown, and asks again within a second of an `int`. A command to the input
 Item is sent as `set insel <n> 4` (TX1 a copy of TX0, as it always is in
-splitter mode), whose acknowledgement it waits for before reading back. A
+splitter mode), whose answer it waits for before reading back: the new
+`insel` line, or `insel err` when the switch refuses it. A
 switch that does not answer, or closes the connection, gets UNDEF and is
 reconnected after 10, 20 and 40 seconds, then every minute.
 
@@ -28,6 +29,12 @@ Items, per switch:
   about 15 s, with no power cycle. It is the cure when its web server
   hangs (resets every HTTP request) while telnet still answers; nothing
   sends it unasked.
+
+The wording of the answers (`insel %d %d`, `insel err`, `ipinterrupt on`,
+`ipinterrupt err`, `reboot`) comes from strings in the VRROOM's firmware,
+not from a recorded session: beyond `get insel` answered `insel 1 4`, no
+answer has been recorded word for word. So the rule takes an answer only by its pattern, skips any
+other line while it waits, and counts no answer by the deadline as unknown.
 
 The VRROOM's web API (vrroom_http, under observe) still reports what telnet
 does not: the signals, +5 V, hot-plug and eARC.

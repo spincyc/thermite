@@ -260,14 +260,15 @@ class VRROOM(TelnetMatrix):
     and 1 for TX1, each holding an input or COPY (a copy of the other
     output). It answers `get insel` with `insel <tx0> <tx1>`, and `get
     ipinterrupt` with `ipinterrupt on` or `off`; a set of either with the
-    line a get would now answer (the real one's acknowledgement of set
-    insel is not recorded word for word), and a set it refuses, or any line
-    it does not know (an upper-case one too), with nothing. While its
-    ipinterrupt is on (a setting, off at first, that a reboot keeps) it says
-    `int` on every connection shortly after an output's input changes,
-    whoever changed it. `set reboot` gets no answer: shortly after, it
-    closes every connection and refuses new ones for reboot_s seconds,
-    keeping its settings. It records each request as its first two words
+    line a get would now answer, and a set it refuses with `insel err` or
+    `ipinterrupt err` (wording taken from strings in the real one's
+    firmware, not from a recorded session); any line it does not know (an
+    upper-case one too) gets nothing. While its ipinterrupt is on (a
+    setting, off at first, that a reboot keeps) it says `int` on every
+    connection shortly after an output's input changes, whoever changed it.
+    `set reboot` is answered `reboot`: shortly after, it closes every
+    connection and refuses new ones for reboot_s seconds, keeping its
+    settings. It records each request as its first two words
     (`get insel`, `set insel`, `get ipinterrupt`, `set ipinterrupt`, `set
     reboot`) and any other line whole."""
 
@@ -304,6 +305,9 @@ class VRROOM(TelnetMatrix):
     def _reply(self, request: dict, lines: list[str], ok: bool = True) -> dict:
         return {"comhead": request["comhead"], "result": int(ok), "lines": lines if ok else []}
 
+    def _refuse(self, request: dict, name: str) -> dict:
+        return {"comhead": request["comhead"], "result": 0, "lines": [f"{name} err"]}
+
     def _get_insel(self, request: dict) -> dict:
         return self._reply(request, [f"insel {self.insel[0]} {self.insel[1]}"], not request["values"])
 
@@ -311,7 +315,7 @@ class VRROOM(TelnetMatrix):
         allowed = {str(n) for n in [*self.INPUTS, self.COPY]}
         values = request["values"]
         if len(values) != 2 or not set(values) <= allowed or values == [str(self.COPY)] * 2:
-            return self._reply(request, [], False)
+            return self._refuse(request, "insel")
         self._route([int(value) for value in values])
         return self._get_insel({**request, "values": []})
 
@@ -323,7 +327,7 @@ class VRROOM(TelnetMatrix):
 
     def _set_interrupts(self, request: dict) -> dict:
         if request["values"] not in (["on"], ["off"]):
-            return self._reply(request, [], False)
+            return self._refuse(request, "ipinterrupt")
         self.interrupts = request["values"] == ["on"]
         return self._reply(request, self._interrupts())
 
@@ -332,7 +336,7 @@ class VRROOM(TelnetMatrix):
             return self._reply(request, [], False)
         self.reboots += 1
         threading.Timer(self.DELAY_S, self._restart).start()
-        return self._reply(request, [])
+        return self._reply(request, ["reboot"])
 
     def _restart(self) -> None:
         with self.lock:

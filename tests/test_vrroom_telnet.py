@@ -63,7 +63,7 @@ class Rule(unittest.TestCase):
         result = subprocess.run([shutil.which("node"), str(AREA / "tests/vrroom_telnet_harness.js"),
                                  str(vrroom_telnet.SOURCE), str(_io.DEVICE)], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 9)
+        self.assertEqual(json.loads(result.stdout)["passed"], 10)
 
 
 class Rendering(unittest.TestCase):
@@ -212,12 +212,12 @@ class StandIn(unittest.TestCase):
         self.addCleanup(lines.close)
         return lines
 
-    def test_it_acknowledges_what_it_knows_and_says_nothing_to_anything_else(self):
+    def test_it_answers_what_it_knows_refuses_with_err_and_says_nothing_to_anything_else(self):
         _, answers = sim.exchange(self.server.address, [
             "get insel", "set insel 2 4", "get ipinterrupt", "set ipinterrupt on", "get ipinterrupt",
-            "SET INSEL 1 4", "set insel 5 4", "set insel 4 4", "get status tx0", "hello"])
+            "SET INSEL 1 4", "set insel 5 4", "set insel 4 4", "set ipinterrupt maybe", "get status tx0", "hello"])
         self.assertEqual(answers, [["insel 0 4"], ["insel 2 4"], ["ipinterrupt off"], ["ipinterrupt on"],
-                                   ["ipinterrupt on"], [], [], [], [], []])
+                                   ["ipinterrupt on"], [], ["insel err"], ["insel err"], ["ipinterrupt err"], [], []])
         self.assertEqual(self.vrroom.get(0), 2)
         self.assertEqual(self.vrroom.unknown, ["SET INSEL 1 4", "get status tx0", "hello"])
 
@@ -243,6 +243,7 @@ class StandIn(unittest.TestCase):
         first.send("set insel 1 4")
         first.read()
         first.send("set reboot")
+        self.assertEqual(first.read(), ["reboot"])
         self.assertTrue(first.closed())
         self.assertTrue(second.closed())
         self.assertEqual(sim.exchange(self.server.address, ["get insel"])[1], [[]])
