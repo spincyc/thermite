@@ -82,7 +82,7 @@ This feature validates the routing and renders:
 The matrices are any devices whose integration can switch (`ports()` and
 `switch_item()`, as bk808_http and ukm404_http provide), the HDMI switches
 any devices whose integration has `INPUTS` and `input_item()`, as
-vrroom_http does, receivers and displays any whose integration has
+vrroom_telnet does, receivers and displays any whose integration has
 `stage()`, as denonmarantz_http and sony_adcp do, and EDIDs need an HDMI
 matrix integration with `EDID`, `edid_item()` and `copy_edid()`, so this
 module knows rooms and sources, not protocols.
