@@ -287,6 +287,30 @@ test('set insel is applied only on an insel answer naming it: insel err or anoth
   assert.deepEqual(r.vr.requests.slice(asked), ['get ipinterrupt', 'get insel']);
 });
 
+test('a reboot ordered by the routing actor is logged with who asked for it', () => {
+  const r = vrroom({ interrupts: true });
+  r.tick();
+  // An actor that queues each command, as lifecycle_io.js does, stamping it.
+  const queued = [];
+  vm.runInContext('routingLifecycleActor = actor', Object.assign(r.context, { actor: {
+    legacy(resource, value, sensitive, source) { queued.push({ resource, value, queuedAt: r.clock.now }); return true; } } }));
+  const provider = r.context.routingProvider();
+  r.command('reboot', 'reboot', 'thermite.remote:c1=>org.openhab.core.io.rest$owner');
+  r.clock.now += 5;
+  r.command('reboot', 'reboot', 'org.openhab.ui');
+  r.command('input', '2', 'org.openhab.ui');
+  assert.equal(queued.length, 3); assert(!r.vr.requests.includes('set reboot'));
+  for (const operation of queued.filter(op => op.resource === 'switch_reboot')) {
+    assert.deepEqual(provider.execute(operation.resource, operation.value, operation), { outcome: 'applied' });
+  }
+  // One whose command was never queued here names nobody.
+  assert.deepEqual(provider.execute('switch_reboot', 'reboot', { queuedAt: r.clock.now + 60000 }), { outcome: 'applied' });
+  assert.deepEqual(r.warnings().filter(line => line.includes('set reboot')), [
+    'switch: sent set reboot (command from thermite.remote:c1=>org.openhab.core.io.rest$owner); it restarts and does not answer for about 15 s',
+    'switch: sent set reboot (command from org.openhab.ui); it restarts and does not answer for about 15 s',
+    'switch: sent set reboot; it restarts and does not answer for about 15 s']);
+});
+
 test('listening keeps the bytes of a line not yet complete and the connection; a session still starts clean', () => {
   const classes = {}, chunks = [], opened = [];
   const { runtime, hooks } = require('./integration_io_harness.js').install(classes, {}, { Socket: class {} });
