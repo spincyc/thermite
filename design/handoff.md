@@ -68,28 +68,36 @@ settings, live tests) is in the private site's handoff, not here.
 
 ## Stage 2b: outcomes, retries, deadlines
 
-- `busy{retryAfterMs}` and `unsent{transient}` outcomes, retried within the
-  deadline. Today every terminal outcome is final:
-  - a projector Off sent during startup, or an On sent during cooling, is
-    declined and never retried;
-  - a Sony TV input write right after power-on is refused while the TV's
-    content API boots.
-- Deadlines from declarations. The fixed 30 s route deadline is shorter
-  than the 61 s quarantine recovery.
-- Quarantine independence: quarantine is per device key, so one read
-  timeout on the HDMI matrix blocks every room on it for 61 s or more.
+Done:
+- `busy{retryAfterMs}` and `unsent{transient}` outcomes, retried while the
+  route is current and before its deadline. The Sony projector answers busy
+  for an Off while it warms up, an On while it cools and an input while it
+  warms up; a Sony TV for an input refused while its content API boots
+  (30 s after it reads on). Busy retries skip the read before the write.
+- Each route's deadline is 30 s plus the longest chain of declared settle
+  times its writes may take, at most 300 s more. It leaves out the 61 s
+  quarantine recovery on purpose: covering it would slow every failure.
+- `independent` fields: a BK-808 output or EDID input, a UKM-404 port or an
+  AVPro output quarantines alone on an unknown outcome, and a manual command
+  to one holds only that port.
+- A replacement actor ends the flight a dead one left; an old actor that
+  finishes late changes nothing shared. One executor event that throws no
+  longer stalls the others.
+
+Not verified on hardware: the TV's 30 s boot window and its boot error code
+(the rig uses 40005). No integration emits a transient `unsent` yet.
+
+Still open:
 - Publish each route's outcome (`running`, `done`, `failed{reasons}`,
   `yielded`). Today the status is point-in-time evidence: an incomplete
   route always shows `pathReady:false` plus a deadline failure, and no
   client reads it.
-- A replacement actor never clears `current.flight`, so `recover()` and
-  `drain()` wedge and `broker.active` leaks (emulated, not seen live).
 - Hold a manual command to a settling property until the planner reads it
   settled. Today it goes out at once; only its readback is ignored (see
   the design note's 2b row for the shape).
 - Export the planner's own slot quarantine, with every reason, as metrics.
 - routing.js's histogram buckets (1–60 s) are fixed; derive them from the
-  deadline.
+  deadline, which can now reach 330 s.
 - Low: preserve takeover; `ownerRelease` reads a yielded room; a manual
   command of the same value replaces a planner write and shows
   not-admitted.
@@ -113,15 +121,15 @@ settings, live tests) is in the private site's handoff, not here.
   while waking now gets a backed-off repair.
 - `power` kinds: the SHIELD wake is a KEY_POWER toggle outside any actor,
   so two locked rooms repairing it can toggle it off again.
-- `recovery`, with the HDFury VRROOM as the first integration on the full
-  contract:
-  - control over its telnet API (port 2222), with push (`ipinterrupt on`)
-    and acknowledged `set insel`;
-  - `set reboot` as the recovery when its web server hangs;
-  - HTTP kept only for the diagnostics telnet lacks (+5 V, hot-plug,
-    eARC), read about once a minute.
-  - Command list: the firmware zip's `vrroom-rs232-ip-251021.txt`. An
-    unknown command gets no reply. `get status tx0` drops its first letter.
+- The HDFury VRROOM is controlled over telnet (`vrroom_telnet`), with push
+  (`ipinterrupt`) and acknowledged `set insel`; `vrroom_http` only reads
+  diagnostics, once a minute. Its replies' wording comes from strings in
+  the firmware, not a recorded session: check the first live switches.
+- `recovery`: `<id>_reboot` sends `set reboot`, but only when commanded.
+  For the VRROOM the signal is its `vrroom_http` Thing OFFLINE with a
+  connection reset on two 60 s polls in a row while the telnet input
+  reading stays fresh (an unpowered switch fails both). Reboot at most once
+  an hour and expect the Thing back within about 90 s.
 - Low:
   - `sony_ip_control` registers WOL but never sends it;
   - the pyatv lifecycle budget includes the reconnect;
