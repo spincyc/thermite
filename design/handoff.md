@@ -112,7 +112,7 @@ Still open:
   notifies only when its cached value changes. The Item can show a stale
   input indefinitely.
 - One failed poll sets a matrix output UNDEF, so a room on a flaky output
-  flickers between Off and Unavailable.
+  flickers between Off and Unknown.
 - Availability: a script-driven device that stops answering should fail its
   check. Today the AVPro matrix has no check at all, and the Apple TVs and
   the projector have only a power check, which goes Unknown.

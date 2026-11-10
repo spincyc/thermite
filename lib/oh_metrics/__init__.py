@@ -460,6 +460,7 @@ def exporter_map(inventory: dict, conf=None) -> dict:
         ident = device["id"]
         devices[ident] = {"room": device["room"], "kind": device["kind"], "label": house.label(device),
                           "things": sorted(things.get(ident, []))}
+        kept: dict[str, dict] = {}
         for name, item in conf.points(ident):
             chosen = select_point(name, item)
             if chosen is None:
@@ -476,7 +477,19 @@ def exporter_map(inventory: dict, conf=None) -> dict:
                 entry["clear_state"] = clear
             if convert == "enum":
                 entry["options"] = _options(item)
-            items[name] = entry
+            items[name] = kept[name] = entry
+        # The power Item each reading needs on (powered_by(), or the device's
+        # only one), so that a reading with no value while it reads OFF is
+        # the device being off, not unknown.
+        powers = [name for name, entry in kept.items() if entry["point"] == "power" and entry["convert"] == "switch"]
+        declared = {}
+        for module in oh_integrations.REGISTRY:
+            if hasattr(module, "powered_by") and _uses(device, module.PHASE, module.NAME):
+                declared.update(module.powered_by(device))
+        for name, entry in kept.items():
+            power = declared.get(name, powers[0] if len(powers) == 1 else None)
+            if entry["point"] not in ("power", "power_state", "problem") and power in kept:
+                entry["power"] = power
     for file in conf.yaml.values():
         for name, item in file.items.items():
             groups = item.get("groups") or []

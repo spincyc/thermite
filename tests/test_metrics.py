@@ -64,10 +64,11 @@ def items(**states):
 
 #: Families no rule or board reads, each for its reason. The info families
 #: are facts to join a check with (on(zone), on(room) group_left(label)).
+#: A reading whose device is off is a fact to query, not a fault to show.
 #: The gateway's subscriptions opened and resyncs repeat its connects, which
 #: are routine (the first remote page opens it): its failures are what
 #: matters, and the gateway is to stop exporting both (handoff).
-UNREAD = {"thermite_room_info", "thermite_zone_info",
+UNREAD = {"thermite_room_info", "thermite_zone_info", "thermite_item_device_off",
           "thermite_gateway_upstream_connects_total", "thermite_gateway_upstream_resyncs_total"}
 
 
@@ -84,19 +85,19 @@ class Selections(unittest.TestCase):
     MAPPING = {"items": {"loc_example_west_source": {"room": "example_west", "zone": "example_west", "point": "source",
                                                      "convert": "enum", "options": ["off", "example_player"]}}}
 
-    def test_an_unreadable_selection_is_reported_unavailable(self):
+    def test_an_unreadable_selection_is_reported_unknown(self):
         labels = {"device": "", "room": "example_west", "kind": "", "item": "loc_example_west_source",
                   "point": "source", "zone": "example_west"}
         for state in ("UNDEF", "NULL"):
             samples = exporter._items(self.MAPPING, items(loc_example_west_source=state))
             self.assertNotIn("thermite_item_info", [name for name, _, _ in samples])
-            self.assertIn(("thermite_item_unavailable", labels, 1.0), samples)
+            self.assertIn(("thermite_item_unknown", labels, 1.0), samples)
         shown = exporter._items(self.MAPPING, items(loc_example_west_source="off"))
         self.assertIn(("thermite_item_info", {**labels, "value": "off"}, 1.0), shown)
-        self.assertNotIn("thermite_item_unavailable", [name for name, _, _ in shown])
-        self.assertIn("thermite_item_unavailable", exporter.FAMILIES)
+        self.assertNotIn("thermite_item_unknown", [name for name, _, _ in shown])
+        self.assertIn("thermite_item_unknown", exporter.FAMILIES)
 
-    def test_every_kept_item_without_a_value_is_unavailable(self):
+    def test_every_kept_item_without_a_value_is_unknown(self):
         """NULL and UNDEF read the same for every conversion, not only for
         selections; a problem Item's declared clear state stays 0."""
         mapping = {"items": {
@@ -110,17 +111,66 @@ class Selections(unittest.TestCase):
                                         "point": "problem", "convert": "problem", "clear_state": "UNDEF"}}}
         samples = exporter._items(mapping, items(example_tv_power="UNDEF", example_tv_volume="NULL",
                                                  example_tv_problem="UNDEF", example_display_problem="UNDEF"))
-        unavailable = {labels["item"]: labels["point"] for name, labels, _ in samples
-                       if name == "thermite_item_unavailable"}
-        self.assertEqual(unavailable, {"example_tv_power": "power", "example_tv_volume": "volume",
+        unknown = {labels["item"]: labels["point"] for name, labels, _ in samples
+                   if name == "thermite_item_unknown"}
+        self.assertEqual(unknown, {"example_tv_power": "power", "example_tv_volume": "volume",
                                        "example_tv_problem": "problem"})
         self.assertIn(("thermite_device_problem", {"device": "example_display", "room": "example_east", "kind": "tv"},
                        0.0), samples)
         self.assertNotIn("thermite_item_value", [name for name, _, _ in samples])
-        # An unparsable value is no value, not an unavailable reading.
+        # An unparsable value is no value, not an unknown reading.
         samples = exporter._items(mapping, items(example_tv_power="ON", example_tv_volume="loud",
                                                  example_tv_problem="", example_display_problem="UNDEF"))
-        self.assertNotIn("thermite_item_unavailable", [name for name, _, _ in samples])
+        self.assertNotIn("thermite_item_unknown", [name for name, _, _ in samples])
+
+    def test_a_reading_with_no_value_while_its_power_reads_off_is_the_device_off(self):
+        """A TV in standby has no input or volume, and a receiver's zone 2
+        no input while zone 2 is off: that is the device off, not unknown.
+        Without a power reading, or with it on, no value is unknown."""
+        def spec(device, point, convert, power=None):
+            return {"device": device, "room": "example_west", "kind": "tv", "point": point, "convert": convert,
+                    **({"power": power} if power else {}), **({"options": ["hdmi1"]} if convert == "enum" else {})}
+        mapping = {"items": {
+            "example_tv_power": spec("example_tv", "power", "switch"),
+            "example_tv_input": spec("example_tv", "input", "enum", "example_tv_power"),
+            "example_tv_volume": spec("example_tv", "volume", "number", "example_tv_power"),
+            "example_avr_main_power": spec("example_avr", "power", "switch"),
+            "example_avr_main_input": spec("example_avr", "input", "enum", "example_avr_main_power"),
+            "example_avr_zone2_power": spec("example_avr", "power", "switch"),
+            "example_avr_zone2_input": spec("example_avr", "input", "enum", "example_avr_zone2_power")}}
+
+        def families(**states):
+            return {labels["item"]: name for name, labels, _ in exporter._items(mapping, items(**states))
+                    if name in ("thermite_item_unknown", "thermite_item_device_off")}
+        standby = families(example_tv_power="OFF", example_tv_input="UNDEF", example_tv_volume="NULL",
+                           example_avr_main_power="ON", example_avr_main_input="UNDEF",
+                           example_avr_zone2_power="OFF", example_avr_zone2_input="UNDEF")
+        self.assertEqual(standby, {"example_tv_input": "thermite_item_device_off",
+                                   "example_tv_volume": "thermite_item_device_off",
+                                   "example_avr_main_input": "thermite_item_unknown",
+                                   "example_avr_zone2_input": "thermite_item_device_off"})
+        unread = families(example_tv_power="UNDEF", example_tv_input="UNDEF", example_tv_volume="hdmi1",
+                          example_avr_main_power="ON", example_avr_main_input="hdmi1",
+                          example_avr_zone2_power="ON", example_avr_zone2_input="UNDEF")
+        self.assertEqual(unread, {"example_tv_power": "thermite_item_unknown",
+                                  "example_tv_input": "thermite_item_unknown",
+                                  "example_avr_zone2_input": "thermite_item_unknown"})
+        self.assertIn("thermite_item_device_off", exporter.FAMILIES)
+
+    def test_each_reading_names_the_power_it_needs_on(self):
+        """A device with one power Item has every reading follow it; a
+        receiver's zones follow their own (powered_by()); power, problem and
+        an Item of a device with no power Item follow none."""
+        from tests import test_zone_sync as zones
+        mapping = oh_metrics.exporter_map(zones.house())["items"]
+        power = {name: spec.get("power") for name, spec in mapping.items()}
+        self.assertEqual(power["example_tv_input"], "example_tv_power")
+        self.assertEqual(power["example_tv_volume"], "example_tv_power")
+        self.assertEqual(power["example_avr_main_input"], "example_avr_main_power")
+        self.assertEqual(power["example_avr_zone2_input"], "example_avr_zone2_power")
+        for name in ("example_tv_power", "example_tv_problem", "example_avr_zone2_power",
+                     "example_matrix_output1_input"):
+            self.assertIsNone(power[name], name)
 
     def test_a_rooms_two_zones_join_their_checks_on_zone(self):
         """A receiver's zone 2 in the main zone's room: the room has two
@@ -138,7 +188,7 @@ class Selections(unittest.TestCase):
         answer = items(loc_example_cinema_source="example_disc", loc_example_lounge_source="UNDEF")
         samples = exporter.collect(mapping, lambda path, timeout: answer if "items" in path else [])
         sources = [labels for name, labels, _ in samples
-                   if name in ("thermite_item_info", "thermite_item_unavailable") and labels["point"] == "source"]
+                   if name in ("thermite_item_info", "thermite_item_unknown") and labels["point"] == "source"]
         self.assertEqual({labels["room"] for labels in sources}, {zones.CINEMA})
         self.assertEqual(sorted(labels["zone"] for labels in sources), [zones.CINEMA, zones.LOUNGE])
         zone_info = {labels["zone"] for name, labels, _ in samples if name == "thermite_zone_info"}
@@ -151,8 +201,8 @@ class Selections(unittest.TestCase):
         self.assertEqual(sum(source["room"] == zones.CINEMA for source in sources), 2, "on(room) is many-to-many")
         # Every query reads a source Item by its own name, or joins on zone.
         for text in files.values():
-            self.assertNotRegex(text, r"on ?\(room\)[^\n]*thermite_item_(info|unavailable)")
-            self.assertNotRegex(text, r"thermite_item_(info|unavailable)[^\n]*on ?\(room\)")
+            self.assertNotRegex(text, r"on ?\(room\)[^\n]*thermite_item_(info|unknown)")
+            self.assertNotRegex(text, r"thermite_item_(info|unknown)[^\n]*on ?\(room\)")
 
     def test_a_room_that_cannot_be_read_keeps_its_row(self):
         timeline = next(panel for board in boards().values() for panel in panels(board)
@@ -160,10 +210,10 @@ class Selections(unittest.TestCase):
         self.assertTrue(timeline["targets"])
         for target in timeline["targets"]:
             item = re.search(r'item="([^"]+)"', target["expr"]).group(1)
-            self.assertIn(f'thermite_item_unavailable{{item="{item}"}}', target["expr"])
+            self.assertIn(f'thermite_item_unknown{{item="{item}"}}', target["expr"])
         texts = {option["text"] for mapping in timeline["fieldConfig"]["defaults"]["mappings"]
                  for option in mapping["options"].values()}
-        self.assertIn("Unavailable", texts)
+        self.assertIn("Unknown", texts)
 
     def test_sources_are_named_as_the_remotes_name_them(self):
         timeline = next(panel for board in boards().values() for panel in panels(board)

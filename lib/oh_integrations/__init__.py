@@ -27,6 +27,12 @@ Optional provider hooks preserve dormant integrations and validate gateways:
     transport_addresses(device) -> {exactThingUID: [IPv4, ...]}
               validated endpoint authority for that provider's own Things
               only; unrelated Things retain their inventory address checks
+    powered_by(device) -> {Item: power Item}
+              the power Item each of its readings needs on, for a device
+              with more than one (a receiver's zones); a device with one
+              power Item has every reading follow it without this. Metrics
+              tell a reading with no value while that power reads OFF as
+              the device being off (thermite_item_device_off), not unknown
 
 A module that switches a matrix also provides
 

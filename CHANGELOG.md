@@ -7,6 +7,15 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A reading with no value is no longer called unavailable, which claimed a
+  communication failure it could not know. While the power it needs reads
+  Off, its device's or its receiver zone's, it is
+  `thermite_item_device_off`: a TV in standby has no input, volume or mute.
+  Otherwise it is `thermite_item_unknown` (was `thermite_item_unavailable`):
+  not reported yet, or not answered; Thing status and the checks say which.
+  "Rooms through the day" shows a room with no readback as Unknown. A
+  receiver's integration names each zone's power through a new optional
+  `powered_by(device)` hook; a device with one power Item needs none.
 - `thermite check`, which an upgrade runs on the private site, now removes a
   file under the site's `conf/` or `metrics/` that an earlier version
   generated and nothing generates now, as `thermite generate --prune` does.
@@ -66,7 +75,7 @@ rollback. The unified deployment workflow uses a separate committed private site
   `thermite_openhab_endpoint_up` is gone: `thermite_openhab_up` reads 0
   when either REST read fails, and the exporter's log says which.
 - A routing zone's source Item names its zone in Prometheus:
-  `thermite_item_info` and `thermite_item_unavailable` of `loc_<zone>_source`
+  `thermite_item_info` and `thermite_item_unknown` of `loc_<zone>_source`
   carry `zone`, as `thermite:check` and the routing series do. They had only
   `room`, and a room may have two zones, such as a receiver's zone 2 at a
   desk: a check joined with its source on `room` found both of the room's
@@ -184,7 +193,7 @@ rollback. The unified deployment workflow uses a separate committed private site
   `thermite_callbacks_last_received_timestamp_seconds`: callbacks arrive
   only when devices change, so the time of the last one said nothing about
   the relay, and `thermite_callbacks_total{outcome="forwarded"}` counts them.
-- `thermite_item_unavailable` covers every Item the exporter keeps: a
+- `thermite_item_unknown` covers every Item the exporter keeps: a
   power, volume, mute, input or problem Item that is NULL or UNDEF reads 1
   there, as a selection Item does. Only selection Items used to; any other
   Item without a value just had no series, the same as one openHAB does
@@ -292,10 +301,10 @@ rollback. The unified deployment workflow uses a separate committed private site
   status are still posted only when they change. Rules that wait for a
   change, such as the routing planner's, see no more events than before.
 - A room whose devices cannot be read keeps its row in "Rooms through the
-  day", grey and labelled Unavailable, for as long as its readback is NULL
+  day", grey and labelled Unknown, for as long as its readback is NULL
   or UNDEF. The exporter dropped those states, so a room whose HDMI switch
   had stopped answering for a day vanished from the panel. The exporter
-  now writes `thermite_item_unavailable` for any selection Item it cannot
+  now writes `thermite_item_unknown` for any selection Item it cannot
   read; a gap now means only that there was no data.
 - A receiver whose zones serve different rooms is checked per zone: each
   room's power check reads only the zone that room listens to. Every room

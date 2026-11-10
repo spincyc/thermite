@@ -17,8 +17,9 @@ volume, input...) and conversion:
              the value itself when it is short and plain, else `other`
     problem  1 while the problem text is set, 0 when it is empty
 
-An Item whose state is NULL or UNDEF has no value but
-thermite_item_unavailable 1, whatever its conversion; anything unparsable is
+An Item whose state is NULL or UNDEF has no value but, whatever its
+conversion, thermite_item_device_off 1 while the power Item it needs on
+(map `power`) reads OFF, else thermite_item_unknown 1; anything unparsable is
 absent, never stale. The explicit clear_state descriptor is the sole
 exception: a problem Item whose integration declares a PROBLEM_CLEAR_STATE
 (Sony's: UNDEF) uses that present state to mean "nothing wrong", which
@@ -70,7 +71,7 @@ NUMBER = re.compile(r"^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)")
 PLAIN = re.compile(r"^[A-Za-z0-9_./:+ -]{1,32}$")
 OTHER = "other"
 #: The states openHAB gives an Item it has no value for.
-UNAVAILABLE = ("NULL", "UNDEF")
+NO_VALUE = ("NULL", "UNDEF")
 DEVICE_LABELS = ("device", "room", "kind")
 #: The room house-wide checks name (oh_metrics.alerts), and its label.
 HOUSE_ROOM, HOUSE_LABEL = "house", "House"
@@ -93,8 +94,12 @@ FAMILIES = {
     "thermite_item_value": ("gauge", "A numeric Item state: switches 1 or 0, numbers as they are."),
     "thermite_item_info": ("gauge", "A selection Item's state, as a label; always 1. A routing zone's source Item "
                            "names its zone too: join it with a check on(zone), as a room may have two zones."),
-    "thermite_item_unavailable": ("gauge", "1 while a kept Item is NULL or UNDEF (a selection also while empty): "
-                                  "what it reads is unavailable. A source Item names its zone."),
+    "thermite_item_unknown": ("gauge", "1 while a kept Item is NULL or UNDEF (a selection also while empty) and "
+                              "its device is not known to be off: it has not reported, or did not answer; Thing "
+                              "status and the checks say which. A source Item names its zone."),
+    "thermite_item_device_off": ("gauge", "1 while a kept Item has no value because the power Item it needs on, "
+                                 "its device's or its receiver zone's, reads OFF: a TV in standby has no input, "
+                                 "volume or mute."),
     "thermite_device_problem": ("gauge", "1 while the device's problem Item has a text."),
     "thermite_handler_pool_up": ("gauge", "1 when thingHandler telemetry is complete and at most 60 seconds old."),
     "thermite_handler_pool_observation_age_seconds": ("gauge", "Age of the native thingHandler telemetry sample."),
@@ -467,6 +472,13 @@ def _things(mapping: dict, answer: list) -> list[Sample]:
     return samples
 
 
+def _no_value(spec: dict, state_of: dict) -> str:
+    """The family of a kept Item with no value: its device is off while the
+    power Item it needs on reads OFF, else its value is unknown."""
+    return "thermite_item_device_off" if spec.get("power") and state_of.get(spec["power"]) == "OFF" \
+        else "thermite_item_unknown"
+
+
 def _items(mapping: dict, answer: list) -> list[Sample]:
     state_of = {item["name"]: item.get("state") for item in answer
                 if isinstance(item, dict) and isinstance(item.get("name"), str)}
@@ -488,7 +500,7 @@ def _items(mapping: dict, answer: list) -> list[Sample]:
         if convert == "enum":
             text = to_label(state, spec.get("options"))
             samples.append(("thermite_item_info", {**item, "value": text}, 1.0) if text is not None
-                           else ("thermite_item_unavailable", item, 1.0))
+                           else (_no_value(spec, state_of), item, 1.0))
             continue
         if convert == "problem":
             value = to_number(state, convert, spec.get("clear_state"))
@@ -500,8 +512,8 @@ def _items(mapping: dict, answer: list) -> list[Sample]:
             continue
         if value is not None:
             samples.append(sample)
-        elif state in UNAVAILABLE:
-            samples.append(("thermite_item_unavailable", item, 1.0))
+        elif state in NO_VALUE:
+            samples.append((_no_value(spec, state_of), item, 1.0))
     samples.append(("thermite_items_missing", {}, float(missing)))
     return samples
 

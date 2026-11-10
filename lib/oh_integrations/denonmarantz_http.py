@@ -359,6 +359,15 @@ def render(device: dict, house: House, out: YamlFile) -> None:
                                      link={"commandFromItemScript": key_js()})
 
 
+def powered_by(device: dict) -> dict[str, str]:
+    """Each zone's readings and the power Item of their own zone: zone 2's
+    input has no value while zone 2 is off, whatever the main zone does."""
+    ident = device["id"]
+    main, zone2 = f"{ident}_main_power", f"{ident}_zone2_power"
+    return {f"{ident}_main_volume": main, f"{ident}_main_mute": main, f"{ident}_main_input": main,
+            f"{ident}_zone2_input": zone2}
+
+
 def stage(device: dict, zone: int | None) -> dict | None:
     """The power and input Items of one zone (None: the main zone) and the
     inputs it takes, for a room whose receiver it is (oh_features.routing);
