@@ -23,6 +23,7 @@ import socket
 import socketserver
 import threading
 import time
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from oh_integrations import _instr as instr
@@ -82,6 +83,14 @@ class Matrix:
         """Every comhead received, in order."""
         with self.lock:
             return [str(r.get("comhead")) for r in self.requests]
+
+    def repeated(self, comheads) -> list[str]:
+        """Those of `comheads` received more than once on one connection
+        (a request's "link"; a request without one is on no connection)."""
+        with self.lock:
+            counts = Counter((r["link"], r.get("comhead")) for r in self.requests
+                             if r.get("link") is not None and r.get("comhead") in comheads)
+        return sorted({str(comhead) for (_, comhead), count in counts.items() if count > 1})
 
 
 def _pair(request: dict, key: str, first: range, second: range) -> tuple[int, int] | None:
@@ -219,6 +228,9 @@ class TelnetMatrix(Matrix):
         #: The open connections' senders, for what it says unasked.
         self.links: set = set()
         self.links_lock = threading.Lock()
+        #: Connections served so far; each request carries its connection's
+        #: number as "link".
+        self.connections = 0
 
     def listing(self) -> list[str]:
         """What it sends on connect."""
@@ -231,9 +243,12 @@ class TelnetMatrix(Matrix):
         """Whether a new connection is served (else closed at once)."""
         return not self.muted
 
-    def attach(self, link) -> None:
+    def attach(self, link) -> int:
+        """Serve `link`; its number among the connections served."""
         with self.links_lock:
             self.links.add(link)
+            self.connections += 1
+            return self.connections
 
     def detach(self, link) -> None:
         with self.links_lock:
@@ -283,6 +298,8 @@ class VRROOM(TelnetMatrix):
         super().__init__()
         self.insel = list(insel or [0, self.COPY])
         self.interrupts = False
+        #: Each set ipinterrupt that left the setting as it was.
+        self.redundant: list[str] = []
         self.reboot_s = 15.0
         self.reboots = 0
         self.down_until = 0.0
@@ -328,6 +345,8 @@ class VRROOM(TelnetMatrix):
     def _set_interrupts(self, request: dict) -> dict:
         if request["values"] not in (["on"], ["off"]):
             return self._refuse(request, "ipinterrupt")
+        if self.interrupts == (request["values"] == ["on"]):
+            self.redundant.append(f"set ipinterrupt {request['values'][0]}")
         self.interrupts = request["values"] == ["on"]
         return self._reply(request, self._interrupts())
 
@@ -532,7 +551,7 @@ class _TelnetHandler(socketserver.StreamRequestHandler):
         self.sending = threading.Lock()
         self.connection.settimeout(matrix.idle_s)
         self.send(matrix.listing())
-        matrix.attach(self)
+        self.number = matrix.attach(self)
         try:
             self._serve(matrix)
         finally:
@@ -551,7 +570,7 @@ class _TelnetHandler(socketserver.StreamRequestHandler):
                 continue
             if matrix.muted:
                 return
-            reply = matrix.answer(matrix.parse_line(line))
+            reply = matrix.answer({**matrix.parse_line(line), "link": self.number})
             self.send(reply["lines"] if reply else [])
 
     def send(self, lines: list[str]) -> None:

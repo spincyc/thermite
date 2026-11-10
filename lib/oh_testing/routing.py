@@ -875,6 +875,15 @@ class Check:
                 self.failures.append(f"{ident} refused {len(refused)} request(s), first {refused[0]}")
             if matrix.unknown:
                 self.failures.append(f"{ident} got unknown comheads {sorted(set(matrix.unknown))}")
+            # Setup (SETUP_COMHEADS) is no port write, so _writes() does not
+            # bound it: a connection asks it once, and a set that changes
+            # nothing (getattr: a stand-in that records it) is a rule
+            # re-sending what the device already holds.
+            for comhead in matrix.repeated(set(getattr(self.modules[ident], "SETUP_COMHEADS", ()))):
+                self.failures.append(f"{ident} heard {comhead} more than once on one connection")
+            redundant = list(getattr(matrix, "redundant", ()))
+            if redundant:
+                self.failures.append(f"{ident} was sent {redundant[0]}, which changed nothing, {len(redundant)} time(s)")
 
     def step_log(self, inst: lib.Instance) -> None:
         text = inst.openhab_log.read_text(encoding="utf-8", errors="replace") if inst.openhab_log.exists() else ""

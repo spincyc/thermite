@@ -157,6 +157,24 @@ class Rendering(unittest.TestCase):
         self.assertEqual(check._writes("example_switch"), 1)
         self.assertLessEqual(set(matrix.comheads()), vrroom_telnet.COMHEADS)
 
+    def test_the_routing_check_fails_setup_sent_twice_on_one_connection_or_when_it_changes_nothing(self):
+        check = routing_check.Check(house(), log=lambda _: None)
+        self.addCleanup(lambda: [server.stop() for server in check.servers.values()])
+        address = check.servers["example_switch"].start().address
+        # Each connection asks once, and turns the setting on only while off.
+        sim.exchange(address, ["get ipinterrupt", "set ipinterrupt on", "get insel"])
+        sim.exchange(address, ["get ipinterrupt", "get insel", "get insel"])
+        check.step_audit()
+        self.assertEqual(check.failures, [])
+        sim.exchange(address, ["get ipinterrupt", "get insel", "get ipinterrupt"])
+        check.step_audit()
+        self.assertEqual(check.failures, ["example_switch heard get ipinterrupt more than once on one connection"])
+        check.failures.clear()
+        sim.exchange(address, ["set ipinterrupt on"])
+        check.step_audit()
+        self.assertIn("example_switch was sent set ipinterrupt on, which changed nothing, 1 time(s)", check.failures)
+        self.assertEqual(check._writes("example_switch"), 0)
+
 
 class Lines:
     """One telnet connection to a stand-in, read line by line."""
