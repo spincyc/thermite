@@ -170,7 +170,9 @@ examples:
 
 Generate, validate and lint a private configuration directory.
 
-No service is changed. Generated configuration stays in the site&#x27;s ignored output.
+No service is changed. Generated configuration stays in the site&#x27;s ignored
+output, where a file an earlier generate wrote that nothing generates now is
+removed; any other file there stops the check.
 
 options:
   -h, --help            show this help message and exit

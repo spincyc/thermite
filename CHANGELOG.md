@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite check`, which an upgrade runs on the private site, now removes a
+  file under the site's `conf/` or `metrics/` that an earlier version
+  generated and nothing generates now, as `thermite generate --prune` does.
+  An upgrade that stopped generating a file used to stop there, with
+  nothing installed, until the file was deleted by hand. A file there
+  without the generated header still stops the check.
 - A locked room with a passive display (`passive: true`) is now verified
   once everything else on its route reads back, and the policy page says
   so. It used to stay degraded ("needs attention") for as long as it was

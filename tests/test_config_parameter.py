@@ -52,6 +52,7 @@ class ConfigParameter(unittest.TestCase):
                 patch.object(validate, "main", return_value=1) as validated, \
                 patch.object(lint, "main", return_value=0) as scanned:
             self.assertEqual(check.main([]), 1)
-        generated.assert_called_once_with([])
+        # An upgrade's check removes what an earlier version generated.
+        generated.assert_called_once_with(["--prune"])
         validated.assert_called_once_with([])
         scanned.assert_not_called()
