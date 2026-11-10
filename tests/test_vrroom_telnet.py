@@ -61,9 +61,9 @@ def house():
 class Rule(unittest.TestCase):
     def test_the_production_rule_against_a_scripted_switch(self):
         result = subprocess.run([shutil.which("node"), str(AREA / "tests/vrroom_telnet_harness.js"),
-                                 str(vrroom_telnet.SOURCE), str(_io.DEVICE)], capture_output=True, text=True, timeout=30)
+                                 str(vrroom_telnet.SOURCE), str(_io.DEVICE), str(_io.SOURCE)], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 10)
+        self.assertEqual(json.loads(result.stdout)["passed"], 11)
 
 
 class Rendering(unittest.TestCase):

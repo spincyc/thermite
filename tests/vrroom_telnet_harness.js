@@ -1,10 +1,12 @@
 'use strict';
 // Runs the production VRROOM telnet rule against a stub openHAB and a
-// scripted switch. argv: vrroom_telnet.js _device.js. No device or network
-// access: the rule's thermiteIO is a fixture, and what the scripts share
-// (_device.js) is embedded as the renderer embeds it (_io.py).
+// scripted switch. argv: vrroom_telnet.js _device.js _io.js. No device or
+// network access: the rule's thermiteIO is a fixture, and what the scripts
+// share (_device.js) is embedded as the renderer embeds it (_io.py). The
+// last test runs the real _io.js and _device.js on a scripted socket
+// (integration_io_harness.js).
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
-const [ruleSource, deviceSource] = process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
+const [ruleSource, deviceSource, ioSource] = process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
 
@@ -43,7 +45,7 @@ function vrroom({ send = true, interrupts = false } = {}) {
       if (link.peerClosed) { link.closed = true; return null; }
       throw Error('quiet');
     },
-    quietTimeout: () => true,
+    quietTimeout: () => true, waitedOut: () => true,
     write(link, text) {
       if (link.closed || link.peerClosed) throw Error('closed');
       assert(text.endsWith('\n') && !text.endsWith('\r\n'), JSON.stringify(text));
@@ -283,6 +285,51 @@ test('set insel is applied only on an insel answer naming it: insel err or anoth
   const asked = r.vr.requests.length;
   r.tick();
   assert.deepEqual(r.vr.requests.slice(asked), ['get ipinterrupt', 'get insel']);
+});
+
+test('listening keeps the bytes of a line not yet complete and the connection; a session still starts clean', () => {
+  const classes = {}, chunks = [], opened = [];
+  const { runtime, hooks } = require('./integration_io_harness.js').install(classes, {}, { Socket: class {} });
+  classes['java.net.InetSocketAddress'] = class { constructor(address, port) { Object.assign(this, { address, port }); } };
+  // A socket whose bytes come in the chunks given, as TCP may split them.
+  classes['java.nio.channels.SocketChannel'] = class {
+    static open() { const channel = new this(); opened.push(channel); return channel; }
+    configureBlocking() {} connect() { return true; } register() {} close() { this.closed = true; }
+    read(buffer) {
+      if (!chunks.length) return 0;
+      const chunk = chunks.shift();
+      for (const c of chunk) buffer.bytes[buffer.pos++] = c.charCodeAt(0);
+      return chunk.length;
+    }
+    write(buffer) { let n = 0; while (buffer.hasRemaining()) { buffer.get(); n++; } return n; }
+  };
+  const context = vm.createContext({
+    Java: { type: name => classes[name] || assert.fail('unexpected Java type ' + name), to: values => values },
+    require: name => name === '@runtime' ? runtime : { items: { getItem: () => null }, rules: { JSRule() {} }, triggers: {} },
+    console: { info() {}, warn() {}, error() {} },
+  });
+  vm.runInContext(`${ioSource}\n${deviceSource}`, context);
+  const [thermiteIO, thermiteDevice] = vm.runInContext('[thermiteIO, thermiteDevice]', context);
+  const heard = [], device = { id: 'switch' };
+  const links = thermiteDevice.links((_, end) => thermiteIO.open('192.0.2.40', 2222, 2000, end), (_, line) => heard.push(line));
+  const first = links.connection(device, thermiteIO.deadline(12000));
+  chunks.push('in');
+  assert.equal(links.listen(device, thermiteIO.deadline(1000)), first);
+  assert.deepEqual(heard, []); assert(!first.closed);
+  chunks.push('t\r\n');
+  assert.equal(links.listen(device, thermiteIO.deadline(1000)), first);
+  assert.deepEqual(heard, ['int']);
+  chunks.push('int\r\nin');
+  assert.equal(links.listen(device, thermiteIO.deadline(1000)), first);
+  chunks.push('t\r\n');
+  assert.equal(links.listen(device, thermiteIO.deadline(1000)), first);
+  assert.deepEqual(heard, ['int', 'int', 'int']); assert.equal(opened.length, 1);
+  // Before a command, as for the AVPro and the projectors, a part line
+  // still closes the connection: it could not answer what is asked next.
+  chunks.push('in');
+  const second = links.connection(device, thermiteIO.deadline(12000));
+  assert(first.closed && !second.closed && second !== first); assert.equal(opened.length, 2);
+  hooks.forEach(hook => hook());
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));
