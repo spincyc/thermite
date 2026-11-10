@@ -14,13 +14,14 @@ function test(name, fn) { fn(); tests.push(name); }
 // else; with ipinterrupt on, `int` follows a change of input. `refuse`
 // makes it accept a connection and close it at once, `mute` close one at
 // its next request, unanswered, and `hangup` close one at that request,
-// unanswered. `silent` takes set insel without answering it. close()
+// unanswered. `silent` takes set insel without answering it, and a request
+// in `unanswered` gets no answer at all. close()
 // closes every connection while idle; notice() says `int` on each.
 // `format` shapes each answer.
 function vrroom({ send = true, interrupts = false } = {}) {
   const clock = { now: 0 }, hooks = [];
   const vr = { refuse: false, mute: false, hangup: null, silent: false, decline: false, insel: [0, 4], interrupts,
-    opened: [], requests: [], links: [], format: line => line,
+    opened: [], requests: [], links: [], unanswered: new Set(), format: line => line,
     close() { for (const link of vr.links) link.peerClosed = true; },
     notice(line = 'int') { for (const link of vr.links) if (!link.closed && !link.peerClosed) link.lines.push(line); } };
   const thermiteIO = {
@@ -45,6 +46,7 @@ function vrroom({ send = true, interrupts = false } = {}) {
       const request = text.slice(0, -1);
       vr.requests.push(request);
       if (vr.mute || request === vr.hangup) { link.peerClosed = true; return; }
+      if (vr.unanswered.has(request)) return;
       const set = /^set insel (\d) (\d)$/.exec(request);
       const insel = () => vr.format(`insel ${vr.insel[0]} ${vr.insel[1]}`);
       if (request === 'get insel') link.lines.push(insel());
@@ -205,6 +207,46 @@ test('a read-only copy connects to no VRROOM and only logs what it would send', 
   assert.deepEqual(r.vr.opened, []); assert.deepEqual(r.posted, []);
   assert.deepEqual(r.logs, [['info', 'switch: SEND is false, not sending set insel 2 4'],
     ['info', 'switch: SEND is false, not sending set reboot']]);
+});
+
+test('the 1 s rule reads only on a live connection that gave notice, and never connects; reconnects keep the poll backoff', () => {
+  // A notice, then the switch closes and refuses (a restart): the listen
+  // ticks connect to nothing; the poll's backoff alone reconnects.
+  let r = vrroom({ interrupts: true });
+  r.tick();
+  r.vr.notice(); r.vr.close(); r.vr.refuse = true;
+  for (let s = 0; s < 30; s++) r.listen();
+  assert.deepEqual(r.vr.opened, [0]);
+  r = vrroom({ interrupts: true });
+  r.tick();
+  r.vr.notice(); r.vr.close(); r.vr.refuse = true;
+  for (let i = 0; i < 6; i++) r.tick();
+  assert.deepEqual(r.vr.opened, [0, 10, 20, 40]);
+  assert.deepEqual(r.posts().filter(v => v === 'UNDEF').length, 3);
+  // A notice whose read fails: one UNDEF, no reconnect until the poll.
+  r = vrroom({ interrupts: true });
+  r.tick();
+  r.vr.notice(); r.vr.hangup = 'get insel';
+  r.listen(); r.vr.hangup = null;
+  for (let s = 0; s < 8; s++) r.listen();
+  assert.deepEqual(r.posts(), ['0', 'UNDEF']); assert.deepEqual(r.vr.opened, [0]);
+  r.poll(); assert.deepEqual(r.posts(), ['0', 'UNDEF', '0']); assert.deepEqual(r.vr.opened, [0, 19]);
+  // A switch that takes connections and answers nothing: one connection per poll at most.
+  r = vrroom({ interrupts: true });
+  r.tick();
+  r.vr.notice(); r.vr.close(); r.vr.unanswered = new Set(['get ipinterrupt', 'set ipinterrupt on', 'get insel']);
+  for (let i = 0; i < 3; i++) r.tick();
+  assert.deepEqual(r.vr.opened, [0, 10, 20]);
+});
+
+test('a connection turns ipinterrupt on only when the switch says it is off, never when it does not answer', () => {
+  const r = vrroom();
+  r.vr.unanswered.add('get ipinterrupt');
+  r.tick();
+  assert.deepEqual(r.vr.requests, ['get ipinterrupt', 'get insel']);
+  assert.equal(r.vr.interrupts, false);
+  r.vr.unanswered.clear(); r.vr.close(); r.tick();
+  assert.deepEqual(r.vr.requests.slice(2), ['get ipinterrupt', 'set ipinterrupt on', 'get insel']);
 });
 
 process.stdout.write(JSON.stringify({ passed: tests.length, tests }));

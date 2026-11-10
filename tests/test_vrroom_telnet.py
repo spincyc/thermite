@@ -63,7 +63,7 @@ class Rule(unittest.TestCase):
         result = subprocess.run([shutil.which("node"), str(AREA / "tests/vrroom_telnet_harness.js"),
                                  str(vrroom_telnet.SOURCE), str(_io.DEVICE)], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 7)
+        self.assertEqual(json.loads(result.stdout)["passed"], 9)
 
 
 class Rendering(unittest.TestCase):
