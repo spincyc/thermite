@@ -108,9 +108,11 @@ rollback. The unified deployment workflow uses a separate committed private site
   connection to the switch, reads TX0's input every 10 s and posts it, and
   reads it again within a second when the switch says a stream changed
   (its `ipinterrupt` setting, which the rule turns on when a connection
-  finds it off). The VRROOM acknowledges a switch before the rule reads it
-  back, so the routing executor now tells a switch it took from one it did
-  not answer. A new `<id>_reboot` Item, commanded `reboot`, sends `set
+  finds it off). The rule waits for the VRROOM's answer to a switch, the
+  new `insel` line or `insel err`, before it reads it back, so the routing
+  executor now tells a switch it took from one it refused and one it did
+  not answer; that wording comes from the firmware's strings, not a
+  recorded session. A new `<id>_reboot` Item, commanded `reboot`, sends `set
   reboot`: the VRROOM restarts in about 15 s with its settings kept and no
   power cycle. Nothing sends it unasked, and each one is logged.
   `vrroom_http` now only observes: it reads the diagnostics snapshot once a
@@ -118,9 +120,10 @@ rollback. The unified deployment workflow uses a separate committed private site
   hot-plug and the eARC and ARC states, and has no input Item. A house
   file that lists `vrroom_http` under control is refused; list it under
   observe and `vrroom_telnet` under control. `thermite test routing` drives
-  the VRROOM over telnet, against a stand-in that acknowledges what it
-  knows, ignores anything else and says `int` after a change, as the real
-  one does.
+  the VRROOM over telnet, against a stand-in that answers what it knows,
+  refuses with `insel err`, ignores anything else and says `int` after a
+  change; the check fails a rule that sends the ipinterrupt setup twice on
+  one connection or turns on a setting already on.
 - Each integration the routing lifecycle drives now declares its fields
   itself, through a new `fields(device)` hook: the values each can be
   commanded with, how a write is acknowledged, how long it may take to
