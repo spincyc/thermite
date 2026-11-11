@@ -14,7 +14,7 @@
   };
   const PRIVATE_ITEM = /(?:^|_)(?:password|passwd|passphrase|secret|token|psk|authorization|credential|auth)(?:_|$)/i;
   const TOPIC = /^openhab\/items\/([A-Za-z][A-Za-z0-9_]*)\/(command|stateupdated|statechanged)$/;
-  const KINDS = new Set(["switch", "enum", "volume", "key", "redacted", "problem", "pairing_status", "pairing_result"]);
+  const KINDS = new Set(["switch", "enum", "volume", "key", "text", "problem", "pairing_status", "pairing_result"]);
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   function clean(value, limit) {
     return typeof value === "string"
@@ -62,7 +62,9 @@
         return own(buttons, value) ? { valueKey: value, text: clean(buttons[value].label, 120) } : null;
       }
       if (desc.kind === "pairing_status") return own(STATES, value) ? { valueKey: value, text: STATES[value] } : null;
-      return { valueKey: "redacted", text: "Value hidden" };
+      // Free text, as the gateway bounded it: a title, an artist, an app.
+      if (desc.kind === "text") return { valueKey: value, text: clean(value, 160) };
+      return null;
     }
     function result(desc, text) {
       let answer;
@@ -119,7 +121,7 @@
           && previous[desc.power] === "OFF") return;
       if (verb === "stateupdated") {
         if (before === undefined || before === valueKey) return;
-      } else if (value && desc.kind !== "redacted") {
+      } else if (value) {
         const old = valueOf(desc, payload.oldValue, false);
         if (old && old.valueKey === value.valueKey) return;
       }

@@ -29,7 +29,7 @@ function gateway(options) {
   site.fetch = async (url, init = {}) => {
     const target = new URL(url), route = target.pathname, method = (init.method || "GET").toUpperCase();
     site.calls.push(method + " " + route);
-    if (route === "/api/v1/security") return json({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, csrf });
+    if (route === "/api/v1/security") return json({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf });
     if (route === "/api/v1/session") return json({ csrf });
     if (route === "/api/v1/me") return json(site.principal);
     if (route === "/api/v1/locks") {

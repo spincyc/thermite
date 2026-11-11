@@ -10,6 +10,9 @@ TYPES = {"stateupdated": "ItemStateUpdatedEvent", "statechanged": "ItemStateChan
 #: The client stream views, each served at /api/v1/events/<view>: the remote
 #: page and the terminal remote; the room lists of Home and Topology; Pairing.
 VIEWS = ("remote", "home", "pair")
+#: The suffix of each view's variant for a Guest while Guests may not see
+#: free text (security.guests_see_text): the view without its free-text Items.
+WITHOUT_TEXT = ":without_text"
 _PUBLIC = weakref.WeakKeyDictionary()
 _VIEWS = weakref.WeakKeyDictionary()
 
@@ -38,7 +41,8 @@ def views(contract):
     """view -> the frozenset of public topics its streams receive. A view
     names Items per verb (oh_site_contract compiles them); anything not public
     is dropped, and an Item a view receives as stateupdated is not also sent
-    as statechanged, so each state change reaches a client once."""
+    as statechanged, so each state change reaches a client once. Each view
+    also has its WITHOUT_TEXT variant."""
     cached = _VIEWS.get(contract)
     if cached is None:
         public, spec, cached = available(contract), contract.views or default_views(contract), {}
@@ -48,6 +52,8 @@ def views(contract):
             updated = {topic.split("/")[2] for topic in wanted if topic.endswith("/stateupdated")}
             cached[name] = frozenset(topic for topic in wanted
                                      if not (topic.endswith("/statechanged") and topic.split("/")[2] in updated))
+            cached[name + WITHOUT_TEXT] = frozenset(topic for topic in cached[name]
+                                                    if not contract.states[topic.split("/")[2]].get("free_text"))
         _VIEWS[contract] = cached
     return cached
 

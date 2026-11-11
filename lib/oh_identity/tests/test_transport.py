@@ -213,17 +213,13 @@ class NativeTransport(SimpleTestCase):
         self.assertEqual(states, {"public_power": "ON"})
         self.assertEqual(requests, ["http://127.0.0.1:8080/rest/items?fields=name%2Cstate"])
 
-    def test_public_redaction_is_keyed_item_scoped_stable_and_bounded(self):
-        spec = {"kind": "redacted"}
-        one = project("public_state", "private sentinel", spec)
-        self.assertTrue(one.startswith("hidden:"))
-        self.assertNotIn("sentinel", one)
-        self.assertEqual(one, project("public_state", "private sentinel", spec))
-        self.assertNotEqual(one, project("other_state", "private sentinel", spec))
-        self.assertNotEqual(one, project("public_state", "different", spec))
-        with override_settings(SECRET_KEY="different-synthetic-site-key"):
-            self.assertNotEqual(one, project("public_state", "private sentinel", spec))
-        self.assertEqual(project("public_state", "x" * 65537, spec), "UNDEF")
+    def test_free_text_is_bounded(self):
+        """A title reaches a client as it is, within TEXT's bounds; anything
+        longer, empty, with control characters or a sensitive word is UNDEF."""
+        spec = {"kind": "text", "max_length": 192, "pattern": "[^\\x00-\\x1f\\x7f-\\x9f]{1,192}", "free_text": True}
+        self.assertEqual(project("public_state", "Example title", spec), "Example title")
+        for value in ("x" * 193, "x" * 65537, "line\nbreak", "", "a secret one"):
+            self.assertEqual(project("public_state", value, spec), "UNDEF", repr(value))
         self.assertEqual(json.loads(project("public_problem", '{"reported":null,"raw":"sentinel"}',
                          {"kind": "json", "fields": {"reported": {"kind": "enum", "nullable": True, "values": [None, "tv"]}}})), {"reported": None})
 

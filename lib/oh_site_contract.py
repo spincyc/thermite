@@ -62,7 +62,9 @@ def _state(name, item):
     if kind == "DateTime":
         return {"kind": "datetime"}
     if kind == "String" and "Status" in item.get("tags", ()) and {"Info", "App"} & set(item.get("tags", ())):
-        return copy.deepcopy(TEXT)
+        # A title, an artist, an app: free text a Guest sees unless an Admin
+        # turned that off (oh_identity.security.guests_see_text).
+        return {**copy.deepcopy(TEXT), "free_text": True}
     # A declared String without a finite recipe is deliberately unreadable.
     return None
 
@@ -245,7 +247,11 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict
             continue
         if name not in states:
             options = list(description.get("options", {}))
-            states[name] = {"kind": "enum", "values": options} if options else {"kind": "redacted"}
+            states[name] = {"kind": "enum", "values": options} if options else dict(TEXT)
+        if states[name]["kind"] == "text":
+            # Free text (a playback state, a transport's reply) is free text
+            # whichever recipe it came by.
+            states[name]["free_text"] = True
         if description.get("commands") and "_pairing" not in name:
             states[name]["commands"] = True
     assets = {name: {"private": name == "house.js" or name.endswith(".json")

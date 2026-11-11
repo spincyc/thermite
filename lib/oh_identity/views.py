@@ -67,6 +67,16 @@ def security(request):
         return problem_response(exc)
 
 
+@api(methods=("PUT",), admin=True)
+def guest_text(request):
+    """{"guest_text": bool}: whether Guests see free-text Items."""
+    from .security import set_guest_text
+    data = body(request)
+    if set(data) != {"guest_text"} or type(data["guest_text"]) is not bool:
+        raise Problem("invalid_security")
+    return JsonResponse(set_guest_text(request.identity_user, data["guest_text"], request=request))
+
+
 def enforcement_data(reconciled, state, now):
     """A past verification is not proof of the current lock or worker health."""
     unknown = {"state": "unknown", "reason": "awaiting_worker",
@@ -381,7 +391,11 @@ def command(request, room):
 
 @api()
 def item_state(request, item):
-    return HttpResponse(get_adapter().read(item), content_type="text/plain")
+    from .security import hidden
+    adapter = get_adapter()
+    if hidden(request.identity_user, adapter.contract.states.get(item), request.identity_state):
+        raise Problem("not_found", 404)
+    return HttpResponse(adapter.read(item), content_type="text/plain")
 
 
 def home(request):
@@ -556,7 +570,12 @@ def item_resource(request, item):
     if request.method == "GET":
         if set(request.GET) - {"fields"}:
             raise Problem("not_found", 404)
-        return JsonResponse(get_adapter().group(item))
+        from .security import hidden
+        adapter = get_adapter()
+        answer = adapter.group(item)
+        answer["members"] = [member for member in answer["members"] if not hidden(
+            request.identity_user, adapter.contract.states.get(member["name"]), request.identity_state)]
+        return JsonResponse(answer)
     # Authorize and validate before taking every room lock.
     user = request.identity_user
     require_admin(request, user)

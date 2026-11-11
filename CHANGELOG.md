@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The activity feed shows free text as it is (a title, an artist, an app,
+  a playback state, a TV's audio format) where it said "Value hidden".
+  Titles, artists, apps and audio formats already reached clients as text;
+  playback states, players and transport replies now do too, up to 192
+  printable characters without a sensitive word, instead of a keyed hash.
+  Guests see it all, unless an Admin turns off "Guests see titles, artists
+  and apps" on the Security page (PUT `/api/v1/security/guests`); a Guest's
+  stream then carries none of those Items, a Guest's read of one is refused,
+  and open Guest streams reopen without them. The setting is on by default,
+  is audited, and binds only while authentication is on.
 - The remotes' activity feed no longer lists every Item's first report
   after openHAB starts (a change from NULL), which filled it at each
   upgrade with "Reported" lines nobody caused. Nor does it list a reading

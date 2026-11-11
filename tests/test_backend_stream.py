@@ -49,7 +49,7 @@ class BackendStream(unittest.TestCase):
         self.assertEqual(self.cases["native_wildcards_and_one_bulk_read"], {"streams": 1, "gets": 1})
 
     def test_activity_and_diagnostics_open_nothing_of_their_own(self):
-        self.assertEqual(self.cases["activity_reads_the_view_stream"]["lines"], 6)
+        self.assertEqual(self.cases["activity_reads_the_view_stream"]["lines"], 8)
         self.assertEqual(self.cases["diagnostics_reads_stay_bounded"], {"diagnostic_reads": 3, "peak": 2})
 
     def test_terminal_remote_and_pairing_use_their_views(self):

@@ -26,7 +26,7 @@ const diagnosticManifest = { version: 1,
 const activityItems = { loc_room_0_source: { label: "Source", room: "Room 0", kind: "enum", options: { off: "Off", source: "Source", other: "Other" },
   states: true, commands: true }, display_0_power: { label: "power", device: "Display 0", kind: "switch", states: true, commands: true },
   display_0_input: { label: "Input", device: "Display 0", kind: "enum", options: { hdmi1: "HDMI 1" }, states: true, commands: true,
-    power: "display_0_power" } };
+    power: "display_0_power" }, display_0_title: { label: "Title", device: "Display 0", kind: "text", states: true, commands: false } };
 
 // Every room on "source", every display on, no problems: a view's snapshot.
 function snapshotStates(view, values = {}) {
@@ -332,11 +332,15 @@ async function probe(name, run, options) {
     c.event("display_0_input", "hdmi1", "statechanged", "UNDEF");
     c.event("display_0_input", "UNDEF", "statechanged", "hdmi1");
     assert.deepEqual(lines().slice(3), ["Reported: On", "Reported: HDMI 1", "Reported: Unknown"]);
+    // Free text reads as it is; the same text again is no change.
+    c.event("display_0_title", "Example title", "statechanged", "UNDEF");
+    c.event("display_0_title", "Other title", "statechanged", "Example title");
+    assert.deepEqual(lines().slice(6), ["Reported: Example title", "Reported: Other title"]);
     // After a gap the snapshot is the new baseline: no line for the gap itself.
     c.live()[0].send({ type: "unavailable" });
     c.live()[0].send({ type: "snapshot", view: "remote", states: snapshotStates("remote", { loc_room_0_source: "off" }) });
     c.event("loc_room_0_source", "off");
-    assert.equal(lines().length, 6);
+    assert.equal(lines().length, 8);
     return { lines: lines().length };
   }, { activity: true });
 
@@ -376,7 +380,7 @@ async function probe(name, run, options) {
       permissions: ["site.read", "room.control", "pairing.manage"] };
     const fetch = async (url, init = {}) => {
       const route = new URL(url).pathname; calls.push((init.method || "GET") + " " + route);
-      if (route === "/api/v1/security") return json({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, csrf: "C".repeat(32) });
+      if (route === "/api/v1/security") return json({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf: "C".repeat(32) });
       if (route === "/api/v1/session") return json({ csrf: "C".repeat(32) });
       if (route === "/api/v1/me") return json(principal);
       if (route === "/api/v1/locks") return json({ rooms: {} });

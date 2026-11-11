@@ -196,6 +196,7 @@
     "lib/oh_identity/migrations/0001_initial.py",
     "lib/oh_identity/migrations/0002_security_state.py",
     "lib/oh_identity/migrations/0003_principals_and_audit.py",
+    "lib/oh_identity/migrations/0004_security_guest_text.py",
     "lib/oh_identity/migrations/__init__.py",
     "lib/oh_identity/models.py",
     "lib/oh_identity/policy_store.py",

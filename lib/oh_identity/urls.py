@@ -15,6 +15,7 @@ urlpatterns = [
     *[path(route.lstrip("/"), views.page_alias, {"target": target}) for route, target in ALIASES.items()],
     path("api/v1/session", views.session), path("api/v1/logout", views.signout), path("api/v1/me", views.me),
     path("api/v1/security", views.security),
+    path("api/v1/security/guests", views.guest_text),
     path("api/v1/token-login", views.token_login),
     path("api/v1/all-off", views.all_off),
     path("api/v1/telemetry", telemetry.report),

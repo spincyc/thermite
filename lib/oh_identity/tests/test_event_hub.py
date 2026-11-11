@@ -32,7 +32,8 @@ def contract():
         states={"loc_den_source": {"kind": "enum", "values": ["player", "off"]},
                 "amp_volume": {"kind": "number", "max": 98, "commands": True},
                 "amp_problem": {"kind": "problem"},
-                "matrix_label": {"kind": "redacted"},
+                "matrix_label": {"kind": "text", "max_length": 192, "pattern": "[^\\x00-\\x1f\\x7f-\\x9f]{1,192}",
+                                 "free_text": True},
                 "tv_pairing": {"kind": "enum", "commands": True},
                 "tv_pairing_status": {"kind": "pairing_status"},
                 "tv_pairing_result": {"kind": "pairing_result"},
@@ -67,7 +68,7 @@ class Upstream:
 
     def __init__(self, values=None):
         self.values = dict(values or {"loc_den_source": "player", "loc_desk_source": "off", "amp_volume": "40",
-                                      "amp_problem": "UNDEF", "matrix_label": "private label", "amp_token": "x",
+                                      "amp_problem": "UNDEF", "matrix_label": "Example title", "amp_token": "x",
                                       "tv_pairing": CODE, "tv_pairing_status": "paired",
                                       "tv_pairing_result": json.dumps({"state": "paired", "pin": CODE})})
         self.connections, self.reads, self.commands = [], [], []
@@ -159,7 +160,7 @@ class EventHub(TransactionTestCase):
             self.assertEqual((remote["type"], remote["view"]), ("snapshot", "remote"))
             self.assertEqual(remote["states"]["loc_den_source"], "player")
             self.assertEqual(remote["states"]["amp_volume"], "40")
-            self.assertTrue(remote["states"]["matrix_label"].startswith("hidden:"))
+            self.assertEqual(remote["states"]["matrix_label"], "Example title")
             self.assertEqual(set(remote["states"]), {"loc_den_source", "loc_desk_source", "amp_volume", "amp_problem",
                                                      "matrix_label", "tv_pairing_status"})
             self.assertEqual(first["home"][0]["states"], {"loc_den_source": "player", "loc_desk_source": "off"})
@@ -187,6 +188,40 @@ class EventHub(TransactionTestCase):
             self.assertEqual(len(upstream.connections), 1)
         self.check(body)
 
+    def test_a_guest_sees_free_text_unless_an_admin_turned_it_off(self):
+        """Free text (a title) reaches every view that names it; the view's
+        WITHOUT_TEXT variant, a Guest's once an Admin turned that off, has
+        neither its value in the snapshot nor its events."""
+        async def body(upstream, adapter):
+            seen = streams.stream(adapter, "remote", self.guest)
+            unseen = streams.stream(adapter, "remote" + topics.WITHOUT_TEXT, self.guest)
+            self.assertEqual((await frame(seen))["states"]["matrix_label"], "Example title")
+            snapshot = await frame(unseen)
+            self.assertEqual(snapshot["view"], "remote")
+            self.assertNotIn("matrix_label", snapshot["states"])
+            self.assertIn("amp_volume", snapshot["states"])
+            upstream.send(event("matrix_label", "Other title", "statechanged", old="Example title"))
+            upstream.send(event("amp_volume", "41", "statechanged", old="40"))
+            self.assertEqual(json.loads((await frame(seen))["payload"]),
+                             {"type": "String", "value": "Other title", "oldValue": "Example title"})
+            self.assertEqual((await frame(unseen))["topic"], "openhab/items/amp_volume/statechanged")
+            await seen.aclose()
+            await unseen.aclose()
+        self.check(body)
+
+    def test_a_guest_stream_ends_when_an_admin_changes_what_guests_see(self):
+        SecurityState.objects.filter(pk=1).update(enabled=True)
+        snapshot = {**self.guest, "guest_text": True}
+        self.assertTrue(streams.valid(snapshot))
+        self.assertTrue(streams.valid(self.guest), "a snapshot from before the setting sees text")
+        SecurityState.objects.filter(pk=1).update(guest_text=False)
+        self.assertFalse(streams.valid(snapshot))
+        self.assertFalse(streams.valid(self.guest))
+        self.assertTrue(streams.valid({**snapshot, "guest_text": False}))
+        # With authentication off every client is a Guest, and sees it.
+        SecurityState.objects.filter(pk=1).update(enabled=False)
+        self.assertTrue(streams.valid(snapshot))
+
     def test_pairing_commands_and_private_items_never_reach_a_client(self):
         async def body(upstream, adapter):
             frames = streams.stream(adapter, "remote", self.guest)
@@ -202,14 +237,10 @@ class EventHub(TransactionTestCase):
                 upstream.send(private)
             upstream.send(event("amp_volume", "47", "command", cookie=sentinel))
             upstream.send(event("amp_volume", "470", "statechanged", old="40"))
-            upstream.send(event("matrix_label", "other private label", "statechanged", old="private label"))
             command = await frame(frames)
             self.assertEqual(command["topic"], "openhab/items/amp_volume/command")
             self.assertEqual(json.loads(command["payload"]), {"type": "String", "value": "47"})
             self.assertEqual(json.loads((await frame(frames))["payload"]), {"type": "String", "value": "UNDEF", "oldValue": "40"})
-            label = json.loads((await frame(frames))["payload"])
-            self.assertTrue(label["value"].startswith("hidden:") and label["oldValue"].startswith("hidden:"))
-            self.assertNotIn("private", json.dumps(label))
             self.assertNotIn("tv_pairing", hub.values)
             self.assertNotIn("amp_token", hub.values)
             await frames.aclose()
@@ -350,6 +381,43 @@ class EventEndpoints(TransactionTestCase):
             self.assertEqual(self.get(path).status_code, 404, path)
         refused = Client().post("/api/v1/events/remote", secure=True)
         self.assertEqual((refused.status_code, refused["Allow"]), (405, "GET"))
+
+    def test_guests_see_free_text_until_an_admin_turns_it_off(self):
+        admin = {"HTTP_AUTHORIZATION": "Bearer " + self.token}
+        member = __import__("oh_identity.models", fromlist=["User"]).User.objects.create_user("member", password=PASSPHRASE)
+        _, raw = issue_token(member, "member")
+
+        def put(value, **extra):
+            return Client(REMOTE_ADDR="192.0.2.20").put("/api/v1/security/guests", json.dumps({"guest_text": value}),
+                                                        content_type="application/json", secure=True, **extra)
+
+        def joined(**extra):
+            views = []
+
+            def fake(adapter, view, snapshot, release=None, meta=None):
+                views.append(view)
+                return (b"" for _ in ())
+            with patch("oh_identity.streams.stream", fake):
+                self.assertEqual(self.get("/api/v1/events/remote", **extra).status_code, 200)
+            return views
+
+        self.assertIs(self.get("/api/v1/security").json()["guest_text"], True)
+        self.assertEqual(self.get("/rest/items/matrix_label/state").content, b"Example title")
+        self.assertEqual(joined(), ["remote"])
+        self.assertEqual(put(False).status_code, 401)
+        self.assertEqual(put(False, HTTP_AUTHORIZATION="Bearer " + raw).status_code, 403)
+        self.assertEqual(put("no", **admin).json()["error"], "invalid_security")
+        self.assertIs(put(False, **admin).json()["guest_text"], False)
+        self.assertEqual(self.get("/rest/items/matrix_label/state").status_code, 404)
+        self.assertEqual(self.get("/rest/items/amp_volume/state").content, b"40")
+        self.assertEqual(self.get("/rest/items/matrix_label/state", **admin).content, b"Example title")
+        self.assertEqual(joined(), ["remote" + topics.WITHOUT_TEXT])
+        self.assertEqual(joined(**admin), ["remote"])
+        from oh_identity.models import Audit
+        self.assertEqual(list(Audit.objects.filter(action__startswith="security.guest_text").values_list("action", flat=True)),
+                         ["security.guest_text_off"])
+        self.assertIs(put(True, **admin).json()["guest_text"], True)
+        self.assertEqual(joined(), ["remote"])
 
     def test_streams_are_admitted_per_peer_and_in_total(self):
         path = "/api/v1/events/remote"

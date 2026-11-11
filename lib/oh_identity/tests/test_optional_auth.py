@@ -368,7 +368,7 @@ class SecurityConcurrency(SecurityClient, TransactionTestCase):
 
 
 class Migrations(TransactionTestCase):
-    LEAF = [("oh_identity", "0003_principals_and_audit")]
+    LEAF = [("oh_identity", "0004_security_guest_text")]
 
     def migrate(self, target):
         from django.db.migrations.executor import MigrationExecutor
@@ -384,13 +384,13 @@ class Migrations(TransactionTestCase):
         from django.contrib.auth.hashers import make_password
         historical = self.migrate("0001_initial")
         historical.get_model("oh_identity", "User").objects.create(username="existing-owner", password=make_password(None))
-        self.migrate("0002_security_state")
-        self.assertTrue(get_state().enabled)
-        self.assertEqual(get_state().revision, 1)
+        # The state as that migration left it: later ones add columns.
+        state = self.migrate("0002_security_state").get_model("oh_identity", "SecurityState").objects.get(pk=1)
+        self.assertTrue(state.enabled)
+        self.assertEqual(state.revision, 1)
         historical = self.migrate("0001_initial")
         historical.get_model("oh_identity", "User").objects.all().delete()
-        self.migrate("0002_security_state")
-        self.assertFalse(get_state().enabled)
+        self.assertFalse(self.migrate("0002_security_state").get_model("oh_identity", "SecurityState").objects.get(pk=1).enabled)
 
     def test_released_roles_become_one_admin_flag_and_audit_gains_labels(self):
         from django.contrib.auth.hashers import make_password

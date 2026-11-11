@@ -38,7 +38,7 @@ def manifest(house: House, conf: Conf) -> dict:
             return
         if SECRET.search(name) or not item or item.get("type") == "DateTime" or item.get("type", "").startswith("Group"):
             return
-        kind = "redacted"
+        kind = "text"
         if "_pairing" in name:
             if name.endswith("_pairing_status"):
                 kind = "pairing_status"
@@ -51,7 +51,7 @@ def manifest(house: House, conf: Conf) -> dict:
         command = (meta.get("commandDescription") or {}).get("config") or {}
         options = {value: label or value for value, label in parse_options(command.get("options") or state.get("options") or "")
                    if value}
-        if kind == "redacted":
+        if kind == "text":
             if name.endswith("_problem"):
                 kind = "problem"
             elif name.endswith("_key"):

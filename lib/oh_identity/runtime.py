@@ -1,8 +1,6 @@
 """Finite runtime contract and typed dispatcher. No caller chooses an upstream URL."""
 
 import copy
-import hashlib
-import hmac
 import json
 import math
 import re
@@ -142,7 +140,8 @@ class RuntimeContract:
 
 
 def project(name, value, spec):
-    """Fail closed for free text and credential-bearing snapshots/results."""
+    """Bound free text (TEXT) and fail closed for credential-bearing
+    snapshots/results."""
     if not safe_item(name):
         raise Problem("not_found", 404)
     if not isinstance(value, str):
@@ -152,12 +151,6 @@ def project(name, value, spec):
     if value in ("NULL", "UNDEF"):
         return value
     kind = spec.get("kind")
-    if kind == "redacted":
-        from django.conf import settings
-        # Only compiled public activity Items receive this recipe. Keyed and
-        # Item-scoped so low-entropy values cannot be recovered from raw hashes.
-        digest = hmac.new(settings.SECRET_KEY.encode(), (name + "\0" + value).encode(), hashlib.sha256).hexdigest()
-        return "hidden:" + digest
     if kind == "json":
         try:
             raw = json.loads(value, parse_constant=lambda value: (_ for _ in ()).throw(ValueError()))

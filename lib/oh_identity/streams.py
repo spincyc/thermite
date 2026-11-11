@@ -18,7 +18,7 @@ from .hub import hub_for, notify
 from .models import PersonalToken, User
 from .runtime import get_adapter
 from .services import Problem
-from .topics import VIEWS, views as view_topics
+from .topics import VIEWS, WITHOUT_TEXT, views as view_topics
 
 #: Seconds a client stream may stay quiet before the gateway sends a
 #: heartbeat. It is a data frame, {"type":"heartbeat"}, not an SSE comment:
@@ -98,12 +98,14 @@ class EventStream(StreamingHttpResponse):
 
 
 def valid(snapshot):
-    from .security import get_state
+    from .security import get_state, guests_see_text
     state = get_state()
     if snapshot.get("security_revision") != state.revision:
         return False
     if snapshot.get("guest"):
-        return True
+        # A Guest's view was chosen for whether it sees free text; when an
+        # Admin changes that, the stream ends and reopens under the new rule.
+        return snapshot.get("guest_text", True) == guests_see_text(state)
     if not state.enabled:
         return False
     if not User.objects.filter(pk=snapshot["user"], is_active=True, auth_revision=snapshot["revision"]).exists():
@@ -179,10 +181,14 @@ def events(request, view):
             require_admin(request, user)
         adapter = get_adapter()
         token = getattr(request, "identity_token", None)
+        from .security import guests_see_text
         snapshot = {"user": user.pk, "revision": user.auth_revision, "token": str(token.pk) if token else None,
                     "session": request.session.session_key if not token else None,
                     "security_revision": user._identity_context["security_revision"],
                     "guest": getattr(user, "is_guest", False)}
+        if snapshot["guest"]:
+            snapshot["guest_text"] = guests_see_text(request.identity_state)
+        joined = view if snapshot.get("guest_text", True) else view + WITHOUT_TEXT
         scope = getattr(request, "scope", None)
         # Lifecycle fields for observers (metrics); the journal lines are
         # trail.stream_opened's. A Guest-listener request carries no
@@ -201,9 +207,9 @@ def events(request, view):
         # and gateway's stream counts. The wrapped release runs once however
         # the response ends.
         from .trail import stream_opened
-        release = stream_opened(release, request, user, topics=len(view_topics(adapter.contract)[view]),
+        release = stream_opened(release, request, user, topics=len(view_topics(adapter.contract)[joined]),
                                 counts=lambda: slots.counts(bucket))
-        content = stream(adapter, view, snapshot, release, meta)
+        content = stream(adapter, joined, snapshot, release, meta)
         # A generator that never starts never runs its finally block.
         weakref.finalize(content, release)
         response = EventStream(content, release, content_type="text/event-stream")

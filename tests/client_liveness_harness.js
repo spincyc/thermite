@@ -52,7 +52,7 @@ function gateway() {
       init.signal?.addEventListener("abort", () => { entry.aborted = true; reject(Object.assign(new Error("aborted"), { name: "AbortError" })); });
       site.held.push(entry);
     });
-    if (route === "/api/v1/security") return answer({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, csrf });
+    if (route === "/api/v1/security") return answer({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf });
     if (route === "/api/v1/session") return answer({ csrf });
     if (route === "/api/v1/me") return answer(admin);
     if (route === "/api/v1/locks") return answer({ rooms: {} });

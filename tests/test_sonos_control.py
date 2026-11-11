@@ -151,6 +151,18 @@ class RoomVolume(unittest.TestCase):
         model, _ = self.model(cottage(audio=False))
         self.assertEqual(next(row for row in model["rooms"] if row["id"] == COTTAGE)["audio"], COTTAGE_TV)
 
+    def test_an_arcs_free_text_is_what_an_admin_may_keep_from_guests(self):
+        """Title, artist and audio format (a text recipe) and playback, the
+        player and TV audio (none) are all free text, which a Guest's
+        :without_text view leaves out (oh_identity.topics), and only they:
+        the volume stays."""
+        _, authority = self.model(cottage())
+        states = authority["states"]
+        for suffix in ("title", "artist", "codec", "state", "player", "tv"):
+            self.assertTrue(states[f"{COTTAGE_ARC}_{suffix}"].get("free_text"), suffix)
+        self.assertTrue(all(spec.get("free_text") for spec in states.values() if spec["kind"] == "text"))
+        self.assertFalse(states[f"{COTTAGE_ARC}_volume"].get("free_text"))
+
     @unittest.skipUnless(shutil.which("node"), "node needed for the shared web/TUI backend")
     def test_building_volume_uses_arc_native_range_and_never_the_tv(self):
         model, _ = self.model(cottage())

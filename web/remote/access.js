@@ -320,13 +320,15 @@
     }
     function securityStatus(value) {
       if (!value || typeof value.enabled !== "boolean" || !Number.isInteger(value.revision) || value.revision < 0
-          || typeof value.bootstrap_required !== "boolean" || typeof value.setup_available !== "boolean") throw problem("invalid_response");
+          || typeof value.bootstrap_required !== "boolean" || typeof value.setup_available !== "boolean"
+          || value.guest_text !== undefined && typeof value.guest_text !== "boolean") throw problem("invalid_response");
+      // A gateway that predates guest_text shows Guests everything.
       return { enabled: value.enabled, revision: value.revision, bootstrap_required: value.bootstrap_required,
-        setup_available: value.setup_available };
+        setup_available: value.setup_available, guest_text: value.guest_text !== false };
     }
     async function loadSecurity() {
       if (legacy) return null;
-      if (mock) return security || (security = { enabled: true, revision: 0, bootstrap_required: false, setup_available: false });
+      if (mock) return security || (security = { enabled: true, revision: 0, bootstrap_required: false, setup_available: false, guest_text: true });
       if (!discovering) discovering = (async () => {
         const revision = authRevision, answer = await firstRead("/api/v1/security", false, true); stale(revision);
         const next = securityStatus(answer), changed = security && security.revision !== next.revision;
@@ -552,6 +554,12 @@
         const answer = await data("/api/v1/security", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) }, true);
         security = securityStatus(answer); token = null; lost("session_expired");
         csrf = answer.csrf || null; if (!security.enabled) ended = false;
+        notify("security"); return security;
+      },
+      // An Admin's choice of whether Guests see free text: titles, artists, apps.
+      async setGuestText(value) {
+        if (legacy || mock) throw problem("access_not_configured", 404);
+        security = securityStatus(await json("/api/v1/security/guests", "PUT", { guest_text: value }));
         notify("security"); return security;
       },
       clear: lost,

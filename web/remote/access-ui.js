@@ -65,12 +65,36 @@
     });
     status(client.current?.()?.is_guest ? "Unlocked rooms work without signing in. Sign in to view cameras or, as an administrator, to manage the site." : "");
   }
+  // Whether Guests see free text in the activity feed; an Admin's choice
+  // while authentication is on, when there is anyone else to see it.
+  function guests(mode) {
+    const host = $("[data-security-guests]");
+    if (!host) return;
+    host.replaceChildren();
+    if (!mode.enabled) return;
+    host.append(node("h2", "What guests see"), node("p",
+      "Guests, who use the remotes without signing in, see what each room is playing in the activity feed: titles, artists, apps and playback. Accounts always see it."));
+    if (client.mock || !client.canEdit()) {
+      host.appendChild(node("p", mode.guest_text ? "Guests see it." : "Guests do not see it.")); return;
+    }
+    const form = node("form", null, { class: "access-form" }), box = input("Guests see titles, artists and apps", "guest_text", "checkbox", mode.guest_text);
+    const field = box.firstElementChild;
+    form.addEventListener("submit", (event) => event.preventDefault());
+    field.addEventListener("change", async () => {
+      field.disabled = true; status("Saving what guests see…");
+      try { field.checked = (await client.setGuestText(field.checked)).guest_text; status(""); }
+      catch (error) { field.checked = !field.checked; status(error.message, true); }
+      finally { field.disabled = false; }
+    });
+    form.appendChild(box); host.appendChild(form);
+  }
   async function security() {
     const host = $("[data-security]");
     const mode = await client.loadSecurity();
     if (mode.enabled) { try { await client.ready(); } catch (_) { /* The public Security page also offers sign-in. */ } }
     status("");
     host.replaceChildren();
+    guests(mode);
     host.append(node("h2", "Authentication is " + (mode.enabled ? "on" : "off")), node("p", mode.enabled
       ? "Unlocked rooms work without signing in. Accounts can view camera media; administrators manage locks, schedules, users, pairing and the system."
       : "Basic remote controls are available without signing in. Accounts, device pairing, locks and room schedules require authentication."));

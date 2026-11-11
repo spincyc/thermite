@@ -131,7 +131,12 @@ class EventHub:
         """Counters and gauges for metrics: client streams per view, whether
         the upstream is serving, connecting or closed, and running totals."""
         state = "serving" if self.ready else "connecting" if self.task and not self.task.done() else "closed"
-        return {"streams": {name: len(each) for name, each in self.subscribers.items()}, "upstream": state, **self.counters}
+        streams = {}
+        for name, each in self.subscribers.items():
+            # A WITHOUT_TEXT variant's streams count as its view's.
+            view = name.removesuffix(topics.WITHOUT_TEXT)
+            streams[view] = streams.get(view, 0) + len(each)
+        return {"streams": streams, "upstream": state, **self.counters}
 
     # ---- client streams ----------------------------------------------------
 
@@ -164,7 +169,7 @@ class EventHub:
         if cached and cached[0] == self.version:
             return cached[1]
         states = {item: self.values[item] for item in sorted(self.items[view]) if item in self.values}
-        data = encode({"type": "snapshot", "view": view, "states": states})
+        data = encode({"type": "snapshot", "view": view.removesuffix(topics.WITHOUT_TEXT), "states": states})
         self._snapshots[view] = (self.version, data)
         return data
 

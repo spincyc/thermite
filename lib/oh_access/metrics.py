@@ -147,7 +147,7 @@ def route_class(path):
         return "media"
     if path in ("/api/v1/session", "/api/v1/logout", "/api/v1/me", "/api/v1/security", "/api/v1/token-login"):
         return "auth"
-    if path.startswith(("/api/v1/users", "/api/v1/tokens")):
+    if path.startswith(("/api/v1/users", "/api/v1/tokens", "/api/v1/security/guests")):
         return "admin"
     if path in _PAGES or path.startswith("/static/"):
         return "asset"

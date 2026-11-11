@@ -1,4 +1,5 @@
-"""Durable authentication switch and owner-issued, one-use setup capability."""
+"""Durable authentication switch, owner-issued one-use setup capability and
+what a Guest may see."""
 
 import hashlib
 import hmac
@@ -35,7 +36,36 @@ def status(state=None):
     first = not User.objects.exists()
     return {"enabled": state.enabled, "revision": state.revision, "bootstrap_required": first,
             "setup_available": bool(first and state.setup_digest and state.setup_expires_at
-                                    and state.setup_expires_at > timezone.now())}
+                                    and state.setup_expires_at > timezone.now()),
+            "guest_text": state.guest_text}
+
+
+def guests_see_text(state=None):
+    """Whether a Guest sees free-text Items: titles, artists, apps, playback
+    and the like (a contract state marked free_text). Yes unless an Admin
+    turned it off; with authentication off every client is a Guest, so it
+    binds only while authentication is on."""
+    state = state or get_state()
+    return state.guest_text or not state.enabled
+
+
+def hidden(user, spec, state=None):
+    """Whether this principal may not see an Item of this contract state."""
+    return bool(spec and spec.get("free_text") and getattr(user, "is_guest", False) and not guests_see_text(state))
+
+
+def set_guest_text(actor, value, *, request=None):
+    """An Admin's choice of whether Guests see free-text Items. Open Guest
+    streams end at their next check (streams.valid) and reopen under it."""
+    from .auth import revalidate
+    with transaction.atomic():
+        revalidate(actor)
+        state = get_state()
+        if state.guest_text != value:
+            state.guest_text = value
+            state.save(update_fields=["guest_text"])
+            audit(actor, "security.guest_text_on" if value else "security.guest_text_off", request=request)
+        return status(state)
 
 
 @transaction.atomic

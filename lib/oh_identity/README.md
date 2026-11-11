@@ -44,8 +44,8 @@ Further starts call
 `install_adapter()`, then run `oh_identity.asgi:application` with a production
 ASGI server. No default state path, account, password or upstream token exists.
 
-GET `/api/v1/security` exposes only mode, revision, setup availability and CSRF
-data. POST uses `{enabled,revision,password}`; first activation additionally
+GET `/api/v1/security` exposes only mode, revision, setup availability,
+`guest_text` and CSRF data. POST uses `{enabled,revision,password}`; first activation additionally
 requires `username` and `setup_code`. Re-enabling an existing site requires
 an active Admin's `username` and current password. Disabling requires the
 current Admin's password. Both browser writes and terminal bearer writes retain
@@ -56,6 +56,17 @@ as Guests after enabling; privileged use requires a new browser sign-in or
 `thermite access login` in the terminal. An explicitly supplied expired or
 invalid session/token is rejected rather than downgraded to Guest; sign out
 to return to anonymous controls.
+
+`guest_text` says whether Guests see free-text Items: the activity feed's
+titles, artists, apps, playback and the like (contract states marked
+`free_text`). It is on until an Admin turns it off with PUT
+`/api/v1/security/guests` `{"guest_text": bool}` (the Security page; a Guest
+gets 401, a Member 403; audited as `security.guest_text_on`/`_off`), and binds
+only while authentication is on, since with it off every client is a Guest.
+While it is off, a Guest's stream joins its view's `:without_text` variant,
+which carries neither those Items' values nor their events, and a Guest's GET
+of one's state is 404. A Guest stream opened under the other choice ends at
+its next check and reopens under this one; accounts' streams go on.
 
 Privilege elevation is an account operation: sign out and sign in as an Admin,
 or have an Admin set `admin` on Users. Any account change revokes that
@@ -180,7 +191,8 @@ value before the gap. A stream quiet for 5 s sends a heartbeat,
 the clients' watchdog (`web/remote/access.js`) reopens a stream that shows
 no frame for three heartbeats while its page is shown, and checks at once
 when a page is shown again. A stream checks the user,
-session/token existence, expiry and revision when it opens, at most once per
+session/token existence, expiry and revision (a Guest's, whether it sees
+free text) when it opens, at most once per
 second while events flow, and at every quiet-stream heartbeat (5 s), and ends
 when one fails. Each peer bucket may hold 8 streams (a page each, a terminal
 two while it pairs, and a reload's old stream until its next heartbeat) and
@@ -338,9 +350,9 @@ Diagnostics states use `kind:json` plus a finite nested `fields` schema
 Unknown fields, sensitive key/text, controls and malformed values are omitted;
 native acquisition timestamps are preserved only when present, never invented.
 Explicit nullable fields preserve null; other malformed/missing fields remain
-absent. Approved public activity Strings without a semantic recipe use a stable
-Item-scoped, per-site HMAC (`hidden:` prefix), preserving change detection
-without exposing plaintext or an offline-guessable raw value hash.
+absent. Approved public activity Strings without a semantic recipe are
+bounded `text` (192 printable characters with no sensitive word; anything else
+is `UNDEF`) marked `free_text`, which Guests may be kept from (`guest_text`).
 Use simple bounded character classes generated from provider contracts, not
 user-supplied regular expressions. A plain text state likewise requires an
 explicit bounded recipe; it is not a raw String passthrough.

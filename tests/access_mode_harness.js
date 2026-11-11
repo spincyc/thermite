@@ -6,7 +6,7 @@ const Administration = require("../tui/remote/administration"), { Grid } = requi
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const origin = "https://site.example:13601", csrfValue = "C".repeat(32), csrfName = "thermite_0123456789abcdef_csrf";
 const confirmation = "F".repeat(16);
-const mode = (enabled, revision = 1) => ({ enabled, revision, bootstrap_required: !enabled, setup_available: false, csrf: csrfValue });
+const mode = (enabled, revision = 1) => ({ enabled, revision, bootstrap_required: !enabled, setup_available: false, guest_text: true, csrf: csrfValue });
 const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, auth_enabled: false, permissions: ["site.read", "room.control", "camera.view"] };
 const admin = { ...guest, id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, auth_enabled: true, permissions: [...guest.permissions, "settings.manage", "users.manage", "pairing.manage"] };
 const response = (value, status = 200, cookies = []) => ({ ok: status >= 200 && status < 300, status, json: async () => value, headers: { getSetCookie: () => cookies } });
@@ -28,14 +28,15 @@ class Element {
   focus() { this.focused = true; }
 }
 async function browser(page, client) {
-  const host = new Element(), status = new Element(), login = new Element("form"), title = new Element("h1"), hidden = new Element();
-  const redirects = [], mapping = { "[data-security]": host, "[data-access-status]": status, "[data-login]": login, ".access-login h1": title };
+  const host = new Element(), status = new Element(), login = new Element("form"), title = new Element("h1"), hidden = new Element(), guests = new Element();
+  const redirects = [], mapping = { "[data-security]": host, "[data-security-guests]": guests, "[data-access-status]": status, "[data-login]": login,
+    ".access-login h1": title };
   const context = { ThermiteAccess: { client }, ThermiteNavigation: Navigation, REMOTE_HOUSE: house, URLSearchParams,
     location: { origin, search: "", replace: value => redirects.push(value), reload: () => redirects.push("reload") },
     document: { body: { dataset: { thermitePage: page } }, createElement: tag => new Element(tag),
       querySelector: selector => mapping[selector], querySelectorAll: () => [hidden] } };
   vm.createContext(context); vm.runInContext(fs.readFileSync(path.join(__dirname, "../web/remote/access-ui.js"), "utf8"), context);
-  await tick(); return { host, status, login, title, hidden, redirects };
+  await tick(); return { host, status, login, title, hidden, guests, redirects };
 }
 (async () => {
   const calls = []; let tokens = 0;
@@ -176,6 +177,16 @@ async function browser(page, client) {
   assert.equal(reenableForm.elements.password.autocomplete, "current-password");
   const member = await browser("security", { native: false, loadSecurity: async () => mode(true), ready: async () => ({ ...admin, admin: false, can_edit: false }), canEdit: () => false, current: () => ({ username: "Member", is_guest: false }) });
   assert(!member.host.children.some(child => child.tag === "form")); assert(textOf(member.host).includes("Switch to an administrator account"));
+  // What guests see: an Admin's checkbox, a Member's sentence, nothing while authentication is off.
+  assert(textOf(member.guests).includes("Guests see it.")); assert(!member.guests.children.some(child => child.tag === "form"));
+  let guestText = null;
+  const owner = await browser("security", { native: false, loadSecurity: async () => mode(true), ready: async () => admin, canEdit: () => true,
+    current: () => admin, setGuestText: async value => { guestText = value; return { ...mode(true), guest_text: value }; } });
+  const guestBox = owner.guests.children.find(child => child.tag === "form").elements.guest_text;
+  assert.equal(guestBox.type, "checkbox"); assert.equal(guestBox.checked, true);
+  guestBox.checked = false; await guestBox.handlers.change();
+  assert.equal(guestText, false); assert.equal(guestBox.checked, false); assert.equal(guestBox.disabled, false);
+  assert.deepEqual(reenable.guests.children, []);
   const settings = await browser("settings", off); assert(settings.status.textContent.includes("Enable authentication")); assert(settings.hidden.hidden);
   const native = await browser("security", { native: true }); assert(native.status.textContent.includes("Configure and open the thermite gateway"));
   const guestAccount = await browser("access", unsigned);

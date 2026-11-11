@@ -20,6 +20,9 @@ class SecurityState(models.Model):
     revision = models.PositiveIntegerField(default=1)
     setup_digest = models.CharField(max_length=64, blank=True)
     setup_expires_at = models.DateTimeField(null=True, blank=True)
+    # Whether a Guest sees free-text Items (titles, artists, apps) while
+    # authentication is on; an Admin's choice (security.guests_see_text).
+    guest_text = models.BooleanField(default=True)
 
     class Meta:
         constraints = [models.CheckConstraint(condition=models.Q(id=1), name="security_singleton")]
