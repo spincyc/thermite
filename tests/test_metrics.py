@@ -172,6 +172,22 @@ class Selections(unittest.TestCase):
                      "example_matrix_output1_input"):
             self.assertIsNone(power[name], name)
 
+    def test_the_activity_feed_names_the_same_power(self):
+        """The feed leaves a reading that loses its value while its power
+        reads OFF to that power's own line, so it names the same power."""
+        import oh_render
+        from oh_conf import House
+        from oh_features import remote_activity
+        from tests import test_zone_sync as zones
+        data = zones.house()
+        feed = remote_activity.manifest(House(data), oh_render.build(data))["items"]
+        mapping = oh_metrics.exporter_map(data)["items"]
+        self.assertEqual(feed["example_tv_input"]["power"], "example_tv_power")
+        self.assertEqual(feed["example_avr_zone2_input"]["power"], "example_avr_zone2_power")
+        for name, spec in feed.items():
+            if name in mapping:
+                self.assertEqual(spec.get("power"), mapping[name].get("power"), name)
+
     def test_a_rooms_two_zones_join_their_checks_on_zone(self):
         """A receiver's zone 2 in the main zone's room: the room has two
         source Items. Each carries its zone, so a zone's checks find

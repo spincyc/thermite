@@ -30,9 +30,11 @@ Optional provider hooks preserve dormant integrations and validate gateways:
     powered_by(device) -> {Item: power Item}
               the power Item each of its readings needs on, for a device
               with more than one (a receiver's zones); a device with one
-              power Item has every reading follow it without this. Metrics
-              tell a reading with no value while that power reads OFF as
-              the device being off (thermite_item_device_off), not unknown
+              power Item has every reading follow it without this (see
+              powered()). Metrics tell a reading with no value while that
+              power reads OFF as the device being off
+              (thermite_item_device_off), not unknown, and the activity feed
+              leaves it to the power's own line
 
 A module that switches a matrix also provides
 
@@ -229,6 +231,26 @@ def allowed() -> dict[str, set[str]]:
         if getattr(module, "CONTROL", False):
             names["control"].add(module.NAME)
     return names
+
+
+def powered(device: dict, items: dict[str, dict]) -> dict[str, str]:
+    """The power Item each of a device's readings needs on: what its
+    integrations' powered_by() declare, else the device's only power Switch.
+    items maps the device's Item names to their Items. A power Item, a power
+    state and the problem text need nothing on."""
+    def power(item: dict) -> bool:
+        return "Power" in (item.get("tags") or [])
+    switches = [name for name, item in items.items() if power(item) and str(item.get("type")).split(":")[0] == "Switch"]
+    declared = {}
+    for module in REGISTRY:
+        if hasattr(module, "powered_by") and module.NAME in ((device.get("controls") or {}).get(module.PHASE) or []):
+            declared.update(module.powered_by(device))
+    needs = {}
+    for name, item in items.items():
+        need = declared.get(name, switches[0] if len(switches) == 1 else None)
+        if need in items and not power(item) and not name.endswith("_problem"):
+            needs[name] = need
+    return needs
 
 
 def declared(attribute: str, modules=REGISTRY) -> tuple:

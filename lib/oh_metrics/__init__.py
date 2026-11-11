@@ -478,18 +478,11 @@ def exporter_map(inventory: dict, conf=None) -> dict:
             if convert == "enum":
                 entry["options"] = _options(item)
             items[name] = kept[name] = entry
-        # The power Item each reading needs on (powered_by(), or the device's
-        # only one), so that a reading with no value while it reads OFF is
-        # the device being off, not unknown.
-        powers = [name for name, entry in kept.items() if entry["point"] == "power" and entry["convert"] == "switch"]
-        declared = {}
-        for module in oh_integrations.REGISTRY:
-            if hasattr(module, "powered_by") and _uses(device, module.PHASE, module.NAME):
-                declared.update(module.powered_by(device))
-        for name, entry in kept.items():
-            power = declared.get(name, powers[0] if len(powers) == 1 else None)
-            if entry["point"] not in ("power", "power_state", "problem") and power in kept:
-                entry["power"] = power
+        # The power Item each reading needs on, so that a reading with no
+        # value while it reads OFF is the device being off, not unknown.
+        for name, power in oh_integrations.powered(device, dict(conf.points(ident))).items():
+            if name in kept and power in kept:
+                kept[name]["power"] = power
     for file in conf.yaml.values():
         for name, item in file.items.items():
             groups = item.get("groups") or []

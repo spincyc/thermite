@@ -24,7 +24,9 @@ const diagnosticManifest = { version: 1,
     readings: diagnosticItems.map((item, index) => ({ item, category: ["video", "audio", "edid"][index], label: "Signal " + index,
       path: ["values", "format"] })) } } };
 const activityItems = { loc_room_0_source: { label: "Source", room: "Room 0", kind: "enum", options: { off: "Off", source: "Source", other: "Other" },
-  states: true, commands: true }, display_0_power: { label: "power", device: "Display 0", kind: "switch", states: true, commands: true } };
+  states: true, commands: true }, display_0_power: { label: "power", device: "Display 0", kind: "switch", states: true, commands: true },
+  display_0_input: { label: "Input", device: "Display 0", kind: "enum", options: { hdmi1: "HDMI 1" }, states: true, commands: true,
+    power: "display_0_power" } };
 
 // Every room on "source", every display on, no problems: a view's snapshot.
 function snapshotStates(view, values = {}) {
@@ -320,11 +322,21 @@ async function probe(name, run, options) {
     c.event("display_0_power", "OFF", "statechanged", "ON");
     c.event("display_0_power", "OFF", "command");
     assert.deepEqual(lines(), ["Reported: Other", "Reported: Off", "Requested: Off"]);
+    // An Item's first report since openHAB started is no activity, nor is a
+    // reading losing its value while its power reads OFF; with it on, the
+    // same reading is unknown.
+    c.event("display_0_input", "hdmi1", "statechanged", "NULL");
+    c.event("display_0_input", "UNDEF", "statechanged", "hdmi1");
+    assert.equal(lines().length, 3, "no line for a start or for a device off");
+    c.event("display_0_power", "ON", "statechanged", "OFF");
+    c.event("display_0_input", "hdmi1", "statechanged", "UNDEF");
+    c.event("display_0_input", "UNDEF", "statechanged", "hdmi1");
+    assert.deepEqual(lines().slice(3), ["Reported: On", "Reported: HDMI 1", "Reported: Unknown"]);
     // After a gap the snapshot is the new baseline: no line for the gap itself.
     c.live()[0].send({ type: "unavailable" });
     c.live()[0].send({ type: "snapshot", view: "remote", states: snapshotStates("remote", { loc_room_0_source: "off" }) });
     c.event("loc_room_0_source", "off");
-    assert.equal(lines().length, 3);
+    assert.equal(lines().length, 6);
     return { lines: lines().length };
   }, { activity: true });
 

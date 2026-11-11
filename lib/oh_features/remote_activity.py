@@ -80,8 +80,14 @@ def manifest(house: House, conf: Conf) -> dict:
         items[name] = desc
 
     for device in active:
-        for name, item in conf.points(device["id"]):
+        points = dict(conf.points(device["id"]))
+        for name, item in points.items():
             add(name, item, device)
+        # A reading that loses its value while this reads OFF is its device
+        # being off, which the power's own line already says.
+        for name, power in integrations.powered(device, points).items():
+            if name in items and items.get(power, {}).get("kind") == "switch":
+                items[name]["power"] = power
     for room in (house.data.get("routing") or {}).get("rooms") or {}:
         name = routing.item_name(room)
         add(name, conf.item(name), room=room)

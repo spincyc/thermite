@@ -89,6 +89,12 @@
       let payload;
       try { payload = typeof payloadText === "string" ? JSON.parse(payloadText) : null; } catch (error) { return; }
       if (!payload || typeof payload.value !== "string") return;
+      // NULL is openHAB's state before an Item's first report since it
+      // started: that report, at each start, is no activity.
+      if (verb === "statechanged" && payload.oldValue === "NULL") {
+        seed(match[1], payload.value, true);
+        return;
+      }
       if (verb === "command") {
         const value = valueOf(desc, payload.value, true);
         if (value) push(desc, "command", "Requested: " + value.text);
@@ -107,6 +113,10 @@
       const valueKey = value ? value.valueKey : "unknown";
       const before = previous[match[1]];
       previous[match[1]] = valueKey;
+      // A reading without a value while its power reads OFF is its device
+      // being off, which the power's own line said.
+      if ((payload.value === "UNDEF" || payload.value === "NULL") && typeof desc.power === "string"
+          && previous[desc.power] === "OFF") return;
       if (verb === "stateupdated") {
         if (before === undefined || before === valueKey) return;
       } else if (value && desc.kind !== "redacted") {

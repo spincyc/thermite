@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The remotes' activity feed no longer lists every Item's first report
+  after openHAB starts (a change from NULL), which filled it at each
+  upgrade with "Reported" lines nobody caused. Nor does it list a reading
+  losing its value while the power it needs reads Off, as a TV's input,
+  volume and mute do in standby: the power's own "Reported: Off" says it.
+  A reading that loses its value with its device on is still Unknown. The
+  feed and the metrics take that power from one place,
+  `oh_integrations.powered()`.
 - A reading with no value is no longer called unavailable, which claimed a
   communication failure it could not know. While the power it needs reads
   Off, its device's or its receiver zone's, it is
