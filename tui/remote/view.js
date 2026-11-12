@@ -11,6 +11,7 @@
 const { Grid, LOCK, box, fit, fitTail, wrap, length } = require("./grid");
 const { METER } = require("./theme");
 const Cameras = require("./cameras");
+const Day = require("./day");
 const Topology = require("./topology");
 const Landing = require("./landing");
 const Navigation = require("../../web/remote/navigation");
@@ -33,6 +34,7 @@ const TUI_SHORTCUTS = [
   [["r"], "Rooms"],
   [["i"], "Info"],
   [["d"], "Signal & audio"],
+  [["h"], "Rooms through the day"],
   [["v"], "Volume slider"],
   [["t"], "Theme"],
   [["a"], "Motion"],
@@ -283,7 +285,7 @@ function paneHelp(ctx) {
   if (ctx.ui.overlay && ctx.ui.overlay.kind === "topology") return ["Site topology", [["↑↓"], "room"], [["←→"], "preview source"], [["Enter"], "web map"], [["Esc"], "close"]];
   if (ctx.ui.overlay && ctx.ui.overlay.kind === "cameras") return ["Cameras", [["↑↓"], "camera"], [["Enter"], "open web"], [["Esc"], "close"]];
   switch (ctx.ui.pane) {
-    case "home": return ["Home", [["↑↓←→"], "choose"], [["Enter"], "open"], [["PgUp/PgDn"], "scroll"]];
+    case "home": return ["Home", [["↑↓←→"], "choose"], [["Enter"], "open"], [["h"], "rooms through the day"], [["PgUp/PgDn"], "scroll"]];
     case "security": return ["Security · Not connected", [["F1"], "Home"]];
     case "system": return ["System", [["↑↓"], "choose"], [["Enter"], "open"], [["PgUp/PgDn"], "scroll"]];
     case "cameras": return ["Cameras", [["↑↓"], "camera"], [["Enter"], "open web"], [["F1"], "Home"]];
@@ -303,6 +305,7 @@ function paneHelp(ctx) {
     case "pair-list": return ["Pairing", [["\u2191\u2193"], "select device"], [["Enter"], "pair"], [["s/S"], "sort/reverse"]];
     case "pair-card": return ["Pairing", [["\u2191\u2193"], "field"], [["Enter"], "pair/send"]];
     case "sheet:help": return ["Help", [["\u2191\u2193"], "scroll"], [["Esc"], "close"]];
+    case "sheet:day": return ["Rooms through the day", [["\u2191\u2193"], "room"], [["PgUp/PgDn"], "scroll"], [["Esc"], "close"]];
     case "sheet:signal": return ["Signal & audio", [["\u2191\u2193"], "scroll"], [["Esc"], "close"]];
     case "sheet:inputs": return ["Inputs", [["\u2191\u2193"], "choose"], [["Enter"], "select"]];
     case "sheet:lock-menu": return ["Room lock", [["\u2191\u2193"], "choose"], [["Enter"], "select"], [["Esc"], "close"]];
@@ -317,9 +320,9 @@ function shortcutBar(frame, ctx, width, y) {
   // and reserve Help/Quit before adding optional shortcuts.
   const list = ctx.ui.overlay ? [[["Esc"], "Close"]]
     : [[["Tab"], "Pane"]].concat(ctx.ui.screen === "remote"
-      ? [[["r"], "Rooms"], [["d"], "Signal"], log, [["v"], "Volume"], [["t"], "Theme"]]
+      ? [[["r"], "Rooms"], [["d"], "Signal"], [["h"], "Day"], log, [["v"], "Volume"], [["t"], "Theme"]]
       : ctx.ui.screen === "pairing" ? [[["Esc"], "Remotes"], log]
-        : (ctx.ui.screen === "home" ? [] : [[["F1"], "Home"]]).concat([[["t"], "Theme"]]));
+        : (ctx.ui.screen === "home" ? [[["h"], "Day"]] : [[["F1"], "Home"]]).concat([[["t"], "Theme"]]));
   g.fill(0, y, width, 1, "footer");
   const essentials = ctx.ui.overlay
     ? [[[ctx.ui.overlay.kind === "access-form" ? "Ctrl-C" : "q"], "Quit"]]
@@ -977,7 +980,7 @@ function logContent(g, w, ctx) {
 function sheet(frame, ctx, width, height) {
   const overlay = ctx.ui.overlay;
   frame.grid.hit(0, 0, width, height, { kind: "dismiss" });
-  const w = Math.min(width - 2, ["signal", "topology"].includes(overlay.kind) ? 100 : ["info", "help", "cameras"].includes(overlay.kind) ? 66
+  const w = Math.min(width - 2, overlay.kind === "day" ? 160 : ["signal", "topology"].includes(overlay.kind) ? 100 : ["info", "help", "cameras"].includes(overlay.kind) ? 66
     : overlay.kind === "lock-menu" ? 40 : 50);
   const content = {
     "access-form": (inner, iw) => ctx.access.formContent(inner, iw, ctx),
@@ -998,7 +1001,8 @@ function sheet(frame, ctx, width, height) {
       button(inner, ctx, 1, index * 3, entry.label, key, { kind: "lock-menu", entry, key, focus: true, label: entry.label }, entry.disabled ? "key.off" : "key");
     }),
     cameras: (inner, iw) => Cameras.content(inner, iw, ctx),
-    topology: (inner, iw) => Topology.content(inner, iw, ctx)
+    topology: (inner, iw) => Topology.content(inner, iw, ctx),
+    day: (inner, iw) => Day.content(inner, iw, ctx)
   }[overlay.kind];
   const probe = new Grid(w - 2, null, "base");
   content(probe, w - 2);
@@ -1007,7 +1011,7 @@ function sheet(frame, ctx, width, height) {
   const y = Math.max(1, Math.floor((height - h) / 2));
   panel(frame, ctx, { x: x, y: y, w: w, h: h }, {
     key: "sheet:" + overlay.kind, color: "sheet", solid: true, footer: [["Esc", "close"]],
-    title: overlay.title || { rooms: "Rooms", info: "Info", help: "Keys", signal: "Signal & audio", cameras: "Cameras", topology: "Site topology", "remotes-menu": "Remotes" }[overlay.kind],
+    title: overlay.title || { rooms: "Rooms", info: "Info", help: "Keys", signal: "Signal & audio", cameras: "Cameras", topology: "Site topology", "remotes-menu": "Remotes", day: "Rooms through the day" }[overlay.kind],
     content: content
   });
 }
@@ -1072,7 +1076,7 @@ function helpContent(g, w, ctx) {
     y++;
   };
   const manage = ctx.ui.screen === "remote" && ctx.session?.roomLock().canManage;
-  if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "v", "F6"].includes(entry[0][0])))
+  if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "h", "v", "F6"].includes(entry[0][0])))
     .concat(manage ? [[["K"], "Lock or unlock this room (administrators)"],
       [["o"], "Lock menu of the selected source or Off: lock on it, or unlock (administrators)"]] : []));
   else if (ctx.ui.screen === "pairing") rows("Pair devices", PAIR_SHORTCUTS.filter(entry => !["Tab", "L", "F1", "?", "q"].includes(entry[0][0])).concat([[["s/S"], "Sort/reverse"]]));

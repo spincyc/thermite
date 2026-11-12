@@ -145,7 +145,7 @@ class Configuration(unittest.TestCase):
             atomic_private(self.root / "bearer", b"synthetic native bearer")
             atomic_private(self.root / "key", b"synthetic key")
             (self.root / "cert").write_text("synthetic cert")
-        def compile_fixture(house, asset_root, destination):
+        def compile_fixture(house, asset_root, destination, **_):
             json_private(destination, {"rooms": {}})
         inputs = dict(state=self.root / "site-state", plan_directory=self.root / (name + "-plan"), house="synthetic.yaml", assets=assets,
                       runtime_url=CONFIG["upstream"], runtime_token_file=self.root / "bearer",

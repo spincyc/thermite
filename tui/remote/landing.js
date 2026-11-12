@@ -49,6 +49,10 @@ function content(g, width, ctx, height) {
     g.hit(1, y++, width - 2, 1, { kind: "home-room", room: room.id, key, focus: true,
       label: room.label + ", " + shown.spoken + (lock.locked ? ". " + lock.text : "") + ". Open Remotes" });
   });
+  y += 1;
+  const dayKey = "home:day";
+  g.put(2, y++, "Rooms through the day ›", ctx.ui.focusVisible && ctx.ui.focus === dayKey ? "row.focus" : "link",
+    { kind: "open", sheet: "day", key: dayKey, focus: true, label: "Rooms through the day (h): each room's source over the last 24 hours" });
   const used = y;
   // The existing compact mark belongs to Home's quiet hero space. Never
   // displace cards or the complete room summary to make room for it.

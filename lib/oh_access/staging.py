@@ -510,7 +510,8 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
             if source.is_symlink() or not source.is_file():
                 raise AccessError("Private asset inventory is incomplete")
             atomic_private(private_assets / name, source.read_bytes())
-        compile_contract(house, private_assets, target / "contract.json")
+        compile_contract(house, private_assets, target / "contract.json",
+                         metrics_port=(host_ports or {}).get("prometheus"))
         config = {"version": CONFIG_VERSION, "state": str(state), "contract_file": str(target / "contract.json"),
                   "runtime_url": runtime_url, "runtime_token_file": str(target / "secrets/runtime-bearer"),
                   "allowed_hosts": allowed_hosts, "bind_host": bind_host, "port": port, "timezone": timezone,

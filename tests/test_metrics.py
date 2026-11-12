@@ -23,6 +23,7 @@ import oh_deploy  # noqa: E402
 from oh_features import routing  # noqa: E402
 import oh_inventory  # noqa: E402
 import oh_metrics  # noqa: E402
+import oh_ports  # noqa: E402
 import oh_render  # noqa: E402
 import oh_units  # noqa: E402
 from oh_metrics import alerts, dashboards, exporter, notifications  # noqa: E402
@@ -230,6 +231,39 @@ class Selections(unittest.TestCase):
         texts = {option["text"] for mapping in timeline["fieldConfig"]["defaults"]["mappings"]
                  for option in mapping["options"].values()}
         self.assertIn("Unknown", texts)
+
+    def test_a_timeline_names_one_reported_value_when_two_series_overlap(self):
+        # Across a Prometheus restart a series that ended keeps its last
+        # sample for the lookback beside its successor: Unknown (-1) beside a
+        # source N summed to N - 1, another source's name. max keeps one
+        # value the readback reported.
+        timeline = next(panel for board in boards().values() for panel in panels(board)
+                        if panel.get("title") == "Rooms through the day")
+        for target in timeline["targets"]:
+            self.assertTrue(target["expr"].startswith("max without (value) ("), target["expr"])
+            self.assertNotIn("sum", target["expr"])
+
+    def test_the_gateways_room_history_is_the_boards_timeline(self):
+        import oh_site_contract
+        from oh_conf import House
+
+        data = copy.deepcopy(INVENTORY)
+        contract = oh_site_contract.compile(House(data), oh_render.build(data), metrics_port=15607)
+        spec = contract["history"]
+        timeline = next(panel for board in boards().values() for panel in panels(board)
+                        if panel.get("title") == "Rooms through the day")
+        self.assertEqual([(zone["query"], zone["label"]) for zone in spec["zones"]],
+                         [(target["expr"], target["legendFormat"]) for target in timeline["targets"]])
+        self.assertEqual([zone["room"] for zone in spec["zones"]], ["example_east", "example_west"])
+        for zone in spec["zones"]:
+            self.assertEqual(contract["rooms"][zone["room"]]["source_item"], zone["item"])
+        words = {number: option["text"] for mapping in timeline["fieldConfig"]["defaults"]["mappings"]
+                 for number, option in mapping["options"].items()}
+        self.assertEqual({number: "Unknown" if value is None else spec["labels"][value]
+                          for number, value in spec["values"].items()}, words)
+        self.assertEqual(spec["port"], 15607)
+        self.assertEqual(oh_site_contract.compile(House(data), oh_render.build(data))["history"]["port"],
+                         oh_ports.DEFAULTS["prometheus"])
 
     def test_sources_are_named_as_the_remotes_name_them(self):
         timeline = next(panel for board in boards().values() for panel in panels(board)
@@ -1147,6 +1181,8 @@ class Textfiles(unittest.TestCase):
         self.assertEqual(route("/api/v1/rooms/example_west/commands"), "command")
         self.assertEqual(route("/api/v1/rooms/example_west/policy"), "policy")
         self.assertEqual(route("/rest/items/loc_example_west_source/state"), "items")
+        self.assertEqual(route("/api/v1/history/rooms"), "history")
+        self.assertEqual(route("/api/v1/history/rooms/example_west"), "other")
         self.assertEqual(route("/static/remote/remote.js"), "asset")
         self.assertEqual(route("/api/v1/events/remote"), "events")
         self.assertEqual(route("/rest/events"), "other")

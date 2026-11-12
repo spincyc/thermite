@@ -312,6 +312,15 @@ def locks(request):
     return JsonResponse({"rooms": summary})
 
 
+@api()
+def room_history(request):
+    """Each room's confirmed source through the last day, as the House board's
+    Rooms through the day shows it (oh_identity.history). Anyone who reads the
+    site sees it: the same rooms' sources the event streams carry."""
+    from . import history
+    return JsonResponse(history.rooms(get_adapter().contract))
+
+
 @api(methods=("PUT",), admin=True)
 def room_lock(request, room):
     # ATOMIC_REQUESTS is off (tests assert it): no request-wide transaction

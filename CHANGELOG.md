@@ -7,6 +7,28 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The terminal remote shows "Rooms through the day", the House board's
+  timeline: `h` on Home or Remotes, or the link below Home's rooms, opens
+  one row per room with its confirmed source over the last 24 hours (a
+  source in tan with its name, Off in slate, Unknown in grey, a dot for no
+  data) and, for the room chosen with Up and Down, its latest runs. It
+  reads a new gateway endpoint, GET `/api/v1/history/rooms`, when it opens
+  and every minute while open, and operates nothing. The gateway answers
+  from the house's own Prometheus on loopback with the board's own
+  queries, which the compiled contract names (`history`); no client
+  chooses a query. Guests, Members and Admins read the same answer, as
+  they read the same sources from the event streams; the plain-HTTP Guest
+  listener does not serve it. Without an answer from Prometheus it is 503
+  `history_unavailable`. Gateway request metrics count it as route
+  `history`.
+- "Rooms through the day" no longer names a source the room did not
+  report for a few minutes after Prometheus restarts. Prometheus marks no
+  series stale across its own restart, so a value's series that ended
+  kept its last sample for up to five minutes beside the one that
+  replaced it, and the board summed the two: Unknown beside a source read
+  as the source numbered one lower, and an Off beside an Unknown read as
+  Unknown. The House and Usage boards now take the larger, a value the
+  readback did report.
 - An upgrade whose openHAB start loses a start-up race in openHAB 5.2.3's
   YAML loader recovers instead of rolling back after the 15-minute
   readiness allowance. The race (a `ConcurrentModificationException` in

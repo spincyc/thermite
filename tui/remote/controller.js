@@ -76,6 +76,8 @@ function create(options) {
   const cameras = { backend: null, selected: null, link: null };
   const topology = { backend: null, room: null, source: null, link: null };
   const system = { backend: options.system || null, expanded: false, link: null };
+  // Rooms through the day (day.js): read while its sheet is open.
+  const day = { backend: null };
   const timers = { toast: 0, flash: {}, repeat: null, tick: 0 };
   let frame = null;
   let size = { width: 80, height: 24 };
@@ -117,7 +119,7 @@ function create(options) {
     if (options.backend && "connected" in options.backend) ui.connected = options.backend.connected;
     return {
       session: session, Session: Session, Remote: options.Remote, layouts: options.layouts, house: options.house,
-      Pairing: Pairing, hints: hints, ui: ui, access, pairing: pairing, cameras: cameras, topology: topology, system, look: options.look || null,
+      Pairing: Pairing, hints: hints, ui: ui, access, pairing: pairing, cameras: cameras, topology: topology, system, day, look: options.look || null,
       now: now(), still: ui.still, animate: undefined
     };
   }
@@ -169,6 +171,7 @@ function create(options) {
     if (pairing.backend) pairing.backend.stop();
     if (cameras.backend) cameras.backend.stop();
     if (topology.backend) topology.backend.stop();
+    if (day.backend) day.backend.stop();
     system.backend?.close();
     if (signalRunning && session.closeDiagnostics) session.closeDiagnostics();
     signalRunning = false;
@@ -215,6 +218,7 @@ function create(options) {
       ui.error = event.guest ? "The site's access settings changed. Reopen the remote." : "Your sign-in has ended. Run thermite access login again.";
       pairing.codes = {}; pairing.notes = {}; if (pairing.backend) pairing.backend.stop(); pairing.backend = null; pairing.loaded = false;
       if (cameras.backend) cameras.backend.stop();
+      if (day.backend) day.backend.stop();
       system.backend?.close(); system.expanded = false; system.link = null;
       access.cancel(); access.state.users = []; access.state.policy = null;
       access.state.kind = "account"; access.state.error = ui.error; ui.screen = "account"; ui.overlay = null; ui.pane = "account"; ui.focus = null;
@@ -506,6 +510,7 @@ function create(options) {
     }
     if (ui.overlay && ui.overlay.kind === "cameras" && kind !== "cameras" && cameras.backend) cameras.backend.close();
     if (ui.overlay && ui.overlay.kind === "topology" && kind !== "topology" && topology.backend) topology.backend.close();
+    if (ui.overlay && ui.overlay.kind === "day" && kind !== "day" && day.backend) day.backend.close();
     ui.returnPane = ui.pane;
     ui.overlay = Object.assign({ kind: kind, title: title || "" }, extra);
     ui.pane = "sheet:" + kind;
@@ -522,6 +527,21 @@ function create(options) {
     if (!ui.focus && ui.focusVisible && frame.focusables.length) ui.focus = frame.focusables[0].key;
     changed();
     if (kind === "cameras") { ui.revealFocus = true; openCameras(); }
+    if (kind === "day") openDay();
+  }
+
+  function openDay() {
+    if (!options.createDay) return;
+    if (!day.backend) day.backend = options.createDay(() => {
+      // The first answer gives the sheet its rooms: the focus starts on the first.
+      if (ui.overlay?.kind === "day" && !String(ui.focus || "").startsWith("day:")) {
+        render(size.width, size.height);
+        const first = frame.focusables.find((hit) => hit.kind === "day-room");
+        if (first) ui.focus = first.key;
+      }
+      changed();
+    });
+    day.backend.open();
   }
 
   function openTopology() {
@@ -560,6 +580,7 @@ function create(options) {
   function closeSheet() {
     if (ui.overlay && ui.overlay.kind === "cameras" && cameras.backend) cameras.backend.close();
     if (ui.overlay && ui.overlay.kind === "topology" && topology.backend) topology.backend.close();
+    if (ui.overlay && ui.overlay.kind === "day" && day.backend) day.backend.close();
     ui.overlay = null;
     ui.focus = null;
     ui.pane = ui.returnPane || (ui.screen === "pairing" ? "pair-list" : "remote");
@@ -589,6 +610,7 @@ function create(options) {
     if (ui.screen === "system") { system.backend?.close(); system.expanded = false; system.link = null; }
     if (ui.overlay && ui.overlay.kind === "cameras" && cameras.backend) cameras.backend.close();
     if (ui.overlay && ui.overlay.kind === "topology" && topology.backend) topology.backend.close();
+    if (ui.overlay && ui.overlay.kind === "day" && day.backend) day.backend.close();
     ui.screen = name;
     ui.overlay = null;
     ui.focus = null;
@@ -696,6 +718,9 @@ function create(options) {
         break;
       case "open":
         openSheet(hit.sheet);
+        break;
+      case "day-room":
+        if (ui.overlay?.kind === "day") ui.focus = hit.key;
         break;
       case "theme":
         toggleTheme();
@@ -991,6 +1016,7 @@ function create(options) {
       if (["up", "down", "left", "right"].includes(name)) return stepCamera(name === "up" || name === "left" ? -1 : 1);
       if (name === "enter") return openCamera();
     }
+    if (ui.overlay.kind === "day" && (name === "up" || name === "down")) return moveControl(name === "up" ? -1 : 1);
     if (name === "up" || name === "down" || (ui.overlay.kind === "inputs" && ["left", "right"].includes(name))) {
       if (ui.overlay.kind === "rooms") stepRoomFocus(name === "up" ? -1 : 1);
       else if (ui.overlay.kind === "inputs") moveControl(name === "up" || name === "left" ? -1 : 1);
@@ -1048,6 +1074,7 @@ function create(options) {
     if (lower === "r") return openSheet("rooms");
     if (lower === "i") return openSheet("info");
     if (lower === "d") return openSheet("signal");
+    if (lower === "h") return openSheet("day");
     if (lower === "v") {
       session.toggleVolumeMode();
       return;
@@ -1092,6 +1119,7 @@ function create(options) {
     } else if (ui.screen === "home") {
       if (["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
       if (name === "enter" || name === "space") { const hit = focusedHit(); if (hit) activate(hit); }
+      if (ch === "h" || ch === "H") return openSheet("day");
     } else if (ui.screen === "cameras") {
       if (["up", "down", "left", "right"].includes(name)) return stepCamera(name === "up" || name === "left" ? -1 : 1);
       if (name === "enter") return openCamera();

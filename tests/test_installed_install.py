@@ -209,7 +209,7 @@ class InstalledInstall(unittest.TestCase):
         atomic_private(root / "key", b"fixture")
         (root / "cert").write_text("fixture")
         target = root / "persistent-release"
-        def compile_contract(house, asset_root, output): json_private(output, {"rooms": {}})
+        def compile_contract(house, asset_root, output, **_): json_private(output, {"rooms": {}})
         with patch.object(oh_paths, "PROGRAM", self.program), patch.object(oh_paths, "SITE", self.site), \
                 patch.object(staging, "_disposable", return_value=False), \
                 patch.object(staging, "_service_parents"), \

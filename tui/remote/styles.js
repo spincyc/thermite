@@ -8,6 +8,8 @@
 const { contrast } = require("./paint");
 
 const PANELS = ["rooms", "remote", "info", "log", "pair"];
+// The House board's state colours (lib/oh_metrics/dashboards.py).
+const DAY = { source: "#D7B18A", off: "#394354", unknown: "#808A96" };
 const METER = 32;
 
 function rgb(color) {
@@ -58,6 +60,9 @@ function styles(c) {
   const pressed = mix(surface, copper, 0.22);
   const on = (bg, fg, bold) => ({ fg: readable(fg, bg), bg: bg, bold: Boolean(bold), underline: false });
   const focusStyle = () => on(focused, focus, true);
+  // A block of a fixed colour, its words in whichever of the theme's text
+  // and ground reads better on it.
+  const block = (bg) => ({ fg: contrast(c.text, bg) >= contrast(c.bg, bg) ? c.text : c.bg, bg: bg, bold: false, underline: false });
   const out = {
     base: { fg: c.text, bg: c.bg },
     dim: { fg: muted },
@@ -126,6 +131,12 @@ function styles(c) {
     "toast.muted": on(key, c.text),
     "toast.bad": on(surface, bad, true),
     "toast.tag": on(selected, busy),
+    // Rooms through the day (day.js), in the House board's own colours
+    // (lib/oh_metrics/dashboards.py IN_USE, OFF and UNKNOWN): tan, slate, grey.
+    "day.source": block(DAY.source),
+    "day.off": block(DAY.off),
+    "day.unknown": block(DAY.unknown),
+    "day.none": { fg: faint },
     "tone.ok": { fg: sage },
     "tone.busy": { fg: busy },
     "tone.bad": { fg: bad },
@@ -141,4 +152,4 @@ function styles(c) {
   return out;
 }
 
-module.exports = { styles, mix, gradient, PANELS, METER };
+module.exports = { styles, mix, gradient, PANELS, METER, DAY };

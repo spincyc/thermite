@@ -58,7 +58,7 @@ class Guest:
 #: anything outside it counts as other.
 PROBLEMS = frozenset({
     "already_initialized", "authentication_disabled", "authorization_changed", "credential_expired",
-    "csrf_failed", "device_locked", "forbidden", "invalid_active", "invalid_admin", "invalid_command",
+    "csrf_failed", "device_locked", "forbidden", "history_unavailable", "invalid_active", "invalid_admin", "invalid_command",
     "invalid_contract", "invalid_host", "invalid_json", "invalid_lock", "invalid_login", "invalid_origin",
     "invalid_pairing_command", "invalid_password", "invalid_policy", "invalid_sdp", "invalid_security",
     "invalid_setup_code", "invalid_setup_lifetime", "invalid_telemetry", "invalid_token", "invalid_token_channel",

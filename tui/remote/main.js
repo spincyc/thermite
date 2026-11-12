@@ -23,6 +23,7 @@ const Theme = require("./theme");
 const { EventSource } = require("./events");
 const { fileStore } = require("./store");
 const Cameras = require("./cameras");
+const Day = require("./day");
 const Topology = require("./topology");
 const Credentials = require("./credentials");
 const System = require("../../web/remote/system");
@@ -125,6 +126,11 @@ function assemble(args, env) {
     createCameras: () => Cameras.create({ base: args.url || "", mock: args.mock, fetch: request, ...timers }),
     createTopology: () => Topology.create({ base: args.url || "", mock: args.mock, fetch: request,
       manifest: options.topologyManifest }),
+    // Room history is the gateway's: none through --native.
+    createDay: (changed) => Day.create({ mock: args.mock, house: shared.house, changed,
+      request: options.dayRequest || (access && !access.native && !args.mock
+        ? (target, init) => access.json(target, "GET", undefined, init) : null),
+      ...timers }),
     system: System.create({ access, mock: args.mock, base: args.url || "http://localhost", fetch: request || globalThis.fetch,
       changed: options.onChange, ...(options.systemManifest ? { manifest: options.systemManifest } : {}),
       ...(options.setTimeout ? { setTimeout: options.setTimeout } : {}), ...(options.clearTimeout ? { clearTimeout: options.clearTimeout } : {}) }),

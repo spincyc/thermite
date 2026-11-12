@@ -48,7 +48,7 @@ CALLBACKS = CollectorRegistry(auto_describe=True)
 
 #: The HTTPS listener, and the opt-in plain-HTTP Guest listener (oh_access.guest).
 LISTENERS = ("https", "guest")
-ROUTES = ("command", "policy", "locks", "items", "events", "media", "asset", "auth", "admin", "other")
+ROUTES = ("command", "policy", "locks", "history", "items", "events", "media", "asset", "auth", "admin", "other")
 CODE_CLASSES = ("2xx", "3xx", "4xx", "5xx", "aborted")
 REQUEST_BUCKETS = (.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10)
 UPSTREAM_KINDS = ("read", "command", "group", "media")
@@ -139,6 +139,8 @@ def route_class(path):
         return "command"
     if path == "/api/v1/locks":
         return "locks"
+    if path == "/api/v1/history/rooms":
+        return "history"
     if path == "/rest/items" or path.startswith("/rest/items/"):
         return "items"
     if path.startswith("/api/v1/events/"):

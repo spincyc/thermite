@@ -79,8 +79,25 @@ def _json_leaf(states, item, path, leaf):
     fields[str(path[-1])] = copy.deepcopy(leaf)
 
 
-def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict:
-    """Serializable RuntimeContract kwargs, derived only from server-side facts."""
+def history(house: House, conf: Conf, rooms: dict, metrics_port: int | None = None) -> dict:
+    """The room history the gateway serves (oh_identity.history): the House
+    board's Rooms through the day timeline (oh_metrics.dashboards
+    room_history), each zone named by its routing room, and the loopback
+    port of the house's Prometheus, which the gateway asks."""
+    import oh_metrics
+    import oh_ports
+    from oh_metrics import dashboards
+
+    spec = dashboards.room_history(oh_metrics.exporter_map(house.data, conf))
+    by_item = {room["source_item"]: ident for ident, room in rooms.items()}
+    zones = [{"room": by_item[zone["item"]], **zone} for zone in spec["zones"] if zone["item"] in by_item]
+    return {"port": oh_ports.checked("prometheus", metrics_port or oh_ports.DEFAULTS["prometheus"]),
+            "zones": zones, "values": spec["values"], "labels": spec["labels"]}
+
+
+def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics_port: int | None = None) -> dict:
+    """Serializable RuntimeContract kwargs, derived only from server-side facts.
+    metrics_port is the house's Prometheus port (host.yaml), else its default."""
     devices = {device["id"]: device for device in house.devices}
     route = house.data.get("routing") or {}
     room_specs = route.get("rooms") or {}
@@ -259,7 +276,7 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None) -> dict
                     **({"admin": True} if name in remote_system.ADMIN_ASSETS else {})} for name in remote.FILES}
     return {"rooms": rooms, "states": states, "routing": table, "house": copy.deepcopy(house.data), "assets": assets,
             "asset_root": str(Path(asset_root).resolve()) if asset_root else None, "pairings": pairings, "groups": groups, "media": media,
-            "views": views(house, rooms, activity, pairings)}
+            "views": views(house, rooms, activity, pairings), "history": history(house, conf, rooms, metrics_port)}
 
 
 def views(house: House, rooms: dict, activity: dict, pairings: dict) -> dict:

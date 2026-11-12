@@ -299,6 +299,25 @@ reads every room's policy, and each is evaluated as policy status evaluates
 authentication is off every room is unlocked. Clients read it only while a
 room list is on show, at the policy status interval.
 
+GET `/api/v1/history/rooms` returns each room's confirmed source over the
+last 24 hours, the House board's "Rooms through the day" for clients that
+cannot reach Grafana: `{"version":1,"start","end","step":60,"labels":{value:
+label},"rooms":[{room,label,"segments":[[from,to,value]]}]}`, in Unix
+seconds. `end` is the start of the current minute. Each segment is a run of
+one value: a source, `off`, or null for Unknown (a room whose devices gave no
+readback). A minute in no segment has no data. The compiled contract
+(`history`, made by `oh_site_contract.history` from
+`oh_metrics.dashboards.room_history`) names the board's own queries, what each
+number means and the loopback port of the house's Prometheus (13607, or
+`metrics: prometheus_port` in `instance/host.yaml`). No client chooses a
+query, range or upstream. One range query reads every room, at most once a minute; clients
+asking within the same minute share its answer. The gateway waits 5 s and
+reads at most 8 MiB, and a number the contract does not name is Unknown.
+Guests, Members and Admins read the same answer, as they read the same rooms'
+sources from the event streams. The plain-HTTP Guest listener does not serve
+it. When Prometheus does not answer, or the contract has no history, the
+answer is 503 `history_unavailable`.
+
 POST `/api/v1/rooms/<id>/commands` takes `{action,value}`. The immutable server
 contract resolves the action to a known Item and validates enum/range/step.
 A volume's range and step are its device's own scale, as its integration

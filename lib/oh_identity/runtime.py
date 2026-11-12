@@ -75,6 +75,30 @@ def json_value(raw, schema, depth=0):
     return None
 
 
+def valid_history(history, rooms):
+    """The compiled room history, refused unless every zone is a room of the
+    contract with its own source Item, every value a number's word and every
+    label plain text."""
+    def text(value, size):
+        return isinstance(value, str) and 0 < len(value) <= size and value.isprintable()
+    try:
+        zones, values, labels, port = history["zones"], history["values"], history["labels"], history["port"]
+        ok = (set(history) == {"port", "zones", "values", "labels"} and type(port) is int and 1024 <= port <= 65535
+              and isinstance(zones, list) and isinstance(values, dict) and isinstance(labels, dict)
+              and all(isinstance(zone, dict) and set(zone) == {"room", "item", "label", "query"}
+                      and zone["room"] in rooms and zone["item"] == rooms[zone["room"]]["source_item"]
+                      and text(zone["label"], 200) and text(zone["query"], 20000) for zone in zones)
+              and len({zone["room"] for zone in zones}) == len(zones)
+              and all(re.fullmatch(r"-?[0-9]{1,6}", number) and (value is None or value in labels)
+                      for number, value in values.items())
+              and all(NAME.fullmatch(value) and text(label, 200) for value, label in labels.items()))
+    except (KeyError, TypeError):
+        ok = False
+    if not ok:
+        raise ValueError("Invalid runtime history contract")
+    return history
+
+
 class RuntimeContract:
     """Compiled server-side facts, independent of browser-provided manifests.
 
@@ -82,11 +106,14 @@ class RuntimeContract:
     states: Item -> {kind, values/fields}; assets: basename -> {private}.
     views: client stream view -> {verb: [Item, ...]}; topics.views() keeps
     only public topics, and derives views for a contract without them.
+    history: the room history's Prometheus port, zones, values and labels
+    (oh_site_contract.history, served by oh_identity.history), or None for
+    a contract compiled without it.
     Source action is derived from source_item; other actions are explicit.
     """
 
     def __init__(self, rooms, states=None, routing=None, house=None, assets=None, asset_root=None,
-                 pairings=None, groups=None, media=None, views=None):
+                 pairings=None, groups=None, media=None, views=None, history=None):
         data = copy.deepcopy(dict(rooms))
         reads = copy.deepcopy(states or {})
         for ident, room in data.items():
@@ -111,6 +138,7 @@ class RuntimeContract:
                 for spec in views.values()):
             raise ValueError("Invalid runtime view contract")
         self.views = frozen(views)
+        self.history = frozen(valid_history(copy.deepcopy(history), data)) if history is not None else None
 
     def policy_contract(self):
         return {"rooms": {key: {"sources": list(value["sources"])} for key, value in self.rooms.items()},
