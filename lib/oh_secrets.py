@@ -18,10 +18,13 @@ KEYED = re.compile(
 PLACEHOLDER = re.compile(
     r"^(?:|\$\{[^}]*\}?|\$[A-Z_]+|<[^>]*>?|null|none|~|true|false|"
     r"[A-Za-z_]*_FILE|\*+|x+|\.\.\.)$", re.IGNORECASE)
+# The tokens' leading word boundary (\boh, \bgh) is checked just after the
+# literal, as "not after a word character", so that re can skip ahead to each
+# "oh" or "gh": the same matches as with \b first, far faster over a tree.
 PATTERNS = (
     ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    ("openHAB API token", re.compile(r"\boh\.[A-Za-z0-9]+\.[A-Za-z0-9_-]{20,}")),
-    ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}")),
+    ("openHAB API token", re.compile(r"oh(?<!\woh)\.[A-Za-z0-9]+\.[A-Za-z0-9_-]{20,}")),
+    ("GitHub token", re.compile(r"gh(?<!\wgh)[pousr]_[A-Za-z0-9]{30,}")),
 )
 RUNTIME = ("var/", "build/")
 NEVER_CONTENT = {".git", "__pycache__"}

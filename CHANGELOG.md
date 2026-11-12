@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `make check` runs the tests in parallel, one worker process per CPU, in
+  about a minute where it took over five on a four-core host; `make check
+  JOBS=1` runs them serially, as before. A worker keeps to one test class
+  while that class has tests left, so each class sets up once per worker,
+  and classes start longest first by the durations of the previous run,
+  kept in `.scratch/test-durations.json`. Failures print as `unittest -q`
+  prints them, in discovery order. `thermite package` and `thermite docs
+  export --with-code` run faster: they scan each file for credentials once
+  rather than once for every check of the same files, and the docs site
+  draws each size of terminal once; what they write is unchanged.
 - An upgrade prints one line per stage. Fetching the application,
   preparing its Python environment and pinning it in the site are stages
   of their own, whose git, pip and validation output shows only on

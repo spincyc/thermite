@@ -223,8 +223,6 @@ function. That replaces these, all found in the cold review:
 - Under a deep worktree the Unix socket path of the two
   `tests.test_handheld.Serve` tests is too long. Run `make check` with
   `TMPDIR` set to a short directory, such as one from `mktemp -d /tmp/t.XXXX`.
-- A local-only failure: an occasional atime flake in
-  `test_repeated_current_application_reuses_environment_and_keeps_launcher_and_commit`.
 - `thermite test routing` and `controls` run on the owner's host beside the
   live runtime. Under load, routing can leave a port unconfirmed at a round
   check (or quarantine a matrix whose write timed out), and controls can

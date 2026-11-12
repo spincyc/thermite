@@ -17,6 +17,7 @@ import contextlib
 import copy
 import dataclasses
 import errno
+import functools
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -63,8 +64,17 @@ class Node:
         return Node(self.kind, self.data, self.target, self.mode, self.uid, self.gid)
 
 
+# The same few hundred paths recur across the thousands of forks a crash
+# test makes: work each one's parent and ancestors out once.
+@functools.lru_cache(maxsize=None)
 def parent(path):
     return str(PurePosixPath(path).parent)
+
+
+@functools.lru_cache(maxsize=None)
+def ancestors(path):
+    """`path`'s ancestors as strings, nearest first, as PurePosixPath.parents."""
+    return tuple(str(ancestor) for ancestor in PurePosixPath(path).parents)
 
 
 def inside(path, top):
@@ -155,8 +165,8 @@ class MemoryDisk(engine.Disk):
         """OsDisk reaches every directory it changes from / without
         following a symlink: a symlink on the way fails as ELOOP does."""
         for path in paths:
-            for ancestor in PurePosixPath(path).parents:
-                node = self.nodes.get(str(ancestor))
+            for ancestor in ancestors(path):
+                node = self.nodes.get(ancestor)
                 if node is not None and node.kind == "link":
                     raise OSError(errno.ELOOP, "Too many levels of symbolic links", str(path))
 
@@ -281,9 +291,9 @@ class MemoryDisk(engine.Disk):
 
     def put(self, path, kind="file", data=b"", target="", mode=None, uid=0, gid=0, *, durable=False):
         path = str(path)
-        for ancestor in reversed(PurePosixPath(path).parents):
-            if str(ancestor) not in self.nodes:
-                op = ("put", str(ancestor), Node("dir", mode=0o755))
+        for ancestor in reversed(ancestors(path)):
+            if ancestor not in self.nodes:
+                op = ("put", ancestor, Node("dir", mode=0o755))
                 apply(self.nodes, op)
                 self._record(op, covered=durable)
         mode = mode if mode is not None else (0o755 if kind == "dir" else 0o777 if kind == "link" else 0o644)

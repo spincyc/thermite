@@ -11,7 +11,9 @@ files and test fixtures to that manifest. Packaging preserves their exact bytes;
 never copy private inventory, credentials or live state into this repository.
 Use fictional fixtures and documentation address ranges for portable tests.
 
-Run `make check` on the exact commit before publishing. Identity tests also run
+Run `make check` on the exact commit before publishing. It runs the tests in
+one worker process per CPU; `make check JOBS=1` runs them serially, exactly as
+`python -m unittest discover -s tests -t . -q`. Identity tests also run
 with `PYTHONPATH=lib DJANGO_SETTINGS_MODULE=oh_identity.test_settings` and a
 private scratch `THERMITE_IDENTITY_STATE`, using `python -m django test oh_identity
 --noinput`. Pinned native-runtime tests require the documented local dependency

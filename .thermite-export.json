@@ -354,6 +354,7 @@
     "site/site.js",
     "site/template.html",
     "tests/__init__.py",
+    "tests/__main__.py",
     "tests/access_mode_harness.js",
     "tests/androidtv_maintenance_probe.cjs",
     "tests/androidtv_patch/ActivationTest.java",

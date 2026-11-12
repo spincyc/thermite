@@ -7,6 +7,7 @@ it is never copied into the public artifact.
 from __future__ import annotations
 
 import ast
+import functools
 import html
 import hashlib
 import ipaddress
@@ -24,7 +25,9 @@ import oh_secrets
 
 MANIFEST = ".thermite-export.json"
 PROTOCOL_IPS = {"0.0.0.0", "127.0.0.1", "224.0.0.251", "239.255.255.250", "255.255.255.255"}
-IP = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+# (?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.]), the lookbehind moved past the
+# first digit so that re skips straight to digits: the same matches, faster.
+IP = re.compile(r"\d(?<![\d.]\d)\d{0,2}\.(?:\d{1,3}\.){2}\d{1,3}(?![\d.])")
 MAC = re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![\w:])")
 CODE_WORDS = {"control4", "sddp", "bk-808", "wattbox", "shield", "fire tv", "alarm.com", "qolsys", "myq",
               "ratgdo", "lutron", "grafik", "subvolume", "btrfs", "adr 0", "homelab", "factory/",
@@ -256,7 +259,15 @@ def guard(files: dict[str, bytes], area: Path = oh_cli.AREA, *, facts: set[str] 
 _CREDENTIAL = re.compile(r"(?i)^(?:password|passwd|passphrase|secret|token|api_?key|apitoken|psk|pre_shared_key|authorization|cookie|pin)$")
 
 
-def _credentials(name, text):
+@functools.lru_cache(maxsize=1024)
+def _credentials(name: str, text: str) -> tuple[tuple[int, str], ...]:
+    """(line, reason) for each literal credential in `text`. It depends on
+    nothing else, so the guards that one export or package repeats over the
+    same files scan each file once."""
+    return tuple(_credential_lines(name, text))
+
+
+def _credential_lines(name, text):
     if name.endswith(".java"):
         return oh_secrets.scan_text(text, code=True)
     def literal(key, value):
@@ -265,7 +276,9 @@ def _credentials(name, text):
     if name.endswith(".py") or name == "bin/thermite":
         found = []
         tree = ast.parse(text)
-        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        # Only simulated_pin reads parents, and only in that one file.
+        parents = ({child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+                   if name == "lib/oh_testing/controls.py" else {})
         def simulated_pin(node):
             if name != "lib/oh_testing/controls.py":
                 return False

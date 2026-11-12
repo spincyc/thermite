@@ -12,6 +12,7 @@ ids): they live in the private homelab repository, and the site is public.
 from __future__ import annotations
 
 import argparse
+import functools
 import html
 from html.parser import HTMLParser
 import json
@@ -216,10 +217,12 @@ def commands_page() -> str:
     return "\n".join(parts) + "\n"
 
 
+@functools.lru_cache(maxsize=None)
 def terminal_html(rows: int = 16) -> str:
     """The terminal drawing, cell for cell, in the page's own theme: each
     cell 2 by 4 units, its braille dots as circles and its quadrant blocks
-    as rectangles, so no font has to have them."""
+    as rectangles, so no font has to have them. It depends on rows alone,
+    so every page that fill() renders shares one drawing of each size."""
     lines = brand.cells(rows)
     columns = len(lines[0])
     shapes: dict[str, list[str]] = {}
