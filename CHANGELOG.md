@@ -7,6 +7,12 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Grafana updates the House health board again. Its uid changed from
+  `thermite-house` to `thermite-house-health` on 2026-11-04, and Grafana,
+  whose file provisioning may not delete a board, could never save
+  house.json under the new one: it logged "deprecatedInternalID ... is
+  already in use" every 30 seconds and kept its stored board as it was
+  before. The board is `thermite-house` again.
 - The terminal remote shows "Rooms through the day", the House board's
   timeline: `h` on Home or Remotes, or the link below Home's rooms, opens
   one row per room with its confirmed source over the last 24 hours (a

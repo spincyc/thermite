@@ -48,7 +48,11 @@ DATASOURCE = {"type": "prometheus", "uid": DATASOURCE_UID}
 SCHEMA_VERSION = 41
 HOUSE, SWITCHING, DEVICES, OPENHAB, HOST, USAGE, YOKE = (
     "house", "switching", "devices", "openhab", "host", "usage", "yoke")
-UIDS = {HOUSE: "thermite-house-health", SWITCHING: "thermite-switching", DEVICES: "thermite-devices",
+#: Fixed for good: Grafana's file provisioning ties a board's internal id to
+#: its file and may not delete (disableDeletion), so a new uid for a file it
+#: already provisioned can never be saved ("deprecatedInternalID ... is
+#: already in use"), and that board stops updating.
+UIDS = {HOUSE: "thermite-house", SWITCHING: "thermite-switching", DEVICES: "thermite-devices",
         OPENHAB: "thermite-openhab", HOST: "thermite-host", USAGE: "thermite-usage", YOKE: "thermite-yoke"}
 TITLES = {HOUSE: "House health", SWITCHING: "Switching & remotes", DEVICES: "Devices", OPENHAB: "openHAB runtime",
           HOST: "Host", USAGE: "Usage", YOKE: "Yoke"}

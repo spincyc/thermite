@@ -700,7 +700,8 @@ class Dashboards(unittest.TestCase):
         found = boards()
         self.assertEqual(set(found), {dashboards.HOUSE, dashboards.SWITCHING, dashboards.DEVICES,
                                       dashboards.OPENHAB, dashboards.HOST, dashboards.USAGE})
-        self.assertEqual(found[dashboards.HOUSE]["uid"], "thermite-house-health")
+        # The uid Grafana first provisioned house.json under; another can never be saved.
+        self.assertEqual(found[dashboards.HOUSE]["uid"], "thermite-house")
         self.assertEqual(found[dashboards.HOUSE]["title"], "House health")
         self.assertEqual(found[dashboards.OPENHAB]["title"], "openHAB runtime")
         settings = dict(dict(oh_metrics.grafana_settings(HOST))["dashboards"])
