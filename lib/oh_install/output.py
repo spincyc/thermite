@@ -84,6 +84,13 @@ class _Tail:
         return (("[earlier child output omitted]\n" if truncated else "") + text).rstrip()
 
 
+def tail(data: bytes) -> str:
+    """The safe bounded tail of output a caller already read."""
+    found = _Tail()
+    found.append(data)
+    return found.diagnostic()
+
+
 def _drain(stream, tail: _Tail, done: threading.Event) -> None:
     try:
         while chunk := stream.read(READ_BYTES):

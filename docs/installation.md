@@ -103,8 +103,11 @@ thermite install --config "$HOME/thermite-site" --dry-run
 thermite install --config "$HOME/thermite-site"
 ```
 
-Use `-v` for stage details and commands. Failures always show diagnostics;
-interactive commands keep control of the terminal. `--dry-run` describes the
+Each stage is one line: a spinner while it works, a mark when it ends. The
+commands inside a stage show their output only when they fail; a sudo
+password prompt follows a line naming the stage that asks. Use `-v` for stage
+details, the commands and all their output. Interactive commands keep control
+of the terminal. `--dry-run` describes the
 application selection and complete workflow without fetching, creating an
 environment, changing the site pin or touching services. For an upgrade from
 GitHub it cannot know the remote commit or its detailed changes without a fetch,
@@ -610,8 +613,9 @@ While Thermite keeps running, the upgrade prepares what belongs to the host
 rather than to Thermite: the configuration checks and boot test, required
 packages, AppArmor's own service, the `thermite` account and, on a new host,
 the installation root, which the install engine works inside. It pulls every
-pinned container image before anything stops. Then it shows the room the
-install engine needs to set the installed version aside:
+pinned container image before anything stops. Then it asks the install engine
+for the room it needs to set the installed version aside, and shows it when
+there is too little, or always with `-v`:
 
 ```text
 Room to set aside the current version, on /srv/thermite (free 41.2 GiB):

@@ -17,7 +17,7 @@ from pathlib import Path
 import oh_cli
 import oh_deploy as deploy
 from oh_cli import AREA
-from oh_install import bridge, changeover, manifest, ownership, runner, steps
+from oh_install import bridge, changeover, manifest, ownership, progress, runner, steps
 from oh_install.system import System
 
 RERUN = "Run thermite upgrade again to go on from here."
@@ -175,7 +175,8 @@ def main(argv: list[str] | None = None) -> int:
                 runtime_token_file=arguments.runtime_token_file, allow_downgrade=arguments.allow_downgrade,
                 host_args=(["--native-timeout", str(arguments.native_timeout)]
                            if arguments.native_timeout is not None else []) +
-                          (["--verbose"] if oh_cli.switches.verbose else []), say=system.say)
+                          (["--verbose"] if oh_cli.switches.verbose else []), say=system.say,
+                stage=lambda title: progress.stage(system, title))
         return host_phase(system, arguments)
     except subprocess.CalledProcessError as exc:
         print(f"thermite upgrade: {changeover.escaped(AREA, 'upgrade', exc)}", file=sys.stderr)

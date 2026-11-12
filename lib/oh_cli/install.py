@@ -16,7 +16,7 @@ from pathlib import Path
 import oh_cli
 import oh_deploy as deploy
 from oh_cli import AREA
-from oh_install import bridge, changeover, manifest, ownership, runner, steps
+from oh_install import bridge, changeover, manifest, ownership, progress, runner, steps
 from oh_install.system import UNATTENDED, System
 
 DESCRIPTION = """\
@@ -150,7 +150,8 @@ def run(system: System, arguments: argparse.Namespace) -> int:
                           (["--restart-runtime"] if arguments.restart_runtime else []) +
                           (["--native-timeout", str(arguments.native_timeout)]
                            if arguments.native_timeout is not None else []) +
-                          (["--verbose"] if oh_cli.switches.verbose else []), say=system.say)
+                          (["--verbose"] if oh_cli.switches.verbose else []), say=system.say,
+                stage=lambda title: progress.stage(system, title))
         import oh_paths
 
         def body(before: str | None) -> int:

@@ -448,7 +448,7 @@ class Lifecycle(GatewayFixture):
         self.assertTrue(stops)
         self.assertLess(max(stops), start)
         self.assertEqual(requests, [("/api/v1/security", f"house.example.test:{port}")])
-        self.assertIn(f"   Gateway verified: https://house.example.test:{port}", system.messages)
+        self.assertFalse(any("Gateway verified" in message for message in system.messages), "an upgrade says what changed")
         profile = json.loads((gateway.context.var / "gateway/current.json").read_bytes())
         self.assertEqual(profile["url"], f"https://house.example.test:{port}")
 

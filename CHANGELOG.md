@@ -7,6 +7,18 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- An upgrade prints one line per stage. Fetching the application,
+  preparing its Python environment and pinning it in the site are stages
+  of their own, whose git, pip and validation output shows only on
+  failure (or with `-v`); the site update no longer prints advice meant
+  for a manual `thermite init --upgrade`. Within the transaction, a stage
+  no longer prints a "[ .. ]" line before its mark: that line now comes
+  only before a sudo password prompt, and none when sudo still holds the
+  password. The install engine's JSON replies and the gateway helper's
+  output stay hidden unless they fail: the earlier change that kept only
+  the engine's warnings showed its replies too. The room table shows only
+  when the room is short, or with `-v`, and the gateway's verified URLs
+  and trust certificate only on a first install, or with `-v`.
 - Grafana updates the House health board again. Its uid changed from
   `thermite-house` to `thermite-house-health` on 2026-11-04, and Grafana,
   whose file provisioning may not delete a board, could never save

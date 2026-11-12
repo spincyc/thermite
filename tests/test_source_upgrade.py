@@ -1,20 +1,25 @@
 """Source upgrades use real fixture Git repositories and a simulated host."""
+import contextlib
 from pathlib import Path
+import io
 import json
 import os
 import subprocess
 import shutil
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
+import oh_cli
 import oh_init
 import oh_release
 import oh_source_upgrade as update
 import oh_application_update as application
+from oh_install import progress
 
 
 class ApplicationFixture(unittest.TestCase):
@@ -45,6 +50,7 @@ class ApplicationFixture(unittest.TestCase):
         self.edit_during_host = False
         self.change_source_during_build = False
         self.approvals = []
+        self.paused_commits = []
         self.real_run = update.run
         self.python = application.PYTHON
         self.packaged = self.new
@@ -71,6 +77,9 @@ class ApplicationFixture(unittest.TestCase):
         args = tuple(map(str, argv))
         self.calls.append(args)
         if args[0] == "git":
+            if args[3:4] == ("commit",):
+                active = progress.current.get()
+                self.paused_commits.append(active.paused if active else None)
             if self.fail == "commit" and args[3] == "commit":
                 raise subprocess.CalledProcessError(1, args)
             return self.real_run(*argv, capture=capture)
@@ -144,6 +153,27 @@ class SourceUpgrade(ApplicationFixture):
                          ["init", "check", "upgrade"])
         self.assertEqual(self.approvals, [True])
 
+    def test_the_work_before_the_host_phase_runs_in_three_stages(self):
+        seen = []
+
+        @contextlib.contextmanager
+        def stage(title):
+            seen.append(title)
+            yield
+            seen.append("passed")
+
+        self.execute(stage=stage)
+        self.assertEqual(seen, ["Fetch the selected application", "passed", "Prepare its Python environment", "passed",
+                                "Pin it in the site", "passed"])
+
+    def test_the_site_commit_pauses_the_spinner_for_a_signing_prompt(self):
+        said = []
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.execute(stage=lambda title: progress.stage(SimpleNamespace(say=said.append), title))
+        self.assertEqual(self.paused_commits, [1])
+        self.assertEqual(said, ["[ OK ] Fetch the selected application", "[ OK ] Prepare its Python environment",
+                                "[ OK ] Pin it in the site"])
+
     def test_packaging_validation_and_commit_failures_preserve_old_pin_and_launcher(self):
         for failure in ("pip", "init", "check", "commit"):
             with self.subTest(failure=failure):
@@ -214,3 +244,48 @@ class SourceUpgrade(ApplicationFixture):
             self.assertEqual(update.main(["--config", str(self.site), "--dry-run"]), 7)
         call.assert_called_once_with([sys.executable, str(update.SOURCE / "bin/thermite"),
                                       "upgrade", "--config", str(self.site), "--dry-run"])
+
+
+class ChildOutput(unittest.TestCase):
+    def setUp(self):
+        options = patch.object(oh_cli, "switches", oh_cli.Switches())
+        options.start()
+        self.addCleanup(options.stop)
+
+    def test_a_child_speaks_only_when_it_fails(self):
+        script = "import sys; print('remote: counting objects'); print('fatal: \\x1b[31mgone\\x1b[0m', file=sys.stderr)"
+        for code in (0, 3):
+            with self.subTest(code=code), contextlib.redirect_stdout(io.StringIO()) as out, \
+                    contextlib.redirect_stderr(io.StringIO()) as error, \
+                    patch.object(update.subprocess, "Popen", wraps=subprocess.Popen) as spawned:
+                argv = (sys.executable, "-I", "-u", "-c", f"{script}; raise SystemExit({code})")
+                if code:
+                    with self.assertRaises(subprocess.CalledProcessError) as raised:
+                        update.run(*argv)
+                    self.assertEqual(raised.exception.returncode, code)
+                else:
+                    self.assertEqual(update.run(*argv), "")
+                options = spawned.call_args.kwargs
+                self.assertEqual((options["stdin"], options["stdout"], options["stderr"]),
+                                 (subprocess.DEVNULL, subprocess.PIPE, subprocess.STDOUT))
+                self.assertEqual(options["env"]["GIT_TERMINAL_PROMPT"], "0", "git fails rather than ask unseen")
+                self.assertEqual(out.getvalue(), "")
+                self.assertEqual(error.getvalue(), "remote: counting objects\nfatal: gone\n" if code else "")
+
+    def test_verbose_leaves_a_child_its_streams(self):
+        oh_cli.switches.verbose = True
+        child = Mock(returncode=0, stdout=None)
+        child.communicate.return_value = (None, None)
+        with patch.object(update.subprocess, "Popen", return_value=child) as spawned:
+            self.assertEqual(update.run("git", "fetch"), "")
+        options = spawned.call_args.kwargs
+        self.assertEqual((options["stdin"], options["stdout"], options["stderr"]), (None, None, None))
+        self.assertNotIn("GIT_TERMINAL_PROMPT", options["env"])
+
+    def test_ctrl_c_lets_the_child_clean_up_before_it_is_killed(self):
+        child = Mock(stdout=None)
+        child.communicate.side_effect = KeyboardInterrupt
+        with patch.object(update.subprocess, "Popen", return_value=child), self.assertRaises(KeyboardInterrupt):
+            update.run("git", "commit")
+        self.assertEqual(child.mock_calls, [call.communicate(), call.wait(timeout=update.INTERRUPT_GRACE),
+                                            call.kill(), call.wait()])

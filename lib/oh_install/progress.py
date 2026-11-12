@@ -143,6 +143,14 @@ class Progress:
             self.message(f"   waiting: {detail} ({self.elapsed()})")
 
     def working(self, detail: str = ""):
+        """Note that the stage acts, not only checks. The spinner already
+        shows that; a log without one gets a line."""
+        if not self.animate:
+            self.announce(detail)
+
+    def announce(self, detail: str = ""):
+        """Name the stage once in the scrollback, before a password prompt
+        that must say which stage asks."""
         if not self.announced:
             self.message(f"[ .. ] {self.label}" + (f": {detail}" if detail else ""))
             self.announced = True
@@ -171,6 +179,15 @@ class Progress:
             self.notes.clear()
 
 
+@contextlib.contextmanager
+def stage(system, title: str):
+    """An unnumbered stage around work outside the runner's steps: it
+    passes unless that work raises."""
+    with Progress(system, title) as display:
+        yield display
+        display.passed("")
+
+
 def update(detail: str) -> None:
     """Show a long wait's current state on the active stage, if any."""
     active = current.get()
@@ -193,8 +210,6 @@ def command(*, terminal: bool, show_output: bool = False):
     output_token = show_command_output.set(show_output)
     try:
         with paused() if terminal else contextlib.nullcontext():
-            if terminal and active and active.animate:
-                active.working()
             yield
     finally:
         show_command_output.reset(output_token)

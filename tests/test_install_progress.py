@@ -454,9 +454,13 @@ class Presentation(unittest.TestCase):
         stream = Terminal()
 
         def authenticate(argv, **options):
-            self.assertEqual(argv, ["sudo", "-v"])
             self.assertGreater(progress.current.get().paused, 0)
+            if argv == ["sudo", "-n", "-v"]:
+                self.assertEqual(options["stdin"], subprocess.DEVNULL)
+                return mock.Mock(returncode=1)
+            self.assertEqual(argv, ["sudo", "-v"])
             self.assertNotIn("stdin", options)
+            self.assertIn("[ .. ] 1. Service ready\n", stream.getvalue(), "the prompt says which stage asks")
             return mock.Mock(returncode=0)
 
         def execute(argv, cwd, **options):
@@ -474,7 +478,46 @@ class Presentation(unittest.TestCase):
             result, text = self.run_stage(stage, stream)
         self.assertEqual(result, 0)
         self.assertIn("✓", text)
-        self.assertEqual((validation.call_count, command.call_count), (1, 1))
+        self.assertEqual((validation.call_count, command.call_count), (2, 1))
+
+    def test_a_password_sudo_still_holds_is_neither_asked_for_nor_announced(self):
+        stream = Terminal()
+        stage = Stage([Check(False, "stopping"), Check(True, "stopped")],
+                      [Command(("systemctl", "stop", "example.service"), root=True)])
+        with mock.patch.object(System, "interactive", return_value=True), \
+                mock.patch("oh_install.system.subprocess.run", return_value=mock.Mock(returncode=0)) as validation, \
+                mock.patch("oh_install.output.run", return_value=0):
+            result, text = self.run_stage(stage, stream)
+        self.assertEqual(result, 0)
+        self.assertEqual([call.args[0] for call in validation.call_args_list], [["sudo", "-n", "-v"]])
+        self.assertNotIn("[ .. ]", text)
+        self.assertNotIn("stopping", text, "the spinner, not the scrollback, says the stage acts")
+
+    def test_a_terminal_root_command_names_its_stage_only_when_sudo_will_ask(self):
+        for held in (True, False):
+            with self.subTest(held=held):
+                stream = Terminal()
+                stage = Stage([Check(False, "packages"), Check(True, "installed")],
+                              [Command(("package-manager",), root=True, terminal=True)])
+
+                def child(argv, **options):
+                    return mock.Mock(returncode=1 if argv == ["sudo", "-n", "-v"] and not held else 0)
+
+                with mock.patch.object(System, "interactive", return_value=True), \
+                        mock.patch("oh_install.system.subprocess.run", side_effect=child) as ran:
+                    result, text = self.run_stage(stage, stream)
+                self.assertEqual(result, 0)
+                self.assertEqual([call.args[0] for call in ran.call_args_list],
+                                 [["sudo", "-n", "-v"], ["sudo", "package-manager"]])
+                self.assertEqual("[ .. ] 1. Service ready\n" in text, not held)
+
+    def test_a_result_on_stdout_stays_hidden_while_warnings_on_stderr_show(self):
+        stage = Stage([Check(False, "recording"), Check(True, "recorded")],
+                      [Command(("engine",), show_output="stderr")])
+        with mock.patch("oh_install.output.run", return_value=0) as command:
+            result, _ = self.run_stage(stage)
+        self.assertEqual(result, 0)
+        self.assertEqual(command.call_args.kwargs["show_output"], "stderr")
 
     def test_an_unattended_root_command_runs_under_sudo_n_and_nothing_authenticates_first(self):
         # --yes: a sudo -v first would ask for a password at a terminal.

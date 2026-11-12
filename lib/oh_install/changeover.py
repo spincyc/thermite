@@ -31,6 +31,7 @@ import shlex
 import shutil
 from typing import Callable
 
+import oh_cli
 import oh_units
 from oh_install import access, bridge, engine, manifest, ownership, runner, steps
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
@@ -388,7 +389,9 @@ class Room(Step):
             space = json.loads(out)
         except ValueError:
             space = None
-        if space is not None and code in (0, engine.SHORT):
+        # The table explains a refusal; when the room is there, only
+        # --verbose asks for it.
+        if space is not None and (code == engine.SHORT or code == 0 and oh_cli.switches.verbose):
             for line in engine.describe_space(space, transaction.root).splitlines():
                 system.say("   " + line)
         return code or (0 if space is not None else 1)

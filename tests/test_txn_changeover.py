@@ -190,7 +190,7 @@ class Committed(Fixture):
         self.assertEqual((release["application"], release["images"]), ("d" * 64, [IMAGE]))
         self.assertEqual((self.directory / "engine.py").read_bytes(), Path(engine.__file__).read_bytes(),
                          "root runs the copy the transaction began with")
-        self.assertIn("Room to set aside the current version", self.said(), "the copy-size estimate (9-Q15)")
+        self.assertNotIn("Room to set aside the current version", self.said(), "the table is for a refusal")
         self.assertEqual(self.unpinned, [])
 
     def test_a_commit_removes_earlier_finished_records(self):
@@ -209,6 +209,7 @@ class Refused(Fixture):
         self.assertIsNone(self.is_open())
         self.assertEqual(self.record()["phase"], "refused")
         self.assertEqual(self.unpinned, [txn_fakes.ID], "the site pins the version that runs again")
+        self.assertIn("Room to set aside the current version", self.said(), "the copy-size estimate (9-Q15)")
         self.assertIn("Not enough space", self.said())
         self.assertIn("nothing of Thermite was stopped or changed", self.said())
 

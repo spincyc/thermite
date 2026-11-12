@@ -16,11 +16,43 @@ SOURCE = Path(__file__).resolve().parents[1]
 SITE_FILES = ("thermite-site.json", ".gitignore")
 
 
+#: How long a child Ctrl-C reached too may clean up (git removes its lock
+#: files) before it is killed.
+INTERRUPT_GRACE = 10.0
+
+
 def run(*argv: str | Path, capture: bool = False) -> str:
-    result = subprocess.run([str(arg) for arg in argv], check=True, text=True,
-                            stdout=subprocess.PIPE if capture else None,
-                            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
-    return result.stdout if capture else ""
+    """Run a child that must succeed. Captured, its standard output is the
+    result; otherwise its output shows only if it fails, or with --verbose.
+    A held child reads no terminal: git fails rather than ask unseen."""
+    import oh_cli
+    held = not capture and not oh_cli.switches.verbose
+    process = subprocess.Popen([str(arg) for arg in argv], text=capture,
+                               stdin=subprocess.DEVNULL if held else None,
+                               stdout=subprocess.PIPE if capture or held else None,
+                               stderr=subprocess.STDOUT if held else None,
+                               env={**os.environ, "GIT_OPTIONAL_LOCKS": "0",
+                                    **({"GIT_TERMINAL_PROMPT": "0"} if held else {})})
+    try:
+        output = process.communicate()[0]
+    except BaseException as error:
+        if isinstance(error, KeyboardInterrupt):
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=INTERRUPT_GRACE)
+        process.kill()
+        process.wait()
+        raise
+    finally:
+        if process.stdout is not None:
+            process.stdout.close()
+    if process.returncode:
+        if held:
+            from oh_install import output as child, progress
+            if text := child.tail(output):
+                with progress.paused():
+                    print(text, file=sys.stderr, flush=True)
+        raise subprocess.CalledProcessError(process.returncode, process.args, output if capture else None)
+    return output if capture else ""
 
 
 def foreground(*argv: str | Path) -> int:
@@ -97,7 +129,11 @@ def site_update(command: Path, site: Path, *, expected_head: str | None = None) 
         if changed:
             paths = [f":(literal){name}" for name in changed]
             run("git", "-C", root, "add", "-A", "--", *paths)
-            run("git", "-C", root, "commit", "--only", "-m", "Upgrade Thermite application", "--", *paths)
+            from oh_install import progress
+            # Signing may ask for a passphrase at the terminal: no spinner
+            # paints over it.
+            with progress.paused():
+                run("git", "-C", root, "commit", "--only", "-m", "Upgrade Thermite application", "--", *paths)
         clean(root)
     except BaseException:
         # Restore our own edits before a commit. A completed commit is

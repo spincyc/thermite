@@ -6,6 +6,7 @@ phase command line; no environment variable or saved approval survives a retry.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import contextlib
 import hashlib
 import json
 import os
@@ -247,7 +248,7 @@ def acquire(store: Path, source: Path | None, revision: str | None, release: str
         checkout.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=".source-", dir=store)) / "checkout"
         run("git", "clone", "--no-hardlinks", "--no-checkout", "--", origin, staging)
-        transaction.git(staging, "checkout", "--detach", commit)
+        transaction.git(staging, "checkout", "--quiet", "--detach", commit)
         staging.rename(checkout)
         staging.parent.rmdir()
     if transaction.clean(checkout) != commit:
@@ -310,7 +311,6 @@ def candidate(store: Path, package: Path, key: str, say: Callable[[str], None]) 
             return environment, release
         say(f"Rebuilding the application environment: {reason}. {environment} is retained unchanged.")
     environment = Path(tempfile.mkdtemp(prefix="environment-", dir=store))
-    say(f"Preparing the selected Thermite application in {environment}")
     run(sys.executable, "-m", "venv", environment)
     pip = (environment / "bin/python", "-I", "-m", "pip", "--isolated", "install", "--disable-pip-version-check")
     run(*pip, "--require-hashes", "-r", requirements(package))
@@ -444,7 +444,11 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
           program: Path | None = None, dry_run: bool = False, approve: Callable[[], bool],
           home: Path | None = None, runtime_token_file: Path | None = None,
           host_args: Sequence[str | Path] = (), allow_downgrade: bool = False,
-          say: Callable[[str], None] = print) -> int:
+          say: Callable[[str], None] = print,
+          stage: Callable[[str], contextlib.AbstractContextManager] = contextlib.nullcontext) -> int:
+    """`stage(title)` wraps each part of the work before the host phase: the
+    owner command shows it as a spinner whose children speak only on
+    failure."""
     if operation not in {"install", "upgrade"}:
         raise ValueError("application workflow must be install or upgrade")
     if revision is not None and (not revision or revision.startswith("-") or "\0" in revision):
@@ -510,8 +514,10 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
         if launcher_state(launcher) != previous_launcher:
             raise ValueError("the owner command changed while waiting for approval")
         try:
-            package, key = acquire(store, source, revision, release_digest)
-            environment, release = candidate(store, package, key, say)
+            with stage("Fetch the selected application") if release_digest is None else contextlib.nullcontext():
+                package, key = acquire(store, source, revision, release_digest)
+            with stage("Prepare its Python environment"):
+                environment, release = candidate(store, package, key, say)
             unchanged_source(source, source_head, release_digest)
             if release_digest is None and transaction.clean(package) != key.removeprefix("git-"):
                 raise ValueError("the application revision changed during packaging")
@@ -522,7 +528,8 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
                 refuse_older(older(store, site_root, site, release["digest"], commit,
                                    [source] if source_head is not None else []), site, release["digest"])
             command = environment / "bin/thermite"
-            transaction.site_update(command, site, expected_head=site_head)
+            with stage("Pin it in the site"):
+                transaction.site_update(command, site, expected_head=site_head)
             committed = transaction.clean(site_root)
             # The host phase undoes the pin commit itself if its install
             # transaction rolls back or never begins.

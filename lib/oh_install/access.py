@@ -14,6 +14,7 @@ import secrets
 import socket
 import ssl
 
+import oh_cli
 import oh_ports
 from oh_access import AccessError, guest, staging
 from oh_access.files import atomic_private, json_private, private_directory, read_private, service_identity
@@ -216,7 +217,10 @@ class Gateway(Step):
         from oh_install.runner import perform
         argv = tuple(str(value) for value in argv)
         root = argv[0] == "sudo"
-        code = perform(Command(argv[1:] if root else argv, root=root, terminal=root), system, self.context.area)
+        # Only a password prompt takes the terminal; the commands' own output
+        # stays behind the spinner unless they fail.
+        code = perform(Command(argv[1:] if root else argv, root=root, terminal=argv == ("sudo", "-v")), system,
+                       self.context.area)
         if code is None or code:
             raise AccessError("gateway deployment command failed")
 
@@ -719,10 +723,13 @@ class Gateway(Step):
             self._save(record, phase="complete", url=url)
             self._profile(metadata, receipt, url)
             self._history(system, record, receipt)
-            system.say("   Gateway verified: " + url)
-            for line in guest_report:
-                system.say(line)
-            system.say("   TLS trust certificate: " + str(public_cert))
+            if old is None or oh_cli.switches.verbose:
+                # A first install says where the gateway is and what to
+                # trust; an upgrade says only what changed.
+                system.say("   Gateway verified: " + url)
+                for line in guest_report:
+                    system.say(line)
+                system.say("   TLS trust certificate: " + str(public_cert))
             return 0
         except (OSError, ValueError, http.client.HTTPException) as exc:
             system.say("   " + str(exc))

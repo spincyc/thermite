@@ -473,8 +473,18 @@ class System:
                             return 124
                     argv = ("sudo", "-n", *argv[1:])
                 return output.run(argv, cwd, timeout=timeout, keep_terminal=privileged,
-                                  show_output=progress.show_command_output.get() and not oh_cli.switches.quiet,
+                                  show_output=False if oh_cli.switches.quiet else progress.show_command_output.get(),
                                   report=lambda text: active.message(text, error=True))
+            if progress.terminal_command.get() and tuple(argv[:1]) == ("sudo",) and tuple(argv[1:2]) != ("-n",):
+                # sudo asks only for a password it no longer holds; only then
+                # does the scrollback name the stage first.
+                held = not subprocess.run(["sudo", "-n", "-v"], cwd=cwd, check=False, timeout=timeout,
+                                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                          stderr=subprocess.DEVNULL).returncode
+                if held and tuple(argv) == ("sudo", "-v"):
+                    return 0
+                if not held and (active := progress.current.get()) and active.animate:
+                    active.announce()
             with contextlib.ExitStack() as stack:
                 options = {}
                 if oh_cli.switches.quiet and progress.terminal_command.get():
