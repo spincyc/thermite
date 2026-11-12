@@ -462,6 +462,20 @@ def thing_pending(thing: dict) -> bool:
     return info.get("status") == "UNINITIALIZED" and info.get("statusDetail") in HANDLER_PENDING_DETAILS
 
 
+def untyped_channels(thing: dict) -> list[str]:
+    """A full Thing DTO's state channels without an item type.
+
+    openHAB 5.2.3's YAML Thing provider can lose a start-up race (a
+    ConcurrentModificationException while it rebuilds a file's Things for a
+    newly arrived handler factory); the files it had not reached keep Things
+    built before their binding's channel types loaded. The HTTP binding then
+    skips each such channel ("Cannot determine item-type"), polls nothing,
+    and the Thing stays UNKNOWN until openHAB restarts.
+    """
+    return [str(channel.get("uid") or channel.get("id")) for channel in thing.get("channels") or []
+            if isinstance(channel, dict) and channel.get("kind", "STATE") == "STATE" and not channel.get("itemType")]
+
+
 def things_pending(things: list[dict]) -> list[str]:
     return [t.get("UID", "?") for t in things if thing_pending(t)]
 

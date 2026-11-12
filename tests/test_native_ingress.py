@@ -90,7 +90,8 @@ class System:
 
     def perform(self, action, system, area):
         assert system is self
-        assert action.root and action.terminal
+        # Only sudo's own prompt owns the terminal; a stage keeps the rest's output.
+        assert action.root and action.terminal == (tuple(action.argv) == ("-v",)), action.argv
         argv = action.argv
         self.commands.append(argv)
         if not self.failed and self.fail and argv[:len(self.fail)] == self.fail:

@@ -266,7 +266,10 @@ offline preparation does not run its managed rules or Things.
 After validating the API token, installation waits for the required add-ons,
 Thing handlers and authenticated native metrics. Unchanged known first-start
 handler symptoms can prompt one reviewed restart of `thermite-openhab.service` within
-the native readiness allowance. Configuration and authentication errors require fixing
+the native readiness allowance. So can Things whose channels openHAB loaded
+without their item types: openHAB 5.2.3's YAML loader can lose a start-up race
+(a `ConcurrentModificationException` in its log), and the HTTP binding then
+polls nothing and leaves those Things UNKNOWN until openHAB restarts. Configuration and authentication errors require fixing
 their reported cause. A persistent failure stops installation and retains
 userdata and credentials. Failed fresh cache priming also retains its
 `.thermite-prime-incomplete` marker and logs; inspect them before explicit
@@ -804,11 +807,20 @@ closes one that never began, or rolls back any other, then stops without
 doing anything more and says so, with that outcome's exit status. Run it
 once more to go on.
 
+A rollback after a failed step asks for your sudo password when the
+earlier one has expired. Left unanswered, sudo's prompt times out and
+nothing is rolled back: the transaction stays open as after Ctrl-C, with
+Thermite as the failed step left it, perhaps running the new version. Run
+the command again to roll it back. The rollback's own steps continue the
+run's numbered stages.
+
 ### A stuck rollback
 
 Exit status 5 means the engine could not put something back, for example
 because the disk is full. Thermite stays stopped and `thermite.target` stays
-disabled; the transaction stays open and no other one can begin. Fix the
+disabled; the transaction stays open and no other one can begin. When the
+engine did not run to its end (it failed or was killed), Thermite may be
+stopped, and the same holds. Fix the
 cause the command printed, then run it again with `--config DIR`: the
 rollback continues from where it stopped.
 

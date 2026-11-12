@@ -436,6 +436,7 @@ class FakeHost(engine.Host):
         command, *rest = argv
         if command == "systemctl":
             verb, *names = rest
+            names = [name for name in names if not name.startswith("-")]
             if verb == "disable" and names == [engine.TARGET]:
                 if not self.installed(engine.TARGET):
                     return 1  # Failed to disable unit: Unit file thermite.target does not exist.

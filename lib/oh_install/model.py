@@ -24,8 +24,10 @@ class Command:
     # Ordinary root helpers authenticate separately, then run with sudo -n.
     terminal: bool = False
     # Keep successful diagnostics visible through bounded, noninteractive
-    # capture. Quiet mode still suppresses successful output.
-    show_output: bool = False
+    # capture. Quiet mode still suppresses successful output. "stderr":
+    # standard output is a result nobody reads here, and is discarded;
+    # standard error, its warnings, shows even on success.
+    show_output: bool | str = False
 
     @property
     def full(self) -> tuple[str, ...]:

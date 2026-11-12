@@ -1113,7 +1113,7 @@ class Engine:
             if journal.phase != "planned":
                 raise EngineError(f"transaction {id} is {journal.phase}, not planned")
             if self._target_installed():
-                self._systemctl("disable", TARGET)
+                self._systemctl("disable", "--quiet", TARGET)
                 self._sync_units()
             self._advance(journal, "guarded")
             return journal
@@ -1357,7 +1357,7 @@ class Engine:
                     self.manifest_path, 1024 * 1024) != raw:
                 self.disk.write_atomic(self.manifest_path, raw, 0o644)
         if journal.kind not in UNINSTALLING:
-            self._systemctl("enable", TARGET)
+            self._systemctl("enable", "--quiet", TARGET)
             self._sync_units()
             # Already running unless a power loss came after the commit point.
             if self.host.run(("systemctl", "start", TARGET)):
@@ -1465,7 +1465,7 @@ class Engine:
             try:
                 self._reinstate(journal)
                 if journal.before["target"]["enabled"]:
-                    self._systemctl("enable", TARGET)
+                    self._systemctl("enable", "--quiet", TARGET)
                     self._sync_units()
             except (OSError, EngineError) as error:
                 journal.outcome = {"at": self.clock(), "result": "stuck", "started": False, "error": str(error)}

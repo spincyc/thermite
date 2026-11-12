@@ -75,6 +75,17 @@ class InstallOutput(unittest.TestCase):
         self.assertEqual(self.run_child("print('single failure diagnostic'); raise SystemExit(7)", show_output=True), 7)
         self.assertEqual(self.reports, ["single failure diagnostic"])
 
+    def test_a_result_on_stdout_is_discarded_and_warnings_on_stderr_show(self):
+        # The install engine: a JSON result nobody reads here, and warnings.
+        script = ("import sys; print('{\"phase\": \"committed\"}'); "
+                  "print('warning: systemctl start thermite.target failed', file=sys.stderr)")
+        self.assertEqual(self.run_child(script, show_output="stderr"), 0)
+        self.assertEqual(self.reports, ["warning: systemctl start thermite.target failed"])
+        self.reports.clear()
+        self.assertEqual(self.run_child("print('{}'); raise SystemExit(3)", show_output="stderr"), 3)
+        self.assertEqual(self.reports, [], "a quiet engine says nothing, even with a nonzero outcome")
+        self.assert_no_reader_left()
+
     def test_large_stdout_and_stderr_are_drained_and_only_bounded_failure_tail_is_reported(self):
         code = self.run_child("""import os,sys
 os.write(1,b'early output must be discarded\\n')

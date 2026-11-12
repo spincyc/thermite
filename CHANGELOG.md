@@ -7,6 +7,29 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- An upgrade whose openHAB start loses a start-up race in openHAB 5.2.3's
+  YAML loader recovers instead of rolling back after the 15-minute
+  readiness allowance. The race (a `ConcurrentModificationException` in
+  its log) leaves Things built without their channels' item types; the
+  HTTP binding then polls nothing and those Things stay UNKNOWN until
+  openHAB restarts. Native readiness now counts such a Thing as a known
+  first-start symptom, and its one reviewed restart repairs it. Only the
+  symptoms' own Things time that restart: another device going on and off
+  line no longer holds it off.
+- A rollback whose sudo prompt goes unanswered no longer goes on to the
+  engine, nor says Thermite stays stopped: it says nothing was rolled
+  back and the transaction stays open, perhaps with the new version
+  running, for the next run to roll back. Only the engine's own stuck
+  rollback says Thermite stays stopped; when the engine did not run to
+  its end, it may be.
+- Install, upgrade and rollback output stays behind each numbered stage's
+  spinner: the install engine's steps, image pulls and the native firewall
+  commands no longer print their output (systemd's "Created symlink" and
+  the like) unless they fail. The engine's warnings, such as a target that
+  would not start, still show. A rollback, the record of it in history, the
+  old version's health, and the release cleanup after a commit run as
+  numbered stages too, continuing the run's numbers, instead of printing
+  each command.
 - The activity feed shows free text as it is (a title, an artist, an app,
   a playback state, a TV's audio format) where it said "Value hidden".
   Titles, artists, apps and audio formats already reached clients as text;

@@ -183,7 +183,7 @@ class NativeIngress(Step):
             system.say(str(exc))
             return 1
         atomic_private(rules, rule_text(self.context.host).encode())
-        code = runner.perform(Command(("nft", "--check", "--file", str(rules)), root=True, terminal=True),
+        code = runner.perform(Command(("nft", "--check", "--file", str(rules)), root=True),
                               system, self.context.area)
         if code is None or code:
             if code is not None:
@@ -200,7 +200,7 @@ class NativeIngress(Step):
             ("systemctl", "restart", UNIT),
         ]
         for argv in commands:
-            code = runner.perform(Command(argv, root=True, terminal=True), system, self.context.area)
+            code = runner.perform(Command(argv, root=True), system, self.context.area)
             if code is None or code:
                 return code or 1
         code, output = system.capture(("sudo", "-n", "nft", "--json", "list", "table", "inet", "thermite_native"), diagnostics=True)

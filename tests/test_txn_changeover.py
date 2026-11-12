@@ -63,9 +63,11 @@ class Fake(Step):
 class Host:
     """The operator's view: commands, sudo, and the engine as a script."""
 
-    def __init__(self, test, *, plan=0, begin=0, rollback=3, commit=0, phase="switching", health=0):
+    def __init__(self, test, *, plan=0, begin=0, rollback=3, commit=0, phase="switching", health=0, sudo=()):
         self.test = test
         self.log = test.log
+        #: Each sudo -v's exit status, in turn; then 0.
+        self.sudo = iter(sudo)
         self.answers = {"begin": begin, "guard": 0, "collect": 0, "commit": commit, "rollback": rollback}
         self.plan, self.phase, self.health = plan, phase, health
         self.system = Mock(spec=System)
@@ -91,7 +93,7 @@ class Host:
         argv = tuple(argv)
         if argv == ("sudo", "-v"):
             self.log.append("sudo -v")
-            return 0
+            return next(self.sudo, 0)
         if argv[0] == "sudo" and (verb := self.verb(argv[1:])):
             self.log.append(verb)
             return self.answers[verb]
@@ -288,6 +290,33 @@ class RolledBack(Fixture):
                       f"rollback --root /srv/thermite-fixture --id {txn_fakes.ID} --print", self.said())
         self.assertEqual(self.unpinned, [])
         self.assertNotIn("old health", self.log)
+        self.assertIn("Thermite stays stopped", self.said())
+
+    def test_a_rollback_the_engine_did_not_finish_says_thermite_may_be_stopped(self):
+        self.assertEqual(self.run_upgrade(switch=[("switch", 1)], rollback=engine.FAILED), changeover.STUCK)
+        self.assertEqual(self.is_open(), txn_fakes.ID)
+        self.assertIn("Thermite may be stopped", self.said())
+        self.assertNotIn("stays stopped", self.said())
+
+    def test_a_rollback_goes_on_in_numbered_stages_that_keep_its_output(self):
+        self.assertEqual(self.run_upgrade(switch=[("switch", 1)]), changeover.ROLLED_BACK)
+        # prepare 3, images 4, room 5, begin 6, guard 7, stop 8, collect 9, switch 10.
+        for label in ("11. Authorize the rollback", f"12. Roll back transaction {txn_fakes.ID}",
+                      "13. Record the rollback in thermite history"):
+            self.assertIn(f"[ OK ] {label}", self.said())
+        self.assertNotIn("next, under sudo", self.said())
+        self.assertFalse(changeover.Transaction.load(self.site / "var", txn_fakes.ID).command("commit").terminal,
+                         "only sudo's prompt owns the terminal; the engine's output stays in its stage")
+
+    def test_an_unanswered_sudo_prompt_leaves_the_rollback_to_the_next_run(self):
+        # The third sudo -v is the rollback's own, long after the run began.
+        self.assertEqual(self.run_upgrade(switch=[("switch", 1)], sudo=(0, 0, 1)), changeover.INTERRUPTED)
+        self.assertEqual(self.log[-2:], ["switch", "sudo -v"])
+        self.assertNotIn("rollback", self.log)
+        self.assertEqual(self.is_open(), txn_fakes.ID)
+        self.assertIn("sudo did not authenticate, so nothing was rolled back", self.said())
+        self.assertNotIn("stays stopped", self.said())
+        self.assertEqual(self.unpinned, [])
 
     def test_an_interrupt_leaves_the_rollback_to_the_next_run(self):
         self.assertEqual(self.run_upgrade(switch=[("switch", KeyboardInterrupt())]), changeover.INTERRUPTED)

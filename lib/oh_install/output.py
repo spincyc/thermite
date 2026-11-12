@@ -138,8 +138,10 @@ def _stop(process: subprocess.Popen, reader: threading.Thread | None, signum: in
             stopped = False
         if reader is not None and reader.ident is not None:
             reader.join(timeout=KILL_GRACE)
-        elif process.stdout is not None:
-            process.stdout.close()
+        else:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
         return stopped and (reader is None or not reader.is_alive())
     finally:
         if previous is not None:
@@ -153,8 +155,10 @@ def _report(tail: _Tail, report: Callable[[str], None]) -> None:
 
 
 def run(argv: Sequence[str], cwd: Path, *, timeout: float | None = None,
-        report: Callable[[str], None], keep_terminal: bool = False, show_output: bool = False) -> int:
-    """Report a safe bounded tail on failure, or on successful opt-in.
+        report: Callable[[str], None], keep_terminal: bool = False, show_output: bool | str = False) -> int:
+    """Report a safe bounded tail on failure, or on successful opt-in;
+    show_output "stderr" discards standard output and reports standard
+    error alone, whenever there is any.
 
     FileNotFoundError, TimeoutExpired and KeyboardInterrupt retain their
     usual meaning. Cancellation cleans up the isolated child process group
@@ -170,10 +174,12 @@ def run(argv: Sequence[str], cwd: Path, *, timeout: float | None = None,
     reader = None
     try:
         isolation = {"process_group": 0} if keep_terminal else {"start_new_session": True}
+        separate = show_output == "stderr"
         process = subprocess.Popen(list(argv), cwd=cwd, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   stdout=subprocess.DEVNULL if separate else subprocess.PIPE,
+                                   stderr=subprocess.PIPE if separate else subprocess.STDOUT,
                                    bufsize=0, **isolation)
-        reader = threading.Thread(target=_drain, args=(process.stdout, tail, done),
+        reader = threading.Thread(target=_drain, args=(process.stderr if separate else process.stdout, tail, done),
                                   name="thermite-child-output", daemon=True)
         reader.start()
         code = process.wait(timeout=timeout)

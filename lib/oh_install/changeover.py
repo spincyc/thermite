@@ -183,7 +183,9 @@ class Transaction:
         return (PYTHON, "-I", "-S", str(self.engine), verb, "--root", str(self.root), *named, *map(str, args))
 
     def command(self, verb: str, *args) -> Command:
-        return Command(self.argv(verb, *args), root=True, terminal=True)
+        # A stage keeps the engine behind its spinner: its result line goes,
+        # its warnings (a target that would not start) show.
+        return Command(self.argv(verb, *args), root=True, show_output="stderr")
 
     def save(self, **changes) -> None:
         self.record.update(changes)
@@ -348,7 +350,7 @@ class Prefetch(Step):
             if found != 1:
                 system.say(f"   podman image exists {ref}: exit status {found}")
                 return found
-            code = runner.perform(Command(("podman", "pull", ref), root=True, terminal=True), system, self.context.area)
+            code = runner.perform(Command(("podman", "pull", ref), root=True), system, self.context.area)
             if code is None or code:
                 return code
             self.pulled.append(ref)
@@ -751,7 +753,7 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
         code = REFUSED
     code = roll_back(system, transaction, "a step failed") if code else committed(system, transaction)
     if code == COMMITTED and work.gateway is not None and getattr(work.gateway, "deferred", False):
-        return relay(context, system, transaction, first=first + len(opening) + len(rest))
+        return relay(context, system, transaction, first=runner.upcoming())
     return code
 
 
@@ -777,8 +779,9 @@ def retain(system: System, transaction: Transaction) -> None:
     older = [releases / name for name in names if name not in keep]
     if not older:
         return
-    code = runner.perform(Command(("rm", "-rf", "--one-file-system", "--", *map(str, older)), root=True),
-                          system, transaction.site, root_confirmed=True)
+    code = runner.staged(system, "Remove older gateway releases",
+                         Command(("rm", "-rf", "--one-file-system", "--", *map(str, older)), root=True),
+                         transaction.site)
     if code == 0:
         system.say(f"   Removed {len(older)} older gateway release(s) from {releases}.")
     else:
@@ -906,16 +909,19 @@ def roll_back(system: System, transaction: Transaction, reason: str) -> int:
                   else "what it installed is set aside."))
     site = transaction.site
     try:
-        code = runner.perform(Command(("-v",), root=True, terminal=True), system, site, root_confirmed=True)
+        code = runner.staged(system, "Authorize the rollback", Command(("-v",), root=True, terminal=True), site)
         if code is None:
             return _interrupted(system, transaction)
-        code = runner.perform(transaction.command("rollback"), system, site, root_confirmed=True)
+        if code:
+            return _unauthorized(system, transaction)
+        code = runner.staged(system, f"Roll back transaction {transaction.id}", transaction.command("rollback"),
+                             site, done=(0, engine.ROLLED_BACK))
     except KeyboardInterrupt:
         return _interrupted(system, transaction)
     if code is None:
         return _interrupted(system, transaction)
-    if code == engine.STUCK or code not in (0, engine.ROLLED_BACK):
-        return _stuck(system, transaction)
+    if code not in (0, engine.ROLLED_BACK):
+        return _stuck(system, transaction, stopped=code == engine.STUCK)
     if code == 0:
         found = transaction.journal(system)
         if found is not None and found["phase"] in ("committed", "kept"):
@@ -924,8 +930,20 @@ def roll_back(system: System, transaction: Transaction, reason: str) -> int:
     return rolled_back(system, transaction)
 
 
-def _stuck(system: System, transaction: Transaction) -> int:
-    system.say(f"The rollback of transaction {transaction.id} did not finish: Thermite stays stopped and "
+def _unauthorized(system: System, transaction: Transaction) -> int:
+    """sudo -v failed (an unanswered password prompt times out): the
+    rollback never began, and the next run resolves the transaction."""
+    system.say(f"   sudo did not authenticate, so nothing was rolled back. Transaction {transaction.id} stays "
+               f"open: Thermite is as the failed step left it, perhaps running the new version, and "
+               f"{oh_units.TARGET} is kept from booting. Run {transaction.rerun} to roll it back.")
+    return INTERRUPTED
+
+
+def _stuck(system: System, transaction: Transaction, stopped: bool = True) -> int:
+    """The engine's rollback did not finish: stuck (Thermite stopped), or
+    the engine did not run to the end."""
+    state = "Thermite stays stopped" if stopped else "Thermite may be stopped"
+    system.say(f"The rollback of transaction {transaction.id} did not finish: {state} and "
                f"{oh_units.TARGET} is kept from booting. Run {transaction.rerun} to try again. "
                f"To roll back by hand instead, print the commands with: sudo {PYTHON} -I -S {transaction.pinned} "
                f"rollback --root {transaction.root} --id {transaction.id} --print, run them, then run "
@@ -943,7 +961,8 @@ def rolled_back(system: System, transaction: Transaction) -> int:
         event = {"transaction": transaction.id, "commit": record["head_after"], "restored": record.get("head_before")}
         argv = _application(record, "history", "--state", record["state"], "--_record-rollback",
                             json.dumps(event, sort_keys=True))
-        if runner.perform(_operator(record, system, argv), system, transaction.site, root_confirmed=True) != 0:
+        if runner.staged(system, "Record the rollback in thermite history", _operator(record, system, argv),
+                         transaction.site) != 0:
             system.say("   The rollback was not added to thermite history.")
     transaction.close("rolled-back")
     if not record.get("installed", True):
@@ -981,7 +1000,8 @@ def health(system: System, transaction: Transaction) -> bool:
     before = transaction.record.get("head_before")
     argv = (str(launcher), "--site", str(transaction.site), "health", "--production", "--installation",
             "--settle", str(SETTLE), *(("--revision", before) if before else ()))
-    return runner.perform(Command(argv, show_output=True), system, transaction.site, root_confirmed=True) == 0
+    return runner.staged(system, "Health of the version that runs", Command(argv, show_output=True),
+                         transaction.site) == 0
 
 
 def resolve(site: Path, system: System, verb: str = "upgrade") -> int | None:
@@ -997,7 +1017,9 @@ def resolve(site: Path, system: System, verb: str = "upgrade") -> int | None:
     system.say(f"Transaction {id} of an earlier run did not finish; resolving it first.")
     try:
         transaction = Transaction.load(var, id)
-        found = transaction.journal(system)
+        with runner.stage(system, f"Read how transaction {id} stands") as display:
+            found = transaction.journal(system)
+            display.passed("")
     except (OSError, ValueError) as exc:
         system.say(f"Cannot resolve it: {exc}. As root, {PYTHON} -I -S <engine.py> status --root <root> "
                    "lists the transactions (docs/installation.md#a-stuck-rollback).")
@@ -1006,8 +1028,8 @@ def resolve(site: Path, system: System, verb: str = "upgrade") -> int | None:
         system.say("   It never began: nothing of Thermite was changed.")
         code = refused(system, transaction)
     elif found["phase"] in ("committed", "kept"):
-        if runner.perform(transaction.command("rollback"), system, transaction.site, root_confirmed=True) != 0:
-            return _stuck(system, transaction)
+        if runner.staged(system, f"Finish transaction {id}", transaction.command("rollback"), transaction.site) != 0:
+            return _stuck(system, transaction, stopped=False)
         code = committed(system, transaction)
     elif found["phase"] == "rolled-back":
         code = rolled_back(system, transaction)

@@ -1646,6 +1646,10 @@ class NativeReadiness(ReadinessStep):
         self.ready_signature = None
         self.ready_since = None
         self.pending_rows: list[dict] = []
+        #: The last snapshot's Things with known first-start symptoms, and
+        #: those of them with untyped state channels (untyped_channels).
+        self.symptoms: set[str] = set()
+        self.untyped: set[str] = set()
         self.last = ""
 
     @property
@@ -1669,7 +1673,7 @@ class NativeReadiness(ReadinessStep):
                 "inspect journalctl -u thermite-openhab.service, or give a slower host --native-timeout SECONDS")
 
     def snapshot(self, system: System) -> tuple[Check, tuple | None]:
-        from oh_sandbox import HANDLER_PENDING_DETAILS, installed_addon_uids, thing_readiness
+        from oh_sandbox import HANDLER_PENDING_DETAILS, installed_addon_uids, thing_readiness, untyped_channels
         deadline = self.native.start(system)
         if system.clock() >= deadline:
             return Check(False, "", self.expired()), None
@@ -1714,7 +1718,7 @@ class NativeReadiness(ReadinessStep):
         # only configuration errors are terminal. Every other unfinished state
         # (missing or reloading handlers, bridged players whose bridge is
         # initializing, unknown details) waits within the deadline.
-        pending, handlers_pending, failed = [], [], []
+        pending, handlers_pending, failed, untyped = [], [], [], set()
         for row in things:
             verdict = thing_readiness(row)
             if verdict == "fail":
@@ -1723,6 +1727,11 @@ class NativeReadiness(ReadinessStep):
                 pending.append(row)
                 if row["statusInfo"]["status"] == "UNINITIALIZED" and row["statusInfo"].get("statusDetail") in HANDLER_PENDING_DETAILS:
                     handlers_pending.append(row)
+                elif untyped_channels(row):
+                    # A lost YAML start-up race: only a restart rebuilds these.
+                    handlers_pending.append(row)
+                    untyped.add(row["UID"])
+        self.symptoms, self.untyped = {row["UID"] for row in handlers_pending}, untyped
         if failed:
             shown = ", ".join(f"{row['UID']} {row['statusInfo']['status']}/{row['statusInfo'].get('statusDetail')}"
                               for row in failed[:8])
@@ -1746,8 +1755,10 @@ class NativeReadiness(ReadinessStep):
         first = (f"; e.g. {pending[0]['UID']} {pending[0]['statusInfo']['status']}/"
                  f"{pending[0]['statusInfo'].get('statusDetail') or 'NONE'}") if pending else ""
         detail = f"required add-ons installed; {len(pending)} Thing(s) still initializing{first}; native metrics HTTP {metrics_status}"
+        # Only the symptoms count: another Thing's device flapping ONLINE and
+        # OFFLINE must not hold off the restart they need.
         signature = (tuple(sorted(installed)), tuple(sorted((row["UID"], row["statusInfo"]["status"],
-                     row["statusInfo"].get("statusDetail") or "NONE") for row in things)), metrics_status) if handlers_pending else None
+                     row["statusInfo"].get("statusDetail") or "NONE") for row in handlers_pending)), metrics_status) if handlers_pending else None
         return Check(False, detail), signature
 
     def check(self, system: System) -> Check:
@@ -1809,8 +1820,12 @@ class NativeReadiness(ReadinessStep):
                     system.say("   cannot verify the native service generation; no recovery restart was requested")
                     return 1
                 self.restarted = True
-                system.say("   installed add-ons still have unchanged missing/not-yet-ready handlers; "
-                           "one restart may recover this first-start condition without replacing userdata or credentials")
+                causes = [f"{len(self.untyped)} Thing(s) have channels openHAB loaded without their item types "
+                          f"(e.g. {min(self.untyped)}), so they never poll"] if self.untyped else []
+                if len(self.untyped) < len(self.symptoms):
+                    causes.append("installed add-ons still have unchanged missing/not-yet-ready handlers")
+                system.say(f"   {' and '.join(causes)}; one restart may recover this first-start condition without "
+                           "replacing userdata or credentials")
                 command = Command(("systemctl", "--no-block", "restart", "thermite-openhab.service"), root=True)
                 code = runner.perform(command, _RestartBeforeDeadline(system, deadline), self.context.area)
                 if code is None or code:

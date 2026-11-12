@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 from contextvars import ContextVar
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
 import shlex
@@ -15,6 +16,9 @@ from oh_install.system import UNATTENDED, System
 
 RERUN = f"Run thermite install --config {shlex.quote(str(oh_cli.AREA))} again to go on from here."
 _TASK_APPROVAL = ContextVar("thermite_task_approval", default=False)
+#: The next stage's number: run() numbers its steps, and stages after them
+#: (a rollback, its health, a commit's cleanup) go on from there.
+_NEXT = ContextVar("thermite_install_next_stage", default=1)
 
 
 def confirm_run(system: System, operation: str, rerun: str = RERUN) -> bool:
@@ -68,6 +72,37 @@ def perform(action: Action, system: System, area: Path, rerun: str = RERUN, *,
         _TASK_APPROVAL.reset(approval)
 
 
+def upcoming() -> int:
+    """The next stage's number."""
+    return _NEXT.get()
+
+
+@contextlib.contextmanager
+def stage(system: System, title: str) -> Iterator[progress.Progress]:
+    """A numbered stage outside run()'s steps, for work its caller already
+    has approval for: commands in it keep their output behind the spinner,
+    shown when they fail or opt in. Unless the caller finishes it, it
+    fails."""
+    number = _NEXT.get()
+    _NEXT.set(number + 1)
+    with progress.Progress(system, f"{number}. {title}") as display:
+        display.working()
+        yield display
+
+
+def staged(system: System, title: str, action: Action, area: Path, *, done: Sequence[int] = (0,)) -> int | None:
+    """One approved action as its own stage(); its exit status."""
+    with stage(system, title) as display:
+        code = perform(action, system, area, root_confirmed=True)
+        if code is None:
+            display.finish("STOP", "owner input required or declined")
+        elif code in done:
+            display.passed("")
+        else:
+            display.finish("FAIL", f"exit status {code}")
+    return code
+
+
 def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = False, first: int = 1,
         rerun: str = RERUN, root_confirmed: bool = False) -> int:
     """0 once every step is done. A dry run only reads: it reports each
@@ -81,6 +116,7 @@ def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = Fa
     status = 0
     for number, step in enumerate(steps, first):
         label = f"{number}. {step.title}"
+        _NEXT.set(number + 1)
         if dry_run:
             found = step.check(system)
             system.say(f"{label}: {found.problem or ('done, ' if found.done else '') + found.detail}")

@@ -80,7 +80,7 @@ class Transacted(Exception):
            "stays selected.",
         4: "The {operation} rolled back: the previous version runs again, but its health does not pass (above). "
            "The previous owner command stays selected.",
-        5: "The rollback did not finish: Thermite stays stopped. Run {command} again to finish it.",
+        5: "The rollback did not finish (above). Run {command} again to finish it.",
         130: "Interrupted: run {command} again; it rolls back the unfinished transaction first.",
     }
 

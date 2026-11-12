@@ -309,6 +309,57 @@ class ThingReadiness(unittest.TestCase):
         self.assertIn("sonos:PLAY1:fixture OFFLINE/HANDLER_INITIALIZING_ERROR", message)
         self.assertIn("--native-timeout", message)
 
+    def test_things_loaded_without_their_channel_item_types_get_one_restart(self):
+        """openHAB 5.2.3's YAML Thing provider can lose a start-up race: an HTTP
+        Thing whose channels have no item type never polls and stays UNKNOWN
+        until openHAB restarts. A Thing UNKNOWN for other reasons just waits."""
+        def http(status, item_type):
+            row = thing("http:url:fixture_tv", status)
+            row["channels"] = [{"uid": "http:url:fixture_tv:power", "kind": "STATE", "itemType": item_type},
+                               {"uid": "http:url:fixture_tv:pressed", "kind": "TRIGGER", "itemType": None}]
+            return row
+
+        self.assertEqual(sandbox.untyped_channels(http("UNKNOWN", None)), ["http:url:fixture_tv:power"])
+        self.assertEqual(sandbox.untyped_channels(http("UNKNOWN", "Switch")), [])
+        flapping = [thing("network:pingdevice:fixture_phone", "ONLINE")]
+        for item_type, restarts in ((None, 1), ("Switch", 0)):
+            step, system, now = self.fixture([], wait=300)
+            rows, generation = [http("UNKNOWN", item_type)], [1]
+            system.unit.side_effect = lambda name, **kwargs: Unit("active", "enabled", 0, generation[0])
+            system.interactive.return_value = True
+            system.ask.return_value = "y"
+
+            def probe(url, token, path, deadline, **kwargs):
+                if path == step.addons_path:
+                    return NativeProbe(200, [{"uid": "binding-sonos", "installed": True}])
+                if path != step.things_path:
+                    return NativeProbe(200)
+                # Another device going on and off line must not hold the restart off.
+                online = flapping[0]["statusInfo"]["status"] == "ONLINE"
+                flapping[0] = (thing(flapping[0]["UID"], "OFFLINE", "COMMUNICATION_ERROR") if online
+                               else thing(flapping[0]["UID"], "ONLINE"))
+                return NativeProbe(200, [*rows, *flapping])
+
+            def restart(argv, area, **kwargs):
+                self.assertEqual(argv[-3:], ("--no-block", "restart", "thermite-openhab.service"))
+                generation[0] += 1
+                rows[:] = [http("ONLINE", "Switch")]
+                return 0
+
+            system.native_probe.side_effect = probe
+            system.run.side_effect = restart
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(step.wait(system), 1 - restarts)
+            self.assertEqual(system.run.call_count, restarts)
+            said = " ".join(call.args[0] for call in system.say.call_args_list)
+            if restarts:
+                self.assertLess(now[0], 120)
+                self.assertIn("1 Thing(s) have channels openHAB loaded without their item types "
+                              "(e.g. http:url:fixture_tv)", said)
+            else:
+                self.assertEqual(now[0], 300)
+                self.assertIn("http:url:fixture_tv UNKNOWN/NONE", said)
+
     def test_configuration_errors_fail_at_once_with_their_uid(self):
         step, system, now = self.fixture([[thing("http:url:fixture", "OFFLINE", "CONFIGURATION_ERROR")]])
         self.assertEqual(step.wait(system), 1)
