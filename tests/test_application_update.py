@@ -87,11 +87,15 @@ class ApplicationUpdate(fixtures.ApplicationFixture):
     def test_repeated_current_application_reuses_environment_and_keeps_launcher_and_commit(self):
         self.assertEqual(self.apply(source=self.source), 0)
         pin = transaction.clean(self.repo)
-        launcher = self.launcher.lstat()
+        # Reading the link may update its access time; the link itself, its
+        # target and its times of change must stay.
+        kept = lambda: (self.launcher.readlink(), self.launcher.lstat().st_ino,
+                        self.launcher.lstat().st_mtime_ns, self.launcher.lstat().st_ctime_ns)
+        launcher = kept()
         self.calls.clear()
         self.assertEqual(self.apply(source=self.source), 0)
         self.assertEqual(transaction.clean(self.repo), pin)
-        self.assertEqual(self.launcher.lstat(), launcher)
+        self.assertEqual(kept(), launcher)
         self.assertFalse(any("pip" in args or "clone" in args for args in self.calls))
         self.assertTrue(any(args[1:2] == ("upgrade",) for args in self.calls), "readiness must still run")
 
