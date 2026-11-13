@@ -620,6 +620,15 @@ class Alerting(unittest.TestCase):
         silenced = {source for source, targets in alerts.INHIBITS if "ThermitePolicyUnenforced" in targets}
         self.assertEqual(silenced, {"ThermitePolicyWorkerStalled", "ThermiteRuntimeUnavailable"})
 
+    def test_each_thing_that_never_started_alerts_on_its_own_but_not_one_asleep(self):
+        rule = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteThingStuck")
+        self.assertEqual(rule["expr"], 'thermite_thing_status_info{status=~"UNINITIALIZED|INITIALIZING|UNKNOWN"} == 1')
+        self.assertEqual((rule["for"], rule["labels"]["severity"]), ("15m", "critical"))
+        self.assertNotIn("OFFLINE", rule["expr"])
+        self.assertNotIn("by", rule["expr"], "one series per Thing, so a second stuck Thing is not hidden")
+        silenced = {source for source, targets in alerts.INHIBITS if "ThermiteThingStuck" in targets}
+        self.assertEqual(silenced, {"ThermiteRuntimeUnavailable"})
+
     def test_service_down_watches_every_daemon_with_escaped_names(self):
         rule = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteServiceDown")
         for unit in oh_units.ACCESS_UNITS:

@@ -69,6 +69,10 @@ HTTP1_CONNECTIONS = 6
 #: an SSE drop (as at every gateway restart) or refusal is not giving up.
 TIMEOUT_KINDS = ("policy_timeout", "locks_timeout", "command_timeout", "snapshot_timeout")
 STREAM_KINDS = ("stream_error", "stream_refused")
+#: Thing statuses openHAB leaves once it has started a Thing; one that stays
+#: in them never started: its binding failed or its settings are wrong. A
+#: device asleep is OFFLINE instead.
+STARTING = ("UNINITIALIZED", "INITIALIZING", "UNKNOWN")
 #: Unallocated btrfs space below which a new metadata chunk may not fit.
 BTRFS_UNALLOCATED = 5 * 2**30
 
@@ -87,6 +91,7 @@ CATALOG = {
     "ThermiteGatewayFeedDown": ("Remotes are not live", "For five minutes the gateway has been reconnecting to the runtime's event feed, so every remote page shows states as they were. Check the runtime and thermite-access.service's journal."),
     "ThermiteRemoteStarved": ("A remote holds too many HTTP/1.1 streams", "One client holds six or more event streams over HTTP/1.1, the browser's connection limit, so its controls can stall. Close extra remote pages on that device. Switching & remotes shows streams by HTTP version."),
     "ThermiteRemoteTimeouts": ("Remotes are timing out", "Remote pages reported repeated timeouts waiting for the gateway in the last fifteen minutes. Switching & remotes shows which requests and how long they waited."),
+    "ThermiteThingStuck": ("A device's Thing never started", "For fifteen minutes openHAB has had a device's Thing neither online nor offline, so its states never update and its commands go nowhere; a device that is asleep goes offline instead. A binding that failed as openHAB started does this, and restarting thermite-openhab.service brings it up; missing or wrong settings keep it so until fixed. Things not online, on the Devices dashboard, lists each one."),
     "ThermiteRoutingTelemetryUnavailable": ("Routing telemetry is unreadable", "For five minutes the routing executor's status or routing's counts in the runtime have not been valid, so the dashboards cannot show switching, device failures or quarantined devices. Check the runtime's log for the routing rule and the routing executor."),
     "ThermiteRoutingQuarantined": ("Routing commands are quarantined", "The routing executor has refused commands to a device for five minutes after an uncertain outcome, and its recovery reads have not succeeded. Devices shows which device; check that it is powered and on its network."),
     "ThermitePolicyWorkerStalled": ("Room schedules are not being applied", "The room policy worker has not completed a pass for three minutes, so schedules and locks are not enforced. Check thermite-access-worker.service and its journal."),
@@ -101,13 +106,14 @@ CATALOG = {
 #: Alerts that should push to a phone once delivery is commissioned.
 CRITICAL = frozenset({"ThermiteCheckFailing", "ThermiteRuntimeUnavailable", "ThermiteGatewayDown", "ThermiteGatewayFeedDown",
                       "ThermiteRemoteStarved", "ThermiteServiceDown", "ThermiteRoutingQuarantined",
-                      "ThermitePolicyWorkerStalled", "ThermitePolicyUnenforced", "ThermiteHandlerPoolSaturated"})
+                      "ThermitePolicyWorkerStalled", "ThermitePolicyUnenforced", "ThermiteHandlerPoolSaturated",
+                      "ThermiteThingStuck"})
 #: (source, targets): while the source fires, the targets would only repeat it.
 INHIBITS = (
     ("ThermiteRuntimeUnavailable", ("ThermiteCheckFailing", "ThermiteControlUnknown", "ThermiteHandlerPoolSaturated",
                                     "ThermiteHandlerTelemetryUnavailable", "ThermiteRoutingQuarantined",
                                     "ThermiteRoutingTelemetryUnavailable", "ThermitePolicyUnenforced",
-                                    "ThermiteGatewayFeedDown")),
+                                    "ThermiteGatewayFeedDown", "ThermiteThingStuck")),
     ("ThermiteGatewayDown", ("ThermiteGatewayFeedDown", "ThermiteRemoteStarved", "ThermiteRemoteTimeouts")),
     # A stalled worker's last textfile keeps its last states.
     ("ThermitePolicyWorkerStalled", ("ThermitePolicyUnenforced",)),
@@ -245,6 +251,8 @@ def rules(mapping):
             alert("ThermiteGatewayFeedDown", f'(thermite_gateway_upstream_state{{state="connecting"}} == 1) and on() ({GATEWAY_INSTALLED})', "5m"),
             alert("ThermiteRemoteStarved", f'thermite_gateway_sse_peer_streams_max{{http_version="1.1"}} >= {HTTP1_CONNECTIONS}', "1m"),
             alert("ThermiteRemoteTimeouts", f'sum(increase(thermite_client_events_total{{kind=~"{timeouts}"}}[15m])) >= 5', "5m"),
+            # Per Thing, so each one stuck says so, while another alert fires.
+            alert("ThermiteThingStuck", f'thermite_thing_status_info{{status=~"{"|".join(STARTING)}"}} == 1', "15m"),
             alert("ThermiteRoutingQuarantined", "thermite_routing_quarantined > 0", "5m"),
             alert("ThermiteRoutingTelemetryUnavailable",
                   "(thermite_routing_executor_up == 0) or (thermite_routing_metrics_up == 0)", "5m"),

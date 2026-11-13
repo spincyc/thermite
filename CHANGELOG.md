@@ -7,6 +7,15 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A new critical alert, ThermiteThingStuck, fires for each device Thing
+  that openHAB has left neither online nor offline (unknown, initializing
+  or uninitialized) for fifteen minutes: one whose binding failed as
+  openHAB started, which a restart of thermite-openhab.service brings up,
+  or whose settings are wrong. A device asleep is offline and does not
+  fire it. When nine HTTP Things stayed unknown for 30 hours after
+  openHAB's YAML loader lost its start-up race, nothing said so: the one
+  house-wide incomplete-telemetry alert was already firing for another
+  device.
 - `thermite upgrade --revision` takes a commit hash abbreviated as `git log
   --oneline` prints it. GitHub sends only whole hashes, so the upgrade
   fetches the official branches and resolves the abbreviation among them;
