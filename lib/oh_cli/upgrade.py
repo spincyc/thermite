@@ -145,7 +145,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runtime-token-file", type=Path,
                         help="advanced: import an existing internal runtime API token from your private file")
     parser.add_argument("--source", type=Path, help="upgrade from a clean application checkout instead of the official repository")
-    parser.add_argument("--revision", help="application Git revision (default: official main)")
+    parser.add_argument("--revision", help="application Git branch, tag or commit, its hash abbreviated or whole "
+                        "(default: official main)")
     parser.add_argument("--native-timeout", type=steps.native_timeout_argument, metavar="SECONDS",
                         help="one native readiness allowance shared by runtime startup, gateway commissioning "
                              "and final settlement (default 900)")

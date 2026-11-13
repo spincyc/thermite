@@ -119,6 +119,10 @@ thermite upgrade --config /path/to/private-site --source /path/to/thermite
 thermite upgrade --config /path/to/private-site --revision REVIEWED_COMMIT
 ```
 
+`--revision` takes a branch, a full commit hash, or a commit hash
+abbreviated as `git log --oneline` prints it, which must name a single
+commit on one of the official repository's branches: GitHub sends only whole
+hashes, so the upgrade fetches the branches and finds the commit among them.
 With `--source`, the default revision is that clean checkout's HEAD; combine
 it with `--revision` to select one of its other commits or tags. Source
 `make upgrade CONFIG=/path/to/private-site` is only an alias for the same public
@@ -192,9 +196,11 @@ run. See [when an upgrade fails](installation.md#when-an-upgrade-fails) for
 the exit statuses.
 
 A run that stops before its host phase keeps a completed pin commit and the
-candidate environment, and prints a Resume command that names the fetched
-commit with `--revision`: it revalidates and reuses the candidate without a
-duplicate pin commit. Meanwhile the previous owner command runs site
+candidate environment, says whether it made that commit, and prints a Resume
+command that names the fetched commit with `--revision`, in full: it
+revalidates and reuses the candidate without a duplicate pin commit. An
+abbreviation no branch holds stops the run before anything changes, with no
+Resume command. Meanwhile the previous owner command runs site
 commands with the site's pinned release, verified from
 `var/application-releases/<digest>`, instead of refusing. A changed or
 damaged retained release is refused. `--dry-run` shows a provisional host

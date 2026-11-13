@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite upgrade --revision` takes a commit hash abbreviated as `git log
+  --oneline` prints it. GitHub sends only whole hashes, so the upgrade
+  fetches the official branches and resolves the abbreviation among them;
+  one no branch holds stops the run before anything changes, where the
+  fetch failed and the run then claimed a retained site commit and
+  offered to resume the same failing command. A stopped run now says a
+  site release commit is retained only when it made one, and its Resume
+  command names the fetched commit in full.
 - `make check` runs the tests in parallel, one worker process per CPU, in
   about a minute where it took over five on a four-core host; `make check
   JOBS=1` runs them serially, as before. A worker keeps to one test class

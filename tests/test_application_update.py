@@ -84,6 +84,49 @@ class ApplicationUpdate(fixtures.ApplicationFixture):
         pip = next(args for args in self.calls if "--no-deps" in args)
         self.assertEqual(transaction.clean(Path(pip[-1])), selected)
 
+    def later_official_commit(self):
+        """The official source, as main, with a commit after its first."""
+        transaction.git(self.source, "branch", "-m", "main")
+        first = transaction.clean(self.source)
+        (self.source / "README").write_text("later reviewed application\n")
+        transaction.git(self.source, "commit", "-am", "Later fixture")
+        return first
+
+    def test_an_abbreviated_official_commit_resolves_among_its_branches(self):
+        first = self.later_official_commit()
+        with patch.object(application, "OFFICIAL_SOURCE", str(self.source)):
+            self.assertEqual(self.apply(revision=first[:7]), 0)
+        pip = next(args for args in self.calls if "--no-deps" in args)
+        self.assertEqual(transaction.clean(Path(pip[-1])), first)
+
+    def test_an_abbreviation_no_official_branch_holds_stops_before_any_change(self):
+        self.later_official_commit()
+        said = []
+        with patch.object(application, "OFFICIAL_SOURCE", str(self.source)), \
+                self.assertRaisesRegex(application.UnknownRevision, "starts with 0000000; give a branch"):
+            self.apply(revision="0000000", say=said.append)
+        self.assertEqual(said[-1], "This run includes application acquisition, the site release commit, native "
+                                   "services, the access gateway, sudo commands and readiness checks, as one "
+                                   "install transaction that commits or rolls back.",
+                         "a refusal needs no resume advice")
+        self.assertEqual(transaction.clean(self.repo), self.before)
+        self.assertEqual(self.launcher.resolve(), self.old / "bin/thermite")
+
+    def test_a_stopped_run_resumes_the_fetched_commit_and_names_a_pin_only_once_committed(self):
+        first = self.later_official_commit()
+        for failure, pin in (("pip", False), ("host edit", True)):
+            with self.subTest(failure=failure):
+                self.fail = failure if failure == "pip" else None
+                self.edit_during_host = failure == "host edit"
+                said = []
+                with patch.object(application, "OFFICIAL_SOURCE", str(self.source)), self.assertRaises((subprocess.CalledProcessError, ValueError)):
+                    self.apply(revision=first[:7], say=said.append)
+                stopped = next(line for line in said if line.startswith("The run stopped"))
+                self.assertEqual("site release commit is retained" in stopped, pin)
+                self.assertTrue(said[-1].startswith("Resume: "))
+                self.assertTrue(said[-1].endswith("--revision " + first), "not the abbreviation, nor what it names later")
+                transaction.git(self.repo, "reset", "--hard", self.before)
+
     def test_repeated_current_application_reuses_environment_and_keeps_launcher_and_commit(self):
         self.assertEqual(self.apply(source=self.source), 0)
         pin = transaction.clean(self.repo)

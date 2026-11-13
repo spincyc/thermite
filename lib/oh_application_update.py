@@ -24,6 +24,9 @@ import oh_source_upgrade as transaction
 
 OFFICIAL_SOURCE = "https://github.com/spincyc/thermite.git"
 DEFAULT_REVISION = "main"
+#: A commit hash shorter than Git's full 40 digits. A server sends only
+#: whole hashes or names, so it resolves among the fetched branches.
+ABBREVIATED = re.compile(r"[0-9a-f]{4,39}", re.IGNORECASE)
 HOST_PHASE_PROTOCOL = 1
 SITE_FILE = "thermite-site.json"
 #: The hashed dependency lock installed before the application itself.
@@ -94,6 +97,10 @@ class Transacted(Exception):
 
 class Downgrade(ValueError):
     """The selected release is older than the one the site already pins."""
+
+
+class UnknownRevision(ValueError):
+    """The official source has no single commit the abbreviation names."""
 
 
 def run(*argv: str | Path, capture: bool = False) -> str:
@@ -235,8 +242,16 @@ def acquire(store: Path, source: Path | None, revision: str | None, release: str
             transaction.git(mirror, "remote", "add", "origin", OFFICIAL_SOURCE)
         if transaction.git(mirror, "remote", "get-url", "origin") != OFFICIAL_SOURCE:
             raise ValueError("the saved application origin differs from the official source")
-        run("git", "-C", mirror, "fetch", "--no-tags", "origin", revision or DEFAULT_REVISION)
-        commit = transaction.git(mirror, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+        if revision is not None and ABBREVIATED.fullmatch(revision):
+            run("git", "-C", mirror, "fetch", "--no-tags", "--prune", "origin", "+refs/heads/*:refs/heads/*")
+            try:
+                commit = transaction.git(mirror, "rev-parse", "--verify", "--quiet", revision + "^{commit}")
+            except subprocess.CalledProcessError:
+                raise UnknownRevision(f"no single commit on a branch of {OFFICIAL_SOURCE} starts with {revision}; "
+                                      "give a branch, or more of the commit's hash") from None
+        else:
+            run("git", "-C", mirror, "fetch", "--no-tags", "origin", revision or DEFAULT_REVISION)
+            commit = transaction.git(mirror, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
         origin = mirror
     else:
         commit = transaction.git(source, "rev-parse", "--verify", (revision or "HEAD") + "^{commit}")
@@ -417,6 +432,14 @@ def refuse_older(reason: str | None, site: Path, digest: str) -> None:
                         "release can read, then rerun with --allow-downgrade.")
 
 
+def advanced(site_root: Path, head: str) -> bool:
+    """Whether the site has committed since `head`: a stopped run's pin."""
+    try:
+        return transaction.git(site_root, "rev-parse", "HEAD") != head
+    except (subprocess.CalledProcessError, OSError):
+        return False
+
+
 def preview(operation: str, site: Path, program: Path, exact: bool, host_args: Sequence[str],
             say: Callable[[str], None]) -> int:
     """Describe this host now with the running release, when the site pins it.
@@ -557,7 +580,7 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
                 finally:
                     temporary.unlink(missing_ok=True)
                 retain(store, environment, previous_launcher, say)
-        except Downgrade:
+        except (Downgrade, UnknownRevision):
             raise
         except Transacted as outcome:
             say(outcome.message)
@@ -569,16 +592,17 @@ def apply(operation: str, site: Path, *, source: Path | None = None, revision: s
                     + shlex.join(["thermite", operation, "--config", str(site)])
                     + " again: it rolls the transaction back first, then stops.")
                 raise
-            say("The run stopped; the previous owner command and application environments are retained. "
-                "A completed site release commit is retained so the same command can resume.")
+            say("The run stopped; the previous owner command and application environments are retained."
+                + (" Its site release commit is retained so the same command can resume."
+                   if advanced(site_root, site_head) else ""))
             resume = ["thermite", operation, "--config", str(site)]
             if source is not None and (operation == "upgrade" or program != source):
                 resume.extend(("--source", str(source)))
-            if revision is not None:
-                resume.extend(("--revision", revision))
-            elif source is None and key is not None and key.startswith("git-"):
-                # Resume the fetched commit, not whatever the branch names later.
+            if source is None and key is not None and key.startswith("git-"):
+                # Resume the fetched commit, not whatever the name selects later.
                 resume.extend(("--revision", key.removeprefix("git-")))
+            elif revision is not None:
+                resume.extend(("--revision", revision))
             if allow_downgrade:
                 resume.append("--allow-downgrade")
             resume.extend(forwarded)
