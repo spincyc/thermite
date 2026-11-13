@@ -46,9 +46,13 @@ class Custody(unittest.TestCase):
         (self.external / "bin/tool").write_text("external executable")
 
     def snapshot(self, path):
-        # The fixture's own read may advance atime; record metadata afterwards.
+        # Any read, the fixture's or custody's, may advance the access time
+        # (relatime, against a ctime that custody's chmod just set), so it
+        # is not compared; what a replay must keep is.
         content = path.read_bytes() if path.is_file() else None
-        return path.stat(), content
+        info = path.stat()
+        return (info.st_mode, info.st_ino, info.st_nlink, info.st_uid, info.st_gid, info.st_size,
+                info.st_mtime_ns, info.st_ctime_ns), content
 
     def test_replay_is_idempotent_and_preserves_new_private_state(self):
         custody.apply(self.plan)
