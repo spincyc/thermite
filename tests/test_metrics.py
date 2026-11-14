@@ -78,7 +78,8 @@ def read_families():
     routing executor and the thingHandler pool telemetry."""
     from tests import test_zone_sync as zones
     texts = [*FILES.values(), *rendered(zones.house()).values(),
-             yaml.safe_dump(alerts.rules({**MAP, "handler_pool": {"observed": "example_observed"}}))]
+             yaml.safe_dump(alerts.rules({**MAP, "handler_pool": {"observed": "example_observed"}})),
+             json.dumps(dashboards.usage({**MAP, "playing": Playing.MAPPING["playing"]}))]
     return "\n".join(texts)
 
 
@@ -283,6 +284,70 @@ class Selections(unittest.TestCase):
         words = dashboards._source_words({**mapping, "devices": devices})
         self.assertEqual((words["example_computer"], words["example_player"]),
                          ("Player (Example Computer)", "Player (Example Player)"))
+
+
+class Playing(unittest.TestCase):
+    MAPPING = {"devices": {"example_player": {"room": "example_west", "kind": "streamer"}},
+               "items": {f"loc_example_{side}_source": {"room": f"example_{side}", "zone": f"example_{side}",
+                                                        "point": "source", "convert": "enum",
+                                                        "options": ["off", "example_player"]}
+                         for side in ("west", "east")},
+               "playing": {"example_player": {"app": "example_player_playing_app",
+                                              "title": "example_player_playing_title"}}}
+    LABELS = {"device": "example_player", "room": "example_west", "kind": "streamer"}
+    NOW = 1_700_000_000.0
+
+    def played(self, **states):
+        return exporter._playing(self.MAPPING, items(**states), now=self.NOW)
+
+    def test_what_a_device_plays_is_one_series_at_the_time_of_reading_with_the_zones_showing_it(self):
+        self.assertEqual(self.played(example_player_playing_app="Example App", example_player_playing_title="A\nB  title",
+                                     loc_example_west_source="example_player", loc_example_east_source="example_player"),
+                         [("thermite_playing_timestamp_seconds", {**self.LABELS, "app": "Example App",
+                                                                  "title": "A B title",
+                                                                  "zones": "example_east,example_west"}, self.NOW)])
+        self.assertEqual(self.played(example_player_playing_app="UNDEF", example_player_playing_title="Example Track",
+                                     loc_example_west_source="off", loc_example_east_source="UNDEF"),
+                         [("thermite_playing_timestamp_seconds", {**self.LABELS, "app": "", "title": "Example Track",
+                                                                  "zones": ""}, self.NOW)])
+
+    def test_nothing_playing_is_no_series_and_text_is_bounded_and_escaped(self):
+        self.assertEqual(self.played(example_player_playing_app="UNDEF", example_player_playing_title="NULL"), [])
+        self.assertEqual(self.played(example_player_playing_app=" ", example_player_playing_title=""), [])
+        (_, labels, _), = self.played(example_player_playing_app="Example", example_player_playing_title='say "x" ' * 40)
+        self.assertEqual(len(labels["title"]), exporter.TEXT_CHARS)
+        self.assertIn('title="say \\"x\\" say', exporter.exposition(self.played(
+            example_player_playing_app="Example", example_player_playing_title='say "x" say')))
+        # A lone surrogate, which JSON can carry and UTF-8 cannot, is no failed scrape.
+        lone = self.played(example_player_playing_app="Example", example_player_playing_title="Example \ud800 title")
+        self.assertEqual(lone[0][1]["title"], "Example ? title")
+        exporter.exposition(lone).encode()
+
+    def test_the_map_names_each_devices_playing_items(self):
+        self.assertEqual(MAP["version"], 3)
+        self.assertEqual(MAP["playing"], {})
+        inventory = copy.deepcopy(INVENTORY)
+        inventory["devices"].append({"id": "example_shield", "room": "example_west", "kind": "streamer", "make": "NVIDIA",
+                                     "model": "SHIELD TV Pro", "ip": "192.0.2.31",
+                                     "controls": {"observe": ["cast"], "control": ["androidtv_googletv"]}})
+        self.assertEqual(oh_metrics.exporter_map(inventory)["playing"], {"example_shield": {
+            "app": "example_shield_playing_app", "title": "example_shield_playing_title"}})
+
+    def test_the_usage_board_shows_what_played_where_something_can_play(self):
+        titles = lambda board: [panel["title"] for panel in panels(board)]  # noqa: E731
+        self.assertNotIn("What rooms played", titles(dashboards.usage(MAP)))
+        board = dashboards.usage({**MAP, "playing": self.MAPPING["playing"]})
+        timeline = next(panel for panel in panels(board) if panel["title"] == "What rooms played")
+        # Only what a room showed, each title in any interval it played, however short.
+        self.assertIn('count_over_time(thermite_playing_timestamp_seconds{zones!=""}[$__interval])',
+                      timeline["targets"][0]["expr"])
+        self.assertEqual(timeline["interval"], "1m")
+        rows = next(panel for panel in panels(board) if panel["title"] == "What played, where and for how long")
+        # First and last are the readings' own times; no subquery.
+        self.assertEqual([target["expr"] for target in rows["targets"]], [
+            "min by (device, zones, app, title) (min_over_time(thermite_playing_timestamp_seconds[$__range])) * 1000",
+            "max by (device, zones, app, title) (max_over_time(thermite_playing_timestamp_seconds[$__range])) * 1000",
+            "sum by (device, zones, app, title) (count_over_time(thermite_playing_timestamp_seconds[$__range])) * 30"])
 
 
 class RoutingSeries(unittest.TestCase):

@@ -378,6 +378,30 @@ thermite reboot DEVICE --config "$HOME/thermite-site"
 thermite reboot --config "$HOME/thermite-site"
 ```
 
+### What is playing
+
+Where a room's source reports what it plays, the remotes show it. On the
+web it appears under the source buttons and under each room's name. In the
+terminal it appears above the room's buttons and after its source on Home.
+If the source reports nothing, the room's audio device is shown instead.
+What each device can report:
+
+- **NVIDIA SHIELD:** the app on screen, and the title where the app sends
+  one over Google Cast. Disney+ sends titles; Netflix does not.
+- **Sony TV:** what is cast to it.
+- **Sonos or WiiM player:** its track and artist.
+- **Apple TV:** nothing yet.
+
+A home screen, the screen saver, or a device that is off counts as nothing
+playing.
+
+Prometheus keeps this as `thermite_playing_timestamp_seconds` for as long
+as it keeps metrics, 395 days by default. The Usage dashboard shows what
+played, when, in which rooms, and for how long. Playing means on screen or
+in a speaker, paused or not, so a device left on keeps counting. In the
+remotes, Guests see titles unless an Admin turns that off under Security.
+Grafana shows them to anyone on your network.
+
 ## Set up HTTPS and accounts
 
 Installation prints the verified HTTPS URL, on port 13601 unless

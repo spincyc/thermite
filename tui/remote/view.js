@@ -571,6 +571,12 @@ function remoteContent(frame, g, w, ctx) {
   if (notice) y = paragraph(g, 2, y, w - 4, (session.controlBlock() ? "Read-only · " : "") + notice, "dim");
   const shown = session.view(current, state);
   if (shown.problem) y = paragraph(g, 2, y, w - 4, "\u26a0 " + shown.problem, "alert");
+  // What the room's source plays, one quiet line above its buttons.
+  if (shown.playing && w > 8) {
+    g.put(2, y, "\u25b6", "hotkey");
+    g.put(4, y, fit(shown.playing, w - 6).trimEnd(), "dim");
+    y += 1;
+  }
   // A room that is off shows no remote until a device bubble is tapped.
   if (session.remoteHidden(list)) return paragraph(g, 2, y + 1, w - 4, "Off \u00b7 choose a source, or a device for its buttons", "dim");
   const remote = session.remoteOf(target);

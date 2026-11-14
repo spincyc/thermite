@@ -11,7 +11,7 @@ import re
 import oh_integrations as integrations
 from oh_conf import Conf, House, parse_options
 
-from . import routing
+from . import playing, routing
 from .remote_diagnostics import providers
 
 SECRET = re.compile(r"(?:^|_)(?:password|passwd|passphrase|secret|token|psk|authorization|credential|auth)(?:_|$)", re.I)
@@ -81,8 +81,11 @@ def manifest(house: House, conf: Conf) -> dict:
 
     for device in active:
         points = dict(conf.points(device["id"]))
+        # What it plays joins readings the feed already reports.
+        joined = set((playing.items(device) or {}).values())
         for name, item in points.items():
-            add(name, item, device)
+            if name not in joined:
+                add(name, item, device)
         # A reading that loses its value while this reads OFF is its device
         # being off, which the power's own line already says.
         for name, power in integrations.powered(device, points).items():

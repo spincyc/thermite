@@ -390,7 +390,7 @@
           "The next poll reads every room back", answering ? "" : "bad");
         return;
       }
-      if (event.type === "problem") {
+      if (event.type === "problem" || event.type === "playing") {
         emit({ type: "change" });
         return;
       }
@@ -431,15 +431,26 @@
 
     // What a room shows, for the room list, announcements and the alert line:
     // the alert names the source's problem, then each of the room's devices
-    // openHAB cannot drive (backend problemOf), after its label.
+    // openHAB cannot drive (backend problemOf), after its label. playing is
+    // what its source plays, else its audio device ("Disney+ · DuckTales"),
+    // or null.
     function view(room, state) {
       const shown = sourceView(room, state);
+      shown.playing = state.status === "current" && option(room, state.value) ? playing(room, state.value) : null;
       const problems = [shown.problem].concat(room.devices.map((device) => {
         const problem = backend.problemOf(device.id);
         return problem ? device.label + " " + problem : null;
       })).filter(Boolean);
       if (problems.length) shown.problem = problems.join(". ");
       return shown;
+    }
+
+    function playing(room, value) {
+      const text = (id) => {
+        const now = id ? backend.playingOf(id) : null;
+        return now ? [now.app, now.title].filter(Boolean).join(" \u00b7 ") : null;
+      };
+      return text(value === Remote.OFF ? null : value) || text(room.audio && room.audio.id);
     }
 
     function sourceView(room, state) {

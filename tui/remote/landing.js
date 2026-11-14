@@ -1,6 +1,6 @@
 /* Home is navigation and reported room state, never a device control. */
 "use strict";
-const { LOCK, fit, fitTail, wrap } = require("./grid");
+const { LOCK, fit, fitTail, length, wrap } = require("./grid");
 const Torch = require("./torch");
 const Navigation = require("../../web/remote/navigation");
 
@@ -45,9 +45,15 @@ function content(g, width, ctx, height) {
     const style = active ? "row.focus" : "row";
     g.fill(1, y, width - 2, 1, style);
     g.put(2, y, fit(room.label, nameWidth), active ? style : "base");
-    g.put(nameWidth + 4, y, fitTail(shown.short, lock.locked ? " " + LOCK : "", Math.max(1, width - nameWidth - 6)), active ? style : "dim");
+    // The source, then what it plays where the row has room: "Shield · Disney+ · DuckTales".
+    const sourceWidth = Math.max(1, width - nameWidth - 6);
+    const source = fitTail(shown.short, lock.locked ? " " + LOCK : "", sourceWidth).trimEnd();
+    g.put(nameWidth + 4, y, source, active ? style : "dim");
+    const rest = sourceWidth - length(source) - 3;
+    if (shown.playing && rest >= 8) g.put(nameWidth + 4 + length(source), y, " \u00b7 " + fit(shown.playing, rest).trimEnd(), active ? style : "dim");
     g.hit(1, y++, width - 2, 1, { kind: "home-room", room: room.id, key, focus: true,
-      label: room.label + ", " + shown.spoken + (lock.locked ? ". " + lock.text : "") + ". Open Remotes" });
+      label: room.label + ", " + shown.spoken + (shown.playing ? ", playing " + shown.playing : "")
+        + (lock.locked ? ". " + lock.text : "") + ". Open Remotes" });
   });
   y += 1;
   const dayKey = "home:day";

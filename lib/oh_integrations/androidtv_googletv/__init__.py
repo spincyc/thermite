@@ -38,7 +38,9 @@ Items, per device:
   turns a command on the channel's own scale (VOLUME) into one VOLUME_UP or
   VOLUME_DOWN press per step and drops any other. A SHIELD's sound is the
   room's audio device's.
-- `<id>_android_app` (String): the app on screen, display-only.
+- `<id>_android_app` (String): the app on screen, display-only: its Android
+  package name, which playing() names (APP_NAMES); a home screen or the
+  screen saver (IDLE_APPS) is nothing playing.
 - `<id>_key` (String): a remote button id of its remote (keys()). The rule
   presses its Android key code (KEYCODES) or opens its app (APP_LINKS); any
   other id is dropped.
@@ -160,6 +162,38 @@ APP_LINKS = {
         "netflix": "https://www.netflix.com/title",
     },
 }
+#: Android package -> the app's name, for what is playing (playing()). Any
+#: other package is named by its second part (com.fubo.... is Fubo).
+APP_NAMES = {
+    "com.amazon.amazonvideo.livingroom": "Prime Video",
+    "com.apple.atve.androidtv.appletv": "Apple TV",
+    "com.cbs.ott": "Paramount+",
+    "com.crunchyroll.crunchyroid": "Crunchyroll",
+    "com.disney.disneyplus": "Disney+",
+    "com.fubo.firetv.screen": "Fubo",
+    "com.google.android.youtube.tv": "YouTube",
+    "com.google.android.youtube.tvmusic": "YouTube Music",
+    "com.google.android.youtube.tvunplugged": "YouTube TV",
+    "com.hulu.livingroomplus": "Hulu",
+    "com.limelight": "Moonlight",
+    "com.netflix.ninja": "Netflix",
+    "com.nvidia.geforcenow": "GeForce NOW",
+    "com.peacocktv.peacockandroid": "Peacock",
+    "com.plexapp.android": "Plex",
+    "com.sling": "Sling TV",
+    "com.spotify.tv.android": "Spotify",
+    "com.tubitv": "Tubi",
+    "com.valvesoftware.steamlink": "Steam Link",
+    "com.wbd.stream": "Max",
+    "org.xbmc.kodi": "Kodi",
+    "tv.pluto.android": "Pluto TV",
+    "tv.twitch.android.app": "Twitch",
+}
+#: Packages on screen while nothing plays: home screens, the screen saver,
+#: settings, the Play Store and voice search.
+IDLE_APPS = ("com.android.tv.settings", "com.android.vending", "com.google.android.apps.tv.launcherx",
+             "com.google.android.backdrop", "com.google.android.katniss", "com.google.android.leanbacklauncher",
+             "com.google.android.tvlauncher")
 #: The binding sends a debug-channel command starting with this as the raw
 #: protocol message whose hex follows.
 RAW = "GOOGLETV_RAW_"
@@ -316,6 +350,14 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
 def power_item(device: dict) -> str | None:
     """The device's power Item; None unless controlled."""
     return f"{device['id']}_android_power" if uses(device, PHASE, NAME) else None
+
+
+def playing(device: dict) -> dict:
+    """What it plays (oh_features.playing): the app on screen, while on."""
+    ident = device["id"]
+    return {"power": power_item(device),
+            "apps": [{"item": f"{ident}_android_app", "names": dict(APP_NAMES), "idle": list(IDLE_APPS),
+                      "package": True}]}
 
 
 def wake_item(device: dict) -> str | None:

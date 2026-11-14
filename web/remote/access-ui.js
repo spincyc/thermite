@@ -73,7 +73,7 @@
     host.replaceChildren();
     if (!mode.enabled) return;
     host.append(node("h2", "What guests see"), node("p",
-      "Guests, who use the remotes without signing in, see what each room is playing in the activity feed: titles, artists, apps and playback. Accounts always see it."));
+      "Guests, who use the remotes without signing in, see what each room is playing in the remotes and the activity feed: titles, artists, apps and playback. Accounts always see it. This does not cover the Grafana dashboards, which keep what played and which anyone on your network can open."));
     if (client.mock || !client.canEdit()) {
       host.appendChild(node("p", mode.guest_text ? "Guests see it." : "Guests do not see it.")); return;
     }

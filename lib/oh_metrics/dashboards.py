@@ -1179,7 +1179,7 @@ def usage(mapping: dict) -> dict:
         (f'(sum(thermite_item_info{{point="source",value="off"}}) or vector(0)) and on() ({available})', "Off"),
         (unknown_count, "Unobserved")], stack=True, minimum=0, maximum=len(zones),
         description="Routing zones by observed state. Off is normal; unknown source state is shown separately. "
-                    "Runtime outages remain gaps. No presence, playback or exact session is inferred.")
+                    "Runtime outages remain gaps. No presence or exact session is inferred.")
     for name, color in (("In use", IN_USE), ("Off", OFF), ("Unobserved", UNKNOWN)):
         _color(use, name, color)
     use["fieldConfig"]["defaults"]["custom"]["fillOpacity"] = 85
@@ -1208,8 +1208,54 @@ def usage(mapping: dict) -> dict:
         mix["fieldConfig"]["overrides"].append({"matcher": {"id": "byName", "options": value}, "properties": [
             {"id": "displayName", "value": words.get(value, value)}]})
     board.add(mix, 12, 9)
-    return dashboard(USAGE, board, "How the house is used: zones in use, where time went and the source mix. "
-                     "Off is normal; missing observations stay unknown.", annotations=False)
+    if mapping.get("playing"):
+        _played(board, mapping)
+    return dashboard(USAGE, board, "How the house is used: zones in use, where time went, the source mix and "
+                     "what played. Off is normal; missing observations stay unknown.", annotations=False)
+
+
+#: The playing series: the Unix time each device was read playing its app
+#: and title.
+PLAYING = "thermite_playing_timestamp_seconds"
+
+
+def _what(expr: str) -> str:
+    """expr with `what`: its app and title, joined by " · ", or whichever of
+    them it has."""
+    return (f'label_replace(label_replace(label_join({expr}, "what", " · ", "app", "title"), '
+            '"what", "$1", "what", " · (.*)"), "what", "$1", "what", "(.*) · ")')
+
+
+def _played(board: Board, mapping: dict) -> None:
+    """What each device played: when, and for how long in which rooms."""
+    shown = f'count_over_time({PLAYING}{{zones!=""}}[$__interval]) > bool 0'
+    timeline = state_timeline(
+        "What rooms played", [(f"max by (device, what) ({_what(shown)}) * on(device) group_left(label) "
+                               "thermite_device_info", "{{what}} ({{label}})")], value_map({1: ("Playing", IN_USE)}),
+        "Each app and title a device played while it was a room's source, one row each, as its app and title "
+        "Items read every 30 s: a title where the app sends one (Netflix sends none), a track on a speaker. What "
+        "played where no room showed it, such as music on a speaker of its own, is in the table below.")
+    timeline["interval"] = "1m"
+    board.add(timeline, 24, 10)
+    key = "device, zones, app, title"
+    rows = table("What played, where and for how long", "",
+                 ["device", "zones", "app", "title", "Value #A", "Value #B", "Value #C"],
+                 "Each app and title in the selected range: the rooms whose source the device was (none: no room "
+                 "showed it), when it was first and last read playing, and for how long: readings times the "
+                 "30-second scrape interval. Playing means on screen or in a speaker, paused or not.",
+                 names={"device": "Device", "zones": "Rooms", "app": "App", "title": "Title", "Value #A": "First",
+                        "Value #B": "Last", "Value #C": "Time"}, no_value="Nothing played")
+    _table_queries(rows, [
+        ("A", f"min by ({key}) (min_over_time({PLAYING}[$__range])) * 1000"),
+        ("B", f"max by ({key}) (max_over_time({PLAYING}[$__range])) * 1000"),
+        ("C", f"sum by ({key}) (count_over_time({PLAYING}[$__range])) * {SAMPLE_SECONDS}")])
+    _column(rows, "device", {"id": "mappings", "value": _words(_device_words(mapping))})
+    _column(rows, "zones", {"id": "mappings", "value": _words(_zone_words(mapping))})
+    for name in ("Value #A", "Value #B"):
+        _column(rows, name, {"id": "unit", "value": "dateTimeAsLocal"})
+    _column(rows, "Value #C", {"id": "unit", "value": "dtdurations"}, {"id": "decimals", "value": 0})
+    rows["options"]["sortBy"] = [{"displayName": "Last", "desc": True}]  # the latest first
+    board.add(rows, 24, 10)
 
 
 def yoke() -> dict:

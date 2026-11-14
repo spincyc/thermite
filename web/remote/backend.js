@@ -301,6 +301,18 @@
     return items;
   }
 
+  // Item name -> [device id, "app" or "title"] for every Item that tells
+  // what a device plays (oh_features.playing).
+  function playingItems(house) {
+    const items = Object.create(null);
+    Object.keys(house.devices).forEach((id) => {
+      const playing = house.devices[id].playing;
+      if (!playing) return;
+      ["app", "title"].forEach((field) => { if (playing[field]) items[playing[field]] = [id, field]; });
+    });
+    return items;
+  }
+
   // Item name -> device id for every device's problem Item.
   function problemItems(house) {
     const items = Object.create(null);
@@ -574,6 +586,20 @@
     problemOf: function (deviceId) {
       return this.problems[deviceId] || null;
     },
+    // What the device plays, {app, title}, each null when not known; null
+    // while it plays nothing anyone named.
+    playingOf: function (deviceId) {
+      const shown = (this.playing || {})[deviceId];
+      return shown && (shown.app || shown.title) ? { app: shown.app || null, title: shown.title || null } : null;
+    },
+    // NULL, UNDEF or an empty state is nothing.
+    updatePlaying: function (deviceId, field, value) {
+      const text = value && value !== NULL_STATE && value !== UNDEF ? value : null;
+      const shown = this.playing[deviceId] || (this.playing[deviceId] = { app: null, title: null });
+      if (shown[field] === text) return;
+      shown[field] = text;
+      this.emit({ type: "playing", device: deviceId });
+    },
     // NULL, UNDEF or an empty state is no problem.
     updateProblem: function (deviceId, value) {
       const problem = value && value !== NULL_STATE && value !== UNDEF ? value : null;
@@ -637,6 +663,8 @@
     // Every device with a control starts on, unmuted, 60% of the way up its own scale, on its first input.
     this.aims = {};
     this.problems = Object.assign({}, config.problems);
+    // Device id -> {app, title}: what a preview shows playing.
+    this.playing = Object.assign({}, config.playing);
     this.devices = unread(house);
     Object.keys(this.devices).forEach((id) => {
       const control = controlOf(house, id);
@@ -816,13 +844,15 @@
     });
     this.aims = {};
     this.problems = {};
+    this.playing = {};
     this.devices = unread(house);
     this.controlItems = remote ? controlItems(house) : Object.create(null);
     this.problemItems = remote ? problemItems(house) : Object.create(null);
+    this.playingItems = remote ? playingItems(house) : Object.create(null);
     if (this.access && !this.access.native) {
       this.access.subscribe((event) => {
         if (event.type === "unauthorized") {
-          this.stop(); this.connected = false; this.devices = unread(house); this.problems = {}; this.aims = {}; this.activity = null;
+          this.stop(); this.connected = false; this.devices = unread(house); this.problems = {}; this.playing = {}; this.aims = {}; this.activity = null;
           Object.values(this.items).forEach((item) => { item.value = NULL_STATE; item.pending = null; });
         }
         this.emit({ type: "access", unauthorized: event.type === "unauthorized", guest: event.guest === true });
@@ -1005,9 +1035,11 @@
     this.syncWaiters.slice().forEach((waiter) => waiter());
   };
 
-  // Every Item a control is read from, then every problem Item.
+  // Every Item a control is read from, then every problem Item, then what
+  // devices play.
   OpenHabBackend.prototype.watched = function () {
-    return Object.keys(this.controlItems).concat(Object.keys(this.problemItems), Object.keys(this.routeProblemItems));
+    return Object.keys(this.controlItems).concat(Object.keys(this.problemItems), Object.keys(this.routeProblemItems),
+      Object.keys(this.playingItems));
   };
 
   OpenHabBackend.prototype.updateRouteProblem = function (item, value) {
@@ -1022,6 +1054,7 @@
     const entry = this.controlItems[item];
     if (entry) this.updateDevice(entry[0], entry[1], value);
     else if (this.problemItems[item]) this.updateProblem(this.problemItems[item], value);
+    else if (this.playingItems[item]) this.updatePlaying(this.playingItems[item][0], this.playingItems[item][1], value);
   };
 
   // The view's Items as the gateway (or openHAB) holds them now: after a
@@ -1217,7 +1250,8 @@
     if (roomId && verb !== "command" && verb !== this.sourceVerb) return;
     if (this.activity) this.activity.accept(event.topic, event.payload);
     // Commands and Items the view does not show are ignored before inner parsing.
-    if (verb === "command" || !(roomId || this.controlItems[item] || this.problemItems[item] || this.routeProblemItems[item])) return;
+    if (verb === "command" || !(roomId || this.controlItems[item] || this.problemItems[item] || this.routeProblemItems[item]
+      || this.playingItems[item])) return;
     try { payload = JSON.parse(event.payload); } catch (error) { return; }
     if (!payload || payload.value === undefined) return;
     const value = String(payload.value);

@@ -283,8 +283,9 @@ def views(house: House, rooms: dict, activity: dict, pairings: dict) -> dict:
     """The Items each client event stream view carries, by verb (oh_identity
     topics.VIEWS). The remote takes its rooms' Sources as stateupdated, since
     a choice ends at the next read-back even when it repeats the value, and
-    every other Item it reads (house.js controls, problems and route problems)
-    and the activity feed's Items as statechanged, with the feed's commands.
+    every other Item it reads (house.js controls, problems, route problems and
+    what each device plays) and the activity feed's Items as statechanged,
+    with the feed's commands.
     Home and Topology take only the rooms' Sources; Pairing its status and
     result Items, whose repeated updates answer a code. The gateway keeps only
     public topics of these."""
@@ -297,6 +298,7 @@ def views(house: House, rooms: dict, activity: dict, pairings: dict) -> dict:
         read.update(control[field]["item"] for field in ("volume", "input", "playback") if isinstance(control.get(field), dict))
         read.add(((control.get("volume") or {}).get("displayMode") or {}).get("item"))
         read.add(device.get("problem"))
+        read.update((device.get("playing") or {}).values())
     read.update(name for name, description in activity.items() if description.get("states"))
     read.discard(None)
     status = {config[field] for spec in pairings.values() for config in (spec["config"],)

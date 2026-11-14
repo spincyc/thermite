@@ -1,4 +1,11 @@
-"""Google Cast receivers by address (chromecast binding)."""
+"""Google Cast receivers by address (chromecast binding).
+
+What a receiver plays, as its cast session reports it (playing()): an app
+that supports Cast Connect, such as Disney+, sends its title even when
+started on the device itself; many apps, such as Netflix, send none. A Sony
+TV names its own inputs as app TV ("Game console HDMI 4"), and a SHIELD its
+screen saver as Backdrop: neither is something playing.
+"""
 
 from __future__ import annotations
 
@@ -30,7 +37,12 @@ POINTS = (
     ("cast_status", "String", "Cast Status", ["Status", "Info"], "statustext", None),
     ("cast_title", "String", "Cast Title", ["Status", "Info"], "title", None),
     ("cast_artist", "String", "Cast Artist", ["Status", "Info"], "artist", None),
+    ("cast_series", "String", "Cast Series", ["Status", "Info"], "seriesTitle", None),
+    ("cast_season", "Number", "Cast Season", ["Status", "Info"], "seasonNumber", None),
+    ("cast_episode", "Number", "Cast Episode", ["Status", "Info"], "episodeNumber", None),
 )
+#: App names a receiver reports while nothing plays (playing()).
+IDLE_APPS = ("Backdrop", "TV")
 
 
 def validate(device: dict) -> list[str]:
@@ -49,3 +61,12 @@ def render(device: dict, house: House, out: YamlFile) -> None:
         out.items[f"{ident}_{suffix}"] = point(ident, type_, label, tags, f"{uid}:{channel}", icon=icon)
     out.items[f"{ident}_cast_volume"] = point(ident, "Dimmer", "Cast Volume", ["Status", "SoundVolume"],
                                               f"{uid}:volume", guarded=True, icon="soundvolume")
+
+
+def playing(device: dict) -> dict:
+    """What it plays (oh_features.playing): its cast session's app and title."""
+    ident = device["id"]
+    return {"apps": [{"item": f"{ident}_cast_app", "idle": list(IDLE_APPS)}],
+            "titles": [{"title": f"{ident}_cast_title", "artist": f"{ident}_cast_artist",
+                        "series": f"{ident}_cast_series", "season": f"{ident}_cast_season",
+                        "episode": f"{ident}_cast_episode"}]}

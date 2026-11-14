@@ -17,6 +17,6 @@ the point Items the integrations made (oh_conf.Conf.points).
 
 from __future__ import annotations
 
-from . import all_off, model, overview, reboots, remote, routing, threadpools
+from . import all_off, model, overview, playing, reboots, remote, routing, threadpools
 
-REGISTRY = (model, routing, all_off, reboots, remote, overview, threadpools)
+REGISTRY = (model, routing, all_off, reboots, playing, remote, overview, threadpools)

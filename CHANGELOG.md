@@ -7,6 +7,25 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- What is playing: each device whose integrations report it gets two
+  Items, `<id>_playing_app` and `<id>_playing_title`. A rule joins them
+  from those reports:
+  - a SHIELD: the app on screen, named from its package, and the title its
+    Google Cast session sends, with the series, season and episode
+    (newly read);
+  - a Cast receiver: its app and title;
+  - a Sonos or WiiM player: its track and artist while it plays.
+  A home screen, the screen saver or a device that reads off counts as
+  nothing playing. A value that goes away is kept for 15 seconds, so a
+  cast session's brief drops do not flicker.
+  The web and terminal remotes show what a room's source plays: under the
+  source bubbles, under each room's name, and after the source on Home.
+  Guests see it only while Guests may see titles.
+  The exporter keeps it as `thermite_playing_timestamp_seconds`, the
+  time of each reading, with app and title labels and the routing zones
+  showing it. The Usage dashboard gains **What rooms played**, one row
+  per title a room showed through the day, and a table of everything
+  played, with its rooms, first and last reading and time played.
 - Nightly reboots: a device with `reboot: nightly` in the house file
   restarts each night at the house file's `reboots: {time: "HH:MM"}`
   (03:00 without it), one device at a time, from the screen back to the

@@ -28,7 +28,7 @@ Open `http://<thermite's address>:13611/`. Anyone on your network can look witho
 - **Devices**: one row per device, with its Thing, control port, problem and whether a room needs it now; the Things that aren't online, and in what status; then each room's power and source through the day, and listening levels.
 - **openHAB runtime**: memory, thread pools, the thingHandler pool, how long its REST API takes to answer, events, the busiest rules, and Things that aren't online.
 - **Host**: how many scrape targets are up and which are down, thermite's services and their restarts, alerts firing, CPU, memory, disk space and I/O.
-- **Usage**: which sources the house used and for how long. It is not a health signal.
+- **Usage**: which sources the house used and for how long, and what each device played, when and in which rooms. It is not a health signal.
 
 Colour means one thing on every dashboard: green is OK, amber a warning, red a failure, grey unknown, slate Off, and tan only "in use". Dashed lines mark service starts and deploys; switch them off at the top of a dashboard.
 

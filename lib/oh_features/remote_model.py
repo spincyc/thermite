@@ -11,7 +11,7 @@ import re
 
 import oh_integrations as integrations
 from oh_conf import House
-from . import routing
+from . import playing, routing
 
 GENERATED = "// Generated remote model; edit the house file, not this preview."
 _TOKEN = re.compile(r'\s+|//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|[A-Za-z_$][\w$]*|-?\d+(?:\.\d+)?|[{}\[\]:,;=.]')
@@ -126,6 +126,9 @@ def build(house: House) -> dict:
             row["control"] = control
         if problem:
             row["problem"] = problem
+        # What it plays (oh_features.playing): {"app", "title"} Items.
+        if shown := playing.items(device):
+            row["playing"] = shown
         availability = next((entry for module in integrations.REGISTRY if hasattr(module, "remote_availability")
                              if (entry := module.remote_availability(device)) is not None), None)
         if availability is not None:

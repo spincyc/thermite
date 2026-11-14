@@ -211,6 +211,14 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     items[f"{ident}_key"] = _control(ident, "String", "Remote Key", ["Control"], f"{uid}:key")
 
 
+def playing(device: dict) -> dict:
+    """What it plays (oh_features.playing): its track, while its status is
+    play. A field it does not know reads Unknown, which is nothing."""
+    ident = device["id"]
+    return {"titles": [{"title": f"{ident}_title", "artist": f"{ident}_artist",
+                        "when": {"item": f"{ident}_status", "is": ["play"]}}]}
+
+
 def remote(device: dict) -> dict | None:
     """What the remote page drives (av-contract): None unless controlled."""
     if not uses(device, "control", NAME):

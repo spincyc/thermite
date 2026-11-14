@@ -110,6 +110,7 @@
     document.title = current.label + " · thermite";
     $("#room-switch").setAttribute("aria-label", "Room: " + current.label + ". Choose another room");
     updateRoomLists();
+    updateNow();
     updateAlert();
     updateControls();
     updateAudio();
@@ -150,7 +151,10 @@
       session.rooms().forEach((room) => {
         list.appendChild(node("li", null, [
           node("button", { type: "button", class: "room", "data-action": "room", "data-room": room.id }, [
-            node("span", { class: "room__label" }, room.label),
+            node("span", { class: "room__name" }, [
+              node("span", { class: "room__label" }, room.label),
+              node("span", { class: "room__playing" })
+            ]),
             node("span", { class: "room__source" }, [
               node("span", { class: "led", "aria-hidden": "true" }),
               node("span", { class: "room__source-text" }),
@@ -170,9 +174,21 @@
       button.setAttribute("aria-current", room === current ? "true" : "false");
       button.setAttribute("data-led", shown.led);
       button.toggleAttribute("data-locked", lock.locked);
-      button.setAttribute("aria-label", room.label + ", " + shown.spoken + (lock.locked ? ". " + lock.text : ""));
+      button.setAttribute("aria-label", room.label + ", " + shown.spoken + (shown.playing ? ", playing " + shown.playing : "")
+        + (lock.locked ? ". " + lock.text : ""));
       button.querySelector(".room__source-text").textContent = shown.short;
+      const playing = button.querySelector(".room__playing");
+      if (playing.textContent !== (shown.playing || "")) playing.textContent = shown.playing || "";
     });
+  }
+
+  // What the room's source plays, under the bubbles.
+  function updateNow() {
+    const current = session.current();
+    const playing = session.view(current, session.state(current.id)).playing;
+    $("#now").hidden = !playing;
+    if ($("#now-text").textContent !== (playing || "")) $("#now-text").textContent = playing || "";
+    $("#now").title = playing || "";
   }
 
   // The bubbles show what is on and a locked room's padlock; only a source

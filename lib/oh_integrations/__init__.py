@@ -157,6 +157,18 @@ provides, for nightly reboots (oh_features.reboots),
               "unreadIsIdle": True where a missing snapshot is a hang
               that the restart cures}
 
+A module whose Items tell what its devices play provides, for what is
+playing (oh_features.playing),
+
+    playing(device) -> {"power": the Item whose OFF means nothing plays
+              (optional), "apps": Items naming the app, each {"item",
+              "names": {value: app name} (optional), "idle": values that
+              mean nothing plays (optional), "package": True where any
+              other value is an Android package (optional)}, "titles":
+              Items of the title, each {"title", "artist", "series",
+              "season", "episode" (each but title optional), "when":
+              {"item", "is": [values]} while it holds (optional)}}
+
 Facts about a vendor's devices live in its module, never in a generic one:
 the generic code reads these optional attributes through REGISTRY
 (declared() for the tuples), so no table outside this package names an

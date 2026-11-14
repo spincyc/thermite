@@ -421,9 +421,10 @@ def select_point(name: str, item: dict) -> tuple[str, str] | None:
     Item tagged with the property Power, SoundVolume or Channel (power,
     power state, volume, mute, input), plus the Number Items a matrix or
     switch is commanded with (routing). Not kept: `<id>_online` (its Thing's
-    status says the same), EDID selections (fixed settings), and titles,
-    artists, apps, keys and pairing Items (free text, or no state worth a
-    history).
+    status says the same), EDID selections (fixed settings), titles,
+    artists and apps (what a device plays is kept once, joined, as
+    thermite_playing_timestamp_seconds: exporter_map() `playing`), and keys
+    and pairing Items (no state worth a history).
     """
     kind = str(item.get("type") or "").split(":")[0]
     tags = set(item.get("tags") or [])
@@ -499,8 +500,14 @@ def exporter_map(inventory: dict, conf=None) -> dict:
     sources = {ident: str(entry["label"]) for ident, entry in
                ((inventory.get("routing") or {}).get("sources") or {}).items()
                if isinstance(entry, dict) and entry.get("label")}
+    # Each device's playing Items (oh_features.playing), which the exporter
+    # keeps as thermite_playing_timestamp_seconds.
+    from oh_features import playing
+    present = {name for file in conf.yaml.values() for name in file.items}
+    shown = {device["id"]: names for device in house.devices
+             if (names := playing.items(device)) and set(names.values()) <= present}
     result = {"version": MAP_VERSION, "rooms": rooms, "devices": devices, "sources": sources,
-              "items": dict(sorted(items.items())), "paths": paths, "health_checks": checks}
+              "items": dict(sorted(items.items())), "paths": paths, "health_checks": checks, "playing": shown}
     from oh_features import threadpools
     if threadpools.enabled(house):
         result["handler_pool"] = dict(threadpools.ITEM_NAMES)

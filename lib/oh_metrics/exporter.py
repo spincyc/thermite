@@ -17,6 +17,11 @@ volume, input...) and conversion:
              the value itself when it is short and plain, else `other`
     problem  1 while the problem text is set, 0 when it is empty
 
+and each device's two playing Items (map `playing`, oh_features.playing):
+its app and title as free-text labels of
+thermite_playing_timestamp_seconds, with the routing zones whose source it
+is at that moment.
+
 An Item whose state is NULL or UNDEF has no value but, whatever its
 conversion, thermite_item_device_off 1 while the power Item it needs on
 (map `power`) reads OFF, else thermite_item_unknown 1; anything unparsable is
@@ -55,8 +60,9 @@ LISTEN = f"127.0.0.1:{EXPORTER_PORT}"
 OPENHAB = oh_ports.NATIVE_URL
 MAP = Path("/etc/thermite-exporter/map.json")
 TOKEN = Path("/secrets/openhab-token")
-#: 2: routing.zones gives each zone's room and label.
-MAP_VERSION = 2
+#: 2: routing.zones gives each zone's room and label. 3: playing gives each
+#: device's app and title Items.
+MAP_VERSION = 3
 CACHE_SECONDS = 5.0
 #: Seconds a round's two REST calls share, under Prometheus' 10 s
 #: scrape_timeout: a slow openHAB gives thermite_openhab_up 0, not a failed scrape.
@@ -70,6 +76,9 @@ NUMBER = re.compile(r"^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)")
 #: An enum value without options is kept only if it looks like a code, not prose.
 PLAIN = re.compile(r"^[A-Za-z0-9_./:+ -]{1,32}$")
 OTHER = "other"
+#: Characters of free text kept as a label value (oh_features.playing.MAX_TEXT).
+TEXT_CHARS = 160
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 #: The states openHAB gives an Item it has no value for.
 NO_VALUE = ("NULL", "UNDEF")
 DEVICE_LABELS = ("device", "room", "kind")
@@ -100,6 +109,10 @@ FAMILIES = {
     "thermite_item_device_off": ("gauge", "1 while a kept Item has no value because the power Item it needs on, "
                                  "its device's or its receiver zone's, reads OFF: a TV in standby has no input, "
                                  "volume or mute."),
+    "thermite_playing_timestamp_seconds": ("gauge", "When the device was read playing this: its app and title, as "
+                                           "free text of at most 160 characters, empty when not known; the Unix "
+                                           "time of the reading, absent while nothing plays. zones lists the "
+                                           "routing zones whose source it is now, comma-separated, empty for none."),
     "thermite_device_problem": ("gauge", "1 while the device's problem Item has a text."),
     "thermite_handler_pool_up": ("gauge", "1 when thingHandler telemetry is complete and at most 60 seconds old."),
     "thermite_handler_pool_observation_age_seconds": ("gauge", "Age of the native thingHandler telemetry sample."),
@@ -221,6 +234,16 @@ def to_label(state: object, options: list[str] | None) -> str | None:
     return state if PLAIN.match(state) else OTHER
 
 
+def to_text(state: object) -> str | None:
+    """Free text as a label value: one line of at most TEXT_CHARS characters,
+    a lone surrogate (which UTF-8 cannot carry) as ?; None for NULL, UNDEF and
+    blank."""
+    if not isinstance(state, str) or state in NO_VALUE:
+        return None
+    line = " ".join(CONTROL.sub(" ", state.encode("utf-8", "replace").decode()).split())[:TEXT_CHARS]
+    return line or None
+
+
 # ---------------------------------------------------------------- the collector
 
 
@@ -310,6 +333,7 @@ def collect(mapping: dict, fetch: Fetch, clock: Callable[[], float] = time.monot
         samples += _things(mapping, answers["things"])
     if "items" in answers:
         samples += _items(mapping, answers["items"])
+        samples += _playing(mapping, answers["items"])
     samples += _handler_pool(mapping, answers.get("items", []))
     if "items" in answers:
         samples += _routing(mapping, answers["items"])
@@ -515,6 +539,28 @@ def _items(mapping: dict, answer: list) -> list[Sample]:
         elif state in NO_VALUE:
             samples.append((_no_value(spec, state_of), item, 1.0))
     samples.append(("thermite_items_missing", {}, float(missing)))
+    return samples
+
+
+def _playing(mapping: dict, answer: list, now: float | None = None) -> list[Sample]:
+    """thermite_playing_timestamp_seconds for each device playing something,
+    with the zones whose source Item names it."""
+    now = time.time() if now is None else now
+    spec = mapping.get("playing") or {}
+    state_of = {item["name"]: item.get("state") for item in answer
+                if isinstance(item, dict) and isinstance(item.get("name"), str)}
+    zones: dict[str, list[str]] = {}
+    for name, entry in (mapping.get("items") or {}).items():
+        if entry.get("point") == "source" and entry.get("zone") and isinstance(state_of.get(name), str):
+            zones.setdefault(state_of[name], []).append(str(entry["zone"]))
+    samples: list[Sample] = []
+    for ident in sorted(spec):
+        app, title = (to_text(state_of.get(spec[ident].get(key))) for key in ("app", "title"))
+        if app is None and title is None:
+            continue
+        samples.append(("thermite_playing_timestamp_seconds", {**device_labels(mapping, ident), "app": app or "",
+                                                               "title": title or "",
+                                                               "zones": ",".join(sorted(zones.get(ident, [])))}, now))
     return samples
 
 

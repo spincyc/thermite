@@ -136,6 +136,14 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
     return {RULE: SOURCE.read_text().replace(MARK, "const DEVICES = " + json.dumps(controlled, indent=2) + ";")}
 
 
+def playing(device: dict) -> dict:
+    """What it plays (oh_features.playing): its track, while PLAYING. TV
+    audio and line-in have a blank title, which is nothing."""
+    ident = device["id"]
+    return {"titles": [{"title": f"{ident}_title", "artist": f"{ident}_artist",
+                        "when": {"item": f"{ident}_state", "is": ["PLAYING"]}}]}
+
+
 def remote(device: dict) -> dict | None:
     """The existing Arc remotes; standalone Amps retain native Item control."""
     if not uses(device, "control", NAME) or device.get("model") != "Arc":
