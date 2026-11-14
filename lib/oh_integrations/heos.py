@@ -17,6 +17,13 @@ bridge's connection is the host's HEOS CLI at the host's address, and the
 inventory and metrics give every Thing to the device its UID ends with.
 Each receiver's player, heos:player:<host>:<id>, is on that bridge, so it
 is OFFLINE (BRIDGE_OFFLINE) while the bridge is.
+
+`<id>_reboot` (String), commanded `reboot`, has the rule send
+heos://system/reboot to the receiver's own HEOS CLI (TCP 1255), which is
+answered and logged. The receiver restarts its network module, and with it
+HEOS and the HTTP API; whether the rest of it restarts too is unconfirmed.
+Only a receiver with `reboot: nightly` restarts unasked, at night while
+every zone is off (reboot(), oh_features.reboots).
 """
 
 from __future__ import annotations
@@ -27,6 +34,8 @@ import re
 from pathlib import Path
 
 from oh_conf import Addon, House, YamlFile, point, uses
+
+from . import denonmarantz_http
 
 NAME = "heos"
 PHASE = "control"
@@ -76,6 +85,19 @@ def playback_item(device: dict) -> str:
     return f"{device['id']}_heos_playback"
 
 
+def reboot_item(device: dict) -> str:
+    return f"{device['id']}_reboot"
+
+
+def reboot(device: dict) -> dict:
+    """Nightly reboots (oh_features.reboots): the receiver answers while
+    denonmarantz_http reads it, and is idle while each zone with a power
+    Item is off."""
+    powers = [staged["power"] for zone in (None, 2) if (staged := denonmarantz_http.stage(device, zone))]
+    return {"item": reboot_item(device), "answers": powers[:1], "things": [denonmarantz_http.thing_uid(device)],
+            "idle": [{"item": power, "is": "OFF"} for power in powers]}
+
+
 def validate(device: dict) -> list[str]:
     where = device.get("id") or "a device"
     if not uses(device, PHASE, NAME):
@@ -117,10 +139,15 @@ def render(device: dict, house: House, out: YamlFile) -> None:
     item["autoupdate"] = False
     item["metadata"]["stateDescription"]["config"]["options"] = "PLAY=Playing,PAUSE=Paused or stopped"
     out.items[playback_item(device)] = item
+    out.items[reboot_item(device)] = {
+        "type": "String", "label": "Reboot", "groups": [ident], "tags": ["Control"], "autoupdate": False,
+        "metadata": {"commandDescription": {"config": {"options": "reboot=Reboot"}}},
+    }
 
 
 def files(devices: list[dict], house: House) -> dict[str, str]:
-    table = [{"id": d["id"], "thing": thing_uid(d, house), "receiver": f"denonmarantz:avr:{d['id']}",
+    table = [{"id": d["id"], "thing": thing_uid(d, house), "receiver": denonmarantz_http.thing_uid(d),
+              "host": str(ipaddress.IPv4Address(d["ip"])),
               "readURL": f"http://{ipaddress.IPv4Address(d['ip'])}:8080/goform/AppCommand.xml"} for d in devices]
     return {RULE: SOURCE.read_text().replace("const DEVICES = null;", "const DEVICES = " + json.dumps(table) + ";")}
 

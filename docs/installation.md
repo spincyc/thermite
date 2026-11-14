@@ -351,6 +351,33 @@ Health reports real device availability; fictional example addresses will
 not establish a healthy house. Pair and verify equipment before relying on
 automation; `thermite pair --help` lists supported pairing steps.
 
+### Nightly reboots
+
+A device that does better after a restart can restart every night. Give it
+`reboot: nightly` in the house file. The top-level `reboots: {time:
+"03:00"}` sets when, in the host's time zone; 03:00 is the default. Only a
+device Thermite can restart without cutting its power can opt in: an
+HDFury VRROOM, or a Denon or Marantz receiver under HEOS control. Whether
+a receiver's HEOS restart also restarts its audio and video processing,
+and not only its network module, is not confirmed. Apple TVs have no such
+command, and a SHIELD needs ADB, which Thermite does not use.
+
+The devices restart one at a time, two minutes apart: receivers before
+switches, so each switch then reads its receiver's EDID afresh. A device
+is skipped while it does not answer or is in use, meaning a receiver with
+a zone on, or a VRROOM whose input has a signal. A VRROOM whose web page has
+stopped answering while its telnet port still answers is restarted anyway,
+since that hang is what the restart cures. After each restart
+Thermite waits up to five minutes for the device to answer again. A
+device that does not come back is left to its health alerts, and nothing
+cuts its power. To try a device before opting it in, or to see how each
+device's last reboot went:
+
+```sh
+thermite reboot DEVICE --config "$HOME/thermite-site"
+thermite reboot --config "$HOME/thermite-site"
+```
+
 ## Set up HTTPS and accounts
 
 Installation prints the verified HTTPS URL, on port 13601 unless

@@ -9,7 +9,7 @@ Each module provides:
               adds its files, Items and pages to conf (an oh_conf.Conf)
 
 and may declare, as an integration does (oh_integrations), HOUSE_KEYS,
-HOUSE_ITEMS and ITEM_ONLY_RULES.
+DEVICE_KEYS, HOUSE_ITEMS and ITEM_ONLY_RULES.
 
 Features run after every integration, in REGISTRY order, so they can read
 the point Items the integrations made (oh_conf.Conf.points).
@@ -17,6 +17,6 @@ the point Items the integrations made (oh_conf.Conf.points).
 
 from __future__ import annotations
 
-from . import all_off, model, overview, remote, routing, threadpools
+from . import all_off, model, overview, reboots, remote, routing, threadpools
 
-REGISTRY = (model, routing, all_off, remote, overview, threadpools)
+REGISTRY = (model, routing, all_off, reboots, remote, overview, threadpools)

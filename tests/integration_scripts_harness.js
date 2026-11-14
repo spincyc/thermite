@@ -87,9 +87,10 @@ function run(source, table, { things, items, java = {}, clock, globals = {}, run
 
 const VERIFIED = name => '<?xml version="1.0" encoding="utf-8"?>\r\n<tx>\r\n<cmd id="1">' + name + '</cmd>\r\n</tx>\r\n';
 
-function heos(replies) {
-  const requests = [];
-  const java = {
+// The Java types heos.js loads: HTTP reads answered by replies(body), and
+// HEOS CLI sockets that network says how to answer.
+function heosJava(requests, replies, network = {}, sockets = []) {
+  return {
     'java.net.URL': class { constructor(url) { this.url = url; }
       openConnection() {
         let body = '', reply = null, offset = 0;
@@ -104,10 +105,19 @@ function heos(replies) {
           }, close() {} }) };
       } },
     'java.net.Proxy': { NO_PROXY: {} },
-    'java.nio.charset.StandardCharsets': { UTF_8: 'utf8' },
-    'java.lang.String': class { constructor(text) { this.text = text; } getBytes() { return Buffer.from(this.text, 'utf8'); } },
+    'java.net.Socket': class { constructor() { sockets.push(this); this.written = ''; }
+      connect(address, ms) { this.address = `${address.host}:${address.port}`; this.connectMs = ms; if (network.refuse) throw Error('Connection refused'); }
+      setSoTimeout(ms) { this.timeout = ms; }
+      getOutputStream() { const socket = this; return { write(bytes) { socket.written += Buffer.from(bytes).toString('ascii'); }, flush() {} }; }
+      getInputStream() { const reply = Buffer.from(network.answer || '', 'utf8'); let offset = 0;
+        return { read: () => { if (offset < reply.length) return reply[offset++]; if (network.answer === undefined) throw Error('Read timed out'); return -1; } }; }
+      close() { this.closed = true; } },
+    'java.net.InetSocketAddress': class { constructor(host, port) { this.host = host; this.port = port; } },
+    'java.nio.charset.StandardCharsets': { UTF_8: 'utf8', US_ASCII: 'ascii' },
+    'java.lang.String': class { constructor(text, charset) { this.text = Buffer.isBuffer(text) ? text.toString(charset) : text; }
+      getBytes(charset = 'utf8') { return Buffer.from(this.text, charset); } toString() { return this.text; } },
     'java.io.ByteArrayOutputStream': class { constructor() { this.parts = []; }
-      write(buffer, start, count) { this.parts.push(Buffer.from(buffer.subarray(start, start + count))); }
+      write(buffer, start, count) { this.parts.push(typeof buffer === 'number' ? Buffer.from([buffer]) : Buffer.from(buffer.subarray(start, start + count))); }
       size() { return Buffer.concat(this.parts).length; } toByteArray() { return Buffer.concat(this.parts); } },
     'java.lang.System': { nanoTime: () => Number(process.hrtime.bigint()) },
     'byte[]': function (length) { return Buffer.alloc(length); },
@@ -117,13 +127,45 @@ function heos(replies) {
     'org.xml.sax.helpers.DefaultHandler': class {},
     'javax.xml.XMLConstants': { FEATURE_SECURE_PROCESSING: 'secure', ACCESS_EXTERNAL_DTD: 'dtd', ACCESS_EXTERNAL_SCHEMA: 'schema' },
   };
+}
+
+const HEOS_DEVICES = [{ id: 'avr', thing: 'heos:player:1', receiver: 'denon:avr:1', host: '192.0.2.10',
+  readURL: 'http://192.0.2.10:8080/goform/AppCommand.xml' }];
+
+function heos(replies) {
+  const requests = [];
   const things = { 'heos:player:1': thing('ONLINE'), 'denon:avr:1': thing('ONLINE') };
   const items = { avr_main_power: 'ON', avr_main_input: 'NET', avr_heos_playback: 'NULL' };
-  const loaded = run(heosSource, { DEVICES: [{ id: 'avr', thing: 'heos:player:1', receiver: 'denon:avr:1',
-    readURL: 'http://192.0.2.10:8080/goform/AppCommand.xml' }] }, { things, items, java, clock: { now: 0 } });
+  const loaded = run(heosSource, { DEVICES: HEOS_DEVICES }, { things, items, java: heosJava(requests, replies), clock: { now: 0 } });
   loaded.rules.heos_avr_transport.execute({ itemName: 'avr_key', receivedCommand: 'play' });
   return { requests, handled: things['heos:player:1'].handled, logs: loaded.logs };
 }
+
+// A command to the receiver's reboot Item, and the HEOS CLI sockets it opened.
+function heosReboot(command, network, send = true) {
+  const requests = [], sockets = [];
+  const things = { 'heos:player:1': thing('ONLINE'), 'denon:avr:1': thing('ONLINE') };
+  const source = send ? heosSource : heosSource.replace('const SEND = true;', 'const SEND = false;');
+  const loaded = run(source, { DEVICES: HEOS_DEVICES }, { things, items: {}, java: heosJava(requests, () => '', network, sockets), clock: { now: 0 } });
+  loaded.rules.heos_avr_reboot.execute({ itemName: 'avr_reboot', receivedCommand: command });
+  return { sockets, requests, logs: loaded.logs.map(([level, message]) => `${level}: ${message}`) };
+}
+
+test('a HEOS reboot goes to the receiver\'s own CLI, once, and logs its answer', () => {
+  const answered = heosReboot('reboot', { answer: '{"heos": {"command": "system/reboot", "result": "success", "message": ""}}\r\n' });
+  assert.deepEqual(answered.sockets.map(socket => [socket.address, socket.written, socket.closed]),
+    [['192.0.2.10:1255', 'heos://system/reboot\r\n', true]]);
+  assert.deepEqual(answered.requests, []);
+  assert.deepEqual(answered.logs, ['warn: avr: sent heos://system/reboot; it answered success']);
+  assert.deepEqual(heosReboot('reboot', {}).logs, ['warn: avr: sent heos://system/reboot; no answer: Read timed out']);
+  const refused = heosReboot('reboot', { refuse: true });
+  assert.deepEqual(refused.logs, ['warn: avr: could not send heos://system/reboot: Connection refused']);
+  assert.equal(refused.sockets[0].written, '');
+  const dropped = heosReboot('ON', {});
+  assert.deepEqual([dropped.sockets, dropped.logs], [[], ["warn: avr_reboot: 'ON' is not reboot, dropped"]]);
+  const readOnly = heosReboot('reboot', {}, false);
+  assert.deepEqual([readOnly.sockets, readOnly.logs], [[], ['info: avr: SEND is false, not sending heos://system/reboot']]);
+});
 
 test('HEOS reads the receiver one verified AppCommand at a time before a transport press', () => {
   // Like the firmware: anything but the verified serialization gets <rx> empty.

@@ -84,6 +84,7 @@ VERBS = {
     "control4": Verb("devices", "export the Control4 project read-only and compare it"),
     "discover": Verb("devices", "scan the LAN read-only and compare it with the house file"),
     "pair": Verb("devices", "pair a TV with runtime, or check the Sony TVs' pairing"),
+    "reboot": Verb("devices", "restart a device now as the nightly reboots do, or list how each went"),
     "cameras": Verb("devices", "read camera status, or configure native Protect bridges privately"),
     "apple-tv": Verb("devices", "run the Apple TV helper runtime calls"),
     "ir-profile": Verb("devices", "validate verified IR keys or print an iTach packet without transmitting"),

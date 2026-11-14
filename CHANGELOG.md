@@ -7,6 +7,20 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Nightly reboots: a device with `reboot: nightly` in the house file
+  restarts each night at the house file's `reboots: {time: "HH:MM"}`
+  (03:00 without it), one device at a time, from the screen back to the
+  sources, two minutes apart. Only devices thermite can restart without
+  cutting their power can opt in: an HDFury VRROOM over telnet, and a
+  Denon or Marantz receiver over its own HEOS CLI (`heos://system/reboot`,
+  which restarts at least its network module). A device is restarted
+  only while it answers and is idle: a receiver with every zone off, a
+  VRROOM whose input has no signal, as its web page reports, or whose web
+  page has hung, which the restart cures. Thermite
+  then waits up to 5 minutes for it to stop answering and answer again,
+  and logs each outcome. `thermite reboot DEVICE` restarts one now past
+  the same checks and reports how it went; `thermite reboot` lists each
+  device's last reboot.
 - A new critical alert, ThermiteThingStuck, fires for each device Thing
   that openHAB has left neither online nor offline (unknown, initializing
   or uninitialized) for fifteen minutes: one whose binding failed as

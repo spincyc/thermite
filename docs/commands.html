@@ -45,7 +45,7 @@
 <h2 id="production">Production runtime on this host</h2>
 <table class="verbs"><tbody><tr><td><a href="#install"><code>thermite install</code></a></td><td>install thermite on this host, with one approval for the whole run</td></tr><tr><td><a href="#upgrade"><code>thermite upgrade</code></a></td><td>update the application, native services and HTTPS gateway together</td></tr><tr><td><a href="#uninstall"><code>thermite uninstall</code></a></td><td>stop thermite here and remove its units; --purge deletes its state</td></tr><tr><td><a href="#deploy"><code>thermite deploy</code></a></td><td>compatibility alias for the complete install workflow</td></tr><tr><td><a href="#rollback"><code>thermite rollback</code></a></td><td>install the commit deployed before the current one, or another</td></tr><tr><td><a href="#revert"><code>thermite revert</code></a></td><td>go back to the version, and state, the last upgrade set aside</td></tr><tr><td><a href="#status"><code>thermite status</code></a></td><td>what is deployed and running here, against this checkout</td></tr><tr><td><a href="#history"><code>thermite history</code></a></td><td>this host&#x27;s deploys, numbered, the latest last</td></tr><tr><td><a href="#health"><code>thermite health</code></a></td><td>read-only: every Thing ONLINE in the runtime</td></tr></tbody></table>
 <h2 id="devices">The house&#x27;s devices</h2>
-<table class="verbs"><tbody><tr><td><a href="#dhcp-reservations"><code>thermite dhcp-reservations</code></a></td><td>list the UniFi DHCP reservations the house file needs</td></tr><tr><td><a href="#matrix-settings"><code>thermite matrix-settings</code></a></td><td>show matrix settings that differ from the house file; --apply sets them</td></tr><tr><td><a href="#control4"><code>thermite control4</code></a></td><td>export the Control4 project read-only and compare it</td></tr><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
+<table class="verbs"><tbody><tr><td><a href="#dhcp-reservations"><code>thermite dhcp-reservations</code></a></td><td>list the UniFi DHCP reservations the house file needs</td></tr><tr><td><a href="#matrix-settings"><code>thermite matrix-settings</code></a></td><td>show matrix settings that differ from the house file; --apply sets them</td></tr><tr><td><a href="#control4"><code>thermite control4</code></a></td><td>export the Control4 project read-only and compare it</td></tr><tr><td><a href="#discover"><code>thermite discover</code></a></td><td>scan the LAN read-only and compare it with the house file</td></tr><tr><td><a href="#pair"><code>thermite pair</code></a></td><td>pair a TV with runtime, or check the Sony TVs&#x27; pairing</td></tr><tr><td><a href="#reboot"><code>thermite reboot</code></a></td><td>restart a device now as the nightly reboots do, or list how each went</td></tr><tr><td><a href="#cameras"><code>thermite cameras</code></a></td><td>read camera status, or configure native Protect bridges privately</td></tr><tr><td><a href="#apple-tv"><code>thermite apple-tv</code></a></td><td>run the Apple TV helper runtime calls</td></tr><tr><td><a href="#ir-profile"><code>thermite ir-profile</code></a></td><td>validate verified IR keys or print an iTach packet without transmitting</td></tr></tbody></table>
 <h2 id="use">Front ends, themes and docs</h2>
 <table class="verbs"><tbody><tr><td><a href="#remote"><code>thermite remote</code></a></td><td>the house remote in a terminal</td></tr><tr><td><a href="#tui"><code>thermite tui</code></a></td><td>the house remote in a terminal on any computer, from its HTTPS gateway</td></tr><tr><td><a href="#handheld"><code>thermite handheld</code></a></td><td>handheld remotes: the bridge to the house, enrolling and forgetting them</td></tr><tr><td><a href="#access"><code>thermite access</code></a></td><td>site login, local identity bootstrap, HTTPS service and room policies</td></tr><tr><td><a href="#theme"><code>thermite theme</code></a></td><td>the flaming bowl mark and color themes: show, check, export</td></tr><tr><td><a href="#docs"><code>thermite docs</code></a></td><td>build the docs site, or export it to the thermite repository</td></tr></tbody></table>
 <h2 id="program">This program</h2>
@@ -85,6 +85,7 @@ the house&#x27;s devices:
   control4             export the Control4 project read-only and compare it
   discover             scan the LAN read-only and compare it with the house file
   pair                 pair a TV with runtime, or check the Sony TVs&#x27; pairing
+  reboot               restart a device now as the nightly reboots do, or list how each went
   cameras              read camera status, or configure native Protect bridges privately
   apple-tv             run the Apple TV helper runtime calls
   ir-profile           validate verified IR keys or print an iTach packet without transmitting
@@ -1556,6 +1557,43 @@ examples:
   thermite pair DEVICE A1B2C3 --sandbox
                                     send the code it shows; wait for it to come ONLINE
   thermite pair --check             whether every Sony TV is paired with production
+</pre>
+</section>
+<section class="verb" id="reboot"><h3><code>thermite reboot</code></h3><p>Restart a device now as the nightly reboots do, or list how each went.</p><pre class="help">usage: thermite reboot [-h] [--config DIR] [--house FILE] [--timeout SECONDS] [DEVICE]
+
+Restart a device as the nightly reboots do (lib/oh_features/reboots):
+production thermite restarts it only if it answers and is idle (a receiver
+with every zone off, a switch whose input has no signal), then waits for
+it to stop answering and answer again, and reports how that went. DEVICE
+need not have `reboot: nightly` in the house file; it needs an integration
+under control that can restart it without cutting its power. Without
+DEVICE, each such device: whether it restarts nightly, and its last
+reboot.
+
+positional arguments:
+  DEVICE                the device&#x27;s id in the house file
+
+options:
+  -h, --help            show this help message and exit
+  --config, --site DIR  use this private configuration directory
+  --house FILE          the house file (default: instance/devices.yaml)
+  --timeout SECONDS     seconds to wait for the device to answer again (default: 480)
+
+switches every verb takes:
+  -q, --quiet           print only errors
+  -v, --verbose         also print, on stderr, the commands and HTTP requests it runs
+  --no-color            no color in what it prints (as NO_COLOR=1 does)
+
+exit status:
+  0  the device is back, or the list was shown
+  1  it was skipped (in use, or not answering), was not seen to restart,
+     or did not answer again in time
+  2  the house file is invalid, no such device thermite can restart, or
+     thermite could not be reached or has no house_reboot Item
+
+examples:
+  thermite reboot                   each device thermite can restart, and its last reboot
+  thermite reboot DEVICE            restart it now; wait until it answers again
 </pre>
 </section>
 <section class="verb" id="cameras"><h3><code>thermite cameras</code></h3><p>Read camera status, or configure native Protect bridges privately.</p><pre class="help">usage: thermite cameras [-h] [--config DIR] ACTION ...

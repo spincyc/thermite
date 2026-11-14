@@ -144,6 +144,19 @@ does what their binding cannot, provides
               files rendered from all the devices it renders at once, such
               as its rule under automation/js/
 
+A control module that can restart its devices without cutting their power
+provides, for nightly reboots (oh_features.reboots),
+
+    reboot(device) -> {"item": the Item that restarts the device when
+              commanded "reboot", "answers": Items with a value while it
+              answers, "things": Things ONLINE while it answers (optional),
+              "signs": more Things that go offline while it restarts
+              (optional), "idle": the readings that all hold while nothing
+              uses it, each {"item", "is"}, or {"item", "field", "is",
+              "maxAge"} for a field of a diagnostics snapshot, with
+              "unreadIsIdle": True where a missing snapshot is a hang
+              that the restart cures}
+
 Facts about a vendor's devices live in its module, never in a generic one:
 the generic code reads these optional attributes through REGISTRY
 (declared() for the tuples), so no table outside this package names an

@@ -27,8 +27,9 @@ Items, per switch:
 - `<id>_reboot` (String): commanded `reboot`, sends `set reboot`, logged.
   The VRROOM restarts without losing its settings and answers again in
   about 15 s, with no power cycle. It is the cure when its web server
-  hangs (resets every HTTP request) while telnet still answers; nothing
-  sends it unasked.
+  hangs (resets every HTTP request) while telnet still answers. Only a
+  switch with `reboot: nightly` restarts unasked, at night while its input
+  has no signal (reboot(), oh_features.reboots), which vrroom_http reports.
 
 The wording of the answers (`insel %d %d`, `insel err`, `ipinterrupt on`,
 `ipinterrupt err`, `reboot`) comes from strings in the VRROOM's firmware,
@@ -52,7 +53,7 @@ import json
 from pathlib import Path
 
 from oh_conf import RULE_SENDS, Addon, House, YamlFile, uses
-from .. import _io
+from .. import _io, vrroom_http
 
 NAME = "vrroom_telnet"
 PHASE = "control"
@@ -97,6 +98,17 @@ def reboot_item(device: dict) -> str:
     return f"{device['id']}_reboot"
 
 
+def reboot(device: dict) -> dict:
+    """Nightly reboots (oh_features.reboots): the switch answers while its
+    input reads, and is idle while the input TX0 shows has no signal, as
+    its web page (vrroom_http) reports it. A web page that does not answer
+    while telnet does is the VRROOM's hang that a restart cures, so its
+    missing report does not hold the restart back."""
+    return {"item": reboot_item(device), "answers": [input_item(device)],
+            "idle": [{"item": vrroom_http.signal_item(device), "field": "RX0", "is": "no signal",
+                      "maxAge": vrroom_http.MAX_AGE, "unreadIsIdle": True}]}
+
+
 def fields(device: dict) -> dict[str, dict]:
     """The routing executor's field (oh_integrations): TX0's input, driven by
     this integration's own rule. Its actor also takes the reboot Item's
@@ -105,8 +117,13 @@ def fields(device: dict) -> dict[str, dict]:
 
 
 def validate(device: dict) -> list[str]:
-    if uses(device, PHASE, NAME) and device.get("kind") not in KINDS:
+    if not uses(device, PHASE, NAME):
+        return []
+    if device.get("kind") not in KINDS:
         return [f"{device.get('id')}: {NAME} drives an hdmi_switch, not a {device.get('kind')}"]
+    if "reboot" in device and not uses(device, vrroom_http.PHASE, vrroom_http.NAME):
+        return [f"{device.get('id')}.reboot: needs {vrroom_http.NAME} under {vrroom_http.PHASE}, "
+                "which tells when the switch's input has no signal"]
     return []
 
 

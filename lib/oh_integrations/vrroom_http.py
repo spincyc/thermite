@@ -45,13 +45,17 @@ def thing_uid(device: dict) -> str:
     return f"http:url:{device['id']}"
 
 
+def signal_item(device: dict) -> str:
+    return f"{device['id']}_signal"
+
+
 def diagnostics(device: dict) -> dict:
     """Reported signals and sink capabilities, +5 V, hot-plug and eARC.
 
 RX0/RX1 are the original signals for the TX0/TX1 processing paths, not
 physical input sockets. See HDfury VRROOM manual, INFO section, page 19.
 """
-    item = f"{device['id']}_signal"
+    item = signal_item(device)
     readings = []
     for output in range(2):
         for category, label, key in (
