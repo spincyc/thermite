@@ -398,6 +398,18 @@ def command(request, room):
     return JsonResponse(answer, status=202)
 
 
+@api(methods=("POST",))
+def device_command(request, device):
+    """A command on a device's audio page (RuntimeAdapter.dispatch_device)."""
+    data = body(request)
+    if set(data) != {"action", "value"} or not isinstance(data.get("action"), str):
+        raise Problem("invalid_command")
+    from .trail import origin
+    answer = get_adapter().dispatch_device(request.identity_user, device, data["action"], data["value"],
+                                           origin=origin(request))
+    return JsonResponse(answer, status=202)
+
+
 @api()
 def item_state(request, item):
     from .security import hidden

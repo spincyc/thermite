@@ -414,13 +414,18 @@ def _options(item: dict) -> list[str] | None:
     return values or None
 
 
+#: The property tag of a kept Measurement -> its point.
+MEASURED = {"Temperature": "temperature", "StateOfCharge": "battery"}
+
+
 def select_point(name: str, item: dict) -> tuple[str, str] | None:
     """(point, conversion) of an Item of a device worth keeping, else None.
 
     Kept: the device's problem text (`<id>_problem`, as 0/1), and every
     Item tagged with the property Power, SoundVolume or Channel (power,
     power state, volume, mute, input), plus the Number Items a matrix or
-    switch is commanded with (routing). Not kept: `<id>_online` (its Thing's
+    switch is commanded with (routing) and a Number measuring a device's
+    temperature or a battery's charge (MEASURED). Not kept: `<id>_online` (its Thing's
     status says the same), EDID selections (fixed settings), titles,
     artists and apps (what a device plays is kept once, joined, as
     thermite_playing_timestamp_seconds: exporter_map() `playing`), and keys
@@ -439,6 +444,8 @@ def select_point(name: str, item: dict) -> tuple[str, str] | None:
         return {"String": ("input", "enum"), "Number": ("input", "number")}.get(kind)
     if kind == "Number" and "Control" in tags:
         return None if name.endswith("_edid") else ("routing", "number")
+    if kind == "Number" and "Measurement" in tags:
+        return next(((point, "number") for tag, point in MEASURED.items() if tag in tags), None)
     return None
 
 

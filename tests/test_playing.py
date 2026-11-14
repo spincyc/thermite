@@ -137,7 +137,7 @@ class Rule(unittest.TestCase):
         result = subprocess.run([shutil.which("node"), str(AREA / "tests/playing_harness.js"), str(playing.SOURCE)],
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
-        self.assertEqual(json.loads(result.stdout)["passed"], 12)
+        self.assertEqual(json.loads(result.stdout)["passed"], 13)
 
 
 @unittest.skipUnless(shutil.which("node"), "needs node for the shared web/TUI session")

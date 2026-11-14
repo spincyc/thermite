@@ -164,10 +164,44 @@ playing (oh_features.playing),
               (optional), "apps": Items naming the app, each {"item",
               "names": {value: app name} (optional), "idle": values that
               mean nothing plays (optional), "package": True where any
-              other value is an Android package (optional)}, "titles":
-              Items of the title, each {"title", "artist", "series",
-              "season", "episode" (each but title optional), "when":
-              {"item", "is": [values]} while it holds (optional)}}
+              other value is an Android package (optional), "when"
+              (optional, as a title's)}, "titles": Items of the title,
+              each {"title", "artist", "series", "season", "episode" (each
+              but title optional), "when": {"item", "is": [values]} while
+              it holds (optional)}}
+
+A control module gives the remote page what it drives, and may give an
+audio device a page of its own (the remote's Audio page; the gateway's
+device route, oh_identity.runtime, commands what both declare):
+
+    remote(device) -> {"power", "mute": Switch Items, "volume": {"item",
+              "min", "max", "step"} on the device's own scale, "input":
+              {"item", "options": [[value, label], ...]}, "key": the
+              String Item a remote button id (KEYS, or keys(device)) is
+              sent to; each optional} or None; REMOTE_LAYOUT or
+              remote_of(device) names its buttons' layout (remotes.js)
+    audio(device) -> what its page adds to remote(), or None (each key
+              optional):
+        transport  button ids of its keys the page shows as transport
+                   (previous, play_pause, next, tv)
+        state      {"item", "playing": [values while it plays]}
+        track      {"title", "artist", "album", "service" (Item names,
+                   free text), "duration" (seconds), "sample_rate" (Hz),
+                   "bit_depth" (bits): plain Number Items}
+        settings   [{"item", "label", "section": "playback", "sound" or
+                   "device", "kind": "switch", "enum" with "options":
+                   [[value, label], ...] it is sent and "reads" (optional)
+                   it may only show, or "number" with "min", "max", "step"
+                   and "unit" (optional), "when" (optional, display only):
+                   {"item", "is": [values]} while it applies}], each
+                   commanded and read back
+        facts      [{"item", "label", "unit" (optional), "quiet" (optional):
+                   true for a reading that drifts with every poll, such as
+                   a temperature, which the activity feed leaves out}],
+                   read only
+              A page shows a setting or fact only while its Item has a
+              value: what a model lacks reads as nothing. The feed leaves
+              out a track's details beyond its title and artist.
 
 Facts about a vendor's devices live in its module, never in a generic one:
 the generic code reads these optional attributes through REGISTRY

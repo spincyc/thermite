@@ -12,7 +12,8 @@ const SHIELD = { id: 'shield', app: 'shield_playing_app', title: 'shield_playing
   { item: 'shield_cast_app', idle: ['Backdrop', 'TV'] }],
   titles: [{ title: 'shield_cast_title', artist: 'shield_cast_artist', series: 'shield_cast_series',
     season: 'shield_cast_season', episode: 'shield_cast_episode' }] };
-const SPEAKER = { id: 'speaker', app: 'speaker_playing_app', title: 'speaker_playing_title', power: null, apps: [],
+const SPEAKER = { id: 'speaker', app: 'speaker_playing_app', title: 'speaker_playing_title', power: null,
+  apps: [{ item: 'speaker_service', when: { item: 'speaker_state', is: ['PLAYING'] } }],
   titles: [{ title: 'speaker_title', artist: 'speaker_artist', when: { item: 'speaker_state', is: ['PLAYING'] } }] };
 const TABLE = { holdMs: 15000, maxText: 160, devices: [SHIELD, SPEAKER] };
 
@@ -22,7 +23,7 @@ function load(start = {}) {
     shield_android_app: 'NULL', shield_cast_app: 'UNDEF', shield_cast_title: 'UNDEF', shield_cast_artist: 'UNDEF',
     shield_cast_series: 'UNDEF', shield_cast_season: 'UNDEF', shield_cast_episode: 'UNDEF',
     speaker_playing_app: 'NULL', speaker_playing_title: 'NULL', speaker_title: '', speaker_artist: '',
-    speaker_state: 'STOPPED' }, start);
+    speaker_service: '', speaker_state: 'STOPPED' }, start);
   const posts = [], rules = {}, disposals = [];
   let timers = [];
   const openhab = {
@@ -74,8 +75,8 @@ test('it hears every Item it reads, once, and sets each device on loading', () =
   const heard = p.rule.triggers.map(trigger => trigger.item);
   assert.equal(new Set(heard).size, heard.length);
   assert.deepEqual(heard.sort(), ['shield_android_app', 'shield_cast_app', 'shield_cast_artist', 'shield_cast_episode',
-    'shield_cast_season', 'shield_cast_series', 'shield_cast_title', 'shield_power', 'speaker_artist', 'speaker_state',
-    'speaker_title'].sort());
+    'shield_cast_season', 'shield_cast_series', 'shield_cast_title', 'shield_power', 'speaker_artist', 'speaker_service',
+    'speaker_state', 'speaker_title'].sort());
   assert.deepEqual(p.shown(), ['Netflix', 'UNDEF']);
   assert.deepEqual(p.shown('speaker'), ['UNDEF', 'UNDEF']);
 });
@@ -187,6 +188,17 @@ test('a speaker plays its track and artist only while PLAYING; a blank title (TV
   p.set({ speaker_state: 'PLAYING' });
   assert.deepEqual(p.shown('speaker'), ['UNDEF', 'Example Song — Example Artist']);
   p.set({ speaker_title: ' ', speaker_artist: '' });
+  p.advance(15000);
+  assert.deepEqual(p.shown('speaker'), ['UNDEF', 'UNDEF']);
+});
+
+test('a speaker names its service only while PLAYING: paused, it plays nothing after the hold', () => {
+  const p = load({ speaker_service: 'Example Service' });
+  assert.deepEqual(p.shown('speaker'), ['UNDEF', 'UNDEF']);
+  p.set({ speaker_state: 'PLAYING' });
+  assert.deepEqual(p.shown('speaker'), ['Example Service', 'UNDEF']);
+  p.set({ speaker_state: 'PAUSED' });
+  assert.deepEqual(p.shown('speaker'), ['Example Service', 'UNDEF']);
   p.advance(15000);
   assert.deepEqual(p.shown('speaker'), ['UNDEF', 'UNDEF']);
 });

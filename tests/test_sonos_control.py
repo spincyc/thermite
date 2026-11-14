@@ -24,7 +24,7 @@ import oh_render  # noqa: E402
 import oh_sandbox  # noqa: E402
 import oh_site_contract  # noqa: E402
 import oh_sonos_sim  # noqa: E402
-from oh_features import remote_model  # noqa: E402
+from oh_features import remote_activity, remote_model  # noqa: E402
 from oh_integrations import sonos  # noqa: E402
 from oh_testing import controls  # noqa: E402
 
@@ -131,6 +131,77 @@ class NativeItems(unittest.TestCase):
         self.assertEqual(result["readOnlySent"], [])
 
 
+class AudioPage(unittest.TestCase):
+    """Every controlled Arc or Amp: its remote, and its page's settings, each
+    a native channel that takes only what that channel takes."""
+
+    def amp(self, control=True):
+        device = copy.deepcopy(house(control)["devices"][0])
+        device.update(id="example_amp", kind="amp", model="Amp", ip="192.0.2.11", mac=mac("11"),
+                      sonos_udn=sonos.udn(mac("11")))
+        return device
+
+    def test_a_standalone_amp_has_a_remote_and_a_page_without_an_arcs_extras(self):
+        amp = self.amp()
+        self.assertEqual(sonos.remote(amp), {"key": "example_amp_key", "mute": "example_amp_mute",
+                                             "volume": {"item": "example_amp_volume", **sonos.VOLUME}})
+        page = sonos.audio(amp)
+        self.assertEqual(page["transport"], ["previous", "play_pause", "next"])
+        self.assertEqual([entry["item"] for entry in page["settings"]],
+                         [f"example_amp_{suffix}" for suffix in sonos.SETTINGS])
+        self.assertNotIn("facts", page)
+        self.assertIsNone(sonos.audio(self.amp(control=False)))
+
+    def test_an_amps_remote_has_no_tv_key(self):
+        self.assertEqual((sonos.remote_of(house()["devices"][0]), sonos.remote_of(self.amp())), ("sonos", "sonos_amp"))
+        layouts = (AREA / "web/remote/remotes.js").read_text()
+        amp = layouts[layouts.index("    sonos_amp: {"):]
+        self.assertNotIn('"tv"', amp[:amp.index("\n    },")])
+        self.assertNotIn("tv", sonos.keys(self.amp()))
+
+    def test_the_feed_keeps_an_arcs_tv_audio_and_leaves_out_track_details(self):
+        data = house()
+        feed = remote_activity.manifest(oh_conf.House(data), oh_render.build(data))["items"]
+        self.assertLessEqual({f"{ARC}_line_in", f"{ARC}_codec", f"{ARC}_title"}, set(feed))
+        self.assertNotIn(f"{ARC}_album", feed)
+
+    def test_an_arcs_page_adds_tv_audio_and_its_bonded_speakers_levels(self):
+        page = sonos.audio(house()["devices"][0])
+        self.assertEqual(page["transport"], ["previous", "play_pause", "next", "tv"])
+        shown = {entry["item"].removeprefix(ARC + "_"): entry for entry in page["settings"]}
+        self.assertEqual(list(shown), [*sonos.SETTINGS, *sonos.ARC_SETTINGS])
+        self.assertEqual(shown["sub_gain"], {"item": f"{ARC}_sub_gain", "label": "Subwoofer Level", "section": "sound",
+                                             "kind": "number", "min": -15, "max": 15, "step": 1})
+        self.assertEqual(shown["repeat"]["options"], [["OFF", "Off"], ["ONE", "One"], ["ALL", "All"]])
+        items = oh_render.build(house()).yaml[sonos.FILE].items
+        self.assertEqual(oh_conf.linked(items[f"{ARC}_height"]), [f"sonos:Arc:{ARC}:heightlevel"])
+        self.assertEqual(items[f"{ARC}_bass"]["tags"], ["Setpoint", "Level"])
+        self.assertEqual(items[f"{ARC}_album"]["channel"], f"sonos:Arc:{ARC}:currentalbum")
+        for suffix in [*sonos.SETTINGS, *sonos.ARC_SETTINGS]:
+            self.assertFalse(oh_conf.is_guarded(items[f"{ARC}_{suffix}"]), suffix)
+            self.assertFalse(items[f"{ARC}_{suffix}"]["autoupdate"], suffix)
+        # Observed only, none of them is rendered.
+        observed = oh_render.build(house(False)).yaml[sonos.FILE].items
+        self.assertFalse({f"{ARC}_{suffix}" for suffix in [*sonos.SETTINGS, *sonos.ARC_SETTINGS]} & set(observed))
+
+    @unittest.skipUnless(shutil.which("node"), "node needed for native link profiles")
+    def test_a_level_or_a_choice_passes_its_link_only_when_its_channel_takes_it(self):
+        items = oh_render.build(house()).yaml[sonos.FILE].items
+        script = "const vm=require('vm'); const p=JSON.parse(process.argv[1]); " \
+                 "process.stdout.write(JSON.stringify(p.map(([code,values])=>values.map(input=>vm.runInNewContext(code,{input})))));"
+
+        def link(suffix):
+            return next(iter(items[f"{ARC}_{suffix}"]["channels"].values()))["toHandlerScript"][1:]
+        probes = [[link("bass"), ["-10", "10", "0", "11", "-11", "2.5", "UP"]],
+                  [link("sub_gain"), ["-15", "15", "16"]],
+                  [link("repeat"), ["OFF", "ONE", "ALL", "all", "SHUFFLE"]],
+                  [link("music_mode"), ["0", "1", "2"]]]
+        run = subprocess.run([shutil.which("node"), "-e", script, json.dumps(probes)], text=True,
+                             capture_output=True, check=True, timeout=10)
+        self.assertEqual(json.loads(run.stdout), [["-10", "10", "0", None, None, None, None], ["-15", "15", None],
+                                                ["OFF", "ONE", "ALL", None, None], ["0", "1", None]])
+
+
 class RoomVolume(unittest.TestCase):
     """A room whose sound is an Arc beside its TV drives the Arc, never the
     TV, even when the Arc is in a room nested in the room's Building."""
@@ -199,8 +270,11 @@ class ContractStandIn(unittest.TestCase):
             self.assertNotIn(device["ip"], text)
             self.assertNotIn(device["sonos_udn"], text)
         document = yaml.safe_load(files[sonos.FILE])
-        self.assertEqual(list(document["things"]), [f"http:url:{ARC}"])
-        self.assertIn("127.0.0.1", document["things"][f"http:url:{ARC}"]["config"]["baseURL"])
+        # The settings poll on a slower Thing of their own; both reach only the stand-in.
+        self.assertEqual(list(document["things"]), [f"http:url:{ARC}", f"http:url:settings:{ARC}"])
+        for thing in document["things"].values():
+            self.assertIn("127.0.0.1", thing["config"]["baseURL"])
+        self.assertEqual(document["things"][f"http:url:settings:{ARC}"]["config"]["refresh"], sonos.SETTINGS_REFRESH)
         self.assertIn(sonos.simulation_udn(self.data["devices"][0]), text)
         self.assertIn("binding = http", files["services/addons.cfg"])
         self.assertNotIn("binding = sonos", files["services/addons.cfg"])
@@ -212,9 +286,11 @@ class ContractStandIn(unittest.TestCase):
 
     def test_http_switch_channels_have_required_native_wire_values(self):
         document = yaml.safe_load(self.check.conf()[sonos.FILE])
-        channels = document["things"][f"http:url:{ARC}"]["channels"]
+        channels = {name: channel for thing in document["things"].values() for name, channel in thing["channels"].items()}
         switches = {name: channel["config"] for name, channel in channels.items() if channel["type"] == "switch"}
-        self.assertEqual(set(switches), {"mute", "night", "speech", "line_in"})
+        settings = sonos.settings(self.data["devices"][0])
+        self.assertEqual(set(switches), {"mute", "line_in", *(name for name, (_, kind, *_) in settings.items()
+                                                              if kind == "Switch")})
         stand_in = self.check.stand_ins[ARC]
         stand_in.server.start()
 
@@ -240,13 +316,14 @@ class ContractStandIn(unittest.TestCase):
 
     def test_http_channel_item_types_match_the_native_schema(self):
         document = yaml.safe_load(self.check.conf()[sonos.FILE])
-        channels = document["things"][f"http:url:{ARC}"]["channels"]
+        channels = {uid + ":" + name: channel for uid, thing in document["things"].items()
+                    for name, channel in thing["channels"].items()}
         # Item types declared by HTTP 5.2.3's native channel definitions.
         item_types = {"string": "String", "switch": "Switch", "dimmer": "Dimmer", "number": "Number"}
-        self.assertEqual(channels["volume"]["type"], "dimmer")
+        self.assertEqual(channels[f"http:url:{ARC}:volume"]["type"], "dimmer")
         for name, item in document["items"].items():
             for uid in oh_conf.linked(item):
-                channel = channels[uid.rsplit(":", 1)[-1]]
+                channel = channels[uid]
                 self.assertEqual(item["type"], item_types[channel["type"]], name)
 
     def test_loopback_contract_accepts_only_expected_native_values(self):

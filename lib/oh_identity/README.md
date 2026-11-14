@@ -328,7 +328,20 @@ The commanded room's lock refuses every ordinary command (`room_locked`). A
 locked room the contract names as affected refuses only what would disturb
 the route it holds (`device_locked`): a source route setting a field that
 route needs to another value, or any command to a device it uses. Choosing a
-shared source the locked room also shows remains allowed.
+shared source the locked room also shows remains allowed. Another routed room
+that owns the commanded device (`own_rooms`: the device is its `audio`, or
+its soundbar, streaming amp or TV in its own room, `oh_features.routing.targets`)
+refuses it outright while locked (`device_locked`); a zone over a Building
+only shares the rooms' sound inside it.
+POST `/api/v1/devices/<id>/commands` takes `{action,value}` from a device's
+audio page: `action` is a point of its remote (`volume`, `mute`, `input`,
+`key`, `power`) or the Item of one of its page's settings, each validated as
+a room's command is (the compiled `devices` contract). The rooms whose
+remotes command the device guard it: each that owns it refuses every command
+while locked, and each that shares it (a source it shows, a stage) only what
+would disturb its held route; both refusals are `device_locked`. Like a
+room's commands it needs no account, and the Guest listener serves it. Its
+trail line has `room=-` and names `device=<id>`.
 A fresh principal/revision is checked immediately before transport.
 POST `/api/v1/all-off` with `{}` affects only unlocked authorized rooms and
 returns accepted/skipped IDs. It cannot create an override. No public API

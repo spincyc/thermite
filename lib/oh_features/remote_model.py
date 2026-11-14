@@ -96,6 +96,13 @@ def provider(device: dict) -> tuple[object | None, dict | None]:
     return None, None
 
 
+def audio_page(device: dict) -> dict | None:
+    """The first integration's (REGISTRY order) audio page for the device
+    (oh_integrations audio()), beside its remote; None without one."""
+    return next((page for module in integrations.REGISTRY if hasattr(module, "audio")
+                 if (page := module.audio(device))), None)
+
+
 def capabilities(device: dict) -> tuple[dict | None, str | None, str | None]:
     module, control = provider(device)
     if module is not None:
@@ -129,6 +136,12 @@ def build(house: House) -> dict:
         # What it plays (oh_features.playing): {"app", "title"} Items.
         if shown := playing.items(device):
             row["playing"] = shown
+        # Its audio page: what audio() declares, where it is, and the routed
+        # rooms that command it, each "own" (locked, it locks the page) or
+        # "shared" (oh_features.routing.targets).
+        if (page := audio_page(device)) and control:
+            row["audio"] = {**page, "place": house.room_label(device["room"]),
+                            "rooms": routing.guard_rooms(data, ident)}
         availability = next((entry for module in integrations.REGISTRY if hasattr(module, "remote_availability")
                              if (entry := module.remote_availability(device)) is not None), None)
         if availability is not None:

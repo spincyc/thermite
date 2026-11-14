@@ -313,8 +313,8 @@ actions:
   ACTION
     boot                boot conf/ on a test runtime and report how it loads
     routing             the room Source selectors end to end, against simulated matrices
-    controls            receiver, streamer, projector and TV controls, plus Sonos Item
-                        contracts, against stand-ins
+    controls            receiver, streamer, projector, TV and audio page controls, plus
+                        Sonos Item contracts, against stand-ins
 
 switches every verb takes:
   -q, --quiet           print only errors
@@ -466,7 +466,7 @@ examples:
 </pre></details>
 <details id="test-controls"><summary><code>thermite test controls</code></summary><pre class="help">usage: thermite test controls [-h] [--timeout SECONDS] [--house FILE]
 
-Receiver, streamer, projector and TV controls, plus Sonos Item contracts, against stand-ins.
+Receiver, streamer, projector, TV and audio page controls, plus Sonos Item contracts, against stand-ins.
 
 Prove the remote and routing controls work, end to end,
 without touching the house. Generate conf/ from the house file, keep only
@@ -494,7 +494,11 @@ does, and check that:
 7. All off, pressed as the page presses it, turns every device with a
    power control off (all_off.js; the rooms&#x27; Source Items are not in this
    conf, so it names them as missing);
-8. openhab.log holds no ERROR and no model problem.
+8. every setting of each audio page (oh_integrations audio()) reaches its
+   simulated device as sent and is read back: each choice a URL must
+   escape (a WiiM&#x27;s &quot;R&amp;B&quot; EQ preset), each switch both ways, each level at
+   its max or min; one step past a level&#x27;s max reaches nothing;
+9. openhab.log holds no ERROR and no model problem.
 
 Verified IR profiles use the native iTach binding on loopback TCP 4998.
 Their packet/transport acknowledgements are checked without claiming player

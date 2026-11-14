@@ -160,6 +160,49 @@ def covered_rooms(data: dict, room: str) -> set:
     return covered
 
 
+def targets(data: dict, room: str) -> dict[str, str]:
+    """The devices a routed room's remote commands, each with its role:
+    "own" for the room's own sound: its `audio`, a soundbar in its home
+    room (a streaming amp too, unless the routed room is a screen in a
+    larger room), and a TV or projector there that no other routed room
+    shows; "shared" for a source it shows, a stage that is not passive,
+    which other rooms may use too (a receiver's other zone), and such a
+    soundbar or amp in a room it covers only as a Building. A room locked
+    refuses every command to what it owns, from anywhere; a command to what
+    it shares only when the command would disturb its route
+    (oh_identity.runtime)."""
+    routed = data["routing"]["rooms"]
+    entry = routed[room]
+    devices = [d for d in data.get("devices") or [] if isinstance(d, dict) and d.get("id")]
+    shown_by: dict = {}
+    for other, spec in routed.items():
+        shown_by.setdefault((spec.get("display") or {}).get("device"), set()).add(other)
+    covered = covered_rooms(data, room)
+    shared = set(entry["sources"])
+    shared.update(spec.get("device") for stage in STAGES if (spec := entry.get(stage)) and not spec.get("passive"))
+    # Only endpoint audio devices join the explicit roles: an aliased TV
+    # screen does not gain the desk amplifier beside it.
+    sound = {d["id"]: d["room"] for d in devices if d.get("room") in covered
+             and (d.get("kind") == "soundbar" or d.get("kind") == "streaming_amp" and "room" not in entry)}
+    shared.update(ident for ident, place in sound.items() if place != home(data, room))
+    own = {entry.get("audio")} | {ident for ident, place in sound.items() if place == home(data, room)}
+    # An inventory can have a controlled TV in a room whose route is audio only.
+    own.update(d["id"] for d in devices if d.get("room") == home(data, room) and d.get("kind") in {"tv", "projector"}
+               and not shown_by.get(d["id"], {room}) - {room})
+    roles = {**{ident: "shared" for ident in shared}, **{ident: "own" for ident in own}}
+    roles.pop(None, None)
+    if (entry.get("display") or {}).get("passive"):
+        roles.pop(entry["display"].get("device"), None)
+    return roles
+
+
+def guard_rooms(data: dict, device_id: str) -> dict[str, str]:
+    """The routed rooms whose remotes command a device, each with the
+    device's role there (targets())."""
+    rooms = (data.get("routing") or {}).get("rooms") or {}
+    return {room: role for room in rooms if (role := targets(data, room).get(device_id))}
+
+
 def room_label(data: dict, room: str) -> str:
     """A routed room's name on its Source selector and the remote: its own
     label where its screen is not the whole room, else the room's."""

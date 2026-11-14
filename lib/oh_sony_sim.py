@@ -159,6 +159,10 @@ class _Handler(BaseHTTPRequestHandler):
 
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
+    # The binding polls each of a Thing's requests at once; past the listen
+    # backlog (socketserver's 5) a connection is dropped and its client
+    # retries only a second later, which the latency check would time.
+    request_queue_size = 128
 
 
 class Server:

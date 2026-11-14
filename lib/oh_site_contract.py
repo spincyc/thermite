@@ -15,6 +15,8 @@ from oh_features import remote, remote_activity, remote_cameras, remote_diagnost
 
 PRIVATE = re.compile(r"(?:^|_)(?:password|passwd|secret|token|psk|credential|authorization|auth)(?:_|$)", re.I)
 TEXT = {"kind": "text", "max_length": 192, "pattern": r"[^\x00-\x1f\x7f-\x9f]{1,192}"}
+#: The remote() points a room or device route commands.
+POINTS = ("power", "input", "key", "volume", "mute")
 PAIR_FIELDS = {"device", "integration", "label", "model", "room", "order", "status", "length", "chars", "again", "hint", "confirm", "result"}
 
 
@@ -119,9 +121,6 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
         item = control.get("key")
         if module and item in all_items and (allowed := keys(module, devices[ident])):
             states[item] = {"kind": "enum", "values": allowed}
-    display_owners = {}
-    for ident, spec in room_specs.items():
-        display_owners.setdefault((spec.get("display") or {}).get("device"), set()).add(ident)
     consumers = {ident: {room for room, spec in room_specs.items() if ident in spec["sources"]}
                  for ident in devices}
     plans, item_rooms = {}, {}
@@ -143,26 +142,58 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
                 result.add(room)
         return result
 
+    def control_spec(module, device, point, descriptor):
+        """A remote() control point's typed action, its Item's state recorded
+        as commanded; None for a point nobody may command."""
+        if point not in POINTS:
+            return None
+        item = descriptor.get("item") if isinstance(descriptor, dict) else descriptor
+        if not commandable(item) or not readable(item):
+            return None
+        if point in {"power", "mute"}:
+            spec = {"kind": "switch", "values": ["ON", "OFF"]}
+        elif point == "input":
+            spec = {"kind": "enum", "values": [pair[0] for pair in descriptor["options"]]}
+        elif point == "key":
+            allowed = keys(module, device)
+            if not allowed:
+                return None
+            spec = {"kind": "key", "values": allowed}
+        else:
+            # The device's own scale, as its integration declares it
+            # (VOLUME): commands and readback alike, never capped or rescaled.
+            spec = {"kind": "number", "min": descriptor["min"], "max": descriptor["max"], "step": descriptor["step"]}
+            states[item] = {"kind": "number", "min": descriptor["min"], "max": descriptor["max"]}
+        if point != "volume":
+            states[item] = {"kind": "enum" if point == "key" else spec["kind"], "values": spec.get("values", [])}
+        states[item]["commands"] = True
+        if point == "volume" and (mode := descriptor.get("displayMode", {}).get("item")) and mode in all_items:
+            states[mode] = {"kind": "enum", "values": ["absolute", "relative"]}
+        return {**spec, "item": item, "resources": ["device:" + device["id"]]}
+
+    def setting_spec(device, setting):
+        """An audio() setting's typed action, its Item's state recorded as
+        commanded (a choice reads its `reads` too); None for one nobody may
+        command."""
+        item = setting["item"]
+        if not commandable(item) or not readable(item):
+            return None
+        kind = setting["kind"]
+        if kind == "number":
+            spec = {"kind": "number", "min": setting["min"], "max": setting["max"], "step": setting["step"]}
+            states[item] = {"kind": "number", "min": setting["min"], "max": setting["max"]}
+        else:
+            spec = ({"kind": "switch", "values": ["ON", "OFF"]} if kind == "switch"
+                    else {"kind": "enum", "values": [value for value, _ in setting["options"]]})
+            states[item] = {**spec, "values": [*spec["values"], *(value for value, _ in setting.get("reads", ()))]}
+        states[item]["commands"] = True
+        return {**spec, "item": item, "resources": ["device:" + device["id"]]}
+
+    guards = {ident: routing.guard_rooms(house.data, ident) for ident in devices} if room_specs else {}
     rooms = {}
     for room, entry in room_specs.items():
         actions = {}
-        display = entry.get("display") or {}
-        # A building-level routed zone includes its explicitly nested rooms.
-        physical = routing.covered_rooms(house.data, room)
-        targets = set(entry["sources"])
-        targets.add(entry.get("audio"))
-        targets.update(spec.get("device") for stage in routing.STAGES if (spec := entry.get(stage)) and not spec.get("passive"))
-        # Only endpoint audio devices join the explicit source/display/receiver roles.
-        # An aliased TV screen does not gain the desk amplifier beside it.
-        targets.update(ident for ident, device in devices.items() if device.get("room") in physical
-                       and (device.get("kind") == "soundbar" or device.get("kind") == "streaming_amp" and "room" not in entry))
-        # Legacy inventories can have a controlled TV in a room whose route is audio-only.
-        targets.update(ident for ident, device in devices.items() if device.get("room") == routing.home(house.data, room)
-                       and device.get("kind") in {"tv", "projector"} and not display_owners.get(ident, {room}) - {room})
-        targets.discard(None)
-        if display.get("passive"):
-            targets.discard(display.get("device"))
-        for ident in sorted(targets):
+        for ident in sorted(routing.targets(house.data, room)):
             device = devices[ident]
             module, control = native[ident]
             if not module:
@@ -176,37 +207,17 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
                 if staged:
                     control["input"] = {"item": staged["input"], "options": [[value, value] for value in staged["inputs"]]}
             for point, descriptor in control.items():
-                if point not in {"power", "input", "key", "volume", "mute"}:
+                spec = control_spec(module, device, point, descriptor)
+                if spec is None:
                     continue
-                item = descriptor.get("item") if isinstance(descriptor, dict) else descriptor
-                if not commandable(item) or not readable(item):
-                    continue
-                if point in {"power", "mute"}:
-                    spec = {"kind": "switch", "values": ["ON", "OFF"]}
-                elif point == "input":
-                    spec = {"kind": "enum", "values": [pair[0] for pair in descriptor["options"]]}
-                elif point == "key":
-                    allowed = keys(module, device)
-                    if not allowed:
-                        continue
-                    spec = {"kind": "key", "values": allowed}
-                else:
-                    # The device's own scale, as its integration declares it
-                    # (VOLUME): commands and readback alike, never capped or rescaled.
-                    spec = {"kind": "number", "min": descriptor["min"], "max": descriptor["max"],
-                            "step": descriptor["step"]}
-                    states[item] = {"kind": "number", "min": descriptor["min"], "max": descriptor["max"]}
-                spec.update(item=item, resources=["device:" + ident])
-                affected = item_rooms.get(item, set()) | consumers.get(ident, set())
+                affected = item_rooms.get(spec["item"], set()) | consumers.get(ident, set())
                 if point == "key":
                     affected |= affected_device(ident)
                 spec["affected_rooms"] = sorted(affected | {room})
+                # Another room that owns the device, locked, refuses it outright.
+                if owners := sorted(r for r, role in guards[ident].items() if role == "own" and r != room):
+                    spec["own_rooms"] = owners
                 actions[ident + "." + point] = spec
-                if point != "volume":
-                    states[item] = {"kind": "enum" if point == "key" else spec["kind"], "values": spec.get("values", [])}
-                states[item]["commands"] = True
-                if point == "volume" and (mode := descriptor.get("displayMode", {}).get("item")) and mode in all_items:
-                    states[mode] = {"kind": "enum", "values": ["absolute", "relative"]}
         # Extra actions must exist as generated Items and carry finite generated options.
         for ident in set((entry.get("on_actions") or {})) | set(entry.get("off_actions") or {}):
             item = routing.action_item(devices, ident)
@@ -239,6 +250,22 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
                 "action": {"kind": "enum", "values": ["read selected input", "read matrix output input", "read power"]},
                 "reason": {"kind": "enum", "values": ["unavailable", "unsupported_input"]},
                 "reported": {"kind": "enum", "nullable": True, "values": [None, *diagnosis["reported"]]}}}
+
+    # Each audio page's device route (oh_identity.runtime): its remote's
+    # controls by point, its settings by Item, and the routed rooms that
+    # command it with its role in each (routing.targets).
+    audio_devices = {}
+    for ident, device in devices.items():
+        module, control = native[ident]
+        page = remote_model.audio_page(device)
+        if not module or not page:
+            continue
+        actions = {point: spec for point, descriptor in control.items()
+                   if (spec := control_spec(module, device, point, descriptor))}
+        actions.update({setting["item"]: spec for setting in page.get("settings", ())
+                        if (spec := setting_spec(device, setting))})
+        if actions:
+            audio_devices[ident] = {"actions": actions, "rooms": guards.get(ident, {})}
 
     for description in remote_diagnostics.providers(house).values():
         for reading in description.get("readings", ()):
@@ -274,7 +301,8 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
     assets = {name: {"private": name == "house.js" or name.endswith(".json")
                     or name.endswith(".html") and name != "access.html",
                     **({"admin": True} if name in remote_system.ADMIN_ASSETS else {})} for name in remote.FILES}
-    return {"rooms": rooms, "states": states, "routing": table, "house": copy.deepcopy(house.data), "assets": assets,
+    return {"rooms": rooms, "devices": audio_devices, "states": states, "routing": table,
+            "house": copy.deepcopy(house.data), "assets": assets,
             "asset_root": str(Path(asset_root).resolve()) if asset_root else None, "pairings": pairings, "groups": groups, "media": media,
             "views": views(house, rooms, activity, pairings), "history": history(house, conf, rooms, metrics_port)}
 
@@ -283,8 +311,9 @@ def views(house: House, rooms: dict, activity: dict, pairings: dict) -> dict:
     """The Items each client event stream view carries, by verb (oh_identity
     topics.VIEWS). The remote takes its rooms' Sources as stateupdated, since
     a choice ends at the next read-back even when it repeats the value, and
-    every other Item it reads (house.js controls, problems, route problems and
-    what each device plays) and the activity feed's Items as statechanged,
+    every other Item it reads (house.js controls, problems, route problems,
+    what each device plays and its audio page's Items) and the activity
+    feed's Items as statechanged,
     with the feed's commands.
     Home and Topology take only the rooms' Sources; Pairing its status and
     result Items, whose repeated updates answer a code. The gateway keeps only
@@ -299,6 +328,11 @@ def views(house: House, rooms: dict, activity: dict, pairings: dict) -> dict:
         read.add(((control.get("volume") or {}).get("displayMode") or {}).get("item"))
         read.add(device.get("problem"))
         read.update((device.get("playing") or {}).values())
+        page = device.get("audio") or {}
+        read.add((page.get("state") or {}).get("item"))
+        read.update((page.get("track") or {}).values())
+        for entry in (*page.get("settings", ()), *page.get("facts", ())):
+            read.update((entry["item"], (entry.get("when") or {}).get("item")))
     read.update(name for name, description in activity.items() if description.get("states"))
     read.discard(None)
     status = {config[field] for spec in pairings.values() for config in (spec["config"],)

@@ -30,10 +30,10 @@ import oh_sony_sim as sony_sim
 import oh_sonos_sim as sonos_sim
 from oh_cli import pair as pair_cli
 from oh_conf import Conf, House, YamlFile, uses
-from oh_features import all_off, routing
+from oh_features import all_off, remote_model, routing
 from oh_testing.routing import SIGNAL_WAIT, signal_problems, simulated_lifecycle
 
-SUMMARY = "receiver, streamer, projector and TV controls, plus Sonos Item contracts, against stand-ins"
+SUMMARY = "receiver, streamer, projector, TV and audio page controls, plus Sonos Item contracts, against stand-ins"
 
 DESCRIPTION = """\
 Prove the remote and routing controls work, end to end,
@@ -62,7 +62,11 @@ does, and check that:
 7. All off, pressed as the page presses it, turns every device with a
    power control off (all_off.js; the rooms' Source Items are not in this
    conf, so it names them as missing);
-8. openhab.log holds no ERROR and no model problem.
+8. every setting of each audio page (oh_integrations audio()) reaches its
+   simulated device as sent and is read back: each choice a URL must
+   escape (a WiiM's "R&B" EQ preset), each switch both ways, each level at
+   its max or min; one step past a level's max reaches nothing;
+9. openhab.log holds no ERROR and no model problem.
 
 Verified IR profiles use the native iTach binding on loopback TCP 4998.
 Their packet/transport acknowledgements are checked without claiming player
@@ -159,18 +163,25 @@ class PlayerStandIn:
         self.server = av_sim.Server(self.sim)
         self.modes = module.MODES
         self.codes = {code: button for button, code in module.KEYS.items()}
+        self.reads = {module.STATUS, module.EQ_BAND, module.META, module.DEVICE_STATUS, module.SUB, module.LIGHT}
 
     def state(self) -> dict[str, str]:
         sim = self.sim
         return {"volume": str(sim.volume), "mute": "ON" if sim.mute else "OFF",
                 "input": self.modes.get(sim.mode, "wifi")}
 
+    def settings(self) -> dict[str, str]:
+        """Each audio page setting, by its Item's suffix, as its Item reads it."""
+        sim = self.sim
+        return {"play_mode": sim.loop, "eq": "ON" if sim.eq else "OFF", "eq_preset": sim.eq_preset,
+                "sub_level": str(sim.sub_level), "light": "ON" if sim.light else "OFF"}
+
     def keys(self) -> list[str]:
         return [self.codes[command[len("setPlayerCmd:"):]] for command in self.sim.commands
                 if command[len("setPlayerCmd:"):] in self.codes]
 
     def writes(self) -> list[str]:
-        return [command for command in self.sim.commands if command.startswith("setPlayerCmd:")]
+        return [command for command in self.sim.commands if command not in self.reads]
 
 
 class SonosStandIn:
@@ -181,6 +192,9 @@ class SonosStandIn:
 
     def state(self) -> dict[str, str]:
         return {"volume": str(self.sim.volume), "mute": self.sim.mute}
+
+    def settings(self) -> dict[str, str]:
+        return dict(self.sim.settings)
 
     def keys(self) -> list[str]:
         return list(self.sim.presses)
@@ -344,6 +358,19 @@ def cpu_seconds(pgid: int | None) -> float:
     return total / os.sysconf("SC_CLK_TCK")
 
 
+def setting_values(setting: dict, now: str) -> list[str]:
+    """What a setting is sent, from its state now: a switch the other way;
+    each choice a URL must escape (a space, "&"), else one other; a level
+    its max, else its min. Each must arrive as sent."""
+    if setting["kind"] == "switch":
+        return ["OFF" if now == "ON" else "ON"]
+    if setting["kind"] == "enum":
+        others = [value for value, _ in setting["options"] if value != now]
+        return [value for value in others if not value.isalnum()] or others[:1]
+    top = f"{setting['max']:g}"
+    return [top if not same(top, now) else f"{setting['min']:g}"]
+
+
 def control_items(control: dict) -> dict[str, str]:
     """field -> Item name of what a control reads (oh_integrations remote())."""
     items = {}
@@ -377,6 +404,9 @@ class Check:
         if missing:
             raise lib.SandboxError("no simulator for " + ", ".join(missing))
         self.stand_ins = {i: STAND_INS[m.NAME](m, self.devices[i]) for i, (m, _) in self.controls.items()}
+        #: device id -> the settings of its audio page, each read back by its stand-in.
+        self.settings = {i: settings for i in self.controls
+                         if (settings := (remote_model.audio_page(self.devices[i]) or {}).get("settings"))}
         self.signal_since = time.time() * 1000
         self.signal_items = set()
         for ident, (module, _) in self.controls.items():
@@ -640,6 +670,31 @@ class Check:
         if stand_in.writes() != before:
             self.failures.append(f"a volume past its max reached {ident}")
 
+    def step_settings(self) -> None:
+        self.each(lambda ident: ident in self.settings and self._settings(ident))
+
+    def _settings(self, ident: str) -> None:
+        stand_in = self.stand_ins[ident]
+        for setting in self.settings[ident]:
+            suffix = setting["item"].removeprefix(ident + "_")
+            for value in setting_values(setting, stand_in.settings()[suffix]):
+                self.command(setting["item"], value)
+
+                def wrong(item=setting["item"], suffix=suffix, value=value):
+                    shown, read = stand_in.settings().get(suffix), self.states().get(item)
+                    return {**({f"{ident} {suffix}": (value, shown)} if not same(value, shown) else {}),
+                            **({item: (value, read)} if not same(value, read) else {})}
+                self.wait_for(f"{ident} {suffix} {value}", wrong)
+        # One step past each level's max, sent at once, reaches nothing.
+        levels = [setting for setting in self.settings[ident] if setting["kind"] == "number"]
+        before = list(stand_in.writes())
+        for setting in levels:
+            self.command(setting["item"], f"{setting['max'] + setting['step']:g}")
+        if levels:
+            time.sleep(QUIET)
+            if stand_in.writes() != before:
+                self.failures.append(f"a level past its max reached {ident}: {stand_in.writes()[len(before):]}")
+
     def step_unknown_key(self) -> None:
         self.each(self._unknown_key)
 
@@ -681,12 +736,20 @@ class Check:
         item, allowed = items[field], module.READ_BACK + SLACK
         for _ in range(PRESSES):
             value = next(v for v in values if not same(v, self.states().get(item)))
-            sent = len(stand_in.writes())
+            sent, seen = len(stand_in.writes()), len(heard)
             began = time.monotonic()
             self.command(item, value)
             reached = until(lambda: len(stand_in.writes()) > sent, began, REACH + STEP)
-            read = until(lambda: any(t >= began and i == item and same(value, v) for t, i, v in list(heard)),
-                         began, allowed + STEP)
+
+            # Only the events heard since the last look: every device waits at
+            # once, and rescanning the whole stream would starve the stand-ins
+            # whose answers this times.
+            def read_back() -> bool:
+                nonlocal seen
+                fresh = heard[seen:]
+                seen += len(fresh)
+                return any(t >= began and i == item and same(value, v) for t, i, v in fresh)
+            read = until(read_back, began, allowed + STEP)
             shown = [f"{ident} {field} {value}:",
                      "never reached it" if reached is None else f"at the device in {reached * 1000:.0f} ms,",
                      "never read back" if read is None else f"read back on the event stream in {read * 1000:.0f} ms",
@@ -825,6 +888,7 @@ def run_check(args, rt: lib.Runtime, log) -> int:
                     ("how long a press takes", lambda: check.step_latency(inst)),
                     ("a command from the remote page, with no login", check.step_remote),
                     ("All off", check.step_all_off),
+                    ("every audio page setting, sent and read back", check.step_settings),
                     ("openhab.log", lambda: check.step_log(inst)),
                 ]
                 for name, step in steps:

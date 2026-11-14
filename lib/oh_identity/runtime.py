@@ -103,6 +103,8 @@ class RuntimeContract:
     """Compiled server-side facts, independent of browser-provided manifests.
 
     rooms: id -> {sources, source_item, actions: action -> typed Item spec}.
+    devices: an audio page's device id -> {actions: action -> typed Item
+    spec, rooms: {routed room: "own" | "shared"}} (oh_site_contract).
     states: Item -> {kind, values/fields}; assets: basename -> {private}.
     views: client stream view -> {verb: [Item, ...]}; topics.views() keeps
     only public topics, and derives views for a contract without them.
@@ -113,7 +115,7 @@ class RuntimeContract:
     """
 
     def __init__(self, rooms, states=None, routing=None, house=None, assets=None, asset_root=None,
-                 pairings=None, groups=None, media=None, views=None, history=None):
+                 pairings=None, groups=None, media=None, views=None, history=None, devices=None):
         data = copy.deepcopy(dict(rooms))
         reads = copy.deepcopy(states or {})
         for ident, room in data.items():
@@ -124,6 +126,14 @@ class RuntimeContract:
             source_action.setdefault("resources", room.get("resources", [room["source_item"]]))
             reads.setdefault(room["source_item"], {"kind": "enum", "values": ["off", *room["sources"]]})
         self.rooms = frozen(data)
+        machines = copy.deepcopy(dict(devices or {}))
+        for ident, device in machines.items():
+            guards = device.get("rooms", {}) if isinstance(device, dict) else None
+            if (not isinstance(ident, str) or not NAME.fullmatch(ident) or not isinstance(guards, dict)
+                    or not isinstance(device.get("actions"), dict)
+                    or any(room not in data or role not in ("own", "shared") for room, role in guards.items())):
+                raise ValueError("Invalid runtime device contract")
+        self.devices = frozen(machines)
         self.states = frozen({name: spec for name, spec in reads.items() if safe_item(name)})
         self.routing = frozen(copy.deepcopy(routing or {}))
         self.house = frozen(copy.deepcopy(house or {}))
@@ -147,6 +157,23 @@ class RuntimeContract:
     def command(self, room_id, action, value):
         room = self.rooms.get(room_id)
         spec = room and room["actions"].get(action)
+        self.checked(spec, value)
+        affected = tuple(spec.get("affected_by_value", {}).get(str(value), spec.get("affected_rooms", (room_id,))))
+        if any(ident not in self.rooms for ident in (*affected, *spec.get("own_rooms", ()))):
+            raise Problem("invalid_contract", 503)
+        return spec["item"], str(value), affected
+
+    def device_command(self, device_id, action, value):
+        """(Item, value, {routed room: role}) of a command on a device's
+        audio page, checked as a room's is."""
+        device = self.devices.get(device_id)
+        spec = device and device["actions"].get(action)
+        self.checked(spec, value)
+        return spec["item"], str(value), dict(device["rooms"])
+
+    @staticmethod
+    def checked(spec, value):
+        """Refuse an action no spec names or a value its spec does not take."""
         if not spec or not safe_item(spec.get("item")):
             raise Problem("unknown_action", 404)
         kind = spec.get("kind")
@@ -161,10 +188,6 @@ class RuntimeContract:
                 raise Problem("invalid_command")
         else:
             raise Problem("unknown_action", 404)
-        affected = tuple(spec.get("affected_by_value", {}).get(str(value), spec.get("affected_rooms", (room_id,))))
-        if any(ident not in self.rooms for ident in affected):
-            raise Problem("invalid_contract", 503)
-        return spec["item"], str(value), affected
 
 
 def project(name, value, spec):
@@ -238,11 +261,11 @@ class RuntimeAdapter:
         self.command_lock = command_lock or (lambda rooms, resources: nullcontext())
         self._plans = {}
 
-    def allowed(self, room_id, command=None):
+    def allowed(self, room_id, command=None, code="room_locked"):
         """Every principal controls unlocked rooms; only a room's policy refuses."""
         if room_id not in self.contract.rooms:
             raise Problem("unknown_room", 404)
-        self.check_policy(room_id, command)
+        self.check_policy(room_id, command, code)
 
     def _plan(self, room, choice):
         key = (id(self.contract), room, choice)
@@ -251,23 +274,26 @@ class RuntimeAdapter:
         return self._plans[key]
 
     def _disturbs(self, command, held_room, desired):
-        """Whether a command made in another room would change what a locked
-        room holds: a source route setting a field the held route needs to
+        """Whether a command made elsewhere would change what a locked room
+        holds: a source route setting a field the held route needs to
         another value, or any command to a device the held route uses."""
-        room, action, value = command
+        room, action, value, resources = command
         if desired is None or not hasattr(self.policy, "expected_plan"):
             return True  # without a route to compare, a lock protects every room the contract names
         try:
             held = self._plan(held_room, desired)
-            if action == "source":
+            if room is not None and action == "source":
                 return bool(self.policy.conflicts(self._plan(room, value), [held]))
-            return bool(set(self.contract.rooms[room]["actions"][action].get("resources", ())) & set(held.resources))
+            return bool(set(resources) & set(held.resources))
         except Exception:
             return True
 
-    def check_policy(self, room_id, command=None):
-        """`command` (room, action, value) names a command made in another
-        room; the lock then refuses only what would disturb it."""
+    def check_policy(self, room_id, command=None, code="room_locked"):
+        """`command` (room, action, value, resources) names a command made
+        elsewhere (room None: on a device's page); the lock then refuses only
+        what would disturb it (device_locked). Without one, the lock refuses
+        outright with `code`: room_locked for the room's own command,
+        device_locked for a device it owns, commanded from elsewhere."""
         from django.utils import timezone
         from oh_room_policy import active
         from .models import RoomPolicy
@@ -289,7 +315,7 @@ class RuntimeAdapter:
             raise Problem("policy_unavailable", 503) from None
         if not answer.get("allowed"):
             if command is None:
-                refusal = Problem("room_locked", 423)
+                refusal = Problem(code, 423)
             elif self._disturbs(command, room_id, answer.get("desired")):
                 refusal = Problem("device_locked", 423)
             else:
@@ -304,30 +330,62 @@ class RuntimeAdapter:
         item, command, affected = self.contract.command(room_id, action, value)
         spec = self.contract.rooms[room_id]["actions"][action]
         resources = tuple(spec.get("resources", (item,)))
+        # Other rooms that own the device: locked, each refuses it outright.
+        own = tuple(spec.get("own_rooms", ()))
         record = trail.Command(origin, user, room=room_id, action=action, item=item, value=command)
         try:
-            with self.command_lock(tuple(sorted(set((room_id, *affected)))), resources):
-                result = self._dispatch(user, room_id, action, item, command, affected, record)
+            with self.command_lock(tuple(sorted({room_id, *affected, *own})), resources):
+                result = self._dispatch(user, room_id, action, item, command, affected, own, resources, record)
         except BaseException as error:
             record.finish(error)
             raise
         record.finish()
         return result
 
-    def _dispatch(self, user, room_id, action, item, command, affected, record):
+    def _dispatch(self, user, room_id, action, item, command, affected, own, resources, record):
         from .auth import revalidate
         # After the lock wait and before I/O: a queued stale principal is insufficient.
         revalidate(user)
         self.allowed(room_id)
+        for ident in own:
+            self.allowed(ident, code="device_locked")
         for ident in dict.fromkeys(affected):
-            if ident != room_id:
-                self.allowed(ident, (room_id, action, command))
+            if ident != room_id and ident not in own:
+                self.allowed(ident, (room_id, action, command, resources))
+        self._send(item, command, record)
+        return {"accepted": True, "room": room_id, "action": action}
+
+    def dispatch_device(self, user, device_id, action, value, *, origin=None):
+        """A command on a device's audio page; every principal sends it, as a
+        room's commands. Each routed room that owns the device, locked,
+        refuses it, as that room's remote would; a room that shares it (a
+        source it shows, a stage, a larger room's soundbar) refuses only
+        what would disturb its held route. Either refusal is device_locked:
+        the page is no room's."""
+        item, command, rooms = self.contract.device_command(device_id, action, value)
+        spec = self.contract.devices[device_id]["actions"][action]
+        resources = tuple(spec.get("resources", (item,)))
+        record = trail.Command(origin, user, room=None, device=device_id, action=action, item=item, value=command)
+        try:
+            with self.command_lock(tuple(sorted(rooms)), resources):
+                from .auth import revalidate
+                # After the lock wait and before I/O, as a room's command.
+                revalidate(user)
+                for room, role in sorted(rooms.items()):
+                    self.allowed(room, None if role == "own" else (None, action, command, resources), "device_locked")
+                self._send(item, command, record)
+        except BaseException as error:
+            record.finish(error)
+            raise
+        record.finish()
+        return {"accepted": True, "device": device_id, "action": action}
+
+    def _send(self, item, command, record):
         try:
             self.transport.command(item, command, source=record.source)
         except Exception as error:
             record.cause = trail.cause(error)
             raise Problem("runtime_unavailable", 502) from None
-        return {"accepted": True, "room": room_id, "action": action}
 
     def read(self, item):
         spec = self.contract.states.get(item)

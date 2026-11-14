@@ -11,7 +11,7 @@ import re
 import oh_integrations as integrations
 from oh_conf import Conf, House, parse_options
 
-from . import playing, routing
+from . import playing, remote_model, routing
 from .remote_diagnostics import providers
 
 SECRET = re.compile(r"(?:^|_)(?:password|passwd|passphrase|secret|token|psk|authorization|credential|auth)(?:_|$)", re.I)
@@ -81,8 +81,13 @@ def manifest(house: House, conf: Conf) -> dict:
 
     for device in active:
         points = dict(conf.points(device["id"]))
-        # What it plays joins readings the feed already reports.
+        # What it plays joins readings the feed already reports. A track's
+        # details beyond its title and artist change with every track, and
+        # a quiet fact on its audio page with every poll: no activity.
         joined = set((playing.items(device) or {}).values())
+        page = remote_model.audio_page(device) or {}
+        joined.update(entry["item"] for entry in page.get("facts", ()) if entry.get("quiet"))
+        joined.update(item for field, item in (page.get("track") or {}).items() if field not in ("title", "artist"))
         for name, item in points.items():
             if name not in joined:
                 add(name, item, device)

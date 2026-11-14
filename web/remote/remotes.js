@@ -199,6 +199,11 @@ globalThis.REMOTE_LAYOUTS = {
       playback: ["previous", "play_pause", "next"],
       keyGroups: [{ label: "Audio", keys: ["tv", "night", "speech"], columns: 3, primary: true }]
     },
+    sonos_amp: {
+      label: "Audio controls",
+      playback: ["previous", "play_pause", "next"],
+      keyGroups: [{ label: "Audio", keys: ["night", "speech"], columns: 2, primary: true }]
+    },
     wiim: {
       label: "WiiM remote",
       top: ["input"],

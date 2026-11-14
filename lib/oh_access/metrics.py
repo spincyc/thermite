@@ -135,7 +135,7 @@ def route_class(path):
         _PAGES = frozenset((*PAGES, *ALIASES))
     if path.startswith("/api/v1/rooms/"):
         return "command" if path.endswith("/commands") else "policy"
-    if path == "/api/v1/all-off":
+    if path == "/api/v1/all-off" or path.startswith("/api/v1/devices/") and path.endswith("/commands"):
         return "command"
     if path == "/api/v1/locks":
         return "locks"

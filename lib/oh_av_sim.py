@@ -13,10 +13,14 @@ volume (MV, the 0-98 scale), mute, source (SI), surround mode (MS), menu
 does, and lists it in `unknown`.
 
 Player answers GET /httpapi.asp?command=<command> as the WiiM Amp Pro does,
-in plain HTTP (the real one is HTTPS only): getPlayerStatus,
-getStatusEx and the setPlayerCmd commands vol, mute, switchmode, onepause,
-play, pause, prev and next. A setPlayerCmd it does not take answers Failed,
-any other command `unknown command`.
+in plain HTTP (the real one is HTTPS only): getPlayerStatus, EQGetBand,
+getMetaInfo, getStatusEx, getSubLPF and LED_SWITCH_GET; the setPlayerCmd
+commands vol, mute, switchmode, loopmode, onepause, play, pause, prev and
+next; EQOn, EQOff, EQLoad:<preset>, setSubLPF:level:<dB> and
+LED_SWITCH_SET:<0|1>. It reads the query as a web server does, so an
+unescaped "&" in a value ends the command there. A setPlayerCmd it does
+not take answers Failed, another command it does not take Failed or
+`unknown command`, as the player does.
 
 Both record every request and every command, apply commands whatever the
 power state, and can be told to answer nothing (muted).
@@ -222,9 +226,16 @@ class Player(Device):
     #: inputs the Amp Pro has (getStatusEx plm_support).
     MODES = {"wifi": "10", "line-in": "40", "bluetooth": "41", "optical": "43", "HDMI": "49"}
     PLM_SUPPORT = "0x2b00416"
+    #: EQGetList on an Amp Pro (read 2026-11-14).
+    EQ_PRESETS = ("Flat", "Acoustic", "Bass Booster", "Bass Reducer", "Classical", "Dance", "Deep", "Electronic",
+                  "Game", "Hip-Hop", "Jazz", "Latin", "Loudness", "Lounge", "Movie", "Piano", "Pop", "R&B", "Rock",
+                  "Small Speakers", "Spoken Word", "Treble Booster", "Treble Reducer", "Vocal Booster")
+    #: setPlayerCmd:loopmode values it takes (Arylic's table).
+    LOOPS = ("0", "1", "2", "3", "4", "5")
 
     def __init__(self, *, status: str = "play", volume: int = 30, mute: bool = False, mode: str = "43",
-                 title: str = "", artist: str = "", name: str = "WiiM Amp Pro") -> None:
+                 title: str = "", artist: str = "", album: str = "", vendor: str = "", name: str = "WiiM Amp Pro",
+                 position: int = 0, duration: int = 0, sample_rate: str = "unknow", bit_depth: str = "unknow") -> None:
         super().__init__()
         self.status = status
         self.volume = volume
@@ -232,27 +243,68 @@ class Player(Device):
         self.mode = mode
         self.title = title
         self.artist = artist
+        self.album = album
+        self.vendor = vendor
         self.name = name
+        self.position = position
+        self.duration = duration
+        self.sample_rate = sample_rate
+        self.bit_depth = bit_depth
+        self.loop = "4"
+        self.eq = True
+        self.eq_preset = "Flat"
+        self.sub_level = 0
+        self.light = True
 
     def reply(self, method: str, path: str, body: bytes) -> Reply | None:
         url = urllib.parse.urlsplit(path)
-        if method != "GET" or url.path != "/httpapi.asp" or not url.query.startswith("command="):
+        query = urllib.parse.parse_qs(url.query, keep_blank_values=True)
+        if method != "GET" or url.path != "/httpapi.asp" or len(query.get("command", ())) != 1:
             return 404, "text/html", b"<html><body>404 Not Found</body></html>"
-        command = urllib.parse.unquote(url.query[len("command="):])
+        command = query["command"][0]
         self.commands.append(command)
         if command == "getPlayerStatus":
-            return self._json({"type": "0", "ch": "0", "mode": self.mode, "loop": "0", "eq": "0",
-                               "status": self.status, "curpos": "0", "offset_pts": "0", "totlen": "0",
-                               "Title": hex_text(self.title), "Artist": hex_text(self.artist),
-                               "Album": "", "alarmflag": "0", "plicount": "0", "plicurr": "0",
-                               "vol": str(self.volume), "mute": "1" if self.mute else "0"})
+            return self._json({"type": "0", "ch": "0", "mode": self.mode, "loop": self.loop, "eq": "0",
+                               "vendor": self.vendor, "status": self.status, "curpos": str(self.position),
+                               "offset_pts": "0", "totlen": str(self.duration), "Title": hex_text(self.title),
+                               "Artist": hex_text(self.artist), "Album": hex_text(self.album), "alarmflag": "0",
+                               "plicount": "0", "plicurr": "0", "vol": str(self.volume),
+                               "mute": "1" if self.mute else "0"})
+        if command == "EQGetBand":
+            return self._json({"status": "OK", "EQStat": "On" if self.eq else "Off", "Name": self.eq_preset,
+                               "source_name": "optical", "pluginURI": "http://moddevices.com/plugins/caps/Eq10HP"})
+        if command == "getMetaInfo":
+            return self._json({"metaData": {"album": self.album or "unknow", "title": self.title or "unknow",
+                                            "artist": self.artist or "unknow", "albumArtURI": "un_known",
+                                            "sampleRate": self.sample_rate, "bitDepth": self.bit_depth,
+                                            "bitRate": "unknow", "trackId": "0"}})
         if command == "getStatusEx":
-            return self._json({"DeviceName": self.name, "project": "WiiM_Amp_4layer",
-                               "plm_support": self.PLM_SUPPORT})
+            return self._json({"DeviceName": self.name, "project": "WiiM_Amp_Pro", "plm_support": self.PLM_SUPPORT,
+                               "firmware": "Linkplay.5.2.833845", "VersionUpdate": "0", "NewVer": "0",
+                               "internet": "1", "temperature_cpu": "38", "temperature_tmp102": "31",
+                               "BleRemoteControl": "1", "BleRemoteConnected": "1", "BleRemoteBatterylevel": "40"})
+        if command == "getSubLPF":
+            return self._json({"status": 1, "plugged": 1, "cross": 90, "phase": 0, "level": self.sub_level,
+                               "main_filter": 1, "sub_filter": 1, "sub_delay": 0})
+        if command == "LED_SWITCH_GET":
+            return self._text("1" if self.light else "0")
         if command.startswith("setPlayerCmd:"):
             return self._text("OK" if self.player_command(command[len("setPlayerCmd:"):]) else "Failed")
+        if command in ("EQOn", "EQOff"):
+            self.eq = command == "EQOn"
+            return self._json({"status": "OK"})
+        if command.startswith("EQLoad:") and command[len("EQLoad:"):] in self.EQ_PRESETS:
+            self.eq, self.eq_preset = True, command[len("EQLoad:"):]
+            return self._json({"status": "OK"})
+        if re.fullmatch(r"setSubLPF:level:-?\d+", command) and -15 <= int(command.rsplit(":", 1)[1]) <= 15:
+            self.sub_level = int(command.rsplit(":", 1)[1])
+            return self._text("OK")
+        if command in ("LED_SWITCH_SET:0", "LED_SWITCH_SET:1"):
+            self.light = command.endswith("1")
+            return self._text("OK")
         self.unknown.append(command)
-        return self._text("unknown command")
+        return self._json({"status": "Failed"}) if command.startswith(("EQLoad:", "setSubLPF:")) else \
+            self._text("unknown command")
 
     def player_command(self, command: str) -> bool:
         name, _, value = command.partition(":")
@@ -262,6 +314,8 @@ class Player(Device):
             self.mute = value == "1"
         elif name == "switchmode" and value in self.MODES:
             self.mode = self.MODES[value]
+        elif name == "loopmode" and value in self.LOOPS:
+            self.loop = value
         elif command == "onepause":
             self.status = "pause" if self.status == "play" else "play"
         elif command in ("play", "resume"):
@@ -320,6 +374,10 @@ class _Handler(BaseHTTPRequestHandler):
 
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
+    # The binding polls each of a Thing's requests at once; past the listen
+    # backlog (socketserver's 5) a connection is dropped and its client
+    # retries only a second later, which the latency check would time.
+    request_queue_size = 128
     device: Device
 
 

@@ -1255,6 +1255,8 @@ class Textfiles(unittest.TestCase):
         route = self.metrics.route_class
         self.assertEqual(route("/api/v1/rooms/example_west/commands"), "command")
         self.assertEqual(route("/api/v1/rooms/example_west/policy"), "policy")
+        self.assertEqual(route("/api/v1/devices/example_desk_wiim/commands"), "command")
+        self.assertEqual(route("/api/v1/devices/example_desk_wiim"), "other")
         self.assertEqual(route("/rest/items/loc_example_west_source/state"), "items")
         self.assertEqual(route("/api/v1/history/rooms"), "history")
         self.assertEqual(route("/api/v1/history/rooms/example_west"), "other")

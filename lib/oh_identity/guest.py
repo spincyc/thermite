@@ -38,7 +38,8 @@ ROUTES = {
     "api/v1/events/remote": GET, "api/v1/events/home": GET, "rest/items/<slug:item>/state": GET,
     "api/v1/locks": GET, "api/v1/rooms/<room:room>/policy": GET,
     # Controls, with every room check (locks included) of the HTTPS site.
-    "api/v1/rooms/<room:room>/commands": POST, "api/v1/all-off": POST,
+    "api/v1/rooms/<room:room>/commands": POST, "api/v1/devices/<slug:device>/commands": POST,
+    "api/v1/all-off": POST,
     # What the page could not see the gateway answer (oh_identity.telemetry).
     "api/v1/telemetry": POST,
 }

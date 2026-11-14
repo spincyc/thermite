@@ -12,27 +12,37 @@ import urllib.parse
 
 
 class Player:
+    #: Each setting a page commands (oh_integrations.sonos SETTINGS and
+    #: ARC_SETTINGS) -> the values it takes; it starts at 0, else the first.
+    SETTINGS = {**{name: ("OFF", "ON") for name in ("shuffle", "loudness", "night", "speech", "led", "subwoofer",
+                                                     "surround")},
+                "repeat": ("OFF", "ONE", "ALL"), "music_mode": ("0", "1"),
+                **{name: tuple(str(n) for n in range(-10, 11)) for name in ("bass", "treble", "height")},
+                **{name: tuple(str(n) for n in range(-15, 16)) for name in ("sub_gain", "surround_tv", "surround_music")}}
+
     def __init__(self, udn: str) -> None:
         self.udn = udn
         self.volume = 25
         self.mute = "OFF"
         self.playing = True
-        self.night = "OFF"
-        self.speech = "OFF"
+        self.settings = {name: "0" if "0" in values else values[0] for name, values in self.SETTINGS.items()}
         self.commands: list[tuple[str, str]] = []
         self.presses: list[str] = []
 
     def read(self, point: str) -> str | None:
         return {"volume": str(self.volume), "mute": self.mute, "state": "PLAYING" if self.playing else "PAUSED_PLAYBACK",
-                "night": self.night, "speech": self.speech, "codec": "Dolby Digital", "line_in": "ON",
-                "title": "TV", "artist": ""}.get(point)
+                "codec": "Dolby Digital", "line_in": "ON", "title": "TV", "artist": "", "album": "",
+                **self.settings}.get(point)
 
     def command(self, point: str, value: str) -> bool:
         key = None
         if point == "volume" and value.isdigit() and 0 <= int(value) <= 100:
             self.volume = int(value)
-        elif point in ("mute", "night", "speech") and value in ("ON", "OFF"):
-            setattr(self, point, value)
+        elif point == "mute" and value in ("ON", "OFF"):
+            self.mute = value
+        elif point in self.SETTINGS and value in self.SETTINGS[point]:
+            self.settings[point] = value
+            # The remote's Night and Speech keys reach their switches.
             key = point if point in ("night", "speech") else None
         elif point == "player" and value in ("PREVIOUS", "NEXT", "PLAY", "PAUSE"):
             key = {"PREVIOUS": "previous", "NEXT": "next", "PLAY": "play_pause", "PAUSE": "play_pause"}[value]
@@ -47,6 +57,14 @@ class Player:
         if key:
             self.presses.append(key)
         return True
+
+
+class _Server(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    # The binding polls each of a Thing's requests at once; past the listen
+    # backlog (socketserver's 5) a connection is dropped and its client
+    # retries only a second later, which the latency check would time.
+    request_queue_size = 128
 
 
 class Server:
@@ -69,7 +87,7 @@ class Server:
                 self.end_headers()
                 self.wfile.write(body)
 
-        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.httpd = _Server(("127.0.0.1", 0), Handler)
         self.thread: threading.Thread | None = None
 
     @property

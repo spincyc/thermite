@@ -26,6 +26,7 @@ urlpatterns = [
     path("api/v1/rooms/<room:room>/policy", views.room_policy),
     path("api/v1/rooms/<room:room>/lock", views.room_lock),
     path("api/v1/rooms/<room:room>/commands", views.command),
+    path("api/v1/devices/<slug:device>/commands", views.device_command),
     path("rest/items", views.pairing_items), path("rest/items/<slug:item>", views.item_resource),
     path("rest/items/<slug:item>/state", views.item_state),
     # One snapshot-first event stream per page, by view (topics.py VIEWS).

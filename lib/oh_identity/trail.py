@@ -10,6 +10,7 @@ line, events.log and the routing rule's own lines can be joined:
         token=- peer=9c0d1e2f req=3a4b5c6d room=den action=source
         item=loc_den_source value=off outcome=accepted ms=41
 
+A command on a device's audio page has room=- and names its device=<id>.
 origin is web, tui, guest or api (a request that named no client), all_off,
 schedule or repair (the worker), or local (a trusted local call). Values are
 validated command values, never pairing codes (always <private>), bodies,
@@ -147,10 +148,10 @@ class Command:
     """One command's trail: its ID, its openHAB event source and, when it
     ends, one INFO line."""
 
-    def __init__(self, where, user, *, room, action, item, value, private=False, clock=time.monotonic):
+    def __init__(self, where, user, *, room, action, item, value, device=None, private=False, clock=time.monotonic):
         self.id, self.where, self.clock = new_id(), where or Origin(), clock
         self.user = user
-        self.room, self.action, self.item = room, action, item
+        self.room, self.device, self.action, self.item = room, device, action, item
         self.value = PRIVATE if private else value
         self.started = clock()
         self.cause = None
@@ -192,7 +193,8 @@ class Command:
         batch = {"batch": self.where.batch} if self.where.batch else {}
         LOG.info(line("cmd", id=self.id, **batch, origin=self.where.origin, client=self.where.client,
                       user=username, principal=kind, token=token, peer=short(context.get("peer")),
-                      req=self.where.request, room=self.room, action=self.action, item=self.item, value=self.value,
+                      req=self.where.request, room=self.room, **({"device": self.device} if self.device else {}),
+                      action=self.action, item=self.item, value=self.value,
                       outcome=outcome, **extra, ms=milliseconds(self.started, self.clock)))
 
 
