@@ -2209,6 +2209,21 @@ kbd {
   .sidebar { width: 440px; }
 }
 
+/* ---- the room's audio device, a link to its Audio page (audio.html) ------ */
+
+.caption__link {
+  /* A taller target than its line, without moving the line. */
+  padding-block: 8px;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--panel-border);
+  text-underline-offset: 3px;
+}
+
+.caption__link:hover {
+  color: var(--accent);
+}
+
 /* ---- the link to the Pairing page (pair.html), under each All off ---------- */
 
 .link--pair {

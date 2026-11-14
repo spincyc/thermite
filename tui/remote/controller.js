@@ -1,10 +1,10 @@
 /*
  * The terminal remote's state and input, without a terminal: it keeps what
  * is on the screen (the screen, a sheet, the focus, toasts, the log, scroll
- * offsets) and turns keys and mouse events into RemoteSession and
- * PairingBackend calls, as remote.js and pair.js do for the page. app.js
- * draws its frame() and feeds it key() and mouse(); the tests call the
- * same three.
+ * offsets) and turns keys and mouse events into RemoteSession,
+ * PairingBackend and RemoteAudio calls, as remote.js, pair.js and audio.js
+ * do for the page. app.js draws its frame() and feeds it key() and mouse();
+ * the tests call the same three.
  *
  * The views get the time (ctx.now, ms, from options.now) and whether
  * motion is off (ctx.still: --still, THERMITE_REMOTE_STILL, or the a key).
@@ -78,10 +78,13 @@ function create(options) {
   const system = { backend: options.system || null, expanded: false, link: null };
   // Rooms through the day (day.js): read while its sheet is open.
   const day = { backend: null };
+  // The Audio screen's RemoteAudio (audio-session.js): started while it shows.
+  const audio = { session: null };
   const timers = { toast: 0, flash: {}, repeat: null, tick: 0 };
   let frame = null;
   let size = { width: 80, height: 24 };
   let dragging = null;
+  let audioDragging = null;
   let stopped = false;
   let signalRunning = false;
   let signalContext = null;
@@ -100,9 +103,10 @@ function create(options) {
   }
 
   // Every room's lock is read only while a room list can show it: on Home
-  // and Remotes (its rooms panel or sheet).
+  // and Remotes (its rooms panel or sheet), and on Audio, whose devices'
+  // rooms lock them.
   function syncLocks() {
-    if (options.access && options.access.watchLocks) options.access.watchLocks(ui.ready && (ui.screen === "home" || ui.screen === "remote"));
+    if (options.access && options.access.watchLocks) options.access.watchLocks(ui.ready && ["home", "remote", "audio"].includes(ui.screen));
   }
 
   function changed() {
@@ -119,7 +123,7 @@ function create(options) {
     if (options.backend && "connected" in options.backend) ui.connected = options.backend.connected;
     return {
       session: session, Session: Session, Remote: options.Remote, layouts: options.layouts, house: options.house,
-      Pairing: Pairing, hints: hints, ui: ui, access, pairing: pairing, cameras: cameras, topology: topology, system, day, look: options.look || null,
+      Pairing: Pairing, hints: hints, ui: ui, access, pairing: pairing, cameras: cameras, topology: topology, system, day, audio, look: options.look || null,
       now: now(), still: ui.still, animate: undefined
     };
   }
@@ -150,6 +154,7 @@ function create(options) {
         if (ui.screen === "cameras") openCameras();
         if (ui.screen === "topology") openTopology();
         if (ui.screen === "system") system.backend?.open().then(changed);
+        if (ui.screen === "audio") openAudio(session.current()?.audio?.id);
         if (["security", "settings", "users", "account"].includes(ui.screen)) access.open(ui.screen, session.current()?.id);
         changed();
         if (chosen) session.choose(chosen);
@@ -172,6 +177,7 @@ function create(options) {
     if (cameras.backend) cameras.backend.stop();
     if (topology.backend) topology.backend.stop();
     if (day.backend) day.backend.stop();
+    if (audio.session) audio.session.stop();
     system.backend?.close();
     if (signalRunning && session.closeDiagnostics) session.closeDiagnostics();
     signalRunning = false;
@@ -219,6 +225,7 @@ function create(options) {
       pairing.codes = {}; pairing.notes = {}; if (pairing.backend) pairing.backend.stop(); pairing.backend = null; pairing.loaded = false;
       if (cameras.backend) cameras.backend.stop();
       if (day.backend) day.backend.stop();
+      if (audio.session && ui.screen === "audio") audio.session.stop();
       system.backend?.close(); system.expanded = false; system.link = null;
       access.cancel(); access.state.users = []; access.state.policy = null;
       access.state.kind = "account"; access.state.error = ui.error; ui.screen = "account"; ui.overlay = null; ui.pane = "account"; ui.focus = null;
@@ -329,6 +336,32 @@ function create(options) {
     }).catch(() => toast("Camera web view", "Open Cameras from the web remote.", "bad"));
   }
 
+  // The Audio screen, on the device given if it has an audio page, else on
+  // the one last chosen there. Its session is made the first time and reads
+  // its devices only while the screen shows.
+  function openAudio(device) {
+    if (!options.createAudio) return;
+    if (!audio.session) {
+      audio.session = options.createAudio();
+      audio.session.subscribe(onAudio);
+    }
+    audio.session.start(device).then(changed);
+  }
+
+  // What the Audio session says: toasts as the remote's, the rest a redraw.
+  function onAudio(event) {
+    if (event.type === "toast") return toast(event.title, event.body, event.tone);
+    if (event.type === "announce") ui.announce = event.message;
+    changed();
+  }
+
+  // [ and ]: the previous or next device, as on the page.
+  function stepAudioDevice(delta) {
+    const ids = audio.session.devices().flatMap((group) => group.devices.map((device) => device.id));
+    const index = ids.indexOf(audio.session.selected());
+    if (ids.length > 1) audio.session.select(ids[(index + delta + ids.length) % ids.length]);
+  }
+
   // ---- the frame -------------------------------------------------------
 
   function render(width, height) {
@@ -404,6 +437,7 @@ function create(options) {
       || hit || list.find((entry) => entry.item && entry.item.id === session.state(session.current().id).value);
     else if (pane === "remote" && !hit) hit = list.find((entry) => entry.key === "key:ok") || list.find((entry) => entry.kind === "key");
     else if (pane === "pair-card" && !hit) hit = list.find((entry) => entry.key === "code");
+    else if (pane === "audio" && !hit) hit = list.find((entry) => entry.key === "audio-key:play_pause");
     if (["info", "signal", "log", "sheet:info", "sheet:help"].includes(pane)) hit = null;
     ui.focus = hit ? hit.key : list.length && !["info", "signal", "log", "sheet:info", "sheet:help"].includes(pane) ? list[0].key : null;
     ui.focusVisible = true;
@@ -511,6 +545,8 @@ function create(options) {
     if (ui.overlay && ui.overlay.kind === "cameras" && kind !== "cameras" && cameras.backend) cameras.backend.close();
     if (ui.overlay && ui.overlay.kind === "topology" && kind !== "topology" && topology.backend) topology.backend.close();
     if (ui.overlay && ui.overlay.kind === "day" && kind !== "day" && day.backend) day.backend.close();
+    // Closed, the sheet gives the focus back to the control that opened it.
+    if (ui.focus) ui.paneFocus[ui.pane] = ui.focus;
     ui.returnPane = ui.pane;
     ui.overlay = Object.assign({ kind: kind, title: title || "" }, extra);
     ui.pane = "sheet:" + kind;
@@ -523,6 +559,7 @@ function create(options) {
       const used = options.find((entry) => entry.inUse) || options[0];
       ui.focus = used ? "input:" + used.value : null;
     }
+    if (kind === "audio-choice") ui.focus = "audio-option:" + extra.item + ":" + extra.value;
     render(size.width, size.height);
     if (!ui.focus && ui.focusVisible && frame.focusables.length) ui.focus = frame.focusables[0].key;
     changed();
@@ -597,6 +634,7 @@ function create(options) {
     if (ui.screen === name && !ui.overlay) return;
     stopRepeat();
     if (dragging) { dragging = null; session.setDragging(false); }
+    audioDragging = null;
     if (ui.screen === "pairing" && name !== "pairing" && pairing.backend) {
       pairing.backend.stop();
       pairing.backend = null;
@@ -608,6 +646,8 @@ function create(options) {
     if (ui.screen === "cameras" && cameras.backend) cameras.backend.close();
     if (ui.screen === "topology" && topology.backend) topology.backend.close();
     if (ui.screen === "system") { system.backend?.close(); system.expanded = false; system.link = null; }
+    const from = ui.screen;
+    if (from === "audio" && name !== "audio" && audio.session) audio.session.stop();
     if (ui.overlay && ui.overlay.kind === "cameras" && cameras.backend) cameras.backend.close();
     if (ui.overlay && ui.overlay.kind === "topology" && topology.backend) topology.backend.close();
     if (ui.overlay && ui.overlay.kind === "day" && day.backend) day.backend.close();
@@ -623,6 +663,8 @@ function create(options) {
     if (name === "cameras") openCameras();
     if (name === "topology") openTopology();
     if (name === "system") system.backend?.open().then(changed);
+    // From Remotes, the room's audio device when it has a page.
+    if (name === "audio" && from !== "audio") openAudio(session.current()?.audio?.id);
     if (["security", "settings", "users", "account"].includes(name)) access.open(name, session.current()?.id);
     render(size.width, size.height);
     changed();
@@ -656,6 +698,7 @@ function create(options) {
     if (hit.kind.startsWith("pair-") || ["send-code", "new-code", "code"].includes(hit.kind)) {
       if (ui.screen !== "pairing") return;
     }
+    if (hit.kind.startsWith("audio-")) return activateAudio(hit);
     const blocked = session.controlBlock();
     if (blocked && ["key", "control", "input", "bubble"].includes(hit.kind)) return toast("Read-only", blocked);
     if (hit.kind === "access-action" || hit.kind === "access-field") {
@@ -795,6 +838,50 @@ function create(options) {
         pairing.codes[hit.device] = "";
         if (!pairing.backend.view(hit.device).busy) pairing.backend.cancelAgain(hit.device).catch(() => null);
         if (ui.focus === "pair-cancel") ui.focus = null;
+        break;
+      default:
+        return;
+    }
+    changed();
+  }
+
+  // A control on the Audio screen; the session refuses, with a toast, what a
+  // locked room holds.
+  function activateAudio(hit) {
+    const player = audio.session;
+    if (ui.screen !== "audio" || !player) return;
+    switch (hit.kind) {
+      case "audio-device":
+        player.select(hit.device);
+        break;
+      case "audio-key":
+        player.press(hit.button);
+        if (!player.view()?.locked) flash(hit.key);
+        break;
+      case "audio-volume-step":
+        player.stepVolume(hit.step);
+        break;
+      case "audio-mute":
+        player.toggleMute();
+        break;
+      case "audio-power":
+        player.togglePower();
+        break;
+      case "audio-input":
+        player.chooseInput(hit.value);
+        break;
+      case "audio-switch":
+        player.toggle(hit.item);
+        break;
+      case "audio-choose":
+        openSheet("audio-choice", hit.title, { item: hit.item, value: hit.value });
+        break;
+      case "audio-option":
+        player.set(hit.item, hit.value);
+        if (ui.overlay && ui.overlay.kind === "audio-choice") closeSheet();
+        break;
+      case "audio-step":
+        player.step(hit.item, hit.step);
         break;
       default:
         return;
@@ -998,7 +1085,7 @@ function create(options) {
       return;
     }
     if (name === "pageup" || name === "pagedown") return pageScroll(name === "pageup" ? -1 : 1);
-    if (["remotes-menu", "lock-menu"].includes(ui.overlay.kind) && ["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
+    if (["remotes-menu", "lock-menu", "audio-choice"].includes(ui.overlay.kind) && ["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
     if (ui.overlay.kind === "topology") {
       if (name === "up" || name === "down") return stepTopology("room", name === "up" ? -1 : 1);
       if (name === "left" || name === "right") return stepTopology("source", name === "left" ? -1 : 1);
@@ -1099,14 +1186,56 @@ function create(options) {
     if (!keyEvent.ctrl && !keyEvent.meta && (ch === "l" || ch === "L")) return toggleLog();
     if (ch === "q" || ch === "Q") return quit();
     if (name === "tab") return movePane(keyEvent.shift ? -1 : 1);
-    const page = Navigation.pages.find(page => page.key.toLowerCase() === name && page.screen !== "pairing");
-    if (page) return setScreen(page.screen);
-    if ((name === "f6" || keyEvent.ctrl && name === "p") && ui.screen === "remote") return setScreen("pairing");
+    // A page's key (navigation.js) opens it from any screen, except that a
+    // child page's opens it only from its parent's: F6 (or Ctrl-P) and u,
+    // from Remotes. Account pages stay reachable from anywhere, so Users
+    // (F8), System's child, does too. A letter takes no Ctrl or Alt.
+    const typed = keyEvent.ctrl && name === "p" ? "f6" : name;
+    const page = Navigation.pages.find(entry => entry.key.toLowerCase() === typed && (typed.length > 1 || !keyEvent.ctrl && !keyEvent.meta));
+    if (page && (!page.parent || page.account || ui.screen === Navigation.pages.find(entry => entry.id === page.parent).screen)) return setScreen(page.screen);
     if (ui.overlay) return sheetKey(ch, keyEvent);
     if (ch === "?") return openSheet("help");
     if (ui.screen === "pairing") return pairingKey(ch, keyEvent);
     if (ui.screen === "remote") return remoteKey(ch, keyEvent);
+    if (ui.screen === "audio") return audioKey(ch, keyEvent);
     return pageKey(ch, keyEvent);
+  }
+
+  // The Audio screen's keys, as the page's: the arrows choose a control (←
+  // and → step the volume or a level), Enter or Space presses it; P, or
+  // Space off a button or level, plays and pauses, M mutes, + and − step the
+  // volume, [ and ] choose the previous or next device. Esc goes back to Remotes.
+  function audioKey(ch, event) {
+    const name = event.name;
+    const lower = ch ? ch.toLowerCase() : "";
+    if (name === "escape") return setScreen("remote");
+    if (name === "pageup" || name === "pagedown") return pageScroll(name === "pageup" ? -1 : 1);
+    if (lower === "t") return toggleTheme();
+    if (lower === "a") return toggleStill();
+    const view = audio.session && audio.session.view();
+    if (!view) return;
+    const hit = ui.focusVisible ? focusedHit() : null;
+    const level = hit && ["audio-volume", "audio-level"].includes(hit.kind);
+    if (name === "left" || name === "right") {
+      const step = name === "left" ? -1 : 1;
+      if (!level) return moveControl(step);
+      if (hit.kind === "audio-volume") audio.session.stepVolume(step);
+      else audio.session.step(hit.item, step);
+      return;
+    }
+    if (name === "up" || name === "down") return moveControl(name === "up" ? -1 : 1);
+    if (hit && (name === "enter" || name === "space" && !level)) return activate(hit);
+    if (name === "space" && level) return;
+    if (lower === "p" || name === "space") {
+      if (!view.transport.some((button) => button.id === "play_pause")) return;
+      audio.session.press("play_pause");
+      // A locked device's key is refused, not pressed.
+      return view.locked ? undefined : flash("audio-key:play_pause");
+    }
+    if (lower === "m") return audio.session.toggleMute();
+    if (ch === "+" || ch === "=") return audio.session.stepVolume(1);
+    if (ch === "-" || ch === "_") return audio.session.stepVolume(-1);
+    if (ch === "[" || ch === "]") return stepAudioDevice(ch === "]" ? 1 : -1);
   }
 
   function pageKey(ch, event) {
@@ -1180,6 +1309,10 @@ function create(options) {
       slideBy(delta < 0 ? "up" : "down");
       return;
     }
+    if (kind === "audio-volume" && ui.screen === "audio" && audio.session) {
+      audio.session.stepVolume(delta < 0 ? 1 : -1);
+      return;
+    }
     const sheetKey = ui.overlay ? "sheet:" + ui.overlay.kind : null;
     const regions = frame.regions.filter((region) => !sheetKey || region.key === sheetKey);
     for (let index = regions.length - 1; index >= 0; index -= 1) {
@@ -1227,11 +1360,18 @@ function create(options) {
         startRepeat(hit);
         return;
       }
+      // The session sends a volume being dragged at most every SLIDE_EVERY, and the last.
+      if (hit.kind === "audio-volume" && ui.screen === "audio" && audio.session) {
+        audioDragging = entry;
+        audio.session.setVolume(sliderValue(entry, x));
+        return;
+      }
       activate(hit);
       return;
     }
     if (action === "mousemove") {
       if (dragging) session.slide(sliderValue(dragging, x), false);
+      if (audioDragging && ui.screen === "audio") audio.session.setVolume(sliderValue(audioDragging, x));
       return;
     }
     if (action === "mouseup") {
@@ -1239,6 +1379,8 @@ function create(options) {
         session.slide(sliderValue(dragging, x), true);
         dragging = null;
       }
+      if (audioDragging && ui.screen === "audio") audio.session.setVolume(sliderValue(audioDragging, x));
+      audioDragging = null;
       stopRepeat();
       return;
     }

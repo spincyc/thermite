@@ -1,9 +1,9 @@
 /*
  * The page's own scripts in this process: web/remote/house.js, remotes.js,
- * backend.js, session.js and pair.js run here as classic scripts, as the
- * page runs them, so the terminal remote and the page share one house, one
- * set of remotes, one backend, one session and one pairing backend. Nothing
- * of them is copied.
+ * backend.js, audio-session.js, session.js and pair.js run here as classic
+ * scripts, as the page runs them, so the terminal remote and the page share
+ * one house, one set of remotes, one backend, one Audio session, one session
+ * and one pairing backend. Nothing of them is copied.
  */
 "use strict";
 
@@ -12,7 +12,7 @@ const path = require("path");
 const vm = require("vm");
 
 const WEB = path.join(__dirname, "..", "..", "web", "remote");
-const SCRIPTS = ["navigation.js", "access.js", "house.js", "remotes.js", "activity.js", "diagnostics.js", "backend.js", "session.js", "pair.js"];
+const SCRIPTS = ["navigation.js", "access.js", "house.js", "remotes.js", "activity.js", "diagnostics.js", "backend.js", "audio-session.js", "session.js", "pair.js"];
 
 function load(dir) {
   const from = dir || WEB;
@@ -28,6 +28,7 @@ function load(dir) {
     house: globalThis.REMOTE_HOUSE,
     layouts: globalThis.REMOTE_LAYOUTS,
     Remote: globalThis.RemoteBackend,
+    Audio: globalThis.RemoteAudio,
     Session: globalThis.RemoteSession,
     Pairing: globalThis.PairingBackend
   };

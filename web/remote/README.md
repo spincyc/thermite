@@ -43,6 +43,24 @@ its maximum, and each press of + or − moves one of the device's own steps
 (0.5 on a receiver, 1 elsewhere). Nothing caps or rescales it; a limit set on
 the device itself is the device's to apply.
 
+Audio (`/audio/`) is a page for each speaker or streamer thermite controls
+itself, a WiiM or a Sonos under `control` in the house file, whether or not
+a room routes it. It shows what plays (title, artist and album, the service
+and the stream's format), the device's transport keys, volume, mute and
+input, then its settings by section: play mode, EQ, bass and treble,
+subwoofer, surround, night and speech modes, the status light, as each device
+has them. Below, folded, is what the device reports about itself, such as its
+firmware or the TV audio format. A setting shows only while the device
+reports it, and only where it applies (a WiiM's play mode on Wi-Fi). A change
+shows at once and pulses until the device reads it back. A remote whose
+volume or keys drive such a device names it as a link to its page. Guests
+may use it without signing in. When a room that owns the device is locked,
+the page is locked too. A room owns its `audio` device and the soundbars and
+streaming amplifiers in its own room. The gateway checks each command
+(`POST /api/v1/devices/<id>/commands`) against the device's actions and those
+locks. A locked room that only shares the device refuses just what would
+disturb what it shows.
+
 Source previews use the fictional sample. Add `?backend=mock` to simulate
 controls without sending commands.
 

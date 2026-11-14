@@ -111,5 +111,6 @@ globalThis.REMOTE_HOUSE = {
       "model": "HDMI matrix"
     }
   },
-  "initial": {}
+  "initial": {},
+  "holdMs": 15000
 };

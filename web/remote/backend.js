@@ -1,7 +1,7 @@
 /*
  * The seam between the remote's UI and the house. remote.js talks only to
- * the object RemoteBackend.create() returns, which has eleven methods, each
- * returning a Promise except subscribe and problemOf:
+ * the object RemoteBackend.create() returns, which has these methods, each
+ * returning a Promise except subscribe, problemOf and audioOf:
  *
  *   getRooms()            [{id, label, item, options: [{id, label, kind, model}],
  *                           display, audio, devices: [{id, label, short, kind, model}],
@@ -41,9 +41,20 @@
  *                         room shows "switching" to Off until it is read back, as after choose()
  *   problemOf(device)     why openHAB cannot drive the device, as its house.js problem Item
  *                         last said (a phrase to follow its label), or null
+ *   audioOf(device)       {item: value} for each Item the device's audio page reads (house.js
+ *                         audio: its state, track, settings, facts and what their `when`
+ *                         reads) that is not one of its control's, as openHAB last read it
+ *                         ("NULL" until read); {} without a page
+ *   command(device, action, value)
+ *                         one command from the device's own page: action is a point of its
+ *                         control ("volume", "mute", "input", "key" or "power") or the Item
+ *                         of one of its page's settings; value as that takes it. Resolves
+ *                         with {device, action, sent, tag} once sent; what the device reads
+ *                         back arrives as for any other Item
  *   subscribe(callback)   callback({type: "state", room, state}), callback({type: "device", device,
  *                         state}) (state as getDevice), callback({type: "problem", device, problem})
- *                         (as problemOf), callback({type: "matrix", answering}) (mock only) and
+ *                         (as problemOf), callback({type: "audio", device, item}) (as audioOf),
+ *                         callback({type: "matrix", answering}) (mock only) and
  *                         callback({type: "connection", connected}) (openHAB only);
  *                         returns an unsubscribe function
  *
@@ -94,6 +105,10 @@
  *              device's own command, and drops a volume off the device's own scale
  *   allOff     POST /rest/items/house_all_off, text/plain body ON; openHAB's all_off.js then
  *              sends every room's Source Off and every controlled power Item OFF
+ *   command    POST /api/v1/devices/<device>/commands through the gateway (access.js
+ *              deviceCommand), which checks the action and value against the device's
+ *              contract and the locks of the rooms it serves; natively the Item itself
+ * The remote view's stream carries every audio page's Items.
  */
 (function (global) {
   "use strict";
@@ -311,6 +326,36 @@
       ["app", "title"].forEach((field) => { if (playing[field]) items[playing[field]] = [id, field]; });
     });
     return items;
+  }
+
+  // Item name -> device id for every Item a device's audio page reads that
+  // its control does not (controlItems follows those).
+  function audioItems(house) {
+    const items = Object.create(null);
+    const controlled = controlItems(house);
+    Object.keys(house.devices).forEach((id) => {
+      const page = house.devices[id].audio;
+      if (!page || !controlOf(house, id)) return;
+      const reads = [page.state && page.state.item].concat(Object.values(page.track || {}),
+        (page.settings || []).map((setting) => setting.item), (page.settings || []).map((setting) => setting.when && setting.when.item),
+        (page.facts || []).map((fact) => fact.item));
+      reads.forEach((item) => { if (item && !controlled[item]) items[item] = id; });
+    });
+    return items;
+  }
+
+  // What a device page's action commands: [field, Item], field the control's
+  // point or "setting"; throws for an action the device's page lacks.
+  function deviceAction(house, deviceId, action) {
+    const target = house.devices[deviceId];
+    const control = controlOf(house, deviceId);
+    const page = target && target.audio;
+    if (!control || !page) throw new Error("thermite has no page for " + deviceId);
+    const point = { power: control.power, mute: control.mute, key: control.key,
+      volume: control.volume && control.volume.item, input: control.input && control.input.item }[action];
+    if (point) return [action, point];
+    if ((page.settings || []).some((setting) => setting.item === action)) return ["setting", action];
+    throw new Error("The " + target.label + " has no " + action);
   }
 
   // Item name -> device id for every device's problem Item.
@@ -586,6 +631,15 @@
     problemOf: function (deviceId) {
       return this.problems[deviceId] || null;
     },
+    audioOf: function (deviceId) {
+      return Object.assign({}, this.audio[deviceId]);
+    },
+    updateAudio: function (deviceId, item, value) {
+      const values = this.audio[deviceId];
+      if (!values || values[item] === value) return;
+      values[item] = value;
+      this.emit({ type: "audio", device: deviceId, item: item });
+    },
     // What the device plays, {app, title}, each null when not known; null
     // while it plays nothing anyone named.
     playingOf: function (deviceId) {
@@ -639,7 +693,25 @@
     return devices;
   }
 
+  // Device id -> {item: "NULL"} for each of items (audioItems()).
+  function unheard(items) {
+    const audio = {};
+    Object.keys(items).forEach((item) => { (audio[items[item]] = audio[items[item]] || {})[item] = NULL_STATE; });
+    return audio;
+  }
+
   // ---- mock ----------------------------------------------------------------
+
+  // What a preview's audio pages play.
+  const MOCK_TRACK = { title: "Sample Track", artist: "Sample Artist", album: "Sample Album", service: "Preview",
+    duration: "245", sample_rate: "44100", bit_depth: "16" };
+
+  // A setting as a preview starts it: off, its first choice, or 0 within its scale.
+  function mockSetting(setting) {
+    if (setting.kind === "switch") return "OFF";
+    if (setting.kind === "enum") return setting.options[0][0];
+    return String(Math.min(setting.max, Math.max(setting.min, 0)));
+  }
 
   function MockBackend(house, settings) {
     const config = settings || {};
@@ -675,6 +747,23 @@
       if (control.mute) state.mute = "OFF";
       if (control.input) state.input = control.input.options[0][0];
     });
+    // Every audio page plays a sample track, each setting as mockSetting()
+    // starts it and each `when` holding; facts stay unread. settings.audio,
+    // {item: value}, overrides any of these.
+    const pages = audioItems(house);
+    this.audio = unheard(pages);
+    Object.keys(this.audio).forEach((id) => {
+      const page = house.devices[id].audio;
+      const values = this.audio[id];
+      const set = (item, value) => { if (item in values) values[item] = value; };
+      if (page.state) set(page.state.item, page.state.playing[0]);
+      Object.keys(page.track || {}).forEach((field) => { if (MOCK_TRACK[field]) set(page.track[field], MOCK_TRACK[field]); });
+      (page.settings || []).forEach((setting) => {
+        set(setting.item, mockSetting(setting));
+        if (setting.when) set(setting.when.item, setting.when.is[0]);
+      });
+    });
+    Object.keys(config.audio || {}).forEach((item) => { if (pages[item]) this.audio[pages[item]][item] = String(config.audio[item]); });
     if (global.RemoteActivity) this.activity = global.RemoteActivity.create({
       items: global.RemoteActivity.preview(house).items, layouts: global.REMOTE_LAYOUTS,
       now: config.now, emit: (event) => this.emit(event)
@@ -739,6 +828,26 @@
       setTimeout(() => this.updateDevice(deviceId, step.field, step.command), this.latency / 4);
     }
     return Promise.resolve(result);
+  };
+
+  // A device page's command, taken a moment later; nothing is sent. Play/pause
+  // starts or stops what plays.
+  MockBackend.prototype.command = function (deviceId, action, value) {
+    return settled(() => {
+      const [field, item] = deviceAction(this.house, deviceId, action);
+      const command = String(value);
+      console.info("[remote mock] command " + item + " " + command);
+      setTimeout(() => {
+        const page = this.house.devices[deviceId].audio;
+        const state = page.state && page.state.item;
+        if (field === "setting") this.updateAudio(deviceId, item, command);
+        else if (field !== "key") this.updateDevice(deviceId, field, command);
+        else if (command === "play_pause" && state) {
+          this.updateAudio(deviceId, state, page.state.playing.includes(this.audio[deviceId][state]) ? "PAUSED" : page.state.playing[0]);
+        }
+      }, this.latency / 4);
+      return { device: deviceId, action: action, sent: false, tag: "Mock" };
+    });
   };
 
   // Every room Off as choose() does, and every powered device off a moment later.
@@ -849,10 +958,13 @@
     this.controlItems = remote ? controlItems(house) : Object.create(null);
     this.problemItems = remote ? problemItems(house) : Object.create(null);
     this.playingItems = remote ? playingItems(house) : Object.create(null);
+    this.audioItems = remote ? audioItems(house) : Object.create(null);
+    this.audio = unheard(this.audioItems);
     if (this.access && !this.access.native) {
       this.access.subscribe((event) => {
         if (event.type === "unauthorized") {
           this.stop(); this.connected = false; this.devices = unread(house); this.problems = {}; this.playing = {}; this.aims = {}; this.activity = null;
+          this.audio = unheard(this.audioItems);
           Object.values(this.items).forEach((item) => { item.value = NULL_STATE; item.pending = null; });
         }
         this.emit({ type: "access", unauthorized: event.type === "unauthorized", guest: event.guest === true });
@@ -1036,10 +1148,10 @@
   };
 
   // Every Item a control is read from, then every problem Item, then what
-  // devices play.
+  // devices play, then what their audio pages read.
   OpenHabBackend.prototype.watched = function () {
     return Object.keys(this.controlItems).concat(Object.keys(this.problemItems), Object.keys(this.routeProblemItems),
-      Object.keys(this.playingItems));
+      Object.keys(this.playingItems), Object.keys(this.audioItems));
   };
 
   OpenHabBackend.prototype.updateRouteProblem = function (item, value) {
@@ -1055,6 +1167,7 @@
     if (entry) this.updateDevice(entry[0], entry[1], value);
     else if (this.problemItems[item]) this.updateProblem(this.problemItems[item], value);
     else if (this.playingItems[item]) this.updatePlaying(this.playingItems[item][0], this.playingItems[item][1], value);
+    else if (this.audioItems[item]) this.updateAudio(this.audioItems[item], item, value);
   };
 
   // The view's Items as the gateway (or openHAB) holds them now: after a
@@ -1251,7 +1364,7 @@
     if (this.activity) this.activity.accept(event.topic, event.payload);
     // Commands and Items the view does not show are ignored before inner parsing.
     if (verb === "command" || !(roomId || this.controlItems[item] || this.problemItems[item] || this.routeProblemItems[item]
-      || this.playingItems[item])) return;
+      || this.playingItems[item] || this.audioItems[item])) return;
     try { payload = JSON.parse(event.payload); } catch (error) { return; }
     if (!payload || payload.value === undefined) return;
     const value = String(payload.value);
@@ -1383,6 +1496,14 @@
     }, (error) => {
       delete this.aims[deviceId + " " + step.field];
       throw error;
+    });
+  };
+
+  OpenHabBackend.prototype.command = function (deviceId, action, value) {
+    return settled(() => {
+      const item = deviceAction(this.house, deviceId, action)[1];
+      return (this.access && !this.access.native ? this.access.deviceCommand(deviceId, action, value)
+        : this.post("/rest/items/" + item, String(value))).then(() => ({ device: deviceId, action: action, sent: true, tag: "" }));
     });
   };
 

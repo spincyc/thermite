@@ -3,7 +3,8 @@
  * the page's scripts (shared.js), makes the backend the page would make
  * (the mock, or openHAB at --url over node's fetch and events.js), a
  * RemoteSession on a file store, the Pairing screen's PairingBackend, the
- * controller, and the terminal (app.js) that draws it.
+ * Audio screen's RemoteAudio, the controller, and the terminal (app.js)
+ * that draws it.
  *
  *   node tui/remote/main.js --modules DIR (--url URL | --mock) [--state FILE]
  *     [--pair] [--room ID] [--choose SOURCE] [--mode dark|light]
@@ -120,9 +121,14 @@ function assemble(args, env) {
     native: !access || access.native === true
   }, timers.setTimeout ? { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } : {},
   timers.now ? { now: timers.now } : {}));
+  // The Audio screen's session, on the remote's backend, locks and store;
+  // the controller polls the locks for every screen (syncLocks).
+  const createAudio = () => shared.Audio.create(Object.assign({ backend: backend, house: shared.house, access, store: store, watchLocks: false },
+    timers.setTimeout ? { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } : {},
+    timers.now ? { now: timers.now } : {}));
   const controller = Controller.create(Object.assign({
     session: session, Session: shared.Session, Pairing: shared.Pairing, Remote: shared.Remote, access,
-    layouts: shared.layouts, house: shared.house, store: store, backend: backend, createPairing: createPairing,
+    layouts: shared.layouts, house: shared.house, store: store, backend: backend, createPairing, createAudio,
     createCameras: () => Cameras.create({ base: args.url || "", mock: args.mock, fetch: request, ...timers }),
     createTopology: () => Topology.create({ base: args.url || "", mock: args.mock, fetch: request,
       manifest: options.topologyManifest }),

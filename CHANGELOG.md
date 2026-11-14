@@ -7,6 +7,34 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Audio: a page (`/audio/`, and the terminal remote's Audio screen, `u`
+  from Remotes) for each WiiM or Sonos speaker or streamer under `control`,
+  routed by a room or not. It shows:
+  - what plays: title, artist and album, the service, its length and format;
+  - the transport keys, volume, mute and input;
+  - its settings by section: play mode, EQ and its preset, bass and treble,
+    loudness, subwoofer, surround and height levels, night and speech modes,
+    and the status light, as each device has them;
+  - folded, what it reports about itself.
+  A setting shows only while the device reports it and where it applies.
+  A change shows at once until the device reads it back.
+  A remote whose volume or keys drive the device links to its page. Guests
+  may use it without signing in.
+  - A WiiM now reads its album, length, service, sample rate and bit depth,
+    and controls its play mode, EQ, EQ preset, subwoofer level and status
+    light. It also reports its firmware, a waiting update, its temperatures,
+    its remote's battery, internet and subwoofer, polled every 60 s on a
+    second Thing. The activity log leaves out the readings that drift with
+    every poll.
+  - A Sonos Arc or Amp reads back its sound settings, and an Amp's remote
+    no longer offers TV audio.
+  - The gateway takes a page's commands at
+    `POST /api/v1/devices/<id>/commands`, each checked against the device's
+    actions and the locks of the rooms it serves. A room owns its `audio`
+    device and the soundbars and streaming amplifiers in its own room. When
+    any room that owns the device is locked, the gateway refuses the command
+    (`device_locked`). A locked room that only shares the device refuses
+    just what would disturb what it shows.
 - What is playing: each device whose integrations report it gets two
   Items, `<id>_playing_app` and `<id>_playing_title`. A rule joins them
   from those reports:

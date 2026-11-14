@@ -11,6 +11,7 @@ PAGES = (
     ("home", "/", "home.html"),
     ("remotes", "/remotes/", "index.html"),
     ("pairing", "/pairing/", "pair.html"),
+    ("audio", "/audio/", "audio.html"),
     ("security", "/security/", "security.html"),
     ("cameras", "/cameras/", "cameras.html"),
     ("site", "/site/", "topology.html"),

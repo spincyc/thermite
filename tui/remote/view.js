@@ -1,10 +1,11 @@
 /*
- * What the terminal remote shows, drawn from a RemoteSession (and on the
- * Pairing screen a PairingBackend) into a Grid: the header, the rooms, the
- * remote of the device the buttons control, the info panel, the log, the
- * status line, the shortcuts and any sheet over them. render() only reads;
- * it returns the frame with every place a click or the focus can reach, and
- * the scroll offsets it settled on, for controller.js to keep.
+ * What the terminal remote shows, drawn from a RemoteSession (on the
+ * Pairing screen a PairingBackend, on Audio a RemoteAudio) into a Grid: the
+ * header, the rooms, the remote of the device the buttons control, the info
+ * panel, the log, the status line, the shortcuts and any sheet over them.
+ * render() only reads; it returns the frame with every place a click or the
+ * focus can reach, and the scroll offsets it settled on, for controller.js
+ * to keep.
  */
 "use strict";
 
@@ -45,6 +46,7 @@ const TUI_SHORTCUTS = [
   [["F4"], "Cameras"],
   [["F5"], "Site"],
   [["F6", "Ctrl-P"], "Pair devices (Remotes)"],
+  [["u"], "Audio (Remotes)"],
   [["F7"], "Room settings"],
   [["F8"], "Users"],
   [["F9"], "Account"],
@@ -63,6 +65,16 @@ const PAIR_SHORTCUTS = [
   [["F1"], "Home"],
   [["?"], "Help"],
   [["q"], "Quit"]
+];
+const AUDIO_SHORTCUTS = [
+  [["\u2191", "\u2193"], "Choose a control"],
+  [["Enter", "Space"], "Press, switch or choose it"],
+  [["\u2190", "\u2192"], "Step the volume or a level"],
+  [["P", "Space"], "Play/pause (Space off a button or level)"],
+  [["M"], "Mute"],
+  [["+", "\u2212"], "Volume"],
+  [["[", "]"], "Previous/next device"],
+  [["Esc"], "Remotes"]
 ];
 const MOUSE_HELP = "Click a room, a bubble, a key or a button; hold a key that repeats. The wheel scrolls a panel "
   + "and the bubbles, and moves the volume slider.";
@@ -201,12 +213,12 @@ function ledChar(led, blink) {
 function header(frame, ctx, width) {
   const g = frame.grid;
   g.fill(0, 0, width, 1, "header");
-  const remotes = ["remote", "pairing"].includes(ctx.ui.screen);
+  const remotes = ["remote", "pairing", "audio"].includes(ctx.ui.screen);
   let at = width >= 100 ? g.put(0, 0, " thermite ", "header.title") : 0;
   const tabs = Navigation.pages.filter(page => page.top && Navigation.allowed(page, ctx.access)
     && !(page.system && remotes && width < 100)).map(page => [page.screen, page.key, page.label]);
   if (width < 48) {
-    const label = ctx.ui.screen === "pairing" ? "Remotes / Pair devices" : tabs.find(tab => tab[0] === ctx.ui.screen)?.[2] || ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen] || "Home";
+    const label = ctx.ui.screen === "pairing" ? "Remotes / Pair devices" : ctx.ui.screen === "audio" ? "Remotes / Audio" : tabs.find(tab => tab[0] === ctx.ui.screen)?.[2] || ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen] || "Home";
     at = g.put(1, 0, fit("thermite · " + label, width - 2), "header.title");
   } else tabs.forEach((tab) => {
     const current = ctx.ui.screen === tab[0] || tab[0] === "remote" && remotes;
@@ -218,12 +230,14 @@ function header(frame, ctx, width) {
     at = g.put(at, 0, " ", "header");
     at = g.line(at, 0, [[" " + tab[1] + " ", style + "+bold", null], [label + " ", style, null]]);
     const hit = tab[0] === "remote" && remotes
-      ? { kind: "open", sheet: "remotes-menu", key, focus: true, label: "Remotes menu: rooms and Pair devices" }
+      ? { kind: "open", sheet: "remotes-menu", key, focus: true,
+          label: "Remotes menu: rooms, " + (hasAudio(ctx) ? "Audio " : "") + "and Pair devices" }
       : { kind: "screen", screen: tab[0], key, focus: true, label: tab[2] + " page (" + tab[1] + ")" };
     g.hit(at - size, 0, size, 1, hit);
   });
   if (["settings", "users", "account"].includes(ctx.ui.screen)) at = g.put(at + 1, 0, fit("› " + ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen], Math.max(0, width - at - 2)), "tab.current");
-  if (remotes && width - at >= 23 && Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) at = g.put(at + 1, 0, ctx.ui.screen === "pairing" ? " › Pair devices " : " F6 Pair devices ",
+  if (ctx.ui.screen === "audio") at = g.put(at + 1, 0, " › Audio ", "tab.current");
+  else if (remotes && width - at >= 23 && Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) at = g.put(at + 1, 0, ctx.ui.screen === "pairing" ? " › Pair devices " : " F6 Pair devices ",
     focused(ctx, "remotes:pairing") ? "key.focus" : "tab", { kind: "screen", screen: "pairing", key: "remotes:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
   if (ctx.ui.screen === "remote" && frame.layout.sheets) {
     frame.layout.sheets.forEach((entry) => {
@@ -309,6 +323,9 @@ function paneHelp(ctx) {
     case "sheet:signal": return ["Signal & audio", [["\u2191\u2193"], "scroll"], [["Esc"], "close"]];
     case "sheet:inputs": return ["Inputs", [["\u2191\u2193"], "choose"], [["Enter"], "select"]];
     case "sheet:lock-menu": return ["Room lock", [["\u2191\u2193"], "choose"], [["Enter"], "select"], [["Esc"], "close"]];
+    case "audio": return ["Audio", [["\u2191\u2193"], "choose"], [["\u2190\u2192"], "volume/level"], [["Enter"], "press"],
+      [["P"], "play/pause"], [["M"], "mute"], [["+\u2212"], "volume"], [["[]"], "device"]];
+    case "sheet:audio-choice": return [ctx.ui.overlay ? ctx.ui.overlay.title : "Choose", [["\u2191\u2193"], "choose"], [["Enter"], "select"], [["Esc"], "close"]];
     default: return null;
   }
 }
@@ -320,9 +337,10 @@ function shortcutBar(frame, ctx, width, y) {
   // and reserve Help/Quit before adding optional shortcuts.
   const list = ctx.ui.overlay ? [[["Esc"], "Close"]]
     : [[["Tab"], "Pane"]].concat(ctx.ui.screen === "remote"
-      ? [[["r"], "Rooms"], [["d"], "Signal"], [["h"], "Day"], log, [["v"], "Volume"], [["t"], "Theme"]]
+      ? [[["r"], "Rooms"], [["d"], "Signal"], [["h"], "Day"], log].concat(hasAudio(ctx) ? [[["u"], "Audio"]] : [], [[["v"], "Volume"], [["t"], "Theme"]])
       : ctx.ui.screen === "pairing" ? [[["Esc"], "Remotes"], log]
-        : (ctx.ui.screen === "home" ? [[["h"], "Day"]] : [[["F1"], "Home"]]).concat([[["t"], "Theme"]]));
+        : ctx.ui.screen === "audio" ? [[["Esc"], "Remotes"], [["t"], "Theme"]]
+          : (ctx.ui.screen === "home" ? [[["h"], "Day"]] : [[["F1"], "Home"]]).concat([[["t"], "Theme"]]));
   g.fill(0, y, width, 1, "footer");
   const essentials = ctx.ui.overlay
     ? [[[ctx.ui.overlay.kind === "access-form" ? "Ctrl-C" : "q"], "Quit"]]
@@ -353,11 +371,13 @@ function pageScreen(frame, ctx, rect) {
     topology: ["Site topology", Topology.content],
     settings: ["Room settings", (g, w, ctx) => ctx.access.content(g, w, ctx)],
     users: ["Users", (g, w, ctx) => ctx.access.content(g, w, ctx)],
-    account: ["Account", (g, w, ctx) => ctx.access.content(g, w, ctx)]
+    account: ["Account", (g, w, ctx) => ctx.access.content(g, w, ctx)],
+    audio: ["Audio", audioContent]
   };
   const [title, content] = pages[ctx.ui.screen] || pages.home;
+  const audio = ctx.ui.screen === "audio";
   frame.layout = { page: ctx.ui.screen };
-  panel(frame, ctx, rect, { key: ctx.ui.screen, color: "info", title, footer: [["F1", "Home"]],
+  panel(frame, ctx, rect, { key: ctx.ui.screen, color: audio ? "remote" : "info", title, footer: [audio ? ["Esc", "Remotes"] : ["F1", "Home"]],
     content: (inner, width, height) => content(inner, width, ctx, height) });
 }
 
@@ -987,7 +1007,7 @@ function sheet(frame, ctx, width, height) {
   const overlay = ctx.ui.overlay;
   frame.grid.hit(0, 0, width, height, { kind: "dismiss" });
   const w = Math.min(width - 2, overlay.kind === "day" ? 160 : ["signal", "topology"].includes(overlay.kind) ? 100 : ["info", "help", "cameras"].includes(overlay.kind) ? 66
-    : overlay.kind === "lock-menu" ? 40 : 50);
+    : ["lock-menu", "audio-choice"].includes(overlay.kind) ? 40 : 50);
   const content = {
     "access-form": (inner, iw) => ctx.access.formContent(inner, iw, ctx),
     rooms: (inner, iw) => roomsContent(inner, iw, ctx),
@@ -1000,7 +1020,9 @@ function sheet(frame, ctx, width, height) {
       button(inner, ctx, 1, 2, "Rooms & remotes", "menu:remote", { kind: "screen", screen: "remote", key: "menu:remote", focus: true, label: "Rooms and remotes" });
       if (Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) button(inner, ctx, 1, 6, "Pair devices · F6", "menu:pairing", { kind: "screen", screen: "pairing", key: "menu:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
       else paragraph(inner, 1, 6, iw - 2, ctx.access.authEnabled() ? "Sign in as an administrator to pair devices." : "Enable authentication in Security (F3) to pair devices.", "dim");
+      if (hasAudio(ctx)) button(inner, ctx, 1, 10, "Audio · u", "menu:audio", { kind: "screen", screen: "audio", key: "menu:audio", focus: true, label: "Remotes / Audio (u)" });
     },
+    "audio-choice": (inner, iw) => audioChoiceContent(inner, iw, ctx),
     // A bubble's lock menu (right-click, or o): what the session offers.
     "lock-menu": (inner, iw) => ctx.session.lockMenu(overlay.item).forEach((entry, index) => {
       const key = "lock-menu:" + index;
@@ -1082,9 +1104,10 @@ function helpContent(g, w, ctx) {
     y++;
   };
   const manage = ctx.ui.screen === "remote" && ctx.session?.roomLock().canManage;
-  if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "h", "v", "F6"].includes(entry[0][0])))
+  if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "h", "v", "F6"].concat(hasAudio(ctx) ? ["u"] : []).includes(entry[0][0])))
     .concat(manage ? [[["K"], "Lock or unlock this room (administrators)"],
       [["o"], "Lock menu of the selected source or Off: lock on it, or unlock (administrators)"]] : []));
+  else if (ctx.ui.screen === "audio") rows("Audio", AUDIO_SHORTCUTS);
   else if (ctx.ui.screen === "pairing") rows("Pair devices", PAIR_SHORTCUTS.filter(entry => !["Tab", "L", "F1", "?", "q"].includes(entry[0][0])).concat([[["s/S"], "Sort/reverse"]]));
   else {
     const help = paneHelp({ ...ctx, ui: { ...ctx.ui, overlay: null, pane: ctx.ui.screen } });
@@ -1094,6 +1117,193 @@ function helpContent(g, w, ctx) {
   rows("Terminal", TUI_SHORTCUTS.filter(entry => ["Tab", "t", "a", "L", "?", "q"].includes(entry[0][0])));
   y = heading(g, y + 1, "Mouse");
   return paragraph(g, 2, y, w - 4, MOUSE_HELP + (manage ? " Right-click a source or Off for its lock menu." : ""), "base");
+}
+
+// ---- the Audio screen -------------------------------------------------------
+
+// A choice of this many options or fewer, each this short, shows them all
+// in a row, as the page's segments; a longer one opens a list.
+const SEGMENTS = 4;
+const SEGMENT_LABEL = 12;
+const TRANSPORT = { previous: GLYPHS.previous, next: GLYPHS.next, play: GLYPHS.play + " Play", pause: GLYPHS.pause + " Pause" };
+
+// Whether a device has an audio page: Remotes offers u only then.
+function hasAudio(ctx) {
+  const house = ctx.house;
+  return Boolean(house && ctx.Remote) && Object.keys(house.devices).some((id) => house.devices[id].audio && ctx.Remote.controlOf(house, id));
+}
+
+// A one-line button; returns the column after it.
+function chip(g, ctx, x, y, text, hit, style) {
+  return g.put(x, y, " " + text + " ", focused(ctx, hit.key) ? "key.focus" : style, hit);
+}
+
+// The Audio screen, in audio.js's order: the devices by place (when there
+// is more than one), what the chosen one plays and its transport, its
+// volume, mute and power, its input, its settings by section and its facts.
+// A room's lock greys the controls; the session refuses them with a toast.
+function audioContent(g, w, ctx) {
+  const session = ctx.audio && ctx.audio.session;
+  let y = 0;
+  if (!session) return paragraph(g, 1, y, w - 2, "Reading the audio devices…", "dim");
+  const groups = session.devices();
+  if (!groups.length) {
+    y = paragraph(g, 1, y, w - 2, "No speaker or streamer here has an audio page yet.", "base");
+    return paragraph(g, 1, y, w - 2, "A WiiM or Sonos device under control in the house file gets one after thermite generate.", "dim");
+  }
+  if (ctx.ui.target.mock) y = paragraph(g, 1, y, w - 2, "Demo · a sample house. No commands are sent.", "tone.busy") + 1;
+  if (groups.reduce((count, group) => count + group.devices.length, 0) > 1) {
+    groups.forEach((group) => {
+      y = heading(g, y, group.place);
+      group.devices.forEach((device) => {
+        const key = "audio-device:" + device.id;
+        const style = focused(ctx, key) ? "row.focus" : device.current ? "row.current" : "row";
+        const led = device.playing ? "ok" : device.playing === false ? "off" : "muted";
+        const title = device.title ? fit(device.title, Math.floor((w - 6) / 2)).trimEnd() : "";
+        g.fill(0, y, w, 1, style);
+        if (style === "row.current") g.put(0, y, "▎", "row.mark");
+        g.put(2, y, device.locked ? LOCK : ledChar(led), style === "row.focus" ? style : style + "+" + ledStyle(led));
+        g.put(4, y, fit(device.label, Math.max(4, w - 6 - length(title))), style);
+        if (title) g.put(w - 1 - length(title), y, title, style === "row" ? "dim" : style);
+        g.hit(0, y, w, 1, { kind: "audio-device", device: device.id, key, focus: true, label: device.name
+          + (device.playing ? ", playing" + (device.title ? " " + device.title : "") : "") + (device.locked ? ", locked" : "") });
+        y += 1;
+      });
+    });
+    y += 1;
+  }
+  const view = session.view();
+  if (!view) return y;
+  const locked = Boolean(view.locked);
+  const alert = locked ? LOCK + " " + view.locked.text : view.connected === false ? "Not connected to thermite. Reconnecting…"
+    : view.problem ? "⚠ " + view.device.label + " " + view.problem : "";
+  if (alert) y = paragraph(g, 1, y, w - 2, alert, locked ? "strong" : "alert") + 1;
+  // What it plays, and the keys that move it on.
+  y = paragraph(g, 1, y, w - 2, view.device.place + (view.device.model ? " · " + view.device.model : ""), "dim");
+  const track = view.track;
+  y = paragraph(g, 1, y, w - 2, view.now, track ? "strong" : "dim");
+  if (track && track.line) y = paragraph(g, 1, y, w - 2, track.line, "dim");
+  let x = 1;
+  if (track) [track.service, track.format, track.duration].filter(Boolean).forEach((text) => {
+    if (x > 1 && x + length(text) + 2 > w - 1) { y += 1; x = 1; }
+    x = g.put(x, y, " " + text + " ", "badge") + 1;
+  });
+  if (x > 1) y += 1;
+  if (view.transport.length) {
+    x = 1;
+    y += 1;
+    view.transport.forEach((button) => {
+      const key = "audio-key:" + button.id, label = TRANSPORT[button.icon] || button.label, size = length(label) + 4;
+      if (x > 1 && x + size > w - 1) { x = 1; y += 3; }
+      const style = ctx.ui.pressed[key] ? "key.pressed" : focused(ctx, key) ? "key.focus" : locked ? "key.off" : button.id === "play_pause" ? "key.ok" : "key";
+      x = rounded(g, x, y, label, size, style, { kind: "audio-key", button: button.id, key, focus: true, label: button.label + (button.id === "play_pause" ? " (P)" : "") }) + 2;
+    });
+    y += 3;
+  }
+  y += 1;
+  // Each control after its label, or under it where the panel is narrow.
+  const labels = ["Volume"].concat(...view.sections.map((section) => section.settings.map((setting) => setting.label)),
+    view.facts.map((fact) => fact.label));
+  const column = Math.min(24, Math.max(...labels.map(length))) + 3;
+  const narrow = w - column < 24;
+  const field = (label, style) => {
+    g.put(1, y, fit(label, narrow ? w - 2 : column - 2), style || "base");
+    if (!narrow) return column;
+    y += 1;
+    return 3;
+  };
+  // Options in a row, the current one lit: the input, or a short choice.
+  const choices = (item, options, pending, kind, from) => {
+    let at = from;
+    options.forEach((option) => {
+      const key = "audio-option:" + item + ":" + option.value, text = " " + (option.current ? LIT : UNLIT) + " " + option.label + " ";
+      if (at > from && at + length(text) > w - 1) { at = from; y += 1; }
+      const style = focused(ctx, key) ? "bubble.focus" : locked ? "bubble.inert" : option.current ? pending ? "bubble.switching" : "bubble.current" : "bubble";
+      at = g.put(at, y, text, style, { kind, item, value: option.value, key, focus: true, label: option.label + (option.current ? ", chosen" : "") }) + 1;
+    });
+  };
+  if (view.volume) {
+    const volume = view.volume, focus = focused(ctx, "audio-volume");
+    const value = volume.disabled ? "–" : volume.text;
+    const step = (at, glyph, delta) => g.put(at, y, glyph, volume.disabled || locked ? "faint" : "hotkey",
+      { kind: "audio-volume-step", step: delta, key: "audio-volume:" + delta, label: delta < 0 ? "Volume down (−)" : "Volume up (+)" });
+    x = step(field("Volume"), GLYPHS.minus, -1) + 1;
+    // Room after it for the value and "muted", so muting moves nothing.
+    const track = Math.max(6, Math.min(32, w - x - 10 - length(value)));
+    meter(g, x, y, track, { disabled: volume.disabled, fill: volume.fill, muted: view.muted }, focus);
+    g.hit(x, y, track, 1, { kind: "audio-volume", key: "audio-volume", focus: true, min: volume.min, max: volume.max, step: volume.step,
+      label: "Volume: " + volume.text + "  (← → when focused, + −)" });
+    x = step(x + track + 1, "+", 1);
+    x = g.put(x + 1, y, value, volume.pending ? "tone.busy+bold" : focus ? "meter.value.focus" : "meter.value");
+    if (view.muted) g.put(x + 1, y, "muted", "tone.busy");
+    y += 1;
+  }
+  if (view.muted !== null || view.power !== null) {
+    x = narrow ? 3 : column;
+    if (view.muted !== null) x = chip(g, ctx, x, y, "Mute", { kind: "audio-mute", key: "audio-mute", focus: true,
+      label: "Mute: " + (view.muted ? "on" : "off") + " (M)" }, locked ? "key.off" : view.muted ? "key.lit" : "key") + 1;
+    if (view.power !== null) chip(g, ctx, x, y, "Power", { kind: "audio-power", key: "audio-power", focus: true,
+      label: "Power: " + (view.power ? "on" : "off") }, locked ? "key.off" : view.power ? "switch.on" : "switch.off");
+    y += 1;
+  }
+  if (view.input) {
+    y = heading(g, y + 1, "Input");
+    choices("input", view.input.options, view.input.pending, "audio-input", 1);
+    y += 1;
+  }
+  view.sections.forEach((section) => {
+    y = heading(g, y + 1, section.title);
+    section.settings.forEach((setting) => {
+      const key = "audio-set:" + setting.item, item = setting.item;
+      x = field(setting.label);
+      if (setting.kind === "switch") {
+        chip(g, ctx, x, y, setting.on ? "on" : "off", { kind: "audio-switch", item, key, focus: true, label: setting.label + ": " + setting.text },
+          locked ? "key.off" : setting.pending ? "bubble.switching" : setting.on ? "switch.on" : "switch.off");
+      } else if (setting.kind === "number") {
+        // − value +: ← and → step it while it has the focus; a click on a sign steps it too.
+        const text = " " + setting.text + " ", style = focused(ctx, key) ? "key.focus" : locked ? "key.off" : setting.pending ? "bubble.switching" : "key";
+        const sign = (glyph, off) => [" " + glyph + " ", focused(ctx, key) ? style : off || locked ? "key.off" : "key"];
+        const end = g.line(x, y, [sign(GLYPHS.minus, setting.atMin), [text, style], sign("+", setting.atMax)]);
+        g.hit(x, y, end - x, 1, { kind: "audio-level", item, key, focus: true, label: setting.label + ": " + setting.text + "  (← →)" });
+        g.hit(x, y, 3, 1, { kind: "audio-step", item, step: -1, key: key + ":-1", label: setting.label + " down" });
+        g.hit(end - 3, y, 3, 1, { kind: "audio-step", item, step: 1, key: key + ":1", label: setting.label + " up" });
+      } else if (setting.options.length <= SEGMENTS && setting.options.every((option) => length(option.label) <= SEGMENT_LABEL)) {
+        choices(item, setting.options, setting.pending, "audio-option", x);
+      } else {
+        chip(g, ctx, x, y, setting.text + " ▾", { kind: "audio-choose", item, value: setting.value, title: setting.label, key, focus: true,
+          label: setting.label + ": " + setting.text + " (Enter: choose)" }, locked ? "key.off" : setting.pending ? "bubble.switching" : "key");
+      }
+      y += 1;
+    });
+  });
+  if (view.facts.length) {
+    y = heading(g, y + 1, "About this device");
+    view.facts.forEach((fact) => {
+      x = field(fact.label, "dim");
+      y = paragraph(g, x, y, w - x - 1, fact.text, "base");
+    });
+  }
+  return y;
+}
+
+// A long choice's options as a list (Enter on it); a value the device only
+// reports, offered by none, shows above them.
+function audioChoiceContent(g, w, ctx) {
+  const view = ctx.audio && ctx.audio.session && ctx.audio.session.view();
+  const item = ctx.ui.overlay.item;
+  const setting = view ? [].concat(...view.sections.map((section) => section.settings)).find((entry) => entry.item === item) : null;
+  if (!setting || !setting.options) return g.put(1, 0, "Nothing to choose", "dim");
+  let y = 0;
+  if (!setting.options.some((option) => option.current)) y = paragraph(g, 1, y, w - 2, "Now " + setting.text, "dim");
+  setting.options.forEach((option) => {
+    const key = "audio-option:" + item + ":" + option.value;
+    const style = focused(ctx, key) ? "row.focus" : option.current ? "row.current" : "row";
+    g.fill(0, y, w, 1, style);
+    g.put(1, y, option.current ? LIT : UNLIT, style === "row.focus" ? style : style + "+" + (option.current ? "led.ok" : "led.off"));
+    g.put(3, y, fit(option.label, w - 4), style);
+    g.hit(0, y, w, 1, { kind: "audio-option", item, value: option.value, key, focus: true, label: option.label + (option.current ? ", chosen" : "") });
+    y += 1;
+  });
 }
 
 // ---- the Pairing screen -----------------------------------------------------
@@ -1266,4 +1476,4 @@ function pairCardContent(g, w, ctx, narrow) {
   }
 }
 
-module.exports = { render, GLYPHS, TUI_SHORTCUTS, PAIR_SHORTCUTS, WIDE, MEDIUM, pairDevices, pairColumns, PAIR_FIELDS, signalInline };
+module.exports = { render, GLYPHS, TUI_SHORTCUTS, PAIR_SHORTCUTS, AUDIO_SHORTCUTS, WIDE, MEDIUM, pairDevices, pairColumns, PAIR_FIELDS, signalInline };

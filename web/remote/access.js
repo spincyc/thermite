@@ -517,6 +517,14 @@
         try { return await overdue("command_timeout", path, commandRequest(path, "POST", { action, value }), config.commandTimeout || 8000); }
         catch (error) { if ([403, 423].includes(error.status) || error.code === "policy_unavailable") client.loadPolicy(room).catch(() => {}); throw error; }
       },
+      // A device page's command. The server checks it against the locks of
+      // the rooms that command the device; a refusal reads the locks again.
+      async deviceCommand(device, action, value) {
+        await ready();
+        const path = "/api/v1/devices/" + encodeURIComponent(device) + "/commands";
+        try { return await overdue("command_timeout", path, commandRequest(path, "POST", { action, value }), config.commandTimeout || 8000); }
+        catch (error) { if ([403, 423].includes(error.status) && locksWatched) client.loadLocks().catch(() => {}); throw error; }
+      },
       watchRoom(room) { policyRoom = room; return policyPoll.start(); },
       // A room list on show asks for every room's lock; nothing is read otherwise.
       watchLocks(on) { locksWatched = Boolean(on); return lockPoll.start(); },

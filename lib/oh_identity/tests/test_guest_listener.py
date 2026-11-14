@@ -47,7 +47,8 @@ REFUSED_FILES = ("security.html", "access.html", "access-ui.js", "access.css", "
                  "system.html", "system.js", "system.json", "pair.html", "pair.js", "pair.css", "cameras.html",
                  "cameras.js", "cameras.css", "cameras.json", "topology.html", "topology.js", "topology.css",
                  "topology.json", "README.md", "../secrets")
-#: The files a page's markup loads.
+#: The pages the listener serves, and the files their markup loads.
+PAGES = ("home.html", "index.html", "audio.html")
 LOADS = r'<(?:script|link|img)\b[^>]*?\b(?:src|href)="([^"#]+)"'
 
 
@@ -115,12 +116,12 @@ class Listening(TestCase):
         return Client(enforce_csrf_checks=True)
 
     def test_home_remotes_and_their_files_load_and_nothing_else_is_found(self):
-        for path in ("/", "/remotes/", "/static/remote/", *("/static/remote/" + name for name in guest.ASSETS)):
+        for path in ("/", "/remotes/", "/audio/", "/static/remote/", *("/static/remote/" + name for name in guest.ASSETS)):
             with self.subTest(path=path):
                 response = call("get", path)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(call("head", path).status_code, 200)
-        for path, target in (("/remotes", "/remotes/"), ("/overview", "/"), ("/overview/", "/")):
+        for path, target in (("/remotes", "/remotes/"), ("/audio", "/audio/"), ("/overview", "/"), ("/overview/", "/")):
             with self.subTest(path=path):
                 self.assertEqual(call("get", path)["Location"], target)
         refused = [*REFUSED_PAGES, *("/static/remote/" + name for name in REFUSED_FILES), "/missing", "/unifi/media/x",
@@ -373,14 +374,14 @@ class Allowlist(SimpleTestCase):
         self.assertLessEqual(guest.ASSETS, set(FILES))
         self.assertFalse(guest.ASSETS & (ADMIN_ASSETS | set(REFUSED_FILES)))
         marked = set()
-        for page in ("home.html", "index.html"):
+        for page in PAGES:
             marked |= set(re.findall(LOADS, (WEB / page).read_text()))
         loaded = set(marked)
-        for sheet in ("theme.css", "shell.css", "remote.css", "home.css"):
+        for sheet in ("theme.css", "shell.css", "remote.css", "home.css", "audio.css"):
             loaded |= set(re.findall(r'url\("([^"#]+)"\)', (WEB / sheet).read_text()))
         # Scripts fetch these themselves.
         loaded |= {"activity.json", "diagnostics.json", "mark.svg"}
-        self.assertEqual(loaded | {"home.html", "index.html"}, set(guest.ASSETS))
+        self.assertEqual(loaded | set(PAGES), set(guest.ASSETS))
         # Generated pages, and the manifest they link, load each file as
         # /static/remote/<name>?v=<hash of its bytes>. The query never reaches
         # the allowlist: the route's bare name does, and the listener admits it.
@@ -392,7 +393,7 @@ class Allowlist(SimpleTestCase):
             value = files["html/remote/" + name]
             return value.encode() if isinstance(value, str) else value
         served = set()
-        for page in ("home.html", "index.html"):
+        for page in PAGES:
             urls = re.findall(LOADS, content(page).decode())
             manifest = next(url for url in urls if urlsplit(url).path.endswith("/manifest.webmanifest"))
             urls += [urljoin(manifest, icon["src"]) for icon in json.loads(content("manifest.webmanifest"))["icons"]]

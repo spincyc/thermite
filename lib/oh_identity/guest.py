@@ -19,19 +19,21 @@ from oh_access.guest import SCOPE
 from .auth import failure
 
 READ, GET, POST = ("GET", "HEAD"), ("GET",), ("POST",)
-#: The Home and Remotes pages and every file they load. Account, Security,
-#: camera, pairing, site and administration pages stay on the HTTPS site.
+#: The Home, Remotes and Audio pages and every file they load. Account,
+#: Security, camera, pairing, site and administration pages stay on the
+#: HTTPS site.
 ASSETS = frozenset({
     "home.html", "index.html", "access-config.js", "access.js", "navigation.js", "appearance.js", "shell.js",
     "house.js", "remotes.js", "activity.js", "activity.json", "diagnostics.js", "diagnostics.json", "backend.js",
     "session.js", "log.js", "remote.js", "home.js", "theme.css", "shell.css", "remote.css", "home.css",
+    "audio.html", "audio-session.js", "audio.js", "audio.css",
     "manifest.webmanifest", "icon.svg", "mark.svg", "mark-light.svg", "apple-touch-icon.png"})
 #: The routes, as urls.py writes them, a guest-listener request may use, and
 #: their methods. Anything else is not found. Opening another read or control
 #: to guests is one entry here.
 ROUTES = {
-    # Home and Remotes, their aliases, and the files above.
-    "": READ, "overview": READ, "overview/": READ, "remotes": READ, "remotes/": READ,
+    # Home, Remotes and Audio, their aliases, and the files above.
+    "": READ, "overview": READ, "overview/": READ, "remotes": READ, "remotes/": READ, "audio": READ, "audio/": READ,
     "static/remote/": READ, "static/remote/<str:name>": READ,
     # Who the client is, whether accounts are on, and what rooms report.
     "api/v1/me": GET, "api/v1/security": GET,

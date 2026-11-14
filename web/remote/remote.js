@@ -395,7 +395,7 @@
       element.setAttribute("aria-label", label + ". " + to + (note ? ". " + note : ""));
       element.setAttribute("title", note || label + " → " + to);
     });
-    $("[data-caption=audio]").textContent = audio ? audio.short : "No audio";
+    audioName($("[data-caption=audio]"), audio, "");
     all("[data-caption=channel]").forEach((caption) => { caption.textContent = target ? target.short : ""; });
     $("[data-caption=source]").textContent = remote && !remote.note ? target.label + " · " + remote.label
       + (target.availability ? " · " + target.availability.note : "") : "";
@@ -425,7 +425,28 @@
     range.style.setProperty("--fill", view.fill + "%");
     range.setAttribute("aria-label", view.label);
     range.setAttribute("aria-valuetext", view.text);
-    $("[data-caption=fader]").textContent = view.caption;
+    audioName($("[data-caption=fader]"), view.audio, view.caption.slice(view.short.length));
+  }
+
+  // The room's audio device by name in caption, then rest: a link to its
+  // Audio page when it has one. The link is kept while it leads to the same
+  // page, so a device's reports do not take the focus from it.
+  function audioName(caption, audio, rest) {
+    const page = audio && house.devices[audio.id] && house.devices[audio.id].audio;
+    if (!page || !globalThis.ThermiteShell) {
+      caption.textContent = (audio ? audio.short : "No audio") + rest;
+      return;
+    }
+    const href = globalThis.ThermiteShell.href("audio", window.location.search, audio.id);
+    let link = caption.firstChild;
+    if (!link || link.nodeName !== "A" || link.getAttribute("href") !== href || link.textContent !== audio.short) {
+      link = node("a", { class: "caption__link", href: href, "aria-label": audio.short + ": open its Audio page" }, audio.short);
+      caption.replaceChildren(link);
+    }
+    const tail = link.nextSibling;
+    if (!rest) { if (tail) tail.remove(); }
+    else if (tail) { if (tail.data !== rest) tail.data = rest; }
+    else caption.append(rest);
   }
 
   function key(id, extra) {
