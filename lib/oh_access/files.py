@@ -1,5 +1,6 @@
 """Owner-only bounded files and atomic replacement, shared by CLI and service."""
 
+import errno
 import json
 import grp
 import os
@@ -116,6 +117,10 @@ def atomic_private(value, content):
         directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(directory)
+        except OSError as error:
+            # Some file systems (vboxsf, some CIFS) cannot sync a directory; the file is in place.
+            if error.errno not in (errno.EINVAL, errno.ENOTSUP):
+                raise
         finally:
             os.close(directory)
     finally:

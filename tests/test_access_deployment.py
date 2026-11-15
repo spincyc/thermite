@@ -108,6 +108,22 @@ class PrivateFiles(PrivateFixture):
         self.assertEqual(synced, [False, True])
         self.assertEqual(path.read_text(), "{}")
 
+    def test_a_directory_its_file_system_cannot_sync_leaves_the_file_in_place(self):
+        import errno
+        import stat
+        real = os.fsync
+
+        def fsync(descriptor, code=errno.EINVAL):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError(code, os.strerror(code))
+            real(descriptor)
+        for code in (errno.EINVAL, errno.ENOTSUP):
+            with patch.object(os, "fsync", lambda descriptor: fsync(descriptor, code)):
+                path = self.private("record.json", str(code))
+            self.assertEqual(path.read_text(), str(code))
+        with patch.object(os, "fsync", lambda descriptor: fsync(descriptor, errno.EIO)), self.assertRaises(OSError):
+            self.private("record.json", "lost")
+
 
 class Adoption(PrivateFixture):
     def config(self):
