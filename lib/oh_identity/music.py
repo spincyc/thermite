@@ -29,6 +29,7 @@ import re
 import threading
 import time
 import weakref
+from contextlib import contextmanager
 from pathlib import Path
 
 from oh_music.client import SLOW, TIMEOUT, Client, Failed, Unauthorized, Unavailable
@@ -188,31 +189,50 @@ class Music:
                      if spec["provider"] == "wiim" and "mac" in spec}
         self._ip = {spec["ip"]: ident for ident, spec in speakers.items() if spec["provider"] == "wiim" and "ip" in spec}
         self._client, self._guard = None, threading.Lock()
+        # Blocks using each client: one the token replaced is closed by its last.
+        self._using = {}
         self.flow = None
 
     # ---- Music Assistant ----------------------------------------------------
 
-    def client(self):
-        """A client with the stored token, reused while the token is."""
+    @contextmanager
+    def connected(self, failed=("music_failed", 502)):
+        """A client with the stored token for the block, reused while the token
+        is, and Music Assistant's failures in the block as the gateway's
+        problems: music_unavailable when it cannot be reached or refuses the
+        token, failed when it fails what was asked."""
         claim = provision.read_claim(self.state)
         problem = provision.problem(claim, time.time())
         if problem:
             raise Problem(problem, 503)
         with self._guard:
             if self._client is None or self._client.token != claim["token"]:
-                if self._client is not None:
-                    self._client.close()
                 self._client = self.connect(self.spec["port"], claim["token"])
-            return self._client
-
-    def call(self, command, timeout=None, /, **args):
-        """One command's result, within timeout seconds (TIMEOUT by default)."""
+            client = self._client
+            self._using[client] = self._using.get(client, 0) + 1
+            self._release()
         try:
-            return self.client().call(command, timeout, **args)
+            yield client
         except (Unavailable, Unauthorized):
             raise Problem("music_unavailable", 503) from None
         except Failed:
-            raise Problem("music_failed", 502) from None
+            raise Problem(*failed) from None
+        finally:
+            with self._guard:
+                self._using[client] -= 1
+                self._release()
+
+    def _release(self):
+        """Close each client a token replaced once no block uses it."""
+        for client, using in list(self._using.items()):
+            if client is not self._client and not using:
+                del self._using[client]
+                client.close()
+
+    def call(self, command, timeout=None, /, **args):
+        """One command's result, within timeout seconds (TIMEOUT by default)."""
+        with self.connected() as client:
+            return client.call(command, timeout, **args)
 
     def sources(self):
         return Sources(self.call("providers"), self.spec["libraries"])
@@ -428,13 +448,8 @@ class Music:
                 "current": current if type(current) is int and current >= 0 else None, "items": items}
 
     def image(self, proxy_id, size):
-        try:
-            client = self.client()
+        with self.connected(failed=("not_found", 404)) as client:
             return client.image(proxy_id, size)
-        except (Unavailable, Unauthorized):
-            raise Problem("music_unavailable", 503) from None
-        except Failed:
-            raise Problem("not_found", 404) from None
 
     # ---- commands -------------------------------------------------------------
 
@@ -587,30 +602,20 @@ class Music:
 
     def tidal_status(self):
         """Whether TIDAL is signed in, and the sign-in this gateway started."""
-        try:
-            client = self.client()
+        with self.connected() as client:
             if self.flow is not None and self.flow["state"] == "waiting":
                 self.flow = {**tidal.poll(client, self.flow["flow"]), "started": self.flow["started"]}
             signed_in = tidal.signed_in(client)
-        except (Unavailable, Unauthorized):
-            raise Problem("music_unavailable", 503) from None
-        except Failed:
-            raise Problem("music_failed", 502) from None
         sign_in = None
         if self.flow is not None:
             sign_in = {key: self.flow.get(key) for key in ("state", "code", "url", "expires_at")}
         return {"signed_in": signed_in, "sign_in": sign_in}
 
     def tidal_start(self):
-        try:
-            client = self.client()
+        with self.connected() as client:
             if self.flow is not None and self.flow["state"] == "waiting":
                 tidal.cancel(client, self.flow["flow"])
             self.flow = {**tidal.start(client), "started": time.time()}
-        except (Unavailable, Unauthorized):
-            raise Problem("music_unavailable", 503) from None
-        except Failed:
-            raise Problem("music_failed", 502) from None
         return self.tidal_status()
 
     def tidal_finish(self):
@@ -620,10 +625,8 @@ class Music:
             raise Problem("tidal_not_started", 409)
         answer = self.tidal_status()
         if self.flow["state"] == "waiting":
-            try:
-                tidal.cancel(self.client(), self.flow["flow"])
-            except (Unavailable, Unauthorized):
-                raise Problem("music_unavailable", 503) from None
+            with self.connected() as client:
+                tidal.cancel(client, self.flow["flow"])
             answer["sign_in"]["state"] = "cancelled"
         self.flow = None
         return answer

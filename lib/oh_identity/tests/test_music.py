@@ -495,6 +495,31 @@ class Gateway(Stand_in, Requests, TestCase):
                                            "refused_since": int(time.time()) - provision.REFUSED})
         self.assertEqual(self.get("/api/v1/music").json()["problem"], "music_unclaimed")
 
+    def test_a_renewed_token_gets_a_new_client_and_the_old_one_closes_once_unused(self):
+        made = []
+
+        class Recorded:
+            def __init__(self, port, token):
+                self.token, self.closed = token, False
+                made.append(self)
+
+            def call(self, command, timeout=None, /, **args):
+                return []
+
+            def close(self):
+                self.closed = True
+        tracked = music.Music(self.adapter, self.state, connect=Recorded)
+        claim = provision.read_claim(self.state)
+        with tracked.connected() as first:
+            provision.write_claim(self.state, {**claim, "token": "next"})
+            with tracked.connected() as second:
+                # The first is still in use by the outer block.
+                self.assertEqual((first.closed, second.token), (False, "next"))
+            self.assertFalse(first.closed)
+        self.assertTrue(first.closed)
+        tracked.call("players/all")
+        self.assertEqual((len(made), second.closed), (2, False))
+
     def test_a_host_without_music_has_no_music(self):
         install_adapter(RuntimeAdapter(RuntimeContract(**compiled(house(), port=None)), self.adapter.transport))
         self.assertEqual(self.get("/api/v1/music").json(), {"error": "music_not_configured"})
