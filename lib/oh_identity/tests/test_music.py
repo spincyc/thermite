@@ -174,7 +174,8 @@ class Matching(SimpleTestCase):
         for bad in ("filesystem_local--c3://track/x", "spotify://track/1", "library://folder/x", "library://radio/1",
                     "library://track/", "filesystem_local--b2://folder/../../etc", "tidal--a1://track/1\n",
                     "filesystem_local--b2://track/a\x7fb", "filesystem_local--b2://track/a\x85b",
-                    "filesystem_local--b2://track/a\tb",
+                    "filesystem_local--b2://track/a\tb", "filesystem_local--b2://track/a\ud800b",
+                    "tidal--a1://track/1\udfff",
                     "library://track/" + "1" * 1100, 5, None,
                     # Each provider's own IDs: Music Assistant builds TIDAL's API paths from them.
                     "library://track/5/../6", "library://album/five", "tidal--a1://track/123/../../users",
@@ -348,6 +349,7 @@ class Gateway(Stand_in, Requests, TestCase):
                 (f"{AMP}/play", {"ref": ALBUM, "extra": 1}, "invalid_command"),
                 (f"{AMP}/play", {"ref": "spotify://track/1"}, "invalid_ref"),
                 (f"{AMP}/play", {"ref": "library://track/1\u0007"}, "invalid_ref"),
+                (f"{AMP}/play", {"ref": "library://track/1\ud800"}, "invalid_ref"),
                 (f"{AMP}/play", {"ref": "library://folder/x"}, "invalid_ref"),
                 (f"{AMP}/play", {"ref": "tidal--abcd1234://track/1"}, "invalid_ref"),
                 (f"{AMP}/volume", {"level": 101}, "invalid_command"),
@@ -360,6 +362,11 @@ class Gateway(Stand_in, Requests, TestCase):
         # Only the providers were read, for a TIDAL instance Music Assistant does not have; never a command sent.
         self.assertEqual({command for command, _ in self.sim.calls[calls:]}, {"providers"})
         self.assertEqual(self.request("get", f"/api/v1/music/{AMP}/play").status_code, 405)
+
+    def test_a_value_music_assistant_cannot_be_sent_is_refused_not_a_server_error(self):
+        with self.assertRaises(Problem) as refused:
+            self.music.call("players/all", name="\ud800")
+        self.assertEqual((refused.exception.code, refused.exception.status), ("invalid_command", 400))
 
     def test_a_failure_is_music_failed_and_never_music_assistants_text(self):
         response = self.post(f"/api/v1/music/{AMP}/play", {"ref": "library://track/999"})

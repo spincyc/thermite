@@ -93,7 +93,9 @@ TRANSPORT = {"play": lambda value: value is None, "pause": lambda value: value i
 #: argument the value is.
 QUEUE_ACTIONS = {"seek": ("player_queues/seek", "position"), "shuffle": ("player_queues/shuffle", "shuffle_enabled"),
                  "repeat": ("player_queues/repeat", "repeat_mode")}
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+#: C0 and C1 controls, and lone surrogates, which no UTF-8 can carry to
+#: Music Assistant: refused in a reference, dropped from a query.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\ud800-\udfff]")
 _music = weakref.WeakKeyDictionary()
 
 
@@ -235,6 +237,9 @@ class Music:
             yield client
         except (Unavailable, Unauthorized):
             raise Problem("music_unavailable", 503) from None
+        except UnicodeEncodeError:
+            # A client's value that cannot be sent as UTF-8; each is checked before, this is the last guard.
+            raise Problem("invalid_command") from None
         except Failed:
             raise Problem(*failed) from None
         finally:
