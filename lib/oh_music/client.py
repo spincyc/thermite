@@ -98,6 +98,35 @@ class Client:
             raise Unavailable("Music Assistant is not serving")
         return info
 
+    def has_user(self):
+        """Whether Music Assistant has a user: without one it refuses every
+        command 503, before it looks for a token, and with one 401."""
+        response, _ = self._request("POST", "/api", ANSWER_BYTES, json={"message_id": secrets.token_hex(8),
+                                                                        "command": "info", "args": {}})
+        if response.status_code in (401, 403):
+            return True
+        if response.status_code == 503:
+            return False
+        raise Unavailable("Music Assistant is not serving")
+
+    def login(self, username, password, device_name):
+        """A session token for a user's password, or None when Music Assistant
+        refuses the password; NoUser when it has no user."""
+        response, body = self._request("POST", "/auth/login", ANSWER_BYTES, json={
+            "provider_id": "builtin", "credentials": {"username": username, "password": password},
+            "device_name": device_name})
+        if response.status_code == 401:
+            return None
+        if response.status_code == 403:
+            raise NoUser("Music Assistant has no user")
+        if response.status_code != 200:
+            raise Unavailable("Music Assistant refused the login")
+        try:
+            answer = json.loads(body)
+            return answer["token"] if answer.get("success") is True and isinstance(answer["token"], str) else None
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise Unavailable("Music Assistant refused the login") from None
+
     def setup(self, username, password, device_name):
         """Music Assistant's first admin user; its session token, or None when
         the server already has a user."""

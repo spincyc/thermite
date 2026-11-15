@@ -112,6 +112,12 @@ def atomic_private(value, content):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        # The rename outlives a crash only once its directory is on disk too.
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         temporary.unlink(missing_ok=True)
 

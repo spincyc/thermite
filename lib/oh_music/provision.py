@@ -5,12 +5,15 @@ policy worker (oh_access.worker), the site's one supervised background
 process, holds that claim; the gateway only reads the token it stores.
 
 Claim. A fresh Music Assistant has no user. Once it reports running the
-worker creates its first admin, `thermite`, with a random password nobody
-keeps, and stores the setup session it is answered with in TOKEN_FILE, in
-the gateway's private state, at once: a pending claim, which the worker
-resumes from on its next pass however this one ends. With the session it
-mints a long-lived token (Music Assistant's live a year), which replaces
-the session in the file, and revokes every other token of the user. Within
+worker stores a random password in TOKEN_FILE, in the gateway's private
+state, then creates Music Assistant's first admin, `thermite`, with it, and
+stores the setup session it is answered with beside it: a pending claim,
+which the worker resumes from on its next pass however this one ends. A
+setup whose answer was lost left a user thermite has the password of, so a
+server with a user is signed in to with a pending password before it is
+called someone else's. With the session the worker mints a long-lived token
+(Music Assistant's live a year), which replaces the session and the
+password in the file, and revokes every other token of the user. Within
 RENEW_DAYS of a token's end the worker mints the next, stores it, then
 revokes the rest.
 
@@ -94,11 +97,16 @@ def token_file(state):
     return Path(state) / TOKEN_FILE
 
 
+def secret(value):
+    return isinstance(value, str) and 0 < len(value) <= 4096 and value.isprintable()
+
+
 def read_claim(state):
-    """The stored claim: {"token", "issued_at", "expires_at"} once claimed,
-    {"session", "since"} while a claim is pending, either with
-    "refused_since" while Music Assistant refuses it, or {"problem":
-    UNCLAIMED}; None when there is no file. A file that is there but cannot
+    """The stored claim: {"token", "issued_at", "expires_at"} once claimed;
+    while a claim is pending, {"password"} from before Music Assistant is
+    asked for its user, then {"session", "password"}; a token or session
+    with "refused_since" while Music Assistant refuses it; or {"problem":
+    UNCLAIMED}. None when there is no file. A file that is there but cannot
     be read or trusted (its owner, mode or contents) is {"problem":
     UNREADABLE}: nothing replaces it until the owner repairs it."""
     try:
@@ -112,12 +120,19 @@ def read_claim(state):
     if data.get("problem") == UNCLAIMED:
         return {"problem": UNCLAIMED}
     refused = {"refused_since": data["refused_since"]} if type(data.get("refused_since")) is int else {}
-    for key, times in (("token", ("issued_at", "expires_at")), ("session", ("since",))):
-        value = data.get(key)
-        if (isinstance(value, str) and 0 < len(value) <= 4096 and value.isprintable()
-                and all(type(data.get(each)) is int for each in times)):
-            return {key: value, **{each: data[each] for each in times}, **refused}
+    password = {"password": data["password"]} if secret(data.get("password")) else {}
+    if secret(data.get("token")) and all(type(data.get(each)) is int for each in ("issued_at", "expires_at")):
+        return {key: data[key] for key in ("token", "issued_at", "expires_at")} | refused
+    if secret(data.get("session")) and password:
+        return {"session": data["session"]} | password | refused
+    if password and not {"token", "session"} & data.keys():
+        return password
     return {"problem": UNREADABLE}
+
+
+def held(claim):
+    """Whether a claim holds a token or a session to try."""
+    return claim is not None and ("token" in claim or "session" in claim)
 
 
 def problem(claim, now):
@@ -178,10 +193,11 @@ class Provisioner:
 
     def step(self):
         """One pass: claim, resume or renew once Music Assistant runs, then
-        reconcile when due. "ready"; "unclaimed" when the server had a user
-        before thermite claimed it; "refused" while it refuses the stored
-        token or session; "unreadable" while the claim file cannot be
-        trusted. Unavailable while it does not run."""
+        reconcile when due. "ready"; "unclaimed" when the server has a user
+        thermite has neither a token, a session nor the password of;
+        "refused" while it refuses the stored token or session; "unreadable"
+        while the claim file cannot be trusted. Unavailable while it does
+        not run."""
         # A provider's setup flow loads the provider before it answers.
         with self.connect(self.spec["port"], timeout=SLOW) as client:
             info = client.info()
@@ -192,8 +208,8 @@ class Provisioner:
                 self.report("cannot trust its stored claim; give the file to the service account, mode 0600")
                 return "unreadable"
             claimed = False
-            if claim is None or "problem" in claim:
-                claim = self.setup(client)
+            if not held(claim):
+                claim = self.claim(client, claim)
                 if claim is None:
                     if read_claim(self.state) != {"problem": UNCLAIMED}:
                         write_claim(self.state, {"problem": UNCLAIMED})
@@ -204,7 +220,7 @@ class Provisioner:
                     token, claimed = self.hold(client, claim)
                 except NoUser:
                     # Its state was deleted: no user, so no one else's.
-                    claim = self.setup(client)
+                    claim = self.claim(client, None)
                     if claim is None:
                         raise Unavailable("Music Assistant gained a user while thermite claimed it") from None
                     token, claimed = self.hold(client, claim)
@@ -222,13 +238,24 @@ class Provisioner:
         self.report("ready", changed=changed)
         return "ready"
 
-    def setup(self, client):
-        """Create thermite's user on a server with none, storing its session
-        at once (a pending claim); None when the server has a user."""
-        session = client.setup(USERNAME, secrets.token_urlsafe(32), "thermite")
+    def claim(self, client, claim):
+        """A pending claim, {"session", "password"}: thermite's user created
+        on a server with none, the password stored before Music Assistant
+        is asked; or, on a server with a user, a session signed in with the
+        pending password (a setup whose answer was lost). None when the
+        server's user is not one thermite has the password of."""
+        password = (claim or {}).get("password")
+        session = None
+        if not client.has_user():
+            if password is None:
+                password = secrets.token_urlsafe(32)
+                write_claim(self.state, {"password": password})
+            session = client.setup(USERNAME, password, "thermite")
+        if session is None and password is not None:
+            session = client.login(USERNAME, password, "thermite")
         if session is None:
             return None
-        claim = {"session": session, "since": int(self.clock())}
+        claim = {"session": session, "password": password}
         write_claim(self.state, claim)
         return claim
 

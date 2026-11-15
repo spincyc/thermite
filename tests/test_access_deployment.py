@@ -95,6 +95,20 @@ class PrivateFixture(unittest.TestCase):
         return path
 
 
+class PrivateFiles(PrivateFixture):
+    def test_a_private_file_and_the_directory_its_rename_is_in_reach_the_disk(self):
+        import stat
+        synced, real = [], os.fsync
+
+        def fsync(descriptor):
+            synced.append(stat.S_ISDIR(os.fstat(descriptor).st_mode))
+            real(descriptor)
+        with patch.object(os, "fsync", fsync):
+            path = self.private("record.json", "{}")
+        self.assertEqual(synced, [False, True])
+        self.assertEqual(path.read_text(), "{}")
+
+
 class Adoption(PrivateFixture):
     def config(self):
         release = private_directory(self.root / "old-release")

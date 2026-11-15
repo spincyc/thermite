@@ -13,6 +13,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
@@ -173,7 +174,7 @@ class Claim(Site):
         with self.assertRaises(Failed):
             provisioner.step()
         claim = provision.read_claim(self.state)
-        self.assertEqual(set(claim), {"session", "since"})
+        self.assertEqual(set(claim), {"session", "password"})
         self.assertTrue(self.sim.authorized(claim["session"]))
         self.assertEqual(provision.problem(claim, time.time()), "music_unavailable")
         self.assertEqual(provisioner.step(), "ready")
@@ -197,9 +198,41 @@ class Claim(Site):
         self.assertFalse(self.sim.authorized(session))
         self.assertEqual(list(self.sim.tokens), [self.token()])
         # A pending session refused stays pending, as a token does.
-        provision.write_claim(self.state, {"session": session, "since": 1})
+        provision.write_claim(self.state, {"session": session, "password": "x"})
         self.assertEqual(self.provisioner().step(), "refused")
         self.assertEqual(provision.read_claim(self.state)["session"], session)
+
+    def test_the_password_is_stored_before_music_assistant_is_asked_and_dropped_once_claimed(self):
+        stored = []
+
+        def killed(client, *_):
+            # The worker dies while it waits for Music Assistant's answer.
+            stored.append(provision.read_claim(self.state))
+            raise KeyboardInterrupt()
+        with patch.object(Client, "setup", killed), self.assertRaises(KeyboardInterrupt):
+            self.provisioner().step()
+        [pending] = stored
+        self.assertEqual(set(pending), {"password"})
+        self.assertEqual(self.sim.users, {})
+        self.assertEqual(self.provisioner().step(), "ready")
+        self.assertEqual(self.sim.users, {"thermite": pending["password"]})
+        self.assertEqual(set(provision.read_claim(self.state)), {"token", "issued_at", "expires_at"})
+        self.assertNotIn(pending["password"], provision.token_file(self.state).read_text())
+
+    def test_a_setup_whose_answer_was_lost_is_resumed_by_signing_in_with_its_password(self):
+        self.sim.losing["/setup"] = 1
+        with self.assertRaises(Unavailable):
+            self.provisioner().step()
+        self.assertEqual(list(self.sim.users), ["thermite"])
+        self.assertEqual(set(provision.read_claim(self.state)), {"password"})
+        self.assertEqual(self.provisioner().step(), "ready")
+        self.assertEqual(list(self.sim.tokens), [self.token()])
+        # Someone else's server: the pending password signs in to nothing, and is not kept.
+        self.reset()
+        self.sim.create_user("someone", "a long enough password")
+        provision.write_claim(self.state, {"password": "xxx"})
+        self.assertEqual(self.provisioner().step(), "unclaimed")
+        self.assertEqual(provision.read_claim(self.state), {"problem": provision.UNCLAIMED})
 
     def test_nothing_is_claimed_while_the_server_starts_or_is_down(self):
         self.sim.status = "starting"
@@ -430,6 +463,20 @@ class Errors(unittest.TestCase):
             with self.assertRaises(Failed):
                 self.client(status, body, kind)[0].image("0" * 64, 80)
 
+    def test_a_server_says_whether_it_has_a_user_and_a_login_answers_a_token_or_none(self):
+        self.assertTrue(self.client(401, b"")[0].has_user())
+        self.assertFalse(self.client(503, b"")[0].has_user())
+        client, seen = self.client(200, b'{"success": true, "token": "abc"}')
+        self.assertEqual(client.login("thermite", "x" * 12, "thermite"), "abc")
+        self.assertEqual((seen[0].url.path, json.loads(seen[0].content)["credentials"]["username"]),
+                         ("/auth/login", "thermite"))
+        self.assertIsNone(self.client(401, b'{"success": false}')[0].login("thermite", "x" * 12, "thermite"))
+        with self.assertRaises(NoUser):
+            self.client(403, b'{"success": false}')[0].login("thermite", "x" * 12, "thermite")
+        for status in (200, 500):
+            with self.assertRaises(Unavailable):
+                self.client(status, b"[]")[0].has_user() if status == 200 else self.client(500)[0].login("a", "b", "c")
+
     def test_setup_once_a_user_exists_is_none(self):
         self.assertIsNone(self.client(400, b'{"success": false}')[0].setup("thermite", "x" * 12, "thermite"))
         self.assertEqual(self.client(200, b'{"success": true, "token": "abc"}')[0].setup("thermite", "x" * 12, "t"), "abc")
@@ -486,8 +533,6 @@ class Events(Site):
         self.check(body)
 
     def test_a_message_longer_than_its_bytes_closes_the_socket(self):
-        from unittest.mock import patch
-
         from oh_music import events
 
         async def body():

@@ -445,14 +445,17 @@ and a WiiM's hidden AirPlay protocol player, is never shown or commanded. A
 host without music answers 404 `music_not_configured`.
 
 The policy worker holds the claim: once Music Assistant reports running and
-has no user, it creates the admin `thermite` with a random password nobody
-keeps and at once stores the setup session it is answered with in
-`music-token.json` (mode 0600) in the gateway's private state, a pending
-claim that a later pass resumes from however this one ends. With the session
-it mints a long-lived token (a year), which replaces the session in the
-file, and revokes the session; within 30 days of a token's end it mints,
-stores and switches to the next and revokes the old one. Serving only reads
-that file. The worker never gives up a stored token or session because Music
+has no user, it stores a random password in `music-token.json` (mode 0600,
+written atomically, its directory synced) in the gateway's private state,
+creates the admin `thermite` with it, and stores the setup session it is
+answered with beside it: a pending claim that a later pass resumes from
+however this one ends. When the answer to the setup was lost, Music
+Assistant has a user and thermite its password, so a later pass signs in
+with it rather than calling the server someone else's. With the session it
+mints a long-lived token (a year), which replaces the session and the
+password in the file, and revokes the session; within 30 days of a token's
+end it mints, stores and switches to the next and revokes the old one.
+Serving only reads that file. The worker never gives up a stored token or session because Music
 Assistant refuses it, as Music Assistant does for a moment while it starts,
 stops or upgrades: it keeps it, records when the refusals began and tries
 it again on every pass, every 30 seconds. After a day of refusals in a row

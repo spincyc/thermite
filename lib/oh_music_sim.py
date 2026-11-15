@@ -171,9 +171,10 @@ class Sim:
     """Music Assistant's state. speakers: speakers_from_house's. preloaded:
     providers it starts with, as a fresh server loads some by default.
     heartbeat: seconds between its websocket pings. A test makes it fail:
-    failing counts the next commands of a name to answer a bare 500, and
+    failing counts the next commands of a name to answer a bare 500,
     refusing the next authenticated API requests to answer 401, as Music
-    Assistant does when its authentication fails inside."""
+    Assistant does when its authentication fails inside, and losing the
+    next answers to a path (/setup): it acts, then drops the connection."""
 
     def __init__(self, speakers=(), *, preloaded=("chromecast", "dlna", "smart_fades"), heartbeat=25.0):
         self.lock = threading.RLock()
@@ -192,6 +193,7 @@ class Sim:
         self.calls = []
         self.failing = collections.Counter()
         self.refusing = 0
+        self.losing = collections.Counter()
         self.events = []
         self.speakers = list(speakers)
         self.tidal_code = None
@@ -686,6 +688,13 @@ class Sim:
             self.users[username] = password
             return self._token(username, "setup", long_lived=False)
 
+    def login(self, username, password):
+        """POST /auth/login: a session token for the user's password, or None."""
+        with self.lock:
+            if self.users.get(username) != password:
+                return None
+            return self._token(username, "login", long_lived=False)
+
     def _token(self, user, name, *, long_lived):
         token = secrets.token_urlsafe(48)
         now = time.time()
@@ -900,6 +909,15 @@ class Server:
                 self.end_headers()
                 self.wfile.write(data)
 
+            def lost(self, path):
+                """Whether this request's answer is lost: the connection drops unanswered."""
+                with sim.lock:
+                    if sim.losing[path] <= 0:
+                        return False
+                    sim.losing[path] -= 1
+                self.close_connection = True
+                return True
+
             def read_json(self):
                 length = int(self.headers.get("Content-Length") or 0)
                 return json.loads(self.rfile.read(length) or b"null")
@@ -937,10 +955,23 @@ class Server:
                     if not isinstance(body, dict):
                         return self.answer(400, b"Body required", "text/plain")
                     token = sim.create_user(str(body.get("username", "")).strip(), str(body.get("password", "")))
+                    if self.lost(url.path):
+                        return None
                     if token is None:
                         return self.answer(400, {"success": False, "error": "Setup already completed"})
                     return self.answer(200, {"success": True, "token": token,
                                              "user": {"username": body["username"], "role": "admin"}})
+                if url.path == "/auth/login":
+                    with sim.lock:
+                        if not sim.users:
+                            return self.answer(403, {"success": False, "error": "Setup required"})
+                    if not isinstance(body, dict) or not isinstance(body.get("credentials"), dict):
+                        return self.answer(400, b"Invalid request body", "text/plain")
+                    credentials = body["credentials"]
+                    token = sim.login(str(credentials.get("username", "")), str(credentials.get("password", "")))
+                    if token is None:
+                        return self.answer(401, {"success": False, "error": "Invalid username or password"})
+                    return self.answer(200, {"success": True, "token": token})
                 if url.path != "/api":
                     return self.answer(404, b"Not found", "text/plain")
                 with sim.lock:
