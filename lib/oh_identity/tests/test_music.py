@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -510,6 +511,20 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual(views, [("music", True), ("music" + topics.WITHOUT_TEXT, True), ("music", True)])
         self.assertEqual(self.get("/api/v1/events/music?x=1").status_code, 404)
         self.assertEqual(self.request("post", "/api/v1/events/music")["Allow"], "GET")
+
+    def test_the_worker_stops_and_joins_its_music_thread_before_the_block_holding_its_lease_ends(self):
+        from oh_access.worker import music_running
+        stop = threading.Event()
+        with music_running(self.state, self.adapter.contract.music, stop) as thread:
+            self.assertTrue(thread.is_alive())
+        self.assertTrue(stop.is_set())
+        self.assertFalse(thread.is_alive())
+        stop = threading.Event()
+        with self.assertRaises(KeyError), music_running(self.state, self.adapter.contract.music, stop) as thread:
+            raise KeyError()
+        self.assertFalse(thread.is_alive())
+        with music_running(self.state, None, threading.Event()) as thread:
+            self.assertIsNone(thread)
 
     def test_the_guest_listener_serves_music_but_not_tidal(self):
         from oh_identity.guest import ROUTES

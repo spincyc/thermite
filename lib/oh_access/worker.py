@@ -1,6 +1,7 @@
 """Supervised policy worker with exact native observations and revision-fenced I/O."""
 
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import logging
@@ -384,24 +385,22 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
     thread = threading.Thread(target=listen, daemon=True)
-    music = music_thread(config["state"], adapter.contract.music, stop)
     textfile = None
     try:
         # Take the process lease BEFORE connecting a feed or running any writes.
         with locks.hold(["room-policy-worker"], blocking=False):
             if not shutdown_requested:
                 thread.start()
-                if music:
-                    music.start()
-            textfile = metrics.start(metrics.WORKER, metrics.WORKER_FILE)
-            pruned = None
-            while not shutdown_requested and not stop.is_set():
-                if pruned is None or time.monotonic() - pruned >= PRUNE_EVERY:
-                    pruned = time.monotonic()
-                    maintain(store)
-                telemetry.stepped(worker.step())
-                if not shutdown_requested and not stop.is_set():
-                    worker.wait(min(5, interval))
+            with music_running(config["state"], adapter.contract.music, stop, start=not shutdown_requested):
+                textfile = metrics.start(metrics.WORKER, metrics.WORKER_FILE)
+                pruned = None
+                while not shutdown_requested and not stop.is_set():
+                    if pruned is None or time.monotonic() - pruned >= PRUNE_EVERY:
+                        pruned = time.monotonic()
+                        maintain(store)
+                    telemetry.stepped(worker.step())
+                    if not shutdown_requested and not stop.is_set():
+                        worker.wait(min(5, interval))
     finally:
         stop.set()
         if thread.ident is not None:
@@ -416,9 +415,6 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
             loop.run_until_complete(asyncio.gather(observer, return_exceptions=True))
             loop.close()
         cache.clear()
-        if music and music.ident is not None:
-            # One Music Assistant request at most is in flight.
-            music.join(timeout=MUSIC_STOP)
         if textfile:
             textfile.stop()
         for signum, handler in previous.items():
@@ -430,17 +426,32 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
             close()
 
 
-def music_thread(state, music, stop):
-    """The thread that holds the site's claim on Music Assistant and keeps
-    its configuration (oh_music.provision), for a host with music: the
-    worker is the site's one supervised background process, holds the
-    worker lease and shares the gateway's private state, where the claim's
-    token is stored. The gateway only reads that token."""
+@contextmanager
+def music_running(state, music, stop, *, start=True):
+    """For a host with music, the thread that holds the site's claim on
+    Music Assistant and keeps its configuration (oh_music.provision): the
+    worker is the site's one supervised background process and shares the
+    gateway's private state, where the claim is stored; the gateway only
+    reads it. The block holds the worker lease, and the thread is stopped
+    and joined before the block ends, so that no pass runs once another
+    worker may hold the lease."""
     if music is None:
-        return None
+        yield None
+        return
     from oh_identity.runtime import plain
     from oh_music import provision
-    return threading.Thread(target=provision.run, args=(state, plain(music), stop), daemon=True, name="music")
+    thread = threading.Thread(target=provision.run, args=(state, plain(music), stop), daemon=True, name="music")
+    if start:
+        thread.start()
+    try:
+        yield thread
+    finally:
+        if thread.ident is not None:
+            stop.set()
+            # A pass ends at its next part; one request at most is in flight.
+            thread.join(timeout=MUSIC_STOP)
+            if thread.is_alive():
+                LOG.warning("The music thread did not stop; it ends with the process.")
 
 
 def maintain(store):

@@ -164,9 +164,9 @@ class Provisioner:
     """One site's claim and configuration. spec is the contract's music
     (oh_site_contract.music); connect(port, token) opens a Client."""
 
-    def __init__(self, state, spec, *, connect=Client, clock=time.time, every=EVERY):
+    def __init__(self, state, spec, *, connect=Client, clock=time.time, every=EVERY, stop=None):
         self.state, self.spec, self.connect, self.clock = Path(state), spec, connect, clock
-        self.every = every
+        self.every, self.stop = every, stop
         self.reported = None
         # (server ID, when) of the last reconcile.
         self.reconciled = None
@@ -281,11 +281,13 @@ class Provisioner:
         """Bring Music Assistant's configuration to what thermite needs, one
         part at a time; the number of changes made. A part that fails is
         logged, and the parts after it are still applied; one that loses
-        Music Assistant ends the pass."""
+        Music Assistant, or the worker stopping, ends the pass."""
         changed = 0
         for part, apply in (("player providers", self.players), ("speaker addresses", self.discovery),
                             ("libraries", self.libraries), ("unwanted providers", self.unwanted),
                             ("remote access", self.remote_access), ("onboarding", self.onboarding)):
+            if self.stop is not None and self.stop.is_set():
+                break
             try:
                 changed += apply(client, info)
             except Unavailable:
@@ -403,7 +405,7 @@ class Provisioner:
 def run(state, spec, stop, *, poll=POLL, every=EVERY, connect=Client):
     """The worker's music thread: until stop is set, a pass every `poll`
     seconds (Provisioner.step), reconciling every `every`."""
-    provisioner = Provisioner(state, spec, connect=connect, every=every)
+    provisioner = Provisioner(state, spec, connect=connect, every=every, stop=stop)
     while not stop.is_set():
         try:
             provisioner.step()
