@@ -53,6 +53,10 @@ def validate(data: object) -> list[str]:
     for module in integrations.REGISTRY:
         if hasattr(module, "validate_house"):
             problems += module.validate_house(data)
+    if problems:
+        # The features below ask the integrations about their devices (a
+        # remote's inputs, say), which assumes each device is one they know.
+        return problems
     for feature in features.REGISTRY:
         problems += feature.validate(data)
     return problems

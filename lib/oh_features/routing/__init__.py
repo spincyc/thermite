@@ -119,6 +119,9 @@ EDID_KEYS = {"idle"}
 #: A room's devices that a choice powers and switches, in the order the
 #: signal reaches them: the screen is the last.
 STAGES = ("receiver", "display")
+#: Kinds of network player that are a room's sound where they stand, as a
+#: soundbar is (targets()).
+PLAYERS = ("streaming_amp", "audio_streamer")
 STAGE_KEYS = {"device", "zone", "input", "input_by_source", "sources", "sync_with"}
 #: The room keys of what its other devices are sent on any source, and on
 #: Off. Not `on` and `off`: YAML reads those as true and false.
@@ -163,11 +166,12 @@ def covered_rooms(data: dict, room: str) -> set:
 def targets(data: dict, room: str) -> dict[str, str]:
     """The devices a routed room's remote commands, each with its role:
     "own" for the room's own sound: its `audio`, a soundbar in its home
-    room (a streaming amp too, unless the routed room is a screen in a
-    larger room), and a TV or projector there that no other routed room
-    shows; "shared" for a source it shows, a stage that is not passive,
-    which other rooms may use too (a receiver's other zone), and such a
-    soundbar or amp in a room it covers only as a Building. A room locked
+    room (a streaming amp or audio streamer too, unless the routed room
+    is a screen in a larger room), and a TV or projector there that no
+    other routed room shows; "shared" for a source it shows, a stage that
+    is not passive, which other rooms may use too (a receiver's other
+    zone), and such a soundbar or amp in a room it covers only as a
+    Building. A room locked
     refuses every command to what it owns, from anywhere; a command to what
     it shares only when the command would disturb its route
     (oh_identity.runtime)."""
@@ -183,7 +187,7 @@ def targets(data: dict, room: str) -> dict[str, str]:
     # Only endpoint audio devices join the explicit roles: an aliased TV
     # screen does not gain the desk amplifier beside it.
     sound = {d["id"]: d["room"] for d in devices if d.get("room") in covered
-             and (d.get("kind") == "soundbar" or d.get("kind") == "streaming_amp" and "room" not in entry)}
+             and (d.get("kind") == "soundbar" or d.get("kind") in PLAYERS and "room" not in entry)}
     shared.update(ident for ident, place in sound.items() if place != home(data, room))
     own = {entry.get("audio")} | {ident for ident, place in sound.items() if place == home(data, room)}
     # An inventory can have a controlled TV in a room whose route is audio only.

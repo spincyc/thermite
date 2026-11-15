@@ -159,7 +159,7 @@ class PlayerStandIn:
     """lib/oh_av_sim.py's WiiM, as the control Items see it."""
 
     def __init__(self, module, device: dict) -> None:
-        self.sim = av_sim.Player()
+        self.sim = av_sim.Player(model=device["model"])
         self.server = av_sim.Server(self.sim)
         self.modes = module.MODES
         self.codes = {code: button for button, code in module.KEYS.items()}

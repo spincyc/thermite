@@ -9,7 +9,7 @@ LED_SWITCH_GET). Its Items (readings()), plain Numbers in UNITS:
               _album, _duration, _service (the streaming service: vendor,
               else the network mode's name; empty for an input),
               _sample_rate, _bit_depth
-    sound     _volume (0-100), _mute, _input (a switchmode name, INPUTS),
+    sound     _volume (0-100), _mute, _input (a switchmode name, inputs()),
               _play_mode (PLAY_MODES), _eq (EQ on), _eq_preset (EQ_PRESETS),
               _sub_level (dB, SUB_LEVEL)
     device    _firmware, _update (a newer firmware waits), _cpu_temperature,
@@ -17,14 +17,16 @@ LED_SWITCH_GET). Its Items (readings()), plain Numbers in UNITS:
               charge), _internet, _sub (a subwoofer is plugged in),
               _sub_crossover, _sub_phase, _light (the status light)
 
-and, under control, _key (a remote button id, KEYS). Under observe only,
-every channel is READONLY. Under control, volume, mute, input, play mode,
-EQ, EQ preset, sub level, light and key send commands, each only a value
-it lists (a volume only on the player's own scale, VOLUME); INCREASE and
-DECREASE send nothing: the binding turns them into fixed strings, not a
-step from the value read. Every command reads its request again a second
-later (refreshAfterCommand); a key reads getPlayerStatus, so what plays
-shows a second after a press. EQ follows the input, so it can show the
+less those its model has no request for (MODELS: a Mini has neither a
+subwoofer output nor temperatures), and, under control, _key (a remote
+button id, KEYS). Under observe only, every channel is READONLY. Under
+control, volume, mute, input, play mode, EQ, EQ preset, sub level, light
+and key send commands, each only a value it lists (a volume only on the
+player's own scale, VOLUME); INCREASE and DECREASE send nothing: the
+binding turns them into fixed strings, not a step from the value read.
+Every command reads its request again a second later
+(refreshAfterCommand); a key reads getPlayerStatus, so what plays shows a
+second after a press. EQ follows the input, so it can show the
 last input's for up to REFRESH seconds after a switch.
 
 A Number Item is plain, its unit in UNITS: the gateway passes plain numbers
@@ -54,10 +56,12 @@ when the relay carries LinkPlay events and that binding refreshes what it
 reads.
 
 Read from a WiiM Amp Pro on firmware Linkplay.5.2.833845 (2026-11-14):
-EQGetList (EQ_PRESETS), getAudioInputEnable (INPUTS), getSubLPF (plugged,
+EQGetList (EQ_PRESETS), getAudioInputEnable (MODELS), getSubLPF (plugged,
 cross 90, phase 0, level 8) and getPlayerStatus == getPlayerStatusEx field
-for field. Command forms: WiiM's "HTTP API for WiiM Products" v1.2, and
-pywiim and python-linkplay where WiiM documents none (setSubLPF,
+for field. A Mini on Linkplay.4.6.833047 (2026-11-15) lists the same EQ
+presets and answers getPlayerStatus, EQGetBand, getMetaInfo and
+LED_SWITCH_GET alike. Command forms: WiiM's "HTTP API for WiiM Products"
+v1.2, and pywiim and python-linkplay where WiiM documents none (setSubLPF,
 LED_SWITCH_SET, EQGetBand).
 """
 
@@ -121,11 +125,27 @@ DEVICE_REFRESH = 60
 #: "max_volume":"100" (read 2026-11-04); a lower maximum set in the WiiM
 #: app is the player's to apply.
 VOLUME = {"min": 0, "max": 100, "step": 1}
-#: (switchmode name, label) of every input the remote offers: the Amp Pro's
-#: (getAudioInputEnable: line in, Bluetooth, optical, HDMI ARC) and the
-#: network.
-INPUTS = (("wifi", "Wi-Fi"), ("bluetooth", "Bluetooth"), ("line-in", "Line in"), ("optical", "Optical"),
-          ("HDMI", "HDMI ARC"))
+#: (switchmode name, label) of the network, every player's first input.
+NETWORK = ("wifi", "Wi-Fi")
+#: Every model thermite knows, by its inventory `model`: its device kind,
+#: the inputs it has besides the network, as the remote offers them, and
+#: the readings it has no request for. An Amp Pro (read 2026-11-14) has line in, Bluetooth,
+#: optical and HDMI ARC (getAudioInputEnable; plm_support 0x2b00416), a
+#: subwoofer output and two temperature sensors. A Mini (read 2026-11-15,
+#: firmware Linkplay.4.6.833047) has line in and Bluetooth (plm_support
+#: 0x300006; getAudioInputEnable is an unknown command to it), and neither
+#: a subwoofer output (getSubLPF answers without "plugged") nor a
+#: temperature in getStatusEx.
+MODELS = {
+    "Amp Pro": {"kind": "streaming_amp",
+                "inputs": (("bluetooth", "Bluetooth"), ("line-in", "Line in"), ("optical", "Optical"),
+                           ("HDMI", "HDMI ARC")),
+                "lacks": frozenset()},
+    "Mini": {"kind": "audio_streamer",
+             "inputs": (("bluetooth", "Bluetooth"), ("line-in", "Line in")),
+             "lacks": frozenset({"sub", "sub_level", "sub_crossover", "sub_phase", "cpu_temperature",
+                                 "board_temperature"})},
+}
 #: getPlayerStatus mode -> the switchmode name of that input (60 is line in
 #: too in WiiM's own SDK). Every other mode is a network source (AirPlay,
 #: DLNA, Spotify, a multiroom follower...), so it reads as wifi.
@@ -166,7 +186,25 @@ def device_uid(device: dict) -> str:
 
 
 def validate(device: dict) -> list[str]:
+    if not (uses(device, PHASE, NAME) or uses(device, "control", NAME)):
+        return []
+    ident, model = device.get("id") or "a device", device.get("model")
+    if model not in MODELS:
+        return [f"{ident}: wiim_http knows no model {model!r} (one of {', '.join(sorted(MODELS))})"]
+    if device.get("kind") != MODELS[model]["kind"]:
+        return [f"{ident}: a WiiM {model} is kind {MODELS[model]['kind']}, not {device.get('kind')!r}"]
     return []
+
+
+def inputs(device: dict) -> tuple:
+    """(switchmode name, label) of every input the player has, the network
+    first."""
+    return (NETWORK, *MODELS[device["model"]]["inputs"])
+
+
+def has(device: dict, suffix: str) -> bool:
+    """Whether the player's model has a request for this reading."""
+    return suffix not in MODELS[device["model"]]["lacks"]
 
 
 def _lookup_js(table: dict[str, str], otherwise: str = "null") -> str:
@@ -176,10 +214,10 @@ def _lookup_js(table: dict[str, str], otherwise: str = "null") -> str:
             f"{otherwise}; }})({json.dumps(table, separators=(',', ':'))}))")
 
 
-def input_js() -> str:
+def input_js(device: dict) -> str:
     """An inline JS transformation: an input command passed on only when it
-    is one of INPUTS."""
-    return _lookup_js({value: value for value, _ in INPUTS})
+    is one of the player's inputs()."""
+    return _lookup_js({value: value for value, _ in inputs(device)})
 
 
 def mode_js() -> str:
@@ -291,13 +329,13 @@ def readings() -> tuple:
     )
 
 
-def commands() -> dict:
+def commands(device: dict) -> dict:
     """suffix -> (commandExtension, command transformation or None, state
     description, options) of every reading a controlled player commands."""
-    return {
+    sent = {
         "volume": ("command=setPlayerCmd:vol:%2$s", f"JS({volume_js(VOLUME)})", dict(VOLUME), None),
         "mute": ("command=setPlayerCmd:mute:%2$s", None, None, None),
-        "input": ("command=setPlayerCmd:switchmode:%2$s", input_js(), None, (INPUTS, INPUTS)),
+        "input": ("command=setPlayerCmd:switchmode:%2$s", input_js(device), None, (inputs(device),) * 2),
         "play_mode": ("command=setPlayerCmd:loopmode:%2$s", play_mode_js(), None, (PLAY_MODES_READ, PLAY_MODES)),
         "eq": ("command=EQ%2$s", None, None, None),
         "eq_preset": ("command=EQLoad:%2$s", eq_preset_js(), None,
@@ -306,6 +344,7 @@ def commands() -> dict:
                       None),
         "light": ("command=LED_SWITCH_SET:%2$s", None, None, None),
     }
+    return {suffix: spec for suffix, spec in sent.items() if has(device, suffix)}
 
 
 def pattern(suffix: str) -> str | None:
@@ -355,9 +394,11 @@ ICONS = {"volume": "soundvolume", "mute": "soundvolume_mute"}
 def render(device: dict, house: House, out: YamlFile) -> None:
     ident = device["id"]
     control = uses(device, "control", NAME)
-    sent = commands() if control else {}
+    sent = commands(device) if control else {}
     channels: dict[str, dict] = {"player": {}, "device": {}}
     for suffix, thing, request, type_, item_type, label, tags, steps, config in readings():
+        if not has(device, suffix):
+            continue
         body = _channel(type_, label, request, steps, config, control, suffix in sent)
         if suffix in sent:
             extension, transformation, _, _ = sent[suffix]
@@ -420,7 +461,7 @@ def remote(device: dict) -> dict | None:
         "key": f"{ident}_key",
         "mute": f"{ident}_mute",
         "volume": {"item": f"{ident}_volume", **VOLUME},
-        "input": {"item": f"{ident}_input", "options": [list(pair) for pair in INPUTS]},
+        "input": {"item": f"{ident}_input", "options": [list(pair) for pair in inputs(device)]},
     }
 
 
@@ -461,8 +502,10 @@ def audio(device: dict) -> dict | None:
         "state": {"item": f"{ident}_status", "playing": ["play"]},
         "track": {field: f"{ident}_{field}" for field in ("title", "artist", "album", "service", "duration",
                                                            "sample_rate", "bit_depth")},
-        "settings": [{**entry(suffix, **shapes[suffix]), "section": section} for suffix, section in SETTINGS],
-        "facts": [entry(suffix, **({"quiet": True} if suffix in QUIET else {})) for suffix in FACTS],
+        "settings": [{**entry(suffix, **shapes[suffix]), "section": section} for suffix, section in SETTINGS
+                     if has(device, suffix)],
+        "facts": [entry(suffix, **({"quiet": True} if suffix in QUIET else {})) for suffix in FACTS
+                  if has(device, suffix)],
     }
 
 

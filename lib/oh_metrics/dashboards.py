@@ -86,7 +86,7 @@ THING_STATE_NAMES = ("UNINITIALIZED", "INITIALIZING", "UNKNOWN", "ONLINE", "OFFL
 
 #: Device kinds whose volume is a listening level; others (TVs behind a
 #: receiver, Cast players at a fixed 100) only draw flat lines.
-LISTENING_KINDS = ("avr", "amp", "streaming_amp", "soundbar", "sub")
+LISTENING_KINDS = ("avr", "amp", "streaming_amp", "audio_streamer", "soundbar", "sub")
 #: The units the Host dashboard shows.
 UNITS = oh_units.DAEMONS
 #: Seconds between samples (oh_metrics.SCRAPE_INTERVAL): a sample count

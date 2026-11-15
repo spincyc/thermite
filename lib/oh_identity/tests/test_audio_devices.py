@@ -69,6 +69,18 @@ class Contract(TestCase):
         self.assertIn(f"{AMP}_bass", amp["actions"])
         self.assertNotIn(f"{AMP}_sub_gain", amp["actions"])
 
+    def test_an_audio_streamer_where_a_room_is_routed_is_that_rooms_sound(self):
+        """A WiiM Mini beside a routed room's own sound is the room's too, as a
+        streaming amp is, and offers only the inputs it has."""
+        data = house()
+        mini = "example_east_mini"
+        data["devices"].append({"id": mini, "room": EAST, "kind": "audio_streamer", "make": "WiiM", "model": "Mini",
+                                "ip": "192.0.2.33", "controls": {"observe": ["wiim_http"], "control": ["wiim_http"]}})
+        device = compiled(data)["devices"][mini]
+        self.assertEqual(device["rooms"], {EAST: "own"})
+        self.assertEqual(sorted(device["actions"]["input"]["values"]), ["bluetooth", "line-in", "wifi"])
+        self.assertNotIn(f"{mini}_sub_level", device["actions"])
+
     def test_a_play_mode_reads_what_it_is_never_sent_and_the_remote_view_carries_the_page(self):
         authority = compiled(house())
         self.assertEqual(authority["states"][f"{WIIM}_play_mode"]["values"], ["4", "0", "1", "3", "2", "5"])

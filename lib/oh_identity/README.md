@@ -330,7 +330,8 @@ the route it holds (`device_locked`): a source route setting a field that
 route needs to another value, or any command to a device it uses. Choosing a
 shared source the locked room also shows remains allowed. Another routed room
 that owns the commanded device (`own_rooms`: the device is its `audio`, or
-its soundbar, streaming amp or TV in its own room, `oh_features.routing.targets`)
+its soundbar, streaming amp, audio streamer or TV in its own room,
+`oh_features.routing.targets`)
 refuses it outright while locked (`device_locked`); a zone over a Building
 only shares the rooms' sound inside it.
 POST `/api/v1/devices/<id>/commands` takes `{action,value}` from a device's

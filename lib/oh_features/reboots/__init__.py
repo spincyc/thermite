@@ -53,7 +53,7 @@ TIME = re.compile(r"([01][0-9]|2[0-3]):([0-5][0-9])")
 COMMAND = "reboot"
 #: Device kinds by when they restart: the screen first, then what is
 #: between it and the sources, then the sources (every other kind).
-ORDER = ({"tv", "projector", "monitor"}, {"avr", "soundbar", "streaming_amp", "amp"},
+ORDER = ({"tv", "projector", "monitor"}, {"avr", "soundbar", "streaming_amp", "audio_streamer", "amp"},
          {"hdmi_switch", "hdmi_processor", "hdmi_matrix"})
 HEADER = (
     "Nightly reboots (lib/oh_features/reboots): a device id commanded to",

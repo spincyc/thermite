@@ -26,6 +26,13 @@ rollback. The unified deployment workflow uses a separate committed private site
     its remote's battery, internet and subwoofer, polled every 60 s on a
     second Thing. The activity log leaves out the readings that drift with
     every poll.
+  - A WiiM Mini, a new `audio_streamer` kind, gets the same page with the
+    inputs it has (Wi-Fi, Bluetooth, line in) and without the subwoofer
+    and temperatures it lacks. A WiiM's `model` is now `Amp Pro` (kind
+    `streaming_amp`) or `Mini` (kind `audio_streamer`); `generate` refuses
+    any other model, or a kind its model is not. An audio streamer counts
+    as its room's sound wherever a streaming amplifier does: listening
+    levels, and the locks of a room routed there.
   - A Sonos Arc or Amp reads back its sound settings, and an Amp's remote
     no longer offers TV audio.
   - The gateway takes a page's commands at

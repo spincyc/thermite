@@ -34,7 +34,8 @@
 
   const KIND_NAME = {
     tv: "TV", projector: "Projector", avr: "Receiver", soundbar: "Soundbar", amp: "Amplifier",
-    streaming_amp: "Streaming amplifier", streamer: "Streamer", disc_player: "Disc player",
+    streaming_amp: "Streaming amplifier", audio_streamer: "Audio streamer", streamer: "Streamer",
+    disc_player: "Disc player",
     game_console: "Game console",
     curtain: "Curtain", lighting: "Lighting", hdmi_matrix: "HDMI matrix", hdmi_switch: "HDMI switch",
     usb_matrix: "USB matrix"

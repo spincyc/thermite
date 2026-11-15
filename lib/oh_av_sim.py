@@ -12,8 +12,8 @@ volume (MV, the 0-98 scale), mute, source (SI), surround mode (MS), menu
 (MN) and zone 2 power and source (Z2, SOURCE among them); it answers 200 to any other too, as the receiver
 does, and lists it in `unknown`.
 
-Player answers GET /httpapi.asp?command=<command> as the WiiM Amp Pro does,
-in plain HTTP (the real one is HTTPS only): getPlayerStatus, EQGetBand,
+Player answers GET /httpapi.asp?command=<command> as a WiiM Amp Pro or Mini
+does, in plain HTTP (the real one is HTTPS only): getPlayerStatus, EQGetBand,
 getMetaInfo, getStatusEx, getSubLPF and LED_SWITCH_GET; the setPlayerCmd
 commands vol, mute, switchmode, loopmode, onepause, play, pause, prev and
 next; EQOn, EQOff, EQLoad:<preset>, setSubLPF:level:<dB> and
@@ -219,13 +219,22 @@ def hex_text(text: str) -> str:
 
 
 class Player(Device):
-    """A WiiM Amp Pro."""
+    """A WiiM Amp Pro, or a Mini."""
 
     MAX_VOLUME = 100
-    #: switchmode name -> the getPlayerStatus mode it selects, for the
-    #: inputs the Amp Pro has (getStatusEx plm_support).
-    MODES = {"wifi": "10", "line-in": "40", "bluetooth": "41", "optical": "43", "HDMI": "49"}
-    PLM_SUPPORT = "0x2b00416"
+    #: Each model as getStatusEx tells it: switchmode name -> the
+    #: getPlayerStatus mode it selects, for the inputs it has
+    #: (plm_support); the mode it starts in (an Amp Pro on optical, a Mini
+    #: on line in); and whether it has a subwoofer output and temperature
+    #: sensors.
+    MODELS = {
+        "Amp Pro": {"modes": {"wifi": "10", "line-in": "40", "bluetooth": "41", "optical": "43", "HDMI": "49"},
+                    "mode": "43", "plm_support": "0x2b00416", "project": "WiiM_Amp_Pro",
+                    "firmware": "Linkplay.5.2.833845", "sub": True, "temperatures": True},
+        "Mini": {"modes": {"wifi": "10", "line-in": "40", "bluetooth": "41"}, "mode": "40",
+                 "plm_support": "0x300006", "project": "Muzo_Mini", "firmware": "Linkplay.4.6.833047",
+                 "sub": False, "temperatures": False},
+    }
     #: EQGetList on an Amp Pro (read 2026-11-14).
     EQ_PRESETS = ("Flat", "Acoustic", "Bass Booster", "Bass Reducer", "Classical", "Dance", "Deep", "Electronic",
                   "Game", "Hip-Hop", "Jazz", "Latin", "Loudness", "Lounge", "Movie", "Piano", "Pop", "R&B", "Rock",
@@ -233,10 +242,15 @@ class Player(Device):
     #: setPlayerCmd:loopmode values it takes (Arylic's table).
     LOOPS = ("0", "1", "2", "3", "4", "5")
 
-    def __init__(self, *, status: str = "play", volume: int = 30, mute: bool = False, mode: str = "43",
-                 title: str = "", artist: str = "", album: str = "", vendor: str = "", name: str = "WiiM Amp Pro",
-                 position: int = 0, duration: int = 0, sample_rate: str = "unknow", bit_depth: str = "unknow") -> None:
+    def __init__(self, *, model: str = "Amp Pro", status: str = "play", volume: int = 30, mute: bool = False,
+                 mode: str | None = None, title: str = "", artist: str = "", album: str = "", vendor: str = "",
+                 name: str | None = None, position: int = 0, duration: int = 0, sample_rate: str = "unknow",
+                 bit_depth: str = "unknow") -> None:
         super().__init__()
+        self.spec = self.MODELS[model]
+        self.modes = self.spec["modes"]
+        mode = mode or self.spec["mode"]
+        name = name or f"WiiM {model}"
         self.status = status
         self.volume = volume
         self.mute = mute
@@ -272,19 +286,26 @@ class Player(Device):
                                "mute": "1" if self.mute else "0"})
         if command == "EQGetBand":
             return self._json({"status": "OK", "EQStat": "On" if self.eq else "Off", "Name": self.eq_preset,
-                               "source_name": "optical", "pluginURI": "http://moddevices.com/plugins/caps/Eq10HP"})
+                               "source_name": next((name for name, mode in self.modes.items() if mode == self.mode),
+                                                   "wifi"), "pluginURI": "http://moddevices.com/plugins/caps/Eq10HP"})
         if command == "getMetaInfo":
             return self._json({"metaData": {"album": self.album or "unknow", "title": self.title or "unknow",
                                             "artist": self.artist or "unknow", "albumArtURI": "un_known",
                                             "sampleRate": self.sample_rate, "bitDepth": self.bit_depth,
                                             "bitRate": "unknow", "trackId": "0"}})
         if command == "getStatusEx":
-            return self._json({"DeviceName": self.name, "project": "WiiM_Amp_Pro", "plm_support": self.PLM_SUPPORT,
-                               "firmware": "Linkplay.5.2.833845", "VersionUpdate": "0", "NewVer": "0",
-                               "internet": "1", "temperature_cpu": "38", "temperature_tmp102": "31",
+            spec = self.spec
+            temperatures = {"temperature_cpu": "38", "temperature_tmp102": "31"} if spec["temperatures"] else {}
+            return self._json({"DeviceName": self.name, "project": spec["project"],
+                               "plm_support": spec["plm_support"], "firmware": spec["firmware"],
+                               "VersionUpdate": "0", "NewVer": "0", "internet": "1", **temperatures,
                                "BleRemoteControl": "1", "BleRemoteConnected": "1", "BleRemoteBatterylevel": "40"})
-        if command == "getSubLPF":
+        if command == "getSubLPF" and self.spec["sub"]:
             return self._json({"status": 1, "plugged": 1, "cross": 90, "phase": 0, "level": self.sub_level,
+                               "main_filter": 1, "sub_filter": 1, "sub_delay": 0})
+        if command == "getSubLPF":
+            # A Mini answers, but with no subwoofer plugged or pluggable.
+            return self._json({"status": 0, "output_mode": 1, "cross": 80, "phase": 0, "level": 0, "mix_sub": 1,
                                "main_filter": 1, "sub_filter": 1, "sub_delay": 0})
         if command == "LED_SWITCH_GET":
             return self._text("1" if self.light else "0")
@@ -296,7 +317,8 @@ class Player(Device):
         if command.startswith("EQLoad:") and command[len("EQLoad:"):] in self.EQ_PRESETS:
             self.eq, self.eq_preset = True, command[len("EQLoad:"):]
             return self._json({"status": "OK"})
-        if re.fullmatch(r"setSubLPF:level:-?\d+", command) and -15 <= int(command.rsplit(":", 1)[1]) <= 15:
+        if (self.spec["sub"] and re.fullmatch(r"setSubLPF:level:-?\d+", command)
+                and -15 <= int(command.rsplit(":", 1)[1]) <= 15):
             self.sub_level = int(command.rsplit(":", 1)[1])
             return self._text("OK")
         if command in ("LED_SWITCH_SET:0", "LED_SWITCH_SET:1"):
@@ -312,8 +334,8 @@ class Player(Device):
             self.volume = int(value)
         elif name == "mute" and value in ("0", "1"):
             self.mute = value == "1"
-        elif name == "switchmode" and value in self.MODES:
-            self.mode = self.MODES[value]
+        elif name == "switchmode" and value in self.modes:
+            self.mode = self.modes[value]
         elif name == "loopmode" and value in self.LOOPS:
             self.loop = value
         elif command == "onepause":

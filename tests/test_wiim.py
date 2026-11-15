@@ -79,10 +79,15 @@ class Transformations(unittest.TestCase):
         self.assertEqual(self.run_js(wiim_http.service_js(), [json.dumps(case) for case in cases]),
                          ["Spotify", "Amazon Music", "", "", "Multiroom"])
 
+    def test_a_mini_passes_on_only_the_inputs_it_has(self):
+        mini = {**AMP, "model": "Mini"}
+        self.assertEqual(self.run_js(wiim_http.input_js(mini), ["wifi", "line-in", "bluetooth", "optical", "HDMI"]),
+                         ["wifi", "line-in", "bluetooth", None, None])
+
     def test_each_command_passes_only_a_value_it_lists(self):
         self.assertEqual(self.run_js(wiim_http.play_mode_js(), ["4", "0", "2", "5", "-1", "x"]),
                          ["4", "0", "2", None, None, None])
-        self.assertEqual(self.run_js(wiim_http.commands()["sub_level"][1], ["-15", "15", "8", "16", "3.5", "", "ON"]),
+        self.assertEqual(self.run_js(wiim_http.commands(AMP)["sub_level"][1], ["-15", "15", "8", "16", "3.5", "", "ON"]),
                          ["-15", "15", "8", None, None, None, None])
         # "&" goes doubly escaped: the binding's URI builder turns "%%" into "%".
         self.assertEqual(self.run_js(wiim_http.eq_preset_js(), ["R&B", "Bass Booster", "Rock", "Nope", "rock"]),
@@ -194,16 +199,76 @@ class Render(unittest.TestCase):
         self.assertEqual(wiim_http.EQ_PRESETS, av_sim.Player.EQ_PRESETS)
         self.assertLessEqual({value for value, _ in wiim_http.PLAY_MODES_READ}, set(av_sim.Player.LOOPS))
 
+    def test_a_mini_has_three_inputs_and_neither_subwoofer_nor_temperatures(self):
+        mini = {**AMP, "kind": "audio_streamer", "model": "Mini"}
+        out = built(house(**mini))
+        device = out.things["http:url:device:example_amp"]["channels"]
+        self.assertFalse({"sub", "sub_level", "sub_crossover", "sub_phase", "cpu_temperature",
+                          "board_temperature"} & set(device) | {name for name in out.items if "_sub" in name})
+        # No channel reads getSubLPF, so the binding never polls it.
+        self.assertNotIn("command=getSubLPF", {c["config"]["stateExtension"] for c in device.values()})
+        options = out.items["example_amp_input"]["metadata"]["commandDescription"]["config"]["options"]
+        self.assertEqual(options, "wifi=Wi-Fi,bluetooth=Bluetooth,line-in=Line in")
+        self.assertEqual(wiim_http.remote(mini)["input"]["options"],
+                         [["wifi", "Wi-Fi"], ["bluetooth", "Bluetooth"], ["line-in", "Line in"]])
+        page = wiim_http.audio(mini)
+        self.assertEqual([entry["item"] for entry in page["settings"]],
+                         ["example_amp_play_mode", "example_amp_eq", "example_amp_eq_preset", "example_amp_light"])
+        self.assertFalse({"example_amp_sub", "example_amp_cpu_temperature"} & {e["item"] for e in page["facts"]})
 
-class StandIn(unittest.TestCase):
+    def test_a_model_it_does_not_know_is_refused(self):
+        self.assertEqual(wiim_http.validate(AMP), [])
+        self.assertEqual(wiim_http.validate({**AMP, "model": "WiiM Amp Pro"}),
+                         ["example_amp: wiim_http knows no model 'WiiM Amp Pro' (one of Amp Pro, Mini)"])
+        self.assertTrue(render.validate(house(model="Ultra")))
+        # Under control alone (itself refused) too.
+        controlled = {**AMP, "model": "Ultra", "controls": {"control": ["wiim_http"]}}
+        self.assertIn("example_amp: wiim_http knows no model 'Ultra' (one of Amp Pro, Mini)",
+                      wiim_http.validate(controlled))
+
+    def test_an_unknown_model_named_a_rooms_audio_is_refused_not_a_crash(self):
+        # The routing feature asks the WiiM for its remote's inputs: only
+        # once the integrations have found every device well formed.
+        data = json.loads((AREA / "instance/devices.yaml").read_text())
+        data["devices"].append({**AMP, "model": "Ultra", "room": "example_east", "ip": "192.0.2.41"})
+        data["routing"]["rooms"]["example_east"]["audio"] = AMP["id"]
+        self.assertIn("example_amp: wiim_http knows no model 'Ultra' (one of Amp Pro, Mini)", render.validate(data))
+
+    def test_each_model_is_the_kind_it_is(self):
+        self.assertEqual(wiim_http.validate({**AMP, "model": "Mini", "kind": "audio_streamer"}), [])
+        self.assertEqual(wiim_http.validate({**AMP, "model": "Mini"}),
+                         ["example_amp: a WiiM Mini is kind audio_streamer, not 'streaming_amp'"])
+        self.assertEqual(wiim_http.validate({**AMP, "kind": "streamer"}),
+                         ["example_amp: a WiiM Amp Pro is kind streaming_amp, not 'streamer'"])
+
+    def test_the_stand_in_has_what_each_model_has(self):
+        # oh_av_sim's Player answers as the integration expects each model to.
+        self.assertEqual(set(av_sim.Player.MODELS), set(wiim_http.MODELS))
+        for model, spec in av_sim.Player.MODELS.items():
+            device = {**AMP, "model": model, "kind": wiim_http.MODELS[model]["kind"]}
+            with self.subTest(model=model):
+                self.assertEqual(set(spec["modes"]), {name for name, _ in wiim_http.inputs(device)})
+                self.assertEqual(spec["sub"], wiim_http.has(device, "sub"))
+                self.assertEqual(spec["temperatures"], wiim_http.has(device, "cpu_temperature"))
+                self.assertEqual(wiim_http.MODES.get(spec["mode"]), "line-in" if model == "Mini" else "optical")
+
+
+class Served(unittest.TestCase):
+    """The player() a test case makes, behind its HTTP server."""
     def setUp(self):
-        self.sim = av_sim.Player(title="Example Song", album="Example Album", position=61000, duration=215000)
+        self.sim = self.player()
         self.server = av_sim.Server(self.sim).start()
         self.addCleanup(self.server.stop)
+
+    def player(self) -> av_sim.Player:
+        return av_sim.Player(title="Example Song", album="Example Album", position=61000, duration=215000)
 
     def get(self, query: str) -> str:
         with urllib.request.urlopen(f"http://{self.server.address}/httpapi.asp?{query}", timeout=5) as answer:
             return answer.read().decode()
+
+
+class StandIn(Served):
 
     def test_it_reads_the_query_as_a_web_server_does(self):
         # Unescaped, "&" ends the command: the player loads nothing.
@@ -225,6 +290,22 @@ class StandIn(unittest.TestCase):
         status = json.loads(self.get("command=getPlayerStatus"))
         self.assertEqual((status["curpos"], status["totlen"], bytes.fromhex(status["Album"]).decode()),
                          ("61000", "215000", "Example Album"))
+
+
+class MiniStandIn(Served):
+    def player(self) -> av_sim.Player:
+        return av_sim.Player(model="Mini")
+
+    def test_it_answers_as_a_mini_does(self):
+        status = json.loads(self.get("command=getStatusEx"))
+        self.assertEqual((status["project"], status["plm_support"]), ("Muzo_Mini", "0x300006"))
+        self.assertNotIn("temperature_cpu", status)
+        self.assertNotIn("plugged", json.loads(self.get("command=getSubLPF")))
+        self.assertIn("Failed", self.get("command=setSubLPF:level:-4"))
+        self.assertEqual(self.get("command=setPlayerCmd:switchmode:optical"), "Failed")
+        self.assertEqual(self.get("command=setPlayerCmd:switchmode:bluetooth"), "OK")
+        self.assertEqual(json.loads(self.get("command=getPlayerStatus"))["mode"], "41")
+        self.assertEqual(json.loads(self.get("command=EQGetBand"))["source_name"], "bluetooth")
 
 
 if __name__ == "__main__":

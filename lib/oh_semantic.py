@@ -64,6 +64,7 @@ KINDS = {
     "monitor": "Screen",
     "avr": "Receiver",
     "streaming_amp": "MediaPlayer",
+    "audio_streamer": "MediaPlayer",
     "soundbar": "Speaker",
     "amp": "Receiver",
     "sub": "Speaker",

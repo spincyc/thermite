@@ -55,10 +55,10 @@ reports it, and only where it applies (a WiiM's play mode on Wi-Fi). A change
 shows at once and pulses until the device reads it back. A remote whose
 volume or keys drive such a device names it as a link to its page. Guests
 may use it without signing in. When a room that owns the device is locked,
-the page is locked too. A room owns its `audio` device and the soundbars and
-streaming amplifiers in its own room. The gateway checks each command
-(`POST /api/v1/devices/<id>/commands`) against the device's actions and those
-locks. A locked room that only shares the device refuses just what would
+the page is locked too. A room owns its `audio` device and the soundbars,
+streaming amplifiers and audio streamers in its own room. The gateway
+checks each command (`POST /api/v1/devices/<id>/commands`) against the
+device's actions and those locks. A locked room that only shares the device refuses just what would
 disturb what it shows.
 
 Source previews use the fictional sample. Add `?backend=mock` to simulate

@@ -34,7 +34,7 @@ DEVICE = {
     "sonos": {"kind": "soundbar", "make": "Sonos", "model": "Arc", "sonos_udn": "RINCON_" + MACS[0].replace(":", "").upper() + "01400"},
     "denonmarantz_http": {"kind": "avr", "make": "Denon", "model": "AVR-X3800H"},
     "heos": {"kind": "avr", "make": "Denon", "model": "AVR-X3800H", "heos_pid": 12345},
-    "wiim_http": {"kind": "streamer", "make": "WiiM", "model": "Pro"},
+    "wiim_http": {"kind": "streaming_amp", "make": "WiiM", "model": "Amp Pro"},
     "sony_adcp": {"kind": "projector", "make": "Sony", "model": "VPL-VW915ES"},
     "bk808_http": {"kind": "hdmi_matrix", "make": "BZBGEAR", "model": "BK-808"},
     "ukm404_http": {"kind": "usb_matrix", "model": "UKM-404"},
