@@ -5,7 +5,7 @@
 // nothing leaves the process. It waits for what it expects to show, never
 // for a fixed time.
 const assert = require("node:assert/strict");
-const Main = require("../tui/remote/main"), Shared = require("../tui/remote/shared");
+const Main = require("../tui/remote/main"), Shared = require("../tui/remote/shared"), Grid = require("../tui/remote/grid");
 console.log = console.info = () => {};
 const WIDTH = 110, HEIGHT = 70;
 
@@ -246,6 +246,33 @@ async function vanished(proof) {
   proof.vanished.after = Boolean(parts.quit);
 }
 
+// A title in CJK with an emoji and a decomposed accent takes the columns a
+// terminal gives it: its row ends at the panel's edge, as the others do.
+async function widths(proof) {
+  const parts = assemble();
+  const { controller } = parts;
+  await controller.start();
+  await until(parts, () => controller.ui.ready, "ready");
+  key(parts, null, { name: "f2" });
+  key(parts, "y");
+  await shows(parts, "Slow Rivers");
+  const mock = backend(parts), queue = mock.queueOf("study_amp");
+  mock.items[queue.items[queue.current]].name = "東京の夜 🎵 Cafe\u0301";
+  mock.simulateDrop();
+  await shows(parts, "東京の夜");
+  const grid = draw(parts).grid;
+  const rows = grid.rows.map((row) => row.map((cell) => cell.ch).join(""));
+  const at = rows.findIndex((row) => row.includes("東京の夜"));
+  proof.widths = { row: rows[at], next: rows[at + 1], cells: grid.rows[at].length,
+    halves: grid.rows[at].filter((cell) => cell.ch === "").length };
+  // Cut to a width, or half drawn over: a wide character is never split.
+  const cut = new Grid.Grid(8, 1);
+  cut.put(0, 0, "ab東京cd");
+  cut.put(3, 0, "X");
+  proof.widths.cut = [Grid.fit("東京東京東京", 5), Grid.fit("東京東京東京", 4), Grid.wrap("東京東京東京", 5), cut.text()];
+  controller.stop();
+}
+
 // No music on this host; a Guest without titles.
 async function others(proof) {
   for (const [name, settings, words] of [["absent", { configured: false }, "This thermite host has no music."],
@@ -278,6 +305,7 @@ async function others(proof) {
   await narrow(proof);
   await member(proof);
   await vanished(proof);
+  await widths(proof);
   await others(proof);
   process.stdout.write(JSON.stringify(proof) + "\n");
 })().then(() => process.exit(0), (error) => { process.stderr.write(error.stack + "\n"); process.exit(1); });

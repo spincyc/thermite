@@ -40,7 +40,9 @@ rollback. The unified deployment workflow uses a separate committed private site
   WiiM speakers, alone or grouped: search, browse and the queue, with Play
   now, Play next and Add to queue; transport, position and volume; grouping
   that says why a speaker could not join; and an Admin's TIDAL sign-in. A
-  Guest kept from free text sees no titles, covers or library.
+  Guest kept from free text sees no titles, covers or library. Every
+  screen of the terminal remote now gives CJK, emoji and accented text the
+  columns a terminal draws it in.
 - Audio: a page (`/audio/`, and the terminal remote's Audio screen, `u`
   from Remotes) for each WiiM or Sonos speaker or streamer under `control`,
   routed by a room or not. It shows:

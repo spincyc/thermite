@@ -14,9 +14,16 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import unicodedata
 import unittest
 
 AREA = Path(__file__).resolve().parents[1]
+
+
+def columns(text):
+    """The columns a terminal gives text: two for wide, none for a mark or a format character."""
+    return sum(0 if unicodedata.category(ch) in ("Mn", "Me", "Cf") else 2 if unicodedata.east_asian_width(ch) in "WF" else 1
+               for ch in text)
 
 
 @unittest.skipUnless(shutil.which("node"), "node needed for the terminal remote")
@@ -82,6 +89,14 @@ class MusicScreen(unittest.TestCase):
         vanished = self.proof["vanished"]
         # Music Assistant went away under the typing: the focus moved, and q went nowhere until another key.
         self.assertEqual(vanished, {"focus": "music-speaker:kitchen_amp", "typed": [False, "music"], "back": "music-search", "after": True})
+
+    def test_a_title_in_wide_characters_keeps_its_row_on_the_panel(self):
+        widths = self.proof["widths"]
+        # Four CJK characters and an emoji take two columns each, the accent joins its letter.
+        self.assertIn("東京の夜 🎵 Caf\u00e9 · Northbound Quartet │", widths["row"])
+        self.assertEqual((columns(widths["row"]), columns(widths["next"])), (110, 110))
+        self.assertEqual((widths["cells"], widths["halves"]), (110, 5))
+        self.assertEqual(widths["cut"], ["東京…", "東… ", ["東京", "東京", "東京"], "ab X京cd"])
 
     def test_an_admin_sees_the_tidal_code_to_approve(self):
         self.assertEqual(self.proof["tidal"], [])

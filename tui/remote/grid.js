@@ -1,9 +1,12 @@
 /*
- * A screen as a grid of cells, each one character and a style, with the
+ * A screen as a grid of cells, each one column and a style, with the
  * places a click or the focus can reach (hits). The view draws a whole
- * frame into one; app.js turns it into blessed tags, and the tests read it
- * as text. Every character drawn must take one column. order lists the
- * focusable hits as drawn, those clipped out of sight included, for Tab.
+ * frame into one; paint.js draws it in the terminal, and the tests read it
+ * as text. A character takes the columns a terminal gives it: a wide one
+ * (CJK, an emoji) its cell, marked wide, and the next, whose ch is "" (the
+ * painter writes nothing there); a combining mark none, in its letter's.
+ * order lists the focusable hits as drawn, those clipped out of sight
+ * included, for Tab.
  */
 "use strict";
 
@@ -44,9 +47,11 @@ class Grid {
       const at = x + index;
       if (at >= 0 && at < this.width) {
         this.rows[y][at] = { ch: ch, style: style || this.style };
+        if (chars[index + 1] === "") this.rows[y][at].wide = true;
         if (mono) this.rows[y][at].mono = mono;
       }
     });
+    mend(this.rows[y], x, x + chars.length);
     if (hit && chars.length) this.hit(x, y, chars.length, 1, hit, false);
     return x + chars.length;
   }
@@ -91,6 +96,7 @@ class Grid {
         const at = x + col;
         if (at >= 0 && at < this.width) this.rows[y + row][at] = line[col];
       }
+      mend(this.rows[y + row], x, x + Math.min(w, src.width));
     }
     src.hits.forEach((entry) => {
       if (entry.y < from || entry.y >= from + h) return;
@@ -105,6 +111,18 @@ class Grid {
   }
 }
 
+// The edges of cells left..right of row, just drawn: a wide character cut
+// in two there (by what was drawn, or by the grid's edge) leaves a space for
+// the half that remains.
+function mend(row, left, right) {
+  [left - 1, left, right - 1, right].forEach((at) => {
+    const cell = row[at];
+    if (!cell) return;
+    const whole = cell.wide ? Boolean(row[at + 1]) && row[at + 1].ch === "" : cell.ch !== "" || Boolean(row[at - 1] && row[at - 1].wide);
+    if (!whole) row[at] = { ch: " ", style: cell.style };
+  });
+}
+
 // A locked room's padlock, on its lit bubble and after its source in a room
 // list. The padlock emoji takes two columns; this squared key takes one.
 const LOCK = "\u26bf";
@@ -113,9 +131,17 @@ const LOCK = "\u26bf";
 function fit(text, width, align) {
   const chars = characters(text);
   if (width <= 0) return "";
-  if (chars.length > width) return chars.slice(0, Math.max(0, width - 1)).join("") + "\u2026";
+  if (chars.length > width) {
+    const at = cut(chars, width - 1);
+    return chars.slice(0, at).join("") + "\u2026" + " ".repeat(width - 1 - at);
+  }
   const pad = " ".repeat(width - chars.length);
   return align === "right" ? pad + chars.join("") : chars.join("") + pad;
+}
+
+// Where to cut cells to keep at most width columns: before a wide character, not through it.
+function cut(cells, width) {
+  return Math.max(0, cells[width] === "" ? width - 1 : width);
 }
 
 // Text cut to leave tail whole after it (a padlock), padded to width.
@@ -123,14 +149,38 @@ function fitTail(text, tail, width) {
   return fit(fit(text, width - length(tail)).trimEnd() + tail, width);
 }
 
+// The columns text takes.
 function length(text) {
-  return Array.from(String(text)).length;
+  return characters(text).length;
 }
 
-// A cell is printable text. A newline, tab or terminal control from a label
-// must never move the terminal's cursor outside the cell the painter owns.
+// How many columns a character takes, as terminals draw it: none for a
+// combining mark, a joiner, a format character or a variation selector;
+// two for an East Asian wide or fullwidth one and for an emoji drawn as one
+// (by default, or asked for with VS16); one for any other. Characters that
+// are text by default (\u25b6, \u26bf) take one.
+const ZERO = "\\p{Mn}\\p{Me}\\p{Cf}\\u1160-\\u11ff";
+const WIDE = "\\u1100-\\u115f\\u2329\\u232a\\u2e80-\\u303e\\u3041-\\u33ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\ua000-\\ua4cf"
+  + "\\ua960-\\ua97f\\uac00-\\ud7a3\\uf900-\\ufaff\\ufe10-\\ufe19\\ufe30-\\ufe6f\\uff00-\\uff60\\uffe0-\\uffe6"
+  + "\\u{16fe0}-\\u{16fe4}\\u{17000}-\\u{18aff}\\u{1b000}-\\u{1b2ff}\\u{1f200}-\\u{1f2ff}\\u{20000}-\\u{2fffd}\\u{30000}-\\u{3fffd}"
+  + "\\p{Emoji_Presentation}";
+const UNEVEN = new RegExp("[" + ZERO + WIDE + "]", "u");
+const NONE = new RegExp("^[" + ZERO + "]*$", "u");
+const TWO = new RegExp("^(?:[" + WIDE + "]|\\p{Extended_Pictographic}\\ufe0f)", "u");
+const GRAPHEMES = new Intl.Segmenter("en", { granularity: "grapheme" });
+
+// A cell is printable text, one column of it (a wide character's right half
+// ""). A newline, tab or terminal control from a label must never move the
+// terminal's cursor outside the cell the painter owns.
 function characters(text) {
-  return Array.from(String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " "));
+  const clean = String(text).normalize("NFC").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
+  if (!UNEVEN.test(clean)) return Array.from(clean);
+  const cells = [];
+  for (const { segment } of GRAPHEMES.segment(clean)) {
+    if (TWO.test(segment)) cells.push(segment, "");
+    else if (!NONE.test(segment)) cells.push(segment);
+  }
+  return cells;
 }
 
 // A label set into a frame's edge at x, as \u2524 text \u251c; returns the column after it.
@@ -185,8 +235,9 @@ function wrap(text, width) {
           lines.push(line);
           line = "";
         }
-        lines.push(Array.from(word).slice(0, width).join(""));
-        word = Array.from(word).slice(width).join("");
+        const cells = characters(word), at = Math.max(1, cut(cells, width));
+        lines.push(cells.slice(0, at).join(""));
+        word = cells.slice(at).join("");
       }
       if (!line) line = word;
       else if (length(line) + 1 + length(word) <= width) line += " " + word;
