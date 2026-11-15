@@ -119,36 +119,31 @@ class Client:
 
     def login(self, username, password, device_name):
         """A session token for a user's password, or None when Music Assistant
-        refuses the password; NoUser when it has no user."""
-        response, body = self._request("POST", "/auth/login", ANSWER_BYTES, json={
-            "provider_id": "builtin", "credentials": {"username": username, "password": password},
-            "device_name": device_name})
-        if response.status_code == 401:
-            return None
-        if response.status_code == 403:
-            raise NoUser("Music Assistant has no user")
-        if response.status_code != 200:
-            raise Unavailable("Music Assistant refused the login")
-        try:
-            answer = json.loads(body)
-            return answer["token"] if answer.get("success") is True and isinstance(answer["token"], str) else None
-        except (ValueError, KeyError, TypeError, AttributeError):
-            raise Unavailable("Music Assistant refused the login") from None
+        refuses it (a wrong password, a disabled user, or a login it rate
+        limits all answer 401); NoUser when it has no user."""
+        return self._session("/auth/login", 401, provider_id="builtin", device_name=device_name,
+                             credentials={"username": username, "password": password})
 
     def setup(self, username, password, device_name):
         """Music Assistant's first admin user; its session token, or None when
         the server already has a user."""
-        response, body = self._request("POST", "/setup", ANSWER_BYTES, json={
-            "username": username, "password": password, "device_name": device_name})
-        if response.status_code == 400:
+        return self._session("/setup", 400, username=username, password=password, device_name=device_name)
+
+    def _session(self, path, refused, **body):
+        """The session token a POST of /setup or /auth/login answers; None
+        for its refusal's status, NoUser for 403 (no user to sign in as)."""
+        response, answer = self._request("POST", path, ANSWER_BYTES, json=body)
+        if response.status_code == refused:
             return None
-        if response.status_code != 200:
-            raise Unavailable("Music Assistant refused setup")
+        if response.status_code == 403:
+            raise NoUser("Music Assistant has no user")
         try:
-            answer = json.loads(body)
-            return answer["token"] if answer.get("success") is True and isinstance(answer["token"], str) else None
-        except (ValueError, KeyError, TypeError, AttributeError):
-            raise Unavailable("Music Assistant refused setup") from None
+            answer = json.loads(answer) if response.status_code == 200 else None
+        except ValueError:
+            answer = None
+        if not isinstance(answer, dict) or answer.get("success") is not True or not isinstance(answer.get("token"), str):
+            raise Unavailable("Music Assistant did not answer " + path)
+        return answer["token"]
 
     def call(self, command, timeout=None, /, **args):
         """One command's raw result, within timeout seconds (the client's

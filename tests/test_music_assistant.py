@@ -538,9 +538,13 @@ class Errors(unittest.TestCase):
             with self.assertRaises(Failed):
                 self.client(status, body, kind)[0].image("0" * 64, 80)
 
-    def test_a_server_says_whether_it_has_a_user_and_a_login_answers_a_token_or_none(self):
-        self.assertTrue(self.client(401, b"")[0].has_user())
-        self.assertFalse(self.client(503, b"")[0].has_user())
+    def test_a_server_says_whether_it_has_a_user(self):
+        self.assertTrue(self.client(401)[0].has_user())
+        self.assertFalse(self.client(503)[0].has_user())
+        with self.assertRaises(Unavailable):
+            self.client(200, b"[]")[0].has_user()
+
+    def test_a_login_answers_a_session_or_none_when_refused(self):
         client, seen = self.client(200, b'{"success": true, "token": "abc"}')
         self.assertEqual(client.login("thermite", "x" * 12, "thermite"), "abc")
         self.assertEqual((seen[0].url.path, json.loads(seen[0].content)["credentials"]["username"]),
@@ -548,9 +552,11 @@ class Errors(unittest.TestCase):
         self.assertIsNone(self.client(401, b'{"success": false}')[0].login("thermite", "x" * 12, "thermite"))
         with self.assertRaises(NoUser):
             self.client(403, b'{"success": false}')[0].login("thermite", "x" * 12, "thermite")
-        for status in (200, 500):
-            with self.assertRaises(Unavailable):
-                self.client(status, b"[]")[0].has_user() if status == 200 else self.client(500)[0].login("a", "b", "c")
+        # Anything else is no answer, never a refusal.
+        with self.assertRaises(Unavailable):
+            self.client(500)[0].login("thermite", "x" * 12, "thermite")
+        with self.assertRaises(Unavailable):
+            self.client(200, b'{"success": false}')[0].login("thermite", "x" * 12, "thermite")
 
     def test_setup_once_a_user_exists_is_none(self):
         self.assertIsNone(self.client(400, b'{"success": false}')[0].setup("thermite", "x" * 12, "thermite"))
