@@ -149,6 +149,19 @@ async function transport(out) {
   backend.simulateVolume('kitchen_amp', 12);
   await time.tick(10);
   out.elsewhere = music.view().volume.value;
+  // A slide's first level goes whatever went before: here the speaker's
+  // own app moved it while the page slept, and the page woke to a snapshot.
+  music.setVolume(40);
+  await time.tick(RemoteMusic.SLIDE_EVERY + 100);
+  backend.players.kitchen_amp.volume = 38;
+  backend.simulateDrop();
+  await time.tick(100);
+  from = backend.sent.length;
+  out.wake = {woke: music.view().volume.value};
+  music.stepVolume(1);
+  out.wake.sent = sentSince(backend, from);
+  await time.tick(RemoteMusic.SLIDE_EVERY + 100);
+  out.wake.read = [music.view().volume.value, music.view().volume.pending, sentSince(backend, from).length];
   // A command that reaches no reader: what it held ends after HOLD_MS.
   backend.answer = () => new Promise(() => {});
   music.toggleShuffle();

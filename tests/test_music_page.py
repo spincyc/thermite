@@ -80,6 +80,8 @@ class MusicPage(unittest.TestCase):
         self.assertEqual(out["slide"]["read"], [36, False])
         self.assertEqual(out["step"], {"volume": 38, "said": "Kitchen Sonos Amp: Volume 38"})
         self.assertEqual(out["elsewhere"], 12)
+        # Woken to a level moved elsewhere, a step to the level last sent goes again.
+        self.assertEqual(out["wake"], {"woke": 38, "sent": [["volume", "kitchen_amp", "level", 40]], "read": [40, False, 1]})
 
     def test_search_waits_for_the_typing_and_filters_by_kind(self):
         out = self.report["library"]

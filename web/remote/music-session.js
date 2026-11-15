@@ -119,7 +119,8 @@
     // Speaker id + " " + action -> {value, at}: what a command sent, shown
     // until the speaker reads it back.
     const held = {};
-    const ends = new Set();
+    // The same key -> the timer that draws again once its hold ends: one each.
+    const ends = {};
     let music = null;
     let reading = false;
     let absent = null;
@@ -197,10 +198,11 @@
     }
 
     function hold(id, action, value) {
-      held[id + " " + action] = { value: value, at: now() };
+      const key = id + " " + action;
+      held[key] = { value: value, at: now() };
       // A speaker that ignored it reports nothing: draw what it read once the hold ends.
-      const end = later(() => { ends.delete(end); changed(); }, HOLD_MS + 50);
-      ends.add(end);
+      cancel(ends[key]);
+      ends[key] = later(() => { delete ends[key]; changed(); }, HOLD_MS + 50);
     }
 
     function playingOf(speaker) {
@@ -444,9 +446,12 @@
     }
 
     // A volume moved to value: at most one is sent every SLIDE_EVERY while it
-    // moves, and always the last (as Audio's). "volume" is the speaker's,
+    // moves, and always the last (as Audio's). A slide's first level is sent
+    // whatever went before: the speaker may have moved since, its own app
+    // or knob unheard while the page slept. "volume" is the speaker's,
     // "group_volume" its group's.
     function fader(action) {
+      // The slide under way: the level shown, the last sent, and to which speaker.
       const slide = { speaker: null, value: null, sent: null, sentTo: null, timer: 0 };
       const group = action === "group_volume";
       const label = group ? "Group volume" : "Volume";
@@ -457,9 +462,9 @@
         const to = slide.speaker;
         const target = find(to);
         send(backend.volume(to, slide.value, group), nameOf(to), label, null, [holder(to) + " " + action],
-          group && target ? membersOf(target) : [to])
-          .then((result) => { if (!result && slide.sentTo === to) slide.sent = null; });
+          group && target ? membersOf(target) : [to]);
       }
+      // SLIDE_EVERY after a level went: the latest, if it moved since; else the slide is over.
       function tick() {
         slide.timer = 0;
         if (slide.value === slide.sent && slide.speaker === slide.sentTo) { changed(); return; }
@@ -471,7 +476,10 @@
           slide.speaker = id;
           slide.value = value;
           hold(holder(id), action, value);
-          if (!slide.timer) tick();
+          if (!slide.timer) {
+            deliver();
+            slide.timer = later(tick, SLIDE_EVERY);
+          }
           changed();
         },
         // The last of a slide still under way, sent now and no later.
@@ -480,12 +488,7 @@
           cancel(slide.timer);
           slide.timer = 0;
           if (slide.value !== slide.sent || slide.speaker !== slide.sentTo) deliver();
-        },
-        // Moved off what was sent between slides (its own knob): that level may be sent again.
-        moved(id, before, after) {
-          if (slide.sentTo === id && !slide.timer && before !== after && after !== slide.sent) slide.sent = null;
-        },
-        reset() { slide.sent = slide.sentTo = null; }
+        }
       };
     }
     const faders = { volume: fader("volume"), group_volume: fader("group_volume") };
@@ -964,8 +967,6 @@
       if (index < 0) return;
       const before = music.speakers[index];
       music.speakers[index] = speaker;
-      faders.volume.moved(speaker.id, before.volume, speaker.volume);
-      if (before.group && speaker.group) faders.group_volume.moved(speaker.id, before.group.volume, speaker.group.volume);
       heard(speaker);
       // A track began, or what it plays changed: its queue is read again.
       const was = before.now_playing, is = speaker.now_playing;
@@ -1047,13 +1048,10 @@
       if (polls) access.watchLocks(false);
       backend.close();
       [pending, search.timer, queue.timer, tidal.timer].forEach(cancel);
-      ends.forEach(cancel);
-      ends.clear();
+      Object.keys(ends).forEach((key) => { cancel(ends[key]); delete ends[key]; });
       // A session started again hears nothing of the time between: it draws,
       // holds and sends afresh.
       pending = search.timer = queue.timer = tidal.timer = 0;
-      faders.volume.reset();
-      faders.group_volume.reset();
       grouping.pending = false;
       tidal.pending = false;
       tidal.checked = false;
