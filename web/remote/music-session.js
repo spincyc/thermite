@@ -315,17 +315,24 @@
       return blocks;
     }
 
-    // Where it is in the track: from {elapsed, at} while it plays, or from a seek just sent.
+    // Where it is in the track: from {elapsed, at}, or from a seek just sent,
+    // moving on while the speaker says it plays. A Play still to be read back
+    // waits for the speaker; a Pause stops it where it was pressed. at is the
+    // gateway's clock: a phone's set apart from it puts the position off by
+    // as much while it plays.
     function progressOf(speaker) {
       const playing = speaker.now_playing;
       if (!playing || !Number.isFinite(playing.elapsed)) return null;
-      const owner = ownerOf(speaker), moving = playingOf(speaker) === true;
+      const owner = ownerOf(speaker), reported = speaker.available && speaker.state === "playing";
+      const pressed = shown(owner, "playing", speaker.available ? reported : null);
+      // Until when it moved: now, or when a Pause was pressed; null, not at all.
+      const until = !reported ? null : pressed.pending && pressed.value === false ? held[owner + " playing"].at : now();
       const seek = held[owner + " seek"];
       let elapsed;
-      if (seek && now() - seek.at < HOLD_MS) elapsed = seek.value + (moving ? (now() - seek.at) / 1000 : 0);
+      if (seek && now() - seek.at < HOLD_MS) elapsed = seek.value + (until !== null ? Math.max(0, until - seek.at) / 1000 : 0);
       else {
         if (seek) delete held[owner + " seek"];
-        elapsed = playing.elapsed + (moving && Number.isFinite(playing.at) ? Math.max(0, now() / 1000 - playing.at) : 0);
+        elapsed = playing.elapsed + (until !== null && Number.isFinite(playing.at) ? Math.max(0, until / 1000 - playing.at) : 0);
       }
       const duration = Number.isFinite(playing.duration) && playing.duration > 0 ? playing.duration : null;
       if (duration !== null) elapsed = Math.min(elapsed, duration);

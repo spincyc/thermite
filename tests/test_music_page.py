@@ -54,6 +54,11 @@ class MusicPage(unittest.TestCase):
         self.assertEqual(out["advanced"], 68)
         self.assertEqual((out["paused"]["before"], out["paused"]["after"]), (120, 120))
         self.assertEqual((out["paused"]["view"]["playLabel"], out["paused"]["view"]["repeat"]), ("Play", "Repeat all"))
+        # Play pressed on the paused speaker: it moves once the speaker plays, not before.
+        self.assertEqual(out["pressed"]["play"], [True, 120])
+        # Pause pressed: the position stops then, and moves on again if the speaker ignores it.
+        self.assertEqual(out["pressed"]["pause"], [False, 0])
+        self.assertEqual(out["pressed"]["ignored"], [True, 9])
         away = out["away"]
         self.assertEqual((away["now"], away["progress"], away["volume"], away["canSkip"]), ("Not available", None, [None, False], False))
 

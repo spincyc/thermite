@@ -100,6 +100,20 @@ async function overview(out) {
   const paused = music.view().progress.elapsed;
   await time.tick(5000);
   out.paused = {view: summary(music.view()), before: paused, after: music.view().progress.elapsed};
+  // Pressed, not yet read back: Play waits for the speaker, Pause stops where it was pressed.
+  const transport = backend.transport;
+  backend.transport = () => new Promise(() => {});
+  music.playPause();
+  await time.tick(3000);
+  out.pressed = {play: [music.view().playing, music.view().progress.elapsed]};
+  music.select('kitchen_amp');
+  const at = music.view().progress.elapsed;
+  music.playPause();
+  await time.tick(3000);
+  out.pressed.pause = [music.view().playing, music.view().progress.elapsed - at];
+  await time.tick(RemoteMusic.HOLD_MS);
+  out.pressed.ignored = [music.view().playing, music.view().progress.elapsed - at];
+  backend.transport = transport;
   music.select('patio_roam');
   out.away = summary(music.view());
   out.reads = backend.reads.map((read) => read[0]);
