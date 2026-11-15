@@ -75,7 +75,8 @@ PLAYERS = ("sonos", "wiim", "airplay")
 LIBRARY_NAME = "thermite {}"
 #: The private file in the gateway's state that records each library's
 #: instance ID from the moment it is added, so that an instance whose
-#: naming failed is named again, never replaced and rescanned.
+#: naming failed is named again, never replaced and rescanned. While it
+#: cannot be trusted, as the claim, the libraries are left as they are.
 LIBRARY_FILE = "music-libraries.json"
 LIBRARY_BYTES = 65536
 #: Providers Music Assistant may load that thermite does not use: other
@@ -97,6 +98,26 @@ UNCLAIMED = "music_unclaimed"
 UNREADABLE = "unreadable"
 
 
+class Untrusted(Exception):
+    """A private record that is there but cannot be read or trusted: its
+    owner, mode or contents."""
+
+
+def stored(path, maximum):
+    """A private record's JSON object (version 1), or None when there is no
+    file; Untrusted for one that is there but cannot be trusted. The claim
+    and the library record are read alike."""
+    try:
+        data = json.loads(read_private(path, maximum))
+    except FileNotFoundError:
+        return None
+    except (AccessError, OSError, ValueError):
+        raise Untrusted(Path(path).name) from None
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise Untrusted(Path(path).name)
+    return data
+
+
 def token_file(state):
     return Path(state) / TOKEN_FILE
 
@@ -114,13 +135,11 @@ def read_claim(state):
     be read or trusted (its owner, mode or contents) is {"problem":
     UNREADABLE}: nothing replaces it until the owner repairs it."""
     try:
-        data = json.loads(read_private(token_file(state), TOKEN_BYTES))
-    except FileNotFoundError:
+        data = stored(token_file(state), TOKEN_BYTES)
+    except Untrusted:
+        return {"problem": UNREADABLE}
+    if data is None:
         return None
-    except (AccessError, OSError, ValueError):
-        return {"problem": UNREADABLE}
-    if not isinstance(data, dict) or data.get("version") != 1:
-        return {"problem": UNREADABLE}
     if data.get("problem") == UNCLAIMED:
         return {"problem": UNCLAIMED}
     refused = {"refusals": data["refusals"]} if type(data.get("refusals")) is int else {}
@@ -139,10 +158,15 @@ def held(claim):
     return claim is not None and ("token" in claim or "session" in claim)
 
 
+def unreadable(claim):
+    """Whether a claim is a file that cannot be trusted."""
+    return claim == {"problem": UNREADABLE}
+
+
 def problem(claim):
     """Why the gateway cannot use a claim (read_claim's), as its problem
     code; None when it holds a token to try."""
-    if claim is None or claim.get("problem") == UNREADABLE:
+    if claim is None or unreadable(claim):
         return "music_unavailable"
     if claim.get("problem") == UNCLAIMED or claim.get("refusals", 0) >= REFUSALS:
         return UNCLAIMED
@@ -154,18 +178,14 @@ def write_claim(state, claim):
 
 
 def read_libraries(state):
-    """{library: instance ID} as last recorded; empty when there is no record
-    or it cannot be read (it is rewritten on the next change)."""
-    try:
-        data = json.loads(read_private(Path(state) / LIBRARY_FILE, LIBRARY_BYTES))
-    except FileNotFoundError:
-        return {}
-    except (AccessError, OSError, ValueError):
-        LOG.warning("Music Assistant's library record cannot be read; libraries are found by name.")
-        return {}
-    libraries = data.get("libraries") if isinstance(data, dict) else None
-    return {library: instance for library, instance in (libraries or {}).items()
-            if isinstance(library, str) and isinstance(instance, str)} if isinstance(libraries, dict) else {}
+    """{library: instance ID} as last recorded; empty when there is no
+    record. Untrusted for one that cannot be trusted."""
+    data = stored(Path(state) / LIBRARY_FILE, LIBRARY_BYTES)
+    libraries = {} if data is None else data.get("libraries")
+    if not isinstance(libraries, dict) or not all(
+            isinstance(library, str) and isinstance(instance, str) for library, instance in libraries.items()):
+        raise Untrusted(LIBRARY_FILE)
+    return libraries
 
 
 def write_libraries(state, libraries):
@@ -185,6 +205,8 @@ class Provisioner:
         self.state, self.spec, self.connect, self.clock = Path(state), spec, connect, clock
         self.every, self.stop = every, stop
         self.reported = None
+        # What has been warned of, once until it changes.
+        self.warned = set()
         # (server ID, when) of the last reconcile.
         self.reconciled = None
 
@@ -208,7 +230,7 @@ class Provisioner:
             if info.get("status") != "running":
                 raise Unavailable("Music Assistant is starting")
             claim = read_claim(self.state)
-            if claim == {"problem": UNREADABLE}:
+            if unreadable(claim):
                 self.report("cannot trust its stored claim; give the file to the service account, mode 0600")
                 return "unreadable"
             claimed = False
@@ -367,11 +389,22 @@ class Provisioner:
         name; one whose name was lost is named again. Every other instance
         (a library no longer listed, one the owner added in Music
         Assistant's own UI) is removed only once each library has its
-        instance, named: nothing is removed in the hope of replacing it."""
+        instance, named: nothing is removed in the hope of replacing it. A
+        new instance is named before it is recorded, so that its name finds
+        it should the record not be written. While the record cannot be
+        trusted the libraries are left as they are."""
+        try:
+            recorded = read_libraries(self.state)
+        except Untrusted:
+            if "libraries" not in self.warned:
+                self.warned.add("libraries")
+                LOG.warning("Music Assistant: its library record cannot be trusted; give %s to the service "
+                            "account, mode 0600. Its libraries are left as they are until then.", LIBRARY_FILE)
+            return 0
+        self.warned.discard("libraries")
         names = {LIBRARY_NAME.format(library): library for library in self.spec["libraries"]}
         configs = {config["instance_id"]: config for config in self.configs(client)
                    if config.get("domain") == "filesystem_local"}
-        recorded = read_libraries(self.state)
         held = {library: instance for library, instance in recorded.items()
                 if library in self.spec["libraries"] and instance in configs}
         for instance, config in configs.items():
@@ -383,21 +416,27 @@ class Provisioner:
             instance = self.add(client, "filesystem_local", {"content_type": "music", "path": f"{MEDIA}/{library}"})
             if instance is not None:
                 held[library] = instance
-                write_libraries(self.state, held)
                 changed += 1
+                try:
+                    self.name(client, library, instance)
+                finally:
+                    write_libraries(self.state, held)
         if held != recorded:
             write_libraries(self.state, held)
         for library, instance in sorted(held.items()):
-            name = LIBRARY_NAME.format(library)
-            if configs.get(instance, {}).get("name") != name:
-                client.call("config/providers/save", provider_domain="filesystem_local", instance_id=instance,
-                            values={"name": name})
-                changed += instance in configs
+            if instance in configs and configs[instance].get("name") != LIBRARY_NAME.format(library):
+                self.name(client, library, instance)
+                changed += 1
         if held.keys() == set(self.spec["libraries"]):
             for instance in configs.keys() - set(held.values()):
                 client.call("config/providers/remove", instance_id=instance)
                 changed += 1
         return changed
+
+    @staticmethod
+    def name(client, library, instance):
+        client.call("config/providers/save", provider_domain="filesystem_local", instance_id=instance,
+                    values={"name": LIBRARY_NAME.format(library)})
 
     def unwanted(self, client, info):
         changed = 0

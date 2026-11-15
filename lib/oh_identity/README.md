@@ -484,9 +484,13 @@ of the providers that find other speaker families or act on their own
 onboarding complete. It never renames or disables a player. Each of those
 parts is applied alone: one that Music Assistant fails is logged and tried
 again at the next reconcile, 15 minutes on, and the rest still apply. The
-worker records each library's instance ID in `music-libraries.json` (mode
-0600) as soon as it adds it, so that an instance whose naming failed is
-named again rather than removed, added again and rescanned.
+worker names each library's new instance, then records its ID in
+`music-libraries.json` (mode 0600), so that an instance whose naming failed
+is named again, and one whose record was not written is found by its name,
+rather than removed, added again and rescanned. That record is trusted as
+the claim file is: while it is not the service account's, or not mode
+0600, the worker warns once and leaves the libraries as they are, adding
+and removing none.
 
 Routes (`<speaker>` is a contract speaker ID):
 

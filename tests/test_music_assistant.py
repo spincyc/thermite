@@ -369,6 +369,34 @@ class Configuration(Site):
         self.assertEqual([(entry["instance_id"], entry["name"]) for entry in self.sim.providers.values()
                           if entry["domain"] == "filesystem_local"], [(instance, "thermite flac")])
 
+    def test_a_library_record_that_cannot_be_trusted_leaves_the_libraries_as_they_are(self):
+        self.provisioner().step()
+        record = self.state / provision.LIBRARY_FILE
+        os.chmod(record, 0o644)
+        provisioner = self.provisioner(("flac", "mp3"))
+        with self.assertLogs("oh_music.provision", "WARNING") as logs:
+            provisioner.step()
+            provisioner.reconciled = None
+            provisioner.step()
+        self.assertEqual([record.getMessage() for record in logs.records if "library record" in record.getMessage()],
+                         ["Music Assistant: its library record cannot be trusted; give music-libraries.json to the "
+                          "service account, mode 0600. Its libraries are left as they are until then."])
+        self.assertEqual(self.domains().count("filesystem_local"), 1)
+        os.chmod(record, 0o600)
+        provisioner.reconciled = None
+        provisioner.step()
+        self.assertEqual(sorted(entry["name"] for entry in self.sim.providers.values()
+                                if entry["domain"] == "filesystem_local"), ["thermite flac", "thermite mp3"])
+
+    def test_a_library_record_that_cannot_be_written_finds_its_instance_by_name(self):
+        def full(*_):
+            raise OSError(28, "No space left on device")
+        with patch.object(provision, "write_libraries", full), self.assertLogs("oh_music.provision", "WARNING"):
+            for _ in range(3):
+                self.provisioner().step()
+        self.assertEqual([entry["name"] for entry in self.sim.providers.values()
+                          if entry["domain"] == "filesystem_local"], ["thermite flac"])
+
     def test_a_part_that_fails_is_logged_and_the_others_still_applied(self):
         self.sim.remote_access = True
         self.sim.failing["config/providers/get_value"] = 1
