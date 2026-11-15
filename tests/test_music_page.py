@@ -1,6 +1,6 @@
 """The Music page's session and backends (web/remote/music-session.js and
 music-backend.js), which the web page and the terminal remote both draw,
-and the page's own markup.
+and the page's own markup and stylesheet.
 
 The session runs on the mock's invented speakers (two in a kitchen, a Sonos
 in a den, a WiiM without AirPlay in a study, a Sonos away on a patio), on
@@ -9,6 +9,7 @@ music calls run on a fake fetch. Every timer runs on the harness's clock.
 Nothing leaves the process.
 """
 
+from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
@@ -295,6 +296,31 @@ class MusicPage(unittest.TestCase):
         self.assertEqual([code for code, known in out["messages"] if code != known], [])
 
 
+def css_rules(text):
+    """(media, selector, declarations) for each rule of a stylesheet, one level of @media deep."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    block = r"@media([^{]+)\{((?:[^{}]*\{[^{}]*\})*)\s*\}"
+    rules = []
+
+    def read(body, media):
+        for selector, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", body):
+            values = dict(re.findall(r"([\w-]+)\s*:\s*([^;]+);", declarations))
+            rules.extend((media, " ".join(one.split()), values) for one in selector.split(","))
+
+    for media, body in re.findall(block, text):
+        read(body, " ".join(media.split()))
+    read(re.sub(block, "", text), None)
+    return rules
+
+
+def pixels(value, tokens):
+    """A length in px: var()s resolved, env() taken as 0, a calc()'s terms added."""
+    while "var(" in value:
+        value = re.sub(r"var\((--[\w-]+)\)", lambda match: tokens[match.group(1)], value)
+    value = re.sub(r"env\([^)]*\)", "0px", value)
+    return sum(float(number) for number in re.findall(r"(-?[\d.]+)px", value))
+
+
 class MusicMarkup(unittest.TestCase):
     def test_every_part_the_script_draws_into_is_in_the_page(self):
         script = (REMOTE / "music.js").read_text()
@@ -307,6 +333,59 @@ class MusicMarkup(unittest.TestCase):
         icons = set(re.findall(r'icon\("([\w-]+)"\)', script)) | set(re.findall(r'KIND_ICON = \{([^}]*)\}', script)[0].split('"')[1::2])
         icons |= {"play", "pause", "repeat", "repeat-one", "warn", "lock"}
         self.assertEqual(sorted(name for name in icons if f'id="i-{name}"' not in page), [])
+
+    def test_hidden_hides_every_part_of_the_page_the_sheets_included(self):
+        # .button and other classes set display; the page's rule must reach every part marked hidden.
+        rule = re.search(r"^\.([\w-]+) \[hidden\] \{\s*display: none !important;", (REMOTE / "music.css").read_text(), re.M)
+        self.assertIsNotNone(rule)
+        scope = rule.group(1)
+
+        class Page(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.open, self.hidden = [], []
+
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                classes = (attrs.get("class") or "").split()
+                if "hidden" in attrs:
+                    self.hidden.append(("data-group-end" in attrs, any(scope in each for each in self.open + [classes])))
+                if tag not in ("br", "img", "input", "link", "meta", "source", "use", "path"):
+                    self.open.append(classes)
+
+            def handle_endtag(self, tag):
+                if tag not in ("use", "path") and self.open:
+                    self.open.pop()
+
+        page = Page()
+        page.feed((REMOTE / "music.html").read_text())
+        self.assertGreater(len(page.hidden), 10)
+        self.assertIn((True, True), page.hidden)
+        self.assertEqual([covered for _, covered in page.hidden if not covered], [])
+
+    def test_the_transport_fits_a_320_px_phone_and_every_target_is_44_px(self):
+        tokens = {}
+        for media, selector, values in css_rules((REMOTE / "remote.css").read_text()):
+            if media is None and selector == ":root":
+                tokens.update(values)
+        rules = css_rules((REMOTE / "music.css").read_text())
+
+        def value(selector, name, media=None):
+            found = [values[name] for at, one, values in rules if one == selector and name in values and at in (None, media)]
+            return pixels(found[-1].split(" ")[0] if name != "padding-inline" else found[-1], tokens)
+
+        narrow = "(max-width: 374px)"
+        page = pixels(re.split(r"\s+(?![^(]*\))", [values["padding"] for media, one, values in rules if one == ".music" and "padding" in values][0])[1], tokens)
+        card = value(".music-now", "padding", narrow)
+        keys = [value(".music-key", "width")] * 2 + [value(".music-transport .key--sm", "width", narrow)] * 2 + [value(".music-transport .key--play", "width", narrow)]
+        gaps = 4 * value(".music-transport", "gap")
+        self.assertLessEqual(sum(keys) + gaps, 320 - 2 * page - 2 * card)
+        self.assertGreaterEqual(min(keys), 44)
+        self.assertIn(("flex", "none"), [(name, values[name]) for _, one, values in rules if one == ".music-transport .key" for name in values])
+        # Every target the page sizes is at least 44 px tall.
+        heights = {one: pixels(values["min-height"], tokens) for _, one, values in rules if "min-height" in values}
+        self.assertEqual({one: height for one, height in heights.items() if height < 44}, {})
+        self.assertIn(".music-member .button", heights)
 
     def test_the_page_is_registered_where_the_remotes_pages_are(self):
         self.assertIn('{ id: "music", screen: "music", key: "Y"', (REMOTE / "navigation.js").read_text())
