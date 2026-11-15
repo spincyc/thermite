@@ -480,10 +480,21 @@ class Music:
             raise Problem("music_failed", 502)
         return player
 
+    @contextmanager
     def record(self, user, origin, speaker, action, value):
         """A command's trail line, written however the `with` block it
-        guards ends: from once its body is valid."""
-        return trail.Command(origin, user, room=None, device=speaker, action="music." + action, item=None, value=value)
+        guards ends, except refused for its body (400): a reference whose
+        source thermite does not know is found only once Music Assistant
+        lists its providers, inside the block."""
+        command = trail.Command(origin, user, room=None, device=speaker, action="music." + action, item=None,
+                                value=value)
+        try:
+            yield command
+        except BaseException as error:
+            if not (isinstance(error, Problem) and error.status == 400):
+                command.finish(error)
+            raise
+        command.finish()
 
     def guarded(self, user, action, value, plan):
         """A command under the locks and policy of every room that commands a

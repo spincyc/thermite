@@ -559,7 +559,8 @@ is valid is one `cmd` trail line however it ends (a refusal, Music
 Assistant down or failing), `device=<speaker> action=music.<action>` with
 the option, the transport value, the level or the members as its value,
 never a reference, a query or a title; one refused for its body (400, 404)
-is none. Music Assistant has 5 seconds to answer a command or a read and
+is none, a play whose reference names a provider instance Music Assistant
+does not have included. Music Assistant has 5 seconds to answer a command or a read and
 20 for a search or a browse; reading a group back takes 3 seconds at most,
 its reads included. Titles, names and art are free text: a Guest who may
 not see it gets speakers without them and 401 `login_required` for search,

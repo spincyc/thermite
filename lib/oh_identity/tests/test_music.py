@@ -446,6 +446,8 @@ class Gateway(Stand_in, Requests, TestCase):
             self.sim.players[self.player_id(WIIM)]["available"] = False
             self.post(f"/api/v1/music/{WIIM}/transport", {"action": "pause"})
             self.post(f"/api/v1/music/{WIIM}/transport", {"action": "pause", "value": 1})
+            # Nor one whose reference names a source Music Assistant does not have, found once it answers.
+            self.assertEqual(self.post(f"/api/v1/music/{AMP}/play", {"ref": "tidal--abcd1234://track/1"}).status_code, 400)
         found = [(line["device"], line["action"], line["item"], line["value"], line["outcome"], line["user"])
                  for line in lines(logs, "cmd")]
         self.assertEqual(found, [(AMP, "music.play", "-", "add", "accepted", "owner"),
