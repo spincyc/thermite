@@ -11,13 +11,15 @@ projected here to known fields, each checked and bounded; none of its JSON,
 errors or URLs is forwarded. Its free text (titles, names) is TEXT, which a
 Guest sees only while Guests may see free text (security.guests_see_text).
 
-A command on a speaker is RuntimeAdapter.dispatch_device's: any principal
-sends it; each routed room that owns the speaker, locked, refuses it; a room
-that shares it refuses only what disturbs its held route (resource
-device:<speaker>); either refusal is device_locked. A command that reaches a
-group (playing to, or the volume of, a group, and grouping) checks every
-speaker in it. Each command is one trail line: its action, its speaker and a
-plain value, never a search, a title or a reference.
+A command on a speaker keeps a device's rules (RuntimeAdapter.device_guard):
+any principal sends it; each routed room that owns the speaker, locked,
+refuses it; a room that shares it refuses only what disturbs its held route
+(resource device:<speaker>); either refusal is device_locked. A command that
+reaches a group (playing to, or the volume of, a group) checks every speaker
+in it, and grouping every speaker whose group it changes. Which speakers
+those are is read again once their rooms' locks are held. Each command whose
+body is valid is one trail line however it ends: its action, its speaker
+and a plain value, never a search, a title or a reference.
 
 A group member plays its leader's queue (Music Assistant would pull a member
 it plays to out of its group), so play and transport on a member reach its
@@ -66,14 +68,26 @@ DEFAULT_PAGE = 100
 OFFSET = 100000
 #: Seconds the gateway waits for a group to show its members after it asks.
 GROUP_SETTLE = 3.0
+#: Times a command takes its rooms' locks again when a group changed while
+#: it waited for them.
+REPLANS = 3
 #: Player types that are a speaker of their own (not a group or protocol player).
 PLAYER_TYPES = ("player", "stereo_pair")
 STATES = ("playing", "paused", "idle")
 REPEAT = ("off", "one", "all")
 OPTIONS = ("replace", "next", "add")
-TRANSPORT = ("play", "pause", "stop", "next", "previous", "seek", "shuffle", "repeat")
 #: Seconds of one seek, at most: a day.
 SEEK = 24 * 3600
+#: Each transport action, and whether a value is one it takes.
+TRANSPORT = {"play": lambda value: value is None, "pause": lambda value: value is None,
+             "stop": lambda value: value is None, "next": lambda value: value is None,
+             "previous": lambda value: value is None,
+             "seek": lambda value: type(value) is int and 0 <= value <= SEEK,
+             "shuffle": lambda value: type(value) is bool, "repeat": lambda value: value in REPEAT}
+#: The transport actions on a queue: Music Assistant's command and the
+#: argument the value is.
+QUEUE_ACTIONS = {"seek": ("player_queues/seek", "position"), "shuffle": ("player_queues/shuffle", "shuffle_enabled"),
+                 "repeat": ("player_queues/repeat", "repeat_mode")}
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _music = weakref.WeakKeyDictionary()
 
@@ -277,7 +291,7 @@ class Music:
         """The speakers as a client sees them, with the sources thermite has:
         GET /api/v1/music and the snapshot of its event stream. players are
         matched ({speaker: player}); queues, Music Assistant's by queue ID."""
-        ids = {player["player_id"]: speaker for speaker, player in players.items()}
+        ids = self.ids(players)
         return {"version": 1, "available": True, "problem": None,
                 "sources": sources.summary(self.spec["libraries"]),
                 "speakers": [self.speaker(ident, players, ids, queues, see_text) for ident in self.spec["speakers"]]}
@@ -421,7 +435,7 @@ class Music:
         self.known(speaker)
         players = self.players()
         player = self.available(speaker, players)
-        ids = {each["player_id"]: ident for ident, each in players.items()}
+        ids = self.ids(players)
         leader, _ = self.leader(player, players, ids)
         owner = players.get(leader, player)
         queue = self.call("player_queues/get", queue_id=owner["player_id"])
@@ -465,36 +479,40 @@ class Music:
             raise Problem("music_failed", 502)
         return player
 
-    def guarded(self, user, origin, speaker, action, value, involved, send):
-        """send() under the locks and policy of every room that commands an
-        involved speaker, with one trail line (dispatch_device's semantics)."""
-        rooms = {}
-        for ident in involved:
-            for room, role in self.spec["speakers"][ident]["rooms"].items():
-                rooms[room] = "own" if role == "own" or rooms.get(room) == "own" else "shared"
-        resources = tuple("device:" + ident for ident in sorted(set(involved)))
-        record = trail.Command(origin, user, room=None, device=speaker, action="music." + action, item=None, value=value)
-        try:
-            with self.adapter.command_lock(tuple(sorted(rooms)), resources):
-                from .auth import revalidate
-                # After the lock wait and before I/O, as a device's command.
-                revalidate(user)
-                for room, role in sorted(rooms.items()):
-                    self.adapter.allowed(room, None if role == "own" else (None, action, value, resources), "device_locked")
-                result = send()
-        except BaseException as error:
-            record.finish(error)
-            raise
-        record.finish()
-        return result
+    def record(self, user, origin, speaker, action, value):
+        """A command's trail line, written however the `with` block it
+        guards ends: from once its body is valid."""
+        return trail.Command(origin, user, room=None, device=speaker, action="music." + action, item=None, value=value)
 
-    def target(self, speaker):
+    def guarded(self, user, action, value, plan):
+        """A command under the locks and policy of every room that commands a
+        speaker it reaches (RuntimeAdapter.device_guard); plan(players)
+        answers, from Music Assistant's players, (those speakers, the
+        command and its arguments or None, the answer). It is planned again
+        from the players read once the locks are held: a group can change
+        while the command waits. When that plan reaches a speaker the locks
+        do not cover, they are taken again for both."""
+        involved = set(plan(self.players())[0])
+        for _ in range(REPLANS):
+            rooms = {}
+            for ident in involved:
+                for room, role in self.spec["speakers"][ident]["rooms"].items():
+                    rooms[room] = "own" if role == "own" or rooms.get(room) == "own" else "shared"
+            resources = tuple("device:" + ident for ident in sorted(involved))
+            with self.adapter.device_guard(user, rooms, action, value, resources):
+                reached, command, answer = plan(self.players())
+                if set(reached) <= involved:
+                    if command:
+                        self.call(command[0], **command[1])
+                    return answer
+            involved |= set(reached)
+        raise Problem("music_failed", 502)
+
+    def target(self, speaker, players):
         """(the speaker's player, its queue's speaker and player, every speaker
         of its group) for a command on what it plays."""
-        players = self.players()
         player = self.available(speaker, players)
-        ids = {each["player_id"]: ident for ident, each in players.items()}
-        leader, members = self.leader(player, players, ids)
+        leader, members = self.leader(player, players, self.ids(players))
         if leader is None or leader not in players:
             # A member of a group no speaker leads: it plays on its own.
             return player, speaker, player, [speaker]
@@ -504,34 +522,33 @@ class Music:
         self.known(speaker)
         if option not in OPTIONS:
             raise Problem("invalid_command")
-        provider, kind, _ = parse_ref(ref, self.sources())
+        provider, kind, _ = parse_ref(ref)
         if kind == "folder":
             raise Problem("invalid_ref")
-        _, owner, lead, group = self.target(speaker)
-        self.guarded(user, origin, speaker, "play", option, group,
-                     lambda: self.call("player_queues/play_media", queue_id=lead["player_id"], media=ref, option=option))
+
+        def plan(players):
+            _, owner, lead, group = self.target(speaker, players)
+            return group, ("player_queues/play_media", {"queue_id": lead["player_id"], "media": ref, "option": option}), owner
+        with self.record(user, origin, speaker, "play", option):
+            parse_ref(ref, self.sources())
+            owner = self.guarded(user, "play", option, plan)
         return {"accepted": True, "speaker": speaker, "action": "play", "queue": owner}
 
     def transport(self, user, speaker, action, value, *, origin=None):
         self.known(speaker)
-        if action not in TRANSPORT:
+        if action not in TRANSPORT or not TRANSPORT[action](value):
             raise Problem("invalid_command")
-        if action == "seek" and (type(value) is not int or not 0 <= value <= SEEK) or (
-                action == "shuffle" and type(value) is not bool) or (action == "repeat" and value not in REPEAT) or (
-                action not in ("seek", "shuffle", "repeat") and value is not None):
-            raise Problem("invalid_command")
-        _, owner, lead, group = self.target(speaker)
-        queue = lead["player_id"]
-        if action == "seek":
-            command, args = "player_queues/seek", {"queue_id": queue, "position": value}
-        elif action == "shuffle":
-            command, args = "player_queues/shuffle", {"queue_id": queue, "shuffle_enabled": value}
-        elif action == "repeat":
-            command, args = "player_queues/repeat", {"queue_id": queue, "repeat_mode": value}
-        else:
-            command, args = "players/cmd/" + action, {"player_id": queue}
+
+        def plan(players):
+            _, owner, lead, group = self.target(speaker, players)
+            queue = lead["player_id"]
+            if action in QUEUE_ACTIONS:
+                command, key = QUEUE_ACTIONS[action]
+                return group, (command, {"queue_id": queue, key: value}), owner
+            return group, ("players/cmd/" + action, {"player_id": queue}), owner
         shown = None if value is None else str(value).lower()
-        self.guarded(user, origin, speaker, action, shown, group, lambda: self.call(command, **args))
+        with self.record(user, origin, speaker, action, shown):
+            owner = self.guarded(user, action, shown, plan)
         return {"accepted": True, "speaker": speaker, "action": action, "queue": owner}
 
     def volume(self, user, speaker, data, *, origin=None):
@@ -541,35 +558,43 @@ class Music:
         (key, level), = data.items()
         if type(level) is not int or not 0 <= level <= 100:
             raise Problem("invalid_command")
-        player, owner, lead, group = self.target(speaker)
-        if key == "level":
-            self.guarded(user, origin, speaker, "volume", level, [speaker],
-                         lambda: self.call("players/cmd/volume_set", player_id=player["player_id"], volume_level=level))
-        else:
-            self.guarded(user, origin, speaker, "group_volume", level, group,
-                         lambda: self.call("players/cmd/group_volume", player_id=lead["player_id"], volume_level=level))
+
+        def plan(players):
+            player, _, lead, group = self.target(speaker, players)
+            if key == "level":
+                return [speaker], ("players/cmd/volume_set", {"player_id": player["player_id"], "volume_level": level}), None
+            return group, ("players/cmd/group_volume", {"player_id": lead["player_id"], "volume_level": level}), None
+        action = "volume" if key == "level" else "group_volume"
+        with self.record(user, origin, speaker, action, level):
+            self.guarded(user, action, level, plan)
         return {"accepted": True, "speaker": speaker, "action": key, "level": level}
 
     def group(self, user, speaker, members, *, origin=None):
         """Join members to the speaker's group, as its leader; which joined and
         which Music Assistant left out (a speaker it cannot group with this
-        one, or one it has no player for), read back."""
+        one, or one it has no player for), read back. Every speaker whose
+        group this changes is involved: the speaker's group, and each
+        member's, which it leaves."""
         self.known(speaker)
         if (not isinstance(members, list) or not members or any(not isinstance(member, str) for member in members)
                 or len(set(members)) != len(members) or speaker in members):
             raise Problem("invalid_command")
         if any(member not in self.spec["speakers"] for member in members):
             raise Problem("unknown_speaker", 404)
-        players = self.players()
-        leader = self.available(speaker, players)
-        known = [member for member in members if (players.get(member) or {}).get("available") is True]
-        if known:
-            self.guarded(user, origin, speaker, "group", ",".join(members), [speaker, *members], lambda: self.call(
-                "players/cmd/set_members", target_player=leader["player_id"],
-                player_ids_to_add=[players[member]["player_id"] for member in known]))
-        else:
+
+        def plan(players):
+            leader = self.available(speaker, players)
+            ids, reached = self.ids(players), {speaker, *members}
+            for ident in (speaker, *members):
+                if ident in players:
+                    reached.update(self.leader(players[ident], players, ids)[1])
+            known = [member for member in members if (players.get(member) or {}).get("available") is True]
             # Nothing Music Assistant can group: refused without a command, still traced.
-            self.guarded(user, origin, speaker, "group", ",".join(members), [speaker, *members], lambda: None)
+            command = ("players/cmd/set_members", {"target_player": leader["player_id"], "player_ids_to_add": [
+                players[member]["player_id"] for member in known]}) if known else None
+            return reached, command, known
+        with self.record(user, origin, speaker, "group", ",".join(members)):
+            known = self.guarded(user, "group", ",".join(members), plan)
         joined = self.settled(speaker, known)
         return {"accepted": True, "speaker": speaker, "joined": [member for member in members if member in joined],
                 "refused": [member for member in members if member not in joined]}
@@ -589,12 +614,13 @@ class Music:
 
     def ungroup(self, user, speaker, *, origin=None):
         self.known(speaker)
-        players = self.players()
-        player = self.available(speaker, players)
-        ids = {each["player_id"]: ident for ident, each in players.items()}
-        _, members = self.leader(player, players, ids)
-        self.guarded(user, origin, speaker, "ungroup", None, members or [speaker],
-                     lambda: self.call("players/cmd/ungroup", player_id=player["player_id"]))
+
+        def plan(players):
+            player = self.available(speaker, players)
+            _, members = self.leader(player, players, self.ids(players))
+            return members or [speaker], ("players/cmd/ungroup", {"player_id": player["player_id"]}), None
+        with self.record(user, origin, speaker, "ungroup", None):
+            self.guarded(user, "ungroup", None, plan)
         return {"accepted": True, "speaker": speaker, "action": "ungroup"}
 
     # ---- TIDAL ----------------------------------------------------------------

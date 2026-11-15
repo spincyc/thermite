@@ -54,7 +54,7 @@ class MusicHub(Fanout):
     # ---- frames ---------------------------------------------------------------
 
     def speakers(self, see_text):
-        ids = {player["player_id"]: speaker for speaker, player in self.players.items()}
+        ids = self.music.ids(self.players)
         return {ident: self.music.speaker(ident, self.players, ids, self.queues, see_text)
                 for ident in self.music.spec["speakers"]}
 

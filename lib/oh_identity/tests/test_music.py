@@ -349,7 +349,7 @@ class Gateway(Stand_in, Requests, TestCase):
                 (f"{AMP}/volume", {"level": True}, "invalid_command"),
                 (f"{AMP}/ungroup", {"now": True}, "invalid_command")):
             self.assertEqual(self.post("/api/v1/music/" + path, body).json(), {"error": code}, (path, body))
-        # Only the reference's providers were read, never a command sent.
+        # Only the providers were read, for a TIDAL instance Music Assistant does not have; never a command sent.
         self.assertEqual({command for command, _ in self.sim.calls[calls:]}, {"providers"})
         self.assertEqual(self.request("get", f"/api/v1/music/{AMP}/play").status_code, 405)
 
@@ -367,6 +367,32 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual(self.post(f"/api/v1/music/{MINI}/group", {"members": [WIIM]}).status_code, 423)
         self.assertEqual(self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM}).status_code, 202)
         self.assertNotIn("players/cmd/set_members", [command for command, _ in self.sim.calls])
+
+    def test_grouping_checks_the_rooms_of_every_speaker_whose_group_it_changes(self):
+        self.assertEqual(self.post(f"/api/v1/music/{MINI}/group", {"members": [WIIM]}).json()["joined"], [WIIM])
+        self.hold(EAST, "off")
+        calls = len(self.sim.calls)
+        # The Mini leads the East room's WiiM: moving it into the Amp's group would take the WiiM's leader away.
+        self.assertEqual(self.post(f"/api/v1/music/{AMP}/group", {"members": [MINI]}).json(), {"error": "device_locked"})
+        self.assertNotIn("players/cmd/set_members", [command for command, _ in self.sim.calls[calls:]])
+
+    def test_a_group_that_changes_while_a_command_waits_is_read_again_under_the_locks(self):
+        self.hold(EAST, "off")
+        lock, raced = self.adapter.command_lock, []
+
+        def racing(rooms, resources):
+            if not raced:
+                # Another command groups the East room's WiiM under the Mini meanwhile.
+                raced.append(rooms)
+                self.music.call("players/cmd/set_members", target_player=self.player_id(MINI),
+                                player_ids_to_add=[self.player_id(WIIM)])
+            return lock(rooms, resources)
+        with patch.object(self.adapter, "command_lock", racing), self.assertLogs("oh_identity.trail", "INFO") as logs:
+            response = self.post(f"/api/v1/music/{MINI}/play", {"ref": ALBUM})
+        # The first locks were the Mini's alone: no routed room has it.
+        self.assertEqual((raced, response.json()), ([()], {"error": "device_locked"}))
+        self.assertNotIn("player_queues/play_media", [command for command, _ in self.sim.calls])
+        self.assertEqual([line["outcome"] for line in lines(logs, "cmd")], ["device_locked"])
 
     def test_reading_a_group_back_ends_by_its_deadline_whatever_music_assistant_does(self):
         from oh_music.client import TIMEOUT
@@ -409,11 +435,16 @@ class Gateway(Stand_in, Requests, TestCase):
             self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM, "option": "add"})
             self.post(f"/api/v1/music/{AMP}/volume", {"level": 33})
             self.post(f"/api/v1/music/{AMP}/group", {"members": [MINI]})
+            # A valid command Music Assistant cannot take is a line too; an invalid one is none.
+            self.sim.players[self.player_id(WIIM)]["available"] = False
+            self.post(f"/api/v1/music/{WIIM}/transport", {"action": "pause"})
+            self.post(f"/api/v1/music/{WIIM}/transport", {"action": "pause", "value": 1})
         found = [(line["device"], line["action"], line["item"], line["value"], line["outcome"], line["user"])
                  for line in lines(logs, "cmd")]
         self.assertEqual(found, [(AMP, "music.play", "-", "add", "accepted", "owner"),
                                  (AMP, "music.volume", "-", "33", "accepted", "owner"),
-                                 (AMP, "music.group", "-", MINI, "accepted", "owner")])
+                                 (AMP, "music.group", "-", MINI, "accepted", "owner"),
+                                 (WIIM, "music.pause", "-", "-", "music_failed", "owner")])
         self.assertFalse(any("library" in record.getMessage() for record in logs.records))
 
     def test_search_and_browse_show_items_thermite_can_play(self):

@@ -6,7 +6,7 @@ import math
 import re
 from pathlib import Path
 from types import MappingProxyType
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 
 from . import trail
 from .addresses import ROOM_ID
@@ -383,15 +383,9 @@ class RuntimeAdapter:
         resources = tuple(spec.get("resources", (item,)))
         # Other rooms that own the device: locked, each refuses it outright.
         own = tuple(spec.get("own_rooms", ()))
-        record = trail.Command(origin, user, room=room_id, action=action, item=item, value=command)
-        try:
+        with trail.Command(origin, user, room=room_id, action=action, item=item, value=command) as record:
             with self.command_lock(tuple(sorted({room_id, *affected, *own})), resources):
-                result = self._dispatch(user, room_id, action, item, command, affected, own, resources, record)
-        except BaseException as error:
-            record.finish(error)
-            raise
-        record.finish()
-        return result
+                return self._dispatch(user, room_id, action, item, command, affected, own, resources, record)
 
     def _dispatch(self, user, room_id, action, item, command, affected, own, resources, record):
         from .auth import revalidate
@@ -417,19 +411,26 @@ class RuntimeAdapter:
         spec = self.contract.devices[device_id]["actions"][action]
         resources = tuple(spec.get("resources", (item,)))
         record = trail.Command(origin, user, room=None, device=device_id, action=action, item=item, value=command)
-        try:
-            with self.command_lock(tuple(sorted(rooms)), resources):
-                from .auth import revalidate
-                # After the lock wait and before I/O, as a room's command.
-                revalidate(user)
-                for room, role in sorted(rooms.items()):
-                    self.allowed(room, None if role == "own" else (None, action, command, resources), "device_locked")
-                self._send(item, command, record)
-        except BaseException as error:
-            record.finish(error)
-            raise
-        record.finish()
+        with record, self.device_guard(user, rooms, action, command, resources):
+            self._send(item, command, record)
         return {"accepted": True, "device": device_id, "action": action}
+
+    @contextmanager
+    def device_guard(self, user, rooms, action, command, resources):
+        """The block of a command on a device, for dispatch_device and a
+        speaker's music (oh_identity.music): it runs holding the locks of
+        the routed rooms that command the device ({room: "own" | "shared"})
+        and of its resources, once the principal is still valid and each
+        room allows it. A room that owns the device refuses it while
+        locked; one that shares it refuses only what would disturb its held
+        route. Either refusal is device_locked."""
+        with self.command_lock(tuple(sorted(rooms)), resources):
+            from .auth import revalidate
+            # After the lock wait and before I/O, as a room's command.
+            revalidate(user)
+            for room, role in sorted(rooms.items()):
+                self.allowed(room, None if role == "own" else (None, action, command, resources), "device_locked")
+            yield
 
     def _send(self, item, command, record):
         try:
@@ -479,15 +480,9 @@ class RuntimeAdapter:
         # Callers validate first; nothing unauthorized waits on every room lock.
         self.pairing_command(item, value)
         # The trail never names the value: it may be a pairing code.
-        record = trail.Command(origin, user, room=None, action="pair", item=item, value=value, private=True)
-        try:
+        with trail.Command(origin, user, room=None, action="pair", item=item, value=value, private=True) as record:
             with self.command_lock(tuple(sorted(self.contract.rooms)), ()):
-                result = self._pair(user, item, value, record)
-        except BaseException as error:
-            record.finish(error)
-            raise
-        record.finish()
-        return result
+                return self._pair(user, item, value, record)
 
     def _pair(self, user, item, value, record):
         from .security import require_enabled

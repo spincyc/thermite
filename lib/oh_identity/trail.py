@@ -146,7 +146,8 @@ def principal(user):
 
 class Command:
     """One command's trail: its ID, its openHAB event source and, when it
-    ends, one INFO line."""
+    ends, one INFO line. As a context manager, the block is the command,
+    finished however it ends."""
 
     def __init__(self, where, user, *, room, action, item, value, device=None, private=False, clock=time.monotonic):
         self.id, self.where, self.clock = new_id(), where or Origin(), clock
@@ -156,6 +157,12 @@ class Command:
         self.started = clock()
         self.cause = None
         self.done = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, kind, error, traceback):
+        self.finish(error)
 
     @property
     def source(self):

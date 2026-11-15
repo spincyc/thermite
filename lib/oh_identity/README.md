@@ -532,18 +532,25 @@ Assistant drops a member it cannot group (a WiiM without AirPlay with a
 Sonos) without an error, so `refused` lists it, as it does a speaker with no
 available player.
 
-Commands keep a device command's rules (`dispatch_device`): any principal
-sends them; each routed room that owns an involved speaker refuses them
-while locked, and a room that shares one refuses what disturbs its held
-route, both 423 `device_locked`. Playing to, transport on or the group
-volume of a group involves each of its speakers; grouping, the speaker and
-every member. Each command is one `cmd` trail line, `device=<speaker>
-action=music.<action>` with the option, the transport value, the level or
-the members as its value, never a reference, a query or a title. Music
-Assistant has 5 seconds to answer a command or a read and 20 for a search or
-a browse; reading a group back takes 3 seconds at most, its reads included.
-Titles, names and art are free text: a Guest who may not see it gets speakers
-without them and 401 `login_required` for search, browse, queues and art.
+Commands keep a device command's rules (`RuntimeAdapter.device_guard`,
+which `dispatch_device` uses too): any principal sends them; each routed
+room that owns an involved speaker refuses them while locked, and a room
+that shares one refuses what disturbs its held route, both 423
+`device_locked`. Playing to, transport on or the group volume of a group
+involves each of its speakers; grouping, every speaker whose group it
+changes: the speaker's group, each member, and each member's group, which
+it leaves. The gateway reads the groups, takes the involved rooms' locks,
+then reads the groups again: when a group changed meanwhile to involve
+another speaker, it takes the locks again for both. Each command whose body
+is valid is one `cmd` trail line however it ends (a refusal, Music
+Assistant down or failing), `device=<speaker> action=music.<action>` with
+the option, the transport value, the level or the members as its value,
+never a reference, a query or a title; one refused for its body (400, 404)
+is none. Music Assistant has 5 seconds to answer a command or a read and
+20 for a search or a browse; reading a group back takes 3 seconds at most,
+its reads included. Titles, names and art are free text: a Guest who may
+not see it gets speakers without them and 401 `login_required` for search,
+browse, queues and art.
 
 The music event stream is admitted, revalidated and heartbeated as the other
 streams. Its first frame is `{"type":"snapshot","view":"music","music":
