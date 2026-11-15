@@ -20,7 +20,8 @@ function assemble(settings = {}) {
     parts.backends.push(backend);
     return backend;
   } });
-  Object.assign(parts, Main.assemble(Main.parse(["--mock", "--still", "--latency", "0"]), { shared, setInterval: () => 0, clearInterval() {} }));
+  Object.assign(parts, Main.assemble(Main.parse(["--mock", "--still", "--latency", "0"]),
+    { shared, setInterval: () => 0, clearInterval() {}, onQuit: () => { parts.quit = true; } }));
   return parts;
 }
 
@@ -220,6 +221,31 @@ async function member(proof) {
   controller.stop();
 }
 
+// The search field gone under the typing: a q typed next does not quit.
+async function vanished(proof) {
+  const parts = assemble();
+  const { controller } = parts;
+  await controller.start();
+  await until(parts, () => controller.ui.ready, "ready");
+  key(parts, null, { name: "f2" });
+  key(parts, "y");
+  await shows(parts, "type / to search");
+  for (const ch of "/lo") key(parts, ch);
+  backend(parts).simulateUnavailable();
+  await shows(parts, "Music Assistant is not answering yet.");
+  proof.vanished = { focus: controller.ui.focus };
+  key(parts, "q");
+  proof.vanished.typed = [Boolean(parts.quit), controller.ui.screen];
+  // Back again (the search with it), the field takes / once more: keys go to the screen.
+  backend(parts).recover();
+  await shows(parts, "Low Tide · The Lanterns");
+  key(parts, "/");
+  proof.vanished.back = controller.ui.focus;
+  key(parts, null, { name: "down" });
+  key(parts, "q");
+  proof.vanished.after = Boolean(parts.quit);
+}
+
 // No music on this host; a Guest without titles.
 async function others(proof) {
   for (const [name, settings, words] of [["absent", { configured: false }, "This thermite host has no music."],
@@ -251,6 +277,7 @@ async function others(proof) {
   await main(proof);
   await narrow(proof);
   await member(proof);
+  await vanished(proof);
   await others(proof);
   process.stdout.write(JSON.stringify(proof) + "\n");
 })().then(() => process.exit(0), (error) => { process.stderr.write(error.stack + "\n"); process.exit(1); });

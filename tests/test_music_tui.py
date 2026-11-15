@@ -78,6 +78,11 @@ class MusicScreen(unittest.TestCase):
     def test_a_group_members_lock_leaves_the_speakers_own_volume(self):
         self.assertEqual(self.proof["member"], {"sent": [["volume", "kitchen_amp", "level", 34]], "toast": ["Kitchen Sonos Amp", "Locked by Den"]})
 
+    def test_a_q_typed_after_the_search_field_went_does_not_quit(self):
+        vanished = self.proof["vanished"]
+        # Music Assistant went away under the typing: the focus moved, and q went nowhere until another key.
+        self.assertEqual(vanished, {"focus": "music-speaker:kitchen_amp", "typed": [False, "music"], "back": "music-search", "after": True})
+
     def test_an_admin_sees_the_tidal_code_to_approve(self):
         self.assertEqual(self.proof["tidal"], [])
 

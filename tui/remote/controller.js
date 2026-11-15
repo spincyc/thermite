@@ -80,9 +80,10 @@ function create(options) {
   const day = { backend: null };
   // The Audio screen's RemoteAudio (audio-session.js): started while it shows.
   const audio = { session: null };
-  // The Music screen's RemoteMusic (music-session.js), likewise, and the
-  // speakers ticked in its group sheet.
-  const music = { session: null, picked: new Set() };
+  // The Music screen's RemoteMusic (music-session.js), likewise, the
+  // speakers ticked in its group sheet, and whether the last key was typed
+  // into its search field.
+  const music = { session: null, picked: new Set(), typing: false };
   const timers = { toast: 0, flash: {}, repeat: null, tick: 0 };
   let frame = null;
   let size = { width: 80, height: 24 };
@@ -1356,17 +1357,23 @@ function create(options) {
 
   // Typing into the Music screen's search field while it has the focus: a
   // character, a space, Backspace. Enter, Esc, Tab and the arrows keep theirs.
+  // Should the field go under the typing (Music Assistant away, a Guest
+  // refused), what is typed while it is gone goes nowhere, q included,
+  // until another key or a click.
   function musicTyping(ch, event) {
-    if (ui.screen !== "music" || ui.overlay || !music.session || !ui.focusVisible || ui.focus !== "music-search") return false;
-    const library = music.session.library();
+    const typed = event.name === "backspace"
+      || Boolean(ch) && !event.ctrl && !event.meta && Array.from(ch).length === 1 && !/[\u0000-\u001f\u007f-\u009f]/.test(ch);
+    const field = ui.screen === "music" && !ui.overlay && music.session && ui.focusVisible && ui.focus === "music-search";
+    const library = ui.screen === "music" && music.session && music.session.library();
     const search = library && library.search;
-    if (!search) return false;
-    if (event.name === "backspace") {
-      music.session.setQuery(Array.from(search.query).slice(0, -1).join(""));
-      return true;
+    if (!typed || !field && !(music.typing && !search)) {
+      music.typing = false;
+      return false;
     }
-    if (event.ctrl || event.meta || !ch || Array.from(ch).length !== 1 || /[\u0000-\u001f\u007f-\u009f]/.test(ch)) return false;
-    music.session.setQuery(search.query + ch);
+    music.typing = true;
+    if (!field || !search) return true;
+    if (event.name === "backspace") music.session.setQuery(Array.from(search.query).slice(0, -1).join(""));
+    else music.session.setQuery(search.query + ch);
     return true;
   }
 
@@ -1561,6 +1568,7 @@ function create(options) {
     if (stopped || !frame) return;
     const { action, x, y } = event;
     if (action === "mousedown") {
+      music.typing = false;
       const regions = frame.regions.filter((region) => !ui.overlay || region.key === "sheet:" + ui.overlay.kind);
       const region = regions.find((candidate) => x >= candidate.x - 1 && x <= candidate.x + candidate.w
         && y >= candidate.y - 1 && y <= candidate.y + candidate.h);
