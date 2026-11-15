@@ -26,6 +26,7 @@ from urllib.parse import urljoin, urlsplit
 import xml.etree.ElementTree as ET
 
 import oh_http
+import oh_music
 import oh_ports
 from oh_integrations import sonos
 from . import AccessError
@@ -379,10 +380,14 @@ def verify_filter(value, ports):
 
 
 def firewall_ports(host):
-    """The native ports the table filters, from the site's validated complete allocation."""
+    """The native ports the table filters, from the site's validated complete
+    allocation; on a host with music:, Music Assistant's API too, which only
+    the gateway uses and which falls back to every address when it cannot
+    have loopback's."""
     ports = oh_ports.effective(host)
+    music = {"Music Assistant": ports["music"]} if oh_music.settings(host) is not None else {}
     return frozenset(oh_ports.unique({"HTTP": ports["http"], "HTTPS": ports["https"], "Karaf": ports["karaf"],
-                                      "LSP": ports["lsp"], "shutdown": ports["native_shutdown"]}).values())
+                                      "LSP": ports["lsp"], "shutdown": ports["native_shutdown"], **music}).values())
 
 
 def firewall_rules(host):

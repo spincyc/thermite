@@ -52,7 +52,7 @@ class SplitInstaller(unittest.TestCase):
         self.versions = {"openhab": {"version": "5.2.3"}, "java": {"version": "21"}}
         self.host = {"uid": 9001, "gid": 9001, "root": str(self.site / "installation"), "http_port": 13602}
         self.runtime = self.site / "installation/runtime"
-        self.files = {name: deploy.Blob(("frozen " + name).encode()) for name in deploy.INSTALLED}
+        self.files = {name: deploy.Blob(("frozen " + name).encode()) for name in deploy.host_units(self.host)}
         self.files.update({"conf/services/addons.cfg": deploy.Blob(b"binding = http,network\nmisc = metrics\n"),
                            "conf/automation/js/owned.js": deploy.Blob(b"// committed generated rule\n"),
                            "metrics/prometheus/prometheus.yml": deploy.Blob(b"# frozen metrics\n"),
@@ -191,7 +191,7 @@ class SplitInstaller(unittest.TestCase):
         self.assertEqual(steps.BootTest(self.context).actions(self.system)[0].argv,
                          (*prefix, "test", "boot", "--conf", str(root / "conf"), "--versions", str(root / "versions.json")))
         self.assertEqual(steps.NativeReady(self.context).required, {"binding-http", "binding-network", "misc-metrics"})
-        self.system.read_bytes.side_effect = lambda path: next((self.files[name].data for name, target in deploy.INSTALLED.items() if path == target), None)
+        self.system.read_bytes.side_effect = lambda path: next((self.files[name].data for name, target in deploy.INSTALLED.items() if path == target and name in self.files), None)
         self.assertEqual(steps.Units(self.context).stale(self.system), [])
         self.system.read_bytes.side_effect = None
         self.system.read_bytes.return_value = None
@@ -200,7 +200,7 @@ class SplitInstaller(unittest.TestCase):
                     if getattr(command, "argv", ())[:3] == ("install", "-m", "0644")]
         self.assertTrue(installs)
         self.assertEqual({name for command in installs for name in command.argv[5:]},
-                         {str(root / name) for name in deploy.INSTALLED})
+                         {str(root / name) for name in deploy.host_units(self.host)})
         deploy_actions = steps.Deploy(self.context).actions(self.system)
         self.assertEqual(len(deploy_actions), 1)
         self.assertEqual(deploy_actions[0].argv, (*prefix, "deploy", self.context.head, "--state", str(self.runtime), "--_configuration-phase"))

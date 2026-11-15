@@ -20,6 +20,7 @@ import oh_service
 import oh_units
 import oh_ports
 import oh_metrics as metrics
+import oh_music as music
 from oh_install import manifest, ownership, progress
 from oh_install.access import Gateway
 from oh_install.model import Action, Check, Command, ReadinessStep, Step, Task
@@ -51,9 +52,13 @@ METRICS_RESTARTS = {
     **{quadlet: unit for unit, quadlet in deploy.METRICS_QUADLETS.items()},
     deploy.METRICS_RESTART_PATH: METRICS_PATH_UNIT,
 }
+MUSIC_RESTARTS = {deploy.MUSIC_QUADLET: oh_units.MUSIC}
 #: How long the metrics services' first start may take (it pulls the
 #: images, then Prometheus scrapes every target once).
 METRICS_WAIT = 5 * 60
+#: How long Music Assistant may take to run: an upgrade may migrate its
+#: library database first.
+MUSIC_WAIT = 10 * 60
 #: How long openHAB's first start may take to answer (it installs the
 #: add-ons), and how often to ask.
 WAIT = 15 * 60
@@ -200,7 +205,10 @@ class Context:
         files["versions.json"] = deploy.Blob((json.dumps(self.versions, sort_keys=True) + "\n").encode())
         return files
 
-    def unit(self, name: str) -> bytes:
+    def unit(self, name: str) -> bytes | None:
+        """A unit's bytes; None for one this host does not have (music)."""
+        if name not in deploy.host_units(self.host):
+            return None
         return self.prepared[name].data if self.prepared is not None else (self.area / name).read_bytes()
 
     @property
@@ -240,11 +248,12 @@ class Context:
 
     def ports(self) -> dict[str, list[int]]:
         """The ports each service listens on."""
-        oh_ports.effective(self.host)
+        ports = oh_ports.effective(self.host)
         return {"thermite-openhab.service": [self.host["http_port"], self.host["https_port"], deploy.KARAF_PORT,
                                     deploy.LSP_PORT, oh_ports.SHUTDOWN_PORT],
                 "thermite-atv.service": [deploy.HELPER_PORT],
-                **{service.unit: [int(service.listen.rsplit(":", 1)[1])] for service in metrics.services(self.host)}}
+                **{service.unit: [int(service.listen.rsplit(":", 1)[1])] for service in metrics.services(self.host)},
+                **({oh_units.MUSIC: [ports["music"], ports["music_stream"]]} if music.settings(self.host) is not None else {})}
 
 
 def committed_context(area: Path, system: System, runtime_token_file: Path | None = None, *,
@@ -739,6 +748,33 @@ class MetricsDirectories(StateDirectories):
                 manifest.Item(layout.textfile, "shared")]
 
 
+class MusicDirectories(StateDirectories):
+    """Music Assistant's state, on a host with music:. Without music: the
+    state of an earlier version that had it stays, as it is."""
+    title = "Music Assistant's state directory"
+
+    def directories(self) -> list[tuple[int, list[Path]]]:
+        return self.context.layout.music_directories() if music.settings(self.context.host) is not None else []
+
+    def check(self, system: System) -> Check:
+        if not self.directories():
+            return Check(True, "no music: on this host")
+        if self.wrong(system):
+            return Check(False, f"to create or fix: {self.context.layout.music.relative_to(self.context.installation.root)}")
+        return Check(True, f"{self.context.layout.music}, owned by {NAME}")
+
+    def desired(self, system: System) -> list[manifest.Item]:
+        # Copied aside only when Music Assistant's image changes: a new
+        # version migrates its library and settings, and has no way back.
+        # Once music: goes the state stays, shared, unless it surely is not
+        # there: an item the desired set drops would be deleted.
+        layout = self.context.layout
+        if self.directories():
+            return [manifest.Item(layout.music, "shared-pinned", image="music_assistant",
+                                  value=self.context.versions["music_assistant"]["image"]["digest"])]
+        return [manifest.Item(layout.music, "shared")] if system.lexists(layout.music) else []
+
+
 class BootTest(Step):
     title = "Configuration boot check"
 
@@ -908,6 +944,7 @@ class Units(Step):
         self.context = context
 
     def stale(self, system: System, names: tuple[str, ...] | None = None) -> list[str]:
+        """Units to install, and ones this host no longer has to remove."""
         return [name for name, target in sorted(deploy.INSTALLED.items())
                 if (names is None or name in names)
                 and system.read_bytes(target) != self.context.unit(name)]
@@ -921,7 +958,8 @@ class Units(Step):
             return Check(False, "to install: " + ", ".join(stale))
         if not owned.recorded or system.read_bytes(ownership.MANIFEST) != ownership.manifest_bytes(self.context):
             return Check(False, f"to record the installed units in {ownership.MANIFEST}")
-        return Check(True, f"the {len(deploy.INSTALLED)} installed unit files match deploy/ and {ownership.MANIFEST}")
+        return Check(True, f"the {len(deploy.host_units(self.context.host))} installed unit files match deploy/ and "
+                           f"{ownership.MANIFEST}")
 
     @property
     def manifest(self) -> Path:
@@ -930,10 +968,13 @@ class Units(Step):
     def actions(self, system: System) -> list[Action]:
         by_directory: dict[Path, list[str]] = {}
         stale = self.stale(system)
+        removed = [str(deploy.INSTALLED[name]) for name in stale if self.context.unit(name) is None]
         for name in stale:
-            by_directory.setdefault(deploy.INSTALLED[name].parent, []).append(name)
+            if self.context.unit(name) is not None:
+                by_directory.setdefault(deploy.INSTALLED[name].parent, []).append(name)
         missing = [directory for directory in by_directory if system.stat(directory) is None]
-        return [*([Command(("install", "-d", "-o", "0", "-g", "0", "-m", "0755", *map(str, missing)), root=True)] if missing else []),
+        return [*([Command(("rm", "-f", "--", *removed), root=True)] if removed else []),
+                *([Command(("install", "-d", "-o", "0", "-g", "0", "-m", "0755", *map(str, missing)), root=True)] if missing else []),
                 *(Command(("install", "-m", "0644", "-t", str(directory),
                            *(str(self.context.configuration / name) if self.context.prepared is not None else name for name in names)), root=True)
                   for directory, names in by_directory.items()),
@@ -946,7 +987,7 @@ class Units(Step):
     def desired(self, system: System) -> list[manifest.Item]:
         # units.json stays while install and uninstall prove ownership by it.
         items = [manifest.Item(ownership.MANIFEST, "file")]
-        for source, target in sorted(deploy.INSTALLED.items()):
+        for source, target in sorted(deploy.host_units(self.context.host).items()):
             items.append(manifest.unit(target))
             # Quadlets are enabled by their generator, and drop-ins not at all.
             if target.parent == manifest.UNITS:
@@ -975,7 +1016,7 @@ class Services(Step):
 
     def plan(self, system: System) -> tuple[list[str], list[str], bool]:
         """Units to start, units to restart (their file changed after they
-        started), and whether the path unit needs enabling."""
+        started), and whether the path unit, if any, needs enabling."""
         start, restart = [], []
         for name, unit in self.restarts.items():
             state = system.unit(unit)
@@ -992,7 +1033,7 @@ class Services(Step):
                     or state.since is not None and any(info is not None and info.mtime > state.since
                                                        for info in (installed, support, confinement))):
                 restart.append(unit)
-        return start, restart, system.unit(self.path_unit).enabled != "enabled"
+        return start, restart, self.path_unit is not None and system.unit(self.path_unit).enabled != "enabled"
 
     def check(self, system: System) -> Check:
         start, restart, enable = self.plan(system)
@@ -1035,7 +1076,8 @@ class Services(Step):
     def prefetch(self, system: System, units: list[str]) -> list[Action]:
         """Download sequentially before systemd starts any service's timer."""
         names = {"thermite-openhab.service": "openhab", "thermite-atv.service": "atv_helper",
-                 **{service.unit: service.image for service in metrics.services(self.context.host)}}
+                 **{service.unit: service.image for service in metrics.services(self.context.host)},
+                 oh_units.MUSIC: "music_assistant"}
         images = list(dict.fromkeys(deploy.image(self.context.versions, names[unit])
                                     for unit in units if unit.endswith(".service")))
         if not images:
@@ -1053,6 +1095,19 @@ class MetricsServices(Services):
     title = "Monitoring and notifications"
     restarts = METRICS_RESTARTS
     path_unit = METRICS_PATH_UNIT
+
+
+class MusicServices(Services):
+    """Music Assistant, on a host with music:; each start pins its listeners."""
+    title = "Music Assistant"
+    path_unit = None
+
+    @property
+    def restarts(self) -> dict[str, str]:
+        return MUSIC_RESTARTS if music.settings(self.context.host) is not None else {}
+
+    def check(self, system: System) -> Check:
+        return super().check(system) if self.restarts else Check(True, "no music: on this host")
 
 
 def _opaque(system: System, context: Context, path: Path) -> bool:
@@ -1101,7 +1156,8 @@ def state_owned(context: Context, system: System) -> bool:
         return not system.lexists(root)
     if service_receipt(context, system) or ownership.inspect(context, system).runtime_bound:
         return True
-    allowed = {path for _, paths in (*context.layout.directories(), *context.layout.metrics_directories()) for path in paths}
+    allowed = {path for _, paths in (*context.layout.directories(), *context.layout.metrics_directories(),
+                                     *context.layout.music_directories()) for path in paths}
     pending = [root]
     while pending:
         directory = pending.pop()
@@ -1138,7 +1194,7 @@ class NativePreparation(Step):
     def custody(self, system: System) -> bool:
         return bool(not service_receipt(self.context, system)
                     or StateDirectories(self.context).wrong(system) or MetricsDirectories(self.context).wrong(system)
-                    or Account(self.context).missing(system))
+                    or MusicDirectories(self.context).wrong(system) or Account(self.context).missing(system))
 
     def check(self, system: System) -> Check:
         if self.applied:
@@ -1325,6 +1381,43 @@ class MetricsAnswer(ReadinessStep):
         if health.systemd is not True:
             system.say("   still waiting for Prometheus to report a successful node_exporter systemd collector scrape")
         system.say("   `sudo journalctl -u thermite-prometheus.service` (or the unit of what is down) shows why")
+        return 1
+
+
+class MusicAnswer(ReadinessStep):
+    """Music Assistant running, its API on loopback alone, on a host with music:."""
+    title = "Music Assistant readiness"
+
+    def __init__(self, context: Context):
+        super().__init__()
+        self.context = context
+
+    def check(self, system: System) -> Check:
+        if music.settings(self.context.host) is None:
+            return Check(True, "no music: on this host")
+        health = system.music_health(self.context.host)
+        if health.ok:
+            return Check(True, health.describe() + ", its API on loopback alone")
+        return Check(False, f"{health.describe()}: waiting for it to run, its API on loopback alone")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Task(f"wait up to {MUSIC_WAIT // 60} minutes for Music Assistant to run, its API on loopback alone",
+                     self.wait)]
+
+    def wait(self, system: System) -> int:
+        self.begin_wait()
+        deadline = system.clock() + MUSIC_WAIT
+        while system.clock() < deadline:
+            found = self.check(system)
+            if found.done:
+                return self.ready(found)
+            progress.update(found.detail)
+            system.sleep(POLL)
+        health = system.music_health(self.context.host)
+        if health.addresses and not health.loopback:
+            system.say("   its API listens beyond loopback, where Music Assistant falls back when it cannot listen "
+                       "where its settings say; the native boundary still refuses the LAN there")
+        system.say(f"   `sudo journalctl -u {oh_units.MUSIC}` shows why")
         return 1
 
 

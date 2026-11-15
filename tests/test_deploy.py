@@ -39,9 +39,13 @@ VERSIONS = {
         "ref": "docker.io/library/python:3.14.10-slim-trixie", "digest": "sha256:" + "b" * 64}},
     **{name: {"version": "1.0.0", "image": {"ref": f"docker.io/example/{name}:v1.0.0", "digest": "sha256:" + c * 64}}
        for name, c in (("prometheus", "c"), ("node_exporter", "d"), ("blackbox_exporter", "e"), ("grafana", "f"), ("alertmanager", "1"), ("ntfy", "2"))},
+    "music_assistant": {"version": "2.10.12", "image": {
+        "ref": "ghcr.io/music-assistant/server:2.10.12", "digest": "sha256:" + "3" * 64}},
 }
 HOST = {"timezone": "America/Chicago", "http_port": 8080,
         "https_port": 8443, "uid": 9001, "gid": 9001}
+#: A host that runs Music Assistant, with one library.
+MUSIC_HOST = {**HOST, "music": {"libraries": {"flac": "/mnt/music/flac"}}}
 
 
 def fresh(name: str):
@@ -93,7 +97,7 @@ class Units(unittest.TestCase):
         self.assertNotIn("--allow-remote", text)
 
     def test_native_entrypoint_and_every_container_start_non_root(self):
-        host = {**HOST, "uid": 1234, "gid": 2345}
+        host = {**MUSIC_HOST, "uid": 1234, "gid": 2345}
         for name, text in deploy.render_units(VERSIONS, host).items():
             if name.endswith(".container"):
                 with self.subTest(name=name):
@@ -124,12 +128,12 @@ class Units(unittest.TestCase):
         service = deploy.metrics.services(HOST)[0]
         renderers = (deploy.render_units, deploy.render_quadlet, deploy.render_atv_quadlet,
                      lambda versions, host: deploy.render_metrics_quadlet(versions, host, service),
-                     deploy.prepare_openhab_argv)
+                     deploy.render_music_quadlet, deploy.prepare_openhab_argv)
         for uid, gid in ((0, 9001), (9001, 0), (-1, 9001), (9001, -1), (True, 9001),
                          (9001, "9001"), (9001.0, 9001)):
             for renderer in renderers:
                 with self.subTest(uid=uid, gid=gid, renderer=renderer), self.assertRaises(ValueError):
-                    renderer(VERSIONS, {**HOST, "uid": uid, "gid": gid})
+                    renderer(VERSIONS, {**MUSIC_HOST, "uid": uid, "gid": gid})
 
     def test_offline_native_preparation_keeps_payload_non_root(self):
         argv = deploy.prepare_openhab_argv(VERSIONS, HOST)
@@ -144,7 +148,7 @@ class Units(unittest.TestCase):
     def test_real_quadlet_generator_accepts_payload_identity_and_native_entrypoint(self):
         generator = "/usr/lib/systemd/system-generators/podman-system-generator"
         with tempfile.TemporaryDirectory() as tmp:
-            for name, text in deploy.render_units(VERSIONS, HOST).items():
+            for name, text in deploy.render_units(VERSIONS, MUSIC_HOST).items():
                 if name.endswith(".container"):
                     Path(tmp, Path(name).name).write_text(text)
             generated = subprocess.run([generator, "-dryrun", "-no-kmsg-log"],
@@ -154,7 +158,7 @@ class Units(unittest.TestCase):
         self.assertIn("PartOf=thermite.target", generated.stdout)
         self.assertNotIn("After=thermite.target", generated.stdout)
         commands = [line for line in generated.stdout.splitlines() if line.startswith("ExecStart=")]
-        self.assertEqual(len(commands), 2 + len(deploy.METRICS_QUADLETS))
+        self.assertEqual(len(commands), 3 + len(deploy.METRICS_QUADLETS))
         for command in commands:
             self.assertRegex(command, r"--user(?:=| )9001:9001(?: |$)")
             self.assertIn("--runtime=runc", command)
@@ -179,7 +183,7 @@ class Units(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source, generated = Path(tmp, "quadlets"), Path(tmp, "systemd")
             source.mkdir(); generated.mkdir()
-            rendered = deploy.render_units(VERSIONS, HOST)
+            rendered = deploy.render_units(VERSIONS, MUSIC_HOST)
             for name, text in rendered.items():
                 if name.endswith(".container"):
                     (source / Path(name).name).write_text(text)
@@ -205,15 +209,15 @@ class Units(unittest.TestCase):
                     for line in merged.stdout.splitlines() if "Command Line: " in line]
         expected = {f"/run/{unit.removesuffix('.service')}.cid" for unit in oh_units.CONTAINED}
         starts = [argv for argv in commands if argv[:2] == ["/usr/bin/podman", "run"]]
-        self.assertEqual(len(starts), 10)
+        self.assertEqual(len(starts), 11)
         self.assertEqual({word.removeprefix("--cidfile=") for argv in starts for word in argv
                           if word.startswith("--cidfile=")}, expected)
         prestarts = [argv for argv in commands if argv[:3] == ["/usr/bin/rm", "-f", "--"]]
-        self.assertEqual(len(prestarts), 10)
+        self.assertEqual(len(prestarts), 11)
         self.assertEqual({argv[3] for argv in prestarts}, expected)
         self.assertTrue(all(len(argv) == 4 for argv in prestarts))
         cleanup = [argv for argv in commands if argv[:2] == ["/usr/bin/podman", "rm"]]
-        self.assertEqual(len(cleanup), 20)  # ExecStop and ExecStopPost for each container.
+        self.assertEqual(len(cleanup), 22)  # ExecStop and ExecStopPost for each container.
         for argv in cleanup:
             self.assertEqual(argv[:5], ["/usr/bin/podman", "rm", "-v", "-f", "-i"])
             self.assertEqual(len(argv), 6)
@@ -237,12 +241,14 @@ class Units(unittest.TestCase):
                 self.assertEqual(service["Service"]["SyslogIdentifier"], Path(source).stem)
 
     def test_every_generated_unit_and_dropin_has_an_install_destination(self):
-        self.assertEqual(set(deploy.render_units(VERSIONS, HOST)), set(deploy.INSTALLED))
+        self.assertEqual(set(deploy.render_units(VERSIONS, MUSIC_HOST)), set(deploy.INSTALLED))
+        self.assertEqual(set(deploy.render_units(VERSIONS, HOST)), set(deploy.host_units(HOST)))
+        self.assertEqual(set(deploy.INSTALLED) - set(deploy.host_units(HOST)), set(deploy.MUSIC_UNITS))
 
     def test_target_groups_only_thermite_members_and_services_share_the_slice(self):
-        rendered = deploy.render_units(VERSIONS, HOST)
-        self.assertEqual(len(rendered), 26)
-        self.assertEqual(sum(not name.endswith(".conf") for name in rendered), 16)
+        rendered = deploy.render_units(VERSIONS, MUSIC_HOST)
+        self.assertEqual(len(rendered), 28)
+        self.assertEqual(sum(not name.endswith(".conf") for name in rendered), 17)
         self.assertEqual({path.name for path in deploy.INSTALLED.values()},
                          {Path(name).name for name in rendered})
         containers = set()
@@ -338,6 +344,20 @@ class Units(unittest.TestCase):
                                                    "deploy/b.container": etc / "b.container",
                                                    "deploy/c.path": etc / "c.path"})
         self.assertEqual([how for _, _, how in report], ["current", "differs", "missing"])
+
+    def test_installed_units_name_music_only_where_it_is_wanted_or_still_installed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            area, etc = Path(tmp, "area"), Path(tmp, "etc")
+            (area / "deploy").mkdir(parents=True)
+            etc.mkdir()
+            installed = {deploy.MUSIC_QUADLET: etc / "thermite-music.container"}
+            self.assertEqual(deploy.installed_units(area, installed), [], "a host without music: has none")
+            (etc / "thermite-music.container").write_text("music\n")
+            self.assertEqual([how for _, _, how in deploy.installed_units(area, installed)], ["unwanted"])
+            (area / deploy.MUSIC_QUADLET).write_text("music\n")
+            self.assertEqual([how for _, _, how in deploy.installed_units(area, installed)], ["current"])
+            (etc / "thermite-music.container").unlink()
+            self.assertEqual([how for _, _, how in deploy.installed_units(area, installed)], ["missing"])
 
 
 class GrafanaConditions(unittest.TestCase):
@@ -574,6 +594,7 @@ class MetricsUnits(unittest.TestCase):
         self.assertEqual(deploy.exec_word("--a=b"), "--a=b")
         self.assertEqual(deploy.exec_word(r"x=(a|b)\.c"), r'"x=(a|b)\\.c"')
         self.assertEqual(deploy.exec_word("50%$HOME"), '"50%%$$HOME"')
+        self.assertEqual(deploy.exec_word('print("a")\nprint(1)'), r'"print(\"a\")\nprint(1)"')
 
     def test_the_restart_path_restarts_the_exporter_and_grafana(self):
         units = deploy.render_units(VERSIONS, HOST)
@@ -589,6 +610,206 @@ class MetricsUnits(unittest.TestCase):
             self.assertFalse(deploy.metrics_installed(installed))
             Path(tmp, "thermite-grafana.container").write_text("x\n")
             self.assertTrue(deploy.metrics_installed(installed))
+
+
+def systemd_words(line: str) -> list[str]:
+    """An Exec= line's words as systemd unquotes them, for the words
+    exec_word writes: quotes, \\, \\", \\n, %% and $$."""
+    words = shlex.split(line.split("=", 1)[1].replace("\\n", "\0"))
+    return [word.replace("\0", "\n").replace("%%", "%").replace("$$", "$") for word in words]
+
+
+class MusicUnits(unittest.TestCase):
+    def setUp(self):
+        self.text = deploy.render_units(VERSIONS, MUSIC_HOST)[deploy.MUSIC_QUADLET]
+
+    def test_only_a_host_with_music_has_music_assistant(self):
+        self.assertFalse(set(deploy.render_units(VERSIONS, HOST)) & set(deploy.MUSIC_UNITS))
+        self.assertLessEqual(set(deploy.MUSIC_UNITS), set(deploy.render_units(VERSIONS, MUSIC_HOST)))
+        self.assertEqual(deploy.services(HOST), deploy.SERVICES)
+        self.assertEqual(deploy.services(MUSIC_HOST), (*deploy.SERVICES, oh_units.MUSIC))
+        self.assertIn(oh_units.MUSIC, oh_units.CONTAINED)
+        self.assertEqual(oh_units.CONTAINERS[oh_units.MUSIC], "thermite-music")
+        self.assertEqual(deploy.render_units(VERSIONS, {**HOST, "music": None})[deploy.MUSIC_QUADLET].count(
+            "Volume="), 1, "music: alone runs it with no library")
+
+    def test_the_container_is_pinned_unprivileged_and_on_the_hosts_network(self):
+        text = self.text
+        self.assertIn("Image=ghcr.io/music-assistant/server@sha256:" + "3" * 64 + "\n", text)
+        self.assertNotIn(":2.10.12\n", text)
+        self.assertIn("Description=Music Assistant 2.10.12\n", text)
+        for line in ("ContainerName=thermite-music", "Network=host", "User=9001", "Group=9001",
+                     "NoNewPrivileges=true", "DropCapability=all", "PodmanArgs=--umask=0077",
+                     "PodmanArgs=--stop-timeout=30", "TimeoutStopSec=60", "Restart=always", "RestartSec=10",
+                     "TimeoutStartSec=900", "Slice=thermite.slice", "UMask=0077", "WantedBy=thermite.target",
+                     "PartOf=thermite.target", "PodmanArgs=--entrypoint=python3",
+                     "Environment=HOME=/data", "Environment=NO_COLOR=1", "Environment=TZ=America/Chicago",
+                     "Wants=thermite-native-boundary.service", "After=thermite-native-boundary.service",
+                     "ExecStartPre=/usr/bin/env nft -f /etc/thermite-native.nft"):
+            self.assertIn(line + "\n", text)
+        for absent in ("AddCapability", "HealthCmd", "PodmanArgs=--init", "Requires="):
+            self.assertNotIn(absent, text)
+
+    def test_its_state_is_private_and_the_libraries_read_only_and_never_relabelled(self):
+        self.assertIn("Volume=/srv/thermite/runtime/music:/data:Z\n", self.text)
+        self.assertIn("Volume=/mnt/music/flac:/media/flac:ro\n", self.text)
+        layout = deploy.state(MUSIC_HOST)
+        self.assertEqual(layout.music_directories(), [(0o700, [Path("/srv/thermite/runtime/music")])])
+        host = {**HOST, "music": {"libraries": {"mp3": "/srv/media/mp3", "flac": "/mnt/music/flac"}}}
+        volumes = [line for line in deploy.render_music_quadlet(VERSIONS, host).splitlines()
+                   if line.startswith("Volume=") and ":/media/" in line]
+        self.assertEqual(volumes, ["Volume=/mnt/music/flac:/media/flac:ro", "Volume=/srv/media/mp3:/media/mp3:ro"])
+
+    def test_it_starts_the_images_entrypoint_once_the_listeners_are_pinned(self):
+        line = next(line for line in self.text.splitlines() if line.startswith("Exec="))
+        words = systemd_words(line)
+        self.assertEqual(words[:3], ["-I", "-c", oh_music.SETTINGS])
+        self.assertEqual(words[3:], ["13627", "13628", "/usr/local/bin/entrypoint.sh", "--data-dir", "/data",
+                                     "--cache-dir", "/data/.cache"])
+        moved = deploy.render_music_quadlet(VERSIONS, {**HOST, "music": {"port": 14627, "stream_port": 14628}})
+        self.assertEqual(systemd_words(next(line for line in moved.splitlines() if line.startswith("Exec=")))[3:5],
+                         ["14627", "14628"])
+
+    def test_installed_means_its_quadlet_is_there(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            installed = {name: Path(tmp, Path(name).name) for name in deploy.INSTALLED}
+            self.assertFalse(deploy.music_installed(installed))
+            Path(tmp, "thermite-music.container").write_text("x\n")
+            self.assertTrue(deploy.music_installed(installed))
+
+
+class MusicSettings(unittest.TestCase):
+    """The program the container runs before Music Assistant, run here with
+    a temporary state and a stand-in for the image's entrypoint."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.data = Path(temporary.name)
+        self.settings = self.data / "settings.json"
+
+    def start(self, api=13627, streams=13628):
+        entrypoint = (sys.executable, "-c", "import sys; print('started', *sys.argv[1:])")
+        return subprocess.run([sys.executable, "-I", "-c", oh_music.SETTINGS, str(api), str(streams), *entrypoint,
+                               "--data-dir", str(self.data), "--cache-dir", str(self.data / ".cache")],
+                              capture_output=True, text=True, timeout=30)
+
+    def pinned(self, settings, api=13627, streams=13628):
+        self.assertEqual(settings["core"]["webserver"]["domain"], "webserver")
+        self.assertEqual(settings["core"]["streams"]["domain"], "streams")
+        self.assertEqual({key: settings["core"]["webserver"]["values"][key] for key in ("bind_ip", "bind_port")},
+                         {"bind_ip": "127.0.0.1", "bind_port": api})
+        self.assertEqual({key: settings["core"]["streams"]["values"][key] for key in ("bind_ip", "bind_port")},
+                         {"bind_ip": "0.0.0.0", "bind_port": streams})
+
+    def test_a_new_state_is_seeded_with_the_listeners_and_no_providers_of_its_own(self):
+        done = self.start()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout, f"started --data-dir {self.data} --cache-dir {self.data / '.cache'}\n")
+        settings = json.loads(self.settings.read_text())
+        self.assertEqual(settings, {
+            "core": {"webserver": {"domain": "webserver", "values": {"bind_ip": "127.0.0.1", "bind_port": 13627}},
+                     "streams": {"domain": "streams", "values": {"bind_ip": "0.0.0.0", "bind_port": 13628}}},
+            "default_providers_setup": list(oh_music.PROVIDERS)})
+        self.assertEqual(stat.S_IMODE(self.settings.stat().st_mode), 0o600)
+        self.assertEqual(sorted(path.name for path in self.data.iterdir()), ["settings.json"])
+
+    def test_later_starts_pin_only_the_listeners_and_keep_the_old_file_as_the_backup(self):
+        mine = {"server_id": "fixture", "providers": {"tidal--1": {"values": {"quality": "kept"}}},
+                "core": {"webserver": {"domain": "webserver", "values": {"bind_ip": "0.0.0.0", "bind_port": 8095,
+                                                                          "base_url": "kept"}},
+                         "metadata": {"domain": "metadata", "values": {"language": "en_US"}}}}
+        self.settings.write_text(json.dumps(mine))
+        done = self.start(14627, 14628)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        settings = json.loads(self.settings.read_text())
+        self.pinned(settings, 14627, 14628)
+        self.assertEqual(settings["core"]["webserver"]["values"]["base_url"], "kept")
+        self.assertEqual((settings["server_id"], settings["providers"], settings["core"]["metadata"]),
+                         (mine["server_id"], mine["providers"], mine["core"]["metadata"]))
+        self.assertNotIn("default_providers_setup", settings, "only a new state is seeded")
+        self.assertEqual(json.loads((self.data / "settings.json.backup").read_text()), mine)
+        # Nothing to change: nothing is written.
+        before = self.settings.stat()
+        (self.data / "settings.json.backup").unlink()
+        done = self.start(14627, 14628)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual((self.settings.stat().st_ino, self.settings.stat().st_mtime_ns),
+                         (before.st_ino, before.st_mtime_ns))
+        self.assertFalse((self.data / "settings.json.backup").exists())
+
+    def test_an_unreadable_file_falls_back_to_the_backup_as_music_assistant_does(self):
+        backup = {"server_id": "from-backup"}
+        (self.data / "settings.json.backup").write_text(json.dumps(backup))
+        for broken in ("{", "[]", None):
+            with self.subTest(settings=broken):
+                if broken is None:
+                    self.settings.unlink()
+                else:
+                    self.settings.write_text(broken)
+                done = self.start()
+                self.assertEqual(done.returncode, 0, done.stderr)
+                settings = json.loads(self.settings.read_text())
+                self.pinned(settings)
+                self.assertEqual(settings["server_id"], "from-backup")
+                self.assertNotIn("default_providers_setup", settings)
+                self.assertEqual(json.loads((self.data / "settings.json.backup").read_text()), backup)
+
+    def test_settings_neither_can_read_stop_the_start_untouched(self):
+        for files in ({"settings.json": "{"}, {"settings.json": "{", "settings.json.backup": "[1]"},
+                      {"settings.json.backup": "{"}, {"settings.json": '{"core": []}'},
+                      {"settings.json": '{"core": {"streams": {"values": 1}}}'}):
+            with self.subTest(files=files):
+                for path in self.data.iterdir():
+                    path.unlink()
+                for name, text in files.items():
+                    (self.data / name).write_text(text)
+                done = self.start()
+                self.assertEqual(done.returncode, 1)
+                self.assertNotIn("started", done.stdout)
+                self.assertIn(str(self.settings), done.stderr)
+                self.assertEqual({path.name: path.read_text() for path in self.data.iterdir()}, files)
+
+
+class MusicHealth(unittest.TestCase):
+    INFO = json.dumps({"server_id": "fixture", "server_version": "2.10.12", "status": "running"}).encode()
+
+    def health(self, table, snapshot="LISTEN 0 128 127.0.0.1:13627 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:13628 0.0.0.0:*\n"):
+        return deploy.music_health(MUSIC_HOST, lambda url: table.get(url, (None, b"")), lambda: snapshot)
+
+    def test_running_on_loopback_with_its_streams(self):
+        health = self.health({"http://127.0.0.1:13627/info": (200, self.INFO),
+                              "http://127.0.0.1:13628/info": (200, b"{}")})
+        self.assertTrue(health.ok)
+        self.assertEqual((health.status, health.version, health.addresses), ("running", "2.10.12", ("127.0.0.1",)))
+        self.assertEqual(health.describe(), "Music Assistant 2.10.12 http://127.0.0.1:13627 running; "
+                                            "streams http://127.0.0.1:13628 answer")
+
+    def test_listening_beyond_loopback_starting_or_silent_is_not_healthy(self):
+        answers = {"http://127.0.0.1:13627/info": (200, self.INFO), "http://127.0.0.1:13628/info": (200, b"{}")}
+        for snapshot in ("LISTEN 0 128 0.0.0.0:13627 0.0.0.0:*\n", "LISTEN 0 128 *:13627 *:*\n",
+                         "LISTEN 0 128 127.0.0.1:13627 0.0.0.0:*\nLISTEN 0 128 [::]:13627 [::]:*\n"):
+            with self.subTest(snapshot=snapshot):
+                health = self.health(answers, snapshot)
+                self.assertFalse(health.loopback or health.ok)
+                self.assertIn("its API listening beyond loopback", health.describe())
+        self.assertTrue(self.health(answers, "LISTEN 0 128 [::1]:13627 [::]:*\n"
+                                             "LISTEN 0 128 127.0.0.1%lo:13627 0.0.0.0:*\n").loopback)
+        self.assertIn("its listeners unreadable", self.health(answers, None).describe())
+        starting = {**answers, "http://127.0.0.1:13627/info": (200, self.INFO.replace(b"running", b"starting"))}
+        self.assertEqual(self.health(starting).status, "starting")
+        self.assertFalse(self.health(starting).ok)
+        silent = self.health({}, "")
+        self.assertFalse(silent.ok)
+        self.assertEqual(silent.describe(), "Music Assistant http://127.0.0.1:13627 not answering; "
+                                            "streams http://127.0.0.1:13628 not answering")
+
+    def test_listening_reads_only_the_ports_sockets(self):
+        snapshot = ("LISTEN 0 128 127.0.0.1:13627 0.0.0.0:*\nLISTEN 0 128 192.0.2.5:113627 0.0.0.0:*\n"
+                    "LISTEN 0 128 [::]:13628 [::]:*\n")
+        self.assertEqual(deploy.listening(snapshot, 13627), ("127.0.0.1",))
+        self.assertEqual(deploy.listening(snapshot, 13628), ("::",))
+        self.assertEqual(deploy.listening("", 13627), ())
 
 
 class MetricsHealth(unittest.TestCase):

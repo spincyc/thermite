@@ -405,6 +405,9 @@ class System:
     def metrics_health(self, host: dict, address: str | None) -> deploy.MetricsHealth:
         return deploy.metrics_health(host, address)
 
+    def music_health(self, host: dict) -> deploy.MusicHealth:
+        return deploy.music_health(host)
+
     def interactive(self) -> bool:
         return not UNATTENDED.get() and sys.stdin.isatty()
 

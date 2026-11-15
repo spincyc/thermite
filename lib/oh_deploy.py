@@ -22,6 +22,7 @@ import datetime
 import getpass
 import hashlib
 import io
+import ipaddress
 import json
 import os
 import re
@@ -58,9 +59,13 @@ ATV_RESTART_SERVICE = f"deploy/{oh_units.ATV_RESTART_SERVICE}"
 METRICS_QUADLETS = {unit: f"deploy/{unit.removesuffix('.service')}.container" for unit in metrics.SERVICE_UNITS}
 METRICS_RESTART_PATH = f"deploy/{oh_units.METRICS_RESTART_PATH}"
 METRICS_RESTART_SERVICE = f"deploy/{oh_units.METRICS_RESTART_SERVICE}"
+MUSIC_QUADLET = f"deploy/{oh_units.CONTAINERS[oh_units.MUSIC]}.container"
 TARGET = f"deploy/{oh_units.TARGET}"
 SLICE = f"deploy/{oh_units.SLICE}"
 CONTAINER_DROPINS = {unit: f"deploy/{unit}.d/50-container-lifecycle.conf" for unit in oh_units.CONTAINED}
+#: Music Assistant's unit and drop-in: generated and installed only for a
+#: host with music: (host_units).
+MUSIC_UNITS = (MUSIC_QUADLET, CONTAINER_DROPINS[oh_units.MUSIC])
 #: What thermite-metrics-restart.service restarts: the services a deploy
 #: cannot reload over HTTP.
 METRICS_RESTARTED = (oh_units.EXPORTER, oh_units.GRAFANA, oh_units.NOTIFICATIONS, oh_units.NTFY)
@@ -73,6 +78,7 @@ INSTALLED = {
     **{name: Path("/etc/containers/systemd") / Path(name).name for name in METRICS_QUADLETS.values()},
     METRICS_RESTART_PATH: Path("/etc/systemd/system") / oh_units.METRICS_RESTART_PATH,
     METRICS_RESTART_SERVICE: Path("/etc/systemd/system") / oh_units.METRICS_RESTART_SERVICE,
+    MUSIC_QUADLET: Path("/etc/containers/systemd") / Path(MUSIC_QUADLET).name,
     TARGET: Path("/etc/systemd/system") / oh_units.TARGET,
     SLICE: Path("/etc/systemd/system") / oh_units.SLICE,
     **{source: Path("/etc/systemd/system") / Path(source).relative_to("deploy")
@@ -82,6 +88,20 @@ INSTALLED = {
 METRICS_UNITS = (*METRICS_QUADLETS.values(), METRICS_RESTART_PATH, METRICS_RESTART_SERVICE)
 SERVICES = (oh_units.RUNTIME, oh_units.ATV, oh_units.ATV_RESTART_PATH, *metrics.SERVICE_UNITS,
             oh_units.METRICS_RESTART_PATH, oh_units.TARGET)
+
+
+def host_units(host: dict) -> dict[str, Path]:
+    """INSTALLED as this host has it: without MUSIC_UNITS unless it has music:."""
+    if music.settings(host) is not None:
+        return INSTALLED
+    return {source: target for source, target in INSTALLED.items() if source not in MUSIC_UNITS}
+
+
+def services(host: dict) -> tuple[str, ...]:
+    """SERVICES as this host has them: with Music Assistant when it has music:."""
+    return (*SERVICES, oh_units.MUSIC) if music.settings(host) is not None else SERVICES
+
+
 #: The area's files the Apple TV helper's container runs.
 ATV_APP = ("bin/thermite", "lib/oh_cli/__init__.py", "lib/oh_cli/apple_tv.py", "lib/oh_atv.py",
            "lib/requirements-pyatv.txt", "lib/oh_paths.py", "lib/oh_release.py", "lib/oh_ports.py", "lib/oh_service.py",
@@ -349,6 +369,13 @@ class State:
         settings; thermite-metrics-restart.path watches it."""
         return self.records / "metrics-restart"
 
+    @property
+    def music(self) -> Path:
+        """Music Assistant's own state, its /data: settings, library database,
+        credentials (TIDAL's, and the key that encrypts them) and caches;
+        private to the service."""
+        return self.root / music.STATE
+
     def directories(self) -> list[tuple[int, list[Path]]]:
         """Service-owned directories; operators write the shared ones."""
         return [
@@ -370,6 +397,10 @@ class State:
                                self.root / metrics.STATE_NTFY]),
             (SECRETS_MODE, [self.monitoring_secrets]),
         ]
+
+    def music_directories(self) -> list[tuple[int, list[Path]]]:
+        """(mode, directories) Music Assistant needs, on a host with music:."""
+        return [(SECRETS_MODE, [self.music])]
 
     def with_metrics(self) -> bool:
         """Whether thermite install or upgrade has made the directories a
@@ -818,10 +849,12 @@ _PLAIN_WORD = re.compile(r"^[A-Za-z0-9_@+=:,./-]+$")
 
 def exec_word(word: str) -> str:
     """One argument of a quadlet's Exec=, which systemd splits and unescapes
-    as it does ExecStart=; % would be a specifier and $ a variable."""
+    as it does ExecStart=; % would be a specifier and $ a variable, and a
+    line break, written as \\n, stays on the unit's one line."""
     if _PLAIN_WORD.match(word):
         return word
-    escaped = word.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$")
+    escaped = (word.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+               .replace("%", "%%").replace("$", "$$"))
     return f'"{escaped}"'
 
 
@@ -961,6 +994,84 @@ def render_metrics_restart_service(host: dict) -> str:
     return "\n".join(lines)
 
 
+#: How long Music Assistant has to stop: it closes its library database and
+#: writes its settings first.
+MUSIC_STOP_SECONDS = 30
+
+
+def render_music_quadlet(versions: dict, host: dict) -> str:
+    """Music Assistant (oh_music), for a host with music:."""
+    oh_service.validate_identity(host["uid"], host["gid"])
+    libraries = music.settings(host)["libraries"]
+    ports = oh_ports.effective(host)
+    version = versions["music_assistant"]["version"]
+    words = ("-I", "-c", music.SETTINGS, str(ports["music"]), str(ports["music_stream"]), *music.ENTRYPOINT)
+    lines = [
+        f"# Music Assistant {version}: TIDAL and the music libraries on the house's speakers",
+        "# (lib/oh_music, docs/music.md).",
+        *HEADER,
+        "[Unit]",
+        f"Description=Music Assistant {version}",
+        f"PartOf={oh_units.TARGET}",
+        "Wants=network-online.target",
+        "After=network-online.target",
+        "# Wants=, as openHAB's: ExecStartPre below loads the same rules.",
+        "Wants=thermite-native-boundary.service",
+        "After=thermite-native-boundary.service",
+        "",
+        "[Container]",
+        f"ContainerName={oh_units.CONTAINERS[oh_units.MUSIC]}",
+        f"Image={image(versions, 'music_assistant')}",
+        "# Speakers are found by mDNS and SSDP and fetch their audio from it. Its",
+        f"# API listens on 127.0.0.1:{ports['music']}, for the gateway alone, behind the",
+        f"# native boundary too; the speakers fetch the streams from port {ports['music_stream']}.",
+        "Network=host",
+        f"User={host['uid']}",
+        f"Group={host['gid']}",
+        "# No capability: AirPlay's PTP timing (ports 319 and 320) falls back to NTP.",
+        "NoNewPrivileges=true",
+        "DropCapability=all",
+        # Avoid crun/AppArmor profile stacking under no-new-privileges.
+        "PodmanArgs=--runtime=runc",
+        "PodmanArgs=--replace=false",
+        "PodmanArgs=--cidfile=%t/%N.cid",
+        "# Its state holds credentials: TIDAL's tokens and the key that encrypts them.",
+        "PodmanArgs=--umask=0077",
+        f"PodmanArgs=--stop-timeout={MUSIC_STOP_SECONDS}",
+        "# Quadlet 4.9 (Ubuntu 24.04) predates the Entrypoint key. Python pins the",
+        "# listeners in settings.json, then runs the image's own entrypoint, whose",
+        "# Music Assistant handles SIGTERM itself.",
+        "PodmanArgs=--entrypoint=python3",
+        f"Volume={state(host).music}:{music.DATA}:Z",
+        *(["# The libraries, read-only and never relabelled: without :z or :Z podman",
+           "# leaves each source's SELinux label as it is. Under SELinux a container",
+           "# reads only what is labelled for it (container_file_t, or a share's",
+           "# context= mount option); the owner labels or mounts them so."] if libraries else []),
+        *(f"Volume={path}:{music.MEDIA}/{name}:ro" for name, path in sorted(libraries.items())),
+        f"Environment=HOME={music.DATA}",
+        "Environment=NO_COLOR=1",
+        f"Environment=TZ={host['timezone']}",
+        "Exec=" + " ".join(exec_word(word) for word in words),
+        "",
+        "[Service]",
+        "# Reapply the native boundary, which closes the API's port to the LAN, before every start.",
+        "ExecStartPre=/usr/bin/env nft -f /etc/thermite-native.nft",
+        f"Slice={oh_units.SLICE}",
+        "UMask=0077",
+        "Restart=always",
+        "RestartSec=10",
+        "# The install pulls the image (about 760 MB) before it starts the unit;",
+        "# a start that pulls it again still fits.",
+        "TimeoutStartSec=900",
+        f"TimeoutStopSec={MUSIC_STOP_SECONDS * 2}",
+        "",
+        "[Install]",
+        f"WantedBy={oh_units.TARGET}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def render_target() -> str:
     """One boot entry point; members declare their own target membership."""
     return "\n".join([
@@ -1019,7 +1130,10 @@ def render_units(versions: dict, host: dict) -> dict[str, str]:
         units[METRICS_QUADLETS[service.unit]] = render_metrics_quadlet(versions, host, service)
     units[METRICS_RESTART_PATH] = render_metrics_restart_path(host)
     units[METRICS_RESTART_SERVICE] = render_metrics_restart_service(host)
-    units.update({source: render_container_dropin() for source in CONTAINER_DROPINS.values()})
+    if music.settings(host) is not None:
+        units[MUSIC_QUADLET] = render_music_quadlet(versions, host)
+    wanted = host_units(host)
+    units.update({source: render_container_dropin() for source in CONTAINER_DROPINS.values() if source in wanted})
     return units
 
 
@@ -1062,9 +1176,11 @@ def unit_differences(area: Path, commit: str, installed: dict[str, Path] | None 
 
 def installed_units(area: Path, installed: dict[str, Path] | None = None, *, rev: str = "HEAD") -> list[tuple[str, Path, str]]:
     """(area path, installed path, "current" | "differs" | "missing" |
-    "unreadable") for each unit: whether the owner has installed the one
-    the selected committed schema-2 site derives. Legacy checkouts retain
-    comparison with their local generated units."""
+    "unreadable" | "unwanted") for each unit: whether the owner has
+    installed the one the selected committed schema-2 site derives. Legacy
+    checkouts retain comparison with their local generated units. One of
+    MUSIC_UNITS the site does not derive is left out, or "unwanted" while
+    it is still installed."""
     from oh_paths import SITE_FILE
     files = None
     try:
@@ -1085,6 +1201,11 @@ def installed_units(area: Path, installed: dict[str, Path] | None = None, *, rev
                 files = prepared_files(area, commit, Path(area) / "var")[0]
     out = []
     for name, target in (installed or INSTALLED).items():
+        if name in MUSIC_UNITS and (name not in files if files is not None else not (Path(area) / name).exists()):
+            # A host without music: has none; one still installed is left over.
+            if Path(target).exists():
+                out.append((name, Path(target), "unwanted"))
+            continue
         try:
             if files is not None and name not in files:
                 raise FileNotFoundError
@@ -2281,6 +2402,92 @@ def collector_success(get, prometheus: str, collector: str) -> bool | None:
     except (ValueError, KeyError, TypeError, IndexError):
         values = []
     return all(value == "1" for value in values) if values else None
+
+
+def music_installed(installed: dict[str, Path] | None = None) -> bool:
+    """Whether Music Assistant's quadlet is installed on this host."""
+    return Path((installed or INSTALLED)[MUSIC_QUADLET]).exists()
+
+
+def tcp_listeners() -> str | None:
+    """This host's listening TCP sockets, as `ss -H -ltn` lists them; None
+    when it cannot."""
+    if not shutil.which("ss"):
+        return None
+    oh_cli.trace_run(["ss", "-H", "-ltn"])
+    out = subprocess.run(["ss", "-H", "-ltn"], capture_output=True, text=True, check=False)
+    return out.stdout if out.returncode == 0 else None
+
+
+def listening(snapshot: str, port: int) -> tuple[str, ...]:
+    """The addresses an `ss -H -ltn` snapshot's sockets listen on `port` at."""
+    found = []
+    for line in snapshot.splitlines():
+        fields = line.split()
+        address, separator, number = fields[3].rpartition(":") if len(fields) > 3 else ("", "", "")
+        if separator and number == str(port):
+            # [::1], or 127.0.0.1%lo for one bound to an interface.
+            found.append(address.strip("[]").split("%", 1)[0])
+    return tuple(found)
+
+
+@dataclasses.dataclass(frozen=True)
+class MusicHealth:
+    """What Music Assistant answers: its API's /info (status None when
+    nothing answers), the addresses the API listens at (None when they
+    cannot be read), and whether its stream server, which the speakers
+    reach, answers its own /info."""
+
+    api: str
+    status: str | None
+    version: str | None
+    addresses: tuple[str, ...] | None
+    streams: str
+    streams_status: int | None
+
+    @property
+    def loopback(self) -> bool:
+        """Whether the API listens, and on loopback alone."""
+        try:
+            return bool(self.addresses) and all(ipaddress.ip_address(address).is_loopback
+                                                for address in self.addresses)
+        except ValueError:  # *, every address
+            return False
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "running" and self.loopback and self.streams_status == 200
+
+    def describe(self) -> str:
+        name = f"Music Assistant {self.version}" if self.version else "Music Assistant"
+        api = f"{name} {self.api} " + ("not answering" if self.status is None else self.status)
+        if self.addresses is None:
+            api += ", its listeners unreadable"
+        elif self.addresses and not self.loopback:
+            api += f", its API listening beyond loopback ({', '.join(self.addresses)})"
+        streams = f"streams {self.streams} " + ("answer" if self.streams_status == 200 else
+                                                "not answering" if self.streams_status is None else
+                                                f"answer HTTP {self.streams_status}")
+        return f"{api}; {streams}"
+
+
+def music_health(host: dict, get=http_get, listeners=tcp_listeners) -> MusicHealth:
+    ports = oh_ports.effective(host)
+    api = f"http://127.0.0.1:{ports['music']}"
+    code, body = get(f"{api}/info")
+    try:
+        info = json.loads(body) if code == 200 else None
+    except ValueError:
+        info = None
+    status = (None if code is None else f"answering HTTP {code}" if code != 200 else
+              str(info["status"]) if isinstance(info, dict) and isinstance(info.get("status"), str) else
+              "answering without its status")
+    version = info.get("server_version") if isinstance(info, dict) and isinstance(info.get("server_version"), str) else None
+    snapshot = listeners()
+    streams = f"http://127.0.0.1:{ports['music_stream']}"
+    code, _ = get(f"{streams}/info")
+    return MusicHealth(api, status, version, None if snapshot is None else listening(snapshot, ports["music"]),
+                       streams, code)
 
 
 def service_states(services: Iterable[str] = SERVICES) -> dict[str, str]:

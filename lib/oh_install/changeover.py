@@ -32,6 +32,7 @@ import shutil
 from typing import Callable
 
 import oh_cli
+import oh_music as music
 import oh_units
 from oh_install import access, bridge, engine, manifest, ownership, runner, steps
 from oh_install.ingress import NativeIngress, NativeIngressPrerequisites
@@ -565,16 +566,17 @@ def switching(context: steps.Context, transaction: str | None, how: str = "upgra
     native = steps.NativeDeadline.of(context)
     deployment = steps.Deploy(context)
     deployment.how = how
-    return [steps.StateDirectories(context), steps.MetricsDirectories(context), steps.Units(context),
-            steps.NodeConfinement(context), steps.NativePreparation(context), NativeIngress(context), deployment,
-            steps.Services(context, restart_runtime=context.restart_runtime), steps.Answers(context, native),
+    return [steps.StateDirectories(context), steps.MetricsDirectories(context), steps.MusicDirectories(context),
+            steps.Units(context), steps.NodeConfinement(context), steps.NativePreparation(context),
+            NativeIngress(context), deployment, steps.Services(context, restart_runtime=context.restart_runtime),
+            steps.MusicServices(context), steps.Answers(context, native),
             steps.Token(context, native), *steps.gateway_steps(context, native, transaction=transaction),
             steps.MetricsToken(context), steps.GrafanaPassword(context), steps.MetricsServices(context),
             steps.StartTarget(context), steps.NativeReady(context, native)]
 
 
 def verification(context: steps.Context) -> list[Step]:
-    return [Authorize(), steps.MetricsAnswer(context), steps.Health(context)]
+    return [Authorize(), steps.MetricsAnswer(context), steps.MusicAnswer(context), steps.Health(context)]
 
 
 def operator_files(context: steps.Context) -> list[Path]:
@@ -611,7 +613,9 @@ def install_work(context: steps.Context, id: str | None, *, kind: str = "install
         work.confirm = Confirm(
             "Confirm the clean install", layout.root,
             f"This clean install deletes the state under {layout.root} once it commits: accounts, pairings, "
-            "credentials, the deploy's records, monitoring data and manually installed binding repairs; it "
+            "credentials, the deploy's records, monitoring data, "
+            + ("Music Assistant's settings and library, " if music.settings(context.host) is not None else "")
+            + "and manually installed binding repairs; it "
             f"also clears {context.token_file}, {context.grafana_password_file} and "
             f"{context.runtime_credentials_file}. Logs, the deploy history and old backups stay; so do the "
             "site's configuration and the gateway's identity and TLS state. Until the commit a rollback puts "
@@ -657,7 +661,8 @@ def unchanged(context: steps.Context, system: System, installed: dict | None) ->
     target = system.unit(oh_units.TARGET)
     if target.active != "active" or target.enabled != "enabled":
         return False
-    return not any(any(step.plan(system)) for step in (steps.Services(context), steps.MetricsServices(context)))
+    return not any(any(step.plan(system)) for step in (steps.Services(context), steps.MetricsServices(context),
+                                                       steps.MusicServices(context)))
 
 
 def previous_application(installed: dict | None, system: System) -> str | None:

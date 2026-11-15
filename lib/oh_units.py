@@ -10,6 +10,8 @@ GRAFANA = "thermite-grafana.service"
 ALERTMANAGER = "thermite-alertmanager.service"
 NTFY = "thermite-ntfy.service"
 NOTIFICATIONS = "thermite-notifications.service"
+#: Music Assistant, on a host whose instance/host.yaml has music: (oh_music).
+MUSIC = "thermite-music.service"
 
 TARGET = "thermite.target"
 SLICE = "thermite.slice"
@@ -28,7 +30,7 @@ METRICS = (PROMETHEUS, NODE_EXPORTER, BLACKBOX, EXPORTER, GRAFANA,
            ALERTMANAGER, NTFY, NOTIFICATIONS)
 ACCESS_UNITS = (ACCESS, ACCESS_WORKER, ACCESS_CALLBACKS)
 #: The units that run in containers (Quadlet).
-CONTAINED = (RUNTIME, ATV, *METRICS)
+CONTAINED = (RUNTIME, ATV, *METRICS, MUSIC)
 #: Every long-running Thermite service a host may have.
 DAEMONS = (*CONTAINED, *ACCESS_UNITS)
 RESTART_PATHS = (ATV_RESTART_PATH, METRICS_RESTART_PATH)

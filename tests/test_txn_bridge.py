@@ -33,7 +33,7 @@ def installed_world(ctx, *, skip=()):
     """Today's installation: path -> (kind, bytes or link target, mode, uid).
     The units are the ones this context renders."""
     world = {}
-    for source, target in deploy.INSTALLED.items():
+    for source, target in deploy.host_units(ctx.host).items():
         world[target] = ("file", ctx.unit(source), 0o644, 0)
     for path in (ingress.UNIT_FILE, ingress.RULE_FILE, oh_apparmor.CONFIG, oh_apparmor.POLICY, oh_apparmor.LICENSE,
                  *(manifest.UNITS / name for name in ("thermite-access.service", "thermite-access-worker.service"))):

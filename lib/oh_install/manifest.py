@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import oh_deploy as deploy
 import oh_apparmor
 import oh_metrics as metrics
+import oh_music as music
 import oh_units
 from oh_install import engine
 
@@ -165,7 +166,8 @@ def tools(system: System) -> dict:
 
 def image_names(context: Context) -> list[str]:
     """The versions.json names of every image this version runs."""
-    return list(dict.fromkeys([*IMAGES, *(service.image for service in metrics.services(context.host))]))
+    return list(dict.fromkeys([*IMAGES, *(service.image for service in metrics.services(context.host)),
+                               *(["music_assistant"] if music.settings(context.host) is not None else [])]))
 
 
 def pins(context: Context) -> dict[str, str]:

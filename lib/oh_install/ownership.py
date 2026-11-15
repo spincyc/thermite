@@ -44,7 +44,7 @@ def sha256(data: bytes) -> str:
 def manifest_bytes(context: Context) -> bytes:
     """The manifest for the units this context installs."""
     release = context.application["digest"] if getattr(context, "application", None) else None
-    units = {str(target): sha256(context.unit(source)) for source, target in sorted(deploy.INSTALLED.items())}
+    units = {str(target): sha256(context.unit(source)) for source, target in sorted(deploy.host_units(context.host).items())}
     return (json.dumps({"version": MANIFEST_VERSION, "release": release, "units": units},
                        sort_keys=True, indent=2) + "\n").encode()
 
@@ -159,11 +159,15 @@ def inspect(context: Context, system: System) -> Owned:
             problems.append(f"cannot prove Thermite ownership of {path}; preserve it and resolve the collision")
             continue
         digest = hashes[str(path)] = sha256(file.content)
-        if manifest.get(str(path)) != digest and file.content != templates[source].encode():
+        # A unit this host no longer renders (music) is proven by the record
+        # or an earlier build alone.
+        template = templates[source].encode() if source in templates else None
+        if manifest.get(str(path)) != digest and file.content != template:
             if builds is None:
                 builds = previous_builds(context)
             signature = _signature(file.content)
-            if digest not in builds.get(source, ()) and (signature is None or signature != _signature(templates[source].encode())):
+            if digest not in builds.get(source, ()) and (signature is None or template is None
+                                                         or signature != _signature(template)):
                 problems.append(f"cannot prove Thermite ownership of {path}; it matches neither {MANIFEST}, "
                                 "this site's generated unit nor an earlier build; preserve it and resolve the collision")
                 continue

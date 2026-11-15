@@ -54,9 +54,11 @@ PRIVATE_CACHE_PROGRAM = re.compile(
     r"userdata/\.cache/org\.graalvm\.polyglot/engine/libtruffleattach/[0-9a-f]{64}/bin/libtruffleattach\.so\Z")
 
 SHARED = ("conf", "metrics", "atv/app", "exporter/app", "deploy")
-PRIVATE = ("secrets", "atv/secrets", "monitoring/secrets", "userdata")
+#: Music Assistant's state (oh_music.STATE) is private as a whole: TIDAL's
+#: tokens and the key that encrypts them are in its settings.
+PRIVATE = ("secrets", "atv/secrets", "monitoring/secrets", "userdata", "music")
 NATIVE_ROOTS = ("conf", "userdata", LOGS, "addons", "atv", "deploy", "secrets", "metrics", "monitoring", "exporter",
-                "backups")
+                "backups", "music")
 #: The openHAB container's own trees, its volumes. A change that needs only
 #: openHAB's offline preparation repairs just these: the gateway, the Apple TV
 #: helper and monitoring write their own stores.

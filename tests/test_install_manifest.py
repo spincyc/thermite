@@ -19,14 +19,14 @@ import oh_units  # noqa: E402
 from oh_install import changeover, engine, ingress, manifest, ownership, steps  # noqa: E402
 from oh_install.model import Step  # noqa: E402
 from oh_install.system import Stat, System  # noqa: E402
-from tests.test_deploy import HOST, VERSIONS  # noqa: E402
+from tests.test_deploy import HOST, MUSIC_HOST, VERSIONS  # noqa: E402
 
 ROOT = Path("/srv/thermite-fixture")
 UNITS = Path("/etc/systemd/system")
 
 
-def context(root=ROOT):
-    host = {**HOST, "root": str(root)}
+def context(root=ROOT, base=HOST):
+    host = {**base, "root": str(root)}
     prepared = {name: deploy.Blob(text.encode()) for name, text in deploy.render_units(VERSIONS, host).items()}
     prepared["conf/services/addons.cfg"] = deploy.Blob(b"binding = http\n")
     return steps.Context(Path("/home/owner/fixture-site"), VERSIONS, host, "b" * 40, "c" * 64, "house",
@@ -40,8 +40,8 @@ def system(*, apparmor=True, present=()):
     return found
 
 
-def declared(apparmor=True, present=()):
-    ctx = context()
+def declared(apparmor=True, present=(), host=HOST):
+    ctx = context(base=host)
     return {item.path: item for item in manifest.desired(changeover.switching(ctx, None),
                                                          system(apparmor=apparmor, present=present), ROOT)}
 
@@ -49,7 +49,7 @@ def declared(apparmor=True, present=()):
 class Inventory(unittest.TestCase):
     def test_every_installed_unit_drop_in_and_wants_link_is_declared(self):
         items = declared()
-        for target in deploy.INSTALLED.values():
+        for target in deploy.host_units(HOST).values():
             with self.subTest(target=target):
                 self.assertEqual(items[target].cls, "unit")
         self.assertEqual(items[Path("/etc/systemd/system/thermite-openhab.service.d/50-container-lifecycle.conf")].unit,
@@ -91,6 +91,24 @@ class Inventory(unittest.TestCase):
         })
         prometheus = declared()[runtime / "monitoring/prometheus"]
         self.assertEqual((prometheus.image, prometheus.value), ("prometheus", VERSIONS["prometheus"]["image"]["digest"]))
+
+    def test_music_is_its_unit_and_its_state_copied_aside_when_its_image_changes(self):
+        music, state = deploy.INSTALLED[deploy.MUSIC_QUADLET], ROOT / "runtime/music"
+        items = declared(host=MUSIC_HOST)
+        self.assertEqual({path: items[path].cls for path in deploy.INSTALLED.values()},
+                         {path: "unit" for path in deploy.INSTALLED.values()})
+        self.assertEqual(items[music].unit, oh_units.MUSIC)
+        self.assertNotIn(UNITS / "thermite.target.wants" / oh_units.MUSIC, items, "its generator enables a quadlet")
+        self.assertEqual((items[state].cls, items[state].image, items[state].value),
+                         ("shared-pinned", "music_assistant", VERSIONS["music_assistant"]["image"]["digest"]))
+        self.assertIn("music_assistant", manifest.pins(context(base=MUSIC_HOST)))
+        without = declared()
+        for path in (*(deploy.INSTALLED[source] for source in deploy.MUSIC_UNITS), state):
+            self.assertNotIn(path, without)
+        self.assertNotIn("music_assistant", manifest.pins(context()))
+        # Once music: goes, its state stays where it is, never deleted.
+        self.assertEqual(declared(present=(state,))[state].cls, "shared")
+        engine.check_items([item.to_json() for item in declared(host=MUSIC_HOST).values()], str(ROOT), recorded=False)
 
     def test_the_callback_relay_is_declared_once_its_map_exists(self):
         relay = UNITS / oh_units.ACCESS_CALLBACKS

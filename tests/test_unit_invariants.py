@@ -17,7 +17,7 @@ import oh_deploy as deploy  # noqa: E402
 import oh_units  # noqa: E402
 from oh_access import staging  # noqa: E402
 from oh_install import ingress  # noqa: E402
-from tests.test_deploy import HOST, VERSIONS  # noqa: E402
+from tests.test_deploy import MUSIC_HOST, VERSIONS  # noqa: E402
 
 TARGET, SLICE = oh_units.TARGET, oh_units.SLICE
 #: Directives that make systemd start a unit along with another.
@@ -41,9 +41,10 @@ def directives(text: str) -> dict[tuple[str, str], list[str]]:
 
 
 def rendered() -> dict[str, str]:
-    """{unit name: text} of every unit Thermite renders and installs."""
+    """{unit name: text} of every unit Thermite renders and installs, on a
+    host with all of them."""
     units = {}
-    for name, text in deploy.render_units(VERSIONS, HOST).items():
+    for name, text in deploy.render_units(VERSIONS, MUSIC_HOST).items():
         if name in deploy.CONTAINER_DROPINS.values():
             continue
         unit = Path(name).name
@@ -121,7 +122,7 @@ class Membership(unittest.TestCase):
         self.assertNotIn(("Service", "ExecStop"), found)
 
     def test_dropins_change_how_a_member_stops_never_its_membership(self):
-        for name, text in deploy.render_units(VERSIONS, HOST).items():
+        for name, text in deploy.render_units(VERSIONS, MUSIC_HOST).items():
             if name in deploy.CONTAINER_DROPINS.values():
                 with self.subTest(dropin=name):
                     self.assertEqual({section for section, _ in directives(text)}, {"Service"})
