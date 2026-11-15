@@ -68,9 +68,9 @@ DEFAULT_PAGE = 100
 OFFSET = 100000
 #: Seconds the gateway waits for a group to show its members after it asks.
 GROUP_SETTLE = 3.0
-#: Times a command takes its rooms' locks again when a group changed while
-#: it waited for them.
-REPLANS = 3
+#: Times at most a command takes its rooms' locks: again each time a group
+#: changed while it waited for them to reach another speaker.
+LOCK_ATTEMPTS = 3
 #: Player types that are a speaker of their own (not a group or protocol player).
 PLAYER_TYPES = ("player", "stereo_pair")
 STATES = ("playing", "paused", "idle")
@@ -494,7 +494,7 @@ class Music:
         while the command waits. When that plan reaches a speaker the locks
         do not cover, they are taken again for both."""
         involved = set(plan(self.players())[0])
-        for _ in range(REPLANS):
+        for _ in range(LOCK_ATTEMPTS):
             rooms = {}
             for ident in involved:
                 for room, role in self.spec["speakers"][ident]["rooms"].items():
