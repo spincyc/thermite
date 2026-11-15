@@ -173,8 +173,10 @@ class Sim:
     heartbeat: seconds between its websocket pings. A test makes it fail:
     failing counts the next commands of a name to answer a bare 500,
     refusing the next authenticated API requests to answer 401, as Music
-    Assistant does when its authentication fails inside, and losing the
-    next answers to a path (/setup): it acts, then drops the connection."""
+    Assistant does when its authentication fails inside, limiting the next
+    logins to answer 401 whatever the password, as its rate limiter does
+    after failed ones, and losing the next answers to a path (/setup): it
+    acts, then drops the connection."""
 
     def __init__(self, speakers=(), *, preloaded=("chromecast", "dlna", "smart_fades"), heartbeat=25.0):
         self.lock = threading.RLock()
@@ -193,6 +195,7 @@ class Sim:
         self.calls = []
         self.failing = collections.Counter()
         self.refusing = 0
+        self.limiting = 0
         self.losing = collections.Counter()
         self.events = []
         self.speakers = list(speakers)
@@ -691,7 +694,9 @@ class Sim:
     def login(self, username, password):
         """POST /auth/login: a session token for the user's password, or None."""
         with self.lock:
-            if self.users.get(username) != password:
+            limited = self.limiting > 0
+            self.limiting -= limited
+            if limited or self.users.get(username) != password:
                 return None
             return self._token(username, "login", long_lived=False)
 
@@ -739,6 +744,8 @@ class Sim:
                     if entry["user_id"] == user]
         if command == "auth/token/revoke":
             return self.revoke(args["token_id"])
+        if command == "auth/logout":
+            return self.revoke(self.tokens[token]["token_id"])
         if command == "config/onboard_complete":
             self.onboard_done = True
             return None

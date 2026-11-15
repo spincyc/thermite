@@ -6,29 +6,27 @@ process, holds that claim; the gateway only reads the token it stores.
 
 Claim. A fresh Music Assistant has no user. Once it reports running the
 worker stores a random password in TOKEN_FILE, in the gateway's private
-state, then creates Music Assistant's first admin, `thermite`, with it, and
-stores the setup session it is answered with beside it: a pending claim,
-which the worker resumes from on its next pass however this one ends. A
-setup whose answer was lost left a user thermite has the password of, so a
-server with a user is signed in to with a pending password before it is
-called someone else's. With the session the worker mints a long-lived token
-(Music Assistant's live a year), which replaces the session and the
-password in the file, and revokes every other token of the user. Within
-RENEW_DAYS of a token's end the worker mints the next, stores it, then
-revokes the rest.
+state, then creates Music Assistant's first admin, `thermite`, with it.
+With the session it is answered with the worker mints a long-lived token
+(Music Assistant's live a year), stores it beside the password, and
+revokes every other token of the user, the session included. The password
+stays: whenever Music Assistant refuses the stored token (it was revoked,
+or Music Assistant's state was reset), or there is none yet (the answer to
+the setup was lost), the worker signs in with it, or creates the user
+again on a server with none, and mints the next token. Within RENEW_DAYS of
+a token's end the worker mints the next, stores it, then revokes the rest.
+A server that has a user when thermite has no password stored is someone
+else's (music_unclaimed) until the owner resets Music Assistant: stops it,
+deletes its state, starts it.
 
-A stored token or session is never given up because Music Assistant
-refuses it: Music Assistant answers 401 whenever its authentication fails
-inside, as it may while it starts, stops or upgrades. The file keeps the
-token and counts the passes in a row that reached Music Assistant and were
-refused; each pass tries it again, and the first that works clears the
-count. A refused pass also claims the server afresh should it have no user,
-and signs in with a pending claim's password. A server with no user (its
-state was deleted) answers 503, and is claimed afresh. Only after REFUSALS
-refused passes, a day's, does the gateway call the server someone else's
-(music_unclaimed, problem()), and the worker still tries; a server that had
-a user before thermite ever claimed it is someone else's at once, until
-the owner resets Music Assistant: stops it, deletes its state, starts it.
+The password is never given up because Music Assistant refuses it: it
+answers 401 alike to a wrong password, a disabled user and a login it rate
+limits after failed ones (REFUSALS). The file counts the passes in a
+row that reached Music Assistant and had the password refused, up to
+REFUSALS, a day's; each pass tries again, and the first that signs in
+clears the count. Only once the count is full does the gateway call the
+server someone else's (music_unclaimed, problem()), and the worker still
+tries.
 
 Reconcile, idempotently, after a claim, whenever Music Assistant's server
 ID changes (its state was reset) and every EVERY seconds, whether the last
@@ -88,9 +86,11 @@ UNWANTED = ("chromecast", "dlna", "heos", "bluesound", "party", "smart_fades", "
 #: changed.
 POLL = 30
 EVERY = 15 * 60
-#: Passes in a row that reach Music Assistant and are refused, a day's,
-#: after which a token is no longer thermite's. Passes are counted, not
-#: time: Music Assistant down, or the clock stepped, adds none.
+#: Passes in a row whose sign-in Music Assistant refused, a day's, after
+#: which the server is no longer thermite's. Passes are counted, not time:
+#: Music Assistant down, or the clock stepped, adds none. Music Assistant
+#: blocks a username's logins for 30 seconds after 3 failures in 30 minutes,
+#: longer after more, so one refusal alone says little.
 REFUSALS = 24 * 3600 // POLL
 #: The problem a stored claim records when the server is someone else's,
 #: and what read_claim() answers for a claim file it cannot trust.
@@ -127,13 +127,13 @@ def secret(value):
 
 
 def read_claim(state):
-    """The stored claim: {"token", "issued_at", "expires_at"} once claimed;
-    while a claim is pending, {"password"} from before Music Assistant is
-    asked for its user, then {"session", "password"}; a token or session
-    with "refusals", the passes it was refused in a row; or {"problem":
-    UNCLAIMED}. None when there is no file. A file that is there but cannot
-    be read or trusted (its owner, mode or contents) is {"problem":
-    UNREADABLE}: nothing replaces it until the owner repairs it."""
+    """The stored claim: {"password"} from before Music Assistant gives
+    thermite its first token; {"password", "token", "issued_at",
+    "expires_at"} once it has; either with "refusals", the passes in a row
+    Music Assistant refused the password; or {"problem": UNCLAIMED}. None
+    when there is no file. A file that is there but cannot be read or
+    trusted (its owner, mode or contents) is {"problem": UNREADABLE}:
+    nothing replaces it until the owner repairs it."""
     try:
         data = stored(token_file(state), TOKEN_BYTES)
     except Untrusted:
@@ -142,20 +142,16 @@ def read_claim(state):
         return None
     if data.get("problem") == UNCLAIMED:
         return {"problem": UNCLAIMED}
-    refused = {"refusals": data["refusals"]} if type(data.get("refusals")) is int else {}
-    password = {"password": data["password"]} if secret(data.get("password")) else {}
-    if secret(data.get("token")) and all(type(data.get(each)) is int for each in ("issued_at", "expires_at")):
-        return {key: data[key] for key in ("token", "issued_at", "expires_at")} | refused
-    if secret(data.get("session")) and password:
-        return {"session": data["session"]} | password | refused
-    if password and not {"token", "session"} & data.keys():
-        return password
-    return {"problem": UNREADABLE}
-
-
-def held(claim):
-    """Whether a claim holds a token or a session to try."""
-    return claim is not None and ("token" in claim or "session" in claim)
+    if not secret(data.get("password")):
+        return {"problem": UNREADABLE}
+    claim = {"password": data["password"]}
+    if "token" in data:
+        if not secret(data["token"]) or not all(type(data.get(each)) is int for each in ("issued_at", "expires_at")):
+            return {"problem": UNREADABLE}
+        claim |= {key: data[key] for key in ("token", "issued_at", "expires_at")}
+    if type(data.get("refusals")) is int and data["refusals"] > 0:
+        claim["refusals"] = min(data["refusals"], REFUSALS)
+    return claim
 
 
 def unreadable(claim):
@@ -218,12 +214,11 @@ class Provisioner:
             LOG.info("Music Assistant: %s%s", outcome, details)
 
     def step(self):
-        """One pass: claim, resume or renew once Music Assistant runs, then
-        reconcile when due. "ready"; "unclaimed" when the server has a user
-        thermite has neither a token, a session nor the password of;
-        "refused" while it refuses the stored token or session; "unreadable"
-        while the claim file cannot be trusted. Unavailable while it does
-        not run."""
+        """One pass: claim, sign in again or renew once Music Assistant runs,
+        then reconcile when due. "ready"; "unclaimed" when the server had a
+        user before thermite claimed it; "refused" while it refuses
+        thermite's password; "unreadable" while the claim file cannot be
+        trusted. Unavailable while it does not run."""
         # A provider's setup flow loads the provider before it answers.
         with self.connect(self.spec["port"], timeout=SLOW) as client:
             # Checked before each request: a stopping worker waits for the one in flight at most.
@@ -235,107 +230,102 @@ class Provisioner:
             if unreadable(claim):
                 self.report("cannot trust its stored claim; give the file to the service account, mode 0600")
                 return "unreadable"
-            claimed = False
-            if not held(claim):
-                claim = self.claim(client, claim)
-                if claim is None:
-                    if read_claim(self.state) != {"problem": UNCLAIMED}:
+            if claim is None or "password" not in claim:
+                if client.has_user():
+                    if claim is None:
                         write_claim(self.state, {"problem": UNCLAIMED})
                     self.report("unclaimed: another user set it up; reset its state to let thermite claim it")
                     return "unclaimed"
-            try:
-                token, claimed = self.hold(client, claim)
-            except (NoUser, Unauthorized) as error:
-                if isinstance(error, Unauthorized):
-                    self.refused()
-                # Its state deleted, so no one else's; or a pending password to sign in with.
-                claim = self.claim(client, read_claim(self.state))
-                if claim is None and isinstance(error, NoUser):
-                    raise Unavailable("Music Assistant gained a user while thermite claimed it") from None
-                if claim is None:
-                    return self.refusing()
-                try:
-                    token, claimed = self.hold(client, claim)
-                except Unauthorized:
-                    self.refused()
-                    return self.refusing()
+                # Stored before Music Assistant is asked: a setup whose answer is lost is signed in to.
+                claim = {"password": secrets.token_urlsafe(32)}
+                write_claim(self.state, claim)
+            token = self.kept(client, claim) if "token" in claim else None
+            signed_in = token is None
+            if signed_in:
+                token = self.sign_in(client, claim)
+                if token is None:
+                    self.count_refusal(claim)
+                    self.report("refused: it refuses thermite's password; trying again")
+                    return "refused"
             client.token = token
             server, now, changed = info.get("server_id"), self.clock(), 0
-            if claimed or self.reconciled is None or self.reconciled[0] != server or now - self.reconciled[1] >= self.every:
+            if signed_in or self.reconciled is None or self.reconciled[0] != server or now - self.reconciled[1] >= self.every:
                 # Recorded first: a reconcile that fails waits as long as one that works.
                 self.reconciled = (server, now)
                 changed = self.reconcile(client, info)
         self.report("ready", changed=changed)
         return "ready"
 
-    def refusing(self):
-        self.report("refused: it refuses thermite's token; trying again")
-        return "refused"
-
-    def refused(self):
-        """Count a refused pass on the claim as it is stored now: a renewal
-        may have replaced the token earlier in the pass."""
-        stored = read_claim(self.state)
-        if held(stored):
-            write_claim(self.state, {**stored, "refusals": stored.get("refusals", 0) + 1})
-
-    def claim(self, client, claim):
-        """A pending claim, {"session", "password"}: thermite's user created
-        on a server with none, the password stored before Music Assistant
-        is asked; or, on a server with a user, a session signed in with the
-        pending password (a setup whose answer was lost). None when the
-        server's user is not one thermite has the password of."""
-        password = (claim or {}).get("password")
-        session = None
-        if not client.has_user():
-            if password is None:
-                password = secrets.token_urlsafe(32)
-                write_claim(self.state, {"password": password})
-            session = client.setup(USERNAME, password, "thermite")
-        if session is None and password is not None:
-            session = client.login(USERNAME, password, "thermite")
-        if session is None:
-            return None
-        claim = {"session": session, "password": password}
-        write_claim(self.state, claim)
-        return claim
-
-    def hold(self, client, claim):
-        """(the token to use, whether it was just claimed): the pending
-        claim's first long-lived token, or the stored one or its successor.
-        Unauthorized when Music Assistant refuses what is stored, NoUser
-        when it has no user."""
-        if "session" in claim:
-            client.token = claim["session"]
-            token = self.mint(client)
-            client.token = token
-            self.revoke_others(client, token)
-            LOG.info("Music Assistant claimed by thermite.")
-            return token, True
+    def kept(self, client, claim):
+        """The stored token, or its successor once it is near its end; None
+        when Music Assistant refuses it or has no user (its state was
+        reset)."""
         client.token = claim["token"]
-        tokens = client.call("auth/tokens")  # Proves the token before anything else uses it.
+        try:
+            tokens = client.call("auth/tokens")  # Proves the token before anything else uses it.
+        except (Unauthorized, NoUser):
+            return None
         if claim["expires_at"] - self.clock() > RENEW_DAYS * DAY:
             if "refusals" in claim:
                 write_claim(self.state, {key: value for key, value in claim.items() if key != "refusals"})
             self.revoke_others(client, claim["token"], tokens)
-            return claim["token"], False
-        token = self.mint(client)
+            return claim["token"]
+        token = self.mint(client, claim)
         client.token = token
         self.revoke_others(client, token)
         LOG.info("Music Assistant token renewed.")
-        return token, False
+        return token
 
-    def mint(self, client):
+    def sign_in(self, client, claim):
+        """A new long-lived token from a session signed in with thermite's
+        password, or from thermite's user created with it on a server with
+        none; None when Music Assistant refuses the password. Every other
+        token of the user goes once the token is stored, the session
+        included; a session whose token could not be minted is logged out,
+        so that sessions never pile up."""
+        try:
+            session = client.login(USERNAME, claim["password"], "thermite")
+        except NoUser:
+            session = client.setup(USERNAME, claim["password"], "thermite")
+            if session is None:
+                raise Unavailable("Music Assistant gained a user while thermite claimed it") from None
+        if session is None:
+            return None
+        client.token = session
+        try:
+            token = self.mint(client, claim)
+        except Exception:
+            try:
+                client.call("auth/logout")
+            except Exception:
+                pass  # It goes with the others once a token is minted.
+            raise
+        client.token = token
+        self.revoke_others(client, token)
+        LOG.info("Music Assistant claimed by thermite.")
+        return token
+
+    def count_refusal(self, claim):
+        """Count a pass whose password Music Assistant refused, up to
+        REFUSALS. Nothing was written earlier in such a pass, so the claim
+        read at its start is the one stored."""
+        refusals = claim.get("refusals", 0)
+        if refusals < REFUSALS:
+            write_claim(self.state, {**claim, "refusals": refusals + 1})
+
+    def mint(self, client, claim):
+        """A new long-lived token, stored with thermite's password."""
         token = client.call("auth/token/create", name=USERNAME)
-        if not isinstance(token, str) or not token or len(token) > 4096 or not token.isprintable():
+        if not secret(token):
             raise Failed(200)
         issued = int(self.clock())
-        write_claim(self.state, {"token": token, "issued_at": issued, "expires_at": issued + TOKEN_DAYS * DAY})
+        write_claim(self.state, {"password": claim["password"], "token": token, "issued_at": issued,
+                                 "expires_at": issued + TOKEN_DAYS * DAY})
         return token
 
     def revoke_others(self, client, token, tokens=None):
-        """Revoke every token of thermite's user but this one: the setup
-        session, one a renewal replaced, one minted by a pass that never
+        """Revoke every token of thermite's user but this one: a session it
+        was minted with, one it replaced, one minted by a pass that never
         stored it."""
         mine = digest(token)
         for entry in (client.call("auth/tokens") if tokens is None else tokens) or ():

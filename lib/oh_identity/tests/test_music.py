@@ -566,8 +566,8 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual(self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM}).json(), {"error": "music_unclaimed"})
         provision.token_file(self.state).unlink()
         self.assertEqual(self.get("/api/v1/music").json()["problem"], "music_unavailable")
-        # A token Music Assistant has refused for a day's passes is no longer thermite's.
-        provision.write_claim(self.state, {"token": "x", "issued_at": 1, "expires_at": 2 ** 40,
+        # A server that has refused thermite's password for a day's passes is no longer thermite's.
+        provision.write_claim(self.state, {"password": "x", "token": "x", "issued_at": 1, "expires_at": 2 ** 40,
                                            "refusals": provision.REFUSALS})
         self.assertEqual(self.get("/api/v1/music").json()["problem"], "music_unclaimed")
 
