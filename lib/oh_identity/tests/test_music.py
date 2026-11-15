@@ -563,6 +563,37 @@ class Gateway(Stand_in, Requests, TestCase):
             self.assertEqual(self.get("/api/v1/music/art/" + path).status_code, 404, path)
         self.assertEqual(self.get(f"/api/v1/music/art/{art}?other=1").json(), {"error": "invalid_query"})
 
+    def test_art_takes_at_most_its_share_of_the_gateways_requests(self):
+        from oh_access.service import MAX_REQUESTS
+        asked, answer = threading.Semaphore(0), threading.Event()
+
+        class Stalled:
+            def __init__(self, port, token):
+                self.token = token
+
+            def image(self, proxy_id, size):
+                asked.release()
+                answer.wait(10)
+                return "image/png", b"x"
+        stalled = music.Music(self.adapter, self.state, connect=Stalled)
+        fetches = [threading.Thread(target=stalled.image, args=("0" * 64, 80)) for _ in range(music.ART_FETCHES)]
+        for fetch in fetches:
+            fetch.start()
+        for _ in fetches:
+            self.assertTrue(asked.acquire(timeout=5))
+        started = time.monotonic()
+        with patch.object(music, "ART_WAIT", 0.1), self.assertRaises(Problem) as refused:
+            stalled.image("0" * 64, 80)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual((refused.exception.code, refused.exception.status, refused.exception.retry_after),
+                         ("music_unavailable", 503, 1))
+        answer.set()
+        for fetch in fetches:
+            fetch.join(5)
+        self.assertEqual(stalled.image("0" * 64, 80), ("image/png", b"x"))
+        # Art takes a small share of the requests the gateway admits.
+        self.assertLessEqual(4 * music.ART_FETCHES, MAX_REQUESTS)
+
     def test_a_guest_who_may_not_see_text_sees_speakers_but_no_titles(self):
         self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM})
         SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})

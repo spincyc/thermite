@@ -68,6 +68,13 @@ DEFAULT_PAGE = 100
 OFFSET = 100000
 #: Seconds the gateway waits for a group to show its members after it asks.
 GROUP_SETTLE = 3.0
+#: Art fetches from Music Assistant at once, per gateway process: each may
+#: wait SLOW seconds on its image proxy, and the gateway admits
+#: oh_access.service.MAX_REQUESTS requests in all, so that stalled art can
+#: never take the room commands' share. One more waits ART_WAIT seconds for
+#: a slot, then is music_unavailable.
+ART_FETCHES = 8
+ART_WAIT = 1.0
 #: Times at most a command takes its rooms' locks: again each time a group
 #: changed while it waited for them to reach another speaker.
 LOCK_ATTEMPTS = 3
@@ -216,6 +223,7 @@ class Music:
                      if spec["provider"] == "wiim" and "mac" in spec}
         self._ip = {spec["ip"]: ident for ident, spec in speakers.items() if spec["provider"] == "wiim" and "ip" in spec}
         self._client, self._guard = None, threading.Lock()
+        self._art = threading.BoundedSemaphore(ART_FETCHES)
         # Blocks using each client: one the token replaced is closed by its last.
         self._using = {}
         self.flow = None
@@ -478,8 +486,13 @@ class Music:
                 "current": current if type(current) is int and current >= 0 else None, "items": items}
 
     def image(self, proxy_id, size):
-        with self.connected(failed=("not_found", 404)) as client:
-            return client.image(proxy_id, size)
+        if not self._art.acquire(timeout=ART_WAIT):
+            raise Problem("music_unavailable", 503, retry_after=1)
+        try:
+            with self.connected(failed=("not_found", 404)) as client:
+                return client.image(proxy_id, size)
+        finally:
+            self._art.release()
 
     # ---- commands -------------------------------------------------------------
 
