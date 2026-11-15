@@ -374,9 +374,8 @@ class Music:
             queues = {queue["queue_id"]: queue for queue in self.call("player_queues/all") or ()
                       if isinstance(queue, dict) and isinstance(queue.get("queue_id"), str)}
         except Problem as problem:
-            if problem.code in ("music_unavailable", "music_unclaimed"):
-                return self.unavailable(problem.code)
-            raise
+            # Music Assistant down, not thermite's, or failing a read.
+            return self.unavailable(problem.code)
         return self.overview(players, queues, sources, see_text=see_text)
 
     def search(self, query, kind, source):

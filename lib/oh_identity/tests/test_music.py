@@ -495,6 +495,14 @@ class Gateway(Stand_in, Requests, TestCase):
                                            "refused_since": int(time.time()) - provision.REFUSED})
         self.assertEqual(self.get("/api/v1/music").json()["problem"], "music_unclaimed")
 
+    def test_a_read_music_assistant_fails_is_still_the_speakers_and_why(self):
+        self.sim.failing["player_queues/all"] = 1
+        response = self.get("/api/v1/music")
+        self.assertEqual((response.status_code, response.json()["available"], response.json()["problem"]),
+                         (200, False, "music_failed"))
+        self.assertEqual(len(response.json()["speakers"]), 3)
+        self.assertTrue(self.get("/api/v1/music").json()["available"])
+
     def test_a_renewed_token_gets_a_new_client_and_the_old_one_closes_once_unused(self):
         made = []
 

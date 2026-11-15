@@ -578,7 +578,8 @@ in again re-authenticates the same TIDAL instance.
 | `tidal_not_started` | 409 | No TIDAL sign-in to finish. |
 
 GET `/api/v1/music` answers 200 with `available: false` and the problem
-instead of failing, so a page can show its speakers.
+(`music_unavailable`, `music_unclaimed` or `music_failed`) instead of
+failing, so a page can show its speakers.
 
 ## Testing
 
