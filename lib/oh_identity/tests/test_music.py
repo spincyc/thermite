@@ -368,6 +368,25 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual(self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM}).status_code, 202)
         self.assertNotIn("players/cmd/set_members", [command for command, _ in self.sim.calls])
 
+    def test_reading_a_group_back_ends_by_its_deadline_whatever_music_assistant_does(self):
+        from oh_music.client import TIMEOUT
+        now, timeouts = [0.0], []
+
+        class Hung:
+            def __init__(self, port, token):
+                self.token = token
+
+            def call(self, command, timeout=None, /, **args):
+                # Music Assistant answers at the last moment, never with the members.
+                timeouts.append(timeout)
+                now[0] += timeout
+                return []
+        slow = music.Music(self.adapter, self.state, connect=Hung, settle=3.0, clock=lambda: now[0],
+                           sleep=lambda seconds: now.__setitem__(0, now[0] + seconds))
+        self.assertEqual(slow.settled(AMP, [MINI]), set())
+        self.assertLessEqual(now[0], 3.5)
+        self.assertTrue(all(timeout <= TIMEOUT for timeout in timeouts))
+
     def test_a_speaker_called_art_keeps_its_routes(self):
         from django.urls import resolve
         from oh_identity import music_api

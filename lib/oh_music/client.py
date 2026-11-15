@@ -17,9 +17,12 @@ import secrets
 import httpx
 
 HOST = "127.0.0.1"
-#: Seconds one request may take. Most commands answer at once; a search
-#: across providers or a long TIDAL listing can take seconds.
-TIMEOUT = 20.0
+#: Seconds one request may take: a command or a read, which Music Assistant
+#: answers at once and the gateway may make holding rooms' locks; and a
+#: search across providers, a long TIDAL listing or a provider's setup,
+#: which can take seconds (a call's own timeout).
+TIMEOUT = 5.0
+SLOW = 20.0
 #: Bytes of one command's answer and of one image.
 ANSWER_BYTES = 8 * 1024 * 1024
 IMAGE_BYTES = 2 * 1024 * 1024
@@ -67,7 +70,9 @@ class Client:
     def __exit__(self, *_):
         self.close()
 
-    def _request(self, method, path, limit, **options):
+    def _request(self, method, path, limit, timeout=None, **options):
+        if timeout is not None:
+            options["timeout"] = timeout
         try:
             with self._http.stream(method, path, **options) as response:
                 body = bytearray()
@@ -108,12 +113,14 @@ class Client:
         except (ValueError, KeyError, TypeError, AttributeError):
             raise Unavailable("Music Assistant refused setup") from None
 
-    def call(self, command, **args):
-        """One command's raw result."""
+    def call(self, command, timeout=None, /, **args):
+        """One command's raw result, within timeout seconds (the client's
+        own by default)."""
         if not self.token:
             raise Unauthorized("No Music Assistant token")
         response, body = self._request(
-            "POST", "/api", ANSWER_BYTES, json={"message_id": secrets.token_hex(8), "command": command, "args": args},
+            "POST", "/api", ANSWER_BYTES, timeout, json={"message_id": secrets.token_hex(8), "command": command,
+                                                         "args": args},
             headers={"Authorization": "Bearer " + self.token})  # lint: allow (scheme only; private token file)
         if response.status_code in (401, 403):
             raise Unauthorized("Music Assistant refused the token")

@@ -31,7 +31,7 @@ import time
 import weakref
 from pathlib import Path
 
-from oh_music.client import Client, Failed, Unauthorized, Unavailable
+from oh_music.client import SLOW, TIMEOUT, Client, Failed, Unauthorized, Unavailable
 from oh_music import provision, tidal
 
 from . import trail
@@ -205,9 +205,10 @@ class Music:
                 self._client = self.connect(self.spec["port"], claim["token"])
             return self._client
 
-    def call(self, command, **args):
+    def call(self, command, timeout=None, /, **args):
+        """One command's result, within timeout seconds (TIMEOUT by default)."""
         try:
-            return self.client().call(command, **args)
+            return self.client().call(command, timeout, **args)
         except (Unavailable, Unauthorized):
             raise Problem("music_unavailable", 503) from None
         except Failed:
@@ -242,8 +243,13 @@ class Music:
                 found[speaker] = player
         return found
 
-    def players(self):
-        return self.matched(self.call("players/all"))
+    def players(self, timeout=None):
+        return self.matched(self.call("players/all", timeout))
+
+    @staticmethod
+    def ids(players):
+        """{player ID: speaker} of matched players."""
+        return {player["player_id"]: speaker for speaker, player in players.items()}
 
     # ---- projection ---------------------------------------------------------
 
@@ -363,7 +369,8 @@ class Music:
         answer = {"query": query, "kind": kind or None, "source": source or None, **{each + "s": [] for each in KINDS}}
         if not providers:
             return answer
-        found = self.call("music/search", search_query=query, media_types=kinds, limit=SEARCH_LIMIT, providers=providers)
+        found = self.call("music/search", SLOW, search_query=query, media_types=kinds, limit=SEARCH_LIMIT,
+                          providers=providers)
         for each in kinds:
             listed = (found or {}).get(each + "s") if isinstance(found, dict) else None
             answer[each + "s"] = [entry for raw in (listed or [])[:SEARCH_LIMIT * len(providers)]
@@ -380,13 +387,13 @@ class Music:
         else:
             provider, kind, ident = parse_ref(ref, sources)
             if kind == "folder":
-                listed = self.call("music/browse", path=f"{provider}://{ident}")
+                listed = self.call("music/browse", SLOW, path=f"{provider}://{ident}")
             elif kind == "track":
                 raise Problem("invalid_query")
             else:
                 command = {"album": "music/albums/album_tracks", "playlist": "music/playlists/playlist_tracks",
                            "artist": "music/artists/artist_albums"}[kind]
-                listed = self.call(command, item_id=ident, provider_instance_id_or_domain=provider)
+                listed = self.call(command, SLOW, item_id=ident, provider_instance_id_or_domain=provider)
             items = [entry for raw in (listed if isinstance(listed, list) else [])[:OFFSET]
                      if (entry := self.item(raw, sources))]
         return {"ref": ref, "offset": offset, "limit": limit, "total": len(items), "items": items[offset:offset + limit]}
@@ -555,17 +562,16 @@ class Music:
 
     def settled(self, speaker, wanted):
         """The speakers in the speaker's group once every wanted one is, or
-        when GROUP_SETTLE seconds have passed: Music Assistant drops a member
-        it cannot group without an error."""
+        when GROUP_SETTLE seconds have passed, each read included: Music
+        Assistant drops a member it cannot group without an error."""
         until = self.clock() + self.settle
         while True:
-            players = self.players()
-            ids = {each["player_id"]: ident for ident, each in players.items()}
+            players = self.players(min(TIMEOUT, max(until - self.clock(), 0.5)))
             player = players.get(speaker)
-            members = set(self.leader(player, players, ids)[1]) if player else set()
+            members = set(self.leader(player, players, self.ids(players))[1]) if player else set()
             if set(wanted) <= members or self.clock() >= until:
                 return members
-            self.sleep(0.25)
+            self.sleep(min(0.25, max(until - self.clock(), 0)))
 
     def ungroup(self, user, speaker, *, origin=None):
         self.known(speaker)

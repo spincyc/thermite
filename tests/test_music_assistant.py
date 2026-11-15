@@ -385,6 +385,16 @@ class Errors(unittest.TestCase):
         body = json.loads(request.content)
         self.assertEqual((body["command"], body["args"]), ("players/all", {"flag": True}))
 
+    def test_a_command_waits_seconds_and_a_slow_one_its_own_timeout(self):
+        from oh_music import client as music_client
+        client, seen = self.client(200, b"[]")
+        client.call("players/all")
+        client.call("music/search", music_client.SLOW, search_query="x")
+        self.assertEqual([request.extensions["timeout"]["read"] for request in seen],
+                         [music_client.TIMEOUT, music_client.SLOW])
+        self.assertEqual(json.loads(seen[1].content)["args"], {"search_query": "x"})
+        self.assertLessEqual(music_client.TIMEOUT, 5)
+
     def test_each_refusal_is_its_exception_without_music_assistants_text(self):
         detail = b"Traceback: KeyError 'secret detail'"
         for status, expected in ((500, Failed), (400, Failed), (404, Failed), (401, Unauthorized), (403, Unauthorized),

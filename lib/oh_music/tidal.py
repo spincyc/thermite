@@ -17,7 +17,7 @@ import time
 
 from oh_access import AccessError
 
-from .client import Client, Failed, Unauthorized, Unavailable
+from .client import SLOW, Client, Failed, Unauthorized, Unavailable
 
 LINK = "https://link.tidal.com/"
 CODE = re.compile(r"[A-Z0-9]{4,16}")
@@ -52,9 +52,9 @@ def start(client):
     configs = [entry for entry in client.call("config/providers", provider_domain="tidal") or ()
                if isinstance(entry, dict) and isinstance(entry.get("instance_id"), str)]
     if configs:
-        step = client.call("config/providers/reconfigure", instance_id=configs[0]["instance_id"])
+        step = client.call("config/providers/reconfigure", SLOW, instance_id=configs[0]["instance_id"])
     else:
-        step = client.call("config/providers/setup", provider_domain="tidal")
+        step = client.call("config/providers/setup", SLOW, provider_domain="tidal")
     return waiting(step)
 
 

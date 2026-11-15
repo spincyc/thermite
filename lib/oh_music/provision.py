@@ -51,7 +51,7 @@ from oh_access import AccessError
 from oh_access.files import json_private, read_private
 
 from . import MEDIA
-from .client import Client, Failed, NoUser, Unauthorized, Unavailable
+from .client import SLOW, Client, Failed, NoUser, Unauthorized, Unavailable
 
 LOG = logging.getLogger(__name__)
 #: The private file in the gateway's state that holds the claim.
@@ -84,8 +84,6 @@ UNWANTED = ("chromecast", "dlna", "heos", "bluesound", "party", "smart_fades", "
 #: changed.
 POLL = 30
 EVERY = 15 * 60
-#: Seconds one request of a pass may take: a provider's setup flow loads it.
-SETUP = 20.0
 #: The problem a stored claim records when the server is someone else's,
 #: and what read_claim() answers for a claim file it cannot trust.
 UNCLAIMED = "music_unclaimed"
@@ -184,7 +182,8 @@ class Provisioner:
         before thermite claimed it; "refused" while it refuses the stored
         token or session; "unreadable" while the claim file cannot be
         trusted. Unavailable while it does not run."""
-        with self.connect(self.spec["port"], timeout=SETUP) as client:
+        # A provider's setup flow loads the provider before it answers.
+        with self.connect(self.spec["port"], timeout=SLOW) as client:
             info = client.info()
             if info.get("status") != "running":
                 raise Unavailable("Music Assistant is starting")

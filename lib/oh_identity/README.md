@@ -539,8 +539,10 @@ route, both 423 `device_locked`. Playing to, transport on or the group
 volume of a group involves each of its speakers; grouping, the speaker and
 every member. Each command is one `cmd` trail line, `device=<speaker>
 action=music.<action>` with the option, the transport value, the level or
-the members as its value, never a reference, a query or a title. Titles,
-names and art are free text: a Guest who may not see it gets speakers
+the members as its value, never a reference, a query or a title. Music
+Assistant has 5 seconds to answer a command or a read and 20 for a search or
+a browse; reading a group back takes 3 seconds at most, its reads included.
+Titles, names and art are free text: a Guest who may not see it gets speakers
 without them and 401 `login_required` for search, browse, queues and art.
 
 The music event stream is admitted, revalidated and heartbeated as the other
