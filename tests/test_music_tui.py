@@ -75,6 +75,9 @@ class MusicScreen(unittest.TestCase):
         self.assertEqual(locked["tried"], [["transport", "kitchen_amp", "pause", None]])
         self.assertTrue(locked["drawn"])
 
+    def test_a_group_members_lock_leaves_the_speakers_own_volume(self):
+        self.assertEqual(self.proof["member"], {"sent": [["volume", "kitchen_amp", "level", 34]], "toast": ["Kitchen Sonos Amp", "Locked by Den"]})
+
     def test_an_admin_sees_the_tidal_code_to_approve(self):
         self.assertEqual(self.proof["tidal"], [])
 

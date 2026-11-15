@@ -195,6 +195,31 @@ async function narrow(proof) {
   controller.stop();
 }
 
+// A group member's room locked: the speaker's own volume still goes, Play does not.
+async function member(proof) {
+  const parts = assemble();
+  const { controller } = parts;
+  await controller.start();
+  await until(parts, () => controller.ui.ready, "ready");
+  // The demo's access knows no locks, and a session ignores it; this one says the Den is locked.
+  let den = false;
+  const lockSummary = parts.access.lockSummary;
+  Object.assign(parts.access, { mock: false, lockSummary: (room) => (den && room === "den" ? { locked: true } : lockSummary(room)) });
+  key(parts, null, { name: "f2" });
+  key(parts, "y");
+  await shows(parts, "Harbour Lights");
+  session(parts).join(["den_one"]);
+  await shows(parts, "With Den");
+  den = true;
+  await shows(parts, "Group locked by Den");
+  const sent = backend(parts).sent.length;
+  key(parts, "+");
+  key(parts, "p");
+  await until(parts, () => toast(parts) && toast(parts)[1] === "Locked by Den", "the lock's toast");
+  proof.member = { sent: backend(parts).sent.slice(sent), toast: toast(parts) };
+  controller.stop();
+}
+
 // No music on this host; a Guest without titles.
 async function others(proof) {
   for (const [name, settings, words] of [["absent", { configured: false }, "This thermite host has no music."],
@@ -225,6 +250,7 @@ async function others(proof) {
   const proof = {};
   await main(proof);
   await narrow(proof);
+  await member(proof);
   await others(proof);
   process.stdout.write(JSON.stringify(proof) + "\n");
 })().then(() => process.exit(0), (error) => { process.stderr.write(error.stack + "\n"); process.exit(1); });

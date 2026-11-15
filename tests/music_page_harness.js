@@ -332,6 +332,30 @@ async function locks(out) {
   await time.tick(400);
   out.blocked = {sent: sentSince(backend, from), toasts: music.log.toasts};
   music.stop();
+  // A group member's room locked: the speaker's own volume still goes, nothing that moves the group.
+  time = clock();
+  backend = mock(time);
+  music = session(time, backend);
+  music.start();
+  await time.tick(100);
+  music.join(['den_one']);
+  await time.tick(400);
+  music.stop();
+  music = session(time, backend, {access: fakeAccess({locked: ['den']})});
+  music.start();
+  await time.tick(100);
+  const view = music.view();
+  out.member = {locked: view.locked, group: view.groupLocked};
+  const before = backend.sent.length;
+  music.stepVolume(1);
+  music.playPause();
+  music.stepGroupVolume(1);
+  await time.tick(400);
+  out.member.sent = sentSince(backend, before);
+  out.member.toasts = music.log.toasts;
+  music.select('den_one');
+  out.member.den = [music.view().locked.text, music.view().groupLocked.text];
+  music.stop();
 }
 
 // Grouping involves each speaker whose group changes: a joining speaker's

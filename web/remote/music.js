@@ -230,7 +230,7 @@
   // One line for the page: no music here, Music Assistant away, a lock or a lost connection.
   function drawAlert(status, view) {
     if (status.state !== "ready") return showAlert(status.text, "warn", status.state === "reading" ? "quiet" : "");
-    if (view && view.locked) return showAlert(view.locked.text, "lock");
+    if (view && view.groupLocked) return showAlert(view.groupLocked.text, "lock");
     showAlert(status.text, "warn");
   }
 
@@ -275,6 +275,8 @@
   }
 
   function drawNow(view) {
+    // Its own room's lock disables every control; a member's, those that move the group.
+    const shared = Boolean(view.groupLocked);
     $("[data-controls]").disabled = Boolean(view.locked);
     $("[data-now-name]").textContent = view.speaker.name;
     $("[data-place]").textContent = view.speaker.name;
@@ -291,39 +293,41 @@
     play.setAttribute("aria-label", view.playLabel);
     play.title = view.playLabel + " (P)";
     play.querySelector("use").setAttribute("href", "#i-" + (view.playing ? "pause" : "play"));
-    $("[data-previous]").disabled = $("[data-next]").disabled = !view.canSkip;
+    play.disabled = shared;
+    $("[data-previous]").disabled = $("[data-next]").disabled = !view.canSkip || shared;
     const shuffle = $("[data-shuffle]");
     shuffle.setAttribute("aria-pressed", String(view.shuffle.on));
     shuffle.setAttribute("aria-label", view.shuffle.label);
     shuffle.title = view.shuffle.label + " (S)";
     shuffle.dataset.pending = view.shuffle.pending ? "true" : "false";
-    shuffle.disabled = !view.shuffle.known;
+    shuffle.disabled = !view.shuffle.known || shared;
     const repeat = $("[data-repeat]");
     repeat.setAttribute("aria-pressed", String(view.repeat.value !== "off"));
     repeat.setAttribute("aria-label", view.repeat.label);
     repeat.title = view.repeat.label + " (R)";
     repeat.dataset.pending = view.repeat.pending ? "true" : "false";
-    repeat.disabled = !view.repeat.known;
+    repeat.disabled = !view.repeat.known || shared;
     repeat.querySelector("use").setAttribute("href", "#i-" + (view.repeat.value === "one" ? "repeat-one" : "repeat"));
-    drawLevel(volume, $("[data-volume-wrap] .fader"), view.volume, dragging.volume, "[data-volume-step]");
+    drawLevel(volume, $("[data-volume-wrap] .fader"), view.volume, dragging.volume, "[data-volume-step]", false);
     $("[data-volume-text]").textContent = "Volume " + view.volume.text + (view.muted ? " · muted" : "");
     $("[data-group-text]").textContent = view.group ? view.group.text : "Not grouped";
+    $("[data-group-open]").disabled = shared;
     $("[data-group-volume-wrap]").hidden = !view.group;
     $("[data-group-volume-text]").hidden = !view.group;
     if (view.group) {
-      drawLevel(groupVolume, $("[data-group-volume-wrap] .fader"), view.group.volume, dragging.group, "[data-group-step]");
+      drawLevel(groupVolume, $("[data-group-volume-wrap] .fader"), view.group.volume, dragging.group, "[data-group-step]", shared);
       $("[data-group-volume-text]").textContent = "Group volume " + view.group.volume.text;
     }
   }
 
-  function drawLevel(input, bar, level, held, steps) {
-    input.disabled = level.disabled;
+  function drawLevel(input, bar, level, held, steps, locked) {
+    input.disabled = level.disabled || locked;
     // A slider being dragged shows the finger, not the speaker.
     if (!held && level.value !== null) input.value = level.value;
     input.style.setProperty("--fill", (held ? Number(input.value) : level.fill) + "%");
     input.setAttribute("aria-valuetext", level.text);
     bar.dataset.pending = level.pending ? "true" : "false";
-    document.querySelectorAll(steps).forEach((button) => { button.disabled = level.disabled; });
+    document.querySelectorAll(steps).forEach((button) => { button.disabled = level.disabled || locked; });
   }
 
   // The cover, only through the gateway's art route; a note while there is none.
@@ -347,7 +351,7 @@
     box.hidden = !progress;
     if (!progress) return;
     box.dataset.pending = progress.pending ? "true" : "false";
-    seek.disabled = progress.duration === null || Boolean(view.locked);
+    seek.disabled = progress.duration === null || Boolean(view.groupLocked);
     seek.max = String(progress.duration || 1);
     if (dragging.seek) return;
     seek.value = String(progress.elapsed);

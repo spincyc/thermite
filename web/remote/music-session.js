@@ -355,7 +355,8 @@
       if (!speaker || !music || !music.available) return null;
       const id = speaker.id, owner = ownerOf(speaker), playing = speaker.now_playing;
       const isPlaying = playingOf(speaker);
-      const locked = lockedBy(membersOf(speaker));
+      // Its own room's lock holds every control; a member's, those that move the group.
+      const locked = lockedBy([id]), shared = lockedBy(membersOf(speaker));
       const shuffle = shown(owner, "shuffle", speaker.shuffle), repeat = shown(owner, "repeat", speaker.repeat);
       const title = playing && playing.title || null;
       const group = speaker.group ? {
@@ -369,6 +370,7 @@
         available: speaker.available,
         connected: connected,
         locked: locked.length ? { rooms: locked, text: "Locked by " + locked.join(", ") } : null,
+        groupLocked: shared.length ? { rooms: shared, text: (locked.length || !speaker.group ? "Locked by " : "Group locked by ") + shared.join(", ") } : null,
         playing: isPlaying,
         state: speaker.state,
         title: title,

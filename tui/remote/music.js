@@ -38,8 +38,8 @@ function content(g, w, ctx, kit) {
   }
   if (ctx.ui.target.mock) { say("Demo · invented speakers and music. Nothing plays.", "tone.busy"); y += 1; }
   const status = session.status(), view = session.view();
-  const locked = status.state === "ready" && view && view.locked;
-  const alert = locked ? LOCK + " " + view.locked.text : status.text;
+  const locked = status.state === "ready" && view && view.groupLocked;
+  const alert = locked ? LOCK + " " + view.groupLocked.text : status.text;
   if (alert) { say(alert, status.state === "reading" ? "dim" : locked ? "strong" : "alert"); y += 1; }
   if (!["ready", "unavailable"].includes(status.state)) return y;
   y = speakers(g, w, ctx, kit, y, session);
@@ -83,7 +83,8 @@ function speakers(g, w, ctx, kit, y, session) {
 
 // What the chosen speaker plays, where it is in it, its keys, volume and group.
 function now(g, w, ctx, kit, y, view) {
-  const locked = Boolean(view.locked);
+  // Its own room's lock holds every control; a member's, those that move the group.
+  const locked = Boolean(view.locked), shared = Boolean(view.groupLocked);
   y = kit.heading(g, y, "Now playing");
   const model = view.speaker.name.includes(view.speaker.label) ? view.speaker.provider : view.speaker.label;
   y = kit.paragraph(g, 1, y, w - 2, view.speaker.name + (model ? " · " + model : ""), "dim");
@@ -95,7 +96,7 @@ function now(g, w, ctx, kit, y, view) {
     const key = "music-progress", focus = kit.focused(ctx, key);
     let x = g.put(1, y, progress.at, progress.pending ? "tone.busy" : "dim") + 1;
     const track = Math.max(6, Math.min(48, w - x - length(progress.left) - 3));
-    kit.meter(g, x, y, track, { disabled: progress.duration === null, fill: progress.fill, muted: false }, focus);
+    kit.meter(g, x, y, track, { disabled: progress.duration === null || shared, fill: progress.fill, muted: false }, focus);
     g.hit(x, y, track, 1, { kind: "music-progress", key, focus: true, min: 0, max: progress.duration || 0,
       label: "Position: " + progress.text + "  (← → 10 s)" });
     x += track + 1;
@@ -115,7 +116,7 @@ function now(g, w, ctx, kit, y, view) {
   keys.forEach(([key, label, spoken, lit, off, pending]) => {
     const size = length(label) + 4;
     if (x > 1 && x + size > w - 1) { x = 1; y += 3; }
-    const style = ctx.ui.pressed[key] ? "key.pressed" : kit.focused(ctx, key) ? "key.focus" : locked || off ? "key.off"
+    const style = ctx.ui.pressed[key] ? "key.pressed" : kit.focused(ctx, key) ? "key.focus" : shared || off ? "key.off"
       : pending ? "bubble.switching" : lit ? "key.lit" : key === "music-play" ? "key.ok" : "key";
     x = kit.rounded(g, x, y, label, size, style, { kind: key, key, focus: true, label: spoken }) + 2;
   });
@@ -128,9 +129,9 @@ function now(g, w, ctx, kit, y, view) {
     y += 1;
     return 3;
   };
-  const level = (label, kind, value, muted) => {
+  const level = (label, kind, value, muted, held) => {
     const focus = kit.focused(ctx, kind), text = value.disabled ? "–" : value.text;
-    const step = (at, glyph, delta) => g.put(at, y, glyph, value.disabled || locked ? "faint" : "hotkey",
+    const step = (at, glyph, delta) => g.put(at, y, glyph, value.disabled || held ? "faint" : "hotkey",
       { kind: kind + "-step", step: delta, key: kind + ":" + delta, label: label + (delta < 0 ? " down" : " up") });
     let at = step(field(label), kit.GLYPHS.minus, -1) + 1;
     const track = Math.max(6, Math.min(32, w - at - 10 - length(text)));
@@ -142,12 +143,12 @@ function now(g, w, ctx, kit, y, view) {
     if (muted) g.put(at + 1, y, "muted", "tone.busy");
     y += 1;
   };
-  level("Volume", "music-volume", view.volume, view.muted);
+  level("Volume", "music-volume", view.volume, view.muted, locked);
   x = field("Group");
   x = g.put(x, y, fit(view.group ? view.group.text : "Not grouped", Math.max(4, w - x - 12)).trimEnd(), "base") + 2;
-  kit.chip(g, ctx, x, y, "Group…", { kind: "music-group", key: "music-group", focus: true, label: "Group speakers (G)" }, locked ? "key.off" : "key");
+  kit.chip(g, ctx, x, y, "Group…", { kind: "music-group", key: "music-group", focus: true, label: "Group speakers (G)" }, shared ? "key.off" : "key");
   y += 1;
-  if (view.group) level("Group volume", "music-group-volume", view.group.volume, false);
+  if (view.group) level("Group volume", "music-group-volume", view.group.volume, false, shared);
   return y + 1;
 }
 
