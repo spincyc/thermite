@@ -312,7 +312,7 @@ class Music:
     def speaker(self, ident, players, ids, queues, see_text):
         spec = self.spec["speakers"][ident]
         view = {"id": ident, "label": spec["label"], "room": spec["room"], "room_label": spec["room_label"],
-                "available": False, "state": "unavailable", "volume": None, "muted": None, "group": None,
+                "provider": spec["provider"], "available": False, "state": "unavailable", "volume": None, "muted": None, "group": None,
                 "now_playing": None, "shuffle": None, "repeat": None}
         player = players.get(ident)
         if not player or player.get("available") is not True:

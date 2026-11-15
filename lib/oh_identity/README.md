@@ -498,10 +498,12 @@ Routes (`<speaker>` is a contract speaker ID):
 | GET `/api/v1/music/tidal`, POST `…/tidal/start`, `…/tidal/finish` `{}` | Admin: `{signed_in, sign_in}` |
 | GET `/api/v1/events/music` | the music event stream |
 
-A speaker is `{id, label, room, room_label, available, state, volume,
-muted, group, now_playing, shuffle, repeat}`: `state` is `playing`,
-`paused`, `idle` or `unavailable`; `volume` 0–100; `group` null or `{leader,
-members, volume}` (Music Assistant reports a group's loudest member);
+A speaker is `{id, label, room, room_label, provider, available, state,
+volume, muted, group, now_playing, shuffle, repeat}`: `provider` is `sonos`
+or `wiim` (a page explains by it a grouping Music Assistant refused);
+`state` is `playing`, `paused`, `idle` or `unavailable`; `volume` 0–100;
+`group` null or `{leader, members, volume}` (Music Assistant reports a
+group's loudest member);
 `now_playing` null or `{duration, elapsed, at, title, artist, album, art}`,
 where `elapsed` seconds were measured at epoch `at`; `repeat` is `off`,
 `one` or `all`. An item is `{ref, kind, name, source, library?, artists,

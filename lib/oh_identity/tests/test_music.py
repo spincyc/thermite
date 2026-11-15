@@ -243,7 +243,7 @@ class Gateway(Stand_in, Requests, TestCase):
                           "sources": {"tidal": False, "libraries": {"flac": True}}})
         self.assertEqual([speaker["id"] for speaker in answer["speakers"]], [WIIM, MINI, AMP])
         self.assertEqual(answer["speakers"][2], {
-            "id": AMP, "label": "Sonos Amp", "room": KITCHEN, "room_label": "Example Kitchen",
+            "id": AMP, "label": "Sonos Amp", "room": KITCHEN, "room_label": "Example Kitchen", "provider": "sonos",
             "available": True, "state": "idle", "volume": 20, "muted": False, "group": None, "now_playing": None,
             "shuffle": False, "repeat": "off"})
         self.assertNotIn("Stranger", json.dumps(answer))
