@@ -1,0 +1,676 @@
+/*
+ * Music's two backends, as backend.js has the remote's: the gateway's music
+ * API (oh_identity.music_api) and its event stream, or a mock house of
+ * invented speakers and a library that plays nothing. music-session.js
+ * drives either; neither decides what a page shows.
+ *
+ * MusicBackend.create(settings) is the gateway's when the page is served by
+ * it (ThermiteNavigation.hosted) and access is not the mock's, else the
+ * mock; settings.backend ("gateway" or "mock") chooses. Both answer, each
+ * a promise of the API's answer or a rejection with access.js's problem
+ * ({code, status, message}):
+ *
+ *   overview()                          GET /api/v1/music
+ *   search(q, kind, source)             GET …/search
+ *   browse(ref, offset, limit)          GET …/browse (ref null: the roots)
+ *   queue(speaker, offset, limit)       GET …/<speaker>/queue
+ *   play(speaker, ref, option)          POST …/<speaker>/play
+ *   transport(speaker, action, value)   POST …/<speaker>/transport
+ *   volume(speaker, level, group)       POST …/<speaker>/volume
+ *   group(speaker, members), ungroup(speaker)
+ *   tidal(), tidalStart(), tidalFinish()   an Admin's TIDAL sign-in
+ *
+ * art(id, size) is a cover's address (null without one); subscribe(callback)
+ * hears the stream as {type: "snapshot", music}, {type: "speaker",
+ * speaker}, {type: "unavailable"} and {type: "connection", connected}.
+ * open() opens the stream, close() lets it go; setActive(false) releases it
+ * while the page is hidden and setActive(true) opens it again.
+ */
+(function (global) {
+  "use strict";
+
+  // How long a stream closed for good waits before it opens again, as backend.js's.
+  const REOPEN_MS = [1000, 2000, 5000, 15000, 30000];
+  const ART = /^[0-9a-f]{64}$/;
+
+  function problem(code, status) {
+    if (global.ThermiteAccess) return global.ThermiteAccess.problem(code, status);
+    return Object.assign(new Error(code), { code: code, status: status || 0 });
+  }
+
+  function query(values) {
+    const params = new URLSearchParams();
+    Object.keys(values).forEach((key) => {
+      if (values[key] !== null && values[key] !== undefined && values[key] !== "") params.set(key, String(values[key]));
+    });
+    const text = params.toString();
+    return text ? "?" + text : "";
+  }
+
+  function listeners(target) {
+    target.listeners = [];
+    target.subscribe = function (callback) {
+      target.listeners.push(callback);
+      return () => { const index = target.listeners.indexOf(callback); if (index >= 0) target.listeners.splice(index, 1); };
+    };
+    target.emit = function (event) {
+      target.listeners.slice().forEach((listener) => {
+        try { listener(event); } catch (error) { console.error(error); }
+      });
+    };
+  }
+
+  // ---- the gateway ----------------------------------------------------------
+
+  function GatewayMusic(settings) {
+    const config = settings || {};
+    listeners(this);
+    this.access = config.access || (global.ThermiteAccess && global.ThermiteAccess.client) || null;
+    this.base = config.base || "";
+    this.EventSource = config.EventSource || global.EventSource;
+    this.later = config.setTimeout || ((callback, ms) => global.setTimeout(callback, ms));
+    this.cancel = config.clearTimeout || ((handle) => global.clearTimeout(handle));
+    this.active = config.active !== false;
+    this.wanted = false;
+    this.source = null;
+    this.generation = 0;
+    this.attempt = 0;
+    this.timer = 0;
+  }
+
+  // A gateway's reads and commands; openHAB itself (--native) has no music.
+  GatewayMusic.prototype.read = function (path) {
+    if (!this.access || this.access.native) return Promise.reject(problem("access_not_configured", 404));
+    return this.access.musicRead(path);
+  };
+
+  GatewayMusic.prototype.command = function (path, value) {
+    if (!this.access || this.access.native) return Promise.reject(problem("access_not_configured", 404));
+    return this.access.musicCommand(path, value);
+  };
+
+  GatewayMusic.prototype.overview = function () { return this.read(""); };
+  GatewayMusic.prototype.search = function (q, kind, source) { return this.read("/search" + query({ q: q, kind: kind, source: source })); };
+  GatewayMusic.prototype.browse = function (ref, offset, limit) { return this.read("/browse" + query({ ref: ref, offset: offset, limit: limit })); };
+  GatewayMusic.prototype.queue = function (speaker, offset, limit) {
+    return this.read("/" + encodeURIComponent(speaker) + "/queue" + query({ offset: offset, limit: limit }));
+  };
+  GatewayMusic.prototype.play = function (speaker, ref, option) {
+    return this.command(encodeURIComponent(speaker) + "/play", { ref: ref, option: option });
+  };
+  GatewayMusic.prototype.transport = function (speaker, action, value) {
+    return this.command(encodeURIComponent(speaker) + "/transport", value === undefined ? { action: action } : { action: action, value: value });
+  };
+  GatewayMusic.prototype.volume = function (speaker, level, group) {
+    return this.command(encodeURIComponent(speaker) + "/volume", group ? { group_level: level } : { level: level });
+  };
+  GatewayMusic.prototype.group = function (speaker, members) { return this.command(encodeURIComponent(speaker) + "/group", { members: members }); };
+  GatewayMusic.prototype.ungroup = function (speaker) { return this.command(encodeURIComponent(speaker) + "/ungroup", {}); };
+  GatewayMusic.prototype.tidal = function () { return this.read("/tidal"); };
+  GatewayMusic.prototype.tidalStart = function () { return this.command("tidal/start", {}); };
+  GatewayMusic.prototype.tidalFinish = function () { return this.command("tidal/finish", {}); };
+
+  // Covers come only through the gateway's art route (the pages' CSP has no other image source).
+  GatewayMusic.prototype.art = function (id, size) {
+    return typeof id === "string" && ART.test(id) ? this.base + "/api/v1/music/art/" + id + "?size=" + (size || 256) : null;
+  };
+
+  GatewayMusic.prototype.open = function () {
+    this.wanted = true;
+    this.listen();
+  };
+
+  GatewayMusic.prototype.close = function () {
+    this.wanted = false;
+    this.listen();
+  };
+
+  // The music stream, open while wanted and the page is shown; its first
+  // frame is the snapshot, so a stream opened again reads everything afresh.
+  GatewayMusic.prototype.listen = function () {
+    if (this.source) this.source.close();
+    this.source = null;
+    this.cancel(this.timer);
+    this.timer = 0;
+    const generation = ++this.generation;
+    if (!this.wanted || !this.active || !this.EventSource) return;
+    const source = this.source = new this.EventSource(this.base + "/api/v1/events/music");
+    const current = () => generation === this.generation;
+    source.onopen = () => { if (current()) this.attempt = 0; };
+    source.onmessage = (message) => {
+      if (!current()) return;
+      let frame;
+      try { frame = JSON.parse(message.data); } catch (_) { return; }
+      if (!frame || typeof frame !== "object") return;
+      if (frame.type === "snapshot" && frame.music && typeof frame.music === "object") {
+        this.emit({ type: "connection", connected: true });
+        this.emit({ type: "snapshot", music: frame.music });
+      } else if (frame.type === "speaker" && frame.speaker && typeof frame.speaker.id === "string") {
+        this.emit({ type: "speaker", speaker: frame.speaker });
+      } else if (frame.type === "unavailable") this.emit({ type: "unavailable" });
+    };
+    source.onerror = () => {
+      if (!current()) return;
+      this.emit({ type: "connection", connected: false });
+      // A browser closes a stream for good on any non-200 answer (a 502
+      // while the gateway restarts) and never retries it by itself.
+      if (source.readyState === 2) this.reopen(generation);
+    };
+  };
+
+  GatewayMusic.prototype.reopen = function (generation) {
+    if (this.timer) return;
+    const attempt = this.attempt;
+    this.attempt += 1;
+    this.timer = this.later(() => {
+      this.timer = 0;
+      if (generation === this.generation) this.listen();
+    }, REOPEN_MS[Math.min(attempt, REOPEN_MS.length - 1)]);
+    if (this.timer && this.timer.unref) this.timer.unref();
+  };
+
+  // A hidden page lets its stream go (an HTTP/1.1 origin has few
+  // connections, the gateway a per-peer allowance) and opens it when shown.
+  GatewayMusic.prototype.setActive = function (active) {
+    const next = Boolean(active);
+    if (next === this.active) return;
+    this.active = next;
+    this.listen();
+  };
+
+  GatewayMusic.prototype.stop = function () {
+    this.close();
+  };
+
+  // ---- the mock ---------------------------------------------------------------
+
+  // Invented speakers, a library and TIDAL's catalogue, for the page without a
+  // gateway and for the tests. Sonos and WiiM group only over AirPlay, which
+  // the Study's WiiM Amp Pro has none of, as Music Assistant's rules have it.
+  const SPEAKERS = [
+    { id: "kitchen_amp", label: "Sonos Amp", room: "kitchen", room_label: "Kitchen", provider: "sonos", airplay: true, volume: 32 },
+    { id: "kitchen_mini", label: "WiiM Mini", room: "kitchen", room_label: "Kitchen", provider: "wiim", airplay: true, volume: 24 },
+    { id: "den_one", label: "Sonos One", room: "den", room_label: "Den", provider: "sonos", airplay: true, volume: 18 },
+    { id: "study_amp", label: "WiiM Amp Pro", room: "study", room_label: "Study", provider: "wiim", airplay: false, volume: 40 },
+    { id: "patio_roam", label: "Sonos Roam", room: "patio", room_label: "Patio", provider: "sonos", airplay: true, volume: 30, away: true }
+  ];
+  const LIBRARY = "filesystem_local--flac";
+  const TIDAL = "tidal--mock";
+  const ARTISTS = [
+    ["library", "1", "The Lanterns"], ["library", "2", "Mira Okafor"], ["library", "3", "Northbound Quartet"], ["tidal", "900", "Juniper Vale"]
+  ];
+  const ALBUMS = [
+    ["library", "10", "Harbour Lights", "1", 2019, [["Low Tide", 221], ["Harbour Lights", 245], ["Signal Fires", 192], ["Drift", 320]]],
+    ["library", "20", "Paper Moons", "2", 2021, [["Paper Moons", 235], ["Glasshouse", 252], ["Undertow", 201]]],
+    ["library", "30", "Slow Rivers", "3", 2016, [["Slow Rivers", 362], ["Rain on Tin", 284], ["Evening Train", 310]]],
+    ["tidal", "901", "Overture", "900", 2023, [["Overture", 178], ["Wide Awake", 213], ["Northern Lights", 240]]]
+  ];
+  const PLAYLISTS = [["library", "1", "Kitchen Radio", ["101", "201", "302", "103"]], ["tidal", "950", "Sunday Morning", ["9011", "202", "9013"]]];
+
+  function catalogue() {
+    const items = {};
+    const provider = (source) => (source === "tidal" ? TIDAL : "library");
+    const base = (source) => (source === "tidal" ? { source: "tidal" } : { source: "library" });
+    const artistName = {};
+    ARTISTS.forEach(([source, id, name]) => {
+      artistName[id] = name;
+      items[provider(source) + "://artist/" + id] = Object.assign({ ref: provider(source) + "://artist/" + id, kind: "artist", name: name,
+        artists: [], album: null, year: null, duration: null, art: null }, base(source));
+    });
+    const tracks = {};
+    ALBUMS.forEach(([source, id, name, artist, year, list]) => {
+      const album = provider(source) + "://album/" + id;
+      items[album] = Object.assign({ ref: album, kind: "album", name: name, artists: [artistName[artist]], album: null, year: year,
+        duration: list.reduce((sum, track) => sum + track[1], 0), art: null, artist: provider(source) + "://artist/" + artist }, base(source));
+      items[album].tracks = list.map(([title, seconds], index) => {
+        const track = String(Number(id) * 10 + index + 1);
+        const ref = provider(source) + "://track/" + track;
+        tracks[track] = items[ref] = Object.assign({ ref: ref, kind: "track", name: title, artists: [artistName[artist]], album: name,
+          year: year, duration: seconds, art: null }, base(source));
+        // A library's files, as Browse finds them.
+        if (source === "library") {
+          const file = LIBRARY + "://track/" + artistName[artist] + "/" + name + "/" + String(index + 1).padStart(2, "0") + " " + title + ".flac";
+          items[file] = Object.assign({}, items[ref], { ref: file, library: "NAS", file: true });
+        }
+        return ref;
+      });
+    });
+    PLAYLISTS.forEach(([source, id, name, list]) => {
+      const ref = provider(source) + "://playlist/" + id;
+      items[ref] = Object.assign({ ref: ref, kind: "playlist", name: name, artists: [], album: null, year: null, duration: null, art: null,
+        tracks: list.map((track) => tracks[track].ref) }, base(source));
+    });
+    return items;
+  }
+
+  function MockMusic(settings) {
+    const config = settings || {};
+    listeners(this);
+    this.mock = true;
+    this.admin = config.admin !== false;
+    this.latency = config.latency != null ? Number(config.latency) : 150;
+    this.now = config.now || (() => Date.now());
+    this.later = config.setTimeout || ((callback, ms) => global.setTimeout(callback, ms));
+    this.configured = config.configured !== false;
+    // A Guest who may not see free text: no titles, and no library.
+    this.guest = config.guest === true;
+    this.problem = null;
+    this.locked = new Set();
+    this.items = catalogue();
+    this.tidalSignedIn = config.tidal === true;
+    this.flow = null;
+    this.tidalPolls = config.tidalPolls != null ? Number(config.tidalPolls) : 2;
+    this.sent = [];
+    this.active = true;
+    this.wanted = false;
+    const at = this.now() / 1000;
+    this.players = {};
+    SPEAKERS.forEach((spec) => {
+      this.players[spec.id] = { spec: spec, volume: spec.volume, muted: false, leader: null, members: [],
+        queue: { items: [], current: null, elapsed: 0, at: at, state: "idle", shuffle: false, repeat: "off" } };
+    });
+    const kitchen = this.players.kitchen_amp.queue;
+    Object.assign(kitchen, { items: this.items["library://album/10"].tracks.slice(), current: 1, elapsed: 63, state: "playing" });
+    const study = this.players.study_amp.queue;
+    Object.assign(study, { items: this.items["library://album/30"].tracks.slice(), current: 0, elapsed: 120, state: "paused", repeat: "all" });
+  }
+
+  MockMusic.prototype.answer = function (work) {
+    return new Promise((resolve, reject) => {
+      this.later(() => {
+        try { resolve(work()); } catch (error) { reject(error); }
+      }, this.latency);
+    });
+  };
+
+  MockMusic.prototype.ready = function (reading) {
+    if (!this.configured) throw problem("music_not_configured", 404);
+    if (this.problem) throw problem(this.problem, 503);
+    if (reading && this.guest) throw problem("login_required", 401);
+  };
+
+  MockMusic.prototype.leaderOf = function (id) {
+    return this.players[id].leader || id;
+  };
+
+  MockMusic.prototype.queueOf = function (id) {
+    return this.players[this.leaderOf(id)].queue;
+  };
+
+  MockMusic.prototype.elapsed = function (queue) {
+    return queue.state === "playing" ? queue.elapsed + Math.max(0, this.now() / 1000 - queue.at) : queue.elapsed;
+  };
+
+  MockMusic.prototype.speaker = function (id) {
+    const player = this.players[id], spec = player.spec;
+    const view = { id: id, label: spec.label, room: spec.room, room_label: spec.room_label, provider: spec.provider,
+      available: false, state: "unavailable", volume: null, muted: null, group: null, now_playing: null, shuffle: null, repeat: null };
+    if (spec.away || this.problem) return view;
+    const leader = this.leaderOf(id), queue = this.queueOf(id);
+    const members = this.players[leader].members;
+    Object.assign(view, { available: true, state: queue.state, volume: player.volume, muted: player.muted, shuffle: queue.shuffle, repeat: queue.repeat });
+    if (members.length) {
+      view.group = { leader: leader, members: [leader].concat(members),
+        volume: Math.max.apply(null, [leader].concat(members).map((member) => this.players[member].volume)) };
+    }
+    const track = queue.current !== null && this.items[queue.items[queue.current]];
+    if (track && queue.state !== "idle") {
+      view.now_playing = { duration: track.duration, elapsed: Math.round(queue.elapsed), at: queue.at };
+      if (!this.guest) Object.assign(view.now_playing, { title: track.name, artist: track.artists.join(", "), album: track.album, art: null });
+    }
+    return view;
+  };
+
+  MockMusic.prototype.music = function () {
+    const speakers = SPEAKERS.map((spec) => this.speaker(spec.id));
+    if (this.problem) return { version: 1, available: false, problem: this.problem, sources: null, speakers: speakers };
+    return { version: 1, available: true, problem: null, sources: { tidal: this.tidalSignedIn, libraries: { NAS: true } }, speakers: speakers };
+  };
+
+  // A change made: each speaker it changed reported on the stream, as the gateway does.
+  MockMusic.prototype.change = function (work) {
+    const before = {};
+    SPEAKERS.forEach((spec) => { before[spec.id] = JSON.stringify(this.speaker(spec.id)); });
+    const result = work();
+    if (this.wanted && this.active) {
+      SPEAKERS.forEach((spec) => {
+        const after = this.speaker(spec.id);
+        if (JSON.stringify(after) !== before[spec.id]) this.emit({ type: "speaker", speaker: after });
+      });
+    }
+    return result;
+  };
+
+  // A command on what speakers play: refused while a room that owns one of them is locked.
+  MockMusic.prototype.command = function (speaker, involved, record, work) {
+    this.sent.push(record);
+    return this.answer(() => {
+      this.ready(false);
+      if (!this.players[speaker]) throw problem("unknown_speaker", 404);
+      if (involved.some((id) => this.locked.has(id))) throw problem("device_locked", 423);
+      if (involved.some((id) => !this.speaker(id).available)) throw problem("music_failed", 502);
+      return this.change(work);
+    });
+  };
+
+  MockMusic.prototype.involved = function (speaker) {
+    const leader = this.leaderOf(speaker);
+    return [leader].concat(this.players[leader].members);
+  };
+
+  MockMusic.prototype.overview = function () {
+    return this.answer(() => { if (!this.configured) throw problem("music_not_configured", 404); return this.music(); });
+  };
+
+  MockMusic.prototype.visible = function (item) {
+    return item.source !== "tidal" || this.tidalSignedIn;
+  };
+
+  MockMusic.prototype.entry = function (item) {
+    const out = { ref: item.ref, kind: item.kind, name: item.name, source: item.source };
+    if (item.library) out.library = item.library;
+    if (item.kind === "folder") return out;
+    return Object.assign(out, { artists: item.artists.slice(), album: item.album, year: item.year, duration: item.duration, art: item.art });
+  };
+
+  MockMusic.prototype.search = function (q, kind, source) {
+    return this.answer(() => {
+      this.ready(true);
+      const words = String(q || "").trim().toLowerCase();
+      if (!words || !["", "track", "album", "artist", "playlist"].includes(kind || "") || !["", "library", "tidal"].includes(source || "")) {
+        throw problem("invalid_query", 400);
+      }
+      const answer = { query: words, kind: kind || null, source: source || null, artists: [], albums: [], tracks: [], playlists: [] };
+      Object.keys(this.items).map((ref) => this.items[ref]).forEach((item) => {
+        if (item.file || !this.visible(item) || (kind && item.kind !== kind) || (source && item.source !== source)) return;
+        const text = [item.name].concat(item.artists || [], item.album || []).join(" ").toLowerCase();
+        const list = answer[item.kind + "s"];
+        if (list && text.includes(words) && list.length < 25) list.push(this.entry(item));
+      });
+      return answer;
+    });
+  };
+
+  // A library's folders by artist and album, TIDAL's by kind.
+  MockMusic.prototype.folder = function (path) {
+    const folder = (ref, name) => ({ ref: ref, kind: "folder", name: name, source: ref.startsWith(TIDAL) ? "tidal" : "library",
+      library: ref.startsWith(TIDAL) ? undefined : "NAS" });
+    if (path.startsWith(TIDAL)) {
+      const inside = path.slice((TIDAL + "://folder/").length);
+      if (!inside) return [folder(TIDAL + "://folder/albums", "Albums"), folder(TIDAL + "://folder/playlists", "Playlists")];
+      if (inside === "albums") return ALBUMS.filter((album) => album[0] === "tidal").map((album) => this.items[TIDAL + "://album/" + album[1]]);
+      if (inside === "playlists") return PLAYLISTS.filter((list) => list[0] === "tidal").map((list) => this.items[TIDAL + "://playlist/" + list[1]]);
+      throw problem("music_failed", 502);
+    }
+    const inside = path.slice((LIBRARY + "://folder/").length);
+    const [artist, album] = inside.split("/");
+    if (!artist) return ARTISTS.filter((entry) => entry[0] === "library").map((entry) => folder(LIBRARY + "://folder/" + entry[2], entry[2]));
+    const albums = ALBUMS.filter((entry) => entry[0] === "library" && this.items["library://artist/" + entry[3]].name === artist);
+    if (!album) return albums.map((entry) => folder(LIBRARY + "://folder/" + artist + "/" + entry[2], entry[2]));
+    const found = albums.find((entry) => entry[2] === album);
+    if (!found) throw problem("music_failed", 502);
+    return Object.keys(this.items).filter((ref) => ref.startsWith(LIBRARY + "://track/" + artist + "/" + album + "/")).sort()
+      .map((ref) => this.items[ref]);
+  };
+
+  MockMusic.prototype.browse = function (ref, offset, limit) {
+    return this.answer(() => {
+      this.ready(true);
+      let items;
+      if (!ref) {
+        items = [{ ref: LIBRARY + "://folder/", kind: "folder", name: "NAS", source: "library", library: "NAS" }];
+        if (this.tidalSignedIn) items.push({ ref: TIDAL + "://folder/", kind: "folder", name: "TIDAL", source: "tidal" });
+      } else if (/:\/\/folder\//.test(ref)) items = this.folder(ref);
+      else {
+        const item = this.items[ref];
+        if (!item || item.kind === "track") throw problem("invalid_query", 400);
+        items = item.kind === "artist" ? Object.keys(this.items).map((key) => this.items[key])
+          .filter((entry) => entry.kind === "album" && entry.artist === ref)
+          : item.tracks.map((track) => this.items[track]);
+      }
+      items = items.filter((item) => this.visible(item)).map((item) => this.entry(item));
+      const from = Number(offset) || 0, size = Number(limit) || 100;
+      return { ref: ref || null, offset: from, limit: size, total: items.length, items: items.slice(from, from + size) };
+    });
+  };
+
+  MockMusic.prototype.queue = function (speaker, offset, limit) {
+    return this.answer(() => {
+      this.ready(true);
+      if (!this.players[speaker]) throw problem("unknown_speaker", 404);
+      if (!this.speaker(speaker).available) throw problem("music_failed", 502);
+      const leader = this.leaderOf(speaker), queue = this.queueOf(speaker);
+      const from = Number(offset) || 0, size = Number(limit) || 100;
+      const items = queue.items.map((ref, index) => Object.assign(this.entry(this.items[ref]), { index: index }));
+      return { speaker: speaker, queue: leader, offset: from, limit: size, total: items.length, current: queue.current,
+        items: items.slice(from, from + size) };
+    });
+  };
+
+  MockMusic.prototype.tracksOf = function (ref) {
+    const item = this.items[ref];
+    if (!item || item.kind === "folder") throw problem("invalid_ref", 400);
+    if (item.kind === "track") return [ref];
+    if (item.kind === "artist") {
+      return Object.keys(this.items).map((key) => this.items[key]).filter((entry) => entry.kind === "album" && entry.artist === ref)
+        .reduce((all, album) => all.concat(album.tracks), []);
+    }
+    return item.tracks.slice();
+  };
+
+  MockMusic.prototype.play = function (speaker, ref, option) {
+    const leader = this.players[speaker] ? this.leaderOf(speaker) : speaker;
+    return this.command(speaker, this.players[speaker] ? this.involved(speaker) : [], ["play", speaker, ref, option], () => {
+      const queue = this.queueOf(speaker), tracks = this.tracksOf(ref);
+      const at = this.now() / 1000;
+      if (option === "replace" || queue.current === null) Object.assign(queue, { items: tracks, current: 0, elapsed: 0, at: at, state: "playing" });
+      else if (option === "next") queue.items.splice(queue.current + 1, 0, ...tracks);
+      else if (option === "add") queue.items.push(...tracks);
+      else throw problem("invalid_command", 400);
+      return { accepted: true, speaker: speaker, action: "play", queue: leader };
+    });
+  };
+
+  MockMusic.prototype.transport = function (speaker, action, value) {
+    const leader = this.players[speaker] ? this.leaderOf(speaker) : speaker;
+    return this.command(speaker, this.players[speaker] ? this.involved(speaker) : [], ["transport", speaker, action, value === undefined ? null : value], () => {
+      const queue = this.queueOf(speaker), at = this.now() / 1000;
+      const move = (index) => Object.assign(queue, { current: index, elapsed: 0, at: at, state: "playing" });
+      if (action === "play") { if (queue.current !== null) Object.assign(queue, { elapsed: this.elapsed(queue), at: at, state: "playing" }); }
+      else if (action === "pause") Object.assign(queue, { elapsed: this.elapsed(queue), at: at, state: queue.current === null ? "idle" : "paused" });
+      else if (action === "stop") Object.assign(queue, { elapsed: 0, at: at, state: "idle" });
+      else if (action === "next" && queue.current !== null) move(queue.current + 1 < queue.items.length ? queue.current + 1 : 0);
+      else if (action === "previous" && queue.current !== null) move(this.elapsed(queue) > 5 ? queue.current : Math.max(0, queue.current - 1));
+      else if (action === "seek" && Number.isInteger(value)) Object.assign(queue, { elapsed: value, at: at });
+      else if (action === "shuffle" && typeof value === "boolean") queue.shuffle = value;
+      else if (action === "repeat" && ["off", "one", "all"].includes(value)) queue.repeat = value;
+      else if (!["next", "previous"].includes(action)) throw problem("invalid_command", 400);
+      return { accepted: true, speaker: speaker, action: action, queue: leader };
+    });
+  };
+
+  MockMusic.prototype.volume = function (speaker, level, group) {
+    const involved = !this.players[speaker] ? [] : group ? this.involved(speaker) : [speaker];
+    return this.command(speaker, involved, ["volume", speaker, group ? "group" : "level", level], () => {
+      if (!Number.isInteger(level) || level < 0 || level > 100) throw problem("invalid_command", 400);
+      if (!group) this.players[speaker].volume = level;
+      else {
+        // Music Assistant moves every member alike; the group reads as its loudest.
+        const loudest = Math.max.apply(null, involved.map((id) => this.players[id].volume));
+        involved.forEach((id) => { this.players[id].volume = Math.max(0, Math.min(100, this.players[id].volume + level - loudest)); });
+      }
+      return { accepted: true, speaker: speaker, action: group ? "group_level" : "level", level: level };
+    });
+  };
+
+  // Whether Music Assistant would group these two: one family, or both with AirPlay.
+  MockMusic.prototype.groups = function (a, b) {
+    const one = this.players[a].spec, other = this.players[b].spec;
+    return one.provider === other.provider || (one.airplay && other.airplay);
+  };
+
+  MockMusic.prototype.leave = function (id) {
+    const player = this.players[id];
+    if (player.leader) {
+      const leader = this.players[player.leader];
+      leader.members = leader.members.filter((member) => member !== id);
+      player.leader = null;
+      Object.assign(player.queue, { items: [], current: null, elapsed: 0, at: this.now() / 1000, state: "idle" });
+    } else {
+      player.members.forEach((member) => this.leave(member));
+    }
+  };
+
+  MockMusic.prototype.group = function (speaker, members) {
+    if (!Array.isArray(members) || !members.length || members.includes(speaker)) return Promise.reject(problem("invalid_command", 400));
+    if (members.some((member) => !this.players[member])) return Promise.reject(problem("unknown_speaker", 404));
+    return this.command(speaker, [speaker], ["group", speaker, members.join(",")], () => {
+      if (members.some((id) => this.locked.has(id))) throw problem("device_locked", 423);
+      if (this.players[speaker].leader) this.leave(speaker);
+      const joined = members.filter((id) => this.speaker(id).available && this.groups(speaker, id));
+      joined.forEach((id) => {
+        if (this.players[id].leader !== speaker) this.leave(id);
+        this.players[id].leader = speaker;
+        if (!this.players[speaker].members.includes(id)) this.players[speaker].members.push(id);
+      });
+      return { accepted: true, speaker: speaker, joined: joined, refused: members.filter((id) => !joined.includes(id)) };
+    });
+  };
+
+  MockMusic.prototype.ungroup = function (speaker) {
+    return this.command(speaker, this.players[speaker] ? this.involved(speaker) : [], ["ungroup", speaker], () => {
+      this.leave(speaker);
+      return { accepted: true, speaker: speaker, action: "ungroup" };
+    });
+  };
+
+  MockMusic.prototype.tidalAnswer = function () {
+    return { signed_in: this.tidalSignedIn, sign_in: this.flow && { state: this.flow.state, code: this.flow.code, url: this.flow.url, expires_at: this.flow.expires_at } };
+  };
+
+  MockMusic.prototype.tidalReady = function () {
+    this.ready(false);
+    if (!this.admin) throw problem("forbidden", 403);
+  };
+
+  MockMusic.prototype.tidal = function () {
+    return this.answer(() => {
+      this.tidalReady();
+      if (this.flow && this.flow.state === "waiting" && --this.flow.polls <= 0) this.approveTidal();
+      return this.tidalAnswer();
+    });
+  };
+
+  MockMusic.prototype.tidalStart = function () {
+    this.sent.push(["tidal", "start"]);
+    return this.answer(() => {
+      this.tidalReady();
+      this.flow = { state: "waiting", code: "MOCK7QX2", url: "https://link.tidal.com/MOCK7QX2", expires_at: Math.round(this.now() / 1000) + 300,
+        polls: this.tidalPolls };
+      return this.tidalAnswer();
+    });
+  };
+
+  MockMusic.prototype.tidalFinish = function () {
+    this.sent.push(["tidal", "finish"]);
+    return this.answer(() => {
+      this.tidalReady();
+      if (!this.flow) throw problem("tidal_not_started", 409);
+      if (this.flow.state === "waiting") this.flow.state = "cancelled";
+      const answer = this.tidalAnswer();
+      this.flow = null;
+      return answer;
+    });
+  };
+
+  // The owner approved the code: TIDAL's catalogue joins search and browse.
+  MockMusic.prototype.approveTidal = function () {
+    if (this.flow) this.flow.state = "done";
+    this.tidalSignedIn = true;
+    if (this.wanted && this.active) this.emit({ type: "snapshot", music: this.music() });
+  };
+
+  MockMusic.prototype.art = function () {
+    return null;
+  };
+
+  MockMusic.prototype.open = function () {
+    this.wanted = true;
+    this.listen();
+  };
+
+  MockMusic.prototype.close = function () {
+    this.wanted = false;
+  };
+
+  // A stream opened, or opened again: its snapshot after the latency.
+  MockMusic.prototype.listen = function () {
+    if (!this.wanted || !this.active || !this.configured) return;
+    this.later(() => {
+      if (!this.wanted || !this.active) return;
+      this.emit({ type: "connection", connected: true });
+      this.emit({ type: "snapshot", music: this.music() });
+    }, this.latency);
+  };
+
+  MockMusic.prototype.setActive = function (active) {
+    const next = Boolean(active);
+    if (next === this.active) return;
+    this.active = next;
+    this.listen();
+  };
+
+  MockMusic.prototype.stop = function () {
+    this.close();
+  };
+
+  // ---- what the tests and the preview simulate ------------------------------
+
+  // Music Assistant went away (problem: music_unavailable or music_unclaimed); recover() brings it back.
+  MockMusic.prototype.simulateUnavailable = function (code) {
+    this.problem = code || "music_unavailable";
+    if (this.wanted && this.active) this.emit({ type: "unavailable" });
+  };
+
+  MockMusic.prototype.recover = function () {
+    this.problem = null;
+    if (this.wanted && this.active) this.emit({ type: "snapshot", music: this.music() });
+  };
+
+  // The stream dropped; the gateway's next one starts with a fresh snapshot.
+  MockMusic.prototype.simulateDrop = function () {
+    this.emit({ type: "connection", connected: false });
+    this.listen();
+  };
+
+  // A room's lock holds these speakers: their commands are refused (423).
+  MockMusic.prototype.simulateLock = function (ids) {
+    this.locked = new Set(ids || []);
+  };
+
+  // The next track began by itself, or someone changed something elsewhere.
+  MockMusic.prototype.simulateNext = function (speaker) {
+    this.change(() => {
+      const queue = this.queueOf(speaker);
+      if (queue.current === null) return;
+      Object.assign(queue, { current: (queue.current + 1) % queue.items.length, elapsed: 0, at: this.now() / 1000, state: "playing" });
+    });
+  };
+
+  MockMusic.prototype.simulateVolume = function (speaker, level) {
+    this.change(() => { this.players[speaker].volume = level; });
+  };
+
+  global.MusicBackend = {
+    REOPEN_MS: REOPEN_MS,
+    GatewayMusic: GatewayMusic,
+    MockMusic: MockMusic,
+    create: function (settings) {
+      const config = settings || {};
+      const access = config.access || (global.ThermiteAccess && global.ThermiteAccess.client) || null;
+      const hosted = global.ThermiteNavigation ? global.ThermiteNavigation.hosted() : false;
+      const kind = config.backend || (hosted && !(access && access.mock) ? "gateway" : "mock");
+      return kind === "gateway" ? new GatewayMusic(config) : new MockMusic(config);
+    }
+  };
+})(globalThis);

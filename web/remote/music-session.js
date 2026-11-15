@@ -1,0 +1,1089 @@
+/*
+ * The Music page's behavior without a page: the house's Sonos and WiiM
+ * speakers as Music Assistant plays them (through the gateway), what each
+ * plays, its volume and group, the library to search and browse, a
+ * speaker's queue, TIDAL's sign-in, and every command the page sends
+ * (music-backend.js). music.js draws a session in a browser and the
+ * terminal remote draws the same one; neither decides anything this does
+ * not. Load it after music-backend.js.
+ *
+ * RemoteMusic.create({backend, access, store}) returns a session on a
+ * MusicBackend (access is the access.js client: the locks, who is signed
+ * in and whether a Guest sees titles; store is {get(key), set(key, value)},
+ * in memory if absent). As Audio's, it has access poll the locks while it
+ * runs, unless watchLocks is false. start(speaker) reads the speakers and
+ * opens the music stream; stop() lets it go. subscribe(callback) hears:
+ *
+ *   {type: "change"}                     draw it again
+ *   {type: "toast", title, body, tone}   tone "", "muted" or "bad"
+ *   {type: "announce", message}          for a screen reader
+ *
+ * status() says whether there is music to show; speakers() lists the
+ * speakers, a group's together; view() is the chosen speaker's now playing
+ * (its progress moves on from the speaker's {elapsed, at} while it plays,
+ * so a page redraws it each second); select(id) chooses another.
+ * playPause(), next(), previous(), seek(s), seekBy(±s), toggleShuffle(),
+ * cycleRepeat(), setVolume(v), stepVolume(±1), setGroupVolume(v) and
+ * stepGroupVolume(±1) send its commands, each shown until the speaker
+ * reads it back or HOLD_MS pass. library() is the Search, Browse or Queue
+ * tab (setTab), with setQuery (sent after SEARCH_MS), setKind, setSource,
+ * open, back, more and play(item, option): "replace" (Play now), "next" or
+ * "add". grouping() is the chosen speaker's group: join(ids), leave(id).
+ * tidal() is an Admin's TIDAL sign-in: tidalStart(), tidalCancel(). A
+ * speaker whose room is locked refuses its commands here with a toast, as
+ * Audio's; the gateway checks every command anyway.
+ */
+(function (global) {
+  "use strict";
+
+  // How long a value sent shows before what the speaker reports, how often
+  // a volume being dragged sends (as Audio's), how long typing waits before
+  // it searches, how often a TIDAL sign-in is checked, and a page of items.
+  const HOLD_MS = 6000;
+  const SLIDE_EVERY = 250;
+  const SEARCH_MS = 350;
+  const QUEUE_MS = 400;
+  const TIDAL_POLL_MS = 3000;
+  const PAGE = 100;
+  // Results of each kind shown while searching every kind.
+  const SECTION = 5;
+  const VOLUME_STEP = 2;
+  const SEEK_STEP = 10;
+  const TABS = ["search", "browse", "queue"];
+  const KINDS = [["", "All"], ["track", "Tracks"], ["album", "Albums"], ["artist", "Artists"], ["playlist", "Playlists"]];
+  const SOURCES = [["", "Everywhere"], ["library", "Library"], ["tidal", "TIDAL"]];
+  const OPTIONS = { replace: "Play now", next: "Play next", add: "Add to queue" };
+  const REPEAT = { off: "all", all: "one", one: "off" };
+  const REPEAT_LABEL = { off: "Repeat off", all: "Repeat all", one: "Repeat one" };
+  const PROVIDERS = { sonos: "Sonos", wiim: "WiiM" };
+  const KIND_LABEL = { track: "Track", album: "Album", artist: "Artist", playlist: "Playlist", folder: "Folder" };
+  const ABSENT = ["music_not_configured", "access_not_configured"];
+  const BLIND = "Sign in to thermite to search, browse and see the queue.";
+
+  function memoryStore() {
+    const memory = {};
+    return { get: (key) => (key in memory ? memory[key] : null), set: (key, value) => { memory[key] = value; } };
+  }
+
+  // 3:07, or 1:02:07.
+  function clock(value) {
+    const seconds = Math.max(0, Math.floor(Number(value) || 0));
+    const pad = (n) => String(n).padStart(2, "0");
+    const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60);
+    return (hours ? hours + ":" + pad(minutes) : minutes) + ":" + pad(seconds % 60);
+  }
+
+  // What a problem says: access.js's words for its code, else its message.
+  function said(error) {
+    const messages = global.ThermiteAccess ? global.ThermiteAccess.MESSAGES : {};
+    if (error && error.code === "access_not_configured") return "Music needs thermite's gateway.";
+    if (error && messages[error.code]) return messages[error.code];
+    return error && error.message ? error.message : String(error);
+  }
+
+  function problemText(code) {
+    return said({ code: code, message: "Music Assistant is not available." });
+  }
+
+  // A search, browse or queue entry as a page lists it; a library's root
+  // folder, named as its library, names it once.
+  function entry(item, extra) {
+    const artists = (item.artists || []).join(", ");
+    const source = item.source === "tidal" ? "TIDAL" : item.library || (item.source === "library" ? "Library" : null);
+    const line = item.kind === "track" ? [artists, item.album].filter(Boolean).join(" · ")
+      : item.kind === "album" ? [artists, item.year].filter(Boolean).join(" · ") : KIND_LABEL[item.kind] || "";
+    return Object.assign({
+      key: (extra && extra.index != null ? extra.index + " " : "") + (item.ref || ""), ref: item.ref || null, kind: item.kind,
+      name: item.name || "Untitled", line: line, source: source === item.name ? null : source,
+      duration: item.duration ? clock(item.duration) : null, art: item.art || null,
+      opens: Boolean(item.ref) && ["folder", "album", "artist", "playlist"].includes(item.kind),
+      plays: Boolean(item.ref) && item.kind !== "folder"
+    }, extra || {});
+  }
+
+  function create(options) {
+    const config = options || {};
+    const backend = config.backend;
+    const access = config.access && !config.access.native && !config.access.mock ? config.access : null;
+    const store = config.store || memoryStore();
+    const polls = Boolean(access) && config.watchLocks !== false;
+    const now = config.now || (() => Date.now());
+    const later = config.setTimeout || ((callback, ms) => global.setTimeout(callback, ms));
+    const cancel = config.clearTimeout || ((handle) => global.clearTimeout(handle));
+
+    const listeners = [];
+    const unsubscribe = [];
+    // Speaker id + " " + action -> {value, at}: what a command sent, shown
+    // until the speaker reads it back.
+    const held = {};
+    const ends = new Set();
+    let music = null;
+    let reading = false;
+    let absent = null;
+    let failure = null;
+    let connected = null;
+    let current = null;
+    let pending = 0;
+    let life = 0;
+    // A Guest who may not see titles has no library (oh_identity.music).
+    let blind = false;
+    let tab = TABS.includes(store.get("music.tab")) ? store.get("music.tab") : "search";
+    const search = { query: "", kind: "", source: "", state: "idle", answer: null, error: null, sequence: 0, timer: 0 };
+    const browse = { stack: [], sequence: 0 };
+    const queue = { speaker: null, owner: null, items: [], total: 0, current: null, state: "idle", error: null, sequence: 0, timer: 0 };
+    const grouping = { pending: false, result: null };
+    const tidal = { flow: null, pending: false, timer: 0, checked: false };
+
+    function emit(event) {
+      listeners.slice().forEach((listener) => {
+        try { listener(event); } catch (error) { console.error(error); }
+      });
+    }
+
+    // Many frames arrive at once (a stream's snapshot): one draw for them all.
+    function changed() {
+      if (pending) return;
+      pending = later(() => { pending = 0; emit({ type: "change" }); }, 0);
+    }
+
+    function toast(title, body, tone) {
+      emit({ type: "toast", title: title, body: body || "", tone: tone || "" });
+    }
+
+    function announce(message) {
+      emit({ type: "announce", message: message });
+    }
+
+    // ---- the speakers -----------------------------------------------------------
+
+    function all() {
+      return music ? music.speakers : [];
+    }
+
+    function find(id) {
+      return all().find((speaker) => speaker.id === id) || null;
+    }
+
+    // Its room, and its own name where the room has more than one.
+    function nameOf(id) {
+      const speaker = find(id);
+      if (!speaker) return id;
+      const shared = all().filter((other) => other.room === speaker.room).length > 1;
+      return shared ? speaker.room_label + " " + speaker.label : speaker.room_label;
+    }
+
+    // The speaker whose queue it plays: its group's leader, else itself.
+    function ownerOf(speaker) {
+      return speaker.group && speaker.group.leader ? speaker.group.leader : speaker.id;
+    }
+
+    function membersOf(speaker) {
+      return speaker.group && speaker.group.members.length ? speaker.group.members.slice() : [speaker.id];
+    }
+
+    // What the page shows for an action: the value sent while it is not
+    // read back and HOLD_MS have not passed, else what was read.
+    function shown(id, action, read) {
+      const key = id + " " + action, sent = held[key];
+      if (!sent) return { value: read, pending: false };
+      if ((read !== null && read !== undefined && read === sent.value) || now() - sent.at >= HOLD_MS) {
+        delete held[key];
+        return { value: read, pending: false };
+      }
+      return { value: sent.value, pending: true };
+    }
+
+    function hold(id, action, value) {
+      held[id + " " + action] = { value: value, at: now() };
+      // A speaker that ignored it reports nothing: draw what it read once the hold ends.
+      const end = later(() => { ends.delete(end); changed(); }, HOLD_MS + 50);
+      ends.add(end);
+    }
+
+    function playingOf(speaker) {
+      const read = speaker.available ? speaker.state === "playing" : null;
+      return shown(ownerOf(speaker), "playing", read).value;
+    }
+
+    // A speaker's report ends each hold it answers, then and there.
+    function heard(speaker) {
+      const owner = ownerOf(speaker);
+      playingOf(speaker);
+      shown(speaker.id, "volume", speaker.volume);
+      shown(owner, "shuffle", speaker.shuffle);
+      shown(owner, "repeat", speaker.repeat);
+      if (speaker.group) shown(owner, "group_volume", speaker.group.volume);
+      const seek = held[owner + " seek"], playing = speaker.now_playing;
+      // A position Music Assistant measured after the seek was sent is the speaker's.
+      if (seek && playing && Number.isFinite(playing.at) && playing.at * 1000 >= seek.at - 1000) delete held[owner + " seek"];
+    }
+
+    // The rooms of these speakers that are locked, by label.
+    function lockedBy(ids) {
+      if (!access) return [];
+      const labels = [];
+      ids.map(find).filter(Boolean).forEach((speaker) => {
+        if ((access.lockSummary(speaker.room) || {}).locked && !labels.includes(speaker.room_label)) labels.push(speaker.room_label);
+      });
+      return labels;
+    }
+
+    // Whether a command on these speakers is held back: a locked room, or no
+    // speaker to send it to.
+    function blocked(speaker, ids) {
+      if (!speaker) return true;
+      if (!speaker.available) {
+        toast(nameOf(speaker.id), "Not available", "muted");
+        return true;
+      }
+      const locked = lockedBy(ids || membersOf(speaker));
+      if (!locked.length) return false;
+      toast(nameOf(speaker.id), "Locked by " + locked.join(", "), "bad");
+      return true;
+    }
+
+    // A command on a speaker (name), said to a screen reader once sent
+    // (text null: a volume being dragged, which says itself); a failure
+    // drops what the page held for it (holds) and answers null.
+    function send(sent, name, title, text, holds) {
+      return Promise.resolve(sent).then((result) => {
+        if (text !== null) announce(name + ": " + title + (text ? " " + text : ""));
+        return result;
+      }).catch((error) => {
+        (holds || []).forEach((key) => { delete held[key]; });
+        changed();
+        toast(name + ": " + title, said(error), "bad");
+        return null;
+      });
+    }
+
+    // ---- reading ----------------------------------------------------------------
+
+    function status() {
+      if (absent) return { state: "absent", text: absent };
+      if (!music) return reading || !failure ? { state: "reading", text: "Reading the speakers…" } : { state: "failed", text: failure };
+      if (!music.available) return { state: "unavailable", text: problemText(music.problem || "music_unavailable") };
+      return { state: "ready", text: connected === false ? "Not connected to thermite. Reconnecting…" : "" };
+    }
+
+    function line(speaker) {
+      if (!speaker.available) return "Not available";
+      const playing = speaker.now_playing;
+      const title = playing && playing.title ? [playing.title, playing.artist].filter(Boolean).join(" · ") : null;
+      const state = playingOf(speaker);
+      if (title) return title;
+      return state ? "Playing" : speaker.state === "paused" ? "Paused" : "Nothing playing";
+    }
+
+    function row(speaker) {
+      const locked = lockedBy([speaker.id]);
+      return { id: speaker.id, name: nameOf(speaker.id), label: speaker.label, room: speaker.room_label, current: speaker.id === current,
+        available: speaker.available, playing: speaker.available ? playingOf(speaker) : null, line: line(speaker),
+        leader: Boolean(speaker.group) && speaker.group.leader === speaker.id, locked: locked.length > 0 };
+    }
+
+    // Each speaker, a group's together under its leader, in the house's order.
+    function speakersView() {
+      const blocks = [], placed = new Set();
+      all().forEach((speaker) => {
+        if (placed.has(speaker.id)) return;
+        if (!speaker.group) {
+          placed.add(speaker.id);
+          blocks.push({ group: false, leader: speaker.id, line: line(speaker), speakers: [row(speaker)] });
+          return;
+        }
+        const members = [speaker.group.leader].concat(speaker.group.members.filter((id) => id !== speaker.group.leader))
+          .filter((id) => find(id) && !placed.has(id));
+        members.forEach((id) => placed.add(id));
+        const lead = find(speaker.group.leader) || speaker;
+        blocks.push({ group: true, leader: lead.id, line: line(lead), name: members.map(nameOf).join(" + "),
+          speakers: members.map((id) => row(find(id))) });
+      });
+      return blocks;
+    }
+
+    // Where it is in the track: from {elapsed, at} while it plays, or from a seek just sent.
+    function progressOf(speaker) {
+      const playing = speaker.now_playing;
+      if (!playing || !Number.isFinite(playing.elapsed)) return null;
+      const owner = ownerOf(speaker), moving = playingOf(speaker) === true;
+      const seek = held[owner + " seek"];
+      let elapsed;
+      if (seek && now() - seek.at < HOLD_MS) elapsed = seek.value + (moving ? (now() - seek.at) / 1000 : 0);
+      else {
+        if (seek) delete held[owner + " seek"];
+        elapsed = playing.elapsed + (moving && Number.isFinite(playing.at) ? Math.max(0, now() / 1000 - playing.at) : 0);
+      }
+      const duration = Number.isFinite(playing.duration) && playing.duration > 0 ? playing.duration : null;
+      if (duration !== null) elapsed = Math.min(elapsed, duration);
+      elapsed = Math.max(0, Math.floor(elapsed));
+      return { elapsed: elapsed, duration: duration, at: clock(elapsed), left: duration !== null ? clock(duration) : "",
+        text: clock(elapsed) + (duration !== null ? " of " + clock(duration) : ""), fill: duration ? elapsed / duration * 100 : 0,
+        pending: Boolean(seek) };
+    }
+
+    function level(id, action, read) {
+      const state = shown(id, action, read);
+      const value = Number.isInteger(state.value) ? state.value : null;
+      return { value: value, min: 0, max: 100, step: 1, pending: state.pending, disabled: value === null,
+        text: value === null ? "Not available" : String(value), fill: value === null ? 0 : value };
+    }
+
+    // The chosen speaker's now playing, volume, group and transport.
+    function view() {
+      const speaker = find(current);
+      if (!speaker || !music || !music.available) return null;
+      const id = speaker.id, owner = ownerOf(speaker), playing = speaker.now_playing;
+      const isPlaying = playingOf(speaker);
+      const locked = lockedBy(membersOf(speaker));
+      const shuffle = shown(owner, "shuffle", speaker.shuffle), repeat = shown(owner, "repeat", speaker.repeat);
+      const title = playing && playing.title || null;
+      const group = speaker.group ? {
+        leader: owner, leaderName: nameOf(owner), lead: owner === id,
+        members: membersOf(speaker).map((member) => ({ id: member, name: nameOf(member), leader: member === owner, current: member === id })),
+        text: "With " + membersOf(speaker).filter((member) => member !== id).map(nameOf).join(", "),
+        volume: level(owner, "group_volume", speaker.group.volume)
+      } : null;
+      return {
+        speaker: { id: id, name: nameOf(id), label: speaker.label, room: speaker.room_label, provider: PROVIDERS[speaker.provider] || speaker.provider || "" },
+        available: speaker.available,
+        connected: connected,
+        locked: locked.length ? { rooms: locked, text: "Locked by " + locked.join(", ") } : null,
+        playing: isPlaying,
+        state: speaker.state,
+        title: title,
+        line: playing ? [playing.artist, playing.album].filter(Boolean).join(" · ") || null : null,
+        art: playing && playing.art || null,
+        // What heads the panel: the title, else whether it plays (a Guest sees no titles).
+        now: title || (!speaker.available ? "Not available" : isPlaying ? "Playing" : speaker.state === "paused" ? "Paused" : "Nothing playing"),
+        progress: progressOf(speaker),
+        canSkip: speaker.available && Boolean(playing),
+        playLabel: isPlaying ? "Pause" : "Play",
+        shuffle: { on: shuffle.value === true, known: typeof shuffle.value === "boolean", pending: shuffle.pending,
+          label: shuffle.value ? "Shuffle on" : "Shuffle off" },
+        repeat: { value: repeat.value || "off", known: typeof repeat.value === "string", pending: repeat.pending, label: REPEAT_LABEL[repeat.value] || REPEAT_LABEL.off },
+        volume: level(id, "volume", speaker.volume),
+        muted: speaker.muted === true,
+        group: group,
+        // A group's member plays its leader's queue.
+        queueOf: owner !== id ? nameOf(owner) : null
+      };
+    }
+
+    // ---- the commands -----------------------------------------------------------
+
+    function chosen() {
+      return find(current);
+    }
+
+    function playPause() {
+      const speaker = chosen();
+      if (blocked(speaker)) return Promise.resolve();
+      const owner = ownerOf(speaker), plays = playingOf(speaker) === true;
+      // It shows what it asked for until the speaker says: a second press undoes the first.
+      hold(owner, "playing", !plays);
+      changed();
+      return send(backend.transport(speaker.id, plays ? "pause" : "play"), nameOf(speaker.id), plays ? "Pause" : "Play", "", [owner + " playing"]);
+    }
+
+    function skip(action) {
+      const speaker = chosen();
+      if (blocked(speaker)) return Promise.resolve();
+      return send(backend.transport(speaker.id, action), nameOf(speaker.id), action === "next" ? "Next track" : "Previous track", "")
+        .then((result) => { if (result) refreshQueue(); return result; });
+    }
+
+    function seek(seconds) {
+      const speaker = chosen();
+      const progress = speaker && progressOf(speaker);
+      if (!progress || progress.duration === null) return Promise.resolve();
+      if (blocked(speaker)) return Promise.resolve();
+      const value = Math.max(0, Math.min(Math.floor(progress.duration) - 1, Math.round(Number(seconds) || 0)));
+      const owner = ownerOf(speaker);
+      hold(owner, "seek", value);
+      changed();
+      return send(backend.transport(speaker.id, "seek", value), nameOf(speaker.id), "Position", clock(value), [owner + " seek"]);
+    }
+
+    function seekBy(delta) {
+      const speaker = chosen();
+      const progress = speaker && progressOf(speaker);
+      return progress ? seek(progress.elapsed + delta * SEEK_STEP) : Promise.resolve();
+    }
+
+    function toggleShuffle() {
+      const speaker = chosen();
+      if (blocked(speaker)) return Promise.resolve();
+      const owner = ownerOf(speaker), on = !(shown(owner, "shuffle", speaker.shuffle).value === true);
+      hold(owner, "shuffle", on);
+      changed();
+      return send(backend.transport(speaker.id, "shuffle", on), nameOf(speaker.id), "Shuffle", on ? "on" : "off", [owner + " shuffle"]);
+    }
+
+    function cycleRepeat() {
+      const speaker = chosen();
+      if (blocked(speaker)) return Promise.resolve();
+      const owner = ownerOf(speaker), next = REPEAT[shown(owner, "repeat", speaker.repeat).value] || "all";
+      hold(owner, "repeat", next);
+      changed();
+      return send(backend.transport(speaker.id, "repeat", next), nameOf(speaker.id), REPEAT_LABEL[next], "", [owner + " repeat"]);
+    }
+
+    // A volume moved to value: at most one is sent every SLIDE_EVERY while it
+    // moves, and always the last (as Audio's). "volume" is the speaker's,
+    // "group_volume" its group's.
+    function fader(action) {
+      const slide = { speaker: null, value: null, sent: null, sentTo: null, timer: 0 };
+      const group = action === "group_volume";
+      const label = group ? "Group volume" : "Volume";
+      const holder = (id) => (group ? ownerOf(find(id) || { id: id }) : id);
+      function deliver() {
+        slide.sent = slide.value;
+        slide.sentTo = slide.speaker;
+        const to = slide.speaker;
+        send(backend.volume(to, slide.value, group), nameOf(to), label, null, [holder(to) + " " + action])
+          .then((result) => { if (!result && slide.sentTo === to) slide.sent = null; });
+      }
+      function tick() {
+        slide.timer = 0;
+        if (slide.value === slide.sent && slide.speaker === slide.sentTo) { changed(); return; }
+        deliver();
+        slide.timer = later(tick, SLIDE_EVERY);
+      }
+      return {
+        set(id, value) {
+          slide.speaker = id;
+          slide.value = value;
+          hold(holder(id), action, value);
+          if (!slide.timer) tick();
+          changed();
+        },
+        // The last of a slide still under way, sent now and no later.
+        flush() {
+          if (!slide.timer) return;
+          cancel(slide.timer);
+          slide.timer = 0;
+          if (slide.value !== slide.sent || slide.speaker !== slide.sentTo) deliver();
+        },
+        // Moved off what was sent between slides (its own knob): that level may be sent again.
+        moved(id, before, after) {
+          if (slide.sentTo === id && !slide.timer && before !== after && after !== slide.sent) slide.sent = null;
+        },
+        reset() { slide.sent = slide.sentTo = null; }
+      };
+    }
+    const faders = { volume: fader("volume"), group_volume: fader("group_volume") };
+
+    function setVolume(value) {
+      const speaker = chosen();
+      const parsed = Math.round(Number(value));
+      if (!speaker || !Number.isFinite(parsed) || level(speaker.id, "volume", speaker.volume).value === null) return;
+      if (blocked(speaker, [speaker.id])) return;
+      faders.volume.set(speaker.id, Math.max(0, Math.min(100, parsed)));
+    }
+
+    function stepVolume(direction) {
+      const speaker = chosen();
+      const shownLevel = speaker && level(speaker.id, "volume", speaker.volume);
+      if (!shownLevel || shownLevel.value === null) return;
+      const next = Math.max(0, Math.min(100, shownLevel.value + direction * VOLUME_STEP));
+      if (next === shownLevel.value) return;
+      setVolume(next);
+      // A step is not a drag a screen reader follows: say where it went.
+      if (!lockedBy([speaker.id]).length) announce(nameOf(speaker.id) + ": Volume " + next);
+    }
+
+    function setGroupVolume(value) {
+      const speaker = chosen();
+      const parsed = Math.round(Number(value));
+      if (!speaker || !speaker.group || !Number.isFinite(parsed)) return;
+      if (blocked(speaker)) return;
+      faders.group_volume.set(speaker.id, Math.max(0, Math.min(100, parsed)));
+    }
+
+    function stepGroupVolume(direction) {
+      const speaker = chosen();
+      if (!speaker || !speaker.group) return;
+      const shownLevel = level(ownerOf(speaker), "group_volume", speaker.group.volume);
+      if (shownLevel.value === null) return;
+      const next = Math.max(0, Math.min(100, shownLevel.value + direction * VOLUME_STEP));
+      if (next === shownLevel.value) return;
+      setGroupVolume(next);
+      if (!lockedBy(membersOf(speaker)).length) announce(nameOf(speaker.id) + ": Group volume " + next);
+    }
+
+    // ---- grouping ---------------------------------------------------------------
+
+    // Why Music Assistant left a speaker out, in plain words.
+    function refusal(lead, id) {
+      const speaker = find(id);
+      if (!speaker || !speaker.available) return nameOf(id) + " is not available.";
+      if (lead && speaker.provider !== lead.provider) {
+        return nameOf(id) + " cannot join " + nameOf(lead.id) + ": Sonos and WiiM speakers group only over AirPlay, and one of them has none.";
+      }
+      return "Music Assistant left " + nameOf(id) + " out. Try again in a moment.";
+    }
+
+    function groupingView() {
+      const speaker = chosen();
+      if (!speaker || !music || !music.available) return null;
+      const owner = ownerOf(speaker), members = membersOf(speaker);
+      return {
+        leader: owner, leaderName: nameOf(owner), grouped: Boolean(speaker.group), available: speaker.available,
+        members: members.map((id) => ({ id: id, name: nameOf(id), leader: id === owner, current: id === speaker.id })),
+        candidates: all().filter((other) => !members.includes(other.id)).map((other) => ({
+          id: other.id, name: nameOf(other.id), available: other.available,
+          note: !other.available ? "Not available" : other.group ? "With " + nameOf(ownerOf(other)) : playingOf(other) ? "Playing" : ""
+        })),
+        pending: grouping.pending,
+        result: grouping.result,
+        volume: speaker.group ? level(owner, "group_volume", speaker.group.volume) : null
+      };
+    }
+
+    // Join speakers to the chosen speaker's group (to its leader's): which
+    // joined, and why each one Music Assistant refused could not.
+    function join(ids) {
+      const speaker = chosen();
+      if (!speaker || grouping.pending) return Promise.resolve();
+      const lead = find(ownerOf(speaker)) || speaker, members = membersOf(speaker);
+      const wanted = (ids || []).filter((id) => find(id) && !members.includes(id));
+      if (!wanted.length || blocked(lead, members.concat(wanted))) return Promise.resolve();
+      grouping.pending = true;
+      grouping.result = null;
+      changed();
+      const started = life;
+      return Promise.resolve(backend.group(lead.id, wanted)).then((answer) => {
+        if (started !== life) return;
+        grouping.pending = false;
+        const joined = (answer.joined || []).map(nameOf);
+        const refused = (answer.refused || []).map((id) => ({ id: id, name: nameOf(id), reason: refusal(lead, id) }));
+        grouping.result = { joined: joined, refused: refused, text: joined.length ? joined.join(", ") + " joined " + nameOf(lead.id) + "." : "" };
+        if (refused.length) {
+          toast(refused.length > 1 ? refused.length + " speakers could not join" : refused[0].name + " could not join",
+            refused.map((entry) => entry.reason).join(" "), "bad");
+        } else toast("Grouped", grouping.result.text);
+        announce([grouping.result.text].concat(refused.map((entry) => entry.reason)).filter(Boolean).join(" "));
+        changed();
+      }, (error) => {
+        if (started !== life) return;
+        grouping.pending = false;
+        changed();
+        toast("Group", said(error), "bad");
+      });
+    }
+
+    // A member out of its group, or a leader's whole group ended.
+    function leave(id) {
+      const target = find(id || current);
+      if (!target || !target.group) return Promise.resolve();
+      const ending = ownerOf(target) === target.id;
+      if (blocked(target, ending ? membersOf(target) : [target.id])) return Promise.resolve();
+      grouping.result = null;
+      return send(backend.ungroup(target.id), nameOf(target.id), ending ? "Group ended" : "Left the group", "");
+    }
+
+    // ---- the library ------------------------------------------------------------
+
+    function blindNow() {
+      const user = access && access.current && access.current();
+      const security = access && access.security && access.security();
+      return blind || Boolean(user && user.is_guest && security && security.guest_text === false);
+    }
+
+    // A library read that a Guest without titles may not make.
+    function refused(error) {
+      if (error && error.code === "login_required") {
+        blind = true;
+        return true;
+      }
+      return false;
+    }
+
+    function setTab(next) {
+      if (!TABS.includes(next) || next === tab) return;
+      tab = next;
+      store.set("music.tab", next);
+      if (tab === "browse" && !browse.stack.length) openRoot();
+      if (tab === "queue") loadQueue(0);
+      changed();
+    }
+
+    function setQuery(text) {
+      search.query = String(text || "").slice(0, 100);
+      cancel(search.timer);
+      search.timer = 0;
+      if (!search.query.trim()) {
+        search.sequence += 1;
+        Object.assign(search, { state: "idle", answer: null, error: null });
+        changed();
+        return;
+      }
+      search.timer = later(runSearch, SEARCH_MS);
+      changed();
+    }
+
+    function setKind(kind) {
+      if (!KINDS.some((option) => option[0] === kind) || kind === search.kind) return;
+      search.kind = kind;
+      runNow();
+    }
+
+    function setSource(source) {
+      if (!SOURCES.some((option) => option[0] === source) || source === search.source) return;
+      search.source = source;
+      runNow();
+    }
+
+    // Enter, or a filter changed: the search goes now.
+    function runNow() {
+      cancel(search.timer);
+      search.timer = 0;
+      if (search.query.trim()) runSearch();
+      else changed();
+    }
+
+    function runSearch() {
+      search.timer = 0;
+      if (blindNow()) return;
+      const sequence = ++search.sequence, started = life;
+      search.state = "searching";
+      search.error = null;
+      changed();
+      return Promise.resolve(backend.search(search.query.trim(), search.kind, search.source)).then((answer) => {
+        if (sequence !== search.sequence || started !== life) return;
+        Object.assign(search, { state: "done", answer: answer });
+        changed();
+      }, (error) => {
+        if (sequence !== search.sequence || started !== life) return;
+        refused(error);
+        Object.assign(search, { state: "failed", answer: null, error: said(error) });
+        changed();
+      });
+    }
+
+    function searchView() {
+      const sections = [];
+      if (search.answer) {
+        [["track", "Tracks"], ["album", "Albums"], ["artist", "Artists"], ["playlist", "Playlists"]].forEach(([kind, title]) => {
+          const items = search.answer[kind + "s"] || [];
+          if (!items.length) return;
+          const shownItems = search.kind ? items : items.slice(0, SECTION);
+          sections.push({ kind: kind, title: title, total: items.length, more: items.length > shownItems.length,
+            items: shownItems.map((item) => entry(item)) });
+        });
+      }
+      const tidalSource = Boolean(music && music.sources && music.sources.tidal);
+      const text = search.state === "searching" ? "Searching…" : search.state === "failed" ? search.error
+        : search.state === "done" && !sections.length ? "Nothing found for “" + search.query.trim() + "”." : "";
+      return {
+        query: search.query, kind: search.kind, source: search.source, state: search.state, text: text, sections: sections,
+        kinds: KINDS.map(([value, label]) => ({ value: value, label: label, current: value === search.kind })),
+        sources: SOURCES.filter(([value]) => value !== "tidal" || tidalSource || search.source === "tidal")
+          .map(([value, label]) => ({ value: value, label: label, current: value === search.source }))
+      };
+    }
+
+    function openRoot() {
+      browse.stack = [{ ref: null, name: "Library", items: [], total: 0, state: "idle", error: null }];
+      loadBrowse(0);
+    }
+
+    function loadBrowse(offset) {
+      const top = browse.stack[browse.stack.length - 1];
+      if (!top || blindNow()) return Promise.resolve();
+      const sequence = ++browse.sequence, started = life;
+      top.state = "reading";
+      top.error = null;
+      changed();
+      return Promise.resolve(backend.browse(top.ref, offset, PAGE)).then((answer) => {
+        if (sequence !== browse.sequence || started !== life) return;
+        top.items = offset ? top.items.concat(answer.items || []) : answer.items || [];
+        top.total = Number.isInteger(answer.total) ? answer.total : top.items.length;
+        top.state = "done";
+        changed();
+      }, (error) => {
+        if (sequence !== browse.sequence || started !== life) return;
+        refused(error);
+        top.state = "failed";
+        top.error = said(error);
+        changed();
+      });
+    }
+
+    function open(item) {
+      if (!item || !item.ref || !["folder", "album", "artist", "playlist"].includes(item.kind)) return Promise.resolve();
+      if (tab !== "browse") {
+        tab = "browse";
+        store.set("music.tab", tab);
+        if (!browse.stack.length) browse.stack = [{ ref: null, name: "Library", items: [], total: 0, state: "idle", error: null }];
+      }
+      browse.stack.push({ ref: item.ref, name: item.name || "Untitled", items: [], total: 0, state: "idle", error: null });
+      return loadBrowse(0);
+    }
+
+    function back() {
+      if (browse.stack.length <= 1) return;
+      browse.stack.pop();
+      browse.sequence += 1;
+      const top = browse.stack[browse.stack.length - 1];
+      if (top.state !== "done") loadBrowse(0);
+      changed();
+    }
+
+    function browseView() {
+      const top = browse.stack[browse.stack.length - 1];
+      if (!top) return { path: ["Library"], depth: 0, state: "idle", text: "", items: [], more: false };
+      return {
+        path: browse.stack.map((level) => level.name), depth: browse.stack.length - 1, state: top.state,
+        text: top.state === "reading" && !top.items.length ? "Reading…" : top.state === "failed" ? top.error
+          : top.state === "done" && !top.items.length ? "Nothing here." : "",
+        items: top.items.map((item) => entry(item)), more: top.state === "done" && top.items.length < top.total, total: top.total
+      };
+    }
+
+    // The chosen speaker's queue (its leader's, in a group).
+    function loadQueue(offset) {
+      const speaker = chosen();
+      cancel(queue.timer);
+      queue.timer = 0;
+      if (!speaker || !speaker.available || blindNow()) return Promise.resolve();
+      const sequence = ++queue.sequence, started = life, id = speaker.id;
+      if (queue.speaker !== id) Object.assign(queue, { items: [], total: 0, current: null, owner: null });
+      queue.speaker = id;
+      queue.state = "reading";
+      queue.error = null;
+      changed();
+      return Promise.resolve(backend.queue(id, offset, PAGE)).then((answer) => {
+        if (sequence !== queue.sequence || started !== life) return;
+        Object.assign(queue, { owner: answer.queue || id, items: offset ? queue.items.concat(answer.items || []) : answer.items || [],
+          total: Number.isInteger(answer.total) ? answer.total : (answer.items || []).length,
+          current: Number.isInteger(answer.current) ? answer.current : null, state: "done" });
+        changed();
+      }, (error) => {
+        if (sequence !== queue.sequence || started !== life) return;
+        refused(error);
+        Object.assign(queue, { state: "failed", error: said(error) });
+        changed();
+      });
+    }
+
+    // Read again shortly when it shows: a track began, or a command changed it.
+    function refreshQueue() {
+      if (tab !== "queue" || queue.timer) return;
+      queue.timer = later(() => { queue.timer = 0; loadQueue(0); }, QUEUE_MS);
+    }
+
+    function queueView() {
+      const speaker = chosen();
+      if (speaker && !speaker.available) return { state: "done", text: nameOf(speaker.id) + " is not available.", items: [], more: false, owner: null };
+      const mine = speaker && queue.speaker === speaker.id;
+      const items = mine ? queue.items.map((item, position) => entry(item, {
+        index: Number.isInteger(item.index) ? item.index : position, current: (Number.isInteger(item.index) ? item.index : position) === queue.current
+      })) : [];
+      const state = mine ? queue.state : "reading";
+      return {
+        state: state, owner: mine && queue.owner && speaker && queue.owner !== speaker.id ? nameOf(queue.owner) : null,
+        text: state === "reading" && !items.length ? "Reading…" : state === "failed" ? queue.error : state === "done" && !items.length ? "The queue is empty." : "",
+        items: items, more: state === "done" && items.length < queue.total, total: mine ? queue.total : 0
+      };
+    }
+
+    function more() {
+      if (tab === "browse") {
+        const top = browse.stack[browse.stack.length - 1];
+        if (top && top.state === "done" && top.items.length < top.total) return loadBrowse(top.items.length);
+      } else if (tab === "queue" && queue.state === "done" && queue.items.length < queue.total) return loadQueue(queue.items.length);
+      return Promise.resolve();
+    }
+
+    function libraryView() {
+      const shownTab = tab;
+      if (!music || !music.available) return null;
+      if (blindNow()) return { tab: shownTab, tabs: tabs(), blind: BLIND };
+      return { tab: shownTab, tabs: tabs(), blind: null,
+        search: shownTab === "search" ? searchView() : null,
+        browse: shownTab === "browse" ? browseView() : null,
+        queue: shownTab === "queue" ? queueView() : null };
+    }
+
+    function tabs() {
+      return TABS.map((id) => ({ id: id, label: id[0].toUpperCase() + id.slice(1), current: id === tab }));
+    }
+
+    // What an item offers: Open, and the three ways to play it.
+    function actions(item) {
+      const speaker = chosen();
+      const list = [];
+      if (item && item.opens) list.push({ id: "open", label: "Open" });
+      if (item && item.plays) {
+        Object.keys(OPTIONS).forEach((option) => list.push({ id: option, label: OPTIONS[option],
+          disabled: !speaker || !speaker.available }));
+      }
+      return list;
+    }
+
+    function act(item, action) {
+      if (action === "open") return open(item);
+      return play(item, action);
+    }
+
+    function play(item, option) {
+      const speaker = chosen();
+      if (!item || !item.ref || item.kind === "folder" || !OPTIONS[option]) return Promise.resolve();
+      if (blocked(speaker)) return Promise.resolve();
+      const name = item.name || "Untitled";
+      const words = option === "replace" ? "Playing " + name : option === "next" ? name + " plays next" : name + " added to the queue";
+      return Promise.resolve(backend.play(speaker.id, item.ref, option)).then((answer) => {
+        const where = answer && answer.queue && answer.queue !== speaker.id ? " (" + nameOf(answer.queue) + "'s group)" : "";
+        if (option === "replace") announce(nameOf(speaker.id) + ": " + words + where);
+        else toast(OPTIONS[option], words + " on " + nameOf(speaker.id) + where);
+        refreshQueue();
+        return answer;
+      }, (error) => {
+        toast(OPTIONS[option], said(error), "bad");
+        return null;
+      });
+    }
+
+    // ---- TIDAL ------------------------------------------------------------------
+
+    function editor() {
+      return access ? access.canEdit() : backend.admin === true;
+    }
+
+    function tidalView() {
+      if (!editor() || !music || !music.available || !music.sources) return null;
+      const flow = tidal.flow;
+      if (music.sources.tidal && !flow) return null;
+      return { signedIn: music.sources.tidal === true, state: flow ? flow.state : "idle", code: flow && flow.code || null,
+        url: flow && flow.url || null, expires: flow && Number.isFinite(flow.expires_at) ? flow.expires_at : null, pending: tidal.pending,
+        text: !flow ? (music.sources.tidal === false ? "TIDAL is not signed in." : "")
+          : flow.state === "waiting" ? "Approve this code at link.tidal.com on any device."
+            : flow.state === "failed" ? "The sign-in did not finish." : flow.state === "done" ? "Signed in." : "" };
+    }
+
+    function tidalCheck() {
+      cancel(tidal.timer);
+      tidal.timer = 0;
+      const started = life;
+      return Promise.resolve(backend.tidal()).then((answer) => {
+        if (started !== life) return;
+        tidal.flow = answer.sign_in || null;
+        if (tidal.flow && tidal.flow.state === "done") return tidalDone();
+        if (tidal.flow && tidal.flow.state === "waiting") tidal.timer = later(tidalCheck, TIDAL_POLL_MS);
+        changed();
+      }, () => {
+        if (started !== life || !tidal.flow || tidal.flow.state !== "waiting") return;
+        tidal.timer = later(tidalCheck, TIDAL_POLL_MS);
+      });
+    }
+
+    function tidalStart() {
+      if (!editor() || tidal.pending) return Promise.resolve();
+      tidal.pending = true;
+      changed();
+      const started = life;
+      return Promise.resolve(backend.tidalStart()).then((answer) => {
+        if (started !== life) return;
+        tidal.pending = false;
+        tidal.flow = answer.sign_in || null;
+        if (tidal.flow && tidal.flow.code) announce("TIDAL code " + tidal.flow.code.split("").join(" "));
+        cancel(tidal.timer);
+        tidal.timer = later(tidalCheck, TIDAL_POLL_MS);
+        changed();
+      }, (error) => {
+        if (started !== life) return;
+        tidal.pending = false;
+        changed();
+        toast("TIDAL", said(error), "bad");
+      });
+    }
+
+    // Approved: the flow is finished, and the sources read again (the stream
+    // sends a fresh snapshot too, as Music Assistant's providers change).
+    function tidalDone() {
+      cancel(tidal.timer);
+      tidal.timer = 0;
+      tidal.flow = null;
+      toast("TIDAL", "Signed in. TIDAL is in Search and Browse.");
+      changed();
+      return Promise.resolve(backend.tidalFinish()).catch(() => {}).then(() => backend.overview()).then(apply, () => {});
+    }
+
+    // Cancelled, or closed after it failed.
+    function tidalCancel() {
+      cancel(tidal.timer);
+      tidal.timer = 0;
+      tidal.flow = null;
+      changed();
+      return Promise.resolve(backend.tidalFinish()).catch(() => {});
+    }
+
+    // ---- life -------------------------------------------------------------------
+
+    function apply(next) {
+      if (!next || !Array.isArray(next.speakers)) return;
+      music = next;
+      failure = null;
+      if (!find(current)) {
+        const stored = store.get("music.speaker");
+        const first = all().find((speaker) => speaker.state === "playing") || all().find((speaker) => speaker.available) || all()[0];
+        current = find(stored) ? stored : first ? first.id : null;
+      }
+      all().forEach(heard);
+      if (editor() && music.available && music.sources && music.sources.tidal === false && !tidal.checked) {
+        tidal.checked = true;
+        tidalCheck();
+      }
+      changed();
+    }
+
+    function onSpeaker(speaker) {
+      if (!music || !music.available) return;
+      const index = music.speakers.findIndex((entry) => entry.id === speaker.id);
+      if (index < 0) return;
+      const before = music.speakers[index];
+      music.speakers[index] = speaker;
+      faders.volume.moved(speaker.id, before.volume, speaker.volume);
+      if (before.group && speaker.group) faders.group_volume.moved(speaker.id, before.group.volume, speaker.group.volume);
+      heard(speaker);
+      // A track began, or what it plays changed: its queue is read again.
+      const was = before.now_playing, is = speaker.now_playing;
+      const chosenOwner = chosen() && ownerOf(chosen());
+      if (ownerOf(speaker) === chosenOwner && (speaker.id === chosenOwner) && ((was && was.title) !== (is && is.title)
+          || (was && was.duration) !== (is && is.duration) || before.state !== speaker.state)) refreshQueue();
+      changed();
+    }
+
+    function select(id) {
+      if (!find(id) || id === current) return;
+      faders.volume.flush();
+      faders.group_volume.flush();
+      current = id;
+      store.set("music.speaker", id);
+      grouping.result = null;
+      if (tab === "queue") loadQueue(0);
+      changed();
+    }
+
+    function start(id) {
+      if (unsubscribe.length) stop();
+      const started = ++life;
+      reading = true;
+      absent = failure = null;
+      connected = null;
+      if (find(id)) current = id;
+      unsubscribe.push(backend.subscribe((event) => {
+        if (life !== started) return;
+        if (event.type === "snapshot") apply(event.music);
+        else if (event.type === "speaker") onSpeaker(event.speaker);
+        else if (event.type === "unavailable" && music) {
+          // Music Assistant went away: nothing a speaker last said holds.
+          const was = music.available;
+          music = Object.assign({}, music, { available: false, problem: music.problem || "music_unavailable", sources: null,
+            speakers: music.speakers.map((speaker) => Object.assign({}, speaker, { available: false, state: "unavailable", volume: null,
+              muted: null, group: null, now_playing: null, shuffle: null, repeat: null })) });
+          changed();
+          // The frame does not say why (down, or the token refused); the overview does.
+          if (was) Promise.resolve(backend.overview()).then((answer) => {
+            if (life === started && music && !music.available && answer && answer.available === false) apply(answer);
+          }, () => {});
+        } else if (event.type === "connection") { connected = event.connected; changed(); }
+      }));
+      if (access) {
+        unsubscribe.push(access.subscribe((event) => { if (event.type === "locks" || event.type === "policy" || event.type === "change") changed(); }));
+        // Locks are read only once access knows accounts are on (as home.js).
+        if (polls) Promise.resolve(access.ready()).then(() => { if (life === started) access.watchLocks(true); }).catch(() => {});
+      }
+      return Promise.resolve(backend.overview()).then((answer) => {
+        if (life !== started) return;
+        reading = false;
+        if (id && answer && Array.isArray(answer.speakers) && answer.speakers.some((speaker) => speaker.id === id)) current = id;
+        apply(answer);
+        backend.open();
+        if (tab === "browse" && !browse.stack.length) openRoot();
+        if (tab === "queue") loadQueue(0);
+      }, (error) => {
+        if (life !== started) return;
+        reading = false;
+        if (ABSENT.includes(error && error.code)) absent = said(error);
+        else {
+          failure = said(error);
+          // The stream's first frame is the snapshot the read did not bring.
+          backend.open();
+        }
+        changed();
+      }).then(() => { emit({ type: "change" }); });
+    }
+
+    function stop() {
+      life += 1;
+      faders.volume.flush();
+      faders.group_volume.flush();
+      unsubscribe.splice(0).forEach((off) => off());
+      if (polls) access.watchLocks(false);
+      backend.close();
+      [pending, search.timer, queue.timer, tidal.timer].forEach(cancel);
+      ends.forEach(cancel);
+      ends.clear();
+      // A session started again hears nothing of the time between: it draws,
+      // holds and sends afresh.
+      pending = search.timer = queue.timer = tidal.timer = 0;
+      faders.volume.reset();
+      faders.group_volume.reset();
+      grouping.pending = false;
+      tidal.pending = false;
+      tidal.checked = false;
+      Object.keys(held).forEach((key) => { delete held[key]; });
+    }
+
+    return {
+      start: start,
+      stop: stop,
+      subscribe: function (callback) {
+        listeners.push(callback);
+        return () => { const index = listeners.indexOf(callback); if (index >= 0) listeners.splice(index, 1); };
+      },
+      status: status,
+      speakers: speakersView,
+      view: view,
+      select: select,
+      selected: () => current,
+      art: (id, size) => (id && backend.art ? backend.art(id, size) : null),
+      playPause: playPause,
+      next: () => skip("next"),
+      previous: () => skip("previous"),
+      seek: seek,
+      seekBy: seekBy,
+      toggleShuffle: toggleShuffle,
+      cycleRepeat: cycleRepeat,
+      setVolume: setVolume,
+      stepVolume: stepVolume,
+      setGroupVolume: setGroupVolume,
+      stepGroupVolume: stepGroupVolume,
+      library: libraryView,
+      tab: () => tab,
+      setTab: setTab,
+      setQuery: setQuery,
+      setKind: setKind,
+      setSource: setSource,
+      searchNow: runNow,
+      open: open,
+      back: back,
+      more: more,
+      actions: actions,
+      act: act,
+      play: play,
+      grouping: groupingView,
+      join: join,
+      leave: leave,
+      tidal: tidalView,
+      tidalStart: tidalStart,
+      tidalCancel: tidalCancel
+    };
+  }
+
+  global.RemoteMusic = { create: create, HOLD_MS: HOLD_MS, SLIDE_EVERY: SLIDE_EVERY, SEARCH_MS: SEARCH_MS, TIDAL_POLL_MS: TIDAL_POLL_MS,
+    OPTIONS: OPTIONS, clock: clock };
+})(globalThis);

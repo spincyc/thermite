@@ -25,7 +25,13 @@
     access_not_configured: "Access is not configured at this address.", invalid_response: "The access service could not answer.",
     client_timeout: "thermite did not answer in time. Try again in a moment.",
     command_unconfirmed: "thermite did not answer in time. The command may still take effect; check before trying again.",
-    origin_mismatch: "The terminal credential belongs to a different address.", secure_connection_required: "Use your site’s HTTPS address to sign in.", connection_failed: "Could not reach thermite."
+    origin_mismatch: "The terminal credential belongs to a different address.", secure_connection_required: "Use your site’s HTTPS address to sign in.", connection_failed: "Could not reach thermite.",
+    music_not_configured: "This thermite host has no music.", unknown_speaker: "thermite does not know that speaker.",
+    invalid_ref: "That cannot be played or opened.", invalid_query: "thermite did not accept that search or page.",
+    invalid_command: "thermite did not accept that command.", music_failed: "Music Assistant could not do that. Try again in a moment.",
+    music_unavailable: "Music Assistant is not answering yet. It may be starting.",
+    music_unclaimed: "Music Assistant belongs to someone else: reset it so thermite can claim it.",
+    tidal_not_started: "No TIDAL sign-in is under way."
   };
   // The gateway sends a stream frame at least this often: a heartbeat,
   // {"type":"heartbeat"}, while it has nothing else (oh_identity.streams.HEARTBEAT).
@@ -523,6 +529,16 @@
         await ready();
         const path = "/api/v1/devices/" + encodeURIComponent(device) + "/commands";
         try { return await overdue("command_timeout", path, commandRequest(path, "POST", { action, value }), config.commandTimeout || 8000); }
+        catch (error) { if ([403, 423].includes(error.status) && locksWatched) client.loadLocks().catch(() => {}); throw error; }
+      },
+      // The house's music (oh_identity.music_api): a read gives up after
+      // readTimeout as client_timeout; a command (path below /api/v1/music/)
+      // is bounded and refused as a device's.
+      async musicRead(path) { await ready(); return bounded("/api/v1/music" + path, "GET", undefined, config.readTimeout || 8000, "client_timeout"); },
+      async musicCommand(path, value) {
+        await ready();
+        const target = "/api/v1/music/" + path;
+        try { return await overdue("command_timeout", target, commandRequest(target, "POST", value), config.commandTimeout || 8000); }
         catch (error) { if ([403, 423].includes(error.status) && locksWatched) client.loadLocks().catch(() => {}); throw error; }
       },
       watchRoom(room) { policyRoom = room; return policyPoll.start(); },
