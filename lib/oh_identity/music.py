@@ -46,6 +46,12 @@ TEXT_LENGTH = 192
 KINDS = ("track", "album", "artist", "playlist")
 REF = re.compile(r"([a-z][a-z0-9_]{0,63}(?:--[A-Za-z0-9]{1,32})?)://(track|album|artist|playlist|folder)/(.*)", re.S)
 REF_LENGTH = 1024
+#: A reference's ID, by its provider: Music Assistant's library numbers its
+#: items; TIDAL's are numbers or UUIDs, and its folders words; a library's
+#: are paths relative to it (oh_identity.music.valid_id).
+LIBRARY_ID = re.compile(r"[0-9]{1,20}")
+TIDAL_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+TIDAL_FOLDER = re.compile(r"(?:[A-Za-z0-9_-]{1,64}(?:/[A-Za-z0-9_-]{1,64}){0,7})?")
 ART = re.compile(r"[0-9a-f]{64}")
 ART_URL = re.compile(r"/imageproxy/([0-9a-f]{64})(?:[?/]|$)")
 #: The art sizes a client may ask for, of Music Assistant's.
@@ -138,18 +144,31 @@ class Sources:
         return {"source": "tidal" if provider in self.available else "library"}
 
 
-def parse_ref(value, sources):
+def valid_id(provider, kind, ident):
+    """Whether an ID is one the provider's kind gives: a library item's
+    number, TIDAL's ID or folder, or a path relative to a library without
+    an empty, `.` or `..` part."""
+    domain = provider.partition("--")[0]
+    if domain == "library":
+        return kind != "folder" and bool(LIBRARY_ID.fullmatch(ident))
+    if domain == "tidal":
+        return bool((TIDAL_FOLDER if kind == "folder" else TIDAL_ID).fullmatch(ident))
+    if domain == "filesystem_local":
+        return kind == "folder" and ident == "" or all(part not in ("", ".", "..") for part in ident.split("/"))
+    return False
+
+
+def parse_ref(value, sources=None):
     """(provider, kind, ID) of a reference a client names or Music Assistant
-    returns; Problem("invalid_ref") unless its provider is TIDAL, a library or
-    Music Assistant's library, and it names a media item or a folder of a
-    library or of TIDAL."""
+    returns; Problem("invalid_ref") unless it names a media item or a
+    folder, of TIDAL, a library or Music Assistant's library, by an ID that
+    provider gives (valid_id), and, given the sources, a provider instance
+    thermite knows."""
     match = REF.fullmatch(value) if isinstance(value, str) and len(value) <= REF_LENGTH else None
-    if not match or not value.isprintable():
+    if not match or not value.isprintable() or not valid_id(*match.groups()):
         raise Problem("invalid_ref")
     provider, kind, ident = match.groups()
-    parts = ident.split("/")
-    if (not sources.known(provider) or kind == "folder" and provider == "library"
-            or kind != "folder" and not ident or ident.startswith("/") or ".." in parts):
+    if sources is not None and not sources.known(provider):
         raise Problem("invalid_ref")
     return provider, kind, ident
 

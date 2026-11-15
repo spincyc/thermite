@@ -163,14 +163,22 @@ class Matching(SimpleTestCase):
                                   "name": "thermite flac", "available": True},
                                  {"domain": "filesystem_local", "instance_id": "filesystem_local--c3",
                                   "name": "someone else", "available": True}], ["flac"])
-        for good in ("library://album/5", "tidal--a1://track/123", "filesystem_local--b2://folder/",
-                     "filesystem_local--b2://track/Artist/Album/01 - Song.flac"):
+        for good in ("library://album/5", "tidal--a1://track/123", "tidal--a1://playlist/" + oh_music_sim.TIDAL_PLAYLIST_ID,
+                     "tidal--a1://folder/", "tidal--a1://folder/playlists", "filesystem_local--b2://folder/",
+                     "filesystem_local--b2://folder/Artist", "filesystem_local--b2://track/Artist/Album/01 - Song?.flac"):
             self.assertEqual(music.parse_ref(good, sources)[0], good.split("://")[0])
         for bad in ("filesystem_local--c3://track/x", "spotify://track/1", "library://folder/x", "library://radio/1",
                     "library://track/", "filesystem_local--b2://folder/../../etc", "tidal--a1://track/1\n",
-                    "library://track/" + "1" * 1100, 5, None):
+                    "library://track/" + "1" * 1100, 5, None,
+                    # Each provider's own IDs: Music Assistant builds TIDAL's API paths from them.
+                    "library://track/5/../6", "library://album/five", "tidal--a1://track/123/../../users",
+                    "tidal--a1://track/1?countryCode=x", "tidal--a1://album/1%2F2", "tidal--a1://folder/../x",
+                    "filesystem_local--b2://track//etc/passwd", "filesystem_local--b2://track/Artist/./x",
+                    "filesystem_local--b2://folder/Artist/", "filesystem_local--b2://track/"):
             with self.assertRaises(Problem):
                 music.parse_ref(bad, sources)
+        # Without the sources, only the form: any instance of a provider thermite uses.
+        self.assertEqual(music.parse_ref("filesystem_local--c3://track/x")[0], "filesystem_local--c3")
 
 
 class Stand_in:
@@ -335,6 +343,7 @@ class Gateway(Stand_in, Requests, TestCase):
                 (f"{AMP}/play", {"ref": "spotify://track/1"}, "invalid_ref"),
                 (f"{AMP}/play", {"ref": "library://track/1\u0007"}, "invalid_ref"),
                 (f"{AMP}/play", {"ref": "library://folder/x"}, "invalid_ref"),
+                (f"{AMP}/play", {"ref": "tidal--abcd1234://track/1"}, "invalid_ref"),
                 (f"{AMP}/volume", {"level": 101}, "invalid_command"),
                 (f"{AMP}/volume", {"level": 5, "group_level": 5}, "invalid_command"),
                 (f"{AMP}/volume", {"level": True}, "invalid_command"),

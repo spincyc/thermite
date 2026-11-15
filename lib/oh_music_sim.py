@@ -53,6 +53,7 @@ LIBRARY = (("Example Quartet", "First Light", 2019, (("Opening", 241), ("Morning
 TIDAL = (("Placeholder Orchestra", "Sample Suite", 2023, (("Overture", 260), ("Interlude", 140), ("Finale", 331))),
          ("Fictional Duo", "Not Real", 2020, (("Imaginary", 214), ("Made Up", 199))))
 TIDAL_PLAYLIST = "Example Mix"
+TIDAL_PLAYLIST_ID = "5f3a8c2e-1b4d-4e6f-9a7b-0c2d4e6f8a1b"
 #: RFC 6455's handshake GUID, and the opcodes the stand-in uses.
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 CONTINUATION, TEXT, CLOSE, PING, PONG = 0x0, 0x1, 0x8, 0x9, 0xA
@@ -510,10 +511,11 @@ class Sim:
                     tidal_tracks.append(track)
             if scheme == "tidal":
                 image = self._image("tidal:playlist")
-                items[f"{provider}://playlist/1"] = {
-                    "item_id": "1", "provider": provider, "name": TIDAL_PLAYLIST, "media_type": "playlist",
-                    "uri": f"{provider}://playlist/1", "owner": "TIDAL", "metadata": {"images": [image]},
-                    "tracks": tidal_tracks}
+                # TIDAL names a playlist by a UUID, and its other items by number.
+                items[f"{provider}://playlist/{TIDAL_PLAYLIST_ID}"] = {
+                    "item_id": TIDAL_PLAYLIST_ID, "provider": provider, "name": TIDAL_PLAYLIST, "media_type": "playlist",
+                    "uri": f"{provider}://playlist/{TIDAL_PLAYLIST_ID}", "owner": "TIDAL",
+                    "metadata": {"images": [image]}, "tracks": tidal_tracks}
         return items
 
     def tracks(self, uri):

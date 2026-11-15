@@ -509,8 +509,12 @@ album, year, duration, art}` (a folder carries only the first five);
 `kind` is `track`, `album`, `artist`, `playlist` or `folder`, and a queue's
 items add their `index`. `ref` is the reference to play or browse, a
 Music Assistant URI of TIDAL's, a library's or Music Assistant's own
-library (`<provider>://<kind>/<id>`, at most 1024 printable characters);
-any other is 400 `invalid_ref`. `art` is a 64-hex image ID; `size` is 80,
+library (`<provider>://<kind>/<id>`, at most 1024 printable characters),
+whose ID is one that provider gives: a number for Music Assistant's
+library; letters, digits, `-` and `_` for TIDAL (its folders, up to eight
+such words joined by `/`); a path relative to the library, without an
+empty, `.` or `..` part, for a library. Any other, or a provider instance
+Music Assistant does not have, is 400 `invalid_ref`. `art` is a 64-hex image ID; `size` is 80,
 160, 256 (the default) or 512, and the image is cached privately for a day.
 `option` is `replace` (the default), `next` or `add`; `action` is `play`,
 `pause`, `stop`, `next`, `previous`, `seek` (`value`: whole seconds),
