@@ -755,6 +755,23 @@ class MusicSettings(unittest.TestCase):
                 self.assertNotIn("default_providers_setup", settings)
                 self.assertEqual(json.loads((self.data / "settings.json.backup").read_text()), backup)
 
+    def test_a_directory_that_cannot_be_synced_still_starts(self):
+        # Some file systems refuse fsync on a directory; Music Assistant's
+        # own save ignores that too.
+        real = os.fsync
+
+        def fsync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError(22, "Invalid argument")
+            real(descriptor)
+
+        argv = ["-c", "13627", "13628", "/fixture/entrypoint.sh", "--data-dir", str(self.data)]
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(os, "fsync", fsync), \
+                mock.patch.object(os, "execv") as execv:
+            exec(compile(oh_music.SETTINGS, "settings", "exec"), {"__name__": "__main__"})
+        execv.assert_called_once_with("/fixture/entrypoint.sh", ["/fixture/entrypoint.sh", "--data-dir", str(self.data)])
+        self.pinned(json.loads(self.settings.read_text()))
+
     def test_settings_neither_can_read_stop_the_start_untouched(self):
         for files in ({"settings.json": "{"}, {"settings.json": "{", "settings.json.backup": "[1]"},
                       {"settings.json.backup": "{"}, {"settings.json": '{"core": []}'},

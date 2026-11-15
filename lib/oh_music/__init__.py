@@ -91,7 +91,10 @@ if json.dumps(settings, sort_keys=True) != before or current is not settings:
         os.replace(path, path + ".backup")
     os.replace(temporary, path)
     directory = os.open(data, os.O_RDONLY)
-    os.fsync(directory)
+    try:
+        os.fsync(directory)
+    except OSError:
+        pass
     os.close(directory)
 os.execv(command[0], command)
 """.replace("PROVIDERS", repr(list(PROVIDERS)))
