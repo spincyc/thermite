@@ -166,6 +166,15 @@ class MusicPage(unittest.TestCase):
         self.assertEqual(out["blocked"]["toasts"], [["Kitchen Sonos Amp", "Locked by Kitchen", "bad"]] * 3
                          + [["Den", "Locked by Kitchen", "bad"]])
 
+    def test_a_group_change_is_stopped_by_a_lock_on_any_speaker_it_moves(self):
+        out = self.report["involved"]
+        self.assertEqual(out["formed"], ["kitchen_mini", "den_one"])
+        # The Kitchen WiiM Mini leaves its group with the Den's speaker to join: the Den's lock stops it.
+        self.assertEqual(out["blocked"], {"sent": [], "toast": ["Kitchen Sonos Amp", "Locked by Den", "bad"]})
+        self.assertEqual(out["refused"], {"sent": [["group", "kitchen_amp", "kitchen_mini"]], "toast": ["Group", "Locked by Den", "bad"],
+                                          "result": None})
+        self.assertEqual(out["leave"], {"sent": [], "toast": ["Den", "Locked by Kitchen", "bad"]})
+
     def test_a_guest_without_free_text_sees_whether_it_plays_but_no_library(self):
         out = self.report["guests"]
         self.assertEqual((out["view"]["title"], out["view"]["now"], out["view"]["playLabel"]), (None, "Playing", "Pause"))
@@ -216,10 +225,14 @@ class MusicPage(unittest.TestCase):
         out = self.report["gateway"]
         self.assertEqual(out["failed"], {"state": "failed", "text": "thermite did not answer in time. Try again in a moment."})
         self.assertEqual(out["stream"], ["https://site.example/api/v1/events/music"])
+        # The stream says Music Assistant is away; the overview read again says why.
+        self.assertEqual(out["away"], [{"state": "unavailable", "text": "Music Assistant did not answer. thermite keeps trying."},
+                                       ["Not available"]])
         self.assertEqual(out["ready"], ["ready", "Low Tide", True])
         self.assertEqual(out["art"], ["https://site.example/api/v1/music/art/" + "a" * 64 + "?size=80", None, None])
         self.assertEqual(out["speakerFrame"], 44)
         self.assertEqual(out["asked"], [
+            ["GET", ""],
             ["GET", ""],
             ["POST", "kitchen_amp/transport", {"action": "pause"}],
             ["POST", "kitchen_amp/transport", {"action": "seek", "value": 42}],
@@ -227,9 +240,9 @@ class MusicPage(unittest.TestCase):
             ["POST", "kitchen_amp/transport", {"action": "shuffle", "value": True}],
             ["POST", "kitchen_amp/transport", {"action": "repeat", "value": "all"}],
             ["POST", "kitchen_amp/play", {"ref": "library://track/1", "option": "next"}],
-            ["GET", "/browse?offset=0&limit=100"],
-            ["GET", "/browse?offset=100&limit=100"],
-            ["GET", "/search?q=low+tide"]])
+            ["GET", "/browse?offset=0&limit=100", 25000],
+            ["GET", "/browse?offset=100&limit=100", 25000],
+            ["GET", "/search?q=low+tide", 25000]])
         self.assertEqual(out["played"], [["Play next", "Low Tide plays next on Kitchen", ""]])
         self.assertEqual((out["page"], out["paged"]), ([100, True], [150, False]))
         self.assertEqual(out["guest"], BLIND)

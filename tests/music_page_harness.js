@@ -65,7 +65,7 @@ function session(time, backend, extra = {}) {
 
 // An access client as music-session.js reads one: locks by room, a Guest or not.
 function fakeAccess({locked = [], guest = false, guestText = true, admin = false} = {}) {
-  return {native: false, mock: false, canEdit: () => admin, current: () => ({is_guest: guest}), security: () => ({guest_text: guestText}),
+  return {native: false, mock: false, locked, canEdit: () => admin, current: () => ({is_guest: guest}), security: () => ({guest_text: guestText}),
           lockSummary: (room) => (locked.includes(room) ? {locked: true} : null), subscribe: () => () => {}, ready: () => Promise.resolve(),
           watchLocks() {}};
 }
@@ -302,6 +302,41 @@ async function locks(out) {
   music.stop();
 }
 
+// Grouping involves each speaker whose group changes: a joining speaker's
+// own group too. A lock on any of them stops it, named once the page knows.
+async function involved(out) {
+  const time = clock(), backend = mock(time), access = fakeAccess(), music = session(time, backend, {access});
+  music.start();
+  await time.tick(100);
+  music.select('kitchen_mini');
+  music.join(['den_one']);
+  await time.tick(100);
+  out.formed = blocks(music).find((block) => block.group).speakers.map((row) => row[0]);
+  music.select('kitchen_amp');
+  access.locked.push('den');
+  let from = backend.sent.length;
+  music.join(['kitchen_mini']);
+  await time.tick(100);
+  out.blocked = {sent: sentSince(backend, from), toast: music.log.toasts[music.log.toasts.length - 1]};
+  // The gateway refuses first; the lock read again names the room.
+  access.locked.splice(0);
+  backend.simulateLock(['den_one']);
+  from = backend.sent.length;
+  music.join(['kitchen_mini']);
+  access.locked.push('den');
+  await time.tick(100);
+  out.refused = {sent: sentSince(backend, from), toast: music.log.toasts[music.log.toasts.length - 1], result: music.grouping().result};
+  // A member leaving changes its leader's group: a lock there stops it.
+  backend.simulateLock([]);
+  access.locked.splice(0, 1, 'kitchen');
+  music.select('den_one');
+  from = backend.sent.length;
+  music.leave('den_one');
+  await time.tick(100);
+  out.leave = {sent: sentSince(backend, from), toast: music.log.toasts[music.log.toasts.length - 1]};
+  music.stop();
+}
+
 async function guests(out) {
   // A Guest without free text: no titles from the gateway, no library.
   let time = clock(), backend = mock(time, {guest: true}), music = session(time, backend);
@@ -435,11 +470,17 @@ async function gateway(out) {
   const overview = {version: 1, available: true, problem: null, sources: {tidal: false, libraries: {NAS: true}}, speakers: [kitchen]};
   const folder = (index) => ({ref: 'filesystem_local--nas://folder/' + index, kind: 'folder', name: 'Folder ' + index, source: 'library', library: 'NAS'});
   const asked = [];
-  let failRead = 'client_timeout';
+  // The first read times out; the next, after the stream says Music Assistant is away, says why.
+  const away = {...overview, available: false, problem: 'music_failed', sources: null,
+    speakers: [{...kitchen, available: false, state: 'unavailable', volume: null, muted: null, now_playing: null, shuffle: null, repeat: null}]};
+  const overviews = [ThermiteAccess.problem('client_timeout'), away];
   const access = {...fakeAccess(),
-    musicRead: (target) => {
-      asked.push(['GET', target]);
-      if (target === '' && failRead) { const code = failRead; failRead = null; return Promise.reject(ThermiteAccess.problem(code)); }
+    musicRead: (target, ms) => {
+      asked.push(ms ? ['GET', target, ms] : ['GET', target]);
+      if (target === '' && overviews.length) {
+        const answer = overviews.shift();
+        return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
+      }
       if (target === '') return Promise.resolve(overview);
       if (target.startsWith('/browse')) {
         const offset = Number(new URLSearchParams(target.split('?')[1]).get('offset'));
@@ -463,6 +504,9 @@ async function gateway(out) {
   // The read failed: the stream's snapshot is the overview it did not bring.
   out.failed = music.status();
   out.stream = Source.made.map((source) => source.url);
+  Source.made[0].send({type: 'unavailable'});
+  await time.tick(10);
+  out.away = [music.status(), music.speakers().map((block) => block.line)];
   Source.made[0].send({type: 'snapshot', view: 'music', music: overview});
   await time.tick(10);
   out.ready = [music.status().state, music.view().title, music.view().connected];
@@ -551,7 +595,7 @@ async function client(out) {
 
 (async () => {
   const report = {};
-  for (const [name, run] of Object.entries({overview, transport, library, grouping, locks, guests, absent, unavailable, tidal, gateway, client})) {
+  for (const [name, run] of Object.entries({overview, transport, library, grouping, locks, involved, guests, absent, unavailable, tidal, gateway, client})) {
     report[name] = {};
     await run(report[name]);
   }

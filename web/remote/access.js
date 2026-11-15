@@ -531,10 +531,10 @@
         try { return await overdue("command_timeout", path, commandRequest(path, "POST", { action, value }), config.commandTimeout || 8000); }
         catch (error) { if ([403, 423].includes(error.status) && locksWatched) client.loadLocks().catch(() => {}); throw error; }
       },
-      // The house's music (oh_identity.music_api): a read gives up after
-      // readTimeout as client_timeout; a command (path below /api/v1/music/)
-      // is bounded and refused as a device's.
-      async musicRead(path) { await ready(); return bounded("/api/v1/music" + path, "GET", undefined, config.readTimeout || 8000, "client_timeout"); },
+      // The house's music (oh_identity.music_api): a read gives up after ms
+      // (readTimeout unless given) as client_timeout; a command (path below
+      // /api/v1/music/) is bounded and refused as a device's.
+      async musicRead(path, ms) { await ready(); return bounded("/api/v1/music" + path, "GET", undefined, ms || config.readTimeout || 8000, "client_timeout"); },
       async musicCommand(path, value) {
         await ready();
         const target = "/api/v1/music/" + path;

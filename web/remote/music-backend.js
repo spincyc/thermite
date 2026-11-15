@@ -31,6 +31,9 @@
 
   // How long a stream closed for good waits before it opens again, as backend.js's.
   const REOPEN_MS = [1000, 2000, 5000, 15000, 30000];
+  // A search or a folder Music Assistant may take 20 s over (oh_music.client.SLOW):
+  // the page waits for it a little longer.
+  const SLOW_MS = 25000;
   const ART = /^[0-9a-f]{64}$/;
 
   function problem(code, status) {
@@ -79,9 +82,9 @@
   }
 
   // A gateway's reads and commands; openHAB itself (--native) has no music.
-  GatewayMusic.prototype.read = function (path) {
+  GatewayMusic.prototype.read = function (path, ms) {
     if (!this.access || this.access.native) return Promise.reject(problem("access_not_configured", 404));
-    return this.access.musicRead(path);
+    return this.access.musicRead(path, ms);
   };
 
   GatewayMusic.prototype.command = function (path, value) {
@@ -90,8 +93,8 @@
   };
 
   GatewayMusic.prototype.overview = function () { return this.read(""); };
-  GatewayMusic.prototype.search = function (q, kind, source) { return this.read("/search" + query({ q: q, kind: kind, source: source })); };
-  GatewayMusic.prototype.browse = function (ref, offset, limit) { return this.read("/browse" + query({ ref: ref, offset: offset, limit: limit })); };
+  GatewayMusic.prototype.search = function (q, kind, source) { return this.read("/search" + query({ q: q, kind: kind, source: source }), SLOW_MS); };
+  GatewayMusic.prototype.browse = function (ref, offset, limit) { return this.read("/browse" + query({ ref: ref, offset: offset, limit: limit }), SLOW_MS); };
   GatewayMusic.prototype.queue = function (speaker, offset, limit) {
     return this.read("/" + encodeURIComponent(speaker) + "/queue" + query({ offset: offset, limit: limit }));
   };
@@ -525,7 +528,10 @@
     if (!Array.isArray(members) || !members.length || members.includes(speaker)) return Promise.reject(problem("invalid_command", 400));
     if (members.some((member) => !this.players[member])) return Promise.reject(problem("unknown_speaker", 404));
     return this.command(speaker, [speaker], ["group", speaker, members.join(",")], () => {
-      if (members.some((id) => this.locked.has(id))) throw problem("device_locked", 423);
+      // Every speaker whose group changes: its group, each member and each member's own group.
+      if (this.involved(speaker).concat(...members.map((id) => this.involved(id))).some((id) => this.locked.has(id))) {
+        throw problem("device_locked", 423);
+      }
       if (this.players[speaker].leader) this.leave(speaker);
       const joined = members.filter((id) => this.speaker(id).available && this.groups(speaker, id));
       joined.forEach((id) => {
@@ -663,6 +669,7 @@
 
   global.MusicBackend = {
     REOPEN_MS: REOPEN_MS,
+    SLOW_MS: SLOW_MS,
     GatewayMusic: GatewayMusic,
     MockMusic: MockMusic,
     create: function (settings) {

@@ -81,7 +81,10 @@
     return error && error.message ? error.message : String(error);
   }
 
+  // Why Music Assistant is away, as a page's one line: a read it failed is
+  // no command, and the stream brings the speakers back when it answers.
   function problemText(code) {
+    if (code === "music_failed") return "Music Assistant did not answer. thermite keeps trying.";
     return said({ code: code, message: "Music Assistant is not available." });
   }
 
@@ -242,17 +245,25 @@
       return true;
     }
 
+    // What a refusal says: a lock names the locked rooms of the speakers
+    // the command involved once the page knows of them, as Audio does.
+    function refusedWith(error, ids) {
+      const locked = error && error.code === "device_locked" ? lockedBy(ids || []) : [];
+      return locked.length ? "Locked by " + locked.join(", ") : said(error);
+    }
+
     // A command on a speaker (name), said to a screen reader once sent
     // (text null: a volume being dragged, which says itself); a failure
-    // drops what the page held for it (holds) and answers null.
-    function send(sent, name, title, text, holds) {
+    // drops what the page held for it (holds) and answers null. ids are
+    // the speakers it involves.
+    function send(sent, name, title, text, holds, ids) {
       return Promise.resolve(sent).then((result) => {
         if (text !== null) announce(name + ": " + title + (text ? " " + text : ""));
         return result;
       }).catch((error) => {
         (holds || []).forEach((key) => { delete held[key]; });
         changed();
-        toast(name + ": " + title, said(error), "bad");
+        toast(name + ": " + title, refusedWith(error, ids), "bad");
         return null;
       });
     }
@@ -383,13 +394,15 @@
       // It shows what it asked for until the speaker says: a second press undoes the first.
       hold(owner, "playing", !plays);
       changed();
-      return send(backend.transport(speaker.id, plays ? "pause" : "play"), nameOf(speaker.id), plays ? "Pause" : "Play", "", [owner + " playing"]);
+      return send(backend.transport(speaker.id, plays ? "pause" : "play"), nameOf(speaker.id), plays ? "Pause" : "Play", "", [owner + " playing"],
+        membersOf(speaker));
     }
 
     function skip(action) {
       const speaker = chosen();
       if (blocked(speaker)) return Promise.resolve();
-      return send(backend.transport(speaker.id, action), nameOf(speaker.id), action === "next" ? "Next track" : "Previous track", "")
+      return send(backend.transport(speaker.id, action), nameOf(speaker.id), action === "next" ? "Next track" : "Previous track", "", [],
+        membersOf(speaker))
         .then((result) => { if (result) refreshQueue(); return result; });
     }
 
@@ -402,7 +415,7 @@
       const owner = ownerOf(speaker);
       hold(owner, "seek", value);
       changed();
-      return send(backend.transport(speaker.id, "seek", value), nameOf(speaker.id), "Position", clock(value), [owner + " seek"]);
+      return send(backend.transport(speaker.id, "seek", value), nameOf(speaker.id), "Position", clock(value), [owner + " seek"], membersOf(speaker));
     }
 
     function seekBy(delta) {
@@ -417,7 +430,8 @@
       const owner = ownerOf(speaker), on = !(shown(owner, "shuffle", speaker.shuffle).value === true);
       hold(owner, "shuffle", on);
       changed();
-      return send(backend.transport(speaker.id, "shuffle", on), nameOf(speaker.id), "Shuffle", on ? "on" : "off", [owner + " shuffle"]);
+      return send(backend.transport(speaker.id, "shuffle", on), nameOf(speaker.id), "Shuffle", on ? "on" : "off", [owner + " shuffle"],
+        membersOf(speaker));
     }
 
     function cycleRepeat() {
@@ -426,7 +440,7 @@
       const owner = ownerOf(speaker), next = REPEAT[shown(owner, "repeat", speaker.repeat).value] || "all";
       hold(owner, "repeat", next);
       changed();
-      return send(backend.transport(speaker.id, "repeat", next), nameOf(speaker.id), REPEAT_LABEL[next], "", [owner + " repeat"]);
+      return send(backend.transport(speaker.id, "repeat", next), nameOf(speaker.id), REPEAT_LABEL[next], "", [owner + " repeat"], membersOf(speaker));
     }
 
     // A volume moved to value: at most one is sent every SLIDE_EVERY while it
@@ -441,7 +455,9 @@
         slide.sent = slide.value;
         slide.sentTo = slide.speaker;
         const to = slide.speaker;
-        send(backend.volume(to, slide.value, group), nameOf(to), label, null, [holder(to) + " " + action])
+        const target = find(to);
+        send(backend.volume(to, slide.value, group), nameOf(to), label, null, [holder(to) + " " + action],
+          group && target ? membersOf(target) : [to])
           .then((result) => { if (!result && slide.sentTo === to) slide.sent = null; });
       }
       function tick() {
@@ -548,7 +564,9 @@
       if (!speaker || grouping.pending) return Promise.resolve();
       const lead = find(ownerOf(speaker)) || speaker, members = membersOf(speaker);
       const wanted = (ids || []).filter((id) => find(id) && !members.includes(id));
-      if (!wanted.length || blocked(lead, members.concat(wanted))) return Promise.resolve();
+      // Every speaker whose group changes: this group, each joining and the group it leaves.
+      const involved = members.concat(...wanted.map((id) => membersOf(find(id))));
+      if (!wanted.length || blocked(lead, involved)) return Promise.resolve();
       grouping.pending = true;
       grouping.result = null;
       changed();
@@ -569,7 +587,7 @@
         if (started !== life) return;
         grouping.pending = false;
         changed();
-        toast("Group", said(error), "bad");
+        toast("Group", refusedWith(error, involved), "bad");
       });
     }
 
@@ -578,9 +596,10 @@
       const target = find(id || current);
       if (!target || !target.group) return Promise.resolve();
       const ending = ownerOf(target) === target.id;
-      if (blocked(target, ending ? membersOf(target) : [target.id])) return Promise.resolve();
+      // A member's leaving changes its group too: every member is involved.
+      if (blocked(target, membersOf(target))) return Promise.resolve();
       grouping.result = null;
-      return send(backend.ungroup(target.id), nameOf(target.id), ending ? "Group ended" : "Left the group", "");
+      return send(backend.ungroup(target.id), nameOf(target.id), ending ? "Group ended" : "Left the group", "", [], membersOf(target));
     }
 
     // ---- the library ------------------------------------------------------------
@@ -841,7 +860,7 @@
         refreshQueue();
         return answer;
       }, (error) => {
-        toast(OPTIONS[option], said(error), "bad");
+        toast(OPTIONS[option], refusedWith(error, membersOf(speaker)), "bad");
         return null;
       });
     }
@@ -978,7 +997,10 @@
         if (life !== started) return;
         if (event.type === "snapshot") apply(event.music);
         else if (event.type === "speaker") onSpeaker(event.speaker);
-        else if (event.type === "unavailable" && music) {
+        else if (event.type === "unavailable" && !music) {
+          // The first read failed and the stream says Music Assistant is away: the overview says why.
+          Promise.resolve(backend.overview()).then((answer) => { if (life === started && !music) apply(answer); }, () => {});
+        } else if (event.type === "unavailable") {
           // Music Assistant went away: nothing a speaker last said holds.
           const was = music.available;
           music = Object.assign({}, music, { available: false, problem: music.problem || "music_unavailable", sources: null,
