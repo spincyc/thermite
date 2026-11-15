@@ -142,31 +142,64 @@ class Claim(Site):
                          ["Music Assistant: refused: it refuses thermite's token; trying again",
                           "Music Assistant: ready changed=0"])
         self.assertEqual(self.token(), token)
-        self.assertNotIn("refused_since", provision.read_claim(self.state))
+        self.assertNotIn("refusals", provision.read_claim(self.state))
         self.assertEqual(list(self.sim.users), ["thermite"])
 
-    def test_a_token_refused_for_a_day_is_unclaimed_but_kept_and_tried(self):
-        now = [time.time()]
-        provisioner = self.provisioner(clock=lambda: now[0])
+    def test_a_token_refused_for_a_days_passes_is_unclaimed_but_kept_and_tried(self):
+        provisioner = self.provisioner()
         provisioner.step()
         token = self.token()
         self.sim.tokens.clear()
-        self.assertEqual(provisioner.step(), "refused")
-        started = int(now[0])
-        now[0] += 3600
-        self.assertEqual(provisioner.step(), "refused")
-        claim = provision.read_claim(self.state)
-        self.assertEqual((claim["token"], claim["refused_since"]), (token, started))
-        self.assertIsNone(provision.problem(claim, started + provision.REFUSED - 1))
-        self.assertEqual(provision.problem(claim, started + provision.REFUSED), provision.UNCLAIMED)
-        now[0] = started + provision.REFUSED + 60
-        self.assertEqual(provisioner.step(), "refused")
-        self.assertEqual(self.token(), token)
-        # The owner resets Music Assistant: no user, so it is claimed afresh.
-        self.reset()
-        self.assertEqual(provisioner.step(), "ready")
+        with patch.object(provision, "REFUSALS", 3):
+            self.assertEqual(provisioner.step(), "refused")
+            # Passes that do not reach Music Assistant are not counted, whatever the clock says.
+            self.server.stop()
+            for _ in range(3):
+                with self.assertRaises(Unavailable):
+                    provisioner.step()
+            self.server = stand_in.Server(self.sim, self.port).start()
+            self.assertEqual(provisioner.step(), "refused")
+            claim = provision.read_claim(self.state)
+            self.assertEqual((claim["token"], claim["refusals"]), (token, 2))
+            self.assertIsNone(provision.problem(claim))
+            self.assertEqual(provisioner.step(), "refused")
+            self.assertEqual(provision.problem(provision.read_claim(self.state)), provision.UNCLAIMED)
+            self.assertEqual(self.token(), token)
+            # The owner resets Music Assistant: no user, so it is claimed afresh.
+            self.reset()
+            self.assertEqual(provisioner.step(), "ready")
         self.assertNotEqual(self.token(), token)
-        self.assertIsNone(provision.problem(provision.read_claim(self.state), now[0]))
+        self.assertIsNone(provision.problem(provision.read_claim(self.state)))
+
+    def test_a_refusal_after_a_renewal_is_counted_on_the_new_token(self):
+        now = [time.time()]
+        provisioner = self.provisioner(clock=lambda: now[0])
+        provisioner.step()
+        first = self.token()
+        now[0] += 340 * DAY
+
+        def refuse(*_):
+            # The old token's revocation is refused, the new one already stored.
+            raise Unauthorized("Music Assistant refused the token")
+        with patch.object(provisioner, "revoke_others", refuse):
+            self.assertEqual(provisioner.step(), "refused")
+        claim = provision.read_claim(self.state)
+        self.assertNotEqual(claim["token"], first)
+        self.assertEqual(claim["refusals"], 1)
+        self.assertEqual(provisioner.step(), "ready")
+        self.assertEqual(list(self.sim.tokens), [claim["token"]])
+        self.assertNotIn("refusals", provision.read_claim(self.state))
+
+    def test_a_refused_pending_session_is_signed_in_again_with_its_password(self):
+        self.sim.failing["auth/token/create"] = 1
+        with self.assertRaises(Failed):
+            self.provisioner().step()
+        pending = provision.read_claim(self.state)
+        with self.sim.lock:
+            self.sim.tokens.clear()
+        self.assertEqual(self.provisioner().step(), "ready")
+        self.assertEqual(self.sim.users, {"thermite": pending["password"]})
+        self.assertEqual(list(self.sim.tokens), [self.token()])
 
     def test_a_pending_claim_is_resumed_after_a_failed_mint(self):
         self.sim.failing["auth/token/create"] = 1
@@ -176,7 +209,7 @@ class Claim(Site):
         claim = provision.read_claim(self.state)
         self.assertEqual(set(claim), {"session", "password"})
         self.assertTrue(self.sim.authorized(claim["session"]))
-        self.assertEqual(provision.problem(claim, time.time()), "music_unavailable")
+        self.assertEqual(provision.problem(claim), "music_unavailable")
         self.assertEqual(provisioner.step(), "ready")
         self.assertEqual(list(self.sim.tokens), [self.token()])
         self.assertTrue(self.sim.onboard_done)
@@ -250,7 +283,7 @@ class Claim(Site):
         os.chmod(provision.token_file(self.state), 0o644)
         unreadable = {"problem": provision.UNREADABLE}
         self.assertEqual(provision.read_claim(self.state), unreadable)
-        self.assertEqual(provision.problem(unreadable, time.time()), "music_unavailable")
+        self.assertEqual(provision.problem(unreadable), "music_unavailable")
         before = provision.token_file(self.state).read_bytes()
         with self.assertLogs("oh_music.provision", "INFO") as logs:
             self.assertEqual(provisioner.step(), "unreadable")

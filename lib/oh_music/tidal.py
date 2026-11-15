@@ -89,7 +89,7 @@ def site(config_path):
     if not music:
         raise AccessError("This site has no music: host.yaml has no music: section")
     claim = read_claim(config["state"])
-    refused = problem(claim, time.time())
+    refused = problem(claim)
     if claim == {"problem": UNREADABLE}:
         raise AccessError("Music Assistant's claim file cannot be trusted: give it to the service account, mode 0600")
     if refused == UNCLAIMED:

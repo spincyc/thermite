@@ -20,13 +20,15 @@ revokes the rest.
 A stored token or session is never given up because Music Assistant
 refuses it: Music Assistant answers 401 whenever its authentication fails
 inside, as it may while it starts, stops or upgrades. The file keeps the
-token and records when the refusals began; each pass tries it again, and
-the first that works clears the record. A server with no user (its state
-was deleted) answers 503 instead, and is claimed afresh. Only after
-REFUSED seconds of refusals in a row does the gateway call the server
-someone else's (music_unclaimed, problem()); a server that had a user
-before thermite ever claimed it is someone else's at once. Either waits
-for the owner to reset Music Assistant: stop it, delete its state, start it.
+token and counts the passes in a row that reached Music Assistant and were
+refused; each pass tries it again, and the first that works clears the
+count. A refused pass also claims the server afresh should it have no user,
+and signs in with a pending claim's password. A server with no user (its
+state was deleted) answers 503, and is claimed afresh. Only after REFUSALS
+refused passes, a day's, does the gateway call the server someone else's
+(music_unclaimed, problem()), and the worker still tries; a server that had
+a user before thermite ever claimed it is someone else's at once, until
+the owner resets Music Assistant: stops it, deletes its state, starts it.
 
 Reconcile, idempotently, after a claim, whenever Music Assistant's server
 ID changes (its state was reset) and every EVERY seconds, whether the last
@@ -60,8 +62,6 @@ LOG = logging.getLogger(__name__)
 #: The private file in the gateway's state that holds the claim.
 TOKEN_FILE = "music-token.json"
 TOKEN_BYTES = 8192
-#: Seconds of refusals in a row after which a token is no longer thermite's.
-REFUSED = 24 * 3600
 USERNAME = "thermite"
 #: Days a long-lived token lives, and how many before its end the worker
 #: replaces it.
@@ -87,6 +87,10 @@ UNWANTED = ("chromecast", "dlna", "heos", "bluesound", "party", "smart_fades", "
 #: changed.
 POLL = 30
 EVERY = 15 * 60
+#: Passes in a row that reach Music Assistant and are refused, a day's,
+#: after which a token is no longer thermite's. Passes are counted, not
+#: time: Music Assistant down, or the clock stepped, adds none.
+REFUSALS = 24 * 3600 // POLL
 #: The problem a stored claim records when the server is someone else's,
 #: and what read_claim() answers for a claim file it cannot trust.
 UNCLAIMED = "music_unclaimed"
@@ -105,7 +109,7 @@ def read_claim(state):
     """The stored claim: {"token", "issued_at", "expires_at"} once claimed;
     while a claim is pending, {"password"} from before Music Assistant is
     asked for its user, then {"session", "password"}; a token or session
-    with "refused_since" while Music Assistant refuses it; or {"problem":
+    with "refusals", the passes it was refused in a row; or {"problem":
     UNCLAIMED}. None when there is no file. A file that is there but cannot
     be read or trusted (its owner, mode or contents) is {"problem":
     UNREADABLE}: nothing replaces it until the owner repairs it."""
@@ -119,7 +123,7 @@ def read_claim(state):
         return {"problem": UNREADABLE}
     if data.get("problem") == UNCLAIMED:
         return {"problem": UNCLAIMED}
-    refused = {"refused_since": data["refused_since"]} if type(data.get("refused_since")) is int else {}
+    refused = {"refusals": data["refusals"]} if type(data.get("refusals")) is int else {}
     password = {"password": data["password"]} if secret(data.get("password")) else {}
     if secret(data.get("token")) and all(type(data.get(each)) is int for each in ("issued_at", "expires_at")):
         return {key: data[key] for key in ("token", "issued_at", "expires_at")} | refused
@@ -135,12 +139,12 @@ def held(claim):
     return claim is not None and ("token" in claim or "session" in claim)
 
 
-def problem(claim, now):
+def problem(claim):
     """Why the gateway cannot use a claim (read_claim's), as its problem
     code; None when it holds a token to try."""
     if claim is None or claim.get("problem") == UNREADABLE:
         return "music_unavailable"
-    if claim.get("problem") == UNCLAIMED or now - claim.get("refused_since", now) >= REFUSED:
+    if claim.get("problem") == UNCLAIMED or claim.get("refusals", 0) >= REFUSALS:
         return UNCLAIMED
     return None if "token" in claim else "music_unavailable"
 
@@ -216,19 +220,21 @@ class Provisioner:
                     self.report("unclaimed: another user set it up; reset its state to let thermite claim it")
                     return "unclaimed"
             try:
+                token, claimed = self.hold(client, claim)
+            except (NoUser, Unauthorized) as error:
+                if isinstance(error, Unauthorized):
+                    self.refused()
+                # Its state deleted, so no one else's; or a pending password to sign in with.
+                claim = self.claim(client, read_claim(self.state))
+                if claim is None and isinstance(error, NoUser):
+                    raise Unavailable("Music Assistant gained a user while thermite claimed it") from None
+                if claim is None:
+                    return self.refusing()
                 try:
                     token, claimed = self.hold(client, claim)
-                except NoUser:
-                    # Its state was deleted: no user, so no one else's.
-                    claim = self.claim(client, None)
-                    if claim is None:
-                        raise Unavailable("Music Assistant gained a user while thermite claimed it") from None
-                    token, claimed = self.hold(client, claim)
-            except Unauthorized:
-                if "refused_since" not in claim:
-                    write_claim(self.state, {**claim, "refused_since": int(self.clock())})
-                self.report("refused: it refuses thermite's token; trying again")
-                return "refused"
+                except Unauthorized:
+                    self.refused()
+                    return self.refusing()
             client.token = token
             server, now, changed = info.get("server_id"), self.clock(), 0
             if claimed or self.reconciled is None or self.reconciled[0] != server or now - self.reconciled[1] >= self.every:
@@ -237,6 +243,17 @@ class Provisioner:
                 changed = self.reconcile(client, info)
         self.report("ready", changed=changed)
         return "ready"
+
+    def refusing(self):
+        self.report("refused: it refuses thermite's token; trying again")
+        return "refused"
+
+    def refused(self):
+        """Count a refused pass on the claim as it is stored now: a renewal
+        may have replaced the token earlier in the pass."""
+        stored = read_claim(self.state)
+        if held(stored):
+            write_claim(self.state, {**stored, "refusals": stored.get("refusals", 0) + 1})
 
     def claim(self, client, claim):
         """A pending claim, {"session", "password"}: thermite's user created
@@ -274,8 +291,8 @@ class Provisioner:
         client.token = claim["token"]
         tokens = client.call("auth/tokens")  # Proves the token before anything else uses it.
         if claim["expires_at"] - self.clock() > RENEW_DAYS * DAY:
-            if "refused_since" in claim:
-                write_claim(self.state, {key: value for key, value in claim.items() if key != "refused_since"})
+            if "refusals" in claim:
+                write_claim(self.state, {key: value for key, value in claim.items() if key != "refusals"})
             self.revoke_others(client, claim["token"], tokens)
             return claim["token"], False
         token = self.mint(client)

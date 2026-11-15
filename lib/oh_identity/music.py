@@ -216,7 +216,7 @@ class Music:
         problems: music_unavailable when it cannot be reached or refuses the
         token, failed when it fails what was asked."""
         claim = provision.read_claim(self.state)
-        problem = provision.problem(claim, time.time())
+        problem = provision.problem(claim)
         if problem:
             raise Problem(problem, 503)
         with self._guard:

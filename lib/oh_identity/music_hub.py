@@ -145,7 +145,7 @@ class MusicHub(Fanout):
 
     async def _connected(self):
         claim = await asyncio.to_thread(provision.read_claim, self.music.state)
-        if provision.problem(claim, time.time()):
+        if provision.problem(claim):
             raise Unavailable("Music Assistant is not claimed")
         options = {} if self.quiet is None else {"quiet": self.quiet}
         socket = await Socket.open(self.music.spec["port"], claim["token"], **options)

@@ -455,15 +455,19 @@ with it rather than calling the server someone else's. With the session it
 mints a long-lived token (a year), which replaces the session and the
 password in the file, and revokes the session; within 30 days of a token's
 end it mints, stores and switches to the next and revokes the old one.
-Serving only reads that file. The worker never gives up a stored token or session because Music
-Assistant refuses it, as Music Assistant does for a moment while it starts,
-stops or upgrades: it keeps it, records when the refusals began and tries
-it again on every pass, every 30 seconds. After a day of refusals in a row
-the gateway answers `music_unclaimed`, as it does at once for a Music
-Assistant that had another user before thermite claimed it; until then it
-answers `music_unavailable`. Either way it serves no music until the owner
-resets Music Assistant: stop it, delete its data directory and start it
-again, and the worker claims it afresh within 30 seconds. A claim file the
+Serving only reads that file. The worker never gives up a stored token or
+session because Music Assistant refuses it, as Music Assistant does for a
+moment while it starts, stops or upgrades: it keeps it, counts the passes in
+a row that reached Music Assistant and were refused (one that finds it down
+counts none, and the clock plays no part), and tries it again on every pass,
+every 30 seconds, while also claiming Music Assistant afresh should it have
+no user, or signing in with a pending claim's password. The first pass that
+works clears the count, and music is served again. After a day's refused
+passes the gateway answers `music_unclaimed`; until then
+`music_unavailable`. A Music Assistant that had another user before
+thermite claimed it is `music_unclaimed` at once. Either recovers when the
+owner resets Music Assistant (stop it, delete its data directory and start
+it again): the worker claims it afresh within 30 seconds. A claim file the
 worker cannot trust (not the service account's, or not mode 0600) is
 reported, never replaced, and the gateway answers `music_unavailable` until
 it is repaired. After
@@ -586,7 +590,7 @@ in again re-authenticates the same TIDAL instance.
 | `device_locked` | 423 | A locked room owns, or holds a route through, an involved speaker. |
 | `music_failed` | 502 | Music Assistant refused or failed it, or has no available player for the speaker. |
 | `music_unavailable` | 503 | Music Assistant is down, starting, not claimed yet, or refuses the token. |
-| `music_unclaimed` | 503 | Music Assistant belongs to another user, or has refused thermite's token for a day: reset it. |
+| `music_unclaimed` | 503 | Music Assistant belongs to another user, or has refused thermite's token for a day's passes: reset it. |
 | `tidal_not_started` | 409 | No TIDAL sign-in to finish. |
 
 GET `/api/v1/music` answers 200 with `available: false` and the problem
