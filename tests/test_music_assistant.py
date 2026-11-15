@@ -283,6 +283,59 @@ class Configuration(Site):
         self.assertEqual(libraries, [("thermite mp3", "/media/mp3")])
         self.assertNotIn("heos", self.domains())
 
+    def test_a_library_whose_naming_fails_is_named_again_and_never_replaced(self):
+        self.sim.failing["config/providers/save"] = 100
+        with self.sim.lock:
+            foreign = self.sim._create("filesystem_local", {"content_type": "music", "path": "/media/flac"})
+        with self.assertLogs("oh_music.provision", "WARNING"):
+            for _ in range(3):
+                # A new worker each time: the instance is known from the record alone.
+                self.provisioner().step()
+        [instance] = provision.read_libraries(self.state).values()
+        self.assertEqual(self.sim.providers[instance]["name"], None)
+        # Nothing was removed while a library had no named instance.
+        self.assertEqual({entry for entry in self.sim.providers if entry.startswith("filesystem_local")},
+                         {instance, foreign})
+        self.assertFalse([args for command, args in self.sim.calls if command == "config/providers/remove"
+                          and args["instance_id"].startswith("filesystem_local")])
+        self.sim.failing.clear()
+        self.provisioner().step()
+        self.assertEqual([(entry["instance_id"], entry["name"]) for entry in self.sim.providers.values()
+                          if entry["domain"] == "filesystem_local"], [(instance, "thermite flac")])
+
+    def test_a_part_that_fails_is_logged_and_the_others_still_applied(self):
+        self.sim.remote_access = True
+        self.sim.failing["config/providers/get_value"] = 1
+        now = [time.time()]
+        provisioner = self.provisioner(clock=lambda: now[0])
+        with self.assertLogs("oh_music.provision", "WARNING") as logs:
+            self.assertEqual(provisioner.step(), "ready")
+        self.assertEqual([record.getMessage() for record in logs.records],
+                         ["Music Assistant: could not reconcile its speaker addresses (Failed); "
+                          "trying again at the next reconcile."])
+        self.assertEqual(self.sim.providers["sonos"]["values"], {})
+        self.assertEqual(self.domains(), ["airplay", "filesystem_local", "sonos", "wiim"])
+        self.assertFalse(self.sim.remote_access)
+        # Tried again when the next reconcile is due, not on every pass.
+        calls = len(self.sim.calls)
+        provisioner.step()
+        self.assertEqual([command for command, _ in self.sim.calls[calls:]], ["auth/tokens"])
+        now[0] += 15 * 60
+        provisioner.step()
+        self.assertEqual(self.sim.providers["sonos"]["values"], {"manual_discovery_ip_addresses": ["192.0.2.21"]})
+
+    def test_a_provider_music_assistant_will_not_add_is_logged_in_thermites_words(self):
+        self.provisioner().step()
+        provisioner = self.provisioner()
+        with Client(self.port, self.token()) as client, self.assertLogs("oh_music.provision", "WARNING") as logs:
+            # Already there; and a sign-in thermite does not answer, whose flow is ended.
+            self.assertIsNone(provisioner.add(client, "sonos"))
+            self.assertIsNone(provisioner.add(client, "tidal"))
+        self.assertEqual([record.getMessage() for record in logs.records],
+                         ["Music Assistant could not add the sonos provider: it refused.",
+                          "Music Assistant could not add the tidal provider: it asked for more than thermite answers."])
+        self.assertEqual(self.sim.flows, {})
+
     def test_a_speakers_new_address_is_given_to_its_provider(self):
         self.provisioner().step()
         provisioner = self.provisioner()

@@ -26,13 +26,16 @@ before thermite ever claimed it is someone else's at once. Either waits
 for the owner to reset Music Assistant: stop it, delete its state, start it.
 
 Reconcile, idempotently, after a claim, whenever Music Assistant's server
-ID changes (its state was reset) and every EVERY seconds: the sonos, wiim and airplay
-player providers are present (MA groups a WiiM with a Sonos over AirPlay);
-the sonos and wiim providers are given the house's speakers' addresses for
-discovery; each library (oh_music.settings) is one filesystem_local instance
-on MEDIA/<name>, named LIBRARY_NAME, and every other filesystem_local
-instance is removed; the providers in UNWANTED are removed; remote access
-stays off; onboarding is complete. Players are never renamed or disabled.
+ID changes (its state was reset) and every EVERY seconds, whether the last
+one worked or not: the sonos, wiim and airplay player providers are present
+(MA groups a WiiM with a Sonos over AirPlay); the sonos and wiim providers
+are given the house's speakers' addresses for discovery; each library
+(oh_music.settings) is one filesystem_local instance on MEDIA/<name>, named
+LIBRARY_NAME, and once each has one every other filesystem_local instance
+is removed; the providers in UNWANTED are removed; remote access stays off;
+onboarding is complete. Each part is applied alone: one Music Assistant
+fails is logged and tried at the next reconcile, and the others go on.
+Players are never renamed or disabled.
 """
 
 from __future__ import annotations
@@ -67,6 +70,11 @@ PLAYERS = ("sonos", "wiim", "airplay")
 #: What the gateway names each library's filesystem_local instance; Music
 #: Assistant never reports the path an instance was set up with.
 LIBRARY_NAME = "thermite {}"
+#: The private file in the gateway's state that records each library's
+#: instance ID from the moment it is added, so that an instance whose
+#: naming failed is named again, never replaced and rescanned.
+LIBRARY_FILE = "music-libraries.json"
+LIBRARY_BYTES = 65536
 #: Providers Music Assistant may load that thermite does not use: other
 #: speaker families it would find on the LAN, and features that act on
 #: their own.
@@ -126,6 +134,25 @@ def problem(claim, now):
 
 def write_claim(state, claim):
     json_private(token_file(state), {"version": 1, **claim})
+
+
+def read_libraries(state):
+    """{library: instance ID} as last recorded; empty when there is no record
+    or it cannot be read (it is rewritten on the next change)."""
+    try:
+        data = json.loads(read_private(Path(state) / LIBRARY_FILE, LIBRARY_BYTES))
+    except FileNotFoundError:
+        return {}
+    except (AccessError, OSError, ValueError):
+        LOG.warning("Music Assistant's library record cannot be read; libraries are found by name.")
+        return {}
+    libraries = data.get("libraries") if isinstance(data, dict) else None
+    return {library: instance for library, instance in (libraries or {}).items()
+            if isinstance(library, str) and isinstance(instance, str)} if isinstance(libraries, dict) else {}
+
+
+def write_libraries(state, libraries):
+    json_private(Path(state) / LIBRARY_FILE, {"version": 1, "libraries": libraries})
 
 
 def digest(token):
@@ -190,8 +217,9 @@ class Provisioner:
             client.token = token
             server, now, changed = info.get("server_id"), self.clock(), 0
             if claimed or self.reconciled is None or self.reconciled[0] != server or now - self.reconciled[1] >= self.every:
-                changed = self.reconcile(client, info)
+                # Recorded first: a reconcile that fails waits as long as one that works.
                 self.reconciled = (server, now)
+                changed = self.reconcile(client, info)
         self.report("ready", changed=changed)
         return "ready"
 
@@ -250,69 +278,126 @@ class Provisioner:
     # ---- configuration ----------------------------------------------------
 
     def reconcile(self, client, info):
-        """Bring Music Assistant's providers to what thermite needs; the number
-        of changes made."""
+        """Bring Music Assistant's configuration to what thermite needs, one
+        part at a time; the number of changes made. A part that fails is
+        logged, and the parts after it are still applied; one that loses
+        Music Assistant ends the pass."""
         changed = 0
-        configs = [config for config in client.call("config/providers") or () if isinstance(config, dict)]
-        domains = {config.get("domain") for config in configs}
-        for domain in PLAYERS:
-            if domain not in domains:
-                changed += self.add(client, domain)
-        configs = [config for config in client.call("config/providers") or () if isinstance(config, dict)]
-        speakers = self.spec["speakers"].values()
-        for domain in ("sonos", "wiim"):
-            wanted = sorted({speaker["ip"] for speaker in speakers if speaker["provider"] == domain and "ip" in speaker})
-            for config in configs:
-                if config.get("domain") == domain:
-                    key = "manual_discovery_ip_addresses"
-                    current = client.call("config/providers/get_value", instance_id=config["instance_id"], key=key)
-                    if sorted(current or ()) != wanted:
-                        client.call("config/providers/save", provider_domain=domain, instance_id=config["instance_id"],
-                                    values={key: wanted})
-                        changed += 1
-        libraries = {LIBRARY_NAME.format(name): name for name in self.spec["libraries"]}
-        present = set()
-        for config in configs:
-            domain, instance = config.get("domain"), config.get("instance_id")
-            if domain == "filesystem_local" and config.get("name") in libraries and config["name"] not in present:
-                present.add(config["name"])
-            elif domain == "filesystem_local" or domain in UNWANTED:
-                # A library no longer listed, one the owner added in Music
-                # Assistant's own UI, or one left unnamed by an interrupted pass.
-                client.call("config/providers/remove", instance_id=instance)
-                changed += 1
-        for name, library in sorted(libraries.items()):
-            if name not in present:
-                changed += self.add(client, "filesystem_local", {"content_type": "music", "path": f"{MEDIA}/{library}"},
-                                    name=name)
-        if info.get("has_remote_access"):
-            client.call("remote_access/configure", enabled=False)
-            changed += 1
-        if info.get("onboard_done") is False:
-            client.call("config/onboard_complete")
-            changed += 1
+        for part, apply in (("player providers", self.players), ("speaker addresses", self.discovery),
+                            ("libraries", self.libraries), ("unwanted providers", self.unwanted),
+                            ("remote access", self.remote_access), ("onboarding", self.onboarding)):
+            try:
+                changed += apply(client, info)
+            except Unavailable:
+                raise
+            except Exception as error:
+                LOG.warning("Music Assistant: could not reconcile its %s (%s); trying again at the next reconcile.",
+                            part, type(error).__name__)
         return changed
 
-    def add(self, client, domain, values=None, *, name=None):
+    @staticmethod
+    def configs(client):
+        return [config for config in client.call("config/providers") or ()
+                if isinstance(config, dict) and isinstance(config.get("instance_id"), str)]
+
+    def players(self, client, info):
+        domains = {config.get("domain") for config in self.configs(client)}
+        return sum(self.add(client, domain) is not None for domain in PLAYERS if domain not in domains)
+
+    def discovery(self, client, info):
+        changed, key = 0, "manual_discovery_ip_addresses"
+        speakers = self.spec["speakers"].values()
+        for config in self.configs(client):
+            domain, instance = config.get("domain"), config["instance_id"]
+            if domain in ("sonos", "wiim"):
+                wanted = sorted({speaker["ip"] for speaker in speakers if speaker["provider"] == domain and "ip" in speaker})
+                if sorted(client.call("config/providers/get_value", instance_id=instance, key=key) or ()) != wanted:
+                    client.call("config/providers/save", provider_domain=domain, instance_id=instance, values={key: wanted})
+                    changed += 1
+        return changed
+
+    def libraries(self, client, info):
+        """One filesystem_local instance per library. An instance is a
+        library's by the ID recorded when thermite added it, else by its
+        name; one whose name was lost is named again. Every other instance
+        (a library no longer listed, one the owner added in Music
+        Assistant's own UI) is removed only once each library has its
+        instance, named: nothing is removed in the hope of replacing it."""
+        names = {LIBRARY_NAME.format(library): library for library in self.spec["libraries"]}
+        configs = {config["instance_id"]: config for config in self.configs(client)
+                   if config.get("domain") == "filesystem_local"}
+        recorded = read_libraries(self.state)
+        held = {library: instance for library, instance in recorded.items()
+                if library in self.spec["libraries"] and instance in configs}
+        for instance, config in configs.items():
+            library = names.get(config.get("name"))
+            if library and library not in held and instance not in held.values():
+                held[library] = instance
+        changed = 0
+        for library in sorted(set(self.spec["libraries"]) - set(held)):
+            instance = self.add(client, "filesystem_local", {"content_type": "music", "path": f"{MEDIA}/{library}"})
+            if instance is not None:
+                held[library] = instance
+                write_libraries(self.state, held)
+                changed += 1
+        if held != recorded:
+            write_libraries(self.state, held)
+        for library, instance in sorted(held.items()):
+            name = LIBRARY_NAME.format(library)
+            if configs.get(instance, {}).get("name") != name:
+                client.call("config/providers/save", provider_domain="filesystem_local", instance_id=instance,
+                            values={"name": name})
+                changed += instance in configs
+        if held.keys() == set(self.spec["libraries"]):
+            for instance in configs.keys() - set(held.values()):
+                client.call("config/providers/remove", instance_id=instance)
+                changed += 1
+        return changed
+
+    def unwanted(self, client, info):
+        changed = 0
+        for config in self.configs(client):
+            if config.get("domain") in UNWANTED:
+                client.call("config/providers/remove", instance_id=config["instance_id"])
+                changed += 1
+        return changed
+
+    @staticmethod
+    def remote_access(client, info):
+        if info.get("has_remote_access"):
+            client.call("remote_access/configure", enabled=False)
+            return 1
+        return 0
+
+    @staticmethod
+    def onboarding(client, info):
+        if info.get("onboard_done") is False:
+            client.call("config/onboard_complete")
+            return 1
+        return 0
+
+    def add(self, client, domain, values=None):
         """Add one provider instance through its setup flow, answering its one
-        form with values. 1 when it was added; 0 when Music Assistant says it
-        exists or cannot be added (logged)."""
+        form with values: the new instance's ID, or None (logged) when Music
+        Assistant does not add it."""
         step = client.call("config/providers/setup", provider_domain=domain)
         if isinstance(step, dict) and step.get("type") == "form" and values is not None:
             step = client.call("config/flows/submit", flow_id=step["flow_id"], values=values)
         kind = step.get("type") if isinstance(step, dict) else None
         if kind == "finish":
             instance = (step.get("result") or {}).get("instance_id")
-            if name is not None and isinstance(instance, str):
-                client.call("config/providers/save", provider_domain=domain, instance_id=instance,
-                            values={"name": name})
-            return 1
-        if kind != "abort":
-            # An unexpected step (a form thermite cannot answer): end the flow.
+            if isinstance(instance, str) and instance:
+                return instance
+            why = "it named no instance"
+        elif kind == "abort":
+            why = "it refused"
+        else:
+            # A step thermite cannot answer: end the flow.
             if isinstance(step, dict) and isinstance(step.get("flow_id"), str):
                 client.call("config/flows/abort", flow_id=step["flow_id"])
-            LOG.warning("Music Assistant could not add the %s provider (%s step).", domain, kind or "no")
-        return 0
+            why = "it asked for more than thermite answers"
+        LOG.warning("Music Assistant could not add the %s provider: %s.", domain, why)
+        return None
 
 
 def run(state, spec, stop, *, poll=POLL, every=EVERY, connect=Client):

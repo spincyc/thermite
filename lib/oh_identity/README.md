@@ -470,11 +470,16 @@ Assistant's configuration to what thermite needs: the
 `sonos`, `wiim` and `airplay` player providers, with the speakers' addresses
 for discovery; one `filesystem_local` instance per library on
 `/media/<name>`, named `thermite <name>` (Music Assistant does not report an
-instance's path), and no other; none of the providers that find other
-speaker families or act on their own (`chromecast`, `dlna`, `heos`,
-`bluesound`, `party`, `smart_fades`, `lastfm_recommendations`,
-`ambient_sounds`); remote access off; and onboarding complete. It never
-renames or disables a player.
+instance's path), and, once each library has its instance, no other; none
+of the providers that find other speaker families or act on their own
+(`chromecast`, `dlna`, `heos`, `bluesound`, `party`, `smart_fades`,
+`lastfm_recommendations`, `ambient_sounds`); remote access off; and
+onboarding complete. It never renames or disables a player. Each of those
+parts is applied alone: one that Music Assistant fails is logged and tried
+again at the next reconcile, 15 minutes on, and the rest still apply. The
+worker records each library's instance ID in `music-libraries.json` (mode
+0600) as soon as it adds it, so that an instance whose naming failed is
+named again rather than removed, added again and rescanned.
 
 Routes (`<speaker>` is a contract speaker ID):
 
