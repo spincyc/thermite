@@ -594,7 +594,8 @@
           toast(refused.length > 1 ? refused.length + " speakers could not join" : refused[0].name + " could not join",
             refused.map((entry) => entry.reason).join(" "), "bad");
         } else toast("Grouped", grouping.result.text);
-        announce([grouping.result.text].concat(refused.map((entry) => entry.reason)).filter(Boolean).join(" "));
+        // Said once: by the group sheet's result (a status) while the sheet is
+        // open and the page behind it inert, else by the toast.
         changed();
       }, (error) => {
         if (started !== life) return;

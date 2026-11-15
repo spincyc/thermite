@@ -1,6 +1,7 @@
 """The Music page's session and backends (web/remote/music-session.js and
 music-backend.js), which the web page and the terminal remote both draw,
-and the page's own markup and stylesheet.
+the page's script (music.js) in a small stand-in for a browser, and the
+page's own markup and stylesheet.
 
 The session runs on the mock's invented speakers (two in a kitchen, a Sonos
 in a den, a WiiM without AirPlay in a study, a Sonos away on a patio), on
@@ -142,6 +143,8 @@ class MusicPage(unittest.TestCase):
         self.assertEqual(out["result"]["text"], "Den joined Kitchen Sonos Amp.")
         self.assertEqual([entry["reason"] for entry in out["result"]["refused"]], [AIRPLAY, "Patio is not available."])
         self.assertEqual(out["toast"], ["2 speakers could not join", AIRPLAY + " Patio is not available.", "bad"])
+        # The toast says it, and the group sheet's result: nothing more for a screen reader.
+        self.assertEqual(out["announced"], [])
         group = out["blocks"][0]
         self.assertEqual((group["group"], [row[1] for row in group["speakers"]]), (True, ["Kitchen Sonos Amp", "Den"]))
         self.assertEqual(len(out["blocks"]), 4)
@@ -294,6 +297,45 @@ class MusicPage(unittest.TestCase):
                                         ["POST", "/api/v1/music/kitchen_amp/transport", {"action": "pause"}, "C" * 32],
                                         ["POST", "/api/v1/music/den_one/volume", {"level": 3}, "C" * 32]])
         self.assertEqual([code for code, known in out["messages"] if code != known], [])
+
+
+@unittest.skipUnless(shutil.which("node"), "node needed for the page's script")
+class MusicPageScript(unittest.TestCase):
+    """music.js on music.html in tests/music_dom_harness.js's small stand-in for a browser."""
+
+    @classmethod
+    def setUpClass(cls):
+        run = subprocess.run([shutil.which("node"), str(AREA / "tests/music_dom_harness.js")],
+                             text=True, capture_output=True, timeout=60)
+        if run.returncode:
+            raise AssertionError(run.stderr)
+        cls.report = json.loads(run.stdout)
+
+    def test_the_card_names_only_what_the_speaker_is_beside_the_bars_switch(self):
+        # The switch and the card's place both hold the name; the CSS shows the place only beside no switch.
+        self.assertEqual(self.report["now"]["place"], ["Kitchen Sonos Amp", "Kitchen Sonos Amp", "Sonos"])
+
+    def test_a_position_dragged_and_let_go_unchanged_shows_the_speakers_again(self):
+        self.assertEqual(self.report["now"]["dragged"], "3:20")
+        self.assertEqual(self.report["now"]["released"], [True, True])
+
+    def test_the_focus_follows_a_folder_opened_back_and_a_sheets_open(self):
+        out = self.report["browse"]
+        lanterns, nas = "item:filesystem_local--flac://folder/The Lanterns", "item:filesystem_local--flac://folder/"
+        # On the path while the folder reads, then on its first entry.
+        self.assertEqual(out["opening"], ["Library › NAS", "path"])
+        self.assertEqual(out["opened"], ["Library › NAS", lanterns])
+        # Back to the top disables Back: the focus goes to the first root.
+        self.assertEqual(out["back"], ["Library", nas, True])
+        self.assertEqual(out["album"][1], "item:filesystem_local--flac://track/The Lanterns/Harbour Lights/01 Low Tide.flac")
+        # A sheet that plays hands the focus back to its entry; one that opens, to the folder's.
+        self.assertEqual(out["sheet"], [True, "button:Play now"])
+        self.assertEqual(out["played"], [False, out["album"][1]])
+        self.assertEqual(out["found"], [True, "button:Open"])
+        self.assertEqual(out["sheetOpening"][::2], [False, "path"])
+        self.assertEqual(out["sheetOpened"], "item:library://track/101")
+        # Taken elsewhere while a folder reads, the focus stays there.
+        self.assertEqual(out["elsewhere"], "input:")
 
 
 def css_rules(text):

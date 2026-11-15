@@ -31,6 +31,8 @@
   // The entries the lists show, by their buttons' data-item, and the one a sheet acts on.
   const shown = new Map();
   let chosenItem = null;
+  // Whether Browse moved (a folder opened, or Back) and its focus is to follow.
+  let browsing = false;
   // The speakers ticked in the group sheet, kept across its redraws.
   const picked = new Set();
   // Each block's last drawing, by what it showed: a block is built again only
@@ -86,6 +88,7 @@
     seek.style.setProperty("--fill", (Number(seek.max) ? Number(seek.value) / Number(seek.max) * 100 : 0) + "%");
   });
   seek.addEventListener("change", () => { dragging.seek = false; session.seek(Number(seek.value)); });
+  seek.addEventListener("pointerup", () => { dragging.seek = false; });
   seek.addEventListener("blur", () => { dragging.seek = false; });
   $("[data-group-open]").addEventListener("click", () => { picked.clear(); openSheet("group-sheet"); drawGroupSheet(); });
 
@@ -108,7 +111,7 @@
   $("[data-search-form]").addEventListener("submit", (event) => { event.preventDefault(); session.searchNow(); });
   $("[data-kind]").addEventListener("change", (event) => session.setKind(event.target.value));
   $("[data-source]").addEventListener("change", (event) => session.setSource(event.target.value));
-  $("[data-browse-back]").addEventListener("click", () => session.back());
+  $("[data-browse-back]").addEventListener("click", () => { browsing = true; session.back(); });
   document.querySelectorAll("[data-more]").forEach((button) => button.addEventListener("click", () => session.more()));
   $("[data-library]").addEventListener("click", (event) => {
     const all = event.target.closest("[data-all]");
@@ -117,13 +120,16 @@
     const item = button && shown.get(button.dataset.item);
     if (!item) return;
     // A folder only opens; anything that plays offers how.
-    if (item.opens && !item.plays) session.open(item);
-    else openItem(item);
+    if (item.opens && !item.plays) {
+      browsing = true;
+      session.open(item);
+    } else openItem(item);
   });
   $("[data-item-actions]").addEventListener("click", (event) => {
     const button = event.target.closest("[data-action]");
     if (!button || !chosenItem) return;
     $("#item-sheet").close();
+    browsing = button.dataset.action === "open";
     session.act(chosenItem, button.dataset.action);
   });
 
@@ -274,7 +280,7 @@
     $("[data-controls]").disabled = Boolean(view.locked);
     $("[data-now-name]").textContent = view.speaker.name;
     $("[data-place]").textContent = view.speaker.name;
-    $("[data-model]").textContent = view.speaker.name.includes(view.speaker.label) ? " · " + view.speaker.provider : " · " + view.speaker.label;
+    $("[data-model]").textContent = view.speaker.name.includes(view.speaker.label) ? view.speaker.provider : view.speaker.label;
     $("[data-title]").textContent = view.now;
     $("[data-now]").dataset.playing = view.playing ? "true" : "false";
     $("[data-line]").textContent = view.line || "";
@@ -409,9 +415,20 @@
     $("[data-browse-text]").textContent = browse.text;
     $("#music-panel-browse [data-more]").hidden = !browse.more;
     const list = $("[data-browse-items]");
-    if (!stale(list, browse.items)) return;
-    forget("browse:");
-    list.replaceChildren(...browse.items.map((item, index) => itemRow(item, "browse:" + index)));
+    if (stale(list, browse.items)) {
+      forget("browse:");
+      list.replaceChildren(...browse.items.map((item, index) => itemRow(item, "browse:" + index)));
+    }
+    // A folder opened, or Back: the focus waits on the path while it reads,
+    // then goes to the first entry, unless it was taken elsewhere meanwhile
+    // (not left on what went, or on what was hidden or disabled).
+    if (!browsing) return;
+    const path = $("[data-browse-path]"), first = list.querySelector("[data-item]"), at = document.activeElement;
+    if (at && at !== document.body && at !== path && !at.disabled && !at.closest("[hidden]")) browsing = false;
+    else if (first) {
+      browsing = false;
+      first.focus();
+    } else path.focus();
   }
 
   function drawQueue(queue) {

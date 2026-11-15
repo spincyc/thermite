@@ -258,6 +258,22 @@
   font-size: 14px;
 }
 
+/* The speaker, then what it is; where the bar's switch names the speaker
+   (below 1180 px), only what it is. */
+.music-now .now-card__model::before {
+  content: " · ";
+}
+
+@media (max-width: 1179px) {
+  .music-now [data-place] {
+    display: none;
+  }
+
+  .music-now .now-card__model::before {
+    content: none;
+  }
+}
+
 .music-now__queue {
   font-size: 12px;
   color: var(--ink-muted);

@@ -270,12 +270,13 @@ async function grouping(out) {
   await time.tick(100);
   const before = music.grouping();
   out.candidates = before.candidates.map((candidate) => [candidate.id, candidate.name, candidate.note]);
-  const from = backend.sent.length;
+  const from = backend.sent.length, said = music.log.announced.length;
   music.join(['den_one', 'study_amp', 'patio_roam']);
   out.pending = music.grouping().pending;
   await time.tick(100);
   out.result = music.grouping().result;
   out.toast = music.log.toasts[music.log.toasts.length - 1];
+  out.announced = music.log.announced.slice(said);
   out.blocks = blocks(music);
   music.select('den_one');
   out.member = summary(music.view());
