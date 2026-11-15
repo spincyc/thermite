@@ -45,7 +45,7 @@
     flac: /mnt/music/flac
     mp3: /mnt/music/mp3</code></pre>
 <p>A library's name is lowercase letters, digits and <code>_</code>, starting with a letter, at most 32 characters. Its directory is a normalized absolute path of letters, digits and <code>._@+-</code>, and no two libraries share one. <code>music: {}</code> runs Music Assistant with no library, for TIDAL alone. <code>port</code> and <code>stream_port</code> move its two listeners; see <a href="#ports">ports</a>.</p>
-<p>Commit the change, then run <code>thermite upgrade --config DIR</code> (or <code>thermite install</code>). It pulls the image, about 760 MB, before it stops anything. Upstream recommends 2 GB of RAM for Music Assistant; plan it on top of the <a href="requirements.html">stack's own</a>.</p>
+<p>A private site pins its own native versions: copy the <code>music_assistant</code> entry from Thermite's <code>versions.json</code> into the site's, or generating refuses the host. Commit both changes, then run <code>thermite upgrade --config DIR</code> (or <code>thermite install</code>). It pulls the image, about 760 MB, before it stops anything. Upstream recommends 2 GB of RAM for Music Assistant; plan it on top of the <a href="requirements.html">stack's own</a>.</p>
 <h2 id="mount-the-libraries">Mount the libraries</h2>
 <p>Thermite reads the libraries but never mounts them: making each directory available is yours to do, before Music Assistant starts. Mount a NAS share from <code>/etc/fstab</code>, read-only, so that it is there whenever the host boots:</p>
 <pre><code class="language-text">192.0.2.20:/volume1/music  /mnt/music  nfs  ro,_netdev,nofail  0  0</code></pre>

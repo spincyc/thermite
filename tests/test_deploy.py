@@ -1581,6 +1581,12 @@ class HostFacts(unittest.TestCase):
         self.refused("same directory", music={"libraries": {"a": "/mnt/flac", "b": "/mnt/flac"}})
         self.refused("collides", music={"port": HOST["http_port"]})
 
+    def test_a_music_host_whose_site_pins_no_music_assistant_is_told_how_to_pin_it(self):
+        unpinned = {name: pin for name, pin in VERSIONS.items() if name != "music_assistant"}
+        deploy.render_units(unpinned, HOST)
+        with self.assertRaisesRegex(deploy.DeployError, "versions.json pins no music_assistant.*copy its entry"):
+            deploy.render_units(unpinned, {**HOST, "music": {}})
+
     def test_values_cannot_inject_unit_directives(self):
         for zone in ("Etc/UTC\nExecStartPre=/bin/true", "Etc/UTC ", "../etc/passwd", "Etc/%n", 'Etc/"UTC"', 5):
             with self.subTest(zone=zone):

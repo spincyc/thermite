@@ -26,8 +26,10 @@ digits and `._@+-`, and no two libraries share one. `music: {}` runs Music
 Assistant with no library, for TIDAL alone. `port` and `stream_port` move its
 two listeners; see [ports](#ports).
 
-Commit the change, then run `thermite upgrade --config DIR` (or `thermite
-install`). It pulls the image, about 760 MB, before it stops anything.
+A private site pins its own native versions: copy the `music_assistant` entry
+from Thermite's `versions.json` into the site's, or generating refuses the
+host. Commit both changes, then run `thermite upgrade --config DIR` (or
+`thermite install`). It pulls the image, about 760 MB, before it stops anything.
 Upstream recommends 2 GB of RAM for Music Assistant; plan it on top of the
 [stack's own](requirements.md).
 

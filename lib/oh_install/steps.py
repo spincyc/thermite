@@ -284,6 +284,7 @@ def committed_context(area: Path, system: System, runtime_token_file: Path | Non
     else:
         versions, host = deploy.load(area)
         conf = deploy.read_tree(area / "conf")
+    deploy.check_pins(versions, host)
     return Context(area, versions, host, head, deploy.tree_digest(conf), system.hostname(), system.address(),
                    runtime_token_file, files, application_)
 

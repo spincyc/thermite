@@ -23,6 +23,8 @@ rollback. The unified deployment workflow uses a separate committed private site
     Music Assistant cannot downgrade; one that removes `music:` removes the
     unit and keeps the state. `thermite generate --prune` removes its
     generated units from `deploy/`.
+  - A private site pins it in its own `versions.json`; generating refuses a
+    `music:` host whose site does not.
   - [Music](docs/music.md) covers mounting the libraries, the ports, AirPlay's
     timing without PTP, and backups.
 - Music, the gateway's half: on a host with `music:`, the gateway drives

@@ -1114,10 +1114,18 @@ def render_container_dropin() -> str:
     ])
 
 
+def check_pins(versions: dict, host: dict) -> None:
+    """Refuse a host that runs a service its site's versions.json does not pin."""
+    if music.enabled(host) and "music_assistant" not in versions:
+        raise DeployError("versions.json pins no music_assistant, which music: in instance/host.yaml needs: "
+                          "copy its entry from Thermite's versions.json")
+
+
 def render_units(versions: dict, host: dict) -> dict[str, str]:
     """{area path: text} of every unit and service drop-in the owner installs."""
     # Every host value below lands in unit text; never render unchecked facts.
     validate_host(host)
+    check_pins(versions, host)
     units = {
         QUADLET: render_quadlet(versions, host),
         ATV_QUADLET: render_atv_quadlet(versions, host),
