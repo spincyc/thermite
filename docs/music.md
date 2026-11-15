@@ -43,12 +43,20 @@ from `/etc/fstab`, read-only, so that it is there whenever the host boots:
 
 The `thermite` account, UID 9001, must be able to read the files. Music
 Assistant sees each library at `/media/<name>`, read-only. Quadlet makes the
-service require the mounts its libraries are on: Music Assistant starts after
-them, does not start while one of them fails to mount or a library's
-directory is missing, and stops when one is unmounted. Once the share is back,
-`sudo systemctl start thermite-music.service` starts it again. A share mounted
-by hand, outside `/etc/fstab`, is not waited for: until it is mounted the
-library looks empty.
+service require the mounts its libraries are on, so Music Assistant starts
+after the shares `/etc/fstab` names, and does not start while one of them
+cannot be mounted or a library's directory is missing. An unreachable share
+therefore fails an install's or upgrade's start of Music Assistant, and with
+it the install transaction, which rolls back. Stopping a share's mount unit
+stops Music Assistant too; unmounting it by hand does not.
+
+Music Assistant sees only what was mounted when it started: a share mounted,
+or mounted again, after it started stays invisible to it, and the library
+looks empty. Restart it after mounting:
+
+```sh
+sudo systemctl restart thermite-music.service
+```
 
 Thermite never relabels your files. Without podman's `:z` or `:Z` volume
 options a source keeps its SELinux label, so on an SELinux host label the
@@ -72,6 +80,11 @@ services: it is part of `thermite.target` and runs in `thermite.slice`.
   Thermite's ports. Every other setting stays as it is. A new state also
   marks the providers Music Assistant would set up by itself as done, so that
   it sets up none: the gateway sets up the ones the house uses.
+- A new Music Assistant's first account is claimed without a password, by
+  whoever asks first; the gateway asks as soon as Music Assistant runs. Until
+  then, for the seconds after its first start, any program on the host could
+  claim it first. Its API listens on loopback alone, behind the native
+  firewall, so nothing on the LAN can.
 - Music Assistant handles a stop itself and has 30 seconds to close its
   library database and save its settings.
 - The image has no health check, and the unit adds none. The install waits up
@@ -92,6 +105,11 @@ back to every address when it cannot listen where its settings say, and the
 firewall still refuses the LAN there. Health and status report such a
 fallback. Music Assistant also opens listeners of its own; see
 [ports](ports.md).
+
+Health and status reach the streams on 127.0.0.1, from the host itself. A
+host with its own firewall (ufw, firewalld) must allow, from the LAN, the
+stream port, TCP 8927 (Sendspin) and mDNS (UDP 5353), or the speakers cannot
+play while every check passes.
 
 ## AirPlay timing
 
