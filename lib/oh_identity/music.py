@@ -96,16 +96,21 @@ QUEUE_ACTIONS = {"seek": ("player_queues/seek", "position"), "shuffle": ("player
 #: C0 and C1 controls, and lone surrogates, which no UTF-8 can carry to
 #: Music Assistant: refused in a reference, dropped from a query.
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\ud800-\udfff]")
+#: Bidirectional embeddings, overrides and isolates: removed from a name, so
+#: that a name cannot reorder the text a page shows after it.
+_BIDI = re.compile("[\u202a-\u202e\u2066-\u2069]")
 _music = weakref.WeakKeyDictionary()
 
 
 def text(value):
-    """Music Assistant free text a client may see: printable, without a
-    credential word, cut to TEXT_LENGTH; else None."""
+    """Music Assistant free text a client may see, by a reference's rule:
+    without controls (_CONTROL) or a credential word, its bidirectional
+    controls removed, cut to TEXT_LENGTH; else None. Any space, joiner or
+    mark a title holds stays."""
     if not isinstance(value, str):
         return None
-    value = value.strip()[:TEXT_LENGTH].strip()
-    if not value or not value.isprintable() or SENSITIVE_TEXT.search(value):
+    value = _BIDI.sub("", value).strip()[:TEXT_LENGTH].strip()
+    if not value or _CONTROL.search(value) or SENSITIVE_TEXT.search(value):
         return None
     return value
 

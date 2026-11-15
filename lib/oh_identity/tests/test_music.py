@@ -155,8 +155,12 @@ class Matching(SimpleTestCase):
     def test_free_text_is_printable_bounded_and_never_a_credential(self):
         self.assertEqual(music.text("  Opening  "), "Opening")
         self.assertEqual(len(music.text("x" * 500)), music.TEXT_LENGTH)
-        for value in ("bad\x07bell", "my password", "", None, 7):
+        for value in ("bad\x07bell", "my password", "", None, 7, "bad\x85next", "lone \ud800", "\u202e"):
             self.assertIsNone(music.text(value))
+        # A title's spaces, joiners and marks stay; what would reorder the page after it goes.
+        for value in ("Ar\u00a0tist", "\u66f2\u3000\u4e00", "\U0001f469\u200d\U0001f467", "\u200f\u05e9\u05d9\u05e8"):
+            self.assertEqual(music.text(value), value)
+        self.assertEqual(music.text("\u202eevil\u202c and \u2067isolated\u2069"), "evil and isolated")
 
     def test_a_reference_names_a_known_provider_and_an_item_or_folder(self):
         sources = music.Sources([{"domain": "tidal", "instance_id": "tidal--a1", "available": True},

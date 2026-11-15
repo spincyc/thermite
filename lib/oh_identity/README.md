@@ -527,7 +527,8 @@ album, year, duration, art}` (a folder carries only the first five);
 `kind` is `track`, `album`, `artist`, `playlist` or `folder`, and a queue's
 items add their `index`. `ref` is the reference to play or browse, a
 Music Assistant URI of TIDAL's, a library's or Music Assistant's own
-library (`<provider>://<kind>/<id>`, at most 1024 printable characters),
+library (`<provider>://<kind>/<id>`, at most 1024 characters, none a
+control or a lone surrogate),
 whose ID is one that provider gives: a number for Music Assistant's
 library; letters, digits, `-` and `_` for TIDAL (its folders, up to eight
 such words joined by `/`); a path relative to the library, without an
@@ -571,9 +572,10 @@ does not have included. Music Assistant has 15 seconds to answer a play
 calls to the speakers), each under the rooms' locks; 5 for any other
 command or read; and 20 for a search, a browse, a queue or art, which hold
 no lock. Reading a group back takes about 3.5 seconds at most, its reads
-included. Titles, names and art are free text: a Guest who may
-not see it gets speakers without them and 401 `login_required` for search,
-browse, queues and art.
+included. Titles, names and art are free text, shown by a reference's rule
+(any space, joiner or mark; no control; bidirectional controls removed):
+a Guest who may not see it gets speakers without them and 401
+`login_required` for search, browse, queues and art.
 
 The music event stream is admitted, revalidated and heartbeated as the other
 streams. Its first frame is `{"type":"snapshot","view":"music","music":
