@@ -12,6 +12,7 @@ import oh_cli
 import oh_deploy as deploy
 import oh_entry
 import oh_http
+import oh_music
 import oh_ports
 import oh_sandbox as lib
 from oh_cli import AREA
@@ -31,8 +32,10 @@ checks the sandbox on {oh_ports.SANDBOX_URL.removeprefix('http://')}, with that 
 --production checks production runtime on this host, on 127.0.0.1 at
 instance/host.yaml's http_port, with the token thermite install saved in
 var/<this host's name>/api-token, and the metrics services beside it:
-Prometheus ready with every scrape target up, and Grafana answering.
-Before thermite upgrade has installed them it says they are not installed yet.
+Prometheus ready with every scrape target up, and Grafana answering; on a
+host with music:, Music Assistant running, its API on loopback alone and its
+streams answering. Before thermite upgrade has installed them it says they
+are not installed yet.
 
 --production --installation checks installation readiness with the same
 Thing policy as the installer's native readiness wait. Offline devices
@@ -57,8 +60,9 @@ NOTES = """\
 exit status:
   0  every Thing ONLINE (or allowed) and no requested add-on missing
   1  a Thing not ONLINE and not allowed, a requested add-on missing, or
-     (--production) the metrics services installed but not answering, or a
-     scrape target down
+     (--production) the metrics services installed but not answering, a
+     scrape target down, or Music Assistant installed but not running with
+     its API on loopback alone
   2  runtime could not be queried (unreachable, the token refused, or 401/403
      without a token)
 
@@ -177,6 +181,7 @@ def run(args) -> dict:
         raise unavailable(acode)(f"/rest/addons answered HTTP {acode}; --addons needs an admin API token")
 
     metrics = metrics_report(args.host) if getattr(args, "host", None) is not None else None
+    music = music_report(args.host) if getattr(args, "host", None) is not None else None
     failures = []
     if summary["failed"]:
         failures.append(f"{len(summary['failed'])} Thing(s) " +
@@ -189,6 +194,10 @@ def run(args) -> dict:
         failures.append("monitoring services are not installed")
     elif installation and metrics["ok"] and metrics.get("systemd_collector") is not True:
         failures.append("monitoring: systemd collector readiness could not be verified")
+    if music and music["installed"] and not music["ok"]:
+        failures.append("music: " + music["summary"])
+    if installation and music and not music["installed"]:
+        failures.append("Music Assistant is not installed")
     entry_ready = oh_entry.ready(args.url, timeout=args.timeout) if installation else None
     if entry_ready is False:
         failures.append("Thermite web entry is not ready")
@@ -202,6 +211,7 @@ def run(args) -> dict:
         "items": {"count": len(items or []), "null_or_undef": undefined},
         "addons": addon_report,
         **({"metrics": metrics} if metrics is not None else {}),
+        **({"music": music} if music is not None else {}),
         "failures": failures,
     }
 
@@ -216,6 +226,18 @@ def metrics_report(host: dict, installed: bool | None = None, health=None) -> di
             "summary": health.describe() + (f"; down: {', '.join(health.down)}" if health.down else ""),
             "prometheus": health.prometheus, "targets_up": health.up, "targets": health.total,
             "down": list(health.down), "grafana": health.grafana, "systemd_collector": health.systemd}
+
+
+def music_report(host: dict, installed: bool | None = None, health=None) -> dict | None:
+    """Music Assistant, on a host with music:; only an installed one can fail."""
+    if oh_music.settings(host) is None:
+        return None
+    if not (deploy.music_installed() if installed is None else installed):
+        return {"installed": False, "ok": True, "summary": "not installed yet; thermite upgrade installs it"}
+    health = health or deploy.music_health(host)
+    return {"installed": True, "ok": health.ok, "summary": health.describe(), "api": health.api,
+            "status": health.status, "version": health.version, "loopback": health.loopback,
+            "streams": health.streams, "streams_ok": health.streams_status == 200}
 
 
 def print_human(report: dict) -> None:
@@ -263,6 +285,8 @@ def print_human(report: dict) -> None:
         print(f"Add-ons: not readable (HTTP {ad['http'] or 'connection failed'}; needs an admin API token)")
     if "metrics" in report:
         print(f"Metrics: {report['metrics']['summary']}")
+    if "music" in report:
+        print(f"Music: {report['music']['summary']}")
     print("RESULT: " + ("FAIL - " + "; ".join(report["failures"]) if report["failures"] else "ok"))
 
 

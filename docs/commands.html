@@ -200,17 +200,18 @@ generated: change the house file, the host file, versions.json or lib/,
 then run this; never edit conf/, metrics/ or deploy/ by hand.
 
 It validates the house file first and writes nothing while it has a
-problem. Writing never deletes: a file under conf/ or metrics/ that nothing
-generates is reported and makes the exit status 1; --prune removes such a
-file when it carries the generated header (an earlier generate wrote it)
-and only reports any other.
+problem. Writing never deletes: a file under conf/ or metrics/, or a unit
+in deploy/ (Music Assistant&#x27;s, once the host file has no music:), that
+nothing generates is reported and makes the exit status 1; --prune removes
+such a file when it carries the generated header (an earlier generate
+wrote it) and only reports any other.
 
 options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
   --check               change nothing; exit 1 if conf/, metrics/ or deploy/ is stale
-  --prune               also remove files under conf/ and metrics/ with the generated
-                        header that nothing generates now
+  --prune               also remove files under conf/, metrics/ and deploy/ with the
+                        generated header that nothing generates now
   --house FILE          the house file (default: instance/devices.yaml)
   --conf DIR            the runtime conf directory (default: conf/)
 
@@ -222,8 +223,8 @@ switches every verb takes:
 exit status:
   0  conf/, metrics/ and deploy/ are what the house file, the host file and
      versions.json generate (with --check: and nothing was written)
-  1  a file is stale or missing (with --check), or conf/ or metrics/
-     holds a file nothing generates
+  1  a file is stale or missing (with --check), or conf/, metrics/ or
+     deploy/ holds a file nothing generates
   2  a wrong switch, or a house or host file that is missing, cannot be
      read or has a problem (nothing is generated)
 
@@ -960,11 +961,12 @@ everything it installed outside the installation root (the units and
 quadlets and their links, the native-port filter and its loaded table, the
 node exporter&#x27;s confinement) and reloads systemd. Its state stays where it
 is: runtime/ (conf, userdata, secrets, the deploy records and backups,
-Prometheus&#x27; samples, Grafana&#x27;s data) and access/ (the gateway&#x27;s identity,
-TLS key and releases), recorded in /etc/thermite/installed.json as not
-installed, so thermite install finds it again. The images, the thermite
-user and group and the packages stay too. What was set aside stays in the
-installation root&#x27;s .transaction/ until the next transaction commits.
+Prometheus&#x27; samples, Grafana&#x27;s data, Music Assistant&#x27;s settings and
+library) and access/ (the gateway&#x27;s identity, TLS key and releases),
+recorded in /etc/thermite/installed.json as not installed, so thermite
+install finds it again. The images, the thermite user and group and the
+packages stay too. What was set aside stays in the installation root&#x27;s
+.transaction/ until the next transaction commits.
 
 --purge, as apt purge does, also removes runtime/ and access/ whole, the
 installed manifest, Thermite&#x27;s images and every transaction, and the site&#x27;s
@@ -1147,9 +1149,10 @@ runtime answers, the HTTPS application&#x27;s address on the port
 instance/host.yaml sets (and whether the installed gateway still serves
 another), the plain-HTTP Guest addresses instance/host.yaml opens,
 Grafana&#x27;s address on the LAN and whether it answers, Prometheus&#x27; scrape
-targets (up of all), the install transaction that installed this version
-and any upgrade transaction that has not finished, and the last deploys
-(thermite history lists more).
+targets (up of all), on a host with music: whether Music Assistant runs
+with its API on loopback alone, the install transaction that installed
+this version and any upgrade transaction that has not finished, and the
+last deploys (thermite history lists more).
 
 options:
   -h, --help            show this help message and exit
@@ -1167,9 +1170,11 @@ exit status:
   0  what HEAD (or the selected commit) holds is deployed, unchanged, and
      its services and runtime are up
   1  nothing is deployed, HEAD is not what is deployed, a deployed file or
-     unit differs or is missing, a service is not active, runtime does not
-     answer, the installed gateway serves HTTPS on another port, or an
-     upgrade&#x27;s install transaction has not finished
+     unit differs or is missing, or is still installed without music:, a
+     service is not active, runtime does not answer, Music Assistant does
+     not run with its API on loopback alone, the installed gateway serves
+     HTTPS on another port, or an upgrade&#x27;s install transaction has not
+     finished
   2  a wrong switch, or the host file or deploy record cannot be read
 
 examples:
@@ -1244,8 +1249,10 @@ checks the sandbox on 127.0.0.1:13616, with that token when it exists.
 --production checks production runtime on this host, on 127.0.0.1 at
 instance/host.yaml&#x27;s http_port, with the token thermite install saved in
 var/&lt;this host&#x27;s name&gt;/api-token, and the metrics services beside it:
-Prometheus ready with every scrape target up, and Grafana answering.
-Before thermite upgrade has installed them it says they are not installed yet.
+Prometheus ready with every scrape target up, and Grafana answering; on a
+host with music:, Music Assistant running, its API on loopback alone and its
+streams answering. Before thermite upgrade has installed them it says they
+are not installed yet.
 
 --production --installation checks installation readiness with the same
 Thing policy as the installer&#x27;s native readiness wait. Offline devices
@@ -1282,8 +1289,9 @@ switches every verb takes:
 exit status:
   0  every Thing ONLINE (or allowed) and no requested add-on missing
   1  a Thing not ONLINE and not allowed, a requested add-on missing, or
-     (--production) the metrics services installed but not answering, or a
-     scrape target down
+     (--production) the metrics services installed but not answering, a
+     scrape target down, or Music Assistant installed but not running with
+     its API on loopback alone
   2  runtime could not be queried (unreachable, the token refused, or 401/403
      without a token)
 

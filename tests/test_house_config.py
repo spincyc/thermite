@@ -184,6 +184,35 @@ class Generate(Scratch):
         (conf / "mine.txt").unlink()
         self.assertEqual(run(*argv, "--check")[0], 0)
 
+    def test_prune_removes_music_assistants_units_once_the_host_has_no_music(self):
+        import oh_deploy
+        import oh_units
+        house, conf = self.house(EXAMPLE), self.root / "conf"
+        argv = ["generate", "--house", str(house), "--conf", str(conf), "--root", str(self.root)]
+        self.assertEqual(run(*argv)[0], 0)
+        versions, host = oh_deploy.load(AREA)
+        self.assertNotIn("music", host)
+        units = oh_deploy.render_units(versions, {**host, "music": {}})
+        for name in oh_deploy.MUSIC_UNITS:
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(units[name])
+        code, _, err = run(*argv)
+        self.assertEqual(code, 1)
+        self.assertIn(f"{oh_deploy.MUSIC_QUADLET}: nothing generates it now; an earlier generate wrote it; "
+                      "thermite generate --prune removes it", err)
+        self.assertEqual(run(*argv, "--check")[0], 1)
+        code, out, _ = run(*argv, "--prune")
+        self.assertEqual(code, 0)
+        self.assertIn(f"removed {oh_deploy.MUSIC_QUADLET}", out)
+        self.assertFalse((self.root / oh_deploy.CONTAINER_DROPINS[oh_units.MUSIC]).parent.exists())
+        self.assertTrue((self.root / oh_deploy.QUADLET).exists())
+        (self.root / oh_deploy.MUSIC_QUADLET).write_text("[Container]\n")
+        code, _, err = run(*argv, "--prune")
+        self.assertEqual(code, 1)
+        self.assertIn(f"{oh_deploy.MUSIC_QUADLET}: nothing generates it now; move the file out of deploy/ or delete it",
+                      err)
+        self.assertTrue((self.root / oh_deploy.MUSIC_QUADLET).exists())
+
 
 class Reservations(Scratch):
     def test_no_reservation_is_no_crash_and_a_missing_mac_is_named(self):

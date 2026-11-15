@@ -13,8 +13,9 @@ instance/host.yaml; never edit any of them by hand.
                      also remove the files an earlier generate wrote that
                      nothing generates now
 
-Without --prune writing never deletes: a file under conf/ or metrics/ that
-nothing generates is reported and makes the exit status 1.
+Without --prune writing never deletes: a file under conf/ or metrics/, or
+a unit in deploy/, that nothing generates is reported and makes the exit
+status 1.
 """
 
 from __future__ import annotations
@@ -39,10 +40,11 @@ generated: change the house file, the host file, versions.json or lib/,
 then run this; never edit conf/, metrics/ or deploy/ by hand.
 
 It validates the house file first and writes nothing while it has a
-problem. Writing never deletes: a file under conf/ or metrics/ that nothing
-generates is reported and makes the exit status 1; --prune removes such a
-file when it carries the generated header (an earlier generate wrote it)
-and only reports any other.
+problem. Writing never deletes: a file under conf/ or metrics/, or a unit
+in deploy/ (Music Assistant's, once the host file has no music:), that
+nothing generates is reported and makes the exit status 1; --prune removes
+such a file when it carries the generated header (an earlier generate
+wrote it) and only reports any other.
 """
 
 EXAMPLES = (
@@ -56,8 +58,8 @@ NOTES = """\
 exit status:
   0  conf/, metrics/ and deploy/ are what the house file, the host file and
      versions.json generate (with --check: and nothing was written)
-  1  a file is stale or missing (with --check), or conf/ or metrics/
-     holds a file nothing generates
+  1  a file is stale or missing (with --check), or conf/, metrics/ or
+     deploy/ holds a file nothing generates
   2  a wrong switch, or a house or host file that is missing, cannot be
      read or has a problem (nothing is generated)
 """
@@ -87,7 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="change nothing; exit 1 if conf/, metrics/ or deploy/ is stale")
     mode.add_argument("--prune", action="store_true",
-                      help="also remove files under conf/ and metrics/ with the generated header that nothing generates now")
+                      help="also remove files under conf/, metrics/ and deploy/ with the generated header that nothing "
+                           "generates now")
     oh_cli.add_house(parser, render.INVENTORY)
     oh_cli.add_conf(parser, render.CONF)
     # deploy/'s and metrics/'s parent, so that the tests can write them somewhere else.
@@ -149,6 +152,19 @@ def main(argv: list[str] | None = None) -> int:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(units[name], encoding="utf-8")
             print(f"wrote {name}")
+    for name in sorted(set(deploy.INSTALLED) - set(units)):
+        if not (root / name).is_file():
+            continue
+        if generated(root / name) and arguments.prune:
+            (root / name).unlink()
+            if not any((root / name).parent.iterdir()) and (root / name).parent != root / "deploy":
+                (root / name).parent.rmdir()
+            print(f"removed {name}")
+            pruned.append(name)
+        elif generated(root / name):
+            stray.append((name, "an earlier generate wrote it; thermite generate --prune removes it"))
+        else:
+            stray.append((name, "move the file out of deploy/ or delete it"))
     for path, why in stray:
         print(f"thermite generate: {path}: nothing generates it now; {why}", file=sys.stderr)
     count = len(files) + len(trees[1][2])

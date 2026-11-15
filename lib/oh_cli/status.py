@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 import oh_cli
 import oh_deploy as deploy
+import oh_music
 import oh_ports
 from oh_access import AccessError, guest
 from oh_cli import AREA
@@ -27,9 +28,10 @@ runtime answers, the HTTPS application's address on the port
 instance/host.yaml sets (and whether the installed gateway still serves
 another), the plain-HTTP Guest addresses instance/host.yaml opens,
 Grafana's address on the LAN and whether it answers, Prometheus' scrape
-targets (up of all), the install transaction that installed this version
-and any upgrade transaction that has not finished, and the last deploys
-(thermite history lists more).
+targets (up of all), on a host with music: whether Music Assistant runs
+with its API on loopback alone, the install transaction that installed
+this version and any upgrade transaction that has not finished, and the
+last deploys (thermite history lists more).
 """
 
 EXAMPLES = (
@@ -43,9 +45,11 @@ exit status:
   0  what HEAD (or the selected commit) holds is deployed, unchanged, and
      its services and runtime are up
   1  nothing is deployed, HEAD is not what is deployed, a deployed file or
-     unit differs or is missing, a service is not active, runtime does not
-     answer, the installed gateway serves HTTPS on another port, or an
-     upgrade's install transaction has not finished
+     unit differs or is missing, or is still installed without music:, a
+     service is not active, runtime does not answer, Music Assistant does
+     not run with its API on loopback alone, the installed gateway serves
+     HTTPS on another port, or an upgrade's install transaction has not
+     finished
   2  a wrong switch, or the host file or deploy record cannot be read
 """
 
@@ -75,6 +79,24 @@ def show_metrics(host: dict, installed: dict[str, Path] | None = None, report: d
         say("systemd  " + ("node_exporter reads the units' states over D-Bus" if health.systemd else
                            "node_exporter's systemd collector fails: sudo journalctl -u "
                            "thermite-node-exporter.service says why"))
+
+
+def show_music(host: dict, report: dict, say, problems: list[str]) -> None:
+    """Music Assistant, on a host with music:: whether it runs, with its API
+    on loopback alone, and its streams answer."""
+    if oh_music.settings(host) is None:
+        return
+    if not deploy.music_installed():
+        report["music"] = None
+        say("music    not installed; thermite upgrade installs it")
+        return
+    health = deploy.music_health(host)
+    report["music"] = {"api": health.api, "status": health.status, "version": health.version,
+                       "loopback": health.loopback, "streams": health.streams,
+                       "streams_ok": health.streams_status == 200}
+    if not health.ok:
+        problems.append("music: " + health.describe())
+    say(f"music    {health.describe()}")
 
 
 def show_gateway(host: dict, report: dict, say, problems: list[str]) -> None:
@@ -188,11 +210,13 @@ def show(args, host: dict) -> int:
     units = deploy.installed_units(AREA, rev=revision) if revision else deploy.installed_units(AREA)
     for name, target, how in units:
         report["units"][str(target)] = how
-        if how in ("differs", "missing"):
+        if how in ("differs", "missing", "unwanted"):
             problems.append(f"unit {target}: {how}")
         say(f"unit     {target}: {how}" + (f" (the owner installs {name}: thermite upgrade)"
-                                           if how in ("differs", "missing") else ""))
-    for service, active in deploy.service_states().items():
+                                           if how in ("differs", "missing") else
+                                           " (instance/host.yaml has no music: now; thermite upgrade removes it)"
+                                           if how == "unwanted" else ""))
+    for service, active in deploy.service_states(deploy.services(host)).items():
         report["services"][service] = active
         if active != "active":
             problems.append(f"service {service}: {active}")
@@ -208,6 +232,7 @@ def show(args, host: dict) -> int:
     show_guest(host, report, say)
     show_transaction(host, report, say, problems)
     show_metrics(host, report=report if as_json else None)
+    show_music(host, report, say, problems)
     entries = deploy.deploys(layout)
     report["deploys"] = len(entries)
     if entries:

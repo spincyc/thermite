@@ -18,6 +18,7 @@ import oh_deploy as deploy  # noqa: E402
 import oh_service  # noqa: E402
 import oh_units  # noqa: E402
 from oh_access import native_boundary  # noqa: E402
+from oh_cli import status, uninstall  # noqa: E402
 from oh_install import changeover, ingress, manifest, ownership, steps  # noqa: E402
 from oh_install.system import Stat, System, Unit, UnitFile, UnitOrigin  # noqa: E402
 from tests.test_deploy import HOST, MUSIC_HOST, VERSIONS  # noqa: E402
@@ -214,6 +215,34 @@ class Readiness(unittest.TestCase):
         self.assertEqual(steps.MusicAnswer(context(base=MUSIC_HOST)).wait(found), 1)
         self.assertIn("listens beyond loopback", said[0])
         self.assertIn("journalctl -u thermite-music.service", said[-1])
+
+
+class Reports(unittest.TestCase):
+    def show(self, host, *, installed=True, health=None):
+        report, problems, said = {}, [], []
+        with patch.object(status.deploy, "music_installed", return_value=installed), \
+                patch.object(status.deploy, "music_health", return_value=health):
+            status.show_music(host, report, said.append, problems)
+        return report, problems, said
+
+    def test_status_shows_music_assistant_and_a_problem_when_it_is_not_on_loopback(self):
+        running = deploy.MusicHealth("http://127.0.0.1:13627", "running", "2.10.12", ("127.0.0.1",),
+                                     "http://127.0.0.1:13628", 200)
+        report, problems, said = self.show(MUSIC_HOST, health=running)
+        self.assertEqual((report["music"]["status"], report["music"]["loopback"], problems), ("running", True, []))
+        self.assertEqual(said, ["music    " + running.describe()])
+        wide = deploy.MusicHealth("http://127.0.0.1:13627", "running", "2.10.12", ("0.0.0.0",),
+                                  "http://127.0.0.1:13628", 200)
+        self.assertEqual(self.show(MUSIC_HOST, health=wide)[1], ["music: " + wide.describe()])
+        report, problems, said = self.show(MUSIC_HOST, installed=False)
+        self.assertEqual((report, problems), ({"music": None}, []))
+        self.assertIn("thermite upgrade installs it", said[0])
+        self.assertEqual(self.show(HOST), ({}, [], []))
+
+    def test_uninstall_says_it_keeps_music_assistants_state(self):
+        self.assertIn("monitoring data, Music Assistant's settings and library)",
+                      uninstall.kept(context(base=MUSIC_HOST), purge=False))
+        self.assertNotIn("Music Assistant", uninstall.kept(context(), purge=False))
 
 
 class Boundary(unittest.TestCase):

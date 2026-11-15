@@ -784,6 +784,10 @@ class MusicHealth(unittest.TestCase):
         self.assertEqual((health.status, health.version, health.addresses), ("running", "2.10.12", ("127.0.0.1",)))
         self.assertEqual(health.describe(), "Music Assistant 2.10.12 http://127.0.0.1:13627 running; "
                                             "streams http://127.0.0.1:13628 answer")
+        report = health_cli.music_report(MUSIC_HOST, installed=True, health=health)
+        self.assertEqual((report["ok"], report["loopback"], report["streams_ok"]), (True, True, True))
+        self.assertIsNone(health_cli.music_report(HOST), "a host without music: has nothing to report")
+        self.assertEqual(health_cli.music_report(MUSIC_HOST, installed=False)["ok"], True)
 
     def test_listening_beyond_loopback_starting_or_silent_is_not_healthy(self):
         answers = {"http://127.0.0.1:13627/info": (200, self.INFO), "http://127.0.0.1:13628/info": (200, b"{}")}
@@ -803,6 +807,8 @@ class MusicHealth(unittest.TestCase):
         self.assertFalse(silent.ok)
         self.assertEqual(silent.describe(), "Music Assistant http://127.0.0.1:13627 not answering; "
                                             "streams http://127.0.0.1:13628 not answering")
+        report = health_cli.music_report(MUSIC_HOST, installed=True, health=silent)
+        self.assertFalse(report["ok"])
 
     def test_listening_reads_only_the_ports_sockets(self):
         snapshot = ("LISTEN 0 128 127.0.0.1:13627 0.0.0.0:*\nLISTEN 0 128 192.0.2.5:113627 0.0.0.0:*\n"

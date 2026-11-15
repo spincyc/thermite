@@ -11,6 +11,7 @@ import sys
 
 import oh_cli
 import oh_deploy as deploy
+import oh_music
 from oh_cli import AREA
 from oh_install import bridge, changeover, manifest, runner, steps
 from oh_install.system import System
@@ -24,11 +25,12 @@ everything it installed outside the installation root (the units and
 quadlets and their links, the native-port filter and its loaded table, the
 node exporter's confinement) and reloads systemd. Its state stays where it
 is: runtime/ (conf, userdata, secrets, the deploy records and backups,
-Prometheus' samples, Grafana's data) and access/ (the gateway's identity,
-TLS key and releases), recorded in /etc/thermite/installed.json as not
-installed, so thermite install finds it again. The images, the thermite
-user and group and the packages stay too. What was set aside stays in the
-installation root's .transaction/ until the next transaction commits.
+Prometheus' samples, Grafana's data, Music Assistant's settings and
+library) and access/ (the gateway's identity, TLS key and releases),
+recorded in /etc/thermite/installed.json as not installed, so thermite
+install finds it again. The images, the thermite user and group and the
+packages stay too. What was set aside stays in the installation root's
+.transaction/ until the next transaction commits.
 
 --purge, as apt purge does, also removes runtime/ and access/ whole, the
 installed manifest, Thermite's images and every transaction, and the site's
@@ -65,8 +67,9 @@ def kept(context: steps.Context, purge: bool) -> str:
     if purge:
         return ("Kept: the thermite user and group; the packages; the site with its var/gateway/authority; and this "
                 "clone. thermite install installs Thermite afresh.")
+    music = ", Music Assistant's settings and library" if oh_music.settings(context.host) is not None else ""
     return (f"Kept: Thermite's state under {root}, runtime/ and access/ (accounts, pairings, the gateway's identity "
-            f"and TLS key, history, monitoring data), recorded in {manifest.INSTALLED} so that thermite install "
+            f"and TLS key, history, monitoring data{music}), recorded in {manifest.INSTALLED} so that thermite install "
             "finds it again; the images (`sudo podman images` lists them); the thermite user and group; the "
             "packages; and this clone. thermite uninstall --purge removes the state and the images too.")
 
