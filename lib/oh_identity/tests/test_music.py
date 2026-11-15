@@ -368,6 +368,12 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual(self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM}).status_code, 202)
         self.assertNotIn("players/cmd/set_members", [command for command, _ in self.sim.calls])
 
+    def test_a_speaker_called_art_keeps_its_routes(self):
+        from django.urls import resolve
+        from oh_identity import music_api
+        self.assertIs(resolve("/api/v1/music/art/play").func, music_api.play)
+        self.assertIs(resolve("/api/v1/music/art/" + "a" * 64).func, music_api.art)
+
     def test_a_room_that_shares_a_speaker_leaves_it_what_does_not_disturb_its_route(self):
         data = house()
         data["rooms"][ESTATE] = {"label": "Example Estate", "tag": "Building"}
