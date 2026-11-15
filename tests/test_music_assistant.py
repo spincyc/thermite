@@ -20,6 +20,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import httpx  # noqa: E402
 import oh_music_sim as stand_in  # noqa: E402
 from oh_access import AccessError  # noqa: E402
+from oh_access.files import atomic_private  # noqa: E402
 from oh_music import provision, tidal  # noqa: E402
 from oh_music.client import SLOW, Client, Failed, NoUser, Stopped, Unauthorized, Unavailable  # noqa: E402
 from oh_music.events import Closed, Socket  # noqa: E402
@@ -277,20 +278,30 @@ class Claim(Site):
         provisioner = self.provisioner()
         provisioner.step()
         os.chmod(provision.token_file(self.state), 0o644)
-        unreadable = {"problem": provision.UNREADABLE}
+        unreadable = {"problem": provision.UNREADABLE, "reason": provision.ACCESS}
         self.assertEqual(provision.read_claim(self.state), unreadable)
         self.assertEqual(provision.problem(unreadable), "music_unavailable")
         before = provision.token_file(self.state).read_bytes()
         with self.assertLogs("oh_music.provision", "INFO") as logs:
             self.assertEqual(provisioner.step(), "unreadable")
             self.assertEqual(provisioner.step(), "unreadable")
-        self.assertEqual(len(logs.records), 1)
+        self.assertEqual([record.getMessage() for record in logs.records],
+                         ["Music Assistant: cannot trust its stored claim; give the file to the service account, "
+                          "mode 0600"])
         self.assertEqual(provision.token_file(self.state).read_bytes(), before)
+        # Contents thermite did not write: another repair.
+        damaged = {"problem": provision.UNREADABLE, "reason": provision.CONTENTS}
         provision.token_file(self.state).unlink()
         for claim in ({"password": "x", "token": "x", "issued_at": "soon", "expires_at": 1},
                       {"token": "x", "issued_at": 1, "expires_at": 1}, {"password": 5}):
             provision.write_claim(self.state, claim)
-            self.assertEqual(provision.read_claim(self.state), unreadable, claim)
+            self.assertEqual(provision.read_claim(self.state), damaged, claim)
+        atomic_private(provision.token_file(self.state), b"{not json")
+        self.assertEqual(provision.read_claim(self.state), damaged)
+        with self.assertLogs("oh_music.provision", "INFO") as logs:
+            self.assertEqual(self.provisioner().step(), "unreadable")
+        self.assertIn("thermite did not write it; restore it, or reset Music Assistant and delete it",
+                      logs.records[0].getMessage())
 
     def test_the_worker_thread_waits_for_the_server_then_claims_it(self):
         self.sim.status = "starting"
@@ -379,7 +390,7 @@ class Configuration(Site):
             provisioner.reconciled = None
             provisioner.step()
         self.assertEqual([record.getMessage() for record in logs.records if "library record" in record.getMessage()],
-                         ["Music Assistant: its library record cannot be trusted; give music-libraries.json to the "
+                         ["Music Assistant: its library record music-libraries.json cannot be trusted; give it to the "
                           "service account, mode 0600. Its libraries are left as they are until then."])
         self.assertEqual(self.domains().count("filesystem_local"), 1)
         os.chmod(record, 0o600)
@@ -387,6 +398,12 @@ class Configuration(Site):
         provisioner.step()
         self.assertEqual(sorted(entry["name"] for entry in self.sim.providers.values()
                                 if entry["domain"] == "filesystem_local"), ["thermite flac", "thermite mp3"])
+        # A record thermite did not write: another repair.
+        atomic_private(record, b'{"version": 1, "libraries": ["flac"]}')
+        provisioner.reconciled = None
+        with self.assertLogs("oh_music.provision", "WARNING") as logs:
+            provisioner.step()
+        self.assertIn("thermite did not write it; delete it to have the libraries found by name", logs.output[0])
 
     def test_a_library_record_that_cannot_be_written_finds_its_instance_by_name(self):
         def full(*_):

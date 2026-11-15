@@ -469,10 +469,11 @@ thermite has no password stored had another user before thermite claimed
 it: `music_unclaimed` at once. Either recovers when the owner resets Music
 Assistant (stop it, delete its data directory and start it again): the
 worker claims it afresh within 30 seconds. A claim file the
-worker cannot trust (not the service account's, or not mode 0600) is
-reported, never replaced, and the gateway answers `music_unavailable` until
-it is repaired. After
-each claim, whenever Music Assistant comes back with a new server ID (its
+worker cannot trust is reported, never replaced, and the gateway answers
+`music_unavailable` until it is repaired: one not the service account's,
+or not mode 0600, by giving it back; one whose contents thermite did not
+write (not its JSON) by restoring it, or by resetting Music Assistant and
+deleting it. After each claim, whenever Music Assistant comes back with a new server ID (its
 state was reset) and every 15 minutes, the worker also brings Music
 Assistant's configuration to what thermite needs: the
 `sonos`, `wiim` and `airplay` player providers, with the speakers' addresses
@@ -490,8 +491,10 @@ worker names each library's new instance, then records its ID in
 is named again, and one whose record was not written is found by its name,
 rather than removed, added again and rescanned. That record is trusted as
 the claim file is: while it is not the service account's, or not mode
-0600, the worker warns once and leaves the libraries as they are, adding
-and removing none.
+0600, or its contents are not thermite's, the worker warns once and leaves
+the libraries as they are, adding and removing none (a record with
+contents thermite did not write may be deleted: the libraries are then
+found by their names).
 
 Routes (`<speaker>` is a contract speaker ID):
 

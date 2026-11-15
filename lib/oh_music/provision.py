@@ -96,11 +96,18 @@ REFUSALS = 24 * 3600 // POLL
 #: and what read_claim() answers for a claim file it cannot trust.
 UNCLAIMED = "music_unclaimed"
 UNREADABLE = "unreadable"
+#: Why a private record cannot be trusted: its owner or mode (or reading it
+#: failed), or contents thermite did not write.
+ACCESS, CONTENTS = "access", "contents"
 
 
 class Untrusted(Exception):
-    """A private record that is there but cannot be read or trusted: its
-    owner, mode or contents."""
+    """A private record that is there but cannot be trusted; reason is
+    ACCESS or CONTENTS."""
+
+    def __init__(self, name, reason):
+        super().__init__(name)
+        self.reason = reason
 
 
 def stored(path, maximum):
@@ -108,13 +115,17 @@ def stored(path, maximum):
     file; Untrusted for one that is there but cannot be trusted. The claim
     and the library record are read alike."""
     try:
-        data = json.loads(read_private(path, maximum))
+        data = read_private(path, maximum)
     except FileNotFoundError:
         return None
-    except (AccessError, OSError, ValueError):
-        raise Untrusted(Path(path).name) from None
+    except (AccessError, OSError):
+        raise Untrusted(Path(path).name, ACCESS) from None
+    try:
+        data = json.loads(data)
+    except ValueError:
+        raise Untrusted(Path(path).name, CONTENTS) from None
     if not isinstance(data, dict) or data.get("version") != 1:
-        raise Untrusted(Path(path).name)
+        raise Untrusted(Path(path).name, CONTENTS)
     return data
 
 
@@ -132,22 +143,23 @@ def read_claim(state):
     "expires_at"} once it has; either with "refusals", the passes in a row
     Music Assistant refused the password; or {"problem": UNCLAIMED}. None
     when there is no file. A file that is there but cannot be read or
-    trusted (its owner, mode or contents) is {"problem": UNREADABLE}:
+    trusted is {"problem": UNREADABLE, "reason": ACCESS or CONTENTS}:
     nothing replaces it until the owner repairs it."""
+    damaged = {"problem": UNREADABLE, "reason": CONTENTS}
     try:
         data = stored(token_file(state), TOKEN_BYTES)
-    except Untrusted:
-        return {"problem": UNREADABLE}
+    except Untrusted as error:
+        return {"problem": UNREADABLE, "reason": error.reason}
     if data is None:
         return None
     if data.get("problem") == UNCLAIMED:
         return {"problem": UNCLAIMED}
     if not secret(data.get("password")):
-        return {"problem": UNREADABLE}
+        return damaged
     claim = {"password": data["password"]}
     if "token" in data:
         if not secret(data["token"]) or not all(type(data.get(each)) is int for each in ("issued_at", "expires_at")):
-            return {"problem": UNREADABLE}
+            return damaged
         claim |= {key: data[key] for key in ("token", "issued_at", "expires_at")}
     if type(data.get("refusals")) is int and data["refusals"] > 0:
         claim["refusals"] = min(data["refusals"], REFUSALS)
@@ -156,7 +168,12 @@ def read_claim(state):
 
 def unreadable(claim):
     """Whether a claim is a file that cannot be trusted."""
-    return claim == {"problem": UNREADABLE}
+    return claim is not None and claim.get("problem") == UNREADABLE
+
+
+#: What the owner does about a claim file that cannot be trusted, by why.
+REPAIR_CLAIM = {ACCESS: "give the file to the service account, mode 0600",
+                CONTENTS: "thermite did not write it; restore it, or reset Music Assistant and delete it"}
 
 
 def problem(claim):
@@ -180,7 +197,7 @@ def read_libraries(state):
     libraries = {} if data is None else data.get("libraries")
     if not isinstance(libraries, dict) or not all(
             isinstance(library, str) and isinstance(instance, str) for library, instance in libraries.items()):
-        raise Untrusted(LIBRARY_FILE)
+        raise Untrusted(LIBRARY_FILE, CONTENTS)
     return libraries
 
 
@@ -228,7 +245,7 @@ class Provisioner:
                 raise Unavailable("Music Assistant is starting")
             claim = read_claim(self.state)
             if unreadable(claim):
-                self.report("cannot trust its stored claim; give the file to the service account, mode 0600")
+                self.report("cannot trust its stored claim; " + REPAIR_CLAIM[claim["reason"]])
                 return "unreadable"
             if claim is None or "password" not in claim:
                 if client.has_user():
@@ -385,11 +402,13 @@ class Provisioner:
         trusted the libraries are left as they are."""
         try:
             recorded = read_libraries(self.state)
-        except Untrusted:
+        except Untrusted as error:
             if "libraries" not in self.warned:
                 self.warned.add("libraries")
-                LOG.warning("Music Assistant: its library record cannot be trusted; give %s to the service "
-                            "account, mode 0600. Its libraries are left as they are until then.", LIBRARY_FILE)
+                repair = ("give it to the service account, mode 0600" if error.reason == ACCESS else
+                          "thermite did not write it; delete it to have the libraries found by name")
+                LOG.warning("Music Assistant: its library record %s cannot be trusted; %s. Its libraries are left "
+                            "as they are until then.", LIBRARY_FILE, repair)
             return 0
         self.warned.discard("libraries")
         names = {LIBRARY_NAME.format(library): library for library in self.spec["libraries"]}

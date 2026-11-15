@@ -83,7 +83,7 @@ def site(config_path):
     """(Music Assistant's port, thermite's token) for a site's service config."""
     from oh_access.files import read_private
     from oh_access.service import load_config
-    from .provision import UNCLAIMED, problem, read_claim, unreadable
+    from .provision import REPAIR_CLAIM, UNCLAIMED, problem, read_claim, unreadable
     config = load_config(config_path, tls=False)
     music = json.loads(read_private(config["contract_file"])).get("music")
     if not music:
@@ -91,7 +91,7 @@ def site(config_path):
     claim = read_claim(config["state"])
     refused = problem(claim)
     if unreadable(claim):
-        raise AccessError("Music Assistant's claim file cannot be trusted: give it to the service account, mode 0600")
+        raise AccessError("Music Assistant's claim file cannot be trusted: " + REPAIR_CLAIM[claim["reason"]])
     if refused == UNCLAIMED:
         raise AccessError("Music Assistant belongs to another user: reset its state to let thermite claim it")
     if refused:
