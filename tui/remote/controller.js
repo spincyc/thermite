@@ -2,8 +2,8 @@
  * The terminal remote's state and input, without a terminal: it keeps what
  * is on the screen (the screen, a sheet, the focus, toasts, the log, scroll
  * offsets) and turns keys and mouse events into RemoteSession,
- * PairingBackend and RemoteAudio calls, as remote.js, pair.js and audio.js
- * do for the page. app.js draws its frame() and feeds it key() and mouse();
+ * PairingBackend, RemoteAudio and RemoteMusic calls, as remote.js, pair.js,
+ * audio.js and music.js do for the page. app.js draws its frame() and feeds it key() and mouse();
  * the tests call the same three.
  *
  * The views get the time (ctx.now, ms, from options.now) and whether
@@ -80,11 +80,15 @@ function create(options) {
   const day = { backend: null };
   // The Audio screen's RemoteAudio (audio-session.js): started while it shows.
   const audio = { session: null };
+  // The Music screen's RemoteMusic (music-session.js), likewise, and the
+  // speakers ticked in its group sheet.
+  const music = { session: null, picked: new Set() };
   const timers = { toast: 0, flash: {}, repeat: null, tick: 0 };
   let frame = null;
   let size = { width: 80, height: 24 };
   let dragging = null;
   let audioDragging = null;
+  let musicDragging = null;
   let stopped = false;
   let signalRunning = false;
   let signalContext = null;
@@ -103,10 +107,10 @@ function create(options) {
   }
 
   // Every room's lock is read only while a room list can show it: on Home
-  // and Remotes (its rooms panel or sheet), and on Audio, whose devices'
-  // rooms lock them.
+  // and Remotes (its rooms panel or sheet), and on Audio and Music, whose
+  // devices' and speakers' rooms lock them.
   function syncLocks() {
-    if (options.access && options.access.watchLocks) options.access.watchLocks(ui.ready && ["home", "remote", "audio"].includes(ui.screen));
+    if (options.access && options.access.watchLocks) options.access.watchLocks(ui.ready && ["home", "remote", "audio", "music"].includes(ui.screen));
   }
 
   function changed() {
@@ -123,7 +127,7 @@ function create(options) {
     if (options.backend && "connected" in options.backend) ui.connected = options.backend.connected;
     return {
       session: session, Session: Session, Remote: options.Remote, layouts: options.layouts, house: options.house,
-      Pairing: Pairing, hints: hints, ui: ui, access, pairing: pairing, cameras: cameras, topology: topology, system, day, audio, look: options.look || null,
+      Pairing: Pairing, hints: hints, ui: ui, access, pairing: pairing, cameras: cameras, topology: topology, system, day, audio, music, look: options.look || null,
       now: now(), still: ui.still, animate: undefined
     };
   }
@@ -155,6 +159,7 @@ function create(options) {
         if (ui.screen === "topology") openTopology();
         if (ui.screen === "system") system.backend?.open().then(changed);
         if (ui.screen === "audio") openAudio(session.current()?.audio?.id);
+        if (ui.screen === "music") openMusic();
         if (["security", "settings", "users", "account"].includes(ui.screen)) access.open(ui.screen, session.current()?.id);
         changed();
         if (chosen) session.choose(chosen);
@@ -178,6 +183,7 @@ function create(options) {
     if (topology.backend) topology.backend.stop();
     if (day.backend) day.backend.stop();
     if (audio.session) audio.session.stop();
+    if (music.session) music.session.stop();
     system.backend?.close();
     if (signalRunning && session.closeDiagnostics) session.closeDiagnostics();
     signalRunning = false;
@@ -226,6 +232,7 @@ function create(options) {
       if (cameras.backend) cameras.backend.stop();
       if (day.backend) day.backend.stop();
       if (audio.session && ui.screen === "audio") audio.session.stop();
+      if (music.session && ui.screen === "music") music.session.stop();
       system.backend?.close(); system.expanded = false; system.link = null;
       access.cancel(); access.state.users = []; access.state.policy = null;
       access.state.kind = "account"; access.state.error = ui.error; ui.screen = "account"; ui.overlay = null; ui.pane = "account"; ui.focus = null;
@@ -362,6 +369,38 @@ function create(options) {
     if (ids.length > 1) audio.session.select(ids[(index + delta + ids.length) % ids.length]);
   }
 
+  // The Music screen: its session is made the first time and reads the
+  // speakers and holds their stream only while the screen shows.
+  function openMusic() {
+    if (!options.createMusic) return;
+    if (!music.session) {
+      music.session = options.createMusic();
+      music.session.subscribe(onMusic);
+    }
+    music.session.start().then(changed);
+  }
+
+  // What the Music session says: toasts as the remote's, the rest a redraw.
+  function onMusic(event) {
+    if (event.type === "toast") return toast(event.title, event.body, event.tone);
+    if (event.type === "announce") ui.announce = event.message;
+    changed();
+  }
+
+  function stepMusicSpeaker(delta) {
+    const ids = music.session.speakers().flatMap((block) => block.speakers.map((speaker) => speaker.id));
+    const index = ids.indexOf(music.session.selected());
+    if (ids.length > 1) music.session.select(ids[(index + delta + ids.length) % ids.length]);
+  }
+
+  // G, or Group…: the chosen speaker's group in a sheet, nothing ticked yet.
+  function openGroup() {
+    const grouping = music.session && music.session.grouping();
+    if (!grouping) return;
+    music.picked.clear();
+    openSheet("music-group", "Group with " + grouping.leaderName);
+  }
+
   // ---- the frame -------------------------------------------------------
 
   function render(width, height) {
@@ -438,6 +477,7 @@ function create(options) {
     else if (pane === "remote" && !hit) hit = list.find((entry) => entry.key === "key:ok") || list.find((entry) => entry.kind === "key");
     else if (pane === "pair-card" && !hit) hit = list.find((entry) => entry.key === "code");
     else if (pane === "audio" && !hit) hit = list.find((entry) => entry.key === "audio-key:play_pause");
+    else if (pane === "music" && !hit) hit = list.find((entry) => entry.key === "music-play");
     if (["info", "signal", "log", "sheet:info", "sheet:help"].includes(pane)) hit = null;
     ui.focus = hit ? hit.key : list.length && !["info", "signal", "log", "sheet:info", "sheet:help"].includes(pane) ? list[0].key : null;
     ui.focusVisible = true;
@@ -635,6 +675,7 @@ function create(options) {
     stopRepeat();
     if (dragging) { dragging = null; session.setDragging(false); }
     audioDragging = null;
+    musicDragging = null;
     if (ui.screen === "pairing" && name !== "pairing" && pairing.backend) {
       pairing.backend.stop();
       pairing.backend = null;
@@ -648,6 +689,7 @@ function create(options) {
     if (ui.screen === "system") { system.backend?.close(); system.expanded = false; system.link = null; }
     const from = ui.screen;
     if (from === "audio" && name !== "audio" && audio.session) audio.session.stop();
+    if (from === "music" && name !== "music" && music.session) music.session.stop();
     if (ui.overlay && ui.overlay.kind === "cameras" && cameras.backend) cameras.backend.close();
     if (ui.overlay && ui.overlay.kind === "topology" && topology.backend) topology.backend.close();
     if (ui.overlay && ui.overlay.kind === "day" && day.backend) day.backend.close();
@@ -665,6 +707,7 @@ function create(options) {
     if (name === "system") system.backend?.open().then(changed);
     // From Remotes, the room's audio device when it has a page.
     if (name === "audio" && from !== "audio") openAudio(session.current()?.audio?.id);
+    if (name === "music" && from !== "music") openMusic();
     if (["security", "settings", "users", "account"].includes(name)) access.open(name, session.current()?.id);
     render(size.width, size.height);
     changed();
@@ -699,6 +742,7 @@ function create(options) {
       if (ui.screen !== "pairing") return;
     }
     if (hit.kind.startsWith("audio-")) return activateAudio(hit);
+    if (hit.kind.startsWith("music-")) return activateMusic(hit);
     const blocked = session.controlBlock();
     if (blocked && ["key", "control", "input", "bubble"].includes(hit.kind)) return toast("Read-only", blocked);
     if (hit.kind === "access-action" || hit.kind === "access-field") {
@@ -889,6 +933,101 @@ function create(options) {
     changed();
   }
 
+  // A control on the Music screen or its sheets; the session refuses, with a
+  // toast, what a locked room holds.
+  function activateMusic(hit) {
+    const player = music.session;
+    if (ui.screen !== "music" || !player) return;
+    switch (hit.kind) {
+      case "music-speaker":
+        player.select(hit.speaker);
+        break;
+      case "music-play":
+      case "music-previous":
+      case "music-next":
+        if (hit.kind === "music-play") player.playPause();
+        else if (hit.kind === "music-next") player.next();
+        else player.previous();
+        if (!player.view()?.locked) flash(hit.key);
+        break;
+      case "music-shuffle":
+        player.toggleShuffle();
+        break;
+      case "music-repeat":
+        player.cycleRepeat();
+        break;
+      case "music-volume-step":
+        player.stepVolume(hit.step);
+        break;
+      case "music-group-volume-step":
+        player.stepGroupVolume(hit.step);
+        break;
+      case "music-group":
+        openGroup();
+        return;
+      case "music-tidal-start":
+        player.tidalStart();
+        break;
+      case "music-tidal-cancel":
+        player.tidalCancel();
+        break;
+      case "music-tab":
+        player.setTab(hit.value);
+        break;
+      case "music-search":
+        player.searchNow();
+        break;
+      case "music-kind":
+      case "music-all":
+        player.setKind(hit.value);
+        break;
+      case "music-source":
+        player.setSource(hit.value);
+        break;
+      case "music-back":
+        player.back();
+        break;
+      case "music-more":
+        player.more();
+        break;
+      case "music-item":
+        // A folder only opens; anything that plays offers how.
+        if (hit.item.opens && !hit.item.plays) player.open(hit.item);
+        else return openSheet("music-item", hit.item.name, { item: hit.item });
+        break;
+      case "music-action": {
+        const item = ui.overlay && ui.overlay.item;
+        if (hit.disabled || !item) return;
+        closeSheet();
+        player.act(item, hit.action);
+        break;
+      }
+      case "music-pick":
+        if (hit.disabled) return;
+        if (music.picked.has(hit.speaker)) music.picked.delete(hit.speaker);
+        else music.picked.add(hit.speaker);
+        break;
+      case "music-join": {
+        const ids = Array.from(music.picked);
+        if (!ids.length) return;
+        music.picked.clear();
+        player.join(ids);
+        break;
+      }
+      case "music-leave":
+        player.leave(hit.speaker);
+        break;
+      case "music-end": {
+        const grouping = player.grouping();
+        if (grouping) player.leave(grouping.leader);
+        break;
+      }
+      default:
+        return;
+    }
+    changed();
+  }
+
   // K, or the button, from any Remotes pane: the D-pad keeps Enter and the arrows.
   function toggleRoomLock(room) {
     const lock = session.roomLock();
@@ -966,6 +1105,17 @@ function create(options) {
     else if (step === "-page") value -= (view.max - view.min) / 10;
     else value += step * view.step;
     session.slide(options.Remote.volumeValue(scale, value), true);
+  }
+
+  // Where on a Music slider (0–100, or a track's seconds) x falls.
+  function musicValue(entry, x) {
+    const fraction = Math.max(0, Math.min(1, (x - entry.x) / Math.max(1, entry.w - 1)));
+    return Math.round(entry.hit.min + fraction * (entry.hit.max - entry.hit.min));
+  }
+
+  function musicSlide(entry, x) {
+    if (entry.hit.kind === "music-volume") music.session.setVolume(musicValue(entry, x));
+    else music.session.setGroupVolume(musicValue(entry, x));
   }
 
   function sliderValue(entry, x) {
@@ -1085,7 +1235,7 @@ function create(options) {
       return;
     }
     if (name === "pageup" || name === "pagedown") return pageScroll(name === "pageup" ? -1 : 1);
-    if (["remotes-menu", "lock-menu", "audio-choice"].includes(ui.overlay.kind) && ["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
+    if (["remotes-menu", "lock-menu", "audio-choice", "music-item", "music-group"].includes(ui.overlay.kind) && ["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
     if (ui.overlay.kind === "topology") {
       if (name === "up" || name === "down") return stepTopology("room", name === "up" ? -1 : 1);
       if (name === "left" || name === "right") return stepTopology("source", name === "left" ? -1 : 1);
@@ -1180,6 +1330,8 @@ function create(options) {
     const keyEvent = event || {};
     const name = keyEvent.name;
     if (ui.overlay?.kind === "access-form" && access.key(ch, keyEvent, focusedHit())) return;
+    // A letter typed into Music's search goes there, q and the page keys included.
+    if (musicTyping(ch, keyEvent)) return;
     // blessed reports Enter twice, as "enter" and "return".
     if (name === "return") return;
     if (keyEvent.ctrl && name === "c") return quit();
@@ -1187,7 +1339,7 @@ function create(options) {
     if (ch === "q" || ch === "Q") return quit();
     if (name === "tab") return movePane(keyEvent.shift ? -1 : 1);
     // A page's key (navigation.js) opens it from any screen, except that a
-    // child page's opens it only from its parent's: F6 (or Ctrl-P) and u,
+    // child page's opens it only from its parent's: F6 (or Ctrl-P), u and y,
     // from Remotes. Account pages stay reachable from anywhere, so Users
     // (F8), System's child, does too. A letter takes no Ctrl or Alt.
     const typed = keyEvent.ctrl && name === "p" ? "f6" : name;
@@ -1198,7 +1350,81 @@ function create(options) {
     if (ui.screen === "pairing") return pairingKey(ch, keyEvent);
     if (ui.screen === "remote") return remoteKey(ch, keyEvent);
     if (ui.screen === "audio") return audioKey(ch, keyEvent);
+    if (ui.screen === "music") return musicKey(ch, keyEvent);
     return pageKey(ch, keyEvent);
+  }
+
+  // Typing into the Music screen's search field while it has the focus: a
+  // character, a space, Backspace. Enter, Esc, Tab and the arrows keep theirs.
+  function musicTyping(ch, event) {
+    if (ui.screen !== "music" || ui.overlay || !music.session || !ui.focusVisible || ui.focus !== "music-search") return false;
+    const library = music.session.library();
+    const search = library && library.search;
+    if (!search) return false;
+    if (event.name === "backspace") {
+      music.session.setQuery(Array.from(search.query).slice(0, -1).join(""));
+      return true;
+    }
+    if (event.ctrl || event.meta || !ch || Array.from(ch).length !== 1 || /[\u0000-\u001f\u007f-\u009f]/.test(ch)) return false;
+    music.session.setQuery(search.query + ch);
+    return true;
+  }
+
+  // The Music screen's keys, as the page's: the arrows choose a control (←
+  // and → step a volume, or move on the position), Enter or Space presses
+  // it; P, or Space off a button, plays and pauses, + and − step the
+  // volume, < and > change the track, S shuffles, R repeats, G groups,
+  // [ and ] choose the speaker, / searches, Backspace goes back a folder.
+  // Esc clears a search typed, else goes back to Remotes.
+  function musicKey(ch, event) {
+    const name = event.name;
+    const lower = ch ? ch.toLowerCase() : "";
+    const player = music.session;
+    const hit = ui.focusVisible ? focusedHit() : null;
+    if (name === "escape") {
+      const search = player && hit && hit.kind === "music-search" && player.library()?.search;
+      if (search && search.query) return player.setQuery("");
+      return setScreen("remote");
+    }
+    if (name === "pageup" || name === "pagedown") return pageScroll(name === "pageup" ? -1 : 1);
+    if (lower === "t") return toggleTheme();
+    if (lower === "a") return toggleStill();
+    if (!player) return;
+    const level = hit && ["music-volume", "music-group-volume", "music-progress"].includes(hit.kind);
+    if (name === "left" || name === "right") {
+      const step = name === "left" ? -1 : 1;
+      if (!level) return moveControl(step);
+      if (hit.kind === "music-volume") player.stepVolume(step);
+      else if (hit.kind === "music-group-volume") player.stepGroupVolume(step);
+      else player.seekBy(step);
+      return;
+    }
+    if (name === "up" || name === "down") return moveControl(name === "up" ? -1 : 1);
+    if (hit && (name === "enter" || name === "space" && !level)) return activate(hit);
+    if (name === "space" && level) return;
+    if (ch === "/") {
+      player.setTab("search");
+      ui.focus = "music-search";
+      ui.focusVisible = true;
+      ui.revealFocus = true;
+      return changed();
+    }
+    if (name === "backspace") return player.back();
+    if (ch === "[" || ch === "]") return stepMusicSpeaker(ch === "]" ? 1 : -1);
+    const view = player.view();
+    if (!view) return;
+    if (lower === "p" || name === "space") {
+      player.playPause();
+      // A locked speaker's key is refused, not pressed.
+      return view.locked ? undefined : flash("music-play");
+    }
+    if (ch === "+" || ch === "=") return player.stepVolume(1);
+    if (ch === "-" || ch === "_") return player.stepVolume(-1);
+    if (ch === "<" || ch === ",") return player.previous();
+    if (ch === ">" || ch === ".") return player.next();
+    if (lower === "s") return player.toggleShuffle();
+    if (lower === "r") return player.cycleRepeat();
+    if (lower === "g") return openGroup();
   }
 
   // The Audio screen's keys, as the page's: the arrows choose a control (←
@@ -1313,6 +1539,11 @@ function create(options) {
       audio.session.stepVolume(delta < 0 ? 1 : -1);
       return;
     }
+    if (["music-volume", "music-group-volume"].includes(kind) && ui.screen === "music" && music.session) {
+      if (kind === "music-volume") music.session.stepVolume(delta < 0 ? 1 : -1);
+      else music.session.stepGroupVolume(delta < 0 ? 1 : -1);
+      return;
+    }
     const sheetKey = ui.overlay ? "sheet:" + ui.overlay.kind : null;
     const regions = frame.regions.filter((region) => !sheetKey || region.key === sheetKey);
     for (let index = regions.length - 1; index >= 0; index -= 1) {
@@ -1366,12 +1597,22 @@ function create(options) {
         audio.session.setVolume(sliderValue(entry, x));
         return;
       }
+      // Music's volumes slide as Audio's; a click on the position seeks there.
+      if (["music-volume", "music-group-volume", "music-progress"].includes(hit.kind) && ui.screen === "music" && music.session) {
+        if (hit.kind === "music-progress") music.session.seek(musicValue(entry, x));
+        else {
+          musicDragging = entry;
+          musicSlide(entry, x);
+        }
+        return;
+      }
       activate(hit);
       return;
     }
     if (action === "mousemove") {
       if (dragging) session.slide(sliderValue(dragging, x), false);
       if (audioDragging && ui.screen === "audio") audio.session.setVolume(sliderValue(audioDragging, x));
+      if (musicDragging && ui.screen === "music") musicSlide(musicDragging, x);
       return;
     }
     if (action === "mouseup") {
@@ -1380,7 +1621,9 @@ function create(options) {
         dragging = null;
       }
       if (audioDragging && ui.screen === "audio") audio.session.setVolume(sliderValue(audioDragging, x));
+      if (musicDragging && ui.screen === "music") musicSlide(musicDragging, x);
       audioDragging = null;
+      musicDragging = null;
       stopRepeat();
       return;
     }

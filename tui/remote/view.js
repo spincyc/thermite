@@ -1,6 +1,7 @@
 /*
  * What the terminal remote shows, drawn from a RemoteSession (on the
- * Pairing screen a PairingBackend, on Audio a RemoteAudio) into a Grid: the
+ * Pairing screen a PairingBackend, on Audio a RemoteAudio, on Music a
+ * RemoteMusic, drawn by music.js) into a Grid: the
  * header, the rooms, the remote of the device the buttons control, the info
  * panel, the log, the status line, the shortcuts and any sheet over them.
  * render() only reads; it returns the frame with every place a click or the
@@ -15,6 +16,7 @@ const Cameras = require("./cameras");
 const Day = require("./day");
 const Topology = require("./topology");
 const Landing = require("./landing");
+const Music = require("./music");
 const Navigation = require("../../web/remote/navigation");
 
 // One column each: a key shows its icon as one of these, or its caption.
@@ -47,6 +49,7 @@ const TUI_SHORTCUTS = [
   [["F5"], "Site"],
   [["F6", "Ctrl-P"], "Pair devices (Remotes)"],
   [["u"], "Audio (Remotes)"],
+  [["y"], "Music (Remotes)"],
   [["F7"], "Room settings"],
   [["F8"], "Users"],
   [["F9"], "Account"],
@@ -213,12 +216,13 @@ function ledChar(led, blink) {
 function header(frame, ctx, width) {
   const g = frame.grid;
   g.fill(0, 0, width, 1, "header");
-  const remotes = ["remote", "pairing", "audio"].includes(ctx.ui.screen);
+  const remotes = ["remote", "pairing", "audio", "music"].includes(ctx.ui.screen);
   let at = width >= 100 ? g.put(0, 0, " thermite ", "header.title") : 0;
   const tabs = Navigation.pages.filter(page => page.top && Navigation.allowed(page, ctx.access)
     && !(page.system && remotes && width < 100)).map(page => [page.screen, page.key, page.label]);
   if (width < 48) {
-    const label = ctx.ui.screen === "pairing" ? "Remotes / Pair devices" : ctx.ui.screen === "audio" ? "Remotes / Audio" : tabs.find(tab => tab[0] === ctx.ui.screen)?.[2] || ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen] || "Home";
+    const label = ctx.ui.screen === "pairing" ? "Remotes / Pair devices" : ctx.ui.screen === "audio" ? "Remotes / Audio"
+      : ctx.ui.screen === "music" ? "Remotes / Music" : tabs.find(tab => tab[0] === ctx.ui.screen)?.[2] || ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen] || "Home";
     at = g.put(1, 0, fit("thermite · " + label, width - 2), "header.title");
   } else tabs.forEach((tab) => {
     const current = ctx.ui.screen === tab[0] || tab[0] === "remote" && remotes;
@@ -231,12 +235,12 @@ function header(frame, ctx, width) {
     at = g.line(at, 0, [[" " + tab[1] + " ", style + "+bold", null], [label + " ", style, null]]);
     const hit = tab[0] === "remote" && remotes
       ? { kind: "open", sheet: "remotes-menu", key, focus: true,
-          label: "Remotes menu: rooms, " + (hasAudio(ctx) ? "Audio " : "") + "and Pair devices" }
+          label: "Remotes menu: rooms, " + (hasAudio(ctx) ? "Audio, " : "") + "Music and Pair devices" }
       : { kind: "screen", screen: tab[0], key, focus: true, label: tab[2] + " page (" + tab[1] + ")" };
     g.hit(at - size, 0, size, 1, hit);
   });
   if (["settings", "users", "account"].includes(ctx.ui.screen)) at = g.put(at + 1, 0, fit("› " + ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen], Math.max(0, width - at - 2)), "tab.current");
-  if (ctx.ui.screen === "audio") at = g.put(at + 1, 0, " › Audio ", "tab.current");
+  if (ctx.ui.screen === "audio" || ctx.ui.screen === "music") at = g.put(at + 1, 0, ctx.ui.screen === "audio" ? " › Audio " : " › Music ", "tab.current");
   else if (remotes && width - at >= 23 && Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) at = g.put(at + 1, 0, ctx.ui.screen === "pairing" ? " › Pair devices " : " F6 Pair devices ",
     focused(ctx, "remotes:pairing") ? "key.focus" : "tab", { kind: "screen", screen: "pairing", key: "remotes:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
   if (ctx.ui.screen === "remote" && frame.layout.sheets) {
@@ -326,6 +330,10 @@ function paneHelp(ctx) {
     case "audio": return ["Audio", [["\u2191\u2193"], "choose"], [["\u2190\u2192"], "volume/level"], [["Enter"], "press"],
       [["P"], "play/pause"], [["M"], "mute"], [["+\u2212"], "volume"], [["[]"], "device"]];
     case "sheet:audio-choice": return [ctx.ui.overlay ? ctx.ui.overlay.title : "Choose", [["\u2191\u2193"], "choose"], [["Enter"], "select"], [["Esc"], "close"]];
+    case "music": return ["Music", [["\u2191\u2193"], "choose"], [["Enter"], "press/play"], [["P"], "play/pause"], [["+\u2212"], "volume"],
+      [["<>"], "track"], [["[]"], "speaker"], [["/"], "search"], [["G"], "group"]];
+    case "sheet:music-item": return [ctx.ui.overlay ? ctx.ui.overlay.title : "Play", [["\u2191\u2193"], "choose"], [["Enter"], "play"], [["Esc"], "close"]];
+    case "sheet:music-group": return ["Group", [["\u2191\u2193"], "choose"], [["Space"], "tick"], [["Enter"], "press"], [["Esc"], "close"]];
     default: return null;
   }
 }
@@ -337,9 +345,10 @@ function shortcutBar(frame, ctx, width, y) {
   // and reserve Help/Quit before adding optional shortcuts.
   const list = ctx.ui.overlay ? [[["Esc"], "Close"]]
     : [[["Tab"], "Pane"]].concat(ctx.ui.screen === "remote"
-      ? [[["r"], "Rooms"], [["d"], "Signal"], [["h"], "Day"], log].concat(hasAudio(ctx) ? [[["u"], "Audio"]] : [], [[["v"], "Volume"], [["t"], "Theme"]])
+      ? [[["r"], "Rooms"], [["d"], "Signal"], [["h"], "Day"], log].concat(hasAudio(ctx) ? [[["u"], "Audio"]] : [], [[["y"], "Music"], [["v"], "Volume"], [["t"], "Theme"]])
       : ctx.ui.screen === "pairing" ? [[["Esc"], "Remotes"], log]
         : ctx.ui.screen === "audio" ? [[["Esc"], "Remotes"], [["t"], "Theme"]]
+          : ctx.ui.screen === "music" ? [[["Esc"], "Remotes"], [["/"], "Search"], [["G"], "Group"], [["t"], "Theme"]]
           : (ctx.ui.screen === "home" ? [[["h"], "Day"]] : [[["F1"], "Home"]]).concat([[["t"], "Theme"]]));
   g.fill(0, y, width, 1, "footer");
   const essentials = ctx.ui.overlay
@@ -372,10 +381,11 @@ function pageScreen(frame, ctx, rect) {
     settings: ["Room settings", (g, w, ctx) => ctx.access.content(g, w, ctx)],
     users: ["Users", (g, w, ctx) => ctx.access.content(g, w, ctx)],
     account: ["Account", (g, w, ctx) => ctx.access.content(g, w, ctx)],
-    audio: ["Audio", audioContent]
+    audio: ["Audio", audioContent],
+    music: ["Music", (g, w, ctx) => Music.content(g, w, ctx, KIT)]
   };
   const [title, content] = pages[ctx.ui.screen] || pages.home;
-  const audio = ctx.ui.screen === "audio";
+  const audio = ["audio", "music"].includes(ctx.ui.screen);
   frame.layout = { page: ctx.ui.screen };
   panel(frame, ctx, rect, { key: ctx.ui.screen, color: audio ? "remote" : "info", title, footer: [audio ? ["Esc", "Remotes"] : ["F1", "Home"]],
     content: (inner, width, height) => content(inner, width, ctx, height) });
@@ -1007,7 +1017,7 @@ function sheet(frame, ctx, width, height) {
   const overlay = ctx.ui.overlay;
   frame.grid.hit(0, 0, width, height, { kind: "dismiss" });
   const w = Math.min(width - 2, overlay.kind === "day" ? 160 : ["signal", "topology"].includes(overlay.kind) ? 100 : ["info", "help", "cameras"].includes(overlay.kind) ? 66
-    : ["lock-menu", "audio-choice"].includes(overlay.kind) ? 40 : 50);
+    : ["lock-menu", "audio-choice"].includes(overlay.kind) ? 40 : overlay.kind === "music-group" ? 60 : 50);
   const content = {
     "access-form": (inner, iw) => ctx.access.formContent(inner, iw, ctx),
     rooms: (inner, iw) => roomsContent(inner, iw, ctx),
@@ -1021,8 +1031,11 @@ function sheet(frame, ctx, width, height) {
       if (Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) button(inner, ctx, 1, 6, "Pair devices · F6", "menu:pairing", { kind: "screen", screen: "pairing", key: "menu:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
       else paragraph(inner, 1, 6, iw - 2, ctx.access.authEnabled() ? "Sign in as an administrator to pair devices." : "Enable authentication in Security (F3) to pair devices.", "dim");
       if (hasAudio(ctx)) button(inner, ctx, 1, 10, "Audio · u", "menu:audio", { kind: "screen", screen: "audio", key: "menu:audio", focus: true, label: "Remotes / Audio (u)" });
+      button(inner, ctx, 1, hasAudio(ctx) ? 14 : 10, "Music · y", "menu:music", { kind: "screen", screen: "music", key: "menu:music", focus: true, label: "Remotes / Music (y)" });
     },
     "audio-choice": (inner, iw) => audioChoiceContent(inner, iw, ctx),
+    "music-item": (inner, iw) => Music.itemSheet(inner, iw, ctx, KIT),
+    "music-group": (inner, iw) => Music.groupSheet(inner, iw, ctx, KIT),
     // A bubble's lock menu (right-click, or o): what the session offers.
     "lock-menu": (inner, iw) => ctx.session.lockMenu(overlay.item).forEach((entry, index) => {
       const key = "lock-menu:" + index;
@@ -1104,10 +1117,11 @@ function helpContent(g, w, ctx) {
     y++;
   };
   const manage = ctx.ui.screen === "remote" && ctx.session?.roomLock().canManage;
-  if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "h", "v", "F6"].concat(hasAudio(ctx) ? ["u"] : []).includes(entry[0][0])))
+  if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "h", "v", "F6", "y"].concat(hasAudio(ctx) ? ["u"] : []).includes(entry[0][0])))
     .concat(manage ? [[["K"], "Lock or unlock this room (administrators)"],
       [["o"], "Lock menu of the selected source or Off: lock on it, or unlock (administrators)"]] : []));
   else if (ctx.ui.screen === "audio") rows("Audio", AUDIO_SHORTCUTS);
+  else if (ctx.ui.screen === "music") rows("Music", Music.SHORTCUTS);
   else if (ctx.ui.screen === "pairing") rows("Pair devices", PAIR_SHORTCUTS.filter(entry => !["Tab", "L", "F1", "?", "q"].includes(entry[0][0])).concat([[["s/S"], "Sort/reverse"]]));
   else {
     const help = paneHelp({ ...ctx, ui: { ...ctx.ui, overlay: null, pane: ctx.ui.screen } });
@@ -1475,5 +1489,8 @@ function pairCardContent(g, w, ctx, narrow) {
     if (device.hint) y = paragraph(g, 1, y, w - 2, device.hint, "dim");
   }
 }
+
+// What music.js draws with, so its keys, meters and rows look as the rest.
+const KIT = { focused, heading, paragraph, chip, button, rounded, meter, ledChar, ledStyle, GLYPHS, LIT, UNLIT };
 
 module.exports = { render, GLYPHS, TUI_SHORTCUTS, PAIR_SHORTCUTS, AUDIO_SHORTCUTS, WIDE, MEDIUM, pairDevices, pairColumns, PAIR_FIELDS, signalInline };

@@ -34,7 +34,13 @@ rollback. The unified deployment workflow uses a separate committed private site
   and trail for each speaker and its group. The policy worker claims Music
   Assistant for thermite, renews its token and keeps its providers and
   libraries; an Admin signs it into TIDAL from the gateway or with
-  `thermite access music-tidal`. The pages come next.
+  `thermite access music-tidal`.
+- Music: a page (`/music/`, and the terminal remote's Music screen, `y`
+  from Remotes) that plays TIDAL and the NAS libraries on the Sonos and
+  WiiM speakers, alone or grouped: search, browse and the queue, with Play
+  now, Play next and Add to queue; transport, position and volume; grouping
+  that says why a speaker could not join; and an Admin's TIDAL sign-in. A
+  Guest kept from free text sees no titles, covers or library.
 - Audio: a page (`/audio/`, and the terminal remote's Audio screen, `u`
   from Remotes) for each WiiM or Sonos speaker or streamer under `control`,
   routed by a room or not. It shows:
