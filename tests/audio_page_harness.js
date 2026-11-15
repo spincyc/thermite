@@ -73,12 +73,16 @@ async function mock() {
   session.stepVolume(1);
   session.stop();
   events.length = 0;
+  // What was in flight lands while it is stopped, and draws nothing; were
+  // it still in flight, it would race the reopened session's first draw.
+  await settle();
+  const stopped = events.length;
   await session.start();
   backend.updateAudio(owned, owned + '_title', 'Another Track');
   await settle();
   const resent = backend.sent.length;
   session.stepVolume(1);
-  out.restarted = {selected: session.selected(), changes: events.filter((type) => type === 'change').length,
+  out.restarted = {stopped, selected: session.selected(), changes: events.filter((type) => type === 'change').length,
                    title: session.view().track.title, sent: backend.sent.length - resent};
   session.stop();
   out.sent = backend.sent;

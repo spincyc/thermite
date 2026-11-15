@@ -106,7 +106,8 @@ class AudioPage(unittest.TestCase):
             [FREE, f"{FREE}_sub_level", "-15"], [FREE, "key", "play_pause"], [FREE, "input", "bluetooth"]])
 
     def test_a_session_opened_again_draws_and_sends(self):
-        self.assertEqual(self.mock["restarted"], {"selected": OWNED, "changes": 2, "title": "Another Track", "sent": 1})
+        self.assertEqual(self.mock["restarted"], {"stopped": 0, "selected": OWNED, "changes": 2, "title": "Another Track",
+                                                  "sent": 1})
 
     def test_a_locked_room_that_owns_the_device_locks_its_page(self):
         locked = self.report["locked"]
