@@ -122,3 +122,8 @@ def settings(host: dict | None) -> dict | None:
             raise ValueError(f"music.libraries.{name} and music.libraries.{seen[path]} are the same directory")
         seen[path] = name
     return {"libraries": dict(libraries)}
+
+
+def enabled(host: dict | None) -> bool:
+    """Whether the host runs Music Assistant: its host.yaml has music:."""
+    return settings(host) is not None

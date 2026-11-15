@@ -20,7 +20,7 @@ def rule_text(host):
     """The rule file; its header names HTTP's and HTTPS's ports, then Music
     Assistant's API's on a host with music:."""
     from oh_access.native_boundary import firewall_rules
-    music = f",{oh_ports.effective(host)['music']}" if oh_music.settings(host) is not None else ""
+    music = f",{oh_ports.effective(host)['music']}" if oh_music.enabled(host) else ""
     return MARKER + f"# Ports: {host['http_port']},{host['https_port']}{music}\n" + firewall_rules(host)
 
 

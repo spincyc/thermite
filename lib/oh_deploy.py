@@ -92,14 +92,14 @@ SERVICES = (oh_units.RUNTIME, oh_units.ATV, oh_units.ATV_RESTART_PATH, *metrics.
 
 def host_units(host: dict) -> dict[str, Path]:
     """INSTALLED as this host has it: without MUSIC_UNITS unless it has music:."""
-    if music.settings(host) is not None:
+    if music.enabled(host):
         return INSTALLED
     return {source: target for source, target in INSTALLED.items() if source not in MUSIC_UNITS}
 
 
 def services(host: dict) -> tuple[str, ...]:
     """SERVICES as this host has them: with Music Assistant when it has music:."""
-    return (*SERVICES, oh_units.MUSIC) if music.settings(host) is not None else SERVICES
+    return (*SERVICES, oh_units.MUSIC) if music.enabled(host) else SERVICES
 
 
 #: The area's files the Apple TV helper's container runs.
@@ -1130,7 +1130,7 @@ def render_units(versions: dict, host: dict) -> dict[str, str]:
         units[METRICS_QUADLETS[service.unit]] = render_metrics_quadlet(versions, host, service)
     units[METRICS_RESTART_PATH] = render_metrics_restart_path(host)
     units[METRICS_RESTART_SERVICE] = render_metrics_restart_service(host)
-    if music.settings(host) is not None:
+    if music.enabled(host):
         units[MUSIC_QUADLET] = render_music_quadlet(versions, host)
     wanted = host_units(host)
     units.update({source: render_container_dropin() for source in CONTAINER_DROPINS.values() if source in wanted})

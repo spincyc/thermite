@@ -385,7 +385,7 @@ def firewall_ports(host):
     the gateway uses and which falls back to every address when it cannot
     have loopback's."""
     ports = oh_ports.effective(host)
-    music = {"Music Assistant": ports["music"]} if oh_music.settings(host) is not None else {}
+    music = {"Music Assistant": ports["music"]} if oh_music.enabled(host) else {}
     return frozenset(oh_ports.unique({"HTTP": ports["http"], "HTTPS": ports["https"], "Karaf": ports["karaf"],
                                       "LSP": ports["lsp"], "shutdown": ports["native_shutdown"], **music}).values())
 

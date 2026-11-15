@@ -253,7 +253,7 @@ class Context:
                                     deploy.LSP_PORT, oh_ports.SHUTDOWN_PORT],
                 "thermite-atv.service": [deploy.HELPER_PORT],
                 **{service.unit: [int(service.listen.rsplit(":", 1)[1])] for service in metrics.services(self.host)},
-                **({oh_units.MUSIC: [ports["music"], ports["music_stream"]]} if music.settings(self.host) is not None else {})}
+                **({oh_units.MUSIC: [ports["music"], ports["music_stream"]]} if music.enabled(self.host) else {})}
 
 
 def committed_context(area: Path, system: System, runtime_token_file: Path | None = None, *,
@@ -667,8 +667,27 @@ class InstallationRoot(Step):
                                    str(top)), root=True)]
 
 
+def music_state(context: Context, system: System) -> bool:
+    """Whether the host has Music Assistant's state: it has music:, or an
+    earlier version that had it left runtime/music, as found or as the
+    installed manifest records it. Before the owner logs in again for the
+    thermite group, runtime/ hides it, and only the record can say."""
+    if music.enabled(context.host):
+        return True
+    path = context.layout.music
+    if system.stat(path) is not None:
+        return True
+    try:
+        installed = manifest.installed(system, context.installation.root)
+    except manifest.ManifestError:
+        return False
+    return installed is not None and any(item["path"] == str(path) for item in installed["items"])
+
+
 class StateDirectories(Step):
     title = "Service state directories"
+    #: What the details call the directories once made.
+    made = "service directories"
 
     def __init__(self, context: Context):
         self.context = context
@@ -689,14 +708,23 @@ class StateDirectories(Step):
         return wrong
 
     def check(self, system: System) -> Check:
-        top = self.context.installation.root
         wrong = [path for _, path in self.wrong(system)]
+        # Until the owner logs in again for the thermite group, runtime/
+        # (0750) hides what fix() made: stat finds none of it.
         if self.applied and self.context.host["gid"] not in system.process_groups():
-            return Check(True, f"service directories installed for {NAME}; log in again for group access")
+            return Check(True, f"{self.made} installed for {NAME}; log in again for group access")
         if wrong:
-            return Check(False, "to create or fix: " + ", ".join(str(path.relative_to(top)) for path in wrong))
+            return Check(False, "to create or fix: " + ", ".join(str(path.relative_to(self.top)) for path in wrong))
+        return Check(True, self.found())
+
+    @property
+    def top(self) -> Path:
+        """What the details name the directories relative to."""
+        return self.context.installation.root
+
+    def found(self) -> str:
         count = sum(len(paths) for _, paths in self.directories())
-        return Check(True, f"the {count} runtime directories in {top}, owned by {NAME}")
+        return f"the {count} runtime directories in {self.top}, owned by {NAME}"
 
     def actions(self, system: System) -> list[Action]:
         return self.fix(system)
@@ -716,26 +744,27 @@ class StateDirectories(Step):
     def desired(self, system: System) -> list[manifest.Item]:
         # The trees a version may change; logs and the old tar backups stay
         # where they are, whichever version runs.
+        # So does Music Assistant's, once the host has no music: an item
+        # the desired set drops would be deleted.
         layout = self.context.layout
+        left = not music.enabled(self.context.host) and music_state(self.context, system)
         return [*(manifest.Item(path, "tree") for path in (layout.atv_venv, layout.atv_secrets, layout.secrets)),
-                *(manifest.Item(path, "shared") for path in (layout.logs, layout.backups))]
+                *(manifest.Item(path, "shared") for path in (layout.logs, layout.backups, *([layout.music] if left else [])))]
 
 
 class MetricsDirectories(StateDirectories):
     title = "Monitoring directories"
+    made = "metrics directories"
 
     def directories(self) -> list[tuple[int, list[Path]]]:
         return self.context.layout.metrics_directories()
 
-    def check(self, system: System) -> Check:
-        root = self.context.layout.root
-        wrong = self.wrong(system)
-        if self.applied and self.context.host["gid"] not in system.process_groups():
-            return Check(True, f"metrics directories installed for {NAME}; log in again for group access")
-        if wrong:
-            return Check(False, "to create or fix: " + ", ".join(str(p.relative_to(root)) for _, p in wrong))
-        return Check(True, f"{', '.join(str(p.relative_to(root)) for _, paths in self.directories() for p in paths)}, "
-                           f"owned by {NAME}")
+    @property
+    def top(self) -> Path:
+        return self.context.layout.root
+
+    def found(self) -> str:
+        return f"{', '.join(str(p.relative_to(self.top)) for _, paths in self.directories() for p in paths)}, owned by {NAME}"
 
     def desired(self, system: System) -> list[manifest.Item]:
         # Prometheus' samples are copied aside only when its image changes:
@@ -749,30 +778,22 @@ class MetricsDirectories(StateDirectories):
 
 
 class MusicDirectories(StateDirectories):
-    """Music Assistant's state, on a host with music:. Without music: the
-    state of an earlier version that had it stays, as it is."""
+    """Music Assistant's state, on a host with music: (StateDirectories
+    keeps what an earlier version left once it has none)."""
     title = "Music Assistant's state directory"
+    made = "Music Assistant's state directory"
 
     def directories(self) -> list[tuple[int, list[Path]]]:
-        return self.context.layout.music_directories() if music.settings(self.context.host) is not None else []
+        return self.context.layout.music_directories()
 
-    def check(self, system: System) -> Check:
-        if not self.directories():
-            return Check(True, "no music: on this host")
-        if self.wrong(system):
-            return Check(False, f"to create or fix: {self.context.layout.music.relative_to(self.context.installation.root)}")
-        return Check(True, f"{self.context.layout.music}, owned by {NAME}")
+    def found(self) -> str:
+        return f"{self.context.layout.music}, owned by {NAME}"
 
     def desired(self, system: System) -> list[manifest.Item]:
         # Copied aside only when Music Assistant's image changes: a new
         # version migrates its library and settings, and has no way back.
-        # Once music: goes the state stays, shared, unless it surely is not
-        # there: an item the desired set drops would be deleted.
-        layout = self.context.layout
-        if self.directories():
-            return [manifest.Item(layout.music, "shared-pinned", image="music_assistant",
-                                  value=self.context.versions["music_assistant"]["image"]["digest"])]
-        return [manifest.Item(layout.music, "shared")] if system.lexists(layout.music) else []
+        return [manifest.Item(self.context.layout.music, "shared-pinned", image="music_assistant",
+                              value=self.context.versions["music_assistant"]["image"]["digest"])]
 
 
 class BootTest(Step):
@@ -1100,14 +1121,8 @@ class MetricsServices(Services):
 class MusicServices(Services):
     """Music Assistant, on a host with music:; each start pins its listeners."""
     title = "Music Assistant"
+    restarts = MUSIC_RESTARTS
     path_unit = None
-
-    @property
-    def restarts(self) -> dict[str, str]:
-        return MUSIC_RESTARTS if music.settings(self.context.host) is not None else {}
-
-    def check(self, system: System) -> Check:
-        return super().check(system) if self.restarts else Check(True, "no music: on this host")
 
 
 def _opaque(system: System, context: Context, path: Path) -> bool:
@@ -1194,7 +1209,8 @@ class NativePreparation(Step):
     def custody(self, system: System) -> bool:
         return bool(not service_receipt(self.context, system)
                     or StateDirectories(self.context).wrong(system) or MetricsDirectories(self.context).wrong(system)
-                    or MusicDirectories(self.context).wrong(system) or Account(self.context).missing(system))
+                    or music.enabled(self.context.host) and MusicDirectories(self.context).wrong(system)
+                    or Account(self.context).missing(system))
 
     def check(self, system: System) -> Check:
         if self.applied:
@@ -1393,8 +1409,6 @@ class MusicAnswer(ReadinessStep):
         self.context = context
 
     def check(self, system: System) -> Check:
-        if music.settings(self.context.host) is None:
-            return Check(True, "no music: on this host")
         health = system.music_health(self.context.host)
         if health.ok:
             return Check(True, health.describe() + ", its API on loopback alone")

@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import DEFAULT, Mock, patch
 
 AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA / "lib"))
@@ -37,6 +37,8 @@ def system(*, apparmor=True, present=()):
     found = Mock(spec=System)
     found.read_bytes.side_effect = lambda path: (b"Y\n" if apparmor else b"N\n") if path == oh_apparmor.MODULE_ENABLED else None
     found.lexists.side_effect = lambda path: Path(path) in present
+    # Music Assistant's state is found only where present names it.
+    found.stat.side_effect = lambda path: None if Path(path) == ROOT / "runtime/music" and Path(path) not in present else DEFAULT
     return found
 
 

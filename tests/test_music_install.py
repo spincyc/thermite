@@ -39,6 +39,7 @@ def host_system(files=None, stats=None):
     found.stat.side_effect = lambda path: stats.get(Path(path))
     found.lexists.side_effect = lambda path: Path(path) in files or Path(path) in stats
     found.unit.return_value = Unit("active", "enabled", since=10.0)
+    found.process_groups.return_value = {9001}
     return found
 
 
@@ -51,6 +52,11 @@ class Sequence(unittest.TestCase):
         self.assertLess(types.index(steps.MusicServices), types.index(steps.StartTarget))
         verification = [type(step) for step in changeover.verification(context(base=MUSIC_HOST))]
         self.assertLess(verification.index(steps.MusicAnswer), verification.index(steps.Health))
+
+    def test_a_host_without_music_runs_none_of_its_steps(self):
+        music = {steps.MusicDirectories, steps.MusicServices, steps.MusicAnswer}
+        for sequence in (changeover.switching(context(), TRANSACTION), changeover.verification(context())):
+            self.assertFalse({type(step) for step in sequence} & music)
 
     def test_halt_stops_it_with_the_rest_of_thermite(self):
         self.assertIn(oh_units.MUSIC, steps.Halt.UNITS)
@@ -75,10 +81,8 @@ class State(unittest.TestCase):
         return {path: Stat(9001, 9001, mode, True, 0)
                 for mode, paths in (*layout.directories(), *layout.metrics_directories()) for path in paths} | (extra or {})
 
-    def test_it_is_made_private_and_service_owned_only_for_music(self):
+    def test_it_is_made_private_and_service_owned(self):
         found = host_system()
-        self.assertEqual(steps.MusicDirectories(context()).wrong(found), [])
-        self.assertEqual(steps.MusicDirectories(context()).check(found).detail, "no music: on this host")
         step = steps.MusicDirectories(context(base=MUSIC_HOST))
         self.assertEqual(step.wrong(found), [(0o700, MUSIC)])
         self.assertEqual(step.check(found).detail, "to create or fix: runtime/music")
@@ -87,32 +91,37 @@ class State(unittest.TestCase):
         self.assertTrue(step.check(host_system(stats={MUSIC: Stat(9001, 9001, 0o700, True, 0)})).done)
         self.assertEqual(step.wrong(host_system(stats={MUSIC: Stat(9001, 9001, 0o750, True, 0)})), [(0o700, MUSIC)])
 
-    def test_a_missing_music_directory_needs_the_full_repair(self):
-        ctx = context(base=MUSIC_HOST)
-        with patch.object(steps, "service_receipt", return_value=True), \
-                patch.object(steps.Account, "missing", return_value=[]):
-            self.assertTrue(steps.NativePreparation(ctx).custody(host_system(stats=self.owned(ctx))))
-            self.assertFalse(steps.NativePreparation(ctx).custody(
-                host_system(stats=self.owned(ctx, {MUSIC: Stat(9001, 9001, 0o700, True, 0)}))))
-            self.assertFalse(steps.NativePreparation(context()).custody(host_system(stats=self.owned(context()))))
+    def test_made_before_the_owner_logs_in_again_it_counts_as_done(self):
+        # runtime/ (0750) hides what was made until the owner has the group.
+        for step in (steps.StateDirectories(context()), steps.MetricsDirectories(context()),
+                     steps.MusicDirectories(context(base=MUSIC_HOST))):
+            with self.subTest(step=type(step).__name__):
+                found = host_system()
+                found.process_groups.return_value = set()
+                self.assertTrue(step.actions(found))
+                check = step.check(found)
+                self.assertTrue(check.done)
+                self.assertIn(f"{step.made} installed for thermite; log in again for group access", check.detail)
+                found.process_groups.return_value = {9001}
+                self.assertFalse(step.check(found).done, "with the group, a missing one is missing")
 
-    def test_an_empty_resumed_music_directory_counts_as_thermites(self):
-        runtime = context().layout.root
-        found = host_system(stats={runtime: Stat(9001, 9001, 0o750, True, 0), MUSIC: Stat(9001, 9001, 0o700, True, 0)})
-        entries = {runtime: ["music"], MUSIC: []}
-        found.directory_entries.side_effect = lambda path: entries.get(Path(path))
-        found.safe_directory.return_value = True
-        with patch.object(steps, "service_receipt", return_value=False), \
-                patch.object(ownership, "inspect", return_value=ownership.Owned()):
-            self.assertTrue(steps.state_owned(context(base=MUSIC_HOST), found))
-            entries[MUSIC] = ["settings.json"]
-            self.assertFalse(steps.state_owned(context(base=MUSIC_HOST), found), "its data needs the receipt")
+    def test_what_a_version_with_music_left_stays_once_it_surely_is_there(self):
+        def declared(found):
+            return {item.path: item.cls for item in steps.StateDirectories(context()).desired(found)}
 
-    def test_the_full_repair_keeps_it_private(self):
-        self.assertIn("music", oh_service.NATIVE_ROOTS)
-        self.assertEqual(oh_service.desired_mode("music", 0o755, True), 0o700)
-        self.assertEqual(oh_service.desired_mode("music/settings.json", 0o644, False), 0o600)
-        self.assertEqual(oh_service.desired_mode("music/.cache/thumbnails", 0o750, True), 0o700)
+        hidden = host_system()
+        hidden.lexists.return_value = True
+        hidden.lexists.side_effect = None
+        with patch.object(manifest, "installed", return_value=None):
+            self.assertNotIn(MUSIC, declared(hidden), "runtime/ hides it before the owner logs in again")
+            self.assertEqual(declared(host_system(stats={MUSIC: Stat(9001, 9001, 0o700, True, 0)}))[MUSIC], "shared")
+        recorded = {"items": [{"path": str(MUSIC), "class": "shared-pinned"}]}
+        with patch.object(manifest, "installed", return_value=recorded):
+            self.assertEqual(declared(hidden)[MUSIC], "shared", "the installed manifest says it is there")
+        with patch.object(manifest, "installed", side_effect=manifest.ManifestError("damaged")):
+            self.assertNotIn(MUSIC, declared(hidden))
+        self.assertNotIn(MUSIC, {item.path for item in steps.StateDirectories(context(base=MUSIC_HOST)).desired(
+            host_system(stats={MUSIC: Stat(9001, 9001, 0o700, True, 0)}))}, "MusicDirectories pins it")
 
 
 class Units(unittest.TestCase):
@@ -174,10 +183,6 @@ class Services(unittest.TestCase):
         self.assertEqual([action.argv for action in step.actions(found)],
                          [("podman", "pull", "--policy=missing", deploy.image(VERSIONS, "music_assistant")),
                           ("systemctl", "start", oh_units.MUSIC)])
-        none = steps.MusicServices(context())
-        self.assertEqual(none.plan(found), ([], [], False))
-        self.assertEqual(none.check(found).detail, "no music: on this host")
-        self.assertEqual(none.actions(found), [])
 
     def test_a_changed_unit_restarts_it(self):
         found = host_system(stats={QUADLET: Stat(0, 0, 0o644, False, 20.0)})
@@ -192,7 +197,6 @@ class Readiness(unittest.TestCase):
                                   "http://127.0.0.1:13628", 200)
 
     def test_it_waits_for_music_assistant_on_loopback(self):
-        self.assertTrue(steps.MusicAnswer(context()).check(host_system()).done)
         found = host_system()
         step = steps.MusicAnswer(context(base=MUSIC_HOST))
         for health, done in ((self.health(), True), (self.health("starting"), False),
