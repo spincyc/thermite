@@ -589,6 +589,12 @@ class Tidal(Site):
             "timezone": "UTC", "guest_http": None}))
         os.chmod(config, 0o600)
         self.assertEqual(tidal.site(config), (self.port, self.token()))
+        os.chmod(provision.token_file(self.state), 0o640)
+        with self.assertRaisesRegex(AccessError, "cannot be trusted"):
+            tidal.site(config)
+        provision.token_file(self.state).unlink()
+        with self.assertRaisesRegex(AccessError, "not claimed yet"):
+            tidal.site(config)
         provision.write_claim(self.state, {"problem": provision.UNCLAIMED})
         with self.assertRaisesRegex(AccessError, "another user"):
             tidal.site(config)
