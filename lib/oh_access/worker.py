@@ -15,8 +15,12 @@ LOG = logging.getLogger(__name__)
 # At most one reconnect warning per interval; suppressed ones are counted.
 WARN_EVERY = 300
 PRUNE_EVERY = 24 * 60 * 60
-#: Seconds the worker waits for the music thread when it stops.
-MUSIC_STOP = 25
+#: Seconds a stopping worker waits for its threads in all: inside the access
+#: units' TimeoutStopSec (30), with room for the rest of its shutdown.
+STOP_SECONDS = 27
+#: Seconds of those it waits for the music thread: the one request it may
+#: have in flight (oh_music.client.SLOW) and a moment more.
+MUSIC_STOP = 21
 
 
 class NativeCache:
@@ -386,30 +390,41 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
             loop.close()
     thread = threading.Thread(target=listen, daemon=True)
     textfile = None
+    deadline = []
+
+    def stopping():
+        # Both threads are told at once, so that their joins share STOP_SECONDS.
+        if deadline:
+            return
+        deadline.append(time.monotonic() + STOP_SECONDS)
+        stop.set()
+        if thread.ident is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(observer.cancel)
+            except RuntimeError:
+                pass  # The observer finished and closed its loop meanwhile.
     try:
         # Take the process lease BEFORE connecting a feed or running any writes.
         with locks.hold(["room-policy-worker"], blocking=False):
             if not shutdown_requested:
                 thread.start()
             with music_running(config["state"], adapter.contract.music, stop, start=not shutdown_requested):
-                textfile = metrics.start(metrics.WORKER, metrics.WORKER_FILE)
-                pruned = None
-                while not shutdown_requested and not stop.is_set():
-                    if pruned is None or time.monotonic() - pruned >= PRUNE_EVERY:
-                        pruned = time.monotonic()
-                        maintain(store)
-                    telemetry.stepped(worker.step())
-                    if not shutdown_requested and not stop.is_set():
-                        worker.wait(min(5, interval))
-    finally:
-        stop.set()
-        if thread.ident is not None:
-            if not loop.is_closed():
                 try:
-                    loop.call_soon_threadsafe(observer.cancel)
-                except RuntimeError:
-                    pass  # The observer finished and closed its loop meanwhile.
-            thread.join(timeout=20)
+                    textfile = metrics.start(metrics.WORKER, metrics.WORKER_FILE)
+                    pruned = None
+                    while not shutdown_requested and not stop.is_set():
+                        if pruned is None or time.monotonic() - pruned >= PRUNE_EVERY:
+                            pruned = time.monotonic()
+                            maintain(store)
+                        telemetry.stepped(worker.step())
+                        if not shutdown_requested and not stop.is_set():
+                            worker.wait(min(5, interval))
+                finally:
+                    stopping()
+    finally:
+        stopping()
+        if thread.ident is not None:
+            thread.join(timeout=max(0.0, deadline[0] - time.monotonic()))
         else:
             observer.cancel()
             loop.run_until_complete(asyncio.gather(observer, return_exceptions=True))
@@ -448,7 +463,8 @@ def music_running(state, music, stop, *, start=True):
     finally:
         if thread.ident is not None:
             stop.set()
-            # A pass ends at its next part; one request at most is in flight.
+            # The music client makes no request once stop is set: the thread
+            # ends when the one in flight, if any, is answered or times out.
             thread.join(timeout=MUSIC_STOP)
             if thread.is_alive():
                 LOG.warning("The music thread did not stop; it ends with the process.")

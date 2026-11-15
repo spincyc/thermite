@@ -611,18 +611,64 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual(self.request("post", "/api/v1/events/music")["Allow"], "GET")
 
     def test_the_worker_stops_and_joins_its_music_thread_before_the_block_holding_its_lease_ends(self):
-        from oh_access.worker import music_running
+        import functools
+
+        import httpx
+
+        from oh_access import worker
+        from oh_access.staging import units
+        from oh_music.client import SLOW
+        from oh_music.client import Client as MusicClient
+        locks = oh_room_policy.FileLocks(Path(self.state) / "locks")
+        lease = functools.partial(locks.hold, ["room-policy-worker"], blocking=False)
         stop = threading.Event()
-        with music_running(self.state, self.adapter.contract.music, stop) as thread:
-            self.assertTrue(thread.is_alive())
-        self.assertTrue(stop.is_set())
-        self.assertFalse(thread.is_alive())
+        with lease():
+            with worker.music_running(self.state, self.adapter.contract.music, stop) as thread:
+                self.assertTrue(thread.is_alive())
+                with self.assertRaises(BlockingIOError), lease():
+                    pass
+            self.assertTrue(stop.is_set())
+            self.assertFalse(thread.is_alive())
         stop = threading.Event()
-        with self.assertRaises(KeyError), music_running(self.state, self.adapter.contract.music, stop) as thread:
+        with self.assertRaises(KeyError), worker.music_running(self.state, self.adapter.contract.music, stop) as thread:
             raise KeyError()
         self.assertFalse(thread.is_alive())
-        with music_running(self.state, None, threading.Event()) as thread:
+        with worker.music_running(self.state, None, threading.Event()) as thread:
             self.assertIsNone(thread)
+        # A request in flight outlasts the join: the warning is logged, the
+        # lease given up, and the thread makes no request after it.
+        asked, answer, requests = threading.Event(), threading.Event(), []
+
+        def handler(request):
+            requests.append(request.url.path)
+            asked.set()
+            answer.wait(10)
+            return httpx.Response(200, json={"server_id": "x", "status": "running"})
+
+        def connect(port, **options):
+            return MusicClient(port, transport=httpx.MockTransport(handler), **options)
+        stop = threading.Event()
+        with patch.object(worker, "MUSIC_STOP", 0.1), \
+                patch.object(provision, "run", functools.partial(provision.run, connect=connect)), \
+                self.assertLogs("oh_access.worker", "WARNING") as logs:
+            with lease():
+                with worker.music_running(self.state, self.adapter.contract.music, stop) as thread:
+                    self.assertTrue(asked.wait(10))
+                self.assertTrue(thread.is_alive())
+        with lease():
+            pass
+        self.assertEqual(logs.output, ["WARNING:oh_access.worker:The music thread did not stop; it ends with the process."])
+        answer.set()
+        thread.join(10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(requests, ["/info"])
+        # Both joins fit inside the unit's stop timeout, so systemd never kills the worker.
+        unit = units("/srv/thermite/access/releases/example",
+                     state="/srv/thermite/access/state")["thermite-access-worker.service"]
+        timeout = int(next(line for line in unit.splitlines() if line.startswith("TimeoutStopSec=")).split("=")[1])
+        self.assertLess(SLOW, worker.MUSIC_STOP)
+        self.assertLess(worker.MUSIC_STOP, worker.STOP_SECONDS)
+        self.assertLessEqual(worker.STOP_SECONDS + 3, timeout)
 
     def test_the_guest_listener_serves_music_but_not_tidal(self):
         from oh_identity.guest import ROUTES

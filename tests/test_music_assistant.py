@@ -21,7 +21,7 @@ import httpx  # noqa: E402
 import oh_music_sim as stand_in  # noqa: E402
 from oh_access import AccessError  # noqa: E402
 from oh_music import provision, tidal  # noqa: E402
-from oh_music.client import Client, Failed, NoUser, Unauthorized, Unavailable  # noqa: E402
+from oh_music.client import Client, Failed, NoUser, Stopped, Unauthorized, Unavailable  # noqa: E402
 from oh_music.events import Closed, Socket  # noqa: E402
 
 DAY = 24 * 3600
@@ -304,7 +304,9 @@ class Claim(Site):
             time.sleep(0.2)
             self.sim.status = "running"
             until = time.monotonic() + 5
-            while not (provision.read_claim(self.state) or {}).get("token") and time.monotonic() < until:
+            # Stopping ends a pass at its next request, so the test waits for the pass to end.
+            while not any(record.getMessage().startswith("Music Assistant: ready") for record in logs.records) \
+                    and time.monotonic() < until:
                 time.sleep(0.02)
             stop.set()
             thread.join(5)
@@ -469,6 +471,16 @@ class Errors(unittest.TestCase):
         client = Client(1024, token, transport=httpx.MockTransport(answer))
         self.addCleanup(client.close)
         return client, seen
+
+    def test_a_stopped_client_makes_no_request(self):
+        client, seen = self.client(200, b'{"ok": true}')
+        client.stop = threading.Event()
+        client.call("players/all")
+        client.stop.set()
+        for request in (client.info, lambda: client.call("players/all"), lambda: client.image("0" * 64, 80)):
+            with self.assertRaises(Stopped):
+                request()
+        self.assertEqual(len(seen), 1)
 
     def test_a_command_is_one_post_with_the_bearer_token(self):
         client, seen = self.client(200, b'{"ok": true}')

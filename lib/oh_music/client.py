@@ -42,6 +42,10 @@ class Unauthorized(Exception):
     """Music Assistant refused thermite's token."""
 
 
+class Stopped(Exception):
+    """The client's stop event is set: no request is made."""
+
+
 class Failed(Exception):
     """Music Assistant refused or failed a command. code is its HTTP status;
     its text is never kept."""
@@ -53,11 +57,13 @@ class Failed(Exception):
 
 class Client:
     """One connection pool to Music Assistant on loopback. token is thermite's
-    bearer token; without one only info(), setup() and image() work.
-    transport is the tests' seam (httpx.MockTransport)."""
+    bearer token; without one only info(), has_user(), login(), setup() and
+    image() work. Once stop (a threading.Event) is set, every request is
+    Stopped before it is made. transport is the tests' seam
+    (httpx.MockTransport)."""
 
     def __init__(self, port, token=None, *, timeout=TIMEOUT, transport=None):
-        self.port, self.token = port, token
+        self.port, self.token, self.stop = port, token, None
         self._http = httpx.Client(base_url=f"http://{HOST}:{port}", timeout=timeout, trust_env=False,
                                   follow_redirects=False, transport=transport)
 
@@ -71,6 +77,8 @@ class Client:
         self.close()
 
     def _request(self, method, path, limit, timeout=None, **options):
+        if self.stop is not None and self.stop.is_set():
+            raise Stopped("Stopping")
         if timeout is not None:
             options["timeout"] = timeout
         try:

@@ -56,7 +56,7 @@ from oh_access import AccessError
 from oh_access.files import json_private, read_private
 
 from . import MEDIA
-from .client import SLOW, Client, Failed, NoUser, Unauthorized, Unavailable
+from .client import SLOW, Client, Failed, NoUser, Stopped, Unauthorized, Unavailable
 
 LOG = logging.getLogger(__name__)
 #: The private file in the gateway's state that holds the claim.
@@ -226,6 +226,8 @@ class Provisioner:
         not run."""
         # A provider's setup flow loads the provider before it answers.
         with self.connect(self.spec["port"], timeout=SLOW) as client:
+            # Checked before each request: a stopping worker waits for the one in flight at most.
+            client.stop = self.stop
             info = client.info()
             if info.get("status") != "running":
                 raise Unavailable("Music Assistant is starting")
@@ -351,11 +353,9 @@ class Provisioner:
         for part, apply in (("player providers", self.players), ("speaker addresses", self.discovery),
                             ("libraries", self.libraries), ("unwanted providers", self.unwanted),
                             ("remote access", self.remote_access), ("onboarding", self.onboarding)):
-            if self.stop is not None and self.stop.is_set():
-                break
             try:
                 changed += apply(client, info)
-            except Unavailable:
+            except (Unavailable, Stopped):
                 raise
             except Exception as error:
                 LOG.warning("Music Assistant: could not reconcile its %s (%s); trying again at the next reconcile.",
@@ -491,6 +491,8 @@ def run(state, spec, stop, *, poll=POLL, every=EVERY, connect=Client):
     while not stop.is_set():
         try:
             provisioner.step()
+        except Stopped:
+            break
         except Unavailable:
             provisioner.report("unavailable")
         except Exception as error:
