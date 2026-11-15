@@ -600,7 +600,8 @@ class Music:
     def group(self, user, speaker, members, *, origin=None):
         """Join members to the speaker's group, as its leader; which joined and
         which Music Assistant left out (a speaker it cannot group with this
-        one, or one it has no player for), read back. Every speaker whose
+        one, or one it has no player for), read back, and which were asked
+        for though no read-back answered (pending). Every speaker whose
         group this changes is involved: the speaker's group, and each
         member's, which it leaves."""
         self.known(speaker)
@@ -624,16 +625,21 @@ class Music:
         with self.record(user, origin, speaker, "group", ",".join(members)):
             known = self.guarded(user, "group", ",".join(members), plan)
         joined = self.settled(speaker, known)
+        if joined is None:
+            # Asked for and accepted, but no read answered: whether each joined is not known.
+            return {"accepted": True, "speaker": speaker, "joined": [],
+                    "refused": [member for member in members if member not in known],
+                    "pending": [member for member in members if member in known]}
         return {"accepted": True, "speaker": speaker, "joined": [member for member in members if member in joined],
-                "refused": [member for member in members if member not in joined]}
+                "refused": [member for member in members if member not in joined], "pending": []}
 
     def settled(self, speaker, wanted):
         """The speakers in the speaker's group once every wanted one is, or
         when GROUP_SETTLE seconds have passed, each read included: Music
         Assistant drops a member it cannot group without an error. A read
-        that fails answers the members last read: the command was sent and
-        accepted."""
-        until, members = self.clock() + self.settle, set()
+        that fails answers the members last read (the command was sent and
+        accepted), None when none was read."""
+        until, members = self.clock() + self.settle, None
         while True:
             try:
                 players = self.players(min(TIMEOUT, max(until - self.clock(), 0.5)))

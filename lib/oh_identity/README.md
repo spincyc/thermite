@@ -508,7 +508,7 @@ Routes (`<speaker>` is a contract speaker ID):
 | POST `/api/v1/music/<speaker>/play` `{ref, option?}` | 202 `{accepted, speaker, action, queue}` |
 | POST `/api/v1/music/<speaker>/transport` `{action, value?}` | 202 `{accepted, speaker, action, queue}` |
 | POST `/api/v1/music/<speaker>/volume` `{level}` or `{group_level}` | 202 `{accepted, speaker, action, level}` |
-| POST `/api/v1/music/<speaker>/group` `{members}` | 200 `{accepted, speaker, joined, refused}` |
+| POST `/api/v1/music/<speaker>/group` `{members}` | 200 `{accepted, speaker, joined, refused, pending}` |
 | POST `/api/v1/music/<speaker>/ungroup` `{}` | 202 `{accepted, speaker, action}` |
 | GET `/api/v1/music/art/<id>?size=` | the cover as JPEG or PNG |
 | GET `/api/v1/music/tidal`, POST `…/tidal/start`, `…/tidal/finish` `{}` | Admin: `{signed_in, sign_in}` |
@@ -550,7 +550,9 @@ to join the members and reads the group back for up to 3 seconds: Music
 Assistant drops a member it cannot group (a WiiM without AirPlay with a
 Sonos) without an error, so `refused` lists it, as it does a speaker with no
 available player. A read-back that fails answers what the last one read:
-the members were asked for and accepted.
+the members were asked for and accepted. When none answered, whether each
+joined is not known: those asked for are `pending`, neither joined nor
+refused (`pending` is otherwise empty).
 
 Commands keep a device command's rules (`RuntimeAdapter.device_guard`,
 which `dispatch_device` uses too): any principal sends them; each routed

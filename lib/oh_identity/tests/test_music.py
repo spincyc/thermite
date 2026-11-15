@@ -292,7 +292,7 @@ class Gateway(Stand_in, Requests, TestCase):
         response = self.post(f"/api/v1/music/{AMP}/group", {"members": [MINI, WIIM]})
         # The Amp Pro has no AirPlay: Music Assistant drops it from a Sonos's group without an error.
         self.assertEqual((response.status_code, response.json()),
-                         (200, {"accepted": True, "speaker": AMP, "joined": [MINI], "refused": [WIIM]}))
+                         (200, {"accepted": True, "speaker": AMP, "joined": [MINI], "refused": [WIIM], "pending": []}))
         speakers = self.speakers()
         self.assertEqual(speakers[AMP]["group"], {"leader": AMP, "members": [AMP, MINI], "volume": 20})
         self.assertEqual(speakers[MINI]["group"], speakers[AMP]["group"])
@@ -316,10 +316,12 @@ class Gateway(Stand_in, Requests, TestCase):
     def test_a_group_of_wiims_and_a_member_that_is_not_there(self):
         self.sim.players[self.player_id(MINI)]["available"] = False
         response = self.post(f"/api/v1/music/{WIIM}/group", {"members": [MINI]})
-        self.assertEqual(response.json(), {"accepted": True, "speaker": WIIM, "joined": [], "refused": [MINI]})
+        self.assertEqual(response.json(), {"accepted": True, "speaker": WIIM, "joined": [], "refused": [MINI],
+                                           "pending": []})
         self.sim.players[self.player_id(MINI)]["available"] = True
         response = self.post(f"/api/v1/music/{WIIM}/group", {"members": [MINI]})
-        self.assertEqual(response.json(), {"accepted": True, "speaker": WIIM, "joined": [MINI], "refused": []})
+        self.assertEqual(response.json(), {"accepted": True, "speaker": WIIM, "joined": [MINI], "refused": [],
+                                           "pending": []})
         for members in ([], [WIIM], [MINI, MINI], "x", [7]):
             self.assertEqual(self.post(f"/api/v1/music/{WIIM}/group", {"members": members}).json(),
                              {"error": "invalid_command"}, members)
@@ -452,20 +454,30 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual([(command, timeout) for command, timeout in sent[reads:] if command.startswith("player_queues/")],
                          [("player_queues/get", SLOW), ("player_queues/items", SLOW)])
 
-    def test_a_group_read_back_that_fails_answers_the_members_it_last_read(self):
-        call, sent = music.Music.call, []
+    def test_a_group_read_back_that_fails_answers_what_it_last_read_or_pending(self):
+        call, sent, reads = music.Music.call, [], [1]
 
         def failing(music_, command, timeout=None, /, **args):
             sent.append(command)
             after = sent[sent.index("players/cmd/set_members") + 1:] if "players/cmd/set_members" in sent else []
-            if after.count("players/all") > 1:
+            if after.count("players/all") > reads[0]:
                 raise Problem("music_unavailable", 503)
             return call(music_, command, timeout, **args)
+        wiim = self.player_id(WIIM)
         # The Amp Pro has no AirPlay: Music Assistant drops it from a Sonos's group, so the read-back waits for it.
         with patch.object(music.Music, "call", failing):
             response = self.post(f"/api/v1/music/{AMP}/group", {"members": [MINI, WIIM]})
-        self.assertEqual((response.status_code, response.json()),
-                         (200, {"accepted": True, "speaker": AMP, "joined": [MINI], "refused": [WIIM]}))
+            self.assertEqual((response.status_code, response.json()),
+                             (200, {"accepted": True, "speaker": AMP, "joined": [MINI], "refused": [WIIM],
+                                    "pending": []}))
+            # No read-back answers at all: neither joined nor refused, but pending; one never sent is refused.
+            sent.clear()
+            self.post(f"/api/v1/music/{AMP}/ungroup", {})
+            self.sim.players[wiim]["available"] = False
+            reads[0] = 0
+            response = self.post(f"/api/v1/music/{AMP}/group", {"members": [MINI, WIIM]})
+        self.assertEqual(response.json(), {"accepted": True, "speaker": AMP, "joined": [], "refused": [WIIM],
+                                           "pending": [MINI]})
 
     def test_a_speaker_called_art_keeps_its_routes(self):
         from django.urls import resolve

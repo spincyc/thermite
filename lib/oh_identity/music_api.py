@@ -107,7 +107,8 @@ def volume(request, speaker):
 @api(methods=("POST",))
 def group(request, speaker):
     """Group speakers under this one; joined and refused are read back, so
-    the answer is the outcome, not an acceptance."""
+    the answer is the outcome, not an acceptance, unless no read-back
+    answered: then the members asked for are pending."""
     from .trail import origin
     data = command_body(request, ("members",), ("members",))
     return JsonResponse(music_for(get_adapter()).group(request.identity_user, speaker, data["members"],
