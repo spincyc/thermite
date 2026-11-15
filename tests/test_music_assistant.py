@@ -737,6 +737,14 @@ class StandIn(Site):
     def player(self, speaker):
         return self.client.call("players/get", player_id=self.ids[speaker])
 
+    def test_a_refusal_is_spent_only_on_a_request_with_a_token(self):
+        self.sim.refusing = 1
+        with Client(self.port) as anonymous:
+            self.assertTrue(anonymous.has_user())
+        with self.assertRaises(Unauthorized):
+            self.client.call("players/all")
+        self.assertTrue(self.client.call("players/all"))
+
     def test_a_wiim_without_airplay_is_dropped_from_a_sonos_group_without_an_error(self):
         self.client.call("players/cmd/set_members", target_player=self.ids[SONOS],
                          player_ids_to_add=[self.ids[AMP_PRO], self.ids[MINI]])

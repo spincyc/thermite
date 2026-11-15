@@ -981,7 +981,8 @@ class Server:
                     return self.answer(400, b"Invalid request", "text/plain")
                 token = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
                 with sim.lock:
-                    refused = sim.refusing > 0
+                    # Only a request with a token is refused as a failed authentication.
+                    refused = bool(token) and sim.refusing > 0
                     sim.refusing -= refused
                     if refused or not sim.authorized(token):
                         return self.answer(401, b"Authentication required", "text/plain",
