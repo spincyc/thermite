@@ -123,5 +123,16 @@
         "linux/arm64": "sha256:664b40a8728a949f019dfada19ed645594b4cf79a65b27cff23649ca2785905e"
       }
     }
+  },
+  "music_assistant": {
+    "version": "2.10.12",
+    "image": {
+      "ref": "ghcr.io/music-assistant/server:2.10.12",
+      "digest": "sha256:7eb272e2e13da9a5d61dcbc4e1fcfc734776222b23f2825a9b5690d4427cfafb",
+      "platforms": {
+        "linux/amd64": "sha256:f6bedec4f610735f504ff209201fc7340542a7283b6a4043dfaa72f14dd93a97",
+        "linux/arm64": "sha256:f4eea91ce45bbfdd2b37749f6259ba5c8bbb85754a88ed03b5391c8c67a6a1e7"
+      }
+    }
   }
 }

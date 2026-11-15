@@ -1,11 +1,12 @@
 # Thermite listening ports
 
-Thermite's default TCP listeners occupy **13600–13626**: the optional
+Thermite's default TCP listeners occupy **13600–13628**: the optional
 plain-HTTP Guest controls on **13600**, the HTTPS application on **13601**,
 and every other listener after them, in the order below. `lib/oh_ports.py`
 owns the allocation.
 `instance/host.yaml` keeps the site's native HTTP/HTTPS choices and optional
-`gateway: port`, `metrics: <service>_port` and `guest_http: port` overrides.
+`gateway: port`, `metrics: <service>_port`, `music: port`/`stream_port` and
+`guest_http: port` overrides.
 Generation rejects invalid values and
 collisions, including collisions with the sandbox, boot test and docs preview.
 Explicit overrides may leave the default range, and a default an override
@@ -48,6 +49,8 @@ fails before starting them starts `thermite.target`, and so every service.
 | 13624 | Native Karaf shutdown control | 127.0.0.1 only |
 | 13625 | Sandbox Karaf shutdown control | 127.0.0.1 only |
 | 13626 | Boot-check Karaf shutdown control | 127.0.0.1 only |
+| 13627 | Music Assistant API (`music:` hosts only) | 127.0.0.1 only; the gateway is its one client |
+| 13628 | Music Assistant audio streams (`music:` hosts only) | Every address: the speakers fetch what they play from it |
 
 HTTPS is the application entry point whether authentication is on or off.
 [Moving the HTTPS application](#moving-the-https-application) explains its
@@ -142,7 +145,7 @@ ports, the usual application defaults displaced above, and Kubernetes' default
 [Prysm's QUIC listener](https://github.com/OffchainLabs/prysm/discussions/14728)
 and the [AgentTeams dashboard](https://github.com/agentteams-group/agentteams-dashboard).
 Targeted searches found no known open-source default allocation for
-13600–13625, the run first chosen; 13626, added later, lies in the same
+13600–13625, the run first chosen; 13626–13628, added later, lie in the same
 unassigned block. This is a local convention,
 not an IANA reservation or a promise that no other program uses those
 numbers. Startup preconditions still check whether required ports are
@@ -153,3 +156,9 @@ Device destinations keep their protocol ports: receiver HTTP 8080, Sonos
 protocols do not move. Discovery multicast/broadcast ports (including mDNS,
 SSDP and vendor discovery), dynamically negotiated device/media sockets and test fixture
 servers bound to port 0 remain protocol or operating-system allocations.
+
+Music Assistant, on a `music:` host, also opens listeners of its own that
+thermite does not allocate: Sendspin on TCP 8927 (fixed), AirPlay remote
+control (DACP) on a random TCP port from 39831–49831, a UPnP event port per
+WiiM chosen by the operating system, and mDNS. They serve the speakers and
+Music Assistant's own players on the LAN.

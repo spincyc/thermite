@@ -24,6 +24,7 @@ sys.path.insert(0, str(AREA / "lib"))
 
 import oh_deploy as deploy  # noqa: E402
 import oh_logging  # noqa: E402
+import oh_music  # noqa: E402
 import oh_units  # noqa: E402
 import oh_sandbox as sandbox_lib  # noqa: E402
 from oh_cli import sandbox as sandbox_cli  # noqa: E402
@@ -1318,8 +1319,23 @@ class HostFacts(unittest.TestCase):
             deploy.validate_host(["root"])
         self.refused("unknown metrics setting retension", metrics={"retension": "30d"})
         # The installation root replaced state_root, which has no other meaning now.
-        self.refused(r"unknown setting state_root \(allowed: gateway, gid, guest_http, http_port, https_port, metrics, root, timezone, uid\)",
+        self.refused(r"unknown setting state_root \(allowed: gateway, gid, guest_http, http_port, https_port, metrics, music, root, timezone, uid\)",
                      state_root="/srv/thermite")
+
+    def test_music_names_its_libraries_and_refuses_what_a_unit_cannot_hold(self):
+        self.assertEqual(oh_music.settings({**HOST, "music": None}), {"libraries": {}})
+        self.assertIsNone(oh_music.settings(HOST))
+        self.assertEqual(deploy.validate_host({**HOST, "music": {"libraries": {"flac": "/mnt/music/flac"}}})
+                         ["music"], {"libraries": {"flac": "/mnt/music/flac"}})
+        self.refused("unknown music setting librarys", music={"librarys": {}})
+        self.refused("music: must be a mapping", music=["flac"])
+        for name, path in (("Flac", "/mnt/flac"), ("1flac", "/mnt/flac"), ("flac", "mnt/flac"),
+                           ("flac", "/mnt/My Music"), ("flac", "/mnt/flac/"), ("flac", "/mnt/../etc"),
+                           ("flac", "/mnt/a:b"), ("flac", "/mnt/%h")):
+            with self.subTest(name=name, path=path):
+                self.refused("music.libraries", music={"libraries": {name: path}})
+        self.refused("same directory", music={"libraries": {"a": "/mnt/flac", "b": "/mnt/flac"}})
+        self.refused("collides", music={"port": HOST["http_port"]})
 
     def test_values_cannot_inject_unit_directives(self):
         for zone in ("Etc/UTC\nExecStartPre=/bin/true", "Etc/UTC ", "../etc/passwd", "Etc/%n", 'Etc/"UTC"', 5):

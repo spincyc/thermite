@@ -23,7 +23,7 @@ NAMES = (
     "guest_http", "access", "http", "https", "karaf", "lsp", "helper", "prometheus", "node_exporter",
     "blackbox", "exporter", "grafana", "alertmanager", "ntfy", "notifications", "callbacks",
     "sandbox_http", "sandbox_https", "sandbox_karaf", "boot_http", "boot_https", "boot_karaf", "docs", "preview",
-    "native_shutdown", "sandbox_shutdown", "boot_shutdown",
+    "native_shutdown", "sandbox_shutdown", "boot_shutdown", "music", "music_stream",
 )
 DEFAULTS = MappingProxyType({name: BASE + offset for offset, name in enumerate(NAMES)})
 ACCESS_PORT = DEFAULTS["access"]
@@ -39,6 +39,8 @@ GUEST_HTTP_PORT = DEFAULTS["guest_http"]
 SANDBOX_URL = f"http://127.0.0.1:{DEFAULTS['sandbox_http']}"
 NATIVE_URL = f"http://127.0.0.1:{HTTP_PORT}"
 METRICS = ("prometheus", "node_exporter", "blackbox", "exporter", "grafana", "alertmanager", "ntfy", "notifications")
+#: Music Assistant's listeners (oh_music), by host.yaml's music: key that moves each.
+MUSIC = {"music": "port", "music_stream": "stream_port"}
 SHELL_CFG = Path("etc/org.apache.karaf.shell.cfg")
 CUSTOM_PROPERTIES = Path("etc/custom.properties")
 SHUTDOWN_KEYS = frozenset(("karaf.shutdown.port", "karaf.shutdown.host"))
@@ -88,6 +90,11 @@ def effective(host: dict | None = None) -> dict[str, int]:
         raise ValueError("metrics: must be a mapping")
     for name in METRICS:
         result[name] = metrics.get(name + "_port", result[name])
+    music = host.get("music") or {}
+    if not isinstance(music, dict):
+        raise ValueError("music: must be a mapping")
+    for name, key in MUSIC.items():
+        result[name] = music.get(key, result[name])
     guest = host.get("guest_http") or {}
     if not isinstance(guest, dict):
         raise ValueError("guest_http: must be a mapping")
