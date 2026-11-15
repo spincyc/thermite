@@ -2292,6 +2292,8 @@ actions:
     prune               delete saved policies for rooms the compiled house no longer has
     audit               read the security audit (logins, tokens, accounts, locks, the
                         security switch)
+    music-tidal         sign the site&#x27;s Music Assistant into TIDAL: show a code to
+                        approve at link.tidal.com and wait
     callbacks           run the explicitly configured plaintext UPnP NOTIFY listener
     login               log this terminal into a site
     logout              revoke this terminal&#x27;s site credential
@@ -2322,6 +2324,8 @@ examples:
                                     delete saved policies for rooms the house no longer has
   thermite access audit --config /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login
                                     read the security audit as the service account
+  thermite access music-tidal --config /srv/thermite/access/releases/RELEASE/config.json
+                                    sign Music Assistant into TIDAL as the service account
 </pre>
 <details id="access-bootstrap"><summary><code>thermite access bootstrap</code></summary><pre class="help">usage: thermite access bootstrap [-h] --config CONFIG --user USER
 
@@ -2464,6 +2468,23 @@ switches every verb takes:
 examples:
   thermite access audit --config /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login
                                     read the security audit as the service account
+</pre></details>
+<details id="access-music-tidal"><summary><code>thermite access music-tidal</code></summary><pre class="help">usage: thermite access music-tidal [-h] --config CONFIG
+
+Sign the site&#x27;s Music Assistant into TIDAL: show a code to approve at link.tidal.com and wait.
+
+options:
+  -h, --help       show this help message and exit
+  --config CONFIG  private site service configuration
+
+switches every verb takes:
+  -q, --quiet      print only errors
+  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
+  --no-color       no color in what it prints (as NO_COLOR=1 does)
+
+examples:
+  thermite access music-tidal --config /srv/thermite/access/releases/RELEASE/config.json
+                                    sign Music Assistant into TIDAL as the service account
 </pre></details>
 <details id="access-callbacks"><summary><code>thermite access callbacks</code></summary><pre class="help">usage: thermite access callbacks [-h] --config CONFIG
 

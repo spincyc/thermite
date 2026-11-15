@@ -10,7 +10,9 @@ from pathlib import Path
 AREA = Path(__file__).resolve().parents[1]
 
 #: Modules only the gateway's release runs, in its own environment.
-GATEWAY_ONLY = ("oh_access.metrics", "oh_access.worker", "oh_identity")
+#: oh_music is host settings the owner reads; its modules drive Music Assistant
+#: from the gateway and its worker.
+GATEWAY_ONLY = ("oh_access.metrics", "oh_access.worker", "oh_identity", "oh_music.")
 
 PROBE = r"""
 import importlib, importlib.abc, importlib.machinery, sys, sysconfig

@@ -34,7 +34,8 @@ EXAMPLES = (("thermite access login --url https://thermite.example:13601 --user 
             ("thermite access serve --config /srv/thermite/access/releases/RELEASE/config.json", "serve the compiled site over verified TLS"),
             ("thermite access worker --config /srv/thermite/access/releases/RELEASE/config.json", "run the single supervised room-policy worker"),
             ("thermite access prune --config /srv/thermite/access/releases/RELEASE/config.json", "delete saved policies for rooms the house no longer has"),
-            ("thermite access audit --config /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login", "read the security audit as the service account"))
+            ("thermite access audit --config /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login", "read the security audit as the service account"),
+            ("thermite access music-tidal --config /srv/thermite/access/releases/RELEASE/config.json", "sign Music Assistant into TIDAL as the service account"))
 
 
 def hidden_password(prompt="Password: ", *, confirm=False):
@@ -98,6 +99,9 @@ def main(argv=None):
     sub.add_argument("--since", metavar="WHEN", help="only rows since 30m, 12h, 7d, or an ISO date or time (site timezone)")
     sub.add_argument("--action", action="append", default=[], help="only this action or family, such as login, token or room.lock (repeatable)")
     oh_cli.add_json(sub)
+    sub = oh_cli.action(commands, "music-tidal", "sign the site's Music Assistant into TIDAL: show a code to approve at "
+                        "link.tidal.com and wait", examples=[example for example in EXAMPLES if " music-tidal " in example[0]])
+    sub.add_argument("--config", required=True, type=Path, help="private site service configuration")
     sub = oh_cli.action(commands, "callbacks", "run the explicitly configured plaintext UPnP NOTIFY listener", examples=[("thermite access callbacks --config /srv/thermite/access/releases/RELEASE/callbacks.json", "run only verified callback paths and peers")])
     sub.add_argument("--config", required=True, type=Path, help="private mode0600 callback-only configuration")
     for name in TERMINAL:
@@ -172,6 +176,11 @@ def main(argv=None):
         elif args.command == "prune":
             from oh_access.service import prune_policies
             result = prune_policies(args.config)
+        elif args.command == "music-tidal":
+            from oh_access.files import require_service_account
+            require_service_account()
+            from oh_music import tidal
+            return tidal.sign_in(*tidal.site(args.config))
         elif args.command == "audit":
             from oh_access import audit
             result = audit.rows(args.config, after=args.since, actions=args.action)
