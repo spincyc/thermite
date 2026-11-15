@@ -63,11 +63,16 @@ function session(time, backend, extra = {}) {
   return music;
 }
 
-// An access client as music-session.js reads one: locks by room, a Guest or not.
+// An access client as music-session.js reads one: locks by room, a Guest or
+// not; tell(type) notifies its listeners as access.js does.
 function fakeAccess({locked = [], guest = false, guestText = true, admin = false} = {}) {
-  return {native: false, mock: false, locked, canEdit: () => admin, current: () => ({is_guest: guest}), security: () => ({guest_text: guestText}),
-          lockSummary: (room) => (locked.includes(room) ? {locked: true} : null), subscribe: () => () => {}, ready: () => Promise.resolve(),
-          watchLocks() {}};
+  const listeners = new Set();
+  const access = {native: false, mock: false, locked, guest, guestText, canEdit: () => admin,
+    current: () => ({is_guest: access.guest}), security: () => ({guest_text: access.guestText}),
+    lockSummary: (room) => (locked.includes(room) ? {locked: true} : null), ready: () => Promise.resolve(), watchLocks() {},
+    subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+    tell: (type) => listeners.forEach((listener) => listener({type}))};
+  return access;
 }
 
 const blocks = (music) => music.speakers().map((block) => ({group: block.group, leader: block.leader, line: block.line,
@@ -376,6 +381,86 @@ async function guests(out) {
   music.stop();
 }
 
+// Left and opened again while the library read, or a Guest who signs in:
+// what it had not finished is read again.
+async function resuming(out) {
+  let time = clock(), backend = mock(time), music = session(time, backend);
+  const searches = () => backend.reads.filter((read) => read[0] === 'search').map((read) => read[1]);
+  const shown = () => music.library().search.sections.map((section) => [section.title, names(section.items)]);
+  music.start();
+  await time.tick(100);
+  music.setTab('search');
+  // Typing still to settle, and a search on its way, when the page sleeps.
+  music.setQuery('harbour');
+  await time.tick(100);
+  music.stop();
+  music.start();
+  await time.tick(200);
+  out.debounced = [searches(), music.library().search.state, shown().length > 0];
+  music.setQuery('lantern');
+  music.searchNow();
+  await time.tick(10);
+  music.stop();
+  music.start();
+  await time.tick(200);
+  out.searching = [searches(), music.library().search.state, shown()];
+  // An answer to an earlier query never shows under the next.
+  music.setQuery('');
+  music.setQuery('harbour');
+  music.searchNow();
+  await time.tick(10);
+  music.setQuery('signal');
+  await time.tick(100);
+  out.late = [music.library().search.state, shown()];
+  await time.tick(RemoteMusic.SEARCH_MS + 100);
+  out.late.push(searches().slice(-2), music.library().search.state, shown().length > 0);
+  // A folder on its way.
+  music.setTab('browse');
+  await time.tick(100);
+  music.open(music.library().browse.items[0]);
+  await time.tick(10);
+  out.folder = [music.library().browse.state];
+  music.stop();
+  music.start();
+  await time.tick(200);
+  const browse = music.library().browse;
+  out.folder.push(browse.path, browse.state, browse.items.length > 0);
+  music.stop();
+  // A Guest refused, who signs in: the next visit, and access saying so, read again.
+  time = clock();
+  backend = mock(time, {guest: true});
+  let access = fakeAccess({guest: true});
+  music = session(time, backend, {access});
+  music.start();
+  await time.tick(100);
+  music.setTab('search');
+  music.setQuery('harbour');
+  await time.tick(RemoteMusic.SEARCH_MS + 100);
+  out.guest = [music.library().blind];
+  backend.guest = false;
+  access.guest = false;
+  music.stop();
+  music.start();
+  await time.tick(200);
+  out.guest.push(music.library().blind, music.library().search.state);
+  music.stop();
+  time = clock();
+  backend = mock(time, {guest: true});
+  access = fakeAccess({guest: true, guestText: false});
+  music = session(time, backend, {access});
+  music.start();
+  await time.tick(100);
+  music.setTab('browse');
+  await time.tick(100);
+  out.told = [music.library().blind, backend.reads.filter((read) => read[0] === 'browse').length];
+  backend.guest = false;
+  access.guest = false;
+  access.tell('change');
+  await time.tick(100);
+  out.told.push(music.library().blind, backend.reads.filter((read) => read[0] === 'browse').length, music.library().browse.state);
+  music.stop();
+}
+
 async function absent(out) {
   let time = clock(), backend = mock(time, {configured: false}), music = session(time, backend);
   music.start();
@@ -608,7 +693,7 @@ async function client(out) {
 
 (async () => {
   const report = {};
-  for (const [name, run] of Object.entries({overview, transport, library, grouping, locks, involved, guests, absent, unavailable, tidal, gateway, client})) {
+  for (const [name, run] of Object.entries({overview, transport, library, resuming, grouping, locks, involved, guests, absent, unavailable, tidal, gateway, client})) {
     report[name] = {};
     await run(report[name]);
   }

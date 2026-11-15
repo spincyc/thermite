@@ -177,6 +177,19 @@ class MusicPage(unittest.TestCase):
                                           "result": None})
         self.assertEqual(out["leave"], {"sent": [], "toast": ["Den", "Locked by Kitchen", "bad"]})
 
+    def test_a_read_cut_short_or_refused_is_read_again(self):
+        out = self.report["resuming"]
+        # Left while the typing settled, or while a search was on its way: opened again, it searches.
+        self.assertEqual(out["debounced"], [["harbour"], "done", True])
+        self.assertEqual(out["searching"][:2], [["harbour", "lantern", "lantern"], "done"])
+        self.assertIn(["Artists", ["The Lanterns"]], out["searching"][2])
+        # The answer to harbour comes after signal is typed: it never shows.
+        self.assertEqual(out["late"], ["idle", [], ["harbour", "signal"], "done", True])
+        self.assertEqual(out["folder"], ["reading", ["Library", "NAS"], "done", True])
+        # Refused as a Guest, then signed in: the next visit, or access saying so, reads again.
+        self.assertEqual(out["guest"], [BLIND, None, "done"])
+        self.assertEqual(out["told"], [BLIND, 0, None, 1, "done"])
+
     def test_a_guest_without_free_text_sees_whether_it_plays_but_no_library(self):
         out = self.report["guests"]
         self.assertEqual((out["view"]["title"], out["view"]["now"], out["view"]["playLabel"]), (None, "Playing", "Pause"))

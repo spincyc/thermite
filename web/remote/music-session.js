@@ -613,6 +613,21 @@
       return blind || Boolean(user && user.is_guest && security && security.guest_text === false);
     }
 
+    // What the library shows and has not finished reading, read (again).
+    // Started afresh, that is also what was under way when it stopped (the
+    // answers dropped) and a search still waiting for the typing to stop;
+    // else what was refused or never asked, now that who is signed in, or
+    // what Guests may see, changed.
+    function resume(fresh) {
+      if (blindNow()) return;
+      const unfinished = (state) => (fresh ? state !== "done" : state === "idle" || state === "failed");
+      if (search.query.trim() && !search.timer && unfinished(search.state)) runSearch();
+      const top = browse.stack[browse.stack.length - 1];
+      if (!top && tab === "browse") openRoot();
+      else if (top && unfinished(top.state)) loadBrowse(top.items.length);
+      if (fresh && tab === "queue") loadQueue(0);
+    }
+
     // A library read that a Guest without titles may not make.
     function refused(error) {
       if (error && error.code === "login_required") {
@@ -635,13 +650,12 @@
       search.query = String(text || "").slice(0, 100);
       cancel(search.timer);
       search.timer = 0;
-      if (!search.query.trim()) {
-        search.sequence += 1;
-        Object.assign(search, { state: "idle", answer: null, error: null });
-        changed();
-        return;
-      }
-      search.timer = later(runSearch, SEARCH_MS);
+      // An answer still to come is to an earlier query.
+      search.sequence += 1;
+      search.state = "idle";
+      search.error = null;
+      if (!search.query.trim()) search.answer = null;
+      else search.timer = later(runSearch, SEARCH_MS);
       changed();
     }
 
@@ -687,7 +701,7 @@
     function searchView() {
       const sections = [];
       if (search.answer) {
-        [["track", "Tracks"], ["album", "Albums"], ["artist", "Artists"], ["playlist", "Playlists"]].forEach(([kind, title]) => {
+        KINDS.slice(1).forEach(([kind, title]) => {
           const items = search.answer[kind + "s"] || [];
           if (!items.length) return;
           const shownItems = search.kind ? items : items.slice(0, SECTION);
@@ -706,8 +720,13 @@
       };
     }
 
+    // A folder (or album, artist, playlist) on the browse stack; ref null is the roots.
+    function folder(ref, name) {
+      return { ref: ref, name: name, items: [], total: 0, state: "idle", error: null };
+    }
+
     function openRoot() {
-      browse.stack = [{ ref: null, name: "Library", items: [], total: 0, state: "idle", error: null }];
+      browse.stack = [folder(null, "Library")];
       loadBrowse(0);
     }
 
@@ -738,9 +757,9 @@
       if (tab !== "browse") {
         tab = "browse";
         store.set("music.tab", tab);
-        if (!browse.stack.length) browse.stack = [{ ref: null, name: "Library", items: [], total: 0, state: "idle", error: null }];
+        if (!browse.stack.length) browse.stack = [folder(null, "Library")];
       }
-      browse.stack.push({ ref: item.ref, name: item.name || "Untitled", items: [], total: 0, state: "idle", error: null });
+      browse.stack.push(folder(item.ref, item.name || "Untitled"));
       return loadBrowse(0);
     }
 
@@ -993,6 +1012,8 @@
       reading = true;
       absent = failure = null;
       connected = null;
+      // Refused as a Guest last time; signed in, maybe, since.
+      blind = false;
       if (find(id)) current = id;
       unsubscribe.push(backend.subscribe((event) => {
         if (life !== started) return;
@@ -1015,7 +1036,15 @@
         } else if (event.type === "connection") { connected = event.connected; changed(); }
       }));
       if (access) {
-        unsubscribe.push(access.subscribe((event) => { if (event.type === "locks" || event.type === "policy" || event.type === "change") changed(); }));
+        unsubscribe.push(access.subscribe((event) => {
+          if (!["locks", "policy", "change", "security"].includes(event.type)) return;
+          // Who is signed in, or what Guests may see, changed: ask again what was refused.
+          if (event.type === "change" || event.type === "security") {
+            blind = false;
+            if (music) resume(false);
+          }
+          changed();
+        }));
         // Locks are read only once access knows accounts are on (as home.js).
         if (polls) Promise.resolve(access.ready()).then(() => { if (life === started) access.watchLocks(true); }).catch(() => {});
       }
@@ -1025,8 +1054,7 @@
         if (id && answer && Array.isArray(answer.speakers) && answer.speakers.some((speaker) => speaker.id === id)) current = id;
         apply(answer);
         backend.open();
-        if (tab === "browse" && !browse.stack.length) openRoot();
-        if (tab === "queue") loadQueue(0);
+        resume(true);
       }, (error) => {
         if (life !== started) return;
         reading = false;
