@@ -83,17 +83,17 @@ def show_metrics(host: dict, installed: dict[str, Path] | None = None, report: d
 
 def show_music(host: dict, report: dict, say, problems: list[str]) -> None:
     """Music Assistant, on a host with music:: whether it runs, with its API
-    on loopback alone, and its streams answer."""
-    if oh_music.settings(host) is None:
+    on loopback alone, and its streams answer. Unlike the metrics, which
+    only watch, it is a problem when it does not: the house plays through
+    it, as it is run through openHAB."""
+    if not oh_music.enabled(host):
         return
     if not deploy.music_installed():
         report["music"] = None
         say("music    not installed; thermite upgrade installs it")
         return
     health = deploy.music_health(host)
-    report["music"] = {"api": health.api, "status": health.status, "version": health.version,
-                       "loopback": health.loopback, "streams": health.streams,
-                       "streams_ok": health.streams_status == 200}
+    report["music"] = health.report()
     if not health.ok:
         problems.append("music: " + health.describe())
     say(f"music    {health.describe()}")

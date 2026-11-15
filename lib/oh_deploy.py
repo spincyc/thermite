@@ -2458,6 +2458,11 @@ class MusicHealth:
     def ok(self) -> bool:
         return self.status == "running" and self.loopback and self.streams_status == 200
 
+    def report(self) -> dict:
+        """What status and health report of it, as JSON."""
+        return {"api": self.api, "status": self.status, "version": self.version, "loopback": self.loopback,
+                "streams": self.streams, "streams_ok": self.streams_status == 200}
+
     def describe(self) -> str:
         name = f"Music Assistant {self.version}" if self.version else "Music Assistant"
         api = f"{name} {self.api} " + ("not answering" if self.status is None else self.status)

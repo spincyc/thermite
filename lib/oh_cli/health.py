@@ -230,14 +230,12 @@ def metrics_report(host: dict, installed: bool | None = None, health=None) -> di
 
 def music_report(host: dict, installed: bool | None = None, health=None) -> dict | None:
     """Music Assistant, on a host with music:; only an installed one can fail."""
-    if oh_music.settings(host) is None:
+    if not oh_music.enabled(host):
         return None
     if not (deploy.music_installed() if installed is None else installed):
         return {"installed": False, "ok": True, "summary": "not installed yet; thermite upgrade installs it"}
     health = health or deploy.music_health(host)
-    return {"installed": True, "ok": health.ok, "summary": health.describe(), "api": health.api,
-            "status": health.status, "version": health.version, "loopback": health.loopback,
-            "streams": health.streams, "streams_ok": health.streams_status == 200}
+    return {"installed": True, "ok": health.ok, "summary": health.describe(), **health.report()}
 
 
 def print_human(report: dict) -> None:
