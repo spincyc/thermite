@@ -182,7 +182,7 @@
     const marks = track ? [track.service, track.format, track.duration].filter(Boolean) : [];
     if (stale(badges, marks)) {
       badges.textContent = "";
-      marks.forEach((text) => badges.appendChild(node("span", { class: "badge" }, text)));
+      marks.forEach((text) => badges.appendChild(node("span", { class: "badge badge--quiet" }, text)));
       badges.hidden = !marks.length;
     }
     const transport = $("[data-transport]");

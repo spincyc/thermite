@@ -1941,6 +1941,163 @@ kbd {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), inset 4px 0 0 var(--bad);
 }
 
+/* ---- what plays: Audio's and Music's ------------------------------------ */
+
+.now-card {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border-radius: var(--radius-sheet);
+  background: var(--key-top);
+  box-shadow: var(--key-shadow);
+}
+
+.now-card p {
+  margin: 0;
+  min-width: 0;
+}
+
+.now-card__place {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--accent);
+}
+
+.now-card__model {
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+.now-card__title {
+  font-size: 22px;
+  font-weight: 620;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.now-card[data-playing="false"] .now-card__title {
+  color: var(--ink-muted);
+}
+
+.now-card__line {
+  font-size: 15px;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.now-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-1) !important;
+}
+
+.now-card__transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  margin-top: var(--space-3);
+}
+
+.now-card__transport:empty {
+  display: none;
+}
+
+/* A narrow phone: the transport keys close up. */
+@media (max-width: 359px) {
+  .now-card__transport {
+    gap: var(--space-3);
+  }
+}
+
+/* A key that stays on (mute, power, shuffle, repeat) is lit while it is. */
+.key--toggle[aria-pressed="true"] {
+  color: var(--accent-ink);
+  background: var(--accent);
+  box-shadow: none;
+}
+
+/* A quiet tag: a service, a format, a length, a source. */
+.badge--quiet {
+  padding: 2px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+}
+
+/* A short choice, or the inputs: a row of buttons, one lit. */
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--well);
+  box-shadow: inset 0 0 0 1px var(--panel-border);
+}
+
+.segmented--scroll {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.segmented--scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.segmented__option {
+  flex: 1 0 auto;
+  min-height: var(--tap);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  font-weight: 640;
+  white-space: nowrap;
+  color: var(--key-ink-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--dur-state), color var(--dur-state);
+}
+
+.segmented__option[aria-checked="true"] {
+  color: var(--key-ink);
+  background: var(--key-top);
+  box-shadow: var(--key-shadow);
+}
+
+.segmented__option:focus-visible {
+  outline-offset: -2px;
+}
+
+.setting__select {
+  flex: 0 1 auto;
+  max-width: 60%;
+  min-height: var(--tap);
+  padding: 0 32px 0 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-row);
+  font: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  background:
+    linear-gradient(45deg, transparent 50%, var(--ink-muted) 50%) right 16px center / 6px 6px no-repeat,
+    linear-gradient(-45deg, transparent 50%, var(--ink-muted) 50%) right 11px center / 6px 6px no-repeat,
+    var(--well);
+  -webkit-appearance: none;
+  appearance: none;
+  text-overflow: ellipsis;
+}
+
+/* A change waiting for its read-back pulses (or, without motion, is dimmed). */
+@keyframes pending {
+  to { opacity: 0.55; }
+}
+
 /* ---- tablet and desktop -------------------------------------------------- */
 
 /* The same action/status history as the terminal's bottom pane; hidden by default. */

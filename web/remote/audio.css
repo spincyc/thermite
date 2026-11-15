@@ -1,6 +1,7 @@
 /*
  * The Audio page (audio.html). Loaded after remote.css and built on its
- * tokens, keys, bubbles, fader and toast: one column that fits a phone.
+ * tokens, keys, bubbles, fader, now card, segments and toast: one column
+ * that fits a phone.
  */
 
 .audio-page {
@@ -97,80 +98,6 @@
   opacity: 0.45;
 }
 
-/* ---- what plays ---------------------------------------------------------- */
-
-.now-card {
-  display: grid;
-  gap: var(--space-1);
-  padding: var(--space-4);
-  border-radius: var(--radius-sheet);
-  background: var(--key-top);
-  box-shadow: var(--key-shadow);
-}
-
-.now-card p {
-  margin: 0;
-  min-width: 0;
-}
-
-.now-card__place {
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--accent);
-}
-
-.now-card__model {
-  font-weight: 500;
-  color: var(--ink-muted);
-}
-
-.now-card__title {
-  font-size: 22px;
-  font-weight: 620;
-  letter-spacing: -0.025em;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-}
-
-.now-card[data-playing="false"] .now-card__title {
-  color: var(--ink-muted);
-}
-
-.now-card__line {
-  font-size: 15px;
-  color: var(--ink-muted);
-  overflow-wrap: anywhere;
-}
-
-.now-card__badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: var(--space-1) !important;
-}
-
-.badge {
-  padding: 2px 8px;
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius-pill);
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-muted);
-}
-
-.now-card__transport {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-5);
-  margin-top: var(--space-3);
-}
-
-.now-card__transport:empty {
-  display: none;
-}
-
 /* ---- volume, mute and power ----------------------------------------------- */
 
 .audio__volume {
@@ -186,12 +113,6 @@
 
 .audio__volume .fader[data-pending="true"] .fader__input {
   opacity: 0.8;
-}
-
-.key[aria-pressed="true"] {
-  color: var(--accent-ink);
-  background: var(--accent);
-  box-shadow: none;
 }
 
 .audio__level {
@@ -250,10 +171,6 @@
 
 .setting[data-pending="true"] :is(.switch, .stepper__value, .setting__select, .segmented__option[aria-checked="true"]) {
   animation: pending 0.9s ease-in-out infinite alternate;
-}
-
-@keyframes pending {
-  to { opacity: 0.55; }
 }
 
 /* Without motion a change waiting for its read-back is dimmed, not pulsed. */
@@ -349,71 +266,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* A short choice, or the inputs: a row of buttons, one lit. */
-.segmented {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: var(--radius-pill);
-  background: var(--well);
-  box-shadow: inset 0 0 0 1px var(--panel-border);
-}
-
 .setting--wide .segmented {
   flex: 1 1 100%;
-}
-
-.segmented--scroll {
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.segmented--scroll::-webkit-scrollbar {
-  display: none;
-}
-
-.segmented__option {
-  flex: 1 0 auto;
-  min-height: var(--tap);
-  padding: 0 var(--space-3);
-  border: 0;
-  border-radius: var(--radius-pill);
-  font-size: 13px;
-  font-weight: 640;
-  white-space: nowrap;
-  color: var(--key-ink-muted);
-  background: transparent;
-  cursor: pointer;
-  transition: background var(--dur-state), color var(--dur-state);
-}
-
-.segmented__option[aria-checked="true"] {
-  color: var(--key-ink);
-  background: var(--key-top);
-  box-shadow: var(--key-shadow);
-}
-
-.segmented__option:focus-visible {
-  outline-offset: -2px;
-}
-
-.setting__select {
-  flex: 0 1 auto;
-  max-width: 60%;
-  min-height: var(--tap);
-  padding: 0 32px 0 12px;
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius-row);
-  font: inherit;
-  font-size: 15px;
-  color: var(--ink);
-  background:
-    linear-gradient(45deg, transparent 50%, var(--ink-muted) 50%) right 16px center / 6px 6px no-repeat,
-    linear-gradient(-45deg, transparent 50%, var(--ink-muted) 50%) right 11px center / 6px 6px no-repeat,
-    var(--well);
-  -webkit-appearance: none;
-  appearance: none;
-  text-overflow: ellipsis;
 }
 
 /* ---- about the device ----------------------------------------------------- */
@@ -481,12 +335,8 @@
   font-size: 0.92em;
 }
 
-/* A narrow phone: the transport keys close up. */
+/* A narrow phone: the steppers close up. */
 @media (max-width: 359px) {
-  .now-card__transport {
-    gap: var(--space-3);
-  }
-
   .stepper__value {
     min-width: 3.5em;
   }
