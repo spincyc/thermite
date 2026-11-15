@@ -63,11 +63,12 @@ PROBLEMS = frozenset({
     "invalid_pairing_command", "invalid_password", "invalid_policy", "invalid_sdp", "invalid_security",
     "invalid_setup_code", "invalid_setup_lifetime", "invalid_telemetry", "invalid_token", "invalid_token_channel",
     "invalid_topics", "invalid_user", "json_required", "last_admin", "login_required", "login_throttled",
-    "media_unavailable", "method_not_allowed", "missing_field", "mixed_authentication", "not_found",
+    "invalid_query", "invalid_ref", "media_unavailable", "method_not_allowed", "missing_field", "mixed_authentication",
+    "music_failed", "music_not_configured", "music_unavailable", "music_unclaimed", "not_found",
     "policy_unavailable", "revision_conflict", "room_locked", "room_state_changed", "room_state_unavailable",
     "runtime_busy", "runtime_not_configured", "runtime_unavailable", "secure_connection_required",
-    "security_unavailable", "session_expired", "session_required", "telemetry_throttled", "too_many_streams",
-    "unknown_action", "unknown_field", "unknown_room", "other"})
+    "security_unavailable", "session_expired", "session_required", "telemetry_throttled", "tidal_not_started",
+    "too_many_streams", "unknown_action", "unknown_field", "unknown_room", "unknown_speaker", "other"})
 for _code in PROBLEMS:
     metrics.PROBLEMS.labels(_code)
 
@@ -229,7 +230,9 @@ def api(permission=None, methods=("GET",), *, account=False, admin=False, item_m
                     raise Problem("login_required", 401) if getattr(user, "is_guest", False) else Problem("forbidden", 403)
                 request.identity_user = user
                 response = view(request, *args, **kwargs)
-                response["Cache-Control"] = "no-store"
+                # Only a view that chose its own caching (music art) keeps it.
+                if "Cache-Control" not in response:
+                    response["Cache-Control"] = "no-store"
                 return response
             except (User.DoesNotExist, PersonalToken.DoesNotExist, RoomPolicy.DoesNotExist):
                 return failure("not_found", 404)

@@ -2,7 +2,7 @@ from django.urls import path, register_converter
 
 from oh_routes import ALIASES, ROUTES
 
-from . import telemetry, views
+from . import music_api, telemetry, views
 from .addresses import RoomConverter
 from .streams import events
 from .topics import VIEWS
@@ -27,10 +27,21 @@ urlpatterns = [
     path("api/v1/rooms/<room:room>/lock", views.room_lock),
     path("api/v1/rooms/<room:room>/commands", views.command),
     path("api/v1/devices/<slug:device>/commands", views.device_command),
+    # Music through Music Assistant (oh_identity.music).
+    path("api/v1/music", music_api.overview), path("api/v1/music/search", music_api.search),
+    path("api/v1/music/browse", music_api.browse), path("api/v1/music/art/<str:image>", music_api.art),
+    path("api/v1/music/tidal", music_api.tidal), path("api/v1/music/tidal/start", music_api.tidal_start),
+    path("api/v1/music/tidal/finish", music_api.tidal_finish),
+    path("api/v1/music/<slug:speaker>/queue", music_api.queue), path("api/v1/music/<slug:speaker>/play", music_api.play),
+    path("api/v1/music/<slug:speaker>/transport", music_api.transport),
+    path("api/v1/music/<slug:speaker>/volume", music_api.volume),
+    path("api/v1/music/<slug:speaker>/group", music_api.group),
+    path("api/v1/music/<slug:speaker>/ungroup", music_api.ungroup),
     path("rest/items", views.pairing_items), path("rest/items/<slug:item>", views.item_resource),
     path("rest/items/<slug:item>/state", views.item_state),
     # One snapshot-first event stream per page, by view (topics.py VIEWS).
     *[path("api/v1/events/" + view, events, {"view": view}) for view in VIEWS],
+    path("api/v1/events/music", music_api.events),
     path("unifi/media/<path:resource>", views.media),
     path("static/remote/", views.asset, {"name": "index.html"}),
     path("static/remote/<str:name>", views.asset),

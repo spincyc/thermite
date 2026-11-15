@@ -25,6 +25,14 @@ rollback. The unified deployment workflow uses a separate committed private site
     generated units from `deploy/`.
   - [Music](docs/music.md) covers mounting the libraries, the ports, AirPlay's
     timing without PTP, and backups.
+- Music, the gateway's half: on a host with `music:`, the gateway drives
+  Music Assistant for thermite's pages at `/api/v1/music` (the speakers and
+  what they play, search, browse, queues, play, transport, volume,
+  grouping, cover art and an event stream), with a device command's locks
+  and trail for each speaker and its group. The policy worker claims Music
+  Assistant for thermite, renews its token and keeps its providers and
+  libraries; an Admin signs it into TIDAL from the gateway or with
+  `thermite access music-tidal`. The pages come next.
 - Audio: a page (`/audio/`, and the terminal remote's Audio screen, `u`
   from Remotes) for each WiiM or Sonos speaker or streamer under `control`,
   routed by a room or not. It shows:

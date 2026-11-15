@@ -48,14 +48,14 @@ CALLBACKS = CollectorRegistry(auto_describe=True)
 
 #: The HTTPS listener, and the opt-in plain-HTTP Guest listener (oh_access.guest).
 LISTENERS = ("https", "guest")
-ROUTES = ("command", "policy", "locks", "history", "items", "events", "media", "asset", "auth", "admin", "other")
+ROUTES = ("command", "policy", "locks", "history", "items", "events", "media", "music", "asset", "auth", "admin", "other")
 CODE_CLASSES = ("2xx", "3xx", "4xx", "5xx", "aborted")
 REQUEST_BUCKETS = (.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10)
 UPSTREAM_KINDS = ("read", "command", "group", "media")
 UPSTREAM_OUTCOMES = ("ok", "http_error", "timeout", "pool_timeout", "error")
 HTTP_VERSIONS = ("1.1", "2")
-#: The event-stream views (oh_identity.streams.VIEWS).
-VIEWS = ("remote", "home", "pair")
+#: The event-stream views (oh_identity.streams.VIEWS, and the music stream).
+VIEWS = ("remote", "home", "pair", "music")
 SSE_LIMITS = ("peer", "total")
 #: How an event stream ended (oh_identity.streams.closed): its client went
 #: away or the gateway stopped, its credential was revoked, or it failed.
@@ -147,6 +147,8 @@ def route_class(path):
         return "events"
     if path.startswith("/unifi/media/"):
         return "media"
+    if path == "/api/v1/music" or path.startswith("/api/v1/music/"):
+        return "music"
     if path in ("/api/v1/session", "/api/v1/logout", "/api/v1/me", "/api/v1/security", "/api/v1/token-login"):
         return "auth"
     if path.startswith(("/api/v1/users", "/api/v1/tokens", "/api/v1/security/guests")):

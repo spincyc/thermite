@@ -123,7 +123,8 @@ site session or CSRF cookie or an `Authorization` header is refused with 403
 `secure_connection_required`; only the routes in `ROUTES` (Home, Remotes and
 their files, `me`, `security`, item state, the `remote` and `home` event
 streams (not `pair`), room policy status,
-`locks`, room commands and All Off) are found; and a POST needs one of the
+`locks`, room commands, All Off, and music with its event stream but not
+TIDAL's sign-in) are found; and a POST needs one of the
 listener's own origins and a JSON body in place of the CSRF cookie. Other
 cookies are dropped unread and no response sets one. Commands keep every room
 check, locks included. The page's access configuration names the HTTPS site
@@ -427,6 +428,134 @@ The deployment owner must verify the pinned callback route/port and retain an
 exact method/device-origin callback relay or supported separate listener.
 Host networking alone does not establish this. The identity core implements
 no unverified callback route, firewall, root service or native listener change.
+
+## Music
+
+A host with `music:` in `instance/host.yaml` (`oh_music`) runs a pinned
+Music Assistant that plays TIDAL and the host's music libraries on the
+house's Sonos and WiiM speakers; the gateway is its only client and serves
+it to thermite's pages as a small typed API. The contract's `music` names
+Music Assistant's loopback `port`, the `libraries` and the `speakers`: each
+Sonos with a `sonos_udn` and each WiiM under `wiim_http` control with a MAC
+or an address, as `{label, room, room_label, provider, udn | mac, ip,
+rooms}`, where `rooms` are the routed rooms that own or share it, as for a
+device's commands. A speaker is matched to Music Assistant's player by its
+UDN (Sonos) or the MAC the WiiM reports, else its address; any other player,
+and a WiiM's hidden AirPlay protocol player, is never shown or commanded. A
+host without music answers 404 `music_not_configured`.
+
+The policy worker holds the claim: once Music Assistant reports running and
+has no user, it creates the admin `thermite` with a random password nobody
+keeps, mints a long-lived token (a year), stores it in `music-token.json`
+(mode 0600) in the gateway's private state, completes onboarding and revokes
+the setup session; within 30 days of a token's end it mints, stores and
+switches to the next and revokes the old one. Serving only reads that file.
+A Music Assistant that already has another user, or refuses thermite's
+token while keeping its user, is not thermite's: the worker records
+`music_unclaimed` and the gateway serves no music until the owner resets
+it. To reset, stop Music Assistant, delete its data directory and start it
+again; the worker, which checks every 30 seconds, claims it again. After
+each claim, whenever Music Assistant comes back with a new server ID (its
+state was reset) and every 15 minutes, the worker also brings Music
+Assistant's configuration to what thermite needs: the
+`sonos`, `wiim` and `airplay` player providers, with the speakers' addresses
+for discovery; one `filesystem_local` instance per library on
+`/media/<name>`, named `thermite <name>` (Music Assistant does not report an
+instance's path), and no other; none of the providers that find other
+speaker families or act on their own (`chromecast`, `dlna`, `heos`,
+`bluesound`, `party`, `smart_fades`, `lastfm_recommendations`,
+`ambient_sounds`); and remote access off. It never renames or disables a
+player.
+
+Routes (`<speaker>` is a contract speaker ID):
+
+| Route | Answer |
+|---|---|
+| GET `/api/v1/music` | `{version: 1, available, problem, sources: {tidal, libraries: {name: bool}}, speakers: [speaker]}` |
+| GET `/api/v1/music/search?q=&kind=&source=` | `{query, kind, source, artists, albums, tracks, playlists}`: items, 25 a kind and source |
+| GET `/api/v1/music/browse?ref=&offset=&limit=` | `{ref, offset, limit, total, items}`; without `ref`, each library's and TIDAL's root folder |
+| GET `/api/v1/music/<speaker>/queue?offset=&limit=` | `{speaker, queue, offset, limit, total, current, items}` |
+| POST `/api/v1/music/<speaker>/play` `{ref, option?}` | 202 `{accepted, speaker, action, queue}` |
+| POST `/api/v1/music/<speaker>/transport` `{action, value?}` | 202 `{accepted, speaker, action, queue}` |
+| POST `/api/v1/music/<speaker>/volume` `{level}` or `{group_level}` | 202 `{accepted, speaker, action, level}` |
+| POST `/api/v1/music/<speaker>/group` `{members}` | 200 `{accepted, speaker, joined, refused}` |
+| POST `/api/v1/music/<speaker>/ungroup` `{}` | 202 `{accepted, speaker, action}` |
+| GET `/api/v1/music/art/<id>?size=` | the cover as JPEG or PNG |
+| GET `/api/v1/music/tidal`, POST `…/tidal/start`, `…/tidal/finish` `{}` | Admin: `{signed_in, sign_in}` |
+| GET `/api/v1/events/music` | the music event stream |
+
+A speaker is `{id, label, room, room_label, available, state, volume,
+muted, group, now_playing, shuffle, repeat}`: `state` is `playing`,
+`paused`, `idle` or `unavailable`; `volume` 0–100; `group` null or `{leader,
+members, volume}` (Music Assistant reports a group's loudest member);
+`now_playing` null or `{duration, elapsed, at, title, artist, album, art}`,
+where `elapsed` seconds were measured at epoch `at`; `repeat` is `off`,
+`one` or `all`. An item is `{ref, kind, name, source, library?, artists,
+album, year, duration, art}` (a folder carries only the first five);
+`kind` is `track`, `album`, `artist`, `playlist` or `folder`, and a queue's
+items add their `index`. `ref` is the reference to play or browse, a
+Music Assistant URI of TIDAL's, a library's or Music Assistant's own
+library (`<provider>://<kind>/<id>`, at most 1024 printable characters);
+any other is 400 `invalid_ref`. `art` is a 64-hex image ID; `size` is 80,
+160, 256 (the default) or 512, and the image is cached privately for a day.
+`option` is `replace` (the default), `next` or `add`; `action` is `play`,
+`pause`, `stop`, `next`, `previous`, `seek` (`value`: whole seconds),
+`shuffle` (`value`: boolean) or `repeat` (`value`: `off`, `one` or `all`).
+`q` is cut to 100 characters without controls; `kind` is one item kind,
+`source` `library` or `tidal`; a page is at most 200 items (100 by default)
+from an offset of at most 100000. Unknown fields or query parameters are 400
+`invalid_command` or `invalid_query`.
+
+A group member plays its leader's queue (Music Assistant would take a member
+it plays to out of its group), so play, transport and queue on a member
+reach its leader's queue, which `queue` names. Grouping asks Music Assistant
+to join the members and reads the group back for up to 3 seconds: Music
+Assistant drops a member it cannot group (a WiiM without AirPlay with a
+Sonos) without an error, so `refused` lists it, as it does a speaker with no
+available player.
+
+Commands keep a device command's rules (`dispatch_device`): any principal
+sends them; each routed room that owns an involved speaker refuses them
+while locked, and a room that shares one refuses what disturbs its held
+route, both 423 `device_locked`. Playing to, transport on or the group
+volume of a group involves each of its speakers; grouping, the speaker and
+every member. Each command is one `cmd` trail line, `device=<speaker>
+action=music.<action>` with the option, the transport value, the level or
+the members as its value, never a reference, a query or a title. Titles,
+names and art are free text: a Guest who may not see it gets speakers
+without them and 401 `login_required` for search, browse, queues and art.
+
+The music event stream is admitted, revalidated and heartbeated as the other
+streams. Its first frame is `{"type":"snapshot","view":"music","music":
+...}`, GET `/api/v1/music`'s answer; then `{"type":"speaker","speaker":
+...}` whenever a speaker a client sees changes, a fresh snapshot when Music
+Assistant's providers change, and `{"type":"unavailable"}` while Music
+Assistant is down or refuses the token. One Music Assistant websocket per
+gateway process (`oh_identity.music_hub`) serves every music stream, on
+`oh_identity.hub`'s terms.
+
+TIDAL signs in with its device flow: POST `/api/v1/music/tidal/start` (or
+`thermite access music-tidal --config FILE`, run as the service account)
+answers `sign_in: {state: "waiting", code, url, expires_at}`; the owner
+approves the code at `https://link.tidal.com/` from any device, and GET
+`/api/v1/music/tidal` follows it (`waiting` with a fresh code once one
+expires, then `done` or `failed`). POST `…/tidal/finish` ends it, cancelling
+a sign-in still waiting; without one it is 409 `tidal_not_started`. Signing
+in again re-authenticates the same TIDAL instance.
+
+| Problem | Status | Meaning |
+|---|---|---|
+| `music_not_configured` | 404 | The host has no music. |
+| `unknown_speaker` | 404 | No such speaker in the contract. |
+| `invalid_ref`, `invalid_query`, `invalid_command` | 400 | A reference, query or body out of bounds. |
+| `device_locked` | 423 | A locked room owns, or holds a route through, an involved speaker. |
+| `music_failed` | 502 | Music Assistant refused or failed it, or has no available player for the speaker. |
+| `music_unavailable` | 503 | Music Assistant is down, starting, not claimed yet, or refuses the token. |
+| `music_unclaimed` | 503 | Music Assistant belongs to another user: reset it. |
+| `tidal_not_started` | 409 | No TIDAL sign-in to finish. |
+
+GET `/api/v1/music` answers 200 with `available: false` and the problem
+instead of failing, so a page can show its speakers.
 
 ## Testing
 

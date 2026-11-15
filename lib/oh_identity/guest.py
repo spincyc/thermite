@@ -44,6 +44,12 @@ ROUTES = {
     "api/v1/all-off": POST,
     # What the page could not see the gateway answer (oh_identity.telemetry).
     "api/v1/telemetry": POST,
+    # Music: what the speakers play and its controls; TIDAL's sign-in is an
+    # Admin's, on the HTTPS site.
+    "api/v1/music": GET, "api/v1/music/search": GET, "api/v1/music/browse": GET,
+    "api/v1/music/art/<str:image>": GET, "api/v1/events/music": GET, "api/v1/music/<slug:speaker>/queue": GET,
+    **dict.fromkeys(("api/v1/music/<slug:speaker>/" + action for action in ("play", "transport", "volume", "group",
+                                                                             "ungroup")), POST),
 }
 
 
