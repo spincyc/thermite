@@ -176,10 +176,9 @@ class Music:
     def client(self):
         """A client with the stored token, reused while the token is."""
         claim = provision.read_claim(self.state)
-        if claim is None:
-            raise Problem("music_unavailable", 503)
-        if "token" not in claim:
-            raise Problem("music_unclaimed", 503)
+        problem = provision.problem(claim, time.time())
+        if problem:
+            raise Problem(problem, 503)
         with self._guard:
             if self._client is None or self._client.token != claim["token"]:
                 if self._client is not None:

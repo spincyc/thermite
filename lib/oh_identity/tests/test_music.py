@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -454,6 +455,10 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual(self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM}).json(), {"error": "music_unclaimed"})
         provision.token_file(self.state).unlink()
         self.assertEqual(self.get("/api/v1/music").json()["problem"], "music_unavailable")
+        # A token Music Assistant has refused for a day is no longer thermite's.
+        provision.write_claim(self.state, {"token": "example", "issued_at": 1, "expires_at": 2 ** 40,
+                                           "refused_since": int(time.time()) - provision.REFUSED})
+        self.assertEqual(self.get("/api/v1/music").json()["problem"], "music_unclaimed")
 
     def test_a_host_without_music_has_no_music(self):
         install_adapter(RuntimeAdapter(RuntimeContract(**compiled(house(), port=None)), self.adapter.transport))

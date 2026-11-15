@@ -83,15 +83,17 @@ def site(config_path):
     """(Music Assistant's port, thermite's token) for a site's service config."""
     from oh_access.files import read_private
     from oh_access.service import load_config
-    from .provision import read_claim
+    from .provision import UNCLAIMED, problem, read_claim
     config = load_config(config_path, tls=False)
     music = json.loads(read_private(config["contract_file"])).get("music")
     if not music:
         raise AccessError("This site has no music: host.yaml has no music: section")
     claim = read_claim(config["state"])
-    if not claim or "token" not in claim:
-        raise AccessError("Music Assistant is not claimed yet: start it and the access worker"
-                          if not claim else "Music Assistant belongs to another user: reset its state to let thermite claim it")
+    refused = problem(claim, time.time())
+    if refused == UNCLAIMED:
+        raise AccessError("Music Assistant belongs to another user: reset its state to let thermite claim it")
+    if refused:
+        raise AccessError("Music Assistant is not claimed yet: start it and the access worker")
     return music["port"], claim["token"]
 
 

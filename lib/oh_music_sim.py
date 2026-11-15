@@ -169,7 +169,10 @@ def speakers_from_house(data):
 class Sim:
     """Music Assistant's state. speakers: speakers_from_house's. preloaded:
     providers it starts with, as a fresh server loads some by default.
-    heartbeat: seconds between its websocket pings."""
+    heartbeat: seconds between its websocket pings. A test makes it fail:
+    failing counts the next commands of a name to answer a bare 500, and
+    refusing the next authenticated API requests to answer 401, as Music
+    Assistant does when its authentication fails inside."""
 
     def __init__(self, speakers=(), *, preloaded=("chromecast", "dlna", "smart_fades"), heartbeat=25.0):
         self.lock = threading.RLock()
@@ -186,6 +189,8 @@ class Sim:
         self.queues = {}
         self.peers = set()
         self.calls = []
+        self.failing = collections.Counter()
+        self.refusing = 0
         self.events = []
         self.speakers = list(speakers)
         self.tidal_code = None
@@ -705,6 +710,9 @@ class Sim:
         """One API command's result; Error for Music Assistant's failures."""
         with self.lock:
             self.calls.append((command, args))
+            if self.failing[command] > 0:
+                self.failing[command] -= 1
+                raise Error(999)
             return self._command(token, command, args)
 
     def _command(self, token, command, args):
@@ -938,7 +946,9 @@ class Server:
                     return self.answer(400, b"Invalid request", "text/plain")
                 token = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
                 with sim.lock:
-                    if not sim.authorized(token):
+                    refused = sim.refusing > 0
+                    sim.refusing -= refused
+                    if refused or not sim.authorized(token):
                         return self.answer(401, b"Authentication required", "text/plain",
                                            (("WWW-Authenticate", "Bearer"),))
                 try:

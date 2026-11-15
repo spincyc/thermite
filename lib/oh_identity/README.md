@@ -446,15 +446,24 @@ host without music answers 404 `music_not_configured`.
 
 The policy worker holds the claim: once Music Assistant reports running and
 has no user, it creates the admin `thermite` with a random password nobody
-keeps, mints a long-lived token (a year), stores it in `music-token.json`
-(mode 0600) in the gateway's private state, completes onboarding and revokes
-the setup session; within 30 days of a token's end it mints, stores and
-switches to the next and revokes the old one. Serving only reads that file.
-A Music Assistant that already has another user, or refuses thermite's
-token while keeping its user, is not thermite's: the worker records
-`music_unclaimed` and the gateway serves no music until the owner resets
-it. To reset, stop Music Assistant, delete its data directory and start it
-again; the worker, which checks every 30 seconds, claims it again. After
+keeps and at once stores the setup session it is answered with in
+`music-token.json` (mode 0600) in the gateway's private state, a pending
+claim that a later pass resumes from however this one ends. With the session
+it mints a long-lived token (a year), which replaces the session in the
+file, and revokes the session; within 30 days of a token's end it mints,
+stores and switches to the next and revokes the old one. Serving only reads
+that file. The worker never gives up a stored token or session because Music
+Assistant refuses it, as Music Assistant does for a moment while it starts,
+stops or upgrades: it keeps it, records when the refusals began and tries
+it again on every pass, every 30 seconds. After a day of refusals in a row
+the gateway answers `music_unclaimed`, as it does at once for a Music
+Assistant that had another user before thermite claimed it; until then it
+answers `music_unavailable`. Either way it serves no music until the owner
+resets Music Assistant: stop it, delete its data directory and start it
+again, and the worker claims it afresh within 30 seconds. A claim file the
+worker cannot trust (not the service account's, or not mode 0600) is
+reported, never replaced, and the gateway answers `music_unavailable` until
+it is repaired. After
 each claim, whenever Music Assistant comes back with a new server ID (its
 state was reset) and every 15 minutes, the worker also brings Music
 Assistant's configuration to what thermite needs: the
@@ -464,8 +473,8 @@ for discovery; one `filesystem_local` instance per library on
 instance's path), and no other; none of the providers that find other
 speaker families or act on their own (`chromecast`, `dlna`, `heos`,
 `bluesound`, `party`, `smart_fades`, `lastfm_recommendations`,
-`ambient_sounds`); and remote access off. It never renames or disables a
-player.
+`ambient_sounds`); remote access off; and onboarding complete. It never
+renames or disables a player.
 
 Routes (`<speaker>` is a contract speaker ID):
 
@@ -551,7 +560,7 @@ in again re-authenticates the same TIDAL instance.
 | `device_locked` | 423 | A locked room owns, or holds a route through, an involved speaker. |
 | `music_failed` | 502 | Music Assistant refused or failed it, or has no available player for the speaker. |
 | `music_unavailable` | 503 | Music Assistant is down, starting, not claimed yet, or refuses the token. |
-| `music_unclaimed` | 503 | Music Assistant belongs to another user: reset it. |
+| `music_unclaimed` | 503 | Music Assistant belongs to another user, or has refused thermite's token for a day: reset it. |
 | `tidal_not_started` | 409 | No TIDAL sign-in to finish. |
 
 GET `/api/v1/music` answers 200 with `available: false` and the problem

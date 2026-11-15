@@ -117,17 +117,89 @@ class Claim(Site):
         self.assertEqual(provisioner.step(), "ready")
         self.assertEqual(list(self.sim.users), ["thermite"])
 
-    def test_a_reset_server_is_claimed_again_and_a_refused_token_is_not(self):
+    def test_a_reset_server_is_claimed_again(self):
         provisioner = self.provisioner()
         provisioner.step()
         first = self.token()
         self.reset()
         self.assertEqual(provisioner.step(), "ready")
         self.assertNotEqual(self.token(), first)
-        # Thermite's user remains but its token is gone: someone else's doing.
+        self.assertEqual(list(self.sim.tokens), [self.token()])
+
+    def test_a_refusal_keeps_the_token_and_the_next_pass_that_works_clears_it(self):
+        now = [time.time()]
+        provisioner = self.provisioner(clock=lambda: now[0])
+        provisioner.step()
+        token = self.token()
+        # Music Assistant's authentication failed inside: 401, a user and the token both still there.
+        self.sim.refusing = 1
+        with self.assertLogs("oh_music.provision", "INFO") as logs:
+            self.assertEqual(provisioner.step(), "refused")
+            now[0] += 30
+            self.assertEqual(provisioner.step(), "ready")
+        self.assertEqual([record.getMessage() for record in logs.records],
+                         ["Music Assistant: refused: it refuses thermite's token; trying again",
+                          "Music Assistant: ready changed=0"])
+        self.assertEqual(self.token(), token)
+        self.assertNotIn("refused_since", provision.read_claim(self.state))
+        self.assertEqual(list(self.sim.users), ["thermite"])
+
+    def test_a_token_refused_for_a_day_is_unclaimed_but_kept_and_tried(self):
+        now = [time.time()]
+        provisioner = self.provisioner(clock=lambda: now[0])
+        provisioner.step()
+        token = self.token()
         self.sim.tokens.clear()
-        self.assertEqual(provisioner.step(), "unclaimed")
-        self.assertEqual(provision.read_claim(self.state), {"problem": provision.UNCLAIMED})
+        self.assertEqual(provisioner.step(), "refused")
+        started = int(now[0])
+        now[0] += 3600
+        self.assertEqual(provisioner.step(), "refused")
+        claim = provision.read_claim(self.state)
+        self.assertEqual((claim["token"], claim["refused_since"]), (token, started))
+        self.assertIsNone(provision.problem(claim, started + provision.REFUSED - 1))
+        self.assertEqual(provision.problem(claim, started + provision.REFUSED), provision.UNCLAIMED)
+        now[0] = started + provision.REFUSED + 60
+        self.assertEqual(provisioner.step(), "refused")
+        self.assertEqual(self.token(), token)
+        # The owner resets Music Assistant: no user, so it is claimed afresh.
+        self.reset()
+        self.assertEqual(provisioner.step(), "ready")
+        self.assertNotEqual(self.token(), token)
+        self.assertIsNone(provision.problem(provision.read_claim(self.state), now[0]))
+
+    def test_a_pending_claim_is_resumed_after_a_failed_mint(self):
+        self.sim.failing["auth/token/create"] = 1
+        provisioner = self.provisioner()
+        with self.assertRaises(Failed):
+            provisioner.step()
+        claim = provision.read_claim(self.state)
+        self.assertEqual(set(claim), {"session", "since"})
+        self.assertTrue(self.sim.authorized(claim["session"]))
+        self.assertEqual(provision.problem(claim, time.time()), "music_unavailable")
+        self.assertEqual(provisioner.step(), "ready")
+        self.assertEqual(list(self.sim.tokens), [self.token()])
+        self.assertTrue(self.sim.onboard_done)
+
+    def test_a_pending_claim_is_resumed_by_a_worker_that_crashed_after_setup(self):
+        class Crashed(Exception):
+            pass
+
+        def crash(*_):
+            raise Crashed()
+        provisioner = self.provisioner()
+        provisioner.hold = crash
+        with self.assertRaises(Crashed):
+            provisioner.step()
+        session = provision.read_claim(self.state)["session"]
+        self.assertEqual(list(self.sim.users), ["thermite"])
+        # The next worker process.
+        self.assertEqual(self.provisioner().step(), "ready")
+        self.assertFalse(self.sim.authorized(session))
+        self.assertEqual(list(self.sim.tokens), [self.token()])
+        # A pending session refused stays pending, as a token does.
+        provision.write_claim(self.state, {"session": session, "since": 1})
+        self.assertEqual(self.provisioner().step(), "refused")
+        self.assertEqual(provision.read_claim(self.state)["session"], session)
 
     def test_nothing_is_claimed_while_the_server_starts_or_is_down(self):
         self.sim.status = "starting"
@@ -139,14 +211,22 @@ class Claim(Site):
         self.assertIsNone(provision.read_claim(self.state))
         self.assertEqual(self.sim.users, {})
 
-    def test_a_claim_file_that_is_not_private_is_not_trusted(self):
-        self.provisioner().step()
+    def test_a_claim_file_that_cannot_be_trusted_is_reported_and_never_replaced(self):
+        provisioner = self.provisioner()
+        provisioner.step()
         os.chmod(provision.token_file(self.state), 0o644)
-        with self.assertLogs("oh_music.provision", "WARNING"):
-            self.assertIsNone(provision.read_claim(self.state))
+        unreadable = {"problem": provision.UNREADABLE}
+        self.assertEqual(provision.read_claim(self.state), unreadable)
+        self.assertEqual(provision.problem(unreadable, time.time()), "music_unavailable")
+        before = provision.token_file(self.state).read_bytes()
+        with self.assertLogs("oh_music.provision", "INFO") as logs:
+            self.assertEqual(provisioner.step(), "unreadable")
+            self.assertEqual(provisioner.step(), "unreadable")
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(provision.token_file(self.state).read_bytes(), before)
         provision.token_file(self.state).unlink()
         provision.write_claim(self.state, {"token": "x", "issued_at": "soon", "expires_at": 1})
-        self.assertIsNone(provision.read_claim(self.state))
+        self.assertEqual(provision.read_claim(self.state), unreadable)
 
     def test_the_worker_thread_waits_for_the_server_then_claims_it(self):
         self.sim.status = "starting"
