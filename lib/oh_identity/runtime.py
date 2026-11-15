@@ -99,6 +99,53 @@ def valid_history(history, rooms):
     return history
 
 
+#: A speaker's match keys (oh_site_contract.music): a Sonos UDN as Music
+#: Assistant names the player, a MAC and an IPv4 or IPv6 address.
+UDN = re.compile(r"RINCON_[0-9A-F]{12}01400")
+MAC = re.compile(r"(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}")
+
+
+def valid_music(music, rooms):
+    """The compiled music, refused unless its port is a listener's, every
+    library a library name and every speaker a contract name with plain-text
+    labels, a known provider, the keys that match it and only rooms of the
+    contract."""
+    import ipaddress
+
+    from oh_music import LIBRARY
+
+    def text(value):
+        return isinstance(value, str) and 0 < len(value) <= 200 and value.isprintable()
+
+    def address(value):
+        try:
+            ipaddress.ip_address(value)
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    def speaker(ident, spec):
+        keys = set(spec) - {"label", "room", "room_label", "provider", "rooms"}
+        return (NAME.fullmatch(ident) and text(spec["label"]) and ROOM_ID.fullmatch(spec["room"])
+                and text(spec["room_label"]) and isinstance(spec["rooms"], dict)
+                and all(room in rooms and role in ("own", "shared") for room, role in spec["rooms"].items())
+                and ("ip" not in spec or address(spec["ip"]))
+                and (spec["provider"] == "sonos" and keys - {"ip"} == {"udn"} and UDN.fullmatch(spec["udn"])
+                     or spec["provider"] == "wiim" and keys and keys <= {"mac", "ip"}
+                     and ("mac" not in spec or MAC.fullmatch(spec["mac"]))))
+    try:
+        port, libraries, speakers = music["port"], music["libraries"], music["speakers"]
+        ok = (set(music) == {"port", "libraries", "speakers"} and type(port) is int and 1024 <= port <= 65535
+              and isinstance(libraries, list) and all(isinstance(name, str) and LIBRARY.fullmatch(name) for name in libraries)
+              and len(set(libraries)) == len(libraries) and isinstance(speakers, dict)
+              and all(isinstance(spec, dict) and speaker(ident, spec) for ident, spec in speakers.items()))
+    except (KeyError, TypeError):
+        ok = False
+    if not ok:
+        raise ValueError("Invalid runtime music contract")
+    return music
+
+
 class RuntimeContract:
     """Compiled server-side facts, independent of browser-provided manifests.
 
@@ -111,11 +158,14 @@ class RuntimeContract:
     history: the room history's Prometheus port, zones, values and labels
     (oh_site_contract.history, served by oh_identity.history), or None for
     a contract compiled without it.
+    music: Music Assistant's port, the library names and the speakers
+    (oh_site_contract.music, served by oh_identity.music), or None for a
+    host without music.
     Source action is derived from source_item; other actions are explicit.
     """
 
     def __init__(self, rooms, states=None, routing=None, house=None, assets=None, asset_root=None,
-                 pairings=None, groups=None, media=None, views=None, history=None, devices=None):
+                 pairings=None, groups=None, media=None, views=None, history=None, devices=None, music=None):
         data = copy.deepcopy(dict(rooms))
         reads = copy.deepcopy(states or {})
         for ident, room in data.items():
@@ -149,6 +199,7 @@ class RuntimeContract:
             raise ValueError("Invalid runtime view contract")
         self.views = frozen(views)
         self.history = frozen(valid_history(copy.deepcopy(history), data)) if history is not None else None
+        self.music = frozen(valid_music(copy.deepcopy(music), data)) if music is not None else None
 
     def policy_contract(self):
         return {"rooms": {key: {"sources": list(value["sources"])} for key, value in self.rooms.items()},

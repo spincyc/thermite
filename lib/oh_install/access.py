@@ -15,6 +15,7 @@ import socket
 import ssl
 
 import oh_cli
+import oh_music
 import oh_ports
 from oh_access import AccessError, guest, staging
 from oh_access.files import atomic_private, json_private, private_directory, read_private, service_identity
@@ -461,7 +462,8 @@ class Gateway(Step):
                                     area=self.context.area, plan_directory=plan, callbacks=callback,
                                     wheelhouse=self.options.get("wheelhouse"), host_ports=oh_ports.effective(self.context.host),
                                     guest_http=self.context.host.get("guest_http"),
-                                    textfile=self.context.installation.state.textfile)
+                                    textfile=self.context.installation.state.textfile,
+                                    music=oh_music.settings(self.context.host))
         self._save(record, stage=receipt, phase="staged")
         return receipt
 

@@ -136,9 +136,11 @@ def configured(path, *, tls=True, transport=None):
     return config, adapter, locks
 
 
-def compile_contract(house_file, asset_root, destination, *, metrics_port=None):
+def compile_contract(house_file, asset_root, destination, *, metrics_port=None, music_host=None):
     """Owner-only immutable server authority from validated inventory/providers.
-    metrics_port is the site's Prometheus port, which room history reads."""
+    metrics_port is the site's Prometheus port, which room history reads;
+    music_host a music host's Music Assistant port and library names
+    (oh_site_contract.compile)."""
     from oh_conf import House
     import oh_inventory
     import oh_render
@@ -149,7 +151,8 @@ def compile_contract(house_file, asset_root, destination, *, metrics_port=None):
     root = Path(asset_root).absolute()
     if not root.is_dir() or root.is_symlink():
         raise AccessError("Private asset root must be an existing directory")
-    contract = oh_site_contract.compile(House(data), oh_render.build(data), asset_root=root, metrics_port=metrics_port)
+    contract = oh_site_contract.compile(House(data), oh_render.build(data), asset_root=root, metrics_port=metrics_port,
+                                        music_host=music_host)
     json_private(destination, contract)
     return contract
 

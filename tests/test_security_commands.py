@@ -214,7 +214,7 @@ class StagePort(unittest.TestCase):
                     "--json"]
         for site, extra, expected in ((moved, [], 16301), (None, [], 13601), (moved, ["--port", "14000"], 14000)):
             with self.subTest(site=bool(site), extra=extra), contextlib.redirect_stdout(io.StringIO()), \
-                    patch.object(access, "_site_ports", return_value=site), \
+                    patch.object(access, "_site_host", return_value=(site, None)), \
                     patch.object(staging, "stage", return_value={}) as stage:
                 self.assertEqual(access.main([*required, *extra]), 0)
                 self.assertEqual((stage.call_args.kwargs["port"], stage.call_args.kwargs["host_ports"]), (expected, site))

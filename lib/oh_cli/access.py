@@ -67,15 +67,18 @@ def print_stage(result, args):
     print("No services started; the security boundary is not active.")
 
 
-def _site_ports():
-    """A selected site's host overrides participate in separate access staging."""
+def _site_host():
+    """A selected site's host overrides participate in separate access
+    staging: its listeners' ports and its music (oh_music.settings)."""
     import oh_deploy
+    import oh_music
     path = oh_cli.AREA / "instance/host.yaml"
     try:
-        return oh_ports.effective(oh_deploy.load_host(path))
+        host = oh_deploy.load_host(path)
+        return oh_ports.effective(host), oh_music.settings(host)
     except FileNotFoundError:
         if not path.is_symlink():
-            return None
+            return None, None
         raise AccessError("Cannot validate staged listeners against the selected site's instance/host.yaml") from None
     except (OSError, ValueError) as exc:
         raise AccessError(f"Cannot validate staged listeners against the selected site's host file: {exc}") from None
@@ -201,7 +204,7 @@ def main(argv=None):
             values = vars(args).copy()
             values.pop("command")
             values.pop("json")
-            values["host_ports"] = _site_ports()
+            values["host_ports"], values["music"] = _site_host()
             if values["port"] is None:
                 values["port"] = (values["host_ports"] or oh_ports.DEFAULTS)["access"]
             result = stage(**values)

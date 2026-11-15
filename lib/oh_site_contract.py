@@ -10,6 +10,7 @@ import copy
 import re
 from pathlib import Path
 
+import oh_integrations as integrations
 from oh_conf import Conf, House, is_guarded, parse_options
 from oh_features import remote, remote_activity, remote_cameras, remote_diagnostics, remote_model, remote_system, routing
 
@@ -97,9 +98,35 @@ def history(house: House, conf: Conf, rooms: dict, metrics_port: int | None = No
             "zones": zones, "values": spec["values"], "labels": spec["labels"]}
 
 
-def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics_port: int | None = None) -> dict:
+def music(house: House, guards: dict, host: dict) -> dict:
+    """The music the gateway serves (oh_identity.music): Music Assistant's
+    loopback API port, the host's library names (oh_music.settings) and the
+    house's speakers. A speaker is every device an integration says Music
+    Assistant plays on (oh_integrations music(), the first in REGISTRY
+    order): its label, its room, its Music Assistant provider and what
+    matches it to its player, its address, which Music Assistant's discovery
+    is also given, and the routed rooms that command it, with its role in
+    each (routing.guard_rooms), which lock it as they lock its audio page."""
+    speakers = {}
+    for device in house.devices:
+        player = next((spec for module in integrations.REGISTRY if hasattr(module, "music")
+                       if (spec := module.music(device))), None)
+        if player is None:
+            continue
+        speakers[device["id"]] = {"label": house.label(device), "room": device["room"],
+                                  "room_label": house.room_label(device["room"]), **player,
+                                  **({"ip": device["ip"]} if device.get("ip") else {}),
+                                  "rooms": dict(guards.get(device["id"], {}))}
+    return {"port": host["port"], "libraries": sorted(host["libraries"]), "speakers": speakers}
+
+
+def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics_port: int | None = None,
+            music_host: dict | None = None) -> dict:
     """Serializable RuntimeContract kwargs, derived only from server-side facts.
-    metrics_port is the house's Prometheus port (host.yaml), else its default."""
+    metrics_port is the house's Prometheus port (host.yaml), else its default.
+    music_host is a music host's {"port": Music Assistant's API port,
+    "libraries": oh_music.settings' libraries}; the contract has music only
+    with it."""
     devices = {device["id"]: device for device in house.devices}
     route = house.data.get("routing") or {}
     room_specs = route.get("rooms") or {}
@@ -304,7 +331,8 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
     return {"rooms": rooms, "devices": audio_devices, "states": states, "routing": table,
             "house": copy.deepcopy(house.data), "assets": assets,
             "asset_root": str(Path(asset_root).resolve()) if asset_root else None, "pairings": pairings, "groups": groups, "media": media,
-            "views": views(house, rooms, activity, pairings), "history": history(house, conf, rooms, metrics_port)}
+            "views": views(house, rooms, activity, pairings), "history": history(house, conf, rooms, metrics_port),
+            **({"music": music(house, guards, music_host)} if music_host is not None else {})}
 
 
 def views(house: House, rooms: dict, activity: dict, pairings: dict) -> dict:

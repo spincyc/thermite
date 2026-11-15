@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import venv
+import oh_ports
 import oh_units
 from oh_service import ACCOUNT, GROUP
 
@@ -433,10 +434,12 @@ def _export_plan(descriptor, receipt, custody, unit_sources=None):
 def stage(destination, *, state, house, assets, runtime_url, runtime_token_file, tls_cert, tls_key,
           allowed_hosts, bind_host, port, timezone, user=None, wheelhouse=None, area=None,
           install_environment=True, callbacks=None, plan_directory=None, host_ports=None, guest_http=None,
-          textfile=None):
+          textfile=None, music=None):
     """A new release with explicit reusable site state. No database is migrated.
 
     guest_http is host.yaml's optional Guest listener mapping (oh_access.guest).
+    music is host.yaml's checked music (oh_music.settings): the gateway then
+    serves its libraries through Music Assistant on host_ports' music port.
 
     Owner installs the units only AFTER resolving the activation checklist. The
     program and assets are copied, so no service points into a disposable checkout.
@@ -511,7 +514,9 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
                 raise AccessError("Private asset inventory is incomplete")
             atomic_private(private_assets / name, source.read_bytes())
         compile_contract(house, private_assets, target / "contract.json",
-                         metrics_port=(host_ports or {}).get("prometheus"))
+                         metrics_port=(host_ports or {}).get("prometheus"),
+                         music_host=None if music is None else
+                         {"port": (host_ports or oh_ports.DEFAULTS)["music"], "libraries": sorted(music["libraries"])})
         config = {"version": CONFIG_VERSION, "state": str(state), "contract_file": str(target / "contract.json"),
                   "runtime_url": runtime_url, "runtime_token_file": str(target / "secrets/runtime-bearer"),
                   "allowed_hosts": allowed_hosts, "bind_host": bind_host, "port": port, "timezone": timezone,

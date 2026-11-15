@@ -694,12 +694,14 @@ class Lifecycle(GatewayFixture):
     def test_fresh_install_prepares_tls_and_release_without_manual_staging(self):
         gateway, system = self.gateway(inputs=False), real_openssl(Host())
         guest_http = {"listen": ["192.0.2.10"], "clients": ["192.0.2.0/24"]}
-        gateway.context.host = {**gateway.context.host, "guest_http": guest_http}
+        gateway.context.host = {**gateway.context.host, "guest_http": guest_http,
+                                "music": {"libraries": {"flac": "/srv/example/flac"}}}
         with patch.object(gateway, "_https", return_value="https://house.example.test:13601"), \
                 patch.object(gateway, "_guest_http", return_value=["   Guest HTTP verified: http://192.0.2.10:13600/"]):
             self.assertEqual(gateway.perform(system), 0, system.messages)
         [staged] = self.staged
         self.assertEqual(staged["guest_http"], guest_http)
+        self.assertEqual(staged["music"], {"libraries": {"flac": "/srv/example/flac"}})
         self.assertEqual(staged["host_ports"]["guest_http"], 13600)
         self.assertEqual(staged["state"], str(gateway.root / "state"))
         self.assertEqual(staged["house"], gateway.context.configuration / "instance/devices.yaml")

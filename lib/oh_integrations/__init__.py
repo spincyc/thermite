@@ -170,6 +170,15 @@ playing (oh_features.playing),
               but title optional), "when": {"item", "is": [values]} while
               it holds (optional)}}
 
+A control module whose devices Music Assistant plays on (oh_music) provides
+
+    music(device) -> {"provider": the Music Assistant player provider that
+              drives it, and what matches the device to that provider's
+              player: "udn" (the player's ID), or "mac" and "ip" (the MAC
+              it reports, else its address)}, or None for a device it does
+              not control; the contract adds the device's address for
+              Music Assistant's discovery (oh_site_contract.music)
+
 A control module gives the remote page what it drives, and may give an
 audio device a page of its own (the remote's Audio page; the gateway's
 device route, oh_identity.runtime, commands what both declare):

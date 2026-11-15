@@ -216,6 +216,14 @@ def playing(device: dict) -> dict:
                         "when": {"item": f"{ident}_state", "is": ["PLAYING"]}}]}
 
 
+def music(device: dict) -> dict | None:
+    """What Music Assistant plays it as (oh_integrations music()): None unless
+    controlled. Music Assistant's sonos provider names a player by its UDN."""
+    if not uses(device, "control", NAME):
+        return None
+    return {"provider": "sonos", "udn": device["sonos_udn"]}
+
+
 def remote(device: dict) -> dict | None:
     """What the remote page drives (av-contract): None unless controlled. An
     Amp is never a room's endpoint (oh_site_contract targets soundbars), so

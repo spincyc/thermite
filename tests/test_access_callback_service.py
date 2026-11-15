@@ -217,7 +217,7 @@ class Configuration(unittest.TestCase):
                 "--tls-key", str(self.root / "key"), "--allowed-host", "site.example", "--callbacks", str(self.path)]
         allocated = oh_ports.effective()
         # The selected site's instance/host.yaml is not an input of this test.
-        with patch.object(cli, "_site_ports", return_value=allocated), patch.object(staging, "stage", return_value={"activated": False}) as stage, patch("sys.stdout", new_callable=io.StringIO), patch.object(service, "serve", side_effect=AssertionError("listener forbidden")):
+        with patch.object(cli, "_site_host", return_value=(allocated, None)), patch.object(staging, "stage", return_value={"activated": False}) as stage, patch("sys.stdout", new_callable=io.StringIO), patch.object(service, "serve", side_effect=AssertionError("listener forbidden")):
             self.assertEqual(cli.main(args), 0)
         self.assertEqual(stage.call_args.kwargs["callbacks"], self.path)
         self.assertEqual(stage.call_args.kwargs["state"], self.root / "site-state")

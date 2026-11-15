@@ -452,6 +452,16 @@ def playing(device: dict) -> dict:
                         "when": playing}]}
 
 
+def music(device: dict) -> dict | None:
+    """What Music Assistant plays it as (oh_integrations music()): None unless
+    controlled. Music Assistant's wiim provider reports a player's MAC and
+    address; its ID is the player's own UUID, which the house does not
+    know."""
+    if not uses(device, "control", NAME):
+        return None
+    return {"provider": "wiim", **{key: device[key] for key in ("mac", "ip") if device.get(key)}}
+
+
 def remote(device: dict) -> dict | None:
     """What the remote page drives (av-contract): None unless controlled."""
     if not uses(device, "control", NAME):
