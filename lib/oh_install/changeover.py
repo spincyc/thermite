@@ -471,9 +471,10 @@ class Confirm(Step):
     always = True
     stop_on_failure = True
 
-    def __init__(self, title: str, path: Path, warning: str):
+    def __init__(self, title: str, path: Path, warning: str | Callable[[System], str]):
         self.title = title
         self.path = Path(path)
+        #: What it deletes; a function of the host when that depends on it.
         self.warning = warning
 
     def check(self, system: System) -> Check:
@@ -483,7 +484,7 @@ class Confirm(Step):
         return [Task(f"type {self.path} to confirm", self.confirm, interactive=True)]
 
     def confirm(self, system: System) -> int:
-        system.say("   " + self.warning)
+        system.say("   " + (self.warning(system) if callable(self.warning) else self.warning))
         typed = system.ask(f"   Type {self.path} to go on: ").strip()
         if typed != str(self.path):
             system.say(f"   That is not {self.path}; nothing was changed.")
@@ -606,8 +607,11 @@ def install_work(context: steps.Context, id: str | None, *, kind: str = "install
         layout = context.layout
 
         def items(system: System) -> list[manifest.Item]:
+            # Music Assistant's state goes too, shared once the host has no
+            # music:.
             declared = manifest.desired(changes, system, root)
-            return [manifest.Item(item.path, "tree-move") if item.cls in ("tree", "shared-pinned")
+            return [manifest.Item(item.path, "tree-move") if (item.cls in ("tree", "shared-pinned")
+                                                              or item.path == layout.music)
                     and engine.below(item.path, layout.root) else item for item in declared]
 
         files = [item.path for step in changes if isinstance(step, steps.Deploy)
@@ -616,9 +620,9 @@ def install_work(context: steps.Context, id: str | None, *, kind: str = "install
         work.switching = [ClearState(context, files), *changes]
         work.confirm = Confirm(
             "Confirm the clean install", layout.root,
-            f"This clean install deletes the state under {layout.root} once it commits: accounts, pairings, "
-            "credentials, the deploy's records, monitoring data, "
-            + ("Music Assistant's settings and library, " if music.enabled(context.host) else "")
+            lambda system: f"This clean install deletes the state under {layout.root} once it commits: accounts, "
+            "pairings, credentials, the deploy's records, monitoring data, "
+            + ("Music Assistant's settings and library, " if steps.music_state(context, system) else "")
             + "and manually installed binding repairs; it "
             f"also clears {context.token_file}, {context.grafana_password_file} and "
             f"{context.runtime_credentials_file}. Logs, the deploy history and old backups stay; so do the "

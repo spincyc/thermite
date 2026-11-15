@@ -123,6 +123,57 @@ class State(unittest.TestCase):
         self.assertNotIn(MUSIC, {item.path for item in steps.StateDirectories(context(base=MUSIC_HOST)).desired(
             host_system(stats={MUSIC: Stat(9001, 9001, 0o700, True, 0)}))}, "MusicDirectories pins it")
 
+    def test_a_clean_install_deletes_it_and_says_so(self):
+        for host, cls in ((MUSIC_HOST, "shared-pinned"), (HOST, "shared")):
+            with self.subTest(music=host is MUSIC_HOST):
+                ctx = context(base=host)
+                with patch.object(steps, "NativeDeadline"):
+                    work = changeover.install_work(ctx, TRANSACTION, kind="clean")
+                declared = [manifest.Item(MUSIC, cls), manifest.Item(ctx.layout.logs, "shared")]
+                with patch.object(manifest, "desired", return_value=declared):
+                    items = {item.path: item.cls for item in work.items(None)}
+                self.assertEqual(items, {MUSIC: "tree-move", ctx.layout.logs: "shared"})
+                found = host_system(stats={MUSIC: Stat(9001, 9001, 0o700, True, 0)})
+                said = []
+                found.say.side_effect = said.append
+                found.ask.return_value = str(ctx.layout.root)
+                self.assertEqual(work.confirm.confirm(found), 0)
+                self.assertIn("monitoring data, Music Assistant's settings and library, and manually", said[0])
+        with patch.object(manifest, "installed", return_value=None):
+            said = []
+            found = host_system()
+            found.say.side_effect = said.append
+            found.ask.return_value = str(context().layout.root)
+            changeover.install_work(context(), TRANSACTION, kind="clean").confirm.confirm(found)
+        self.assertNotIn("Music Assistant", said[0])
+
+    def test_a_missing_music_directory_needs_the_full_repair(self):
+        ctx = context(base=MUSIC_HOST)
+        with patch.object(steps, "service_receipt", return_value=True), \
+                patch.object(steps.Account, "missing", return_value=[]):
+            self.assertTrue(steps.NativePreparation(ctx).custody(host_system(stats=self.owned(ctx))))
+            self.assertFalse(steps.NativePreparation(ctx).custody(
+                host_system(stats=self.owned(ctx, {MUSIC: Stat(9001, 9001, 0o700, True, 0)}))))
+            self.assertFalse(steps.NativePreparation(context()).custody(host_system(stats=self.owned(context()))))
+
+    def test_an_empty_resumed_music_directory_counts_as_thermites(self):
+        runtime = context().layout.root
+        found = host_system(stats={runtime: Stat(9001, 9001, 0o750, True, 0), MUSIC: Stat(9001, 9001, 0o700, True, 0)})
+        entries = {runtime: ["music"], MUSIC: []}
+        found.directory_entries.side_effect = lambda path: entries.get(Path(path))
+        found.safe_directory.return_value = True
+        with patch.object(steps, "service_receipt", return_value=False), \
+                patch.object(ownership, "inspect", return_value=ownership.Owned()):
+            self.assertTrue(steps.state_owned(context(base=MUSIC_HOST), found))
+            entries[MUSIC] = ["settings.json"]
+            self.assertFalse(steps.state_owned(context(base=MUSIC_HOST), found), "its data needs the receipt")
+
+    def test_the_full_repair_keeps_it_private(self):
+        self.assertIn("music", oh_service.NATIVE_ROOTS)
+        self.assertEqual(oh_service.desired_mode("music", 0o755, True), 0o700)
+        self.assertEqual(oh_service.desired_mode("music/settings.json", 0o644, False), 0o600)
+        self.assertEqual(oh_service.desired_mode("music/.cache/thumbnails", 0o750, True), 0o700)
+
 
 class Units(unittest.TestCase):
     def test_an_installed_unit_a_host_no_longer_has_is_removed(self):
@@ -245,8 +296,12 @@ class Reports(unittest.TestCase):
 
     def test_uninstall_says_it_keeps_music_assistants_state(self):
         self.assertIn("monitoring data, Music Assistant's settings and library)",
-                      uninstall.kept(context(base=MUSIC_HOST), purge=False))
+                      uninstall.kept(context(), purge=False, music=True))
         self.assertNotIn("Music Assistant", uninstall.kept(context(), purge=False))
+        self.assertTrue(steps.music_state(context(base=MUSIC_HOST), host_system()))
+        with patch.object(manifest, "installed", return_value=None):
+            self.assertFalse(steps.music_state(context(), host_system()))
+            self.assertTrue(steps.music_state(context(), host_system(stats={MUSIC: Stat(9001, 9001, 0o700, True, 0)})))
 
 
 class Boundary(unittest.TestCase):

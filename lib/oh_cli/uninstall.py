@@ -11,7 +11,6 @@ import sys
 
 import oh_cli
 import oh_deploy as deploy
-import oh_music
 from oh_cli import AREA
 from oh_install import bridge, changeover, manifest, runner, steps
 from oh_install.system import System
@@ -62,12 +61,14 @@ EXAMPLES = (
 )
 
 
-def kept(context: steps.Context, purge: bool) -> str:
+def kept(context: steps.Context, purge: bool, *, music: bool = False) -> str:
+    """What an uninstall keeps; `music`: whether the state holds Music
+    Assistant's (steps.music_state)."""
     root = context.installation.root
     if purge:
         return ("Kept: the thermite user and group; the packages; the site with its var/gateway/authority; and this "
                 "clone. thermite install installs Thermite afresh.")
-    music = ", Music Assistant's settings and library" if oh_music.settings(context.host) is not None else ""
+    music = ", Music Assistant's settings and library" if music else ""
     return (f"Kept: Thermite's state under {root}, runtime/ and access/ (accounts, pairings, the gateway's identity "
             f"and TLS key, history, monitoring data{music}), recorded in {manifest.INSTALLED} so that thermite install "
             "finds it again; the images (`sudo podman images` lists them); the thermite user and group; the "
@@ -109,7 +110,7 @@ def uninstall(system: System, dry_run: bool, purge: bool) -> int:
     code = changeover.run(context, system, lambda id: changeover.uninstall_work(context, id, purge=purge),
                           installed=installed, bridged=bridged, before=None, first=1, pinned=False)
     if code == changeover.COMMITTED:
-        system.say(kept(context, purge))
+        system.say(kept(context, purge, music=steps.music_state(context, system)))
     return code
 
 
