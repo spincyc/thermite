@@ -397,9 +397,8 @@ class Provisioner:
         (a library no longer listed, one the owner added in Music
         Assistant's own UI) is removed only once each library has its
         instance, named: nothing is removed in the hope of replacing it. A
-        new instance is named before it is recorded, so that its name finds
-        it should the record not be written. While the record cannot be
-        trusted the libraries are left as they are."""
+        new instance is named and recorded (keep). While the record cannot
+        be trusted the libraries are left as they are."""
         try:
             recorded = read_libraries(self.state)
         except Untrusted as error:
@@ -414,33 +413,48 @@ class Provisioner:
         names = {LIBRARY_NAME.format(library): library for library in self.spec["libraries"]}
         configs = {config["instance_id"]: config for config in self.configs(client)
                    if config.get("domain") == "filesystem_local"}
-        held = {library: instance for library, instance in recorded.items()
-                if library in self.spec["libraries"] and instance in configs}
+        found = {library: instance for library, instance in recorded.items()
+                 if library in self.spec["libraries"] and instance in configs}
         for instance, config in configs.items():
             library = names.get(config.get("name"))
-            if library and library not in held and instance not in held.values():
-                held[library] = instance
+            if library and library not in found and instance not in found.values():
+                found[library] = instance
         changed = 0
-        for library in sorted(set(self.spec["libraries"]) - set(held)):
+        for library in sorted(set(self.spec["libraries"]) - set(found)):
             instance = self.add(client, "filesystem_local", {"content_type": "music", "path": f"{MEDIA}/{library}"})
             if instance is not None:
-                held[library] = instance
+                found[library] = instance
                 changed += 1
-                try:
-                    self.name(client, library, instance)
-                finally:
-                    write_libraries(self.state, held)
-        if held != recorded:
-            write_libraries(self.state, held)
-        for library, instance in sorted(held.items()):
+                self.keep(client, library, instance, found)
+        if found != recorded:
+            write_libraries(self.state, found)
+        for library, instance in sorted(found.items()):
             if instance in configs and configs[instance].get("name") != LIBRARY_NAME.format(library):
                 self.name(client, library, instance)
                 changed += 1
-        if held.keys() == set(self.spec["libraries"]):
-            for instance in configs.keys() - set(held.values()):
+        if found.keys() == set(self.spec["libraries"]):
+            for instance in configs.keys() - set(found.values()):
                 client.call("config/providers/remove", instance_id=instance)
                 changed += 1
         return changed
+
+    def keep(self, client, library, instance, found):
+        """Name a new library instance and record it ({library: instance}),
+        each whatever the other does: either finds it again. One neither
+        named nor recorded would be added again at every reconcile, so it
+        is removed."""
+        errors = []
+        for keep in (lambda: self.name(client, library, instance), lambda: write_libraries(self.state, found)):
+            try:
+                keep()
+            except Exception as error:
+                errors.append(error)
+        if len(errors) == 2:
+            LOG.warning("Music Assistant: library %s's new instance could be neither named (%s) nor recorded (%s); "
+                        "removing it.", library, type(errors[0]).__name__, type(errors[1]).__name__)
+            client.call("config/providers/remove", instance_id=instance)
+        if errors:
+            raise errors[0]
 
     @staticmethod
     def name(client, library, instance):

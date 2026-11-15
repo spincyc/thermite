@@ -414,6 +414,22 @@ class Configuration(Site):
         self.assertEqual([entry["name"] for entry in self.sim.providers.values()
                           if entry["domain"] == "filesystem_local"], ["thermite flac"])
 
+    def test_a_library_neither_named_nor_recorded_is_removed_again(self):
+        def full(*_):
+            raise OSError(28, "No space left on device")
+
+        def refused(*_):
+            raise Failed(500)
+        with patch.object(provision, "write_libraries", full), patch.object(provision.Provisioner, "name", refused), \
+                self.assertLogs("oh_music.provision", "WARNING") as logs:
+            for _ in range(3):
+                self.provisioner().step()
+        self.assertIn("could be neither named (Failed) nor recorded (OSError); removing it", logs.output[0])
+        self.assertEqual(self.domains().count("filesystem_local"), 0)
+        self.provisioner().step()
+        self.assertEqual([entry["name"] for entry in self.sim.providers.values()
+                          if entry["domain"] == "filesystem_local"], ["thermite flac"])
+
     def test_a_part_that_fails_is_logged_and_the_others_still_applied(self):
         self.sim.remote_access = True
         self.sim.failing["config/providers/get_value"] = 1
