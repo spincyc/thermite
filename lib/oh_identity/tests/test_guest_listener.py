@@ -48,7 +48,7 @@ REFUSED_FILES = ("security.html", "access.html", "access-ui.js", "access.css", "
                  "cameras.js", "cameras.css", "cameras.json", "topology.html", "topology.js", "topology.css",
                  "topology.json", "README.md", "../secrets")
 #: The pages the listener serves, and the files their markup loads.
-PAGES = ("home.html", "index.html", "audio.html")
+PAGES = ("home.html", "index.html", "audio.html", "music.html")
 LOADS = r'<(?:script|link|img)\b[^>]*?\b(?:src|href)="([^"#]+)"'
 
 
@@ -116,12 +116,13 @@ class Listening(TestCase):
         return Client(enforce_csrf_checks=True)
 
     def test_home_remotes_and_their_files_load_and_nothing_else_is_found(self):
-        for path in ("/", "/remotes/", "/audio/", "/static/remote/", *("/static/remote/" + name for name in guest.ASSETS)):
+        for path in ("/", "/remotes/", "/audio/", "/music/", "/static/remote/", *("/static/remote/" + name for name in guest.ASSETS)):
             with self.subTest(path=path):
                 response = call("get", path)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(call("head", path).status_code, 200)
-        for path, target in (("/remotes", "/remotes/"), ("/audio", "/audio/"), ("/overview", "/"), ("/overview/", "/")):
+        for path, target in (("/remotes", "/remotes/"), ("/audio", "/audio/"), ("/music", "/music/"), ("/overview", "/"),
+                             ("/overview/", "/")):
             with self.subTest(path=path):
                 self.assertEqual(call("get", path)["Location"], target)
         refused = [*REFUSED_PAGES, *("/static/remote/" + name for name in REFUSED_FILES), "/missing", "/unifi/media/x",
@@ -377,7 +378,7 @@ class Allowlist(SimpleTestCase):
         for page in PAGES:
             marked |= set(re.findall(LOADS, (WEB / page).read_text()))
         loaded = set(marked)
-        for sheet in ("theme.css", "shell.css", "remote.css", "home.css", "audio.css"):
+        for sheet in ("theme.css", "shell.css", "remote.css", "home.css", "audio.css", "music.css"):
             loaded |= set(re.findall(r'url\("([^"#]+)"\)', (WEB / sheet).read_text()))
         # Scripts fetch these themselves.
         loaded |= {"activity.json", "diagnostics.json", "mark.svg"}
