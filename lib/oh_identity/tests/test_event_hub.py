@@ -394,7 +394,7 @@ class EventEndpoints(TransactionTestCase):
         def joined(**extra):
             views = []
 
-            def fake(adapter, view, snapshot, release=None, meta=None):
+            def fake(adapter, view, snapshot, release=None, meta=None, hub=None):
                 views.append(view)
                 return (b"" for _ in ())
             with patch("oh_identity.streams.stream", fake):

@@ -107,25 +107,24 @@ class Subscriber:
         return self.frames.popleft()
 
 
-class EventHub:
-    """The process's upstream subscription, latest-value cache and fan-out,
-    bound to the event loop that serves the gateway."""
+class Fanout:
+    """Client streams of named views over one upstream, bound to the event
+    loop that serves the gateway: the upstream opens with the first stream,
+    closes LINGER seconds after the last, and reconnects through BACKOFF. A
+    subclass connects (_session), snapshots a view and forgets what its
+    upstream told it once that is lost (_forget). EventHub is openHAB's;
+    oh_identity.music_hub's is Music Assistant's."""
 
-    def __init__(self, adapter, *, queue=None, linger=None, backoff=None):
-        self.contract, self.transport = adapter.contract, adapter.transport
-        self.views = topics.views(self.contract)
-        self.items = {name: topics.state_items(view) for name, view in self.views.items()}
-        self.public = frozenset().union(*self.views.values())
-        self.cached = frozenset().union(*self.items.values())
-        self.filters = upstream_filters(self.public)
+    COUNTERS = ("upstream_connects", "upstream_failures", "resyncs", "events", "frames", "overflows")
+
+    def __init__(self, views, *, queue=None, linger=None, backoff=None):
         self.queue = QUEUE if queue is None else queue
         self.linger = LINGER if linger is None else linger
         self.backoff = BACKOFF if backoff is None else backoff
         self.loop = asyncio.get_running_loop()
-        self.subscribers = {name: set() for name in self.views}
-        self.values, self.version, self._snapshots = {}, 0, {}
-        self.ready, self.touched, self.task, self._idle = False, None, None, None
-        self.counters = dict.fromkeys(("upstream_connects", "upstream_failures", "resyncs", "events", "frames", "overflows"), 0)
+        self.subscribers = {name: set() for name in views}
+        self.ready, self.task, self._idle = False, None, None
+        self.counters = dict.fromkeys(self.COUNTERS, 0)
 
     def status(self):
         """Counters and gauges for metrics: client streams per view, whether
@@ -140,14 +139,17 @@ class EventHub:
 
     # ---- client streams ----------------------------------------------------
 
+    def needs_upstream(self):
+        return True
+
     def join(self, view, meta=None):
         subscriber = Subscriber(self, view, meta or {"view": view})
         self.subscribers[view].add(subscriber)
         if self._idle:
             self._idle.cancel()
             self._idle = None
-        if not self.filters:
-            self.ready = True  # Nothing public: an empty snapshot, no upstream.
+        if not self.needs_upstream():
+            self.ready = True  # Nothing to stream: an empty snapshot, no upstream.
         if self.ready:
             subscriber.push(self.snapshot(view))
         elif self.task is None or self.task.done():
@@ -164,6 +166,64 @@ class EventHub:
         if not any(self.subscribers.values()) and self.task:
             self.task.cancel()
 
+    def _broadcast(self, data_for):
+        for view, subscribers in self.subscribers.items():
+            if subscribers:
+                data = data_for(view)
+                for subscriber in list(subscribers):
+                    subscriber.push(data)
+
+    # ---- upstream ----------------------------------------------------------
+
+    def _forget(self):
+        """Drop what the lost upstream said."""
+
+    def _lost(self):
+        served, self.ready = self.ready, False
+        self._forget()
+        if served:
+            self._broadcast(lambda view: UNAVAILABLE)
+
+    async def _session(self):
+        raise NotImplementedError
+
+    async def _run(self):
+        attempt = 0
+        try:
+            while any(self.subscribers.values()) or self._idle:
+                try:
+                    await self._session()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    self.counters["upstream_failures"] += 1
+                    attempt = 0 if self.ready else attempt
+                    notify("upstream_close", {"error": type(error).__name__})
+                self._lost()
+                await asyncio.sleep(self.backoff[min(attempt, len(self.backoff) - 1)])
+                attempt += 1
+        finally:
+            self._lost()
+
+
+class EventHub(Fanout):
+    """The process's upstream subscription, latest-value cache and fan-out,
+    bound to the event loop that serves the gateway."""
+
+    def __init__(self, adapter, *, queue=None, linger=None, backoff=None):
+        self.contract, self.transport = adapter.contract, adapter.transport
+        self.views = topics.views(self.contract)
+        self.items = {name: topics.state_items(view) for name, view in self.views.items()}
+        self.public = frozenset().union(*self.views.values())
+        self.cached = frozenset().union(*self.items.values())
+        self.filters = upstream_filters(self.public)
+        super().__init__(self.views, queue=queue, linger=linger, backoff=backoff)
+        self.values, self.version, self._snapshots = {}, 0, {}
+        self.touched = None
+
+    def needs_upstream(self):
+        return bool(self.filters)
+
     def snapshot(self, view):
         cached = self._snapshots.get(view)
         if cached and cached[0] == self.version:
@@ -172,13 +232,6 @@ class EventHub:
         data = encode({"type": "snapshot", "view": view.removesuffix(topics.WITHOUT_TEXT), "states": states})
         self._snapshots[view] = (self.version, data)
         return data
-
-    def _broadcast(self, data_for):
-        for view, subscribers in self.subscribers.items():
-            if subscribers:
-                data = data_for(view)
-                for subscriber in list(subscribers):
-                    subscriber.push(data)
 
     # ---- upstream ----------------------------------------------------------
 
@@ -232,12 +285,10 @@ class EventHub:
         self.counters["resyncs"] += 1
         self._broadcast(self.snapshot)
 
-    def _lost(self):
-        served, self.ready, self.touched = self.ready, False, None
+    def _forget(self):
+        self.touched = None
         self.values.clear()
         self.version += 1
-        if served:
-            self._broadcast(lambda view: UNAVAILABLE)
 
     async def _session(self):
         connected = self.loop.create_future()
@@ -273,24 +324,6 @@ class EventHub:
                 if task and not task.done():
                     task.cancel()
             await asyncio.gather(*(task for task in (reader, reading) if task), return_exceptions=True)
-
-    async def _run(self):
-        attempt = 0
-        try:
-            while any(self.subscribers.values()) or self._idle:
-                try:
-                    await self._session()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as error:
-                    self.counters["upstream_failures"] += 1
-                    attempt = 0 if self.ready else attempt
-                    notify("upstream_close", {"error": type(error).__name__})
-                self._lost()
-                await asyncio.sleep(self.backoff[min(attempt, len(self.backoff) - 1)])
-                attempt += 1
-        finally:
-            self._lost()
 
 
 def hub_for(adapter):

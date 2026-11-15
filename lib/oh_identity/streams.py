@@ -129,20 +129,20 @@ def closed(meta, seconds, reason):
     notify("stream_close", {**meta, "seconds": round(seconds, 3), "reason": reason})
 
 
-async def stream(adapter, view, snapshot, release=None, meta=None):
+async def stream(adapter, view, snapshot, release=None, meta=None, hub=None):
     """One client stream of a view: the hub's snapshot, then the view's events,
     with a heartbeat frame after each HEARTBEAT seconds without one. Ends when
-    the credential is revoked."""
+    the credential is revoked. hub returns the view's hub on the running loop
+    (the adapter's EventHub unless given)."""
     meta = meta or {"view": view}
-    hub = subscriber = None
+    subscriber = None
     started, reason = clock(), "client"
     try:
         if not await sync_to_async(valid)(snapshot):
             reason = "revoked"
             return
         opened(meta)
-        hub = hub_for(adapter)
-        subscriber = hub.join(view, meta)
+        subscriber = (hub() if hub else hub_for(adapter)).join(view, meta)
         checked = clock()
         while True:
             data = await subscriber.next(HEARTBEAT)
@@ -163,7 +163,7 @@ async def stream(adapter, view, snapshot, release=None, meta=None):
         yield ERROR
     finally:
         if subscriber:
-            hub.leave(subscriber)
+            subscriber.hub.leave(subscriber)
             closed(meta, clock() - started, reason)
         if release:
             release()
@@ -180,41 +180,49 @@ def events(request, view):
             # Pairing is an Admin's page, as its device list is (views.pairing_items).
             require_admin(request, user)
         adapter = get_adapter()
-        token = getattr(request, "identity_token", None)
-        from .security import guests_see_text
-        snapshot = {"user": user.pk, "revision": user.auth_revision, "token": str(token.pk) if token else None,
-                    "session": request.session.session_key if not token else None,
-                    "security_revision": user._identity_context["security_revision"],
-                    "guest": getattr(user, "is_guest", False)}
-        if snapshot["guest"]:
-            snapshot["guest_text"] = guests_see_text(request.identity_state)
-        joined = view if snapshot.get("guest_text", True) else view + WITHOUT_TEXT
-        scope = getattr(request, "scope", None)
-        # Lifecycle fields for observers (metrics); the journal lines are
-        # trail.stream_opened's. A Guest-listener request carries no
-        # credential: its principal is a Guest.
-        meta = {"view": view, "origin": "guest" if guest_listener(request) else "https",
-                "principal": "guest" if snapshot["guest"] else "token" if token else "session",
-                "http_version": scope.get("http_version") if isinstance(scope, dict) else None,
-                "peer": user._identity_context.get("peer")}
-        bucket = peer_bucket(request.META.get("REMOTE_ADDR"))
-        release = slots.acquire(bucket)
-        if release is None:
-            notify("stream_refused", meta)
-            raise Problem("too_many_streams", 429, retry_after=HEARTBEAT)
-        # One journal line when the stream opens and one when it ends, with
-        # its duration, the number of topics its view carries and the peer's
-        # and gateway's stream counts. The wrapped release runs once however
-        # the response ends.
-        from .trail import stream_opened
-        release = stream_opened(release, request, user, topics=len(view_topics(adapter.contract)[joined]),
-                                counts=lambda: slots.counts(bucket))
-        content = stream(adapter, joined, snapshot, release, meta)
-        # A generator that never starts never runs its finally block.
-        weakref.finalize(content, release)
-        response = EventStream(content, release, content_type="text/event-stream")
-        response["Cache-Control"] = "no-store"
-        response["X-Accel-Buffering"] = "no"
-        return response
+        return respond(request, user, adapter, view, lambda joined: len(view_topics(adapter.contract)[joined]))
     except Problem as exc:
         return problem_response(exc)
+
+
+def respond(request, user, adapter, view, topics, hub=None):
+    """The event stream response of one view: admitted per peer and in
+    total, with the credential snapshot it is revalidated against and its
+    trail. topics(joined) is how many topics the joined view (the view, or
+    its WITHOUT_TEXT variant for a Guest who may not see free text)
+    carries; hub, stream()'s."""
+    token = getattr(request, "identity_token", None)
+    from .security import guests_see_text
+    snapshot = {"user": user.pk, "revision": user.auth_revision, "token": str(token.pk) if token else None,
+                "session": request.session.session_key if not token else None,
+                "security_revision": user._identity_context["security_revision"],
+                "guest": getattr(user, "is_guest", False)}
+    if snapshot["guest"]:
+        snapshot["guest_text"] = guests_see_text(request.identity_state)
+    joined = view if snapshot.get("guest_text", True) else view + WITHOUT_TEXT
+    scope = getattr(request, "scope", None)
+    # Lifecycle fields for observers (metrics); the journal lines are
+    # trail.stream_opened's. A Guest-listener request carries no
+    # credential: its principal is a Guest.
+    meta = {"view": view, "origin": "guest" if guest_listener(request) else "https",
+            "principal": "guest" if snapshot["guest"] else "token" if token else "session",
+            "http_version": scope.get("http_version") if isinstance(scope, dict) else None,
+            "peer": user._identity_context.get("peer")}
+    bucket = peer_bucket(request.META.get("REMOTE_ADDR"))
+    release = slots.acquire(bucket)
+    if release is None:
+        notify("stream_refused", meta)
+        raise Problem("too_many_streams", 429, retry_after=HEARTBEAT)
+    # One journal line when the stream opens and one when it ends, with
+    # its duration, the number of topics its view carries and the peer's
+    # and gateway's stream counts. The wrapped release runs once however
+    # the response ends.
+    from .trail import stream_opened
+    release = stream_opened(release, request, user, topics=topics(joined), counts=lambda: slots.counts(bucket))
+    content = stream(adapter, joined, snapshot, release, meta, hub)
+    # A generator that never starts never runs its finally block.
+    weakref.finalize(content, release)
+    response = EventStream(content, release, content_type="text/event-stream")
+    response["Cache-Control"] = "no-store"
+    response["X-Accel-Buffering"] = "no"
+    return response
