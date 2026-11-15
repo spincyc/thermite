@@ -11,6 +11,8 @@ import re
 import stat
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -1138,6 +1140,24 @@ class Textfiles(unittest.TestCase):
             self.assertFalse(textfile.write())
             self.assertFalse(textfile.write())
         self.assertEqual(len(logged.records), 1)
+
+    def test_a_stop_waits_for_a_stalled_write_no_longer_than_it_is_given(self):
+        stalled, release, writes = threading.Event(), threading.Event(), []
+
+        def refresh():
+            writes.append(threading.current_thread().name)
+            if len(writes) == 2:
+                stalled.set()
+                release.wait(10)
+        textfile = self.metrics.Textfile(self.metrics.CALLBACKS, "example", self.directory, every=0.01,
+                                         refresh=refresh).start()
+        self.assertTrue(stalled.wait(5))
+        started = time.monotonic()
+        textfile.stop(timeout=0.1)
+        self.assertLess(time.monotonic() - started, 2)
+        # The write in progress is the last: none is started beside it.
+        self.assertEqual(writes, ["MainThread", "metrics-textfile"])
+        release.set()
 
     def test_labels_are_finite(self):
         text = self.metrics.prometheus_client.generate_latest(self.metrics.GATEWAY).decode()

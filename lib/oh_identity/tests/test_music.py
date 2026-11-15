@@ -746,12 +746,14 @@ class Gateway(Stand_in, Requests, TestCase):
         def connect(port, **options):
             return MusicClient(port, transport=httpx.MockTransport(handler), **options)
         stop = threading.Event()
-        with patch.object(worker, "MUSIC_STOP", 0.1), \
-                patch.object(provision, "run", functools.partial(provision.run, connect=connect)), \
+        with patch.object(provision, "run", functools.partial(provision.run, connect=connect)), \
                 self.assertLogs("oh_access.worker", "WARNING") as logs:
             with lease():
-                with worker.music_running(self.state, self.adapter.contract.music, stop) as thread:
+                # What is left of the worker's stop budget bounds the join, below MUSIC_STOP.
+                with worker.music_running(self.state, self.adapter.contract.music, stop, left=lambda: 0.1) as thread:
                     self.assertTrue(asked.wait(10))
+                    started = time.monotonic()
+                self.assertLess(time.monotonic() - started, 5)
                 self.assertTrue(thread.is_alive())
         with lease():
             pass
@@ -767,6 +769,32 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertLess(SLOW, worker.MUSIC_STOP)
         self.assertLess(worker.MUSIC_STOP, worker.STOP_SECONDS)
         self.assertLessEqual(worker.STOP_SECONDS + 3, timeout)
+
+    def test_the_worker_joins_its_threads_within_one_deadline_from_its_stop_request(self):
+        from oh_access import worker
+        now, woken = [100.0], threading.Event()
+        stop = threading.Event()
+        shutdown = worker.Shutdown(stop, clock=lambda: now[0], poll=0.01)
+        self.assertEqual(shutdown.left(), worker.STOP_SECONDS)
+        watcher = shutdown.watch(woken.set)
+        # A signal: a flag and a time, and the watcher stops the threads at once.
+        shutdown.request()
+        self.assertTrue(woken.wait(5))
+        self.assertTrue(stop.is_set())
+        # The loop's step ends 20 seconds on: what is left counts from the request, not from then.
+        now[0] += 20
+        shutdown.request()
+        self.assertEqual(shutdown.left(), worker.STOP_SECONDS - 20)
+        now[0] += 60
+        self.assertEqual(shutdown.left(), 0.0)
+        watcher.join(5)
+        # The stop event set by another starts the budget when the watcher sees it.
+        stop = threading.Event()
+        shutdown = worker.Shutdown(stop, clock=lambda: now[0], poll=0.01)
+        watcher = shutdown.watch(woken.set)
+        stop.set()
+        watcher.join(5)
+        self.assertEqual((shutdown.requested, shutdown.left()), (True, worker.STOP_SECONDS))
 
     def test_the_guest_listener_serves_music_but_not_tidal(self):
         from oh_identity.guest import ROUTES

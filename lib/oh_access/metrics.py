@@ -431,13 +431,16 @@ class Textfile:
         self._thread.start()
         return self
 
-    def stop(self):
-        """Stop writing, after one last write of the final counts."""
+    def stop(self, timeout=5):
+        """Stop writing, after one last write of the final counts, waiting
+        timeout seconds at most for a write in progress; one that outlasts
+        it is the last."""
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
-            self.write()
+            self._thread.join(timeout=timeout)
+            stopped, self._thread = not self._thread.is_alive(), None
+            if stopped:
+                self.write()
 
 
 def start(registry, name, *, refresh=None, environ=None):
