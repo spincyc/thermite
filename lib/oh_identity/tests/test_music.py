@@ -165,10 +165,15 @@ class Matching(SimpleTestCase):
                                   "name": "someone else", "available": True}], ["flac"])
         for good in ("library://album/5", "tidal--a1://track/123", "tidal--a1://playlist/" + oh_music_sim.TIDAL_PLAYLIST_ID,
                      "tidal--a1://folder/", "tidal--a1://folder/playlists", "filesystem_local--b2://folder/",
-                     "filesystem_local--b2://folder/Artist", "filesystem_local--b2://track/Artist/Album/01 - Song?.flac"):
+                     "filesystem_local--b2://folder/Artist", "filesystem_local--b2://track/Artist/Album/01 - Song?.flac",
+                     # A file name's spaces of any kind: a no-break space, an ideographic space, a joiner.
+                     "filesystem_local--b2://track/Ar\u00a0tist/\u66f2\u3000\u4e00.flac",
+                     "filesystem_local--b2://folder/\u200dBand"):
             self.assertEqual(music.parse_ref(good, sources)[0], good.split("://")[0])
         for bad in ("filesystem_local--c3://track/x", "spotify://track/1", "library://folder/x", "library://radio/1",
                     "library://track/", "filesystem_local--b2://folder/../../etc", "tidal--a1://track/1\n",
+                    "filesystem_local--b2://track/a\x7fb", "filesystem_local--b2://track/a\x85b",
+                    "filesystem_local--b2://track/a\tb",
                     "library://track/" + "1" * 1100, 5, None,
                     # Each provider's own IDs: Music Assistant builds TIDAL's API paths from them.
                     "library://track/5/../6", "library://album/five", "tidal--a1://track/123/../../users",
@@ -347,7 +352,9 @@ class Gateway(Stand_in, Requests, TestCase):
                 (f"{AMP}/volume", {"level": 101}, "invalid_command"),
                 (f"{AMP}/volume", {"level": 5, "group_level": 5}, "invalid_command"),
                 (f"{AMP}/volume", {"level": True}, "invalid_command"),
-                (f"{AMP}/ungroup", {"now": True}, "invalid_command")):
+                (f"{AMP}/ungroup", {"now": True}, "invalid_command"),
+                (f"{AMP}/transport", {"action": ["pause"]}, "invalid_command"),
+                (f"{AMP}/transport", {"action": {"pause": 1}}, "invalid_command")):
             self.assertEqual(self.post("/api/v1/music/" + path, body).json(), {"error": code}, (path, body))
         # Only the providers were read, for a TIDAL instance Music Assistant does not have; never a command sent.
         self.assertEqual({command for command, _ in self.sim.calls[calls:]}, {"providers"})

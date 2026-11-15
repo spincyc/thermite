@@ -180,7 +180,8 @@ def parse_ref(value, sources=None):
     provider gives (valid_id), and, given the sources, a provider instance
     thermite knows."""
     match = REF.fullmatch(value) if isinstance(value, str) and len(value) <= REF_LENGTH else None
-    if not match or not value.isprintable() or not valid_id(*match.groups()):
+    # A file name may hold any space or joiner; only controls are refused.
+    if not match or _CONTROL.search(value) or not valid_id(*match.groups()):
         raise Problem("invalid_ref")
     provider, kind, ident = match.groups()
     if sources is not None and not sources.known(provider):
@@ -536,7 +537,7 @@ class Music:
 
     def transport(self, user, speaker, action, value, *, origin=None):
         self.known(speaker)
-        if action not in TRANSPORT or not TRANSPORT[action](value):
+        if not isinstance(action, str) or action not in TRANSPORT or not TRANSPORT[action](value):
             raise Problem("invalid_command")
 
         def plan(players):
