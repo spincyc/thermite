@@ -172,8 +172,9 @@ class Client:
 
     def image(self, proxy_id, size):
         """(media type, bytes) of one image at one size, as JPEG; Failed for
-        anything but a bounded JPEG or PNG."""
-        response, body = self._request("GET", f"/imageproxy/{proxy_id}", IMAGE_BYTES,
+        anything but a bounded JPEG or PNG. It has SLOW seconds: Music
+        Assistant may fetch the image from TIDAL first."""
+        response, body = self._request("GET", f"/imageproxy/{proxy_id}", IMAGE_BYTES, SLOW,
                                        params={"size": str(size), "fmt": "jpg"})
         kind = response.headers.get("content-type", "").split(";")[0].strip().lower()
         kind = "image/jpeg" if kind == "image/jpg" else kind

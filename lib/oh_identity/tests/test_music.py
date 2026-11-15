@@ -30,6 +30,7 @@ from oh_identity.services import Problem, bootstrap
 from oh_identity.tests.test_core import PASSPHRASE
 from oh_identity.tests.test_trail import Requests, lines
 from oh_music import provision
+from oh_music.client import SLOW
 
 WEST, EAST, KITCHEN, ESTATE = "example_west", "example_east", "example_kitchen", "example_estate"
 WIIM, MINI, AMP = "example_desk_wiim", "example_kitchen_mini", "example_kitchen_amp"
@@ -420,6 +421,26 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertLessEqual(now[0], 3.5)
         self.assertTrue(all(timeout <= TIMEOUT for timeout in timeouts))
 
+    def test_play_and_group_wait_longer_for_music_assistant_than_other_commands(self):
+        call, sent = music.Music.call, []
+
+        def recording(music_, command, timeout=None, /, **args):
+            sent.append((command, timeout))
+            return call(music_, command, timeout, **args)
+        with patch.object(music.Music, "call", recording):
+            self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM})
+            self.post(f"/api/v1/music/{AMP}/volume", {"level": 33})
+            self.post(f"/api/v1/music/{AMP}/group", {"members": [MINI]})
+            self.post(f"/api/v1/music/{AMP}/transport", {"action": "pause"})
+            reads = len(sent)
+            self.get(f"/api/v1/music/{AMP}/queue")
+        self.assertEqual([(command, timeout) for command, timeout in sent if "/cmd/" in command or "play_media" in command],
+                         [("player_queues/play_media", 15.0), ("players/cmd/volume_set", None),
+                          ("players/cmd/set_members", 15.0), ("players/cmd/pause", None)])
+        # A queue's reads hold no lock, and Music Assistant may fetch its TIDAL items' details first.
+        self.assertEqual([(command, timeout) for command, timeout in sent[reads:] if command.startswith("player_queues/")],
+                         [("player_queues/get", SLOW), ("player_queues/items", SLOW)])
+
     def test_a_group_read_back_that_fails_answers_the_members_it_last_read(self):
         call, sent = music.Music.call, []
 
@@ -641,7 +662,6 @@ class Gateway(Stand_in, Requests, TestCase):
 
         from oh_access import worker
         from oh_access.staging import units
-        from oh_music.client import SLOW
         from oh_music.client import Client as MusicClient
         locks = oh_room_policy.FileLocks(Path(self.state) / "locks")
         lease = functools.partial(locks.hold, ["room-policy-worker"], blocking=False)

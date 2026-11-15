@@ -561,9 +561,12 @@ Assistant down or failing), `device=<speaker> action=music.<action>` with
 the option, the transport value, the level or the members as its value,
 never a reference, a query or a title; one refused for its body (400, 404)
 is none, a play whose reference names a provider instance Music Assistant
-does not have included. Music Assistant has 5 seconds to answer a command or a read and
-20 for a search or a browse; reading a group back takes 3 seconds at most,
-its reads included. Titles, names and art are free text: a Guest who may
+does not have included. Music Assistant has 15 seconds to answer a play
+(it resolves a whole TIDAL playlist or album first) or a grouping (several
+calls to the speakers), each under the rooms' locks; 5 for any other
+command or read; and 20 for a search, a browse, a queue or art, which hold
+no lock. Reading a group back takes about 3.5 seconds at most, its reads
+included. Titles, names and art are free text: a Guest who may
 not see it gets speakers without them and 401 `login_required` for search,
 browse, queues and art.
 

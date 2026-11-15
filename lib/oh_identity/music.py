@@ -71,6 +71,11 @@ GROUP_SETTLE = 3.0
 #: Times at most a command takes its rooms' locks: again each time a group
 #: changed while it waited for them to reach another speaker.
 LOCK_ATTEMPTS = 3
+#: Seconds the gateway waits, under the rooms' locks, for the commands Music
+#: Assistant answers only after long work: play_media resolves a whole TIDAL
+#: playlist or album first, and set_members regroups speakers with several
+#: calls to them. Every other command has TIMEOUT.
+LONG_COMMANDS = {"player_queues/play_media": 15.0, "players/cmd/set_members": 15.0}
 #: Player types that are a speaker of their own (not a group or protocol player).
 PLAYER_TYPES = ("player", "stereo_pair")
 STATES = ("playing", "paused", "idle")
@@ -439,8 +444,9 @@ class Music:
         ids = self.ids(players)
         leader, _ = self.leader(player, players, ids)
         owner = players.get(leader, player)
-        queue = self.call("player_queues/get", queue_id=owner["player_id"])
-        listed = self.call("player_queues/items", queue_id=owner["player_id"], limit=limit, offset=offset)
+        # Reads under no lock: Music Assistant may fetch a TIDAL item's details first.
+        queue = self.call("player_queues/get", SLOW, queue_id=owner["player_id"])
+        listed = self.call("player_queues/items", SLOW, queue_id=owner["player_id"], limit=limit, offset=offset)
         sources = self.sources()
         items = []
         for raw in listed if isinstance(listed, list) else ():
@@ -515,7 +521,7 @@ class Music:
                 reached, command, answer = plan(self.players())
                 if set(reached) <= involved:
                     if command:
-                        self.call(command[0], **command[1])
+                        self.call(command[0], LONG_COMMANDS.get(command[0]), **command[1])
                     return answer
             involved |= set(reached)
         raise Problem("music_failed", 502)

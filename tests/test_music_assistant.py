@@ -21,7 +21,7 @@ import httpx  # noqa: E402
 import oh_music_sim as stand_in  # noqa: E402
 from oh_access import AccessError  # noqa: E402
 from oh_music import provision, tidal  # noqa: E402
-from oh_music.client import Client, Failed, NoUser, Stopped, Unauthorized, Unavailable  # noqa: E402
+from oh_music.client import SLOW, Client, Failed, NoUser, Stopped, Unauthorized, Unavailable  # noqa: E402
 from oh_music.events import Closed, Socket  # noqa: E402
 
 DAY = 24 * 3600
@@ -529,6 +529,8 @@ class Errors(unittest.TestCase):
         client, seen = self.client(200, jpeg, "image/jpeg")
         self.assertEqual(client.image("0" * 64, 80), ("image/jpeg", jpeg))
         self.assertEqual((seen[0].url.path, dict(seen[0].url.params)), ("/imageproxy/" + "0" * 64, {"size": "80", "fmt": "jpg"}))
+        # Music Assistant may fetch it from TIDAL first.
+        self.assertEqual(seen[0].extensions["timeout"]["read"], SLOW)
         self.assertEqual(self.client(200, stand_in.png((1, 2, 3), 80), "image/png")[0].image("0" * 64, 80)[0], "image/png")
         for status, body, kind in ((200, b"<svg/>", "image/svg+xml"), (200, b"<html>", "text/html"),
                                    (200, stand_in.png((1, 2, 3), 80), "image/jpeg"), (404, b"", "text/plain"),
