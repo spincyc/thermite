@@ -30,7 +30,7 @@ import oh_sony_sim as sony_sim
 import oh_sonos_sim as sonos_sim
 from oh_cli import pair as pair_cli
 from oh_conf import Conf, House, YamlFile, uses
-from oh_features import all_off, remote_model, routing
+from oh_features import all_off, remote_model, routing, threadpools
 from oh_testing.routing import SIGNAL_WAIT, signal_problems, simulated_lifecycle
 
 SUMMARY = "receiver, streamer, projector, TV and audio page controls, plus Sonos Item contracts, against stand-ins"
@@ -422,7 +422,9 @@ class Check:
         files = render.render(self.data)
         house = House(self.data)
         modules = {m.NAME: m for m, _ in self.controls.values()}
-        keep = {"services/addons.cfg", "yaml/model.yaml", all_off.ITEMS, all_off.RULE}
+        # Production's thread pools (threadpools): presses are timed on the
+        # pools a house runs with, not openHAB's defaults.
+        keep = {"services/addons.cfg", "yaml/model.yaml", all_off.ITEMS, all_off.RULE, threadpools.FILE}
         for module in modules.values():
             keep.add(module.FILE)
             keep |= set(getattr(module, "ASSETS", {}))
@@ -718,13 +720,17 @@ class Check:
                                heard, opened, stop)).start()
         opened.wait(3)
         pgid = lib.running_pgid(inst)
-        began, used = time.monotonic(), cpu_seconds(pgid)
-        self.each(lambda ident: self._latency(ident, heard))
-        took, used = time.monotonic() - began, cpu_seconds(pgid) - used
+        # One read of every state before the presses: a read per device at
+        # once would load openHAB with the whole Item list while it times them.
+        states = self.states()
+        began, used, own = time.monotonic(), cpu_seconds(pgid), time.process_time()
+        self.each(lambda ident: self._latency(ident, heard, states))
+        took, used, own = time.monotonic() - began, cpu_seconds(pgid) - used, time.process_time() - own
         stop.set()
-        self.log(f"        runtime used {used / took * 100:.1f}% of one core over these {took:.1f}s")
+        self.log(f"        runtime used {used / took * 100:.1f}% of one core over these {took:.1f}s, "
+                 f"this check and its stand-ins {own / took * 100:.1f}%")
 
-    def _latency(self, ident: str, heard: list) -> None:
+    def _latency(self, ident: str, heard: list, states: dict[str, str]) -> None:
         module, control = self.controls[ident]
         stand_in, items = self.stand_ins[ident], control_items(control)
         if "mute" in items:
@@ -734,8 +740,10 @@ class Check:
         else:
             return
         item, allowed = items[field], module.READ_BACK + SLACK
+        state = states.get(item)
         for _ in range(PRESSES):
-            value = next(v for v in values if not same(v, self.states().get(item)))
+            value = next(v for v in values if not same(v, state))
+            state = value
             sent, seen = len(stand_in.writes()), len(heard)
             began = time.monotonic()
             self.command(item, value)

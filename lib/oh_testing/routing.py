@@ -18,7 +18,7 @@ import oh_matrix_sim as sim
 import oh_cli
 import oh_render as render
 import oh_sandbox as lib
-from oh_features import all_off, remote, routing
+from oh_features import all_off, remote, routing, threadpools
 from oh_integrations import _instr as instr, vrroom_telnet
 
 SUMMARY = "the room Source selectors end to end, against simulated matrices"
@@ -270,8 +270,9 @@ class Check:
             lifecycle_io.configure(house, built, contract["lifecycle"])
             built.files[routing.RULE] = routing.rule(self.data, contract)
         files = built.render()
+        # threadpools: production's thread pools, as the controls check runs with.
         keep = {"services/addons.cfg", "yaml/model.yaml", routing.ITEMS, routing.RULE, all_off.ITEMS, all_off.RULE,
-                *(m.FILE for m in self.modules.values()), *(m.RULE for m in self.modules.values() if self.ruled(m)),
+                threadpools.FILE, *(m.FILE for m in self.modules.values()), *(m.RULE for m in self.modules.values() if self.ruled(m)),
                 *(f"{remote.TARGET}/{name}" for name in remote.FILES)}
         house = oh_conf.House(self.data)
         for module in {m.NAME: m for m in self.modules.values()}.values():
