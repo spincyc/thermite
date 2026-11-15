@@ -420,6 +420,21 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertLessEqual(now[0], 3.5)
         self.assertTrue(all(timeout <= TIMEOUT for timeout in timeouts))
 
+    def test_a_group_read_back_that_fails_answers_the_members_it_last_read(self):
+        call, sent = music.Music.call, []
+
+        def failing(music_, command, timeout=None, /, **args):
+            sent.append(command)
+            after = sent[sent.index("players/cmd/set_members") + 1:] if "players/cmd/set_members" in sent else []
+            if after.count("players/all") > 1:
+                raise Problem("music_unavailable", 503)
+            return call(music_, command, timeout, **args)
+        # The Amp Pro has no AirPlay: Music Assistant drops it from a Sonos's group, so the read-back waits for it.
+        with patch.object(music.Music, "call", failing):
+            response = self.post(f"/api/v1/music/{AMP}/group", {"members": [MINI, WIIM]})
+        self.assertEqual((response.status_code, response.json()),
+                         (200, {"accepted": True, "speaker": AMP, "joined": [MINI], "refused": [WIIM]}))
+
     def test_a_speaker_called_art_keeps_its_routes(self):
         from django.urls import resolve
         from oh_identity import music_api

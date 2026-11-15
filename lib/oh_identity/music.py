@@ -614,10 +614,15 @@ class Music:
     def settled(self, speaker, wanted):
         """The speakers in the speaker's group once every wanted one is, or
         when GROUP_SETTLE seconds have passed, each read included: Music
-        Assistant drops a member it cannot group without an error."""
-        until = self.clock() + self.settle
+        Assistant drops a member it cannot group without an error. A read
+        that fails answers the members last read: the command was sent and
+        accepted."""
+        until, members = self.clock() + self.settle, set()
         while True:
-            players = self.players(min(TIMEOUT, max(until - self.clock(), 0.5)))
+            try:
+                players = self.players(min(TIMEOUT, max(until - self.clock(), 0.5)))
+            except Problem:
+                return members
             player = players.get(speaker)
             members = set(self.leader(player, players, self.ids(players))[1]) if player else set()
             if set(wanted) <= members or self.clock() >= until:

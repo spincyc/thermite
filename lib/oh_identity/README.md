@@ -543,7 +543,8 @@ reach its leader's queue, which `queue` names. Grouping asks Music Assistant
 to join the members and reads the group back for up to 3 seconds: Music
 Assistant drops a member it cannot group (a WiiM without AirPlay with a
 Sonos) without an error, so `refused` lists it, as it does a speaker with no
-available player.
+available player. A read-back that fails answers what the last one read:
+the members were asked for and accepted.
 
 Commands keep a device command's rules (`RuntimeAdapter.device_guard`,
 which `dispatch_device` uses too): any principal sends them; each routed
