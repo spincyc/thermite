@@ -522,7 +522,7 @@ class Gateway(Stand_in, Requests, TestCase):
         provision.token_file(self.state).unlink()
         self.assertEqual(self.get("/api/v1/music").json()["problem"], "music_unavailable")
         # A token Music Assistant has refused for a day is no longer thermite's.
-        provision.write_claim(self.state, {"token": "example", "issued_at": 1, "expires_at": 2 ** 40,
+        provision.write_claim(self.state, {"token": "x", "issued_at": 1, "expires_at": 2 ** 40,
                                            "refused_since": int(time.time()) - provision.REFUSED})
         self.assertEqual(self.get("/api/v1/music").json()["problem"], "music_unclaimed")
 
@@ -550,10 +550,10 @@ class Gateway(Stand_in, Requests, TestCase):
         tracked = music.Music(self.adapter, self.state, connect=Recorded)
         claim = provision.read_claim(self.state)
         with tracked.connected() as first:
-            provision.write_claim(self.state, {**claim, "token": "next"})
+            provision.write_claim(self.state, {**claim, "token": "xxx"})
             with tracked.connected() as second:
                 # The first is still in use by the outer block.
-                self.assertEqual((first.closed, second.token), (False, "next"))
+                self.assertEqual((first.closed, second.token), (False, "xxx"))
             self.assertFalse(first.closed)
         self.assertTrue(first.closed)
         tracked.call("players/all")
