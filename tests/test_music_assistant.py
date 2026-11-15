@@ -475,6 +475,24 @@ class Events(Site):
                 await Socket.open(self.port, self.token())
         self.check(body)
 
+    def test_a_message_longer_than_its_bytes_closes_the_socket(self):
+        from unittest.mock import patch
+
+        from oh_music import events
+
+        async def body():
+            socket = await Socket.open(self.port, self.token())
+            try:
+                with patch.object(events, "MESSAGE_BYTES", 1500):
+                    # About 970 characters, 1870 bytes in UTF-8.
+                    self.sim.emit("player_updated", "example", {"name": "\u00e9" * 900})
+                    with self.assertRaises(Closed):
+                        while True:
+                            await socket.receive()
+            finally:
+                await socket.close()
+        self.check(body)
+
     def test_pings_are_answered_and_the_connection_stays_open(self):
         self.sim.heartbeat = 0.05
 

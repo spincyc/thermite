@@ -138,7 +138,7 @@ class Socket:
             elif isinstance(event, Message):
                 if not isinstance(event, TextMessage):
                     raise Closed("Music Assistant sent binary data")
-                self.size += len(event.data)
+                self.size += len(event.data.encode())  # MESSAGE_BYTES counts bytes, not characters.
                 if self.size > MESSAGE_BYTES:
                     raise Closed("Music Assistant message too large")
                 self.text.append(event.data)

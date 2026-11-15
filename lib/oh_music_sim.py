@@ -841,7 +841,9 @@ class Sim:
     # ---- events ---------------------------------------------------------------
 
     def emit(self, event, object_id, data):
-        message = json.dumps({"event": event, "object_id": object_id, "data": data}, separators=(",", ":"))
+        # UTF-8 as it is, as Music Assistant's encoder writes it.
+        message = json.dumps({"event": event, "object_id": object_id, "data": data}, separators=(",", ":"),
+                             ensure_ascii=False)
         self.events.append((event, object_id))
         for peer in list(self.peers):
             if peer.token is not None:
