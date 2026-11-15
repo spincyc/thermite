@@ -1,7 +1,7 @@
 /*
  * The Audio page (audio.html). Loaded after remote.css and built on its
- * tokens, keys, bubbles, fader, now card, segments and toast: one column
- * that fits a phone.
+ * tokens, keys, bubbles, fader, page chrome, now card, segments and toast:
+ * one column that fits a phone.
  */
 
 .audio-page {
@@ -9,40 +9,11 @@
 }
 
 .audio {
-  width: 100%;
   max-width: 560px;
-  min-width: 0;
-  margin: 0 auto;
-  padding:
-    var(--space-3)
-    calc(env(safe-area-inset-right) + var(--space-4))
-    calc(env(safe-area-inset-bottom) + var(--space-7))
-    calc(env(safe-area-inset-left) + var(--space-4));
 }
 
 .audio__head {
-  display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.audio__back {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--tap);
-  margin-left: calc(-1 * var(--space-2));
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-row);
-  color: var(--accent);
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.audio__back .icon {
-  width: 20px;
-  height: 20px;
 }
 
 .audio__title {
@@ -50,19 +21,6 @@
   font-size: 24px;
   font-weight: 600;
   letter-spacing: -0.035em;
-}
-
-/* The shell's bar names the page and leads back to Remotes. */
-.thermite-app .audio__back {
-  display: none;
-}
-
-.audio__mock {
-  margin: var(--space-3) 0 0;
-  padding: 8px 12px;
-  border-left: 2px solid var(--panel-border);
-  font-size: 13px;
-  color: var(--ink-muted);
 }
 
 .audio [hidden] {
@@ -79,23 +37,8 @@
   height: 14px;
 }
 
-.audio__alert {
-  margin: var(--space-3) 0 0;
-}
-
 .audio__device {
   margin-top: var(--space-3);
-}
-
-.audio__controls {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.audio__controls:disabled {
-  opacity: 0.45;
 }
 
 /* ---- volume, mute and power ----------------------------------------------- */
@@ -113,14 +56,6 @@
 
 .audio__volume .fader[data-pending="true"] .fader__input {
   opacity: 0.8;
-}
-
-.audio__level {
-  margin: var(--space-2) 0 0;
-  text-align: center;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-muted);
 }
 
 /* ---- sections and settings ------------------------------------------------ */

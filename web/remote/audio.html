@@ -42,22 +42,22 @@
     <symbol id="i-down" viewBox="0 0 24 24"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></symbol>
   </svg>
 
-  <main class="audio" aria-labelledby="audio-title">
-    <header class="audio__head">
-      <a class="audio__back" href="./">
+  <main class="child-page audio" aria-labelledby="audio-title">
+    <header class="child-page__head audio__head">
+      <a class="child-page__back" href="./">
         <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-back"></use></svg>
         <span>Remotes</span>
       </a>
       <h1 class="audio__title" id="audio-title">Audio</h1>
     </header>
 
-    <p class="audio__mock" data-mock hidden>Demo · a sample house. No commands are sent.</p>
+    <p class="child-page__mock" data-mock hidden>Demo · a sample house. No commands are sent.</p>
 
     <div class="targets-wrap" data-picker hidden>
       <div class="targets" role="group" aria-label="Audio devices" data-devices></div>
     </div>
 
-    <p class="alert audio__alert" data-alert hidden>
+    <p class="alert child-page__alert" data-alert hidden>
       <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-warn"></use></svg>
       <span data-alert-text></span>
     </p>
@@ -65,7 +65,7 @@
     <section class="audio__device" data-device aria-labelledby="audio-device-name" hidden>
       <h2 class="sr-only" id="audio-device-name" data-device-name></h2>
       <!-- A locked room that owns the device disables every control here; the gateway refuses them anyway. -->
-      <fieldset class="audio__controls" data-controls>
+      <fieldset class="child-page__controls" data-controls>
         <legend class="sr-only">Controls</legend>
         <div class="now-card" data-now>
           <p class="now-card__place"><span data-place></span><span class="now-card__model" data-model></span></p>
@@ -94,7 +94,7 @@
             <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-power"></use></svg>
           </button>
         </div>
-        <p class="audio__level" data-volume-text aria-hidden="true"></p>
+        <p class="child-page__level" data-volume-text aria-hidden="true"></p>
 
         <div class="audio__inputs" data-inputs-wrap hidden>
           <h3 class="audio__section-title" id="audio-input-title">Input</h3>

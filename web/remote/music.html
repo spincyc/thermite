@@ -49,9 +49,9 @@
     <symbol id="i-down" viewBox="0 0 24 24"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></symbol>
   </svg>
 
-  <main class="music" aria-labelledby="music-title">
-    <header class="music__head" data-thermite-bar-host>
-      <a class="music__back" href="./">
+  <main class="child-page music" aria-labelledby="music-title">
+    <header class="child-page__head music__head" data-thermite-bar-host>
+      <a class="child-page__back" href="./">
         <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-back"></use></svg>
         <span>Remotes</span>
       </a>
@@ -62,9 +62,9 @@
       </button>
     </header>
 
-    <p class="music__mock" data-mock hidden>Demo · invented speakers and music. Nothing plays.</p>
+    <p class="child-page__mock" data-mock hidden>Demo · invented speakers and music. Nothing plays.</p>
 
-    <p class="alert music__alert" data-alert hidden>
+    <p class="alert child-page__alert" data-alert hidden>
       <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-warn"></use></svg>
       <span data-alert-text></span>
     </p>
@@ -78,7 +78,7 @@
       <section class="music__now" aria-labelledby="music-now-name" data-now-panel hidden>
         <h2 class="sr-only" id="music-now-name" data-now-name></h2>
         <!-- A locked room that has a speaker here disables its controls; the gateway refuses them anyway. -->
-        <fieldset class="music__controls" data-controls>
+        <fieldset class="child-page__controls" data-controls>
           <legend class="sr-only">Controls</legend>
           <div class="now-card music-now" data-now>
             <div class="music-now__head">
@@ -130,7 +130,7 @@
               </div>
             </div>
           </div>
-          <p class="music__level" data-volume-text aria-hidden="true"></p>
+          <p class="child-page__level" data-volume-text aria-hidden="true"></p>
 
           <div class="music-group" data-group>
             <svg class="icon music-group__icon" aria-hidden="true" focusable="false"><use href="#i-group"></use></svg>
@@ -150,7 +150,7 @@
               </div>
             </div>
           </div>
-          <p class="music__level" data-group-volume-text aria-hidden="true" hidden></p>
+          <p class="child-page__level" data-group-volume-text aria-hidden="true" hidden></p>
         </fieldset>
       </section>
 

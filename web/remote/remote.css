@@ -1941,6 +1941,83 @@ kbd {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), inset 4px 0 0 var(--bad);
 }
 
+/* ---- a page under Remotes: Audio's and Music's -------------------------- */
+
+/* One column clear of a notch and the home bar; each page sets how wide. */
+.child-page {
+  width: 100%;
+  min-width: 0;
+  margin: 0 auto;
+  padding:
+    var(--space-3)
+    calc(env(safe-area-inset-right) + var(--space-4))
+    calc(env(safe-area-inset-bottom) + var(--space-7))
+    calc(env(safe-area-inset-left) + var(--space-4));
+}
+
+.child-page__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.child-page__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  margin-left: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-row);
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.child-page__back .icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* The shell's bar names the page and leads back to Remotes. */
+.thermite-app .child-page__back {
+  display: none;
+}
+
+/* A demo says so under the head, and the page's one alert follows. */
+.child-page__mock {
+  margin: var(--space-3) 0 0;
+  padding: 8px 12px;
+  border-left: 2px solid var(--panel-border);
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.child-page__alert {
+  margin: var(--space-3) 0 0;
+}
+
+/* The controls a locked room holds, all at once. */
+.child-page__controls {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.child-page__controls:disabled {
+  opacity: 0.45;
+}
+
+/* A level in words, under its fader. */
+.child-page__level {
+  margin: var(--space-2) 0 0;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+}
+
 /* ---- what plays: Audio's and Music's ------------------------------------ */
 
 .now-card {
@@ -2064,7 +2141,8 @@ kbd {
   transition: background var(--dur-state), color var(--dur-state);
 }
 
-.segmented__option[aria-checked="true"] {
+/* A radio's choice, or a tab's. */
+.segmented__option:is([aria-checked="true"], [aria-selected="true"]) {
   color: var(--key-ink);
   background: var(--key-top);
   box-shadow: var(--key-shadow);

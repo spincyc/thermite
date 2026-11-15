@@ -1,24 +1,13 @@
 /*
  * The Music page (music.html). Loaded after remote.css and built on its
- * tokens, keys, room rows, fader, now card, segments, sheets and toast. A
- * phone has one column under the bar, whose switch chooses the speaker; a
- * tablet adds the speakers beside what plays; a desktop gives the
- * speakers, what plays and the library a column each.
+ * tokens, keys, room rows, fader, page chrome, now card, segments, sheets
+ * and toast. A phone has one column under the bar, whose switch chooses
+ * the speaker; a tablet adds the speakers beside what plays; a desktop
+ * gives the speakers, what plays and the library a column each.
  */
 
 .music-page {
   overflow-y: auto;
-}
-
-.music {
-  width: 100%;
-  min-width: 0;
-  margin: 0 auto;
-  padding:
-    var(--space-3)
-    calc(env(safe-area-inset-right) + var(--space-4))
-    calc(env(safe-area-inset-bottom) + var(--space-7))
-    calc(env(safe-area-inset-left) + var(--space-4));
 }
 
 /* Hidden is hidden, whatever a class says (.button shows itself): the
@@ -27,37 +16,19 @@
   display: none !important;
 }
 
-.music__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
+/* A control that cannot act now (a lock, nothing to skip to, no length to
+   seek in) is dimmed and takes no hand. */
+:is(.music-transport .key, .music-progress__input, .music-path .icon-button, .music-actions .button, .music-sheet__join):disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
-.music__back {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--tap);
-  margin-left: calc(-1 * var(--space-2));
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-row);
-  color: var(--accent);
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.music__back .icon {
-  width: 20px;
-  height: 20px;
-}
-
-/* The shell's bar and sidebar name the page and lead back; the bar takes the switch. */
-.thermite-app .music__back,
+/* The shell's bar takes the switch, and then the head has nothing left. */
 .thermite-app .music__head[data-lent] {
   display: none;
 }
 
+/* With one speaker the switch only names it. */
 .music__switch:disabled {
   cursor: default;
 }
@@ -66,19 +37,7 @@
   display: none;
 }
 
-.music__mock {
-  margin: 0 0 var(--space-3);
-  padding: 8px 12px;
-  border-left: 2px solid var(--panel-border);
-  font-size: 13px;
-  color: var(--ink-muted);
-}
-
-.music__alert {
-  margin: 0 0 var(--space-3);
-}
-
-.music__alert[data-tone="quiet"] {
+.music [data-alert][data-tone="quiet"] {
   color: var(--ink-muted);
   background: var(--panel-hover);
 }
@@ -98,6 +57,7 @@
 
 .music__layout {
   display: grid;
+  margin-top: var(--space-3);
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas: "now" "library";
   gap: var(--space-5);
@@ -225,17 +185,6 @@
 }
 
 /* ---- what plays ------------------------------------------------------------ */
-
-.music__controls {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.music__controls:disabled {
-  opacity: 0.45;
-}
 
 .music-now__head {
   display: grid;
@@ -365,10 +314,6 @@
   background: var(--key-ink);
 }
 
-.music-progress__input:disabled {
-  cursor: default;
-}
-
 .music-progress__input:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 0;
@@ -417,11 +362,6 @@
   height: 20px;
 }
 
-.music-transport .key:disabled {
-  opacity: 0.38;
-  cursor: default;
-}
-
 .music-transport [data-pending="true"] {
   animation: pending 0.9s ease-in-out infinite alternate;
 }
@@ -438,14 +378,6 @@
 
 .music__volume .fader[data-pending="true"] .fader__input {
   opacity: 0.8;
-}
-
-.music__level {
-  margin: var(--space-2) 0 0;
-  text-align: center;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-muted);
 }
 
 /* The group: who plays along, and the button that changes it. */
@@ -486,12 +418,6 @@
 
 .music-tabs {
   margin-bottom: var(--space-3);
-}
-
-.music-tabs .segmented__option[aria-selected="true"] {
-  color: var(--key-ink);
-  background: var(--key-top);
-  box-shadow: var(--key-shadow);
 }
 
 .music-search {
@@ -682,11 +608,6 @@
   font-weight: 600;
 }
 
-.music-path .icon-button:disabled {
-  opacity: 0.38;
-  cursor: default;
-}
-
 .music__more {
   margin-top: var(--space-3);
 }
@@ -762,11 +683,6 @@
   margin: 0;
 }
 
-.music-actions .button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
 .music-members {
   display: grid;
   gap: 2px;
@@ -829,11 +745,6 @@
 .music-sheet__join,
 .music-sheet__end {
   margin-top: var(--space-3);
-}
-
-.music-sheet__join:disabled {
-  opacity: 0.45;
-  cursor: default;
 }
 
 .music-result {

@@ -406,18 +406,19 @@ class MusicMarkup(unittest.TestCase):
         self.assertEqual([covered for _, covered in page.hidden if not covered], [])
 
     def test_the_transport_fits_a_320_px_phone_and_every_target_is_44_px(self):
+        shared, rules = css_rules((REMOTE / "remote.css").read_text()), css_rules((REMOTE / "music.css").read_text())
         tokens = {}
-        for media, selector, values in css_rules((REMOTE / "remote.css").read_text()):
+        for media, selector, values in shared:
             if media is None and selector == ":root":
                 tokens.update(values)
-        rules = css_rules((REMOTE / "music.css").read_text())
 
         def value(selector, name, media=None):
             found = [values[name] for at, one, values in rules if one == selector and name in values and at in (None, media)]
             return pixels(found[-1].split(" ")[0] if name != "padding-inline" else found[-1], tokens)
 
         narrow = "(max-width: 374px)"
-        page = pixels(re.split(r"\s+(?![^(]*\))", [values["padding"] for media, one, values in rules if one == ".music" and "padding" in values][0])[1], tokens)
+        # The page's own padding at the sides (remote.css's, shared with Audio).
+        page = pixels(re.split(r"\s+(?![^(]*\))", [values["padding"] for media, one, values in shared if one == ".child-page"][0])[1], tokens)
         card = value(".music-now", "padding", narrow)
         keys = [value(".music-key", "width")] * 2 + [value(".music-transport .key--sm", "width", narrow)] * 2 + [value(".music-transport .key--play", "width", narrow)]
         gaps = 4 * value(".music-transport", "gap")
