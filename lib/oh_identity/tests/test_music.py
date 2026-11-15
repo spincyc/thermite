@@ -823,6 +823,23 @@ class Events(Stand_in, TransactionTestCase):
                 hub.leave(subscriber)
         self.check(body)
 
+    def test_a_stream_that_joins_after_the_hub_closed_hears_only_what_music_assistant_is_now(self):
+        async def body(hub):
+            port = self.server.port
+            await asyncio.to_thread(self.server.stop)
+            gone = hub.join(music_hub.VIEW)
+            self.assertEqual(await self.next(gone), {"type": "unavailable"})
+            hub.leave(gone)
+            # The hub closes once it has lingered; Music Assistant comes back long after.
+            while hub.task and not hub.task.done():
+                await asyncio.sleep(0.02)
+            self.server = oh_music_sim.Server(self.sim, port).start()
+            self.addCleanup(self.server.stop)
+            later = hub.join(music_hub.VIEW)
+            self.assertEqual((await self.next(later))["type"], "snapshot")
+            hub.leave(later)
+        self.check(body)
+
     def test_providers_that_change_before_the_first_snapshot_are_kept_not_streamed(self):
         async def body(hub):
             hub.task = asyncio.get_running_loop().create_future()  # Its connection is not opened here.

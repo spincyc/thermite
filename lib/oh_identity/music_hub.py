@@ -46,6 +46,9 @@ class MusicHub(Fanout):
         self.down = False
 
     def join(self, view, meta=None):
+        if self.task is None or self.task.done():
+            # A new connection: one that failed before the hub closed says nothing of now.
+            self.down = False
         subscriber = super().join(view, meta)
         if self.down and not self.ready:
             subscriber.push(UNAVAILABLE)
