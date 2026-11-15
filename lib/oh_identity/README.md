@@ -543,10 +543,13 @@ The music event stream is admitted, revalidated and heartbeated as the other
 streams. Its first frame is `{"type":"snapshot","view":"music","music":
 ...}`, GET `/api/v1/music`'s answer; then `{"type":"speaker","speaker":
 ...}` whenever a speaker a client sees changes, a fresh snapshot when Music
-Assistant's providers change, and `{"type":"unavailable"}` while Music
-Assistant is down or refuses the token. One Music Assistant websocket per
-gateway process (`oh_identity.music_hub`) serves every music stream, on
-`oh_identity.hub`'s terms.
+Assistant's providers change, and `{"type":"unavailable"}` when the
+connection to Music Assistant fails (it is down, starting, not claimed, or
+refuses the token), then a snapshot once it serves again. A stream that
+joins while it is down, or that is still waiting for its first snapshot
+when it fails, gets `{"type":"unavailable"}` at once. One Music Assistant
+websocket per gateway process (`oh_identity.music_hub`) serves every music
+stream, on `oh_identity.hub`'s terms.
 
 TIDAL signs in with its device flow: POST `/api/v1/music/tidal/start` (or
 `thermite access music-tidal --config FILE`, run as the service account)

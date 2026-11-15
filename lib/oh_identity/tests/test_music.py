@@ -620,6 +620,34 @@ class Events(Stand_in, TransactionTestCase):
             hub.leave(subscriber)
         self.check(body)
 
+    def test_a_stream_that_joins_or_waits_while_music_assistant_is_down_hears_it_at_once(self):
+        async def body(hub):
+            port = self.server.port
+            await asyncio.to_thread(self.server.stop)
+            waiting = hub.join(music_hub.VIEW)
+            self.assertEqual(await self.next(waiting), {"type": "unavailable"})
+            late = hub.join(music_hub.VIEW)
+            self.assertEqual(await self.next(late), {"type": "unavailable"})
+            self.server = oh_music_sim.Server(self.sim, port).start()
+            self.addCleanup(self.server.stop)
+            for subscriber in (waiting, late):
+                self.assertTrue((await self.next(subscriber, "snapshot"))["music"]["available"])
+                hub.leave(subscriber)
+        self.check(body)
+
+    def test_providers_that_change_before_the_first_snapshot_are_kept_not_streamed(self):
+        async def body(hub):
+            hub.task = asyncio.get_running_loop().create_future()  # Its connection is not opened here.
+            subscriber = hub.join(music_hub.VIEW)
+            providers = [{"domain": "tidal", "instance_id": "tidal--abcd1234", "available": True}]
+            self.assertFalse(hub.event({"event": "providers_updated", "data": providers}))
+            self.assertEqual(hub.sources.tidal, ["tidal--abcd1234"])
+            self.assertEqual(list(subscriber.frames), [])
+            hub.task.cancel()
+            hub.task = None
+            hub.leave(subscriber)
+        self.check(body)
+
     def test_a_renewed_token_reconnects_the_stream(self):
         async def body(hub):
             subscriber = hub.join(music_hub.VIEW)

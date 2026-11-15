@@ -1,7 +1,10 @@
 """One Music Assistant websocket per gateway process, shared by every music
 event stream (GET /api/v1/events/music), on hub.Fanout's terms: it opens
 with the first stream, closes LINGER seconds after the last, reconnects
-through BACKOFF, and streams `{"type":"unavailable"}` while it is down.
+through BACKOFF, and streams `{"type":"unavailable"}` when it goes down.
+Music Assistant down, starting or not claimed is no rare outage, so unlike
+openHAB's hub a stream also hears it at once when it joins, or waits for
+its first snapshot, while the connection fails.
 
 A stream's first frame is `{"type":"snapshot","view":"music","music":...}`,
 GET /api/v1/music's answer; after it, `{"type":"speaker","speaker":...}`
@@ -21,7 +24,7 @@ from oh_music import provision
 from oh_music.client import Unavailable
 from oh_music.events import Socket
 
-from .hub import Fanout, encode
+from .hub import UNAVAILABLE, Fanout, encode
 from .music import Sources
 from .topics import WITHOUT_TEXT
 
@@ -39,6 +42,14 @@ class MusicHub(Fanout):
         self.players, self.queues, self.sources = {}, {}, None
         self.sent = {}
         self._snapshots = {}
+        # Whether the last connection failed before serving or since.
+        self.down = False
+
+    def join(self, view, meta=None):
+        subscriber = super().join(view, meta)
+        if self.down and not self.ready:
+            subscriber.push(UNAVAILABLE)
+        return subscriber
 
     # ---- frames ---------------------------------------------------------------
 
@@ -110,7 +121,9 @@ class MusicHub(Fanout):
             return True
         if kind == "providers_updated" and isinstance(data, list):
             self.sources = Sources(data, self.music.spec["libraries"])
-            self.resync()
+            if self.ready:
+                # Before then, the first snapshot is still to come.
+                self.resync()
         return False
 
     def _forget(self):
@@ -119,6 +132,18 @@ class MusicHub(Fanout):
         self.sent.clear()
 
     async def _session(self):
+        try:
+            await self._connected()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if not self.ready and not self.down:
+                # Fanout tells only the streams it served; these wait for a first snapshot.
+                self._broadcast(lambda view: UNAVAILABLE)
+            self.down = True
+            raise
+
+    async def _connected(self):
         claim = await asyncio.to_thread(provision.read_claim, self.music.state)
         if provision.problem(claim, time.time()):
             raise Unavailable("Music Assistant is not claimed")
@@ -159,7 +184,7 @@ class MusicHub(Fanout):
                         self.keep_queue(each)
                 if not asked and not self.ready:
                     # Every read has answered: events that came before them are older.
-                    self.ready = True
+                    self.ready, self.down = True, False
                     self.counters["resyncs"] += 1
                     self.resync()
         finally:
