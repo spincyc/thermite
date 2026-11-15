@@ -31,6 +31,11 @@ openHAB's Java heap is capped at 1.5 GiB (`-Xmx1536m`); a live site peaked at
 about 0.7 GiB used. A heap that still runs out exits, and systemd restarts
 openHAB instead of leaving it half-working.
 
+[Music](music.md), on a host whose `instance/host.yaml` has `music:`, adds
+Music Assistant; upstream recommends 2 GB of RAM for it, beyond these
+profiles. Its artwork cache takes up to about 500 MB of disk, and its library
+database grows with the libraries.
+
 A dedicated GPU is not required for the core automation stack. Camera
 streaming and transcoding need separate sizing. A monitor and keyboard are
 useful for installation; routine administration can use SSH and a browser.

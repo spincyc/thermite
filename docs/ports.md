@@ -49,7 +49,7 @@ fails before starting them starts `thermite.target`, and so every service.
 | 13624 | Native Karaf shutdown control | 127.0.0.1 only |
 | 13625 | Sandbox Karaf shutdown control | 127.0.0.1 only |
 | 13626 | Boot-check Karaf shutdown control | 127.0.0.1 only |
-| 13627 | Music Assistant API (`music:` hosts only) | 127.0.0.1 only; the gateway is its one client |
+| 13627 | Music Assistant API (`music:` hosts only) | 127.0.0.1 only; the gateway is its one client; non-loopback access blocked by the managed native firewall |
 | 13628 | Music Assistant audio streams (`music:` hosts only) | Every address: the speakers fetch what they play from it |
 
 HTTPS is the application entry point whether authentication is on or off.
@@ -60,9 +60,10 @@ Guests only: see [Guest access over plain HTTP](installation.md#guest-access-ove
 The managed firewall table leaves it alone; a host with its own firewall opens
 it from the guest network only.
 Installation restricts native HTTP/HTTPS to loopback and blocks non-loopback
-traffic to native HTTP, HTTPS, Karaf, LSP and shutdown ports in the dedicated
-`inet thermite_native` nftables table. It leaves other firewall tables intact,
-verifies the active policy and reapplies it before every native runtime start.
+traffic to native HTTP, HTTPS, Karaf, LSP and shutdown ports, and on a
+`music:` host Music Assistant's API, in the dedicated `inet thermite_native`
+nftables table. It leaves other firewall tables intact, verifies the active
+policy and reapplies it before every native runtime and Music Assistant start.
 An unknown existing table or modified policy requires review before replacement.
 For Sonos, the workflow derives exact callback routes from committed identities
 and live device descriptions; existing verified routes and their LAN address
@@ -161,4 +162,5 @@ Music Assistant, on a `music:` host, also opens listeners of its own that
 thermite does not allocate: Sendspin on TCP 8927 (fixed), AirPlay remote
 control (DACP) on a random TCP port from 39831–49831, a UPnP event port per
 WiiM chosen by the operating system, and mDNS. They serve the speakers and
-Music Assistant's own players on the LAN.
+Music Assistant's own players on the LAN. [Music](music.md) covers Music
+Assistant, including AirPlay's PTP ports, which it does without.

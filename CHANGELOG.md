@@ -7,6 +7,24 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Music: a host whose `instance/host.yaml` has `music:` runs Music
+  Assistant 2.10.12, pinned by digest, as `thermite-music.service` in
+  `thermite.target`. Install, upgrade, uninstall, `status` and `health`
+  handle it like the other containers; a host without `music:` gets nothing
+  of it.
+  - It runs as the `thermite` account with no capabilities, on the host's
+    network, with its state in `runtime/music/` and the named libraries
+    mounted read-only and never relabelled.
+  - Each start pins its API to 127.0.0.1 and its streams to every address
+    on Thermite's ports in `settings.json`, keeping every other setting; a
+    new state sets up no providers of its own. The native firewall table
+    closes the API's port to the LAN too.
+  - An upgrade that changes its image copies its state aside first, since
+    Music Assistant cannot downgrade; one that removes `music:` removes the
+    unit and keeps the state. `thermite generate --prune` removes its
+    generated units from `deploy/`.
+  - [Music](docs/music.md) covers mounting the libraries, the ports, AirPlay's
+    timing without PTP, and backups.
 - Audio: a page (`/audio/`, and the terminal remote's Audio screen, `u`
   from Remotes) for each WiiM or Sonos speaker or streamer under `control`,
   routed by a room or not. It shows:

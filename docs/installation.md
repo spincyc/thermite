@@ -206,9 +206,10 @@ installation root:
 ```
 
 `runtime/` holds the native runtime's configuration, userdata, logs and
-add-ons, the Apple TV helper, secrets, the deploy records and the monitoring
-data. `access/` holds the gateway's `releases/` (one per install transaction,
-`releases/<id>`), its identity `state/` (thermite, 0700), its fixed `inputs/`
+add-ons, the Apple TV helper, secrets, the deploy records, the monitoring
+data and, on a host with `music:`, Music Assistant's state in `music/`
+(see [music](music.md)). `access/` holds the gateway's `releases/` (one per
+install transaction, `releases/<id>`), its identity `state/` (thermite, 0700), its fixed `inputs/`
 (the served TLS certificate and key and the verified callback map; you, 0700)
 and the clients' trust certificate `tls-cert.pem`; an installation from before
 the install engine also keeps its old identity `backups/` (root, 0700), which
@@ -691,6 +692,8 @@ engine runs as root from the copy pinned at begin,
    that nothing in the slice still runs.
 4. **Collect**: the installed units, firewall rules, AppArmor policy and state
    trees are copied or moved into `/srv/thermite/.transaction/<id>/`.
+   Prometheus' samples and Music Assistant's state are copied only when the
+   image that writes them changes.
 5. **Switch**: the new version's units, native preparation, native-port
    firewall, deployment, services, runtime access, HTTPS gateway (a new
    release, `access/releases/<id>`) and monitoring; then `thermite.target`
@@ -953,8 +956,9 @@ outside the installation root: the units and quadlets and their links, the
 boot-time `thermite-native-boundary.service`, the native-port rule file with
 its loaded `inet thermite_native` table, and the node exporter's AppArmor
 policy. The state stays where it is, `runtime/` and `access/` (accounts,
-pairings, the gateway's identity and TLS key, history, monitoring data),
-recorded in `/etc/thermite/installed.json` as not installed, so a later
+pairings, the gateway's identity and TLS key, history, monitoring data,
+Music Assistant's settings and library), recorded in
+`/etc/thermite/installed.json` as not installed, so a later
 `thermite install` finds it again. The images, the `thermite` account and
 the packages stay too. What was set aside stays in
 `/srv/thermite/.transaction/<id>/` until the next transaction commits.

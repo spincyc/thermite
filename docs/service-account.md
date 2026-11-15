@@ -148,7 +148,8 @@ for review; an existing identity is never bootstrapped again.
 ## Service registration
 
 Every daemon and container uses the `thermite-` prefix, including
-`thermite-openhab`, `thermite-prometheus` and `thermite-grafana`. All daemon
+`thermite-openhab`, `thermite-prometheus`, `thermite-grafana` and, on a host
+with `music:`, `thermite-music` ([Music Assistant](music.md)). All daemon
 processes belong to `thermite.slice`, and `thermite.target` groups their
 systemd lifecycle. Each container refuses to replace an existing namesake;
 service cleanup uses its own container ID. After commissioning, manage the
@@ -169,8 +170,9 @@ starts no service.
 
 Default TCP listeners use Thermite's [13600–13628 range](ports.md).
 Persistent files remain below the installation root's `runtime/`; upstream
-container paths such as `/openhab` and `/var/lib/grafana` are private mounts,
-not the host's independent application directories. Discovery protocols keep
+container paths such as `/openhab`, `/var/lib/grafana` and Music Assistant's
+`/data` are private mounts, not the host's independent application
+directories. Discovery protocols keep
 their standard multicast ports; running two controllers against the same
 physical devices is still subject to those devices' protocol limits.
 

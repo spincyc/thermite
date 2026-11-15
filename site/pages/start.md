@@ -9,7 +9,7 @@ thermite runs on a Linux machine on your home network. Choose where it will live
 | Stock Arch Linux, or an existing Ubuntu Server | [Install thermite on your server](installation.html). Keep your existing operating system and create a private site. |
 | A dedicated machine | [Build the standalone ISO](iso.html). Arch is the default base; Ubuntu is optional. Boot it to install the operating system and thermite on that machine. |
 
-Review the [system requirements](requirements.html) and [network ports](ports.html) before installing. Administer Thermite with your own login; application services use a separate [service account](service-account.html).
+Review the [system requirements](requirements.html) and [network ports](ports.html) before installing; [music](music.html) adds Music Assistant for TIDAL and your music libraries. Administer Thermite with your own login; application services use a separate [service account](service-account.html).
 
 ## Try the example
 

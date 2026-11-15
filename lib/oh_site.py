@@ -41,10 +41,11 @@ PAGES = (
     ("ports", "Ports", "Network ports", "thermite's service ports and network exposure."),
     ("packaging", "Application releases", "Application releases and private sites", "Install and upgrade thermite while keeping your private site separate."),
     ("service-account", "Service account", "The Thermite service account", "Service ownership, permissions and migration from the old account name."),
+    ("music", "Music", "Music", "Music Assistant on a music: host: libraries, ports, AirPlay timing and backups."),
     ("screenshots", "Screenshots", "Documentation screenshots", "Reproduce the screenshots using fictional inventory and the actual clients."),
 )
 DOCUMENT_PAGES = {name: oh_cli.PROGRAM_ROOT / "docs" / f"{name}.md"
-                  for name in ("requirements", "installation", "iso", "ports", "packaging", "service-account")}
+                  for name in ("requirements", "installation", "iso", "ports", "packaging", "service-account", "music")}
 DOCUMENT_PAGES["screenshots"] = SOURCE / "capture-docs.md"
 EXAMPLES = ("harbor",)
 TOP = ("README.md", "FAQ.md")
