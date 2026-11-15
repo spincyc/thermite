@@ -21,7 +21,8 @@
  * status() says whether there is music to show; speakers() lists the
  * speakers, a group's together; view() is the chosen speaker's now playing
  * (its progress moves on from the speaker's {elapsed, at} while it plays,
- * so a page redraws it each second); select(id) chooses another.
+ * so a page redraws it each second); select(id) chooses another, and
+ * selectNext(±1) the next or previous in the list ([ and ]).
  * playPause(), next(), previous(), seek(s), seekBy(±s), toggleShuffle(),
  * cycleRepeat(), setVolume(v), stepVolume(±1), setGroupVolume(v) and
  * stepGroupVolume(±1) send its commands, each shown until the speaker
@@ -1015,6 +1016,11 @@
       changed();
     }
 
+    function selectNext(direction) {
+      const ids = speakersView().flatMap((block) => block.speakers.map((speaker) => speaker.id));
+      if (ids.length > 1) select(ids[(ids.indexOf(current) + direction + ids.length) % ids.length]);
+    }
+
     function start(id) {
       if (unsubscribe.length) stop();
       const started = ++life;
@@ -1106,6 +1112,7 @@
       speakers: speakersView,
       view: view,
       select: select,
+      selectNext: selectNext,
       selected: () => current,
       art: (id, size) => (id && backend.art ? backend.art(id, size) : null),
       playPause: playPause,

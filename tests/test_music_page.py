@@ -59,6 +59,7 @@ class MusicPage(unittest.TestCase):
         # Pause pressed: the position stops then, and moves on again if the speaker ignores it.
         self.assertEqual(out["pressed"]["pause"], [False, 0])
         self.assertEqual(out["pressed"]["ignored"], [True, 9])
+        self.assertEqual(out["stepped"], ["kitchen_mini", "den_one", "kitchen_mini", "kitchen_amp", "patio_roam"])
         away = out["away"]
         self.assertEqual((away["now"], away["progress"], away["volume"], away["canSkip"]), ("Not available", None, [None, False], False))
 

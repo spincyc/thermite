@@ -116,6 +116,9 @@ async function overview(out) {
   backend.transport = transport;
   music.select('patio_roam');
   out.away = summary(music.view());
+  // [ and ]: the previous or next speaker in the list, round from either end.
+  music.select('kitchen_amp');
+  out.stepped = [1, 1, -1, -1, -1].map((direction) => { music.selectNext(direction); return music.selected(); });
   out.reads = backend.reads.map((read) => read[0]);
   music.stop();
 }

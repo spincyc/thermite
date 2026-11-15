@@ -166,7 +166,7 @@
       session.setTab("search");
       draw();
       query.focus();
-    } else if (key === "[" || key === "]") stepSpeaker(key === "]" ? 1 : -1);
+    } else if (key === "[" || key === "]") session.selectNext(key === "]" ? 1 : -1);
     else if (!session.view()) return;
     else if (key === "p" || key === "P" || key === " " && !event.target.closest("button, a")) session.playPause();
     else if (key === "+" || key === "=") session.stepVolume(1);
@@ -178,12 +178,6 @@
     else return;
     event.preventDefault();
   });
-
-  function stepSpeaker(direction) {
-    const ids = session.speakers().flatMap((block) => block.speakers.map((speaker) => speaker.id));
-    const index = ids.indexOf(session.selected());
-    if (ids.length > 1) session.select(ids[(index + direction + ids.length) % ids.length]);
-  }
 
   // A volume slider: a drag sends as the session lets it, the finger shown meanwhile.
   function slider(input, name, set) {

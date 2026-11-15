@@ -388,12 +388,6 @@ function create(options) {
     changed();
   }
 
-  function stepMusicSpeaker(delta) {
-    const ids = music.session.speakers().flatMap((block) => block.speakers.map((speaker) => speaker.id));
-    const index = ids.indexOf(music.session.selected());
-    if (ids.length > 1) music.session.select(ids[(index + delta + ids.length) % ids.length]);
-  }
-
   // G, or Group…: the chosen speaker's group in a sheet, nothing ticked yet.
   function openGroup() {
     const grouping = music.session && music.session.grouping();
@@ -1417,7 +1411,7 @@ function create(options) {
       return changed();
     }
     if (name === "backspace") return player.back();
-    if (ch === "[" || ch === "]") return stepMusicSpeaker(ch === "]" ? 1 : -1);
+    if (ch === "[" || ch === "]") return music.session.selectNext(ch === "]" ? 1 : -1);
     const view = player.view();
     if (!view) return;
     if (lower === "p" || name === "space") {
