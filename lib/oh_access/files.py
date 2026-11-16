@@ -96,7 +96,7 @@ def read_private(value, maximum=2 * 1024 * 1024):
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:
-            raise AccessError("Private file must be owned, regular, mode 0600 and bounded")
+            raise AccessError("Private file must be owned, regular and mode 0600")
         if info.st_size > maximum:
             raise Oversized("Private file exceeds its limit")
         with os.fdopen(fd, "rb", closefd=False) as stream:
