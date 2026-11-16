@@ -130,6 +130,9 @@ class RemoteTUI(unittest.TestCase):
         self.assertEqual(startup["walk"], [WEST, "watch", [WEST]])
         self.assertEqual(startup["settings"], ["settings", True, ["GET /api/v1/rooms/" + WEST + "/policy"]])
 
+    def test_a_speakers_input_not_read_yet_reads_as_reading_not_null(self):
+        self.assertEqual(self.proof["startup"]["input"], ["Reading… ▾", "Input: Reading… (Enter: choose)"])
+
     def test_a_room_of_speakers_alone_reached_with_the_signal_open_reads_none(self):
         signal = self.proof["signal"]
         # ↓ through every room and on, ], the rooms sheet's ↓ and Enter, and a click: none asks a room of speakers for its signal.

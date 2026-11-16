@@ -481,6 +481,9 @@ async function startup(proof) {
   draw(parts);
   key(parts, "d");
   proof.startup.signal.push(controller.ui.overlay && controller.ui.overlay.kind, controller.ui.pane, parts.diagnosed.slice());
+  // openHAB has not said which input the speaker is on.
+  proof.startup.input = [text(parts).split("\n").map((line) => (/\S+ \u25be/.exec(line) || [""])[0]).find(Boolean),
+    draw(parts).grid.hits.find((hit) => hit.hit.kind === "listen-inputs").hit.label];
   key(parts, null, { name: "escape" });
   size = [150, 50];
   key(parts, null, { name: "down" });

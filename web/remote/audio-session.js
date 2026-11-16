@@ -341,7 +341,9 @@
         muted: mute && mute.value !== null ? mute.value === "ON" : null,
         power: power && power.value !== null ? power.value === "ON" : null,
         input: input ? { value: input.value, pending: input.pending,
-          label: ((own.input.options.find((option) => option[0] === input.value) || [null, input.value])[1]),
+          // An input not read yet is said as the volume's is, not as "null".
+          label: input.value === null ? (state.input === "UNDEF" ? "Not answering" : "Reading…")
+            : (own.input.options.find((option) => option[0] === input.value) || [null, input.value])[1],
           options: own.input.options.map((option) => ({ value: option[0], label: option[1], current: option[0] === input.value })) } : null,
         sections: sections,
         facts: facts
