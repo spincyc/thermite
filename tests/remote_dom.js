@@ -1,12 +1,9 @@
 'use strict';
-// The Music page's script (web/remote/music.js) in a small stand-in for a
-// browser: music.html read into elements that keep their attributes,
-// children, listeners and the focus, as much of the DOM as the page uses,
-// and the session on the mock's invented speakers. Every timer runs on a
-// clock the harness moves. Prints what the page drew and where the focus
-// went; nothing leaves the process.
-const fs = require('fs'), path = require('path'), vm = require('vm');
-const WEB = path.join(__dirname, '..', 'web', 'remote');
+// A small stand-in for a browser, for the remote page's scripts: a page's
+// HTML read into elements that keep their attributes, children, listeners
+// and the focus, as much of the DOM as the scripts use, and a clock the
+// harness moves for every timer. listen_page_harness.js runs the remote on
+// it; nothing leaves the process.
 const START = Date.UTC(2026, 10, 15, 12, 0, 0);
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 const ENTITIES = {amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0'};
@@ -84,17 +81,38 @@ function matches(element, groups) {
 
 // ---- elements -----------------------------------------------------------------
 
-class Text {
-  constructor(data) { this.nodeType = 3; this.data = data; this.parentNode = null; }
+// What an element and a text have alike: a place among their parent's children.
+class Node {
+  get nextSibling() { const list = this.parentNode ? this.parentNode.childNodes : []; return list[list.indexOf(this) + 1] || null; }
+  remove() {
+    if (this.parentNode) this.parentNode.childNodes.splice(this.parentNode.childNodes.indexOf(this), 1);
+    this.parentNode = null;
+  }
+  replaceWith(other) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    if (other.parentNode) other.remove();
+    parent.childNodes.splice(parent.childNodes.indexOf(this), 1, other);
+    other.parentNode = parent;
+    this.parentNode = null;
+  }
+}
+
+class Text extends Node {
+  constructor(data) { super(); this.nodeType = 3; this.nodeName = '#text'; this.data = data; this.parentNode = null; }
   get textContent() { return this.data; }
 }
 
-class Element {
+class Element extends Node {
   constructor(document, tag, attributes) {
+    super();
     this.ownerDocument = document;
     this.nodeType = 1;
     this.localName = tag.toLowerCase();
     this.tagName = tag.toUpperCase();
+    this.nodeName = this.tagName;
+    this.scrollLeft = 0;
+    this.scrollTop = 0;
     this.attributes = new Map(attributes || []);
     this.childNodes = [];
     this.parentNode = null;
@@ -111,11 +129,36 @@ class Element {
       add: (name) => { const list = this.classes(); if (!list.includes(name)) this.setAttribute('class', list.concat(name).join(' ')); },
       remove: (name) => this.setAttribute('class', this.classes().filter((entry) => entry !== name).join(' ')),
       contains: (name) => this.classes().includes(name),
+      toggle: (name, force) => {
+        const on = force === undefined ? !this.classes().includes(name) : Boolean(force);
+        if (on) this.classList.add(name); else this.classList.remove(name);
+        return on;
+      },
     };
   }
 
   classes() { return (this.getAttribute('class') || '').split(/\s+/).filter(Boolean); }
   get children() { return this.childNodes.filter((child) => child.nodeType === 1); }
+  get firstChild() { return this.childNodes[0] || null; }
+  get childElementCount() { return this.children.length; }
+  // Laid out, as far as the stand-in knows: in the page and not hidden.
+  get offsetParent() { return this.ownerDocument.documentElement.contains(this) && !this.closest('[hidden]') ? this.parentNode : null; }
+  get className() { return this.getAttribute('class') || ''; }
+  set className(value) { this.setAttribute('class', value); }
+  get href() { return this.getAttribute('href') || ''; }
+  set href(value) { this.setAttribute('href', value); }
+  set innerHTML(html) { this.replaceChildren(...this.ownerDocument.fragment(html)); }
+  get scrollWidth() { return 0; }
+  get scrollHeight() { return 0; }
+  get clientWidth() { return 0; }
+  get clientHeight() { return 0; }
+  get offsetLeft() { return 0; }
+  get offsetWidth() { return 0; }
+  get offsetHeight() { return 0; }
+  scrollTo() {}
+  scrollBy() {}
+  scrollIntoView() {}
+  getBoundingClientRect() { return {left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0}; }
   get namespaceURI() { return ['svg', 'use', 'path', 'symbol'].includes(this.localName) ? 'http://www.w3.org/2000/svg' : 'http://www.w3.org/1999/xhtml'; }
   getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
   setAttribute(name, value) {
@@ -169,14 +212,15 @@ class Element {
 
   append(...children) { children.forEach((child) => this.appendChild(typeof child === 'string' ? this.ownerDocument.createTextNode(child) : child)); }
 
+  prepend(...children) {
+    const rest = this.childNodes.splice(0);
+    rest.forEach((child) => { child.parentNode = null; });
+    this.append(...children, ...rest);
+  }
+
   replaceChildren(...children) {
     this.childNodes.splice(0).forEach((child) => { child.parentNode = null; });
     this.append(...children);
-  }
-
-  remove() {
-    if (this.parentNode) this.parentNode.childNodes.splice(this.parentNode.childNodes.indexOf(this), 1);
-    this.parentNode = null;
   }
 
   contains(node) {
@@ -220,7 +264,8 @@ class Element {
     return event;
   }
 
-  click() { this.dispatch('click'); }
+  // A click from a key or a screen reader (detail 0), or a pointer's (1).
+  click(detail) { this.dispatch('click', {detail: detail || 0}); }
 
   // As a browser's: nothing hidden takes the focus, nor anything an open modal dialog makes inert.
   // One that may scroll the page to it (no preventScroll) is counted.
@@ -269,8 +314,17 @@ class Document {
     this.body = this.documentElement.querySelector('body');
   }
 
-  // music.html as elements: tags, attributes and text; comments and the doctype dropped.
+  // Markup as elements: tags, attributes and text; comments and the doctype dropped.
+  fragment(html) {
+    const root = this.parse(html);
+    return root.childNodes.slice();
+  }
+
   read(html) {
+    return this.parse(html).children[0];
+  }
+
+  parse(html) {
     const root = new Element(this, '#root');
     const open = [root];
     const tokens = /<!--[\s\S]*?-->|<!doctype[^>]*>|<\/([a-zA-Z][\w-]*)\s*>|<([a-zA-Z][\w-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>|([^<]+)/gi;
@@ -289,7 +343,7 @@ class Document {
         if (!token[4] && !VOID.has(element.localName)) open.push(element);
       } else if (token[5]) top.appendChild(new Text(decode(token[5])));
     }
-    return root.children[0];
+    return root;
   }
 
   // An image asked for its address: it loads or fails a moment later, as a browser's, unless it was asked for another
@@ -319,239 +373,4 @@ class Document {
   addEventListener(type, listener) { (this.listeners[type] = this.listeners[type] || []).push(listener); }
 }
 
-// ---- the page -----------------------------------------------------------------
-
-function page() {
-  const time = clock();
-  const document = new Document(fs.readFileSync(path.join(WEB, 'music.html'), 'utf8'));
-  const stored = new Map();
-  const context = {
-    document, console: {log() {}, info() {}, warn() {}, error: (...args) => { throw new Error(args.join(' ')); }},
-    location: {search: '?backend=mock'}, URLSearchParams, Promise, JSON, Math, Map, Set, WeakMap, Array, Object, String, Number, Boolean,
-    setTimeout: time.setTimeout, clearTimeout: time.clearTimeout, setInterval: () => 0, clearInterval() {},
-    localStorage: {getItem: (key) => (stored.has(key) ? stored.get(key) : null), setItem: (key, value) => stored.set(key, String(value))},
-    CSS: {escape: (text) => String(text).replace(/["\\]/g, '\\$&')},
-    addEventListener() {},
-  };
-  document.later = time.setTimeout;
-  context.window = context;
-  context.globalThis = context;
-  vm.createContext(context);
-  const Clocked = vm.runInContext('Date', context);
-  context.Date = class extends Clocked { static now() { return time.now(); } };
-  const made = [];
-  for (const name of ['music-backend.js', 'music-session.js', 'music.js']) {
-    vm.runInContext(fs.readFileSync(path.join(WEB, name), 'utf8'), context, {filename: name});
-    // The page's backend kept, so a scenario can make the mock answer as it wants.
-    if (name === 'music-backend.js') {
-      const create = context.MusicBackend.create;
-      context.MusicBackend.create = (...args) => { const backend = create(...args); made.push(backend); return backend; };
-    }
-  }
-  const $ = (selector) => document.querySelector(selector);
-  const focus = () => {
-    const at = document.activeElement;
-    if (at === document.body) return 'body';
-    return at.dataset.focus || (at.hasAttribute('data-browse-path') ? 'path' : at.localName + ':' + (at.getAttribute('aria-label') || at.textContent.trim()));
-  };
-  return {time, document, $, focus, backend: made[0]};
-}
-
-// The speaker's name once (the bar's switch says it), and a dragged position let go without a change.
-async function now(out) {
-  const {time, $, backend} = page();
-  await time.tick(400);
-  out.place = [$('[data-switch-name]').textContent, $('[data-place]').textContent, $('[data-model]').textContent];
-  const seek = $('[data-seek]');
-  seek.value = '200';
-  seek.dispatch('input');
-  out.dragged = $('[data-elapsed]').textContent;
-  seek.dispatch('pointerup');
-  // The next drawing (here a speaker's report) shows the speaker's position again.
-  $('[data-volume-step="1"]').click();
-  await time.tick(400);
-  out.released = [seek.value !== '200', $('[data-elapsed]').textContent !== '3:20'];
-  // A volume dragged, held still, then let go: its change sends nothing the drag sent.
-  const volume = $('[data-volume]'), from = backend.sent.length;
-  for (const level of ['30', '32']) {
-    volume.value = level;
-    volume.dispatch('input');
-  }
-  await time.tick(600);
-  volume.dispatch('change');
-  await time.tick(400);
-  out.letGo = backend.sent.slice(from).map((sent) => sent.slice(0, 2).concat(sent.slice(3)));
-  // An arrow key held on it for a second: every step is an input and a change.
-  const held = backend.sent.length;
-  for (let step = 1; step <= 30; step += 1) {
-    volume.value = String(40 + step);
-    volume.dispatch('input');
-    volume.dispatch('change');
-    await time.tick(33);
-  }
-  await time.tick(600);
-  out.held = [backend.sent.length - held, backend.sent[backend.sent.length - 1][3]];
-}
-
-// Browse: a folder opened, Back, and an album opened from its sheet; the focus follows each.
-async function browse(out) {
-  const {time, $, focus} = page();
-  await time.tick(400);
-  $('[data-tab="browse"]').click();
-  await time.tick(400);
-  // A key pressed on a button: it has the focus, then the click.
-  const pressed = async (button) => { button.focus(); button.click(); await time.tick(0); };
-  await pressed($('[data-browse-items] [data-item]'));
-  out.opening = [$('[data-browse-path]').textContent, focus()];
-  await time.tick(400);
-  out.opened = [$('[data-browse-path]').textContent, focus()];
-  await pressed($('[data-browse-back]'));
-  out.back = [$('[data-browse-path]').textContent, focus(), $('[data-browse-back]').disabled];
-  // Down to an album's tracks: a track plays, so it offers its ways to play in a sheet.
-  for (let depth = 0; depth < 3; depth += 1) {
-    await pressed($('[data-browse-items] [data-item]'));
-    await time.tick(400);
-  }
-  out.album = [$('[data-browse-path]').textContent, focus()];
-  await pressed($('[data-browse-items] [data-item]'));
-  out.sheet = [$('#item-sheet').open, focus()];
-  await pressed($('[data-item-actions] [data-action="next"]'));
-  out.played = [$('#item-sheet').open, focus()];
-  // An album found by a search offers Open in its sheet: Browse opens it, the focus follows.
-  $('[data-tab="search"]').click();
-  $('[data-query]').value = 'harbour';
-  $('[data-query]').dispatch('input');
-  await time.tick(2000);
-  const album = $('[data-results]').querySelectorAll('[data-item]').find((button) => button.getAttribute('aria-label').startsWith('Harbour Lights, The Lanterns · 2019'));
-  await pressed(album);
-  out.found = [$('#item-sheet').open, focus()];
-  await pressed($('[data-item-actions] [data-action="open"]'));
-  out.sheetOpening = [$('#item-sheet').open, $('[data-browse-path]').textContent, focus()];
-  await time.tick(400);
-  out.sheetOpened = focus();
-  // Moved elsewhere while a folder reads, to a control in sight: the focus stays there.
-  const other = page();
-  await other.time.tick(400);
-  other.$('[data-tab="browse"]').click();
-  await other.time.tick(400);
-  const folder = other.$('[data-browse-items] [data-item]');
-  folder.focus();
-  folder.click();
-  await other.time.tick(0);
-  out.elsewhere = [other.$('[data-browse-path]').textContent, other.focus()];
-  other.$('[data-volume-step="1"]').focus();
-  await other.time.tick(400);
-  out.elsewhere.push(other.$('[data-browse-items]').querySelectorAll('[data-item]').length > 0, other.focus());
-  // As a browser's, the stand-in gives no focus to what is hidden, or behind an open sheet.
-  other.$('[data-query]').focus();
-  out.inert = [other.focus()];
-  other.$('#item-sheet').showModal();
-  other.$('[data-tab="search"]').focus();
-  out.inert.push(other.focus());
-  other.$('#item-sheet').close();
-  other.$('[data-tab="search"]').focus();
-  out.inert.push(other.focus());
-}
-
-// Taps that move no focus (iOS): a folder that reads on after the tab
-// changed, or ends with no entry to go to, takes the focus no more.
-async function following(out) {
-  const tabbed = page();
-  await tabbed.time.tick(400);
-  tabbed.$('[data-tab="browse"]').click();
-  await tabbed.time.tick(400);
-  tabbed.$('[data-browse-items] [data-item]').click();
-  await tabbed.time.tick(0);
-  out.reading = tabbed.focus();
-  tabbed.$('[data-tab="search"]').click();
-  await tabbed.time.tick(400);
-  tabbed.$('[data-tab="browse"]').click();
-  await tabbed.time.tick(0);
-  out.tabbed = [tabbed.$('[data-browse-path]').textContent, tabbed.focus()];
-  out.scrolls = [tabbed.document.scrolls];
-  const {time, $, focus, backend, document} = page();
-  await time.tick(400);
-  const browse = backend.browse.bind(backend);
-  backend.browse = (ref, ...rest) => (ref ? Promise.reject(Object.assign(new Error('music_failed'), {code: 'music_failed', status: 502}))
-    : browse(ref, ...rest));
-  $('[data-tab="browse"]').click();
-  await time.tick(400);
-  $('[data-browse-items] [data-item]').click();
-  await time.tick(400);
-  out.failed = [$('[data-browse-text]').textContent !== '', focus()];
-  // The focus let go, the next drawing leaves it be.
-  $('[data-browse-path]').blur();
-  $('[data-volume-step="1"]').click();
-  await time.tick(400);
-  out.failed.push(focus());
-  out.scrolls.push(document.scrolls);
-}
-
-// A grouping some of which no read-back confirmed: the sheet says who joined
-// and who was asked, and refuses no one.
-async function grouped(out) {
-  const {time, $, backend} = page();
-  await time.tick(400);
-  $('[data-group-open]').click();
-  for (const id of ['den_one', 'study_amp']) {
-    const box = $('[data-candidates] input[value="' + id + '"]');
-    box.checked = true;
-    box.dispatch('change');
-  }
-  backend.simulateUnconfirmed(['study_amp']);
-  $('[data-join]').click();
-  await time.tick(400);
-  const result = $('[data-group-result]');
-  out.result = [result.hidden, result.querySelectorAll('p').map((line) => [line.textContent, line.getAttribute('class')])];
-}
-
-// Covers the gateway was too busy to fetch (503): each asked for once more
-// after ART_RETRY_MS and up to ART_JITTER_MS (a thumbnail, lazy, eagerly),
-// then left to its placeholder.
-async function covers(out) {
-  const {time, $, backend, document} = page();
-  const art = (n) => n.toString(16).padStart(64, '0'), playing = art(4095);
-  backend.art = (id, size) => (id ? '/api/v1/music/art/' + id + '?size=' + size : null);
-  Object.values(backend.items).forEach((item, index) => { item.art = art(index + 1); });
-  const speaker = backend.speaker.bind(backend);
-  backend.speaker = (id) => {
-    const view = speaker(id);
-    if (view.now_playing && view.now_playing.title) view.now_playing.art = playing;
-    return view;
-  };
-  // Every cover fails when first asked for; the one playing loads when asked again.
-  const asked = (src) => document.images.filter((image) => image === src).length;
-  const answered = new Map();
-  document.answerImage = (src) => {
-    answered.set(src, (answered.get(src) || []).concat(time.now()));
-    return src.includes(playing) && asked(src) > 1;
-  };
-  const image = $('[data-art-image]');
-  await time.tick(400);
-  const failed = (img) => [img.hidden, img.hasAttribute('data-failed'), asked(img.getAttribute('src'))];
-  out.cover = [failed(image)];
-  await time.tick(3000);
-  out.cover.push(failed(image));
-  // Search results: each thumbnail asked for twice, then invisible over its kind's icon.
-  $('[data-tab="search"]').click();
-  $('[data-query]').value = 'harbour';
-  $('[data-query]').dispatch('input');
-  await time.tick(2000);
-  await time.tick(5000);
-  const thumbs = $('[data-results]').querySelectorAll('img');
-  out.thumbs = [thumbs.length > 0, [...new Set(thumbs.map((thumb) => failed(thumb).join()))]];
-  // Each asked again 2 to 3 s after it failed, and not all at once.
-  const after = thumbs.map((thumb) => answered.get(thumb.getAttribute('src'))).map(([first, again]) => again - first);
-  out.jitter = [after.length, after.every((ms) => ms >= 2000 && ms <= 3000), new Set(after).size > 1];
-  out.cover.push(asked(image.src));
-}
-
-(async () => {
-  const report = {};
-  for (const [name, run] of Object.entries({now, browse, following, grouped, covers})) {
-    report[name] = {};
-    await run(report[name]);
-  }
-  process.stdout.write(JSON.stringify(report));
-  process.exit(0);
-})().catch((error) => { process.stderr.write(error.stack + '\n'); process.exit(1); });
+module.exports = {clock, Document, Element};

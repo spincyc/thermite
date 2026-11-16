@@ -48,7 +48,7 @@ REFUSED_FILES = ("security.html", "access.html", "access-ui.js", "access.css", "
                  "cameras.js", "cameras.css", "cameras.json", "topology.html", "topology.js", "topology.css",
                  "topology.json", "README.md", "../secrets")
 #: The pages the listener serves, and the files their markup loads.
-PAGES = ("home.html", "index.html", "audio.html", "music.html")
+PAGES = ("home.html", "index.html")
 LOADS = r'<(?:script|link|img)\b[^>]*?\b(?:src|href)="([^"#]+)"'
 
 
@@ -116,18 +116,18 @@ class Listening(TestCase):
         return Client(enforce_csrf_checks=True)
 
     def test_home_remotes_and_their_files_load_and_nothing_else_is_found(self):
-        for path in ("/", "/remotes/", "/audio/", "/music/", "/static/remote/", *("/static/remote/" + name for name in guest.ASSETS)):
+        for path in ("/", "/remotes/", "/static/remote/", *("/static/remote/" + name for name in guest.ASSETS)):
             with self.subTest(path=path):
                 response = call("get", path)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(call("head", path).status_code, 200)
-        for path, target in (("/remotes", "/remotes/"), ("/audio", "/audio/"), ("/music", "/music/"), ("/overview", "/"),
-                             ("/overview/", "/")):
+        for path, target in (("/remotes", "/remotes/"), ("/overview", "/"), ("/overview/", "/")):
             with self.subTest(path=path):
                 self.assertEqual(call("get", path)["Location"], target)
-        refused = [*REFUSED_PAGES, *("/static/remote/" + name for name in REFUSED_FILES), "/missing", "/unifi/media/x",
-                   "/api/v1/session", "/api/v1/tokens", "/api/v1/users", "/api/v1/users/1", "/rest/items",
-                   "/rest/items/tv_pairing", "/rest/items?metadata=pairing"]
+        # Audio and Music were pages of their own before Remotes listened.
+        refused = [*REFUSED_PAGES, *("/static/remote/" + name for name in REFUSED_FILES), "/audio/", "/music/", "/missing",
+                   "/unifi/media/x", "/api/v1/session", "/api/v1/tokens", "/api/v1/users", "/api/v1/users/1",
+                   "/rest/items", "/rest/items/tv_pairing", "/rest/items?metadata=pairing"]
         for path in refused:
             with self.subTest(path=path):
                 response = call("get", path)
@@ -378,7 +378,7 @@ class Allowlist(SimpleTestCase):
         for page in PAGES:
             marked |= set(re.findall(LOADS, (WEB / page).read_text()))
         loaded = set(marked)
-        for sheet in ("theme.css", "shell.css", "remote.css", "home.css", "audio.css", "music.css"):
+        for sheet in ("theme.css", "shell.css", "remote.css", "home.css", "listen.css"):
             loaded |= set(re.findall(r'url\("([^"#]+)"\)', (WEB / sheet).read_text()))
         # Scripts fetch these themselves.
         loaded |= {"activity.json", "diagnostics.json", "mark.svg"}

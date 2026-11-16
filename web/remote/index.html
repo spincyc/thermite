@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Remotes · thermite</title>
-  <meta name="description" content="thermite: rooms, sources and the room's devices.">
+  <meta name="description" content="thermite: watch and listen in every room.">
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#120e0c">
   <meta name="mobile-web-app-capable" content="yes">
@@ -16,6 +16,7 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="remote.css">
+  <link rel="stylesheet" href="listen.css">
   <link rel="stylesheet" href="shell.css">
   <script src="navigation.js"></script><script src="appearance.js"></script><script src="access-config.js"></script><script src="access.js"></script>
   <script src="house.js" defer></script>
@@ -24,8 +25,13 @@
   <script src="activity.js" defer></script>
   <script src="diagnostics.js" defer></script>
   <script src="backend.js" defer></script>
+  <script src="audio-session.js" defer></script>
+  <script src="music-backend.js" defer></script>
+  <script src="music-session.js" defer></script>
+  <script src="listen-session.js" defer></script>
   <script src="session.js" defer></script>
   <script src="log.js" defer></script>
+  <script src="listen.js" defer></script>
   <script src="remote.js" defer></script>
 </head>
 <body data-thermite-page="remotes">
@@ -64,6 +70,15 @@
     <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.3v.2"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11m0-11-11 11"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-note" viewBox="0 0 24 24"><path d="M9 18V6.5l10-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></symbol>
+    <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M4 7h3c2 0 3.2 1 4.3 2.7l1.4 2.6c1.1 1.7 2.3 2.7 4.3 2.7H20"/><path d="M4 17h3c1.4 0 2.4-.5 3.2-1.4M13.8 8.4c.8-.9 1.8-1.4 3.2-1.4H20"/><path d="m17.5 4.5 2.5 2.5-2.5 2.5M17.5 14.5l2.5 2.5-2.5 2.5"/></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M4.5 11V9.5a3 3 0 0 1 3-3h11"/><path d="m16 4 2.5 2.5L16 9"/><path d="M19.5 13v1.5a3 3 0 0 1-3 3h-11"/><path d="m8 20-2.5-2.5L8 15"/></symbol>
+    <symbol id="i-repeat-one" viewBox="0 0 24 24"><path d="M4.5 11V9.5a3 3 0 0 1 3-3h11"/><path d="m16 4 2.5 2.5L16 9"/><path d="M19.5 13v1.5a3 3 0 0 1-3 3h-11"/><path d="m8 20-2.5-2.5L8 15"/><path d="m11 10.5 1.5-1v5"/></symbol>
+    <symbol id="i-group" viewBox="0 0 24 24"><rect x="3.5" y="5" width="7.5" height="14" rx="2"/><rect x="13" y="5" width="7.5" height="14" rx="2"/><circle cx="7.25" cy="14" r="2"/><circle cx="16.75" cy="14" r="2"/></symbol>
+    <symbol id="i-album" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2"/></symbol>
+    <symbol id="i-artist" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+    <symbol id="i-playlist" viewBox="0 0 24 24"><path d="M4 6.5h11M4 11.5h11M4 16.5h6"/><path d="M17.5 18.5v-7l3-1"/><circle cx="15.5" cy="18.5" r="2"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
   </svg>
 
   <div class="app">
@@ -96,6 +111,18 @@
         </button>
       </header>
 
+      <!-- In a room with a screen and speakers: what the remote drives. -->
+      <div class="modes" role="radiogroup" aria-label="Watch or listen" data-modes hidden>
+        <button class="modes__option" type="button" role="radio" aria-checked="true" aria-keyshortcuts="Y" data-action="mode" data-mode="watch">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-tv"></use></svg>
+          <span>Watch</span>
+        </button>
+        <button class="modes__option" type="button" role="radio" aria-checked="false" aria-keyshortcuts="Y" tabindex="-1" data-action="mode" data-mode="listen">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-note"></use></svg>
+          <span>Listen</span>
+        </button>
+      </div>
+
       <div class="targets-wrap">
         <!-- The arrows are for a mouse: a keyboard reaches each bubble with Tab, a finger swipes. -->
         <button class="targets__more" type="button" data-action="scroll-targets" data-step="-1" tabindex="-1" aria-hidden="true">
@@ -105,6 +132,9 @@
         <button class="targets__more" type="button" data-action="scroll-targets" data-step="1" tabindex="-1" aria-hidden="true">
           <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-right"></use></svg>
         </button>
+      </div>
+      <div class="targets-wrap" data-speakers-wrap hidden>
+        <div class="targets" role="group" aria-label="Speakers" data-speakers></div>
       </div>
       <p class="now" id="now" hidden>
         <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-play"></use></svg>
@@ -155,6 +185,75 @@
         </div>
       </section>
 
+      <section class="listen" id="listen" aria-label="Listen" hidden>
+        <p class="listen__reading" data-listen-reading hidden>Reading…</p>
+        <div class="listen__face" data-listen-face>
+          <div class="listen-now" data-listen-now>
+            <div class="listen-art" aria-hidden="true">
+              <img class="listen-art__image" alt="" width="72" height="72" decoding="async" data-art-image hidden>
+              <svg class="icon listen-art__note" aria-hidden="true" focusable="false"><use href="#i-note"></use></svg>
+            </div>
+            <div class="listen-now__text">
+              <p class="listen-now__title" data-listen-title></p>
+              <p class="listen-now__line" data-listen-line hidden></p>
+              <p class="listen-now__badges" data-listen-badges hidden></p>
+              <p class="listen-now__queue" data-listen-queue hidden></p>
+            </div>
+          </div>
+          <div class="listen-progress" data-progress hidden>
+            <span class="listen-progress__time" data-elapsed aria-hidden="true">0:00</span>
+            <input class="listen-progress__input" type="range" min="0" max="1" step="1" value="0" aria-label="Position" data-seek>
+            <span class="listen-progress__time" data-duration aria-hidden="true"></span>
+          </div>
+          <div class="listen-transport" role="group" aria-label="Playback" data-listen-transport></div>
+          <div class="listen-chips" data-listen-chips>
+            <button class="chip" type="button" aria-haspopup="dialog" aria-controls="group-sheet" aria-keyshortcuts="G" data-action="listen-group" hidden>
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-group"></use></svg>
+              <span class="chip__text" data-group-text>Group</span>
+            </button>
+            <button class="chip" type="button" aria-haspopup="dialog" aria-controls="input-sheet" data-action="listen-input" hidden>
+              <span class="chip__text" data-input-text>Input</span>
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-down"></use></svg>
+            </button>
+            <button class="chip" type="button" aria-haspopup="dialog" aria-controls="library-sheet" aria-keyshortcuts="/" data-action="listen-library" hidden>
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-playlist"></use></svg>
+              <span class="chip__text">Library</span>
+            </button>
+          </div>
+          <div class="listen-volume" data-listen-volume>
+            <div class="fader">
+              <div class="fader__bar">
+                <button class="fader__step" type="button" data-button="volume_down" data-repeat aria-label="Volume down" aria-keyshortcuts="Minus">
+                  <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-minus"></use></svg>
+                </button>
+                <input class="fader__input" type="range" min="0" max="100" step="1" value="0" aria-label="Volume" data-listen-level>
+                <button class="fader__step" type="button" data-button="volume_up" data-repeat aria-label="Volume up" aria-keyshortcuts="Plus">
+                  <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-plus"></use></svg>
+                </button>
+              </div>
+              <p class="caption" data-listen-caption></p>
+            </div>
+            <button class="key key--sm key--toggle listen-volume__mute" type="button" data-button="mute" aria-pressed="false" aria-label="Mute" aria-keyshortcuts="M" hidden>
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-mute"></use></svg>
+            </button>
+          </div>
+          <div class="listen-volume" data-group-volume-wrap hidden>
+            <div class="fader">
+              <div class="fader__bar">
+                <button class="fader__step" type="button" data-button="group_volume_down" data-repeat aria-label="Group volume down">
+                  <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-minus"></use></svg>
+                </button>
+                <input class="fader__input" type="range" min="0" max="100" step="1" value="0" aria-label="Group volume" data-group-level>
+                <button class="fader__step" type="button" data-button="group_volume_up" data-repeat aria-label="Group volume up">
+                  <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-plus"></use></svg>
+                </button>
+              </div>
+              <p class="caption" data-group-caption></p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <p class="remote__mark" aria-hidden="true">thermite</p>
     </main>
 
@@ -165,6 +264,8 @@
       <aside class="panel panel--signal" aria-label="Signal and audio">
         <section class="signal" data-signal="inline" tabindex="0" aria-label="Signal and audio information"></section>
       </aside>
+      <!-- Listen's library, beside the remote from 1200 px; in its sheet below. -->
+      <aside class="panel panel--library" aria-label="Library" data-library-wide></aside>
     </div>
 
     <section class="activity-log" id="activity-log" aria-labelledby="activity-log-title" hidden>
@@ -207,6 +308,7 @@
         </button>
       </header>
       <div class="info" data-info></div>
+      <div class="info listen-info" data-listen-info hidden></div>
     </div>
   </dialog>
 
@@ -220,6 +322,108 @@
         </button>
       </header>
       <ul class="rooms rooms--sheet" data-input-list></ul>
+    </div>
+  </dialog>
+
+  <dialog class="sheet sheet--tall" id="library-sheet" aria-labelledby="library-sheet-title">
+    <div class="sheet__inner" data-library-narrow>
+      <div class="sheet__grabber" aria-hidden="true"></div>
+      <header class="sheet__head">
+        <h2 class="sheet__title" id="library-sheet-title">Library</h2>
+        <button class="icon-button" type="button" data-close aria-label="Close">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-close"></use></svg>
+        </button>
+      </header>
+      <section class="library" aria-label="Library" data-library>
+        <p class="listen__note" data-library-note hidden></p>
+
+        <div class="library-tidal" data-tidal hidden>
+          <div class="library-tidal__text">
+            <p class="library-tidal__title" data-tidal-text></p>
+            <p class="library-tidal__code" data-tidal-code hidden></p>
+          </div>
+          <div class="library-tidal__actions">
+            <a class="button library-tidal__link" target="_blank" rel="noopener noreferrer" data-tidal-link hidden>Open link.tidal.com</a>
+            <button class="button" type="button" data-tidal-start>Sign in to TIDAL</button>
+            <button class="button" type="button" data-tidal-cancel hidden>Cancel</button>
+          </div>
+        </div>
+
+        <div class="segmented library-tabs" role="tablist" aria-label="Library" data-tabs>
+          <button class="segmented__option" type="button" role="tab" id="library-tab-search" aria-controls="library-panel-search" data-tab="search">Search</button>
+          <button class="segmented__option" type="button" role="tab" id="library-tab-browse" aria-controls="library-panel-browse" data-tab="browse">Browse</button>
+          <button class="segmented__option" type="button" role="tab" id="library-tab-queue" aria-controls="library-panel-queue" data-tab="queue">Queue</button>
+        </div>
+
+        <p class="listen__note" data-blind hidden></p>
+
+        <div class="library-panel" role="tabpanel" id="library-panel-search" aria-labelledby="library-tab-search" data-panel="search" hidden>
+          <form class="library-search" role="search" data-search-form>
+            <input class="library-search__input" type="search" name="q" maxlength="100" autocomplete="off" enterkeyhint="search"
+              placeholder="Artists, albums, tracks" aria-label="Search music" aria-keyshortcuts="/" data-query>
+            <div class="library-search__filters">
+              <select class="setting__select library-search__select" aria-label="Kind" data-kind></select>
+              <select class="setting__select library-search__select" aria-label="Source" data-source></select>
+            </div>
+          </form>
+          <p class="listen__note" data-search-text></p>
+          <div data-results></div>
+        </div>
+
+        <div class="library-panel" role="tabpanel" id="library-panel-browse" aria-labelledby="library-tab-browse" data-panel="browse" hidden>
+          <div class="library-path">
+            <button class="icon-button" type="button" aria-label="Back" data-browse-back>
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-back"></use></svg>
+            </button>
+            <p class="library-path__text" tabindex="-1" data-browse-path></p>
+          </div>
+          <p class="listen__note" data-browse-text></p>
+          <ul class="library-items" data-browse-items></ul>
+          <button class="button library__more" type="button" data-more hidden>More</button>
+        </div>
+
+        <div class="library-panel" role="tabpanel" id="library-panel-queue" aria-labelledby="library-tab-queue" data-panel="queue" hidden>
+          <p class="listen__note" data-queue-owner hidden></p>
+          <p class="listen__note" data-queue-text></p>
+          <ul class="library-items" data-queue-items></ul>
+          <button class="button library__more" type="button" data-more hidden>More</button>
+        </div>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog class="sheet" id="item-sheet" aria-labelledby="item-sheet-title">
+    <div class="sheet__inner">
+      <div class="sheet__grabber" aria-hidden="true"></div>
+      <header class="sheet__head">
+        <h2 class="sheet__title listen-sheet__title" id="item-sheet-title" data-item-name></h2>
+        <button class="icon-button" type="button" data-close aria-label="Close">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-close"></use></svg>
+        </button>
+      </header>
+      <p class="listen__note listen-sheet__line" data-item-line></p>
+      <div class="listen-actions" data-item-actions></div>
+      <p class="listen__note" data-item-target></p>
+    </div>
+  </dialog>
+
+  <dialog class="sheet" id="group-sheet" aria-labelledby="group-sheet-title">
+    <div class="sheet__inner">
+      <div class="sheet__grabber" aria-hidden="true"></div>
+      <header class="sheet__head">
+        <h2 class="sheet__title listen-sheet__title" id="group-sheet-title" data-group-title>Group</h2>
+        <button class="icon-button" type="button" data-close aria-label="Close">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-close"></use></svg>
+        </button>
+      </header>
+      <p class="listen__note">Speakers you add play what the group plays.</p>
+      <h3 class="panel__title listen-sheet__heading" data-members-title hidden>In the group</h3>
+      <ul class="listen-members" data-members></ul>
+      <h3 class="panel__title listen-sheet__heading">Add</h3>
+      <ul class="listen-members" data-candidates></ul>
+      <button class="button listen-sheet__join" type="button" data-join disabled>Join</button>
+      <div class="listen-result" role="status" data-group-result hidden></div>
+      <button class="button listen-sheet__end" type="button" data-group-end hidden>Ungroup all</button>
     </div>
   </dialog>
 

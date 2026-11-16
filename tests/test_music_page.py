@@ -1,7 +1,6 @@
-"""The Music page's session and backends (web/remote/music-session.js and
-music-backend.js), which the web page and the terminal remote both draw,
-the page's script (music.js) in a small stand-in for a browser, and the
-page's own markup and stylesheet.
+"""Music's session and backends (web/remote/music-session.js and
+music-backend.js), which Listen on the remote page (test_listen_page) and
+the terminal remote both draw.
 
 The session runs on the mock's invented speakers (two in a kitchen, a Sonos
 in a den, a WiiM without AirPlay in a study, a Sonos away on a patio), on
@@ -10,16 +9,13 @@ music calls run on a fake fetch. Every timer runs on the harness's clock.
 Nothing leaves the process.
 """
 
-from html.parser import HTMLParser
 import json
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import unittest
 
 AREA = Path(__file__).resolve().parents[1]
-REMOTE = AREA / "web/remote"
 AIRPLAY = "Study cannot join Kitchen Sonos Amp: Sonos and WiiM speakers group only over AirPlay, and one of them has none."
 LOCKED = "A locked room is using this device or route, so it cannot change now."
 BLIND = "Sign in to thermite to search, browse and see the queue."
@@ -328,223 +324,6 @@ class MusicPage(unittest.TestCase):
                                         ["POST", "/api/v1/music/kitchen_amp/transport", {"action": "pause"}, "C" * 32],
                                         ["POST", "/api/v1/music/den_one/volume", {"level": 3}, "C" * 32]])
         self.assertEqual([code for code, known in out["messages"] if code != known], [])
-
-
-@unittest.skipUnless(shutil.which("node"), "node needed for the page's script")
-class MusicPageScript(unittest.TestCase):
-    """music.js on music.html in tests/music_dom_harness.js's small stand-in for a browser."""
-
-    @classmethod
-    def setUpClass(cls):
-        run = subprocess.run([shutil.which("node"), str(AREA / "tests/music_dom_harness.js")],
-                             text=True, capture_output=True, timeout=60)
-        if run.returncode:
-            raise AssertionError(run.stderr)
-        cls.report = json.loads(run.stdout)
-
-    def test_the_card_names_only_what_the_speaker_is_beside_the_bars_switch(self):
-        # The switch and the card's place both hold the name; the CSS shows the place only beside no switch.
-        self.assertEqual(self.report["now"]["place"], ["Kitchen Sonos Amp", "Kitchen Sonos Amp", "Sonos"])
-
-    def test_a_position_dragged_and_let_go_unchanged_shows_the_speakers_again(self):
-        self.assertEqual(self.report["now"]["dragged"], "3:20")
-        self.assertEqual(self.report["now"]["released"], [True, True])
-
-    def test_a_volume_let_go_after_a_rest_sends_its_level_once(self):
-        self.assertEqual(self.report["now"]["letGo"], [["volume", "kitchen_amp", 30], ["volume", "kitchen_amp", 32]])
-        # An arrow key held a second: at most one level a SLIDE_EVERY, the last included.
-        self.assertEqual(self.report["now"]["held"], [5, 70])
-
-    def test_the_focus_follows_a_folder_opened_back_and_a_sheets_open(self):
-        out = self.report["browse"]
-        lanterns, nas = "item:filesystem_local--flac://folder/The Lanterns", "item:filesystem_local--flac://folder/"
-        # On the path while the folder reads, then on its first entry.
-        self.assertEqual(out["opening"], ["Library › NAS", "path"])
-        self.assertEqual(out["opened"], ["Library › NAS", lanterns])
-        # Back to the top disables Back: the focus goes to the first root.
-        self.assertEqual(out["back"], ["Library", nas, True])
-        self.assertEqual(out["album"][1], "item:filesystem_local--flac://track/The Lanterns/Harbour Lights/01 Low Tide.flac")
-        # A sheet that plays hands the focus back to its entry; one that opens, to the folder's.
-        self.assertEqual(out["sheet"], [True, "button:Play now"])
-        self.assertEqual(out["played"], [False, out["album"][1]])
-        self.assertEqual(out["found"], [True, "button:Open"])
-        self.assertEqual(out["sheetOpening"][::2], [False, "path"])
-        self.assertEqual(out["sheetOpened"], "item:library://track/101")
-        # Taken elsewhere, to a control in sight, while a folder reads, the focus stays there.
-        self.assertEqual(out["elsewhere"], ["Library › NAS", "path", True, "button:Volume up"])
-        # The stand-in browser gives no focus to what is hidden, or behind an open sheet.
-        self.assertEqual(out["inert"], ["button:Volume up", "button:Volume up", "button:Search"])
-
-    def test_a_cover_the_gateway_was_too_busy_for_is_asked_for_once_more(self):
-        out = self.report["covers"]
-        # Invisible (laid out, not hidden) while it failed, shown once asked again; never asked a third time.
-        self.assertEqual(out["cover"], [[False, True, 1], [False, False, 2], 2])
-        # A lazy thumbnail that fails is asked again all the same (eagerly); failed twice, it stays invisible over
-        # its kind's icon.
-        self.assertEqual(out["thumbs"], [True, ["false,true,2"]])
-        # A page of them asked again 2 to 3 s after each failed, not in step.
-        self.assertGreater(out["jitter"][0], 1)
-        self.assertEqual(out["jitter"][1:], [True, True])
-
-    def test_a_folder_takes_the_focus_only_while_browse_shows_and_it_reads(self):
-        out = self.report["following"]
-        self.assertEqual(out["reading"], "path")
-        # Search shown meanwhile: back on Browse, the folder read has not moved the focus to its entries.
-        self.assertEqual(out["tabbed"], ["Library › NAS", "path"])
-        # A read that failed leaves the focus on the path once, then lets it be.
-        self.assertEqual(out["failed"], [True, "path", "body"])
-        # Following a folder never scrolls the page.
-        self.assertEqual(out["scrolls"], [0, 0])
-
-    def test_the_group_sheet_says_who_was_asked_and_not_confirmed(self):
-        self.assertEqual(self.report["grouped"]["result"], [False, [
-            ["Den joined Kitchen Sonos Amp.", None], ["Study was asked to join; Music Assistant has not confirmed it yet.", None]]])
-
-
-def css_rules(text):
-    """(media, selector, declarations) for each rule of a stylesheet, one level of @media deep."""
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    block = r"@media([^{]+)\{((?:[^{}]*\{[^{}]*\})*)\s*\}"
-    rules = []
-
-    def read(body, media):
-        for selector, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", body):
-            values = dict(re.findall(r"([\w-]+)\s*:\s*([^;]+);", declarations))
-            rules.extend((media, " ".join(one.split()), values) for one in selector.split(","))
-
-    for media, body in re.findall(block, text):
-        read(body, " ".join(media.split()))
-    read(re.sub(block, "", text), None)
-    return rules
-
-
-def pixels(value, tokens):
-    """A length in px: var()s resolved, env() taken as 0, a calc()'s terms added."""
-    while "var(" in value:
-        value = re.sub(r"var\((--[\w-]+)\)", lambda match: tokens[match.group(1)], value)
-    value = re.sub(r"env\([^)]*\)", "0px", value)
-    return sum(float(number) for number in re.findall(r"(-?[\d.]+)px", value))
-
-
-class MusicMarkup(unittest.TestCase):
-    def test_every_part_the_script_draws_into_is_in_the_page(self):
-        script = (REMOTE / "music.js").read_text()
-        page = (REMOTE / "music.html").read_text()
-        parts = set(re.findall(r'(?:\$|querySelectorAll)\("(?:#[\w-]+ )?\[(data-[a-z-]+)', script))
-        self.assertGreater(len(parts), 40)
-        self.assertEqual(sorted(part for part in parts if not re.search(r"\s" + part + r"[\s=>]", page)), [])
-        ids = set(re.findall(r'\$\("#([\w-]+)', script))
-        self.assertEqual(sorted(ident for ident in ids if f'id="{ident}"' not in page), [])
-        icons = set(re.findall(r'icon\("([\w-]+)"\)', script)) | set(re.findall(r'KIND_ICON = \{([^}]*)\}', script)[0].split('"')[1::2])
-        icons |= {"play", "pause", "repeat", "repeat-one", "warn", "lock"}
-        self.assertEqual(sorted(name for name in icons if f'id="i-{name}"' not in page), [])
-
-    def test_hidden_hides_every_part_of_the_page_the_sheets_included(self):
-        # .button and other classes set display; one rule for both child pages (remote.css) reaches every
-        # part marked hidden, Music's sheets outside main included, and neither page has its own.
-        rule = re.search(r"^\.audio-page \[hidden\],\s*\.music-page \[hidden\] \{\s*display: none !important;",
-                         (REMOTE / "remote.css").read_text(), re.M)
-        self.assertIsNotNone(rule)
-        for name in ("audio", "music"):
-            self.assertNotIn("[hidden] {", (REMOTE / (name + ".css")).read_text())
-
-        class Page(HTMLParser):
-            def __init__(self, scope):
-                super().__init__()
-                self.scope, self.open, self.hidden = scope, [], []
-
-            def handle_starttag(self, tag, attrs):
-                attrs = dict(attrs)
-                classes = (attrs.get("class") or "").split()
-                if "hidden" in attrs:
-                    self.hidden.append(("data-group-end" in attrs, any(self.scope in each for each in self.open + [classes])))
-                if tag not in ("br", "img", "input", "link", "meta", "source", "use", "path"):
-                    self.open.append(classes)
-
-            def handle_endtag(self, tag):
-                if tag not in ("use", "path") and self.open:
-                    self.open.pop()
-
-        for name in ("audio", "music"):
-            page = Page(name + "-page")
-            page.feed((REMOTE / (name + ".html")).read_text())
-            with self.subTest(page=name):
-                self.assertGreater(len(page.hidden), 8)
-                self.assertEqual([covered for _, covered in page.hidden if not covered], [])
-            if name == "music":
-                self.assertIn((True, True), page.hidden)
-
-    def test_what_shows_first_sits_12_px_under_the_bar(self):
-        # The head lent to the shell's bar, the first block shown sits at the page's padding: no margin above it.
-        shared, rules = css_rules((REMOTE / "remote.css").read_text()), css_rules((REMOTE / "music.css").read_text())
-        padding = [values["padding"] for media, one, values in shared if one == ".child-page"][0]
-        self.assertEqual(padding.split()[0], "var(--space-3)")
-        music = {name: value for media, one, values in rules if one == ".music" and media is None for name, value in values.items()}
-        self.assertEqual((music["display"], music["flex-direction"], music["gap"]), ("flex", "column", "var(--space-3)"))
-        zeroed = {one for media, one, values in rules if values.get("margin") == "0" and media is None}
-        self.assertLessEqual({".music > .child-page__mock", ".music > .child-page__alert"}, zeroed)
-        self.assertEqual([one for media, one, values in rules if one.startswith(".music__layout") and "margin-top" in values], [])
-        self.assertIn((None, ".thermite-app .music__head[data-lent]", {"display": "none"}), rules)
-
-    def test_a_control_a_locked_room_holds_is_dimmed_once(self):
-        shared = css_rules((REMOTE / "remote.css").read_text())
-        self.assertIn((None, ".child-page__controls:disabled", {"opacity": "0.45"}), shared)
-        # Inside the dimmed fieldset a control's own :disabled (a page's, of three classes) adds nothing.
-        self.assertIn((None, ".child-page .child-page__controls:disabled :disabled", {"opacity": "1"}), shared)
-        # Disabled, a key is as dim as the remote's.
-        page = (REMOTE / "music.css").read_text()
-        self.assertRegex(page, r":is\(\.music-transport \.key, \.music-path \.icon-button\):disabled \{\s*opacity: 0\.38;")
-        self.assertIn((None, ".target:disabled", {"opacity": "0.38", "cursor": "default", "background": "transparent"}), shared)
-
-    def test_the_folder_path_shows_where_the_focus_waits(self):
-        rules = css_rules((REMOTE / "music.css").read_text())
-        self.assertIn((None, ".music-path__text:focus-visible", {"outline": "2px solid var(--focus)", "outline-offset": "0",
-                                                                 "border-radius": "4px"}), rules)
-        self.assertIn('class="music-path__text" tabindex="-1"', (REMOTE / "music.html").read_text())
-
-    def test_only_the_frame_keeps_a_child_pages_sides_clear_of_a_notch(self):
-        # shell.css pads the content by the side insets below 1180 px; a page adding them again doubles them.
-        self.assertRegex((REMOTE / "shell.css").read_text(), r"\.thermite-content \{[^}]*env\(safe-area-inset-right")
-        for name in ("remote", "audio", "music"):
-            with self.subTest(sheet=name):
-                self.assertNotRegex((REMOTE / (name + ".css")).read_text(), r"safe-area-inset-(left|right)")
-        # pair.css pads the Pair page's sides by the insets for a page without the shell; in it, shell.css's rule
-        # for its content's pages (two classes to pair.css's one) sets that padding instead, wide and narrow.
-        shell = (REMOTE / "shell.css").read_text()
-        self.assertEqual(len(re.findall(r"\.thermite-content > :is\([^)]*\.pair\b[^)]*\) \{[^}]*\bpadding:", shell)), 2)
-
-    def test_the_transport_fits_a_320_px_phone_and_every_target_is_44_px(self):
-        shared, rules = css_rules((REMOTE / "remote.css").read_text()), css_rules((REMOTE / "music.css").read_text())
-        tokens = {}
-        for media, selector, values in shared:
-            if media is None and selector == ":root":
-                tokens.update(values)
-
-        def value(selector, name, media=None):
-            found = [values[name] for at, one, values in rules if one == selector and name in values and at in (None, media)]
-            return pixels(found[-1].split(" ")[0] if name != "padding-inline" else found[-1], tokens)
-
-        narrow = "(max-width: 374px)"
-        # The page's own padding at the sides (remote.css's, shared with Audio).
-        page = pixels(re.split(r"\s+(?![^(]*\))", [values["padding"] for media, one, values in shared if one == ".child-page"][0])[1], tokens)
-        card = value(".music-now", "padding", narrow)
-        keys = [value(".music-key", "width")] * 2 + [value(".music-transport .key--sm", "width", narrow)] * 2 + [value(".music-transport .key--play", "width", narrow)]
-        gaps = 4 * value(".music-transport", "gap")
-        # With a few pixels to spare, for a font or a border a little wider.
-        self.assertLessEqual(sum(keys) + gaps + 8, 320 - 2 * page - 2 * card)
-        self.assertGreaterEqual(min(keys), 44)
-        self.assertIn(("flex", "none"), [(name, values[name]) for _, one, values in rules if one == ".music-transport .key" for name in values])
-        # Every target the page sizes is at least 44 px tall.
-        heights = {one: pixels(values["min-height"], tokens) for _, one, values in rules if "min-height" in values}
-        self.assertEqual({one: height for one, height in heights.items() if height < 44}, {})
-        self.assertIn(".music-member .button", heights)
-
-    def test_the_page_is_registered_where_the_remotes_pages_are(self):
-        self.assertIn('{ id: "music", screen: "music", key: "Y"', (REMOTE / "navigation.js").read_text())
-        self.assertIn('("music", "/music/", "music.html")', (AREA / "lib/oh_routes.py").read_text())
-        files = (AREA / "lib/oh_features/remote.py").read_text()
-        for name in ("music.html", "music-backend.js", "music-session.js", "music.js", "music.css"):
-            self.assertIn(f'"{name}"', files)
 
 
 if __name__ == "__main__":

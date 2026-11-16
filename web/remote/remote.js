@@ -2,7 +2,8 @@
  * The remote page: draws a RemoteSession (session.js) in the browser and
  * hands it taps, clicks and keys. Everything the remote does without a page
  * lives in the session; this file holds only the DOM, the sheets, the
- * theme and the update check.
+ * theme and the update check. A room in Listen is drawn by listen.js, on
+ * the sessions it makes for the session's RemoteListen.
  */
 (function () {
   "use strict";
@@ -20,14 +21,24 @@
   });
   const store = storage();
   const activityLog = globalThis.RemoteLog.create({ document: document, store: store });
-  const session = Session.create({ backend: backend, house: house, layouts: layouts, store: store, volume: params.get("volume") });
+  const heard = globalThis.RemoteListenPage.sessions({ backend: backend, house: house, store: store,
+    access: globalThis.ThermiteAccess && globalThis.ThermiteAccess.client, mock: params.get("backend") === "mock",
+    active: document.visibilityState !== "hidden" });
+  const session = Session.create({ backend: backend, house: house, layouts: layouts, store: store, volume: params.get("volume"),
+    listen: heard.listen });
   // Bind before asynchronous startup reads: a tab can become hidden before
   // the first room snapshot finishes loading.
   const syncLive = () => {
-    if (backend.setActive) backend.setActive(document.visibilityState !== "hidden");
+    const active = document.visibilityState !== "hidden";
+    if (backend.setActive) backend.setActive(active);
+    heard.setActive(active);
   };
   document.addEventListener("visibilitychange", syncLive);
-  window.addEventListener("pagehide", () => { if (backend.setActive) backend.setActive(false); });
+  window.addEventListener("pagehide", (event) => {
+    if (backend.setActive) backend.setActive(false);
+    heard.setActive(false);
+    if (!event.persisted) heard.listen.stop();
+  });
   window.addEventListener("pageshow", syncLive);
 
   const KIND_ICON = { off: "i-off", computer: "i-pc", streamer: "i-streamer", disc_player: "i-disc", game_console: "i-game" };
@@ -52,15 +63,21 @@
   // The bubble whose lock menu is open, and a touch held on a bubble.
   let menuFor = null;
   let press = null;
+  let listenPage = null;
+  let shortcutsFor = "";
 
   session.subscribe(onSession);
+  heard.listen.subscribe(onListen);
+  // The speakers are read beside the rooms; a room in Listen draws "Reading…" until they are.
+  heard.start().catch(console.warn);
   session.start(params.get("room"))
     .then(() => {
       buildRoomLists();
       // Both room lists, the sidebar and the sheet, show every room's lock.
       if (session.access) session.access.watchLocks(true);
       buildInfo();
-      buildShortcuts();
+      listenPage = globalThis.RemoteListenPage.create({ session: session, sessions: heard,
+        ui: { $: $, all: all, node: node, icon: icon, openSheet: openSheet } });
       bind();
       applyTheme(document.documentElement.getAttribute("data-theme"), false);
       ready = true;
@@ -100,6 +117,18 @@
     else if (event.type === "inputs") openInputs(event.title);
   }
 
+  // Listen's sessions: what the speakers play shows in the room lists too.
+  function onListen(event) {
+    if (event.type === "toast") toast(event.title, event.body, event.tone);
+    else if (event.type === "announce") announce(event.message);
+    else if (event.type === "change" && ready) {
+      updateRoomLists();
+      updateNow();
+      updateAlert();
+      listenPage.update();
+    }
+  }
+
   // ---- rendering ---------------------------------------------------------
 
   function update() {
@@ -121,11 +150,31 @@
     updateLockMenu();
     // The bubbles follow the lock themselves (updateTargets).
     const blocked = session.controlBlock();
-    all('[data-button], [data-action="control"], [data-action="input"]').forEach((button) => {
+    all('#controls [data-button], [data-action="control"], [data-action="input"]').forEach((button) => {
       if (blocked && !button.hasAttribute("data-policy-disabled")) { button.dataset.policyDisabled = String(button.disabled); button.disabled = true; }
       else if (!blocked && button.hasAttribute("data-policy-disabled")) { button.disabled = button.dataset.policyDisabled === "true"; delete button.dataset.policyDisabled; }
     });
     if (blocked) $("[data-fader-input]").disabled = true;
+    updateMode();
+  }
+
+  // Watch or Listen: the switch where the room has both, then the half on
+  // show. Listen (listen.js) takes Watch's place under the switch.
+  function updateMode() {
+    const modes = session.modes(), mode = session.mode(), listening = mode === "listen";
+    document.body.dataset.mode = mode;
+    $("[data-modes]").hidden = modes.length < 2;
+    all("[data-modes] [data-mode]").forEach((option) => {
+      const on = option.getAttribute("data-mode") === mode;
+      option.setAttribute("aria-checked", String(on));
+      option.tabIndex = on ? 0 : -1;
+    });
+    // Watch's bubbles come back with it; its keys as updateControls has them.
+    $(".targets-wrap").hidden = listening;
+    if (listening) $("#controls").hidden = true;
+    $("#info-open").setAttribute("aria-label", listening ? "Speaker settings" : "Room devices, signal and audio");
+    if (shortcutsFor !== mode) buildShortcuts(mode);
+    listenPage.update();
   }
 
   // Writes only what changed, so a screen reader and keyboard focus are not
@@ -148,8 +197,9 @@
   function buildRoomLists() {
     all("[data-room-list]").forEach((list) => {
       list.textContent = "";
+      // The rooms of speakers alone follow the routed ones, a rule between them (remote.css).
       session.rooms().forEach((room) => {
-        list.appendChild(node("li", null, [
+        list.appendChild(node("li", { "data-listen-only": room.listenOnly ? "" : null }, [
           node("button", { type: "button", class: "room", "data-action": "room", "data-room": room.id }, [
             node("span", { class: "room__name" }, [
               node("span", { class: "room__label" }, room.label),
@@ -186,7 +236,7 @@
   function updateNow() {
     const current = session.current();
     const playing = session.view(current, session.state(current.id)).playing;
-    $("#now").hidden = !playing;
+    $("#now").hidden = !playing || session.mode() === "listen";
     if ($("#now-text").textContent !== (playing || "")) $("#now-text").textContent = playing || "";
     $("#now").title = playing || "";
   }
@@ -195,7 +245,8 @@
   // that cannot be known, or a lock with no lit bubble to carry it, needs words.
   function updateAlert() {
     const current = session.current();
-    const words = [session.view(current, session.state(current.id)).problem, session.lockNotice()].filter(Boolean).join(" · ");
+    const words = session.mode() === "listen" ? listenPage.alert()
+      : [session.view(current, session.state(current.id)).problem, session.lockNotice()].filter(Boolean).join(" · ");
     $("#alert").hidden = !words;
     $("#alert-text").textContent = words;
   }
@@ -373,7 +424,7 @@
     box.classList.toggle("layout--taller", dpad && rows > 2);
     playback.hidden = !playback.childNodes.length;
     $("[data-lower]").classList.toggle("lower--playback", !playback.hidden);
-    all(".remote [data-button]").forEach((element) => {
+    all("#controls [data-button]").forEach((element) => {
       const shortcuts = hints[element.getAttribute("data-button")];
       if (shortcuts) element.setAttribute("aria-keyshortcuts", shortcuts.join(" "));
     });
@@ -382,7 +433,7 @@
   function updateKeys(target) {
     const audio = session.current().audio;
     const remote = session.remoteOf(target);
-    all(".remote [data-button]").forEach((element) => {
+    all("#controls [data-button]").forEach((element) => {
       const id = element.getAttribute("data-button");
       const label = session.spec(id).label;
       const to = session.drives(id, target);
@@ -428,19 +479,19 @@
     audioName($("[data-caption=fader]"), view.audio, view.caption.slice(view.short.length));
   }
 
-  // The room's audio device by name in caption, then rest: a link to its
-  // Audio page when it has one. The link is kept while it leads to the same
-  // page, so a device's reports do not take the focus from it.
+  // The room's audio device by name in caption, then rest: where the room
+  // listens to it, a button to Listen on it. The button is kept while it
+  // names the same device, so a device's reports do not take the focus from it.
   function audioName(caption, audio, rest) {
-    const page = audio && house.devices[audio.id] && house.devices[audio.id].audio;
-    if (!page || !globalThis.ThermiteShell) {
+    const speaker = audio && session.modes().includes("listen") && session.current().speakers.includes(audio.id);
+    if (!speaker) {
       caption.textContent = (audio ? audio.short : "No audio") + rest;
       return;
     }
-    const href = globalThis.ThermiteShell.href("audio", window.location.search, audio.id);
     let link = caption.firstChild;
-    if (!link || link.nodeName !== "A" || link.getAttribute("href") !== href || link.textContent !== audio.short) {
-      link = node("a", { class: "caption__link", href: href, "aria-label": audio.short + ": open its Audio page" }, audio.short);
+    if (!link || link.nodeName !== "BUTTON" || link.getAttribute("data-device") !== audio.id || link.textContent !== audio.short) {
+      link = node("button", { type: "button", class: "caption__link", "data-action": "listen-to", "data-device": audio.id,
+        "aria-label": audio.short + ": listen" }, audio.short);
       caption.replaceChildren(link);
     }
     const tail = link.nextSibling;
@@ -657,10 +708,13 @@
     });
   }
 
-  function buildShortcuts() {
+  function buildShortcuts(mode) {
+    shortcutsFor = mode;
+    const keys = mode === "listen" ? Session.LISTEN_SHORTCUTS.concat([[["L"], "Log"]])
+      : Session.SHORTCUTS.concat([[["D"], "Signal & audio"], [["L"], "Log"]]);
     all("[data-shortcuts]").forEach((list) => {
       list.textContent = "";
-      Session.SHORTCUTS.concat([[["D"], "Signal & audio"], [["L"], "Log"]]).forEach((entry) => {
+      keys.forEach((entry) => {
         const item = node("li");
         entry[0].forEach((key, index) => {
           if (index && entry[2]) item.appendChild(document.createTextNode(entry[2]));
@@ -823,13 +877,19 @@
       const pressedAlready = key.pressedByPointer && event.detail > 0;
       key.pressedByPointer = false;
       if (pressedAlready) return;
-      session.press(key.getAttribute("data-button"));
+      pressButton(key.getAttribute("data-button"));
       if (event.detail === 0) flash(key);
       return;
     }
     const action = event.target.closest("[data-action]");
     if (!action) return;
     switch (action.getAttribute("data-action")) {
+      case "mode":
+        session.setMode(action.getAttribute("data-mode"));
+        break;
+      case "listen-to":
+        session.listenTo(action.getAttribute("data-device"));
+        break;
       case "room-lock":
         session.toggleRoomLock(action.dataset.room);
         break;
@@ -878,7 +938,7 @@
   function onPointerDown(event) {
     lastInput = "pointer";
     if (event.pointerType === "mouse" && event.button !== 0) return;
-    const target = event.target.closest("[data-button], [data-action=bubble], [data-action=room], [data-action=all-off]");
+    const target = event.target.closest("[data-button], [data-action=bubble], [data-speaker], [data-action=mode], [data-action=room], [data-action=all-off]");
     if (!target) return;
     haptic();
     if (!target.hasAttribute("data-button")) return;
@@ -886,13 +946,18 @@
     if (target.hasAttribute("data-repeat")) startRepeat(target);
   }
 
+  // A key presses Watch's button, or in Listen listen.js's.
+  function pressButton(button) {
+    return session.mode() === "listen" ? listenPage.press(button) : session.press(button);
+  }
+
   function startRepeat(key) {
     stopRepeat();
     const button = key.getAttribute("data-button");
     key.pressedByPointer = true;
-    session.press(button);
+    pressButton(button);
     repeat = { key: key, timer: setTimeout(function tick() {
-      session.press(button);
+      pressButton(button);
       repeat.timer = setTimeout(tick, Session.REPEAT_EVERY);
     }, Session.REPEAT_DELAY) };
     key.addEventListener("pointerleave", stopRepeat, { once: true });
@@ -910,7 +975,10 @@
   function onKey(event) {
     if (event.defaultPrevented) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key === "d" || event.key === "D") {
+    // Typing (the library's search) keeps its keys.
+    if (event.target.closest && event.target.closest("input:not([type=range]), select, textarea")) return;
+    const listening = Boolean(session.current()) && session.mode() === "listen";
+    if ((event.key === "d" || event.key === "D") && !listening) {
       event.preventDefault();
       setInfoView("signal", true);
       return;
@@ -918,17 +986,27 @@
     if (document.querySelector("dialog[open]")) return;
     if (event.target.closest && event.target.closest("[data-signal], [data-action=info-view]")) return;
     if (event.target.closest && event.target.closest("[data-log-history]")) return;
-    if (RANGE_KEYS[event.key] && event.target === $("[data-fader-input]")) return;
+    if (RANGE_KEYS[event.key] && event.target.matches && event.target.matches("input[type=range]")) return;
     if (event.key === "Tab") {
       lastInput = "keyboard";
       return;
     }
     if (!session.current()) return;
+    // The switch is a radio group: its arrows choose.
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && event.target.closest && event.target.closest("[data-modes]")) {
+      event.preventDefault();
+      if (session.toggleMode()) $('[data-modes] [aria-checked="true"]').focus();
+      return;
+    }
+    if (event.key === "y" || event.key === "Y") {
+      if (session.toggleMode()) event.preventDefault();
+      return;
+    }
     if (/^[0-9]$/.test(event.key)) {
       const choice = session.chooseDigit(event.key);
       if (!choice) return;
       event.preventDefault();
-      all('[data-targets] [data-device="' + choice + '"]').forEach(flash);
+      all('[data-targets] [data-device="' + choice + '"], [data-speakers] [data-speaker="' + choice + '"]').forEach(flash);
       return;
     }
     if (event.key === "[" || event.key === "]") {
@@ -936,6 +1014,7 @@
       session.stepRoom(event.key === "]" ? 1 : -1);
       return;
     }
+    if (listening) return listenKey(event);
     let buttons = Session.KEYS[event.key];
     if (event.key === "Enter") {
       const active = document.activeElement;
@@ -947,9 +1026,20 @@
     if (buttons) {
       event.preventDefault();
       const button = session.pressKey(buttons);
-      const key = all('.remote [data-button="' + button + '"]').find((element) => element.offsetParent !== null);
+      const key = all('#controls [data-button="' + button + '"]').find((element) => element.offsetParent !== null);
       if (key) flash(key);
     }
+  }
+
+  // Listen's keys: the remote's (Session.KEYS) where Listen has the button,
+  // then its own; Enter, the arrows and Back stay the page's.
+  function listenKey(event) {
+    const buttons = Session.KEYS[event.key];
+    const done = buttons && !/^Arrow|^Backspace$|^Escape$/.test(event.key) ? session.pressKey(buttons) : listenPage.key(event);
+    if (!done) return;
+    event.preventDefault();
+    const key = typeof done === "string" && $('#listen [data-button="' + done + '"]');
+    if (key) flash(key);
   }
 
   function flash(element) {
