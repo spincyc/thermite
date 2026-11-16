@@ -164,8 +164,8 @@ function length(text) {
 }
 
 // How many columns a code point takes, as wcwidth counts them (what most
-// terminals draw): none for a nonspacing or enclosing mark, a format
-// character (a joiner, ZWJ), a variation selector or a Hangul medial vowel
+// terminals draw): none for a nonspacing or enclosing mark, ZWJ or a tag
+// (the format characters left), a variation selector or a Hangul medial vowel
 // or final consonant, drawn in the cell before it; two for an East Asian
 // wide or fullwidth one and an emoji by default (Emoji_Presentation); one
 // for any other, a spacing mark (Devanagari's \u093f, Thai's \u0e33)
@@ -181,12 +181,16 @@ const WIDE = "\\u1100-\\u115f\\u2329\\u232a\\u2e80-\\u303e\\u3041-\\u33ff\\u3400
 const UNEVEN = new RegExp("[" + ZERO + WIDE + "]", "u");
 const NONE = new RegExp("[" + ZERO + "]", "u");
 const TWO = new RegExp("[" + WIDE + "]", "u");
+// Format characters but ZWJ and the tags (of an emoji's sequence).
+const FORMAT = /(?![\u200d\u{e0020}-\u{e007f}])\p{Cf}/gu;
 
 // A cell is printable text, one column of it (a wide character's right half
 // ""). A newline, tab or terminal control from a label must never move the
-// terminal's cursor outside the cell the painter owns.
+// terminal's cursor outside the cell the painter owns. Format characters go:
+// wcwidth gives a soft hyphen or an Arabic number sign a column some
+// terminals draw and others don't, and a bidi control would reorder the row.
 function characters(text) {
-  const clean = String(text).normalize("NFC").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
+  const clean = String(text).replace(FORMAT, "").normalize("NFC").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
   if (!UNEVEN.test(clean)) return Array.from(clean);
   const cells = [];
   for (const point of clean) {

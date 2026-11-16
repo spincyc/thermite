@@ -158,6 +158,12 @@ proof.zwj = cells(grid)[0];
 grid = new Grid.Grid(5, 1);
 grid.put(0, 0, "\u0e01\u0e33\u0e25\u0e31\u0e07");
 proof.thai = cells(grid)[0];
+// Format characters go (a soft hyphen, a bidi isolate, a zero width space); ZWJ and a flag's tags stay.
+proof.format = ["Ex\u00adample", "\u2067ab\u2069 c\u200bd", "\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}"].map((text) => {
+  grid = new Grid.Grid(8, 1);
+  grid.put(0, 0, text);
+  return [Grid.length(text), cells(grid)[0].join("").trimEnd()];
+});
 // Wrapped narrower than a wide character: one whole character to a line, and no empty line after.
 proof.wrap = [Grid.wrap("\u6771\u4eac", 1), Grid.wrap("\u6771\u4eac", 2), Grid.wrap("ab \u6771\u4eac\u6771", 3)];
 // The painter alone, on a row no grid draws now (a right half with no

@@ -37,6 +37,9 @@ class TerminalGrid(unittest.TestCase):
         # two for each emoji, VS16 none (the heart is text by default), a lone regional indicator two.
         self.assertEqual(self.proof["columns"], [9, 4, 6, 1, 2, 4, 1])
         self.assertEqual(self.proof["thai"], ["\u0e01", "\u0e33", "\u0e25\u0e31", "\u0e07", " "])
+        # A format character a terminal may draw (a soft hyphen) or act on (a bidi isolate) goes; a flag's tags stay.
+        self.assertEqual(self.proof["format"], [[7, "Example"], [5, "ab cd"],
+                                                [2, "\U0001f3f4\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f"]])
         # A joiner is drawn in the cell before it: the wide character's own, not its half.
         self.assertEqual(self.proof["zwj"], ["\U0001f468\u200d", "", "\U0001f469\u200d", "", "\U0001f467", "", " ", " "])
 
