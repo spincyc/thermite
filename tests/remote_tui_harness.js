@@ -86,6 +86,18 @@ function assemble(options = {}) {
   const parts = Main.assemble(Main.parse(args), { shared, setInterval: () => 0, clearInterval() {}, environ: {},
     screen: options.screen || "remote", onQuit: () => { parts.quit = true; }, ...(site ? { fetch: site.fetch, EventSource: site.EventSource } : {}) });
   parts.site = site;
+  // What the remote's buttons, choices and volume sent, as [room or device, what, value].
+  parts.sent = [];
+  const record = (name, entry) => {
+    const send = parts.backend[name].bind(parts.backend);
+    parts.backend[name] = (...args) => { parts.sent.push(entry(...args)); return send(...args); };
+  };
+  record("press", (room, device, button) => [device, button]);
+  record("choose", (room, source) => [room, "source", source]);
+  record("setVolume", (room, value) => [room, "volume", value]);
+  record("setInput", (room, device, value) => [device, "input", value]);
+  record("operate", (room, control, action) => [room, control, action]);
+  record("allOff", () => ["all", "off"]);
   parts.diagnosed = [];
   if (parts.backend.getDiagnostics) {
     const read = parts.backend.getDiagnostics.bind(parts.backend);
@@ -134,6 +146,102 @@ async function open(options, room) {
   return parts;
 }
 const room = (parts) => [parts.session.current().id, parts.session.mode()];
+
+const toast = (parts) => parts.controller.ui.toast && [parts.controller.ui.toast.title, parts.controller.ui.toast.body];
+const footer = (parts) => text(parts).split("\n").slice(-1)[0];
+const sent = (parts, from) => parts.sent.slice(from);
+
+// ---- Watch: panes, rooms, sources, the remote's keys ----------------------
+
+async function watch(proof) {
+  size = [150, 50];
+  const parts = await open({}, WEST);
+  const { controller, session } = parts;
+  const ui = controller.ui;
+  proof.watch = { start: [ui.pane, ui.focus], footer: footer(parts) };
+  // Tab and Shift-Tab go round the panes.
+  const panes = [];
+  for (let i = 0; i < 6; i++) { key(parts, null, { name: "tab" }); panes.push(ui.pane); }
+  key(parts, null, { name: "tab", shift: true });
+  proof.watch.panes = [panes, ui.pane];
+  // The rooms: ↓ and ↑ choose the room; ← → a source, Enter switches to it.
+  for (let i = 0; i < 6 && ui.pane !== "rooms"; i++) key(parts, null, { name: "tab" });
+  key(parts, null, { name: "down" });
+  const down = session.current().id;
+  key(parts, null, { name: "up" });
+  key(parts, null, { name: "right" });
+  key(parts, null, { name: "right" });
+  key(parts, null, { name: "left" });
+  const cursor = ui.paneFocus.sources;
+  key(parts, null, { name: "enter" });
+  await until(parts, () => session.state(WEST).value === "example_player", "the player");
+  proof.watch.rooms = { down, up: session.current().id, cursor, sent: sent(parts, 0) };
+  // Digits: 0 Off, 1-9 a source.
+  let from = parts.sent.length;
+  key(parts, "2");
+  await until(parts, () => session.state(WEST).value === "example_computer", "the computer");
+  key(parts, "0");
+  await until(parts, () => session.state(WEST).value === "off", "off");
+  key(parts, "7");
+  proof.watch.digits = sent(parts, from);
+  key(parts, "1");
+  await until(parts, () => session.state(WEST).value === "example_player", "the player again");
+  // The remote: the arrows its D-pad, Enter OK, Backspace and Esc back, the page's keys.
+  for (let i = 0; i < 6 && ui.pane !== "remote"; i++) key(parts, null, { name: "tab" });
+  from = parts.sent.length;
+  for (const name of ["up", "down", "left", "right", "enter", "space", "backspace", "escape"]) key(parts, null, { name });
+  for (const ch of ["p", "+", "-", "m", "<", ">"]) key(parts, ch);
+  proof.watch.remote = sent(parts, from).map((entry) => entry[1]);
+  // Esc and Backspace off the remote press nothing.
+  for (let i = 0; i < 6 && ui.pane !== "rooms"; i++) key(parts, null, { name: "tab" });
+  from = parts.sent.length;
+  key(parts, null, { name: "escape" });
+  key(parts, null, { name: "backspace" });
+  proof.watch.quiet = sent(parts, from);
+  parts.controller.stop();
+  size = [110, 50];
+}
+
+// ---- Watch: its sheets and the terminal's own keys --------------------------
+
+async function sheets(proof) {
+  size = [110, 50];
+  const parts = await open({}, WEST);
+  const { controller, session, store } = parts;
+  const ui = controller.ui;
+  const sheet = () => ui.overlay && ui.overlay.kind;
+  proof.sheets = {};
+  // r, i, d, h and ? each open their sheet; Esc closes it, back on the pane it was opened from.
+  for (const ch of ["r", "i", "d", "h", "?"]) {
+    key(parts, ch);
+    const opened = [sheet(), ui.pane, ui.focus];
+    key(parts, null, { name: "escape" });
+    proof.sheets[ch] = opened.concat([sheet(), ui.pane]);
+  }
+  // The rooms sheet: ↓ chooses the next room at once, Enter goes to its remote.
+  key(parts, "r");
+  key(parts, null, { name: "down" });
+  const chosen = session.current().id;
+  key(parts, null, { name: "enter" });
+  proof.sheets.rooms = [chosen, sheet(), ui.pane];
+  key(parts, "[");
+  // The help: Watch's keys, the pages', the terminal's.
+  key(parts, "?");
+  const help = text(parts);
+  proof.sheets.help = ["Remote controls", "Source", "Watch or listen", "Signal & audio", "Rooms through the day", "Volume slider",
+    "Navigation", "Pair devices", "Terminal", "Motion", "Log pane", "Mouse"].filter((words) => !help.includes(words));
+  key(parts, null, { name: "escape" });
+  // v, t, a and L: the volume slider, the theme, motion and the log, each kept.
+  const before = [session.volumeMode(), ui.theme, ui.still, ui.logVisible];
+  for (const ch of ["v", "t", "a", "L"]) key(parts, ch);
+  proof.sheets.toggles = [before, [session.volumeMode(), ui.theme, ui.still, ui.logVisible],
+    [store.get("remote.volume"), store.get("remote.theme"), store.get("remote.still"), store.get("remote.logVisible")]];
+  for (const ch of ["v", "t", "a", "L"]) key(parts, ch);
+  // q quits.
+  key(parts, "q");
+  proof.sheets.quit = Boolean(parts.quit);
+  size = [110, 50];
+}
 
 // ---- the signal, and rooms of speakers alone -------------------------------
 
@@ -233,6 +341,8 @@ async function terminal(proof) {
 
 (async () => {
   const proof = {};
+  await watch(proof);
+  await sheets(proof);
   await terminal(proof);
   await signal(proof, true);
   await settings(proof);

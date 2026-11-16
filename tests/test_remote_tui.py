@@ -4,7 +4,8 @@ drives them (tests/remote_tui_harness.js).
 
 The house is test_listen_tui's: the public example's two routed rooms, the
 east one watching and listening, and two rooms of speakers alone, the den
-and the lounge. On the mock, on openHAB itself (--native) and on the
+and the lounge; the west room's TV also lists its inputs, and the room has
+a control (not connected) to raise or lower its screen. On the mock, on openHAB itself (--native) and on the
 gateway, each through a stand-in. Nothing leaves the process.
 """
 
@@ -22,6 +23,14 @@ AREA = Path(__file__).resolve().parents[1]
 WEST = "example_west"
 
 
+def fixture():
+    built = model()
+    built["devices"]["example_tv"]["control"]["input"] = {"item": "example_tv_input", "options": [["hdmi1", "HDMI 1"], ["hdmi2", "HDMI 2"]]}
+    west = next(room for room in built["rooms"] if room["id"] == WEST)
+    west["controls"] = [{"id": "screen", "label": "Screen", "device": "example_matrix", "actions": [["up", "Raise"], ["down", "Lower"]]}]
+    return built
+
+
 @unittest.skipUnless(shutil.which("node"), "node needed for the terminal remote")
 class RemoteTUI(unittest.TestCase):
     maxDiff = None
@@ -30,13 +39,48 @@ class RemoteTUI(unittest.TestCase):
     def setUpClass(cls):
         with tempfile.TemporaryDirectory() as root:
             house = Path(root) / "house.js"
-            house.write_text("globalThis.REMOTE_HOUSE = " + json.dumps(model()) + ";\n")
+            house.write_text("globalThis.REMOTE_HOUSE = " + json.dumps(fixture()) + ";\n")
             env = dict(os.environ, THERMITE_REMOTE_HOUSE_FILE=str(house))
             run = subprocess.run([shutil.which("node"), str(AREA / "tests/remote_tui_harness.js"), WEST, EAST, DEN, LOUNGE],
                                  text=True, env=env, capture_output=True, timeout=180)
         if run.returncode:
             raise AssertionError(run.stderr or run.stdout)
         cls.proof = json.loads(run.stdout)
+
+    def test_tab_goes_round_the_panes_and_the_rooms_arrows_choose_a_room_and_a_source(self):
+        watch = self.proof["watch"]
+        self.assertEqual(watch["start"], ["rooms", "room:" + WEST])
+        self.assertEqual(watch["panes"], [["sources", "remote", "info", "signal", "log", "rooms"], "log"])
+        self.assertEqual(watch["rooms"], {"down": EAST, "up": WEST, "cursor": "bubble:example_player",
+                                          "sent": [[WEST, "source", "example_player"]]})
+        for words in ("r Rooms", "d Signal", "h Day", "L Hide log", "v Volume", "t Theme", "? Help", "q Quit"):
+            self.assertIn(words, watch["footer"])
+
+    def test_the_digits_choose_a_source_and_the_remotes_keys_press_its_buttons(self):
+        watch = self.proof["watch"]
+        # 7: the room has no seventh source.
+        self.assertEqual(watch["digits"], [[WEST, "source", "example_computer"], [WEST, "source", "off"]])
+        self.assertEqual(watch["remote"], ["up", "down", "left", "right", "ok", "ok", "back", "back",
+                                           "play_pause", "volume_up", "volume_down", "mute", "previous", "next"])
+        self.assertEqual(watch["quiet"], [], "Esc and Backspace off the remote press nothing")
+
+    def test_each_sheet_opens_on_its_key_and_esc_gives_the_pane_back(self):
+        sheets = self.proof["sheets"]
+        self.assertEqual(sheets["r"], ["rooms", "sheet:rooms", "room:" + WEST, None, "rooms"])
+        self.assertEqual(sheets["i"], ["info", "sheet:info", "signal-open", None, "rooms"])
+        self.assertEqual(sheets["d"], ["signal", "sheet:signal", None, None, "rooms"])
+        self.assertEqual(sheets["h"], ["day", "sheet:day", "day:" + WEST, None, "rooms"])
+        self.assertEqual(sheets["?"], ["help", "sheet:help", None, None, "rooms"])
+        self.assertEqual(sheets["rooms"], [EAST, None, "remote"])
+        self.assertEqual(sheets["help"], [], "missing from the help")
+
+    def test_v_t_a_and_l_switch_the_slider_theme_motion_and_log_and_keep_them_and_q_quits(self):
+        sheets = self.proof["sheets"]
+        before, after, kept = sheets["toggles"]
+        self.assertEqual(after, [{"slider": "buttons", "buttons": "slider"}[before[0]], {"dark": "light", "light": "dark"}[before[1]],
+                                 not before[2], not before[3]])
+        self.assertEqual(kept, after)
+        self.assertTrue(sheets["quit"])
 
     def test_a_room_of_speakers_alone_reached_with_the_signal_open_reads_none(self):
         signal = self.proof["signal"]
@@ -64,7 +108,6 @@ class RemoteTUI(unittest.TestCase):
         self.assertEqual(terminal["click"], ["That did not work", "no room"])
         self.assertEqual(terminal["kept"], ["no step", "no room", "no frame"])
         self.assertEqual(terminal["draws"], 1)
-
 
 if __name__ == "__main__":
     unittest.main()
