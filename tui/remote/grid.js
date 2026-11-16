@@ -172,7 +172,9 @@ function length(text) {
 // included. One convention for emoji, a code point at a time: an emoji by
 // default takes two, one that is text by default (\u25b6, \u26bf, \u2764)
 // one, even asked for as emoji with VS16; a ZWJ sequence takes each of its
-// emoji's two, and a lone regional indicator two.
+// emoji's two. A regional indicator takes wcwidth's one, but a pair of them
+// (a flag) is one wide character: wcwidth's terminals draw each indicator in
+// a column, others the flag in two, and both take the two columns.
 const ZERO = "\\p{Mn}\\p{Me}\\p{Cf}\\u1160-\\u11ff";
 const WIDE = "\\u1100-\\u115f\\u2329\\u232a\\u2e80-\\u303e\\u3041-\\u33ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\ua000-\\ua4cf"
   + "\\ua960-\\ua97f\\uac00-\\ud7a3\\uf900-\\ufaff\\ufe10-\\ufe19\\ufe30-\\ufe6f\\uff00-\\uff60\\uffe0-\\uffe6"
@@ -183,6 +185,7 @@ const NONE = new RegExp("[" + ZERO + "]", "u");
 const TWO = new RegExp("[" + WIDE + "]", "u");
 // Format characters but ZWJ and the tags (of an emoji's sequence).
 const FORMAT = /(?![\u200d\u{e0020}-\u{e007f}])\p{Cf}/gu;
+const INDICATOR = /^\p{Regional_Indicator}$/u;
 
 // A cell is printable text, one column of it (a wide character's right half
 // ""). A newline, tab or terminal control from a label must never move the
@@ -198,6 +201,10 @@ function characters(text) {
       // In the cell before (a wide character's own, not its half); with none before, nowhere.
       const at = cells[cells.length - 1] === "" ? cells.length - 2 : cells.length - 1;
       if (at >= 0) cells[at] += point;
+    } else if (INDICATOR.test(point)) {
+      // The second of a flag joins the first, alone in the cell before, as one wide cell.
+      if (cells.length && INDICATOR.test(cells[cells.length - 1])) cells.push(cells.pop() + point, "");
+      else cells.push(point);
     } else if (TWO.test(point)) cells.push(point, "");
     else cells.push(point);
   }

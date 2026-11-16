@@ -34,14 +34,20 @@ class TerminalGrid(unittest.TestCase):
 
     def test_a_code_point_takes_the_columns_wcwidth_gives_it(self):
         # Devanagari and Thai: a spacing mark takes a column, a nonspacing one none; a ZWJ sequence
-        # two for each emoji, VS16 none (the heart is text by default), a lone regional indicator two.
-        self.assertEqual(self.proof["columns"], [9, 4, 6, 1, 2, 4, 1])
+        # two for each emoji, VS16 none (the heart is text by default), a lone regional indicator one.
+        self.assertEqual(self.proof["columns"], [9, 4, 6, 1, 1, 4, 1])
         self.assertEqual(self.proof["thai"], ["\u0e01", "\u0e33", "\u0e25\u0e31", "\u0e07", " "])
         # A format character a terminal may draw (a soft hyphen) or act on (a bidi isolate) goes; a flag's tags stay.
         self.assertEqual(self.proof["format"], [[7, "Example"], [5, "ab cd"],
                                                 [2, "\U0001f3f4\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f"]])
         # A joiner is drawn in the cell before it: the wide character's own, not its half.
         self.assertEqual(self.proof["zwj"], ["\U0001f468\u200d", "", "\U0001f469\u200d", "", "\U0001f467", "", " ", " "])
+
+    def test_a_flag_is_one_wide_character_drawn_in_its_two_columns(self):
+        # A terminal as wcwidth draws each indicator in a column; others, the flag in two. A third is its own.
+        japan, britain, alone = "\U0001f1ef\U0001f1f5", "\U0001f1ec\U0001f1e7", "\U0001f1e6"
+        self.assertEqual(self.proof["flags"], [[japan, "", britain, "", alone, "a", " ", " "],
+                                               japan + britain + alone + "a", []])
 
     def test_a_wide_word_wraps_a_whole_character_to_a_line_and_no_more(self):
         tokyo = ["\u6771", "\u4eac"]

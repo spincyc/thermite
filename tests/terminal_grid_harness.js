@@ -11,13 +11,16 @@ const Grid = require("../tui/remote/grid"), { Painter } = require("../tui/remote
 
 // The model's widths, written apart from grid.js's (for the characters the
 // frames use): none for a mark or a format character, drawn in the cell
-// before; two for CJK and an emoji by default; one for any other.
+// before; two for CJK and an emoji by default but a regional indicator; one
+// for any other.
 const ZERO = /[\p{Mn}\p{Me}\p{Cf}\u1160-\u11ff]/u;
-const WIDE = /[\u3041-\u33ff\u4e00-\u9fff\uac00-\ud7a3\p{Emoji_Presentation}]/u;
+const WIDE = /(?!\p{Regional_Indicator})[\u3041-\u33ff\u4e00-\u9fff\uac00-\ud7a3\p{Emoji_Presentation}]/u;
 
 // A terminal without autowrap: a write past the right edge is a fault, as
-// is one that lands where the grid has something else; overwriting either
-// half of a wide character blanks both.
+// is one that lands where the grid has something else (but a wide
+// character's right half, by the rest of what the grid has before it: a
+// flag's second indicator); overwriting either half of a wide character
+// blanks both.
 class Terminal {
   constructor(width, height) {
     this.width = width;
@@ -70,7 +73,8 @@ class Terminal {
       this.faults.push(JSON.stringify(point) + " past the edge at " + this.x + "," + this.y);
       return;
     }
-    if (!expect(this.x, this.y).startsWith(point)) {
+    const rest = expect(this.x, this.y) === "" && this.x > 0 && expect(this.x - 1, this.y).startsWith(row[this.x - 1] + point);
+    if (!rest && !expect(this.x, this.y).startsWith(point)) {
       this.faults.push(JSON.stringify(point) + " at " + this.x + "," + this.y + " where the grid has " + JSON.stringify(expect(this.x, this.y)));
     }
     this.erase(this.x);
@@ -158,6 +162,13 @@ proof.zwj = cells(grid)[0];
 grid = new Grid.Grid(5, 1);
 grid.put(0, 0, "\u0e01\u0e33\u0e25\u0e31\u0e07");
 proof.thai = cells(grid)[0];
+// A flag is one wide character, its indicators a column each in a terminal
+// as wcwidth; a third indicator is a cell of its own.
+grid = new Grid.Grid(8, 1);
+grid.put(0, 0, "\u{1f1ef}\u{1f1f5}\u{1f1ec}\u{1f1e7}\u{1f1e6}a");
+let flags = new Terminal(8, 1);
+new Painter((out) => flags.play(out, (x) => grid.rows[0][x].ch), 1).paint(grid.rows, 8, 1, () => "\x1b[0m");
+proof.flags = [cells(grid)[0], flags.text(), flags.faults];
 // Format characters go (a soft hyphen, a bidi isolate, a zero width space); ZWJ and a flag's tags stay.
 proof.format = ["Ex\u00adample", "\u2067ab\u2069 c\u200bd", "\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}"].map((text) => {
   grid = new Grid.Grid(8, 1);
