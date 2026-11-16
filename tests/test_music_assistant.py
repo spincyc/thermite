@@ -350,6 +350,23 @@ class Claim(Site):
         self.assertIn("thermite did not write it; restore it, or reset Music Assistant and delete it",
                       logs.records[0].getMessage())
 
+    def test_the_worker_thread_first_removes_what_killed_writes_left(self):
+        left = [self.state / ("." + name + "." + "0a" * 12) for name in (provision.TOKEN_FILE, provision.LIBRARY_FILE)]
+        kept = [self.state / name for name in (".music-token.json." + "0a" * 11, ".music-token.json.tmp",
+                                               ".other.json." + "0a" * 12, "music-token.json." + "0a" * 12)]
+        for path in left + kept:
+            path.write_text("x")
+        elsewhere = self.state / "elsewhere"
+        elsewhere.write_text("x")
+        linked = self.state / (".music-token.json." + "0b" * 12)
+        linked.symlink_to(elsewhere)
+        stop = threading.Event()
+        stop.set()
+        provision.run(self.state, spec(self.port), stop)
+        self.assertEqual([path.exists() for path in left], [False, False])
+        self.assertEqual([path.exists() for path in kept], [True] * len(kept))
+        self.assertTrue(linked.is_symlink())
+
     def test_the_worker_thread_waits_for_the_server_then_claims_it(self):
         self.sim.status = "starting"
         stop = threading.Event()

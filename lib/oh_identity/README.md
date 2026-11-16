@@ -445,28 +445,33 @@ and a WiiM's hidden AirPlay protocol player, is never shown or commanded. A
 host without music answers 404 `music_not_configured`.
 
 The policy worker holds the claim: once Music Assistant reports running and
-has no user, it stores a random password in `music-token.json` (mode 0600,
-written atomically, its directory synced) in the gateway's private state,
-then creates the admin `thermite` with it. With the session it is answered
-with it mints a long-lived token (a year), stores it beside the password,
-and revokes every other token of the user, the session included; within 30
-days of a token's end it mints, stores and switches to the next and
-revokes the old one. Serving only reads that file. The password stays, so
-that whenever Music Assistant refuses the stored token (it was revoked, or
-Music Assistant's data directory was deleted) or there is none yet (the
-answer to the setup was lost), the next pass, within 30 seconds, signs in
-with it, or creates the user again on a Music Assistant with none, and
-mints the next token; a session whose token could not be minted is logged
-out, so that none pile up. The worker never gives the password up because
-Music Assistant refuses it: Music Assistant answers 401 alike to a wrong
-password and to a login it rate limits after someone's failed ones. It
-counts the passes in a row that reached Music Assistant and had the
-password refused (one that finds it down counts none, and the clock plays
-no part) and tries again on every pass; the first that signs in clears the
-count. After a day's refused passes the gateway answers `music_unclaimed`;
-until then `music_unavailable`. A Music Assistant that has a user when
-thermite has no password stored had another user before thermite claimed
-it: `music_unclaimed` at once. Either recovers when the owner resets Music
+has no user, it stores a random password in `music-token.json` in the
+gateway's private state (mode 0600, written atomically, its directory
+synced, so that a crash keeps the latest write: a file system that refuses
+to sync a directory, answering `EINVAL` or `ENOTSUP`, may lose it; what a
+write killed midway leaves beside it goes when the worker starts), then
+creates the admin `thermite` with it. With the session it is answered with
+it mints a long-lived token (a year), stores it beside the password, and
+revokes every other token of the user, the session included; within 30 days
+of a token's end it mints, stores and switches to the next and revokes the
+old one. Serving only reads that file. The password stays, so that whenever
+Music Assistant refuses the stored token (it was revoked, or Music
+Assistant's data directory was deleted) or there is none yet (the answer to
+the setup was lost), the next pass, within 30 seconds, signs in with it, or
+creates the user again on a Music Assistant with none, and mints the next
+token; a session whose token could not be minted or stored is logged out,
+as is a token that could not be stored, so that none pile up. The worker
+never gives the password up because Music Assistant refuses it: Music
+Assistant answers 401 alike to a wrong password and to a login it rate
+limits after someone's failed ones. It counts the passes in a row that
+reached Music Assistant and had the password refused (one that finds it
+down counts none, and the clock plays no part) and tries again on every
+pass; the first that signs in clears the count. After a day's refused
+passes the gateway answers `music_unclaimed`, and the worker logs once that
+Music Assistant should be reset or the claim file restored; until then
+`music_unavailable`. A Music Assistant that has a user when thermite has no
+password stored had another user before thermite claimed it:
+`music_unclaimed` at once. Either recovers when the owner resets Music
 Assistant (stop it, delete its data directory and start it again): the
 worker claims it afresh within 30 seconds. A claim file the worker cannot
 trust is reported, never replaced, and the gateway answers

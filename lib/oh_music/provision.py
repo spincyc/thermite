@@ -51,7 +51,7 @@ import time
 from pathlib import Path
 
 from oh_access import AccessError
-from oh_access.files import Oversized, json_private, read_private
+from oh_access.files import Oversized, json_private, read_private, remove_temporaries
 
 from . import MEDIA
 from .client import SLOW, Client, Failed, NoUser, Stopped, Unauthorized, Unavailable
@@ -561,7 +561,14 @@ class Provisioner:
 
 def run(state, spec, stop, *, poll=POLL, every=EVERY, connect=Client):
     """The worker's music thread: until stop is set, a pass every `poll`
-    seconds (Provisioner.step), reconciling every `every`."""
+    seconds (Provisioner.step), reconciling every `every`. First, what a
+    write killed midway left beside the records goes."""
+    try:
+        for name in (TOKEN_FILE, LIBRARY_FILE):
+            remove_temporaries(Path(state) / name)
+    except OSError as error:
+        LOG.warning("Music Assistant: the records' leftover temporary files cannot be removed (%s).",
+                    type(error).__name__)
     provisioner = Provisioner(state, spec, connect=connect, every=every, stop=stop)
     while not stop.is_set():
         try:

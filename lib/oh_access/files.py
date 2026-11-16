@@ -6,6 +6,7 @@ import grp
 import os
 from pathlib import Path
 import pwd
+import re
 import secrets
 import stat
 
@@ -107,12 +108,17 @@ def read_private(value, maximum=2 * 1024 * 1024):
         os.close(fd)
 
 
+#: Random bytes in the name of atomic_private's temporary file, written
+#: beside its target as "." + the target's name + "." + their hex.
+TEMPORARY_BYTES = 12
+
+
 def atomic_private(value, content):
     path = Path(value).expanduser().absolute()
     private_directory(path.parent)
     if path.exists() or path.is_symlink():
         read_private(path)
-    temporary = path.parent / ("." + path.name + "." + secrets.token_hex(12))
+    temporary = path.parent / ("." + path.name + "." + secrets.token_hex(TEMPORARY_BYTES))
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
         with os.fdopen(fd, "wb") as stream:
@@ -132,6 +138,24 @@ def atomic_private(value, content):
             os.close(directory)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def remove_temporaries(value):
+    """Remove the temporary files that atomic_private writes of value left
+    when their process was killed midway: this user's regular files by
+    those names, nothing else. For the one writer of value, before it
+    writes."""
+    path = Path(value).expanduser().absolute()
+    left = re.compile(re.escape("." + path.name + ".") + "[0-9a-f]{%d}" % (2 * TEMPORARY_BYTES))
+    try:
+        entries = list(os.scandir(path.parent))
+    except FileNotFoundError:
+        return
+    for entry in entries:
+        if left.fullmatch(entry.name):
+            info = entry.stat(follow_symlinks=False)
+            if stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid():
+                Path(entry.path).unlink(missing_ok=True)
 
 
 def json_private(value, data):
