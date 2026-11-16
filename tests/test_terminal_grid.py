@@ -32,6 +32,14 @@ class TerminalGrid(unittest.TestCase):
         self.assertEqual(self.proof["lastColumn"], [" ", " ", " ", "a", " "])
         self.assertEqual(self.proof["firstColumn"], [" ", "京", "", "a", " "])
 
+    def test_a_code_point_takes_the_columns_wcwidth_gives_it(self):
+        # Devanagari and Thai: a spacing mark takes a column, a nonspacing one none; a ZWJ sequence
+        # two for each emoji, VS16 none (the heart is text by default), a lone regional indicator two.
+        self.assertEqual(self.proof["columns"], [9, 4, 6, 1, 2, 4, 1])
+        self.assertEqual(self.proof["thai"], ["\u0e01", "\u0e33", "\u0e25\u0e31", "\u0e07", " "])
+        # A joiner is drawn in the cell before it: the wide character's own, not its half.
+        self.assertEqual(self.proof["zwj"], ["\U0001f468\u200d", "", "\U0001f469\u200d", "", "\U0001f467", "", " ", " "])
+
     def test_a_mono_character_stands_in_for_a_narrow_cell_only(self):
         self.assertEqual(self.proof["mono"], [None, None, "#", None])
 

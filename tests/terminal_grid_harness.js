@@ -97,7 +97,8 @@ function random(seed) {
   };
 }
 
-const ALPHABET = ["a", "b", " ", "\u00e9", "e\u0301", "\u6771", "\u4eac", "\u{1f3b5}", "\u2502"];
+const ALPHABET = ["a", "b", " ", "\u00e9", "e\u0301", "\u6771", "\u4eac", "\u{1f3b5}", "\u0939", "\u093f", "\u0902", "\u0e01",
+  "\u0e33", "\u0e31", "\u200d", "\ufe0f", "\u2764", "\u{1f1e6}", "\u2502"];
 const STYLES = ["base", "dim", "alert"];
 
 // Random frames painted one over another; how many diverged from the grid, and the first faults.
@@ -148,6 +149,15 @@ proof.firstColumn = cells(grid)[0];
 grid = new Grid.Grid(4, 1);
 grid.put(0, 0, "\u6771a", "base", null, "#");
 proof.mono = grid.rows[0].map((cell) => cell.mono || null);
+// Columns, a code point at a time.
+proof.columns = ["\u0939\u093f\u0902\u0926\u0940 \u0917\u093e\u0928\u093e", "\u0e01\u0e33\u0e25\u0e31\u0e07",
+  "\u{1f468}\u200d\u{1f469}\u200d\u{1f467}", "\u2764\ufe0f", "\u{1f1e6}", "Cafe\u0301", "\u0301a"].map((text) => Grid.length(text));
+grid = new Grid.Grid(8, 1);
+grid.put(0, 0, "\u{1f468}\u200d\u{1f469}\u200d\u{1f467}");
+proof.zwj = cells(grid)[0];
+grid = new Grid.Grid(5, 1);
+grid.put(0, 0, "\u0e01\u0e33\u0e25\u0e31\u0e07");
+proof.thai = cells(grid)[0];
 // The painter alone, on a row no grid draws now (a right half with no
 // character before it): what follows still lands in its own cell.
 const terminal = new Terminal(6, 1), row = [{ ch: "", style: "base" }, { ch: "a", style: "base" },
