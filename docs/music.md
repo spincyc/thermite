@@ -5,8 +5,8 @@ A host whose `instance/host.yaml` has `music:` runs
 and your own music libraries on the house's Sonos and WiiM speakers, alone or
 grouped. Thermite runs the version `versions.json` pins (`music_assistant`,
 2.10.12, by image digest) and keeps its state. The gateway claims Music
-Assistant and configures it; see the Music page. A host without `music:` runs
-no Music Assistant and installs nothing of it.
+Assistant and configures it; Remotes plays it in a room's Listen. A host
+without `music:` runs no Music Assistant and installs nothing of it.
 
 ## Turn it on
 

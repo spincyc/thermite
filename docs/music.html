@@ -37,7 +37,7 @@
   </header>
   <main id="main">
 <h1 id="music">Music</h1>
-<p>A host whose <code>instance/host.yaml</code> has <code>music:</code> runs <a href="https://music-assistant.io">Music Assistant</a> beside openHAB. It plays TIDAL and your own music libraries on the house's Sonos and WiiM speakers, alone or grouped. Thermite runs the version <code>versions.json</code> pins (<code>music_assistant</code>, 2.10.12, by image digest) and keeps its state. The gateway claims Music Assistant and configures it; see the Music page. A host without <code>music:</code> runs no Music Assistant and installs nothing of it.</p>
+<p>A host whose <code>instance/host.yaml</code> has <code>music:</code> runs <a href="https://music-assistant.io">Music Assistant</a> beside openHAB. It plays TIDAL and your own music libraries on the house's Sonos and WiiM speakers, alone or grouped. Thermite runs the version <code>versions.json</code> pins (<code>music_assistant</code>, 2.10.12, by image digest) and keeps its state. The gateway claims Music Assistant and configures it; Remotes plays it in a room's Listen. A host without <code>music:</code> runs no Music Assistant and installs nothing of it.</p>
 <h2 id="turn-it-on">Turn it on</h2>
 <p>Add <code>music:</code> to <code>instance/host.yaml</code>, naming each library and the host directory it is in:</p>
 <pre><code class="language-yaml">music:

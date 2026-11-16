@@ -43,48 +43,55 @@ its maximum, and each press of + or − moves one of the device's own steps
 (0.5 on a receiver, 1 elsewhere). Nothing caps or rescales it; a limit set on
 the device itself is the device's to apply.
 
-Audio (`/audio/`) is a page for each speaker or streamer thermite controls
-itself, a WiiM or a Sonos under `control` in the house file, whether or not
-a room routes it. It shows what plays (title, artist and album, the service
-and the stream's format), the device's transport keys, volume, mute and
-input, then its settings by section: play mode, EQ, bass and treble,
-subwoofer, surround, night and speech modes, the status light, as each device
-has them. Below, folded, is what the device reports about itself, such as its
-firmware or the TV audio format. A setting shows only while the device
-reports it, and only where it applies (a WiiM's play mode on Wi-Fi). A change
-shows at once and pulses until the device reads it back. A remote whose
-volume or keys drive such a device names it as a link to its page. Guests
-may use it without signing in. When a room that owns the device is locked,
-the page is locked too. A room owns its `audio` device and the soundbars,
-streaming amplifiers and audio streamers in its own room. The gateway
-checks each command (`POST /api/v1/devices/<id>/commands`) against the
-device's actions and those locks. A locked room that only shares the device refuses just what would
-disturb what it shows.
+Remotes watches and listens. A room with a screen opens on Watch, the remote
+above; a room whose speakers thermite controls also has Listen, and a room
+with both shows a Watch | Listen switch under the bar (Y toggles it; the
+choice is kept per room). The room lists name the rooms of speakers no routed
+room owns after the routed ones, each with what it plays. A routed room owns
+its `audio` device and the soundbars, streaming amplifiers and audio streamers
+in its own room; a WiiM or a Sonos under `control` in the house file is a
+speaker. Watch's volume caption names the room's speaker as a button to
+Listen to it.
 
-Music (`/music/`, beside Audio under Remotes) plays TIDAL and the NAS libraries
-on the house's Sonos and WiiM speakers through Music Assistant, on a host whose
-site has `music:`. It lists the speakers, a group's together under what it
-plays, and for the chosen one its cover, title, artist and album, where it is
-in the track, its shuffle, previous, play, next and repeat keys, its volume and
-its group. Search (all, or tracks, albums, artists or playlists; everywhere, in
-the libraries or on TIDAL), Browse (each library's folders and TIDAL's) and
-Queue (the chosen speaker's, or its group's) list what can play: a tap offers
-Play now, which replaces the queue, Play next or Add to queue, and Open for an
-album, artist, playlist or folder. Group adds speakers to the chosen one's
-group, removes them or ends it; Sonos and WiiM speakers group only over
-AirPlay, and the page says which could not join and why, and which Music
-Assistant was asked to group but has not confirmed (not refused). A change
-shows at once; until the speaker reads it back, shuffle, repeat and a new
-position pulse and a volume dims. A speaker in a locked room is locked too; a
-locked room of another speaker in its group holds what moves the group, not the
-speaker's own volume. The gateway refuses their commands anyway. An
-administrator signs Music Assistant into TIDAL on the page, which shows the
-code to approve at link.tidal.com and follows the sign-in until it is done. A
-Guest kept from free text (Security) sees whether each speaker plays, but no
-titles, covers or library. Without music on the host, or while Music Assistant
-is away, the page says so in one line. Its keys: Space or P plays and pauses, +
-and − step the volume, < and > change the track, [ and ] choose the speaker, S
-shuffles, R repeats and / searches.
+Listen shows the room's speakers as bubbles (when it has more than one; 1 to
+9 choose), then for the chosen one what plays: its cover, title, artist and
+album, the service and the stream's format, where it is in the track, its
+shuffle, previous, play, next and repeat keys, its volume (hold + or − to
+repeat) and mute, and chips for its group, its input and the library. Info
+holds its power, its settings by section (play mode, EQ and presets, bass and
+treble, subwoofer, surround, night and speech modes, the status light, as
+each device has them) and, under About this speaker, what it reports about
+itself, such as its firmware or the TV audio format. A setting shows only
+while the device reports it, and only where it applies (a WiiM's play mode on
+Wi-Fi). A change shows at once and pulses until the device reads it back.
+
+On a host whose site has `music:`, Music Assistant plays TIDAL and the NAS
+libraries on the speakers, and Listen shows what it plays. The library
+(a sheet on a phone; beside the remote from 1200 pixels, where Info is then a
+tap on the Info button) has Search (all, or tracks, albums, artists or
+playlists; everywhere, in the libraries or on TIDAL), Browse (each library's
+folders and TIDAL's) and Queue (the chosen speaker's, or its group's); a tap
+offers Play now, which replaces the queue, Play next or Add to queue, and Open
+for an album, artist, playlist or folder. Group adds speakers to the chosen
+one's group, removes them or ends it, and a group's volume shows under the
+speaker's; Sonos and WiiM speakers group only over AirPlay, and the sheet says
+which could not join and why, and which Music Assistant was asked to group
+but has not confirmed. An administrator signs Music Assistant into TIDAL from
+the library. A Guest kept from free text (Security) sees whether a speaker
+plays, but no titles, covers or library. Without music on the host, or while
+Music Assistant is away, Listen plays what the speaker reports itself and
+says why in one line.
+
+A speaker in a locked room is locked as Watch is: its bubble carries the
+padlock (or, with one speaker, its name does), its controls are disabled and
+the alert says which room holds it. A locked room of another speaker in its
+group holds what moves the group, not the speaker's own volume. The gateway
+checks each command (`POST /api/v1/devices/<id>/commands` and the music API)
+against the device's actions and those locks; a locked room that only shares
+the device refuses just what would disturb what it shows. Guests may listen
+without signing in. Listen's keys: Space or P plays and pauses, < and > change
+the track, + and − step the volume, M mutes, S shuffles, R repeats, G opens the
+group, / searches, 1 to 9 choose the speaker and [ and ] the room.
 
 Source previews use the fictional sample. Add `?backend=mock` to simulate
 controls without sending commands.
