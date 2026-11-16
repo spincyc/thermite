@@ -28,11 +28,13 @@ class Shutdown:
     """When the worker was asked to stop, and what is left of STOP_SECONDS
     from then for each thread it joins. request() is all a signal handler
     calls: it may take no lock, so it records a time and a flag. watch()
-    turns a request, or the stop event set by another, into stopping at
-    once (stop set, then each wake-up called), so that the music thread and
-    the observer wind down while the loop ends its step."""
+    calls each wake-up once a request comes, or the stop event is set by
+    another, within poll seconds: the music thread stops and the loop wakes
+    while a step may still run. The stop event itself, which ends the
+    observer and clears what it observed, is the loop's to set once its
+    step has ended."""
 
-    def __init__(self, stop, *, clock=time.monotonic, poll=0.1):
+    def __init__(self, stop, *, clock=time.monotonic, poll=1.0):
         self.stop, self.clock, self.poll = stop, clock, poll
         self.requested, self.deadline = False, None
 
@@ -50,7 +52,6 @@ class Shutdown:
             while not self.requested and not self.stop.wait(self.poll):
                 pass
             self.request()
-            self.stop.set()
             for wake in wakes:
                 wake()
         thread = threading.Thread(target=watching, daemon=True, name="shutdown")
@@ -429,15 +430,18 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
                 loop.call_soon_threadsafe(observer.cancel)
             except RuntimeError:
                 pass  # The observer finished and closed its loop meanwhile.
-    # The step that is running when a stop is asked for still ends: its
-    # rooms' locks are held by the gateway for one command at most.
-    shutdown.watch(cancel_observer, worker.wake)
+    # The step that is running when a stop is asked for still ends, with what
+    # the observer saw (its rooms' locks are held by the gateway for one
+    # command at most); the music thread, which shares nothing with it, stops
+    # at once.
+    music_stop = threading.Event()
+    shutdown.watch(music_stop.set, worker.wake)
     try:
         # Take the process lease BEFORE connecting a feed or running any writes.
         with locks.hold(["room-policy-worker"], blocking=False):
             if not shutdown.requested:
                 thread.start()
-            with music_running(config["state"], adapter.contract.music, stop, start=not shutdown.requested,
+            with music_running(config["state"], adapter.contract.music, music_stop, start=not shutdown.requested,
                                left=shutdown.left):
                 textfile = metrics.start(metrics.WORKER, metrics.WORKER_FILE)
                 pruned = None

@@ -809,16 +809,18 @@ class Gateway(Stand_in, Requests, TestCase):
 
     def test_the_worker_joins_its_threads_within_one_deadline_from_its_stop_request(self):
         from oh_access import worker
-        now, woken = [100.0], threading.Event()
+        now, music_stop, woken = [100.0], threading.Event(), threading.Event()
         stop = threading.Event()
         shutdown = worker.Shutdown(stop, clock=lambda: now[0], poll=0.01)
         self.assertEqual(shutdown.left(), worker.STOP_SECONDS)
-        watcher = shutdown.watch(woken.set)
-        # A signal: a flag and a time, and the watcher stops the threads at once.
+        watcher = shutdown.watch(music_stop.set, woken.set)
+        # A signal while a step runs: a flag and a time. The music thread stops and the loop
+        # wakes at once; the observer's stop, which clears what it saw, waits for the step.
         shutdown.request()
+        self.assertTrue(music_stop.wait(5))
         self.assertTrue(woken.wait(5))
-        self.assertTrue(stop.is_set())
-        # The loop's step ends 20 seconds on: what is left counts from the request, not from then.
+        self.assertFalse(stop.is_set())
+        # The step ends 20 seconds on: what is left counts from the request, not from then.
         now[0] += 20
         shutdown.request()
         self.assertEqual(shutdown.left(), worker.STOP_SECONDS - 20)
@@ -826,12 +828,12 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual(shutdown.left(), 0.0)
         watcher.join(5)
         # The stop event set by another starts the budget when the watcher sees it.
-        stop = threading.Event()
+        stop, music_stop = threading.Event(), threading.Event()
         shutdown = worker.Shutdown(stop, clock=lambda: now[0], poll=0.01)
-        watcher = shutdown.watch(woken.set)
+        watcher = shutdown.watch(music_stop.set)
         stop.set()
         watcher.join(5)
-        self.assertEqual((shutdown.requested, shutdown.left()), (True, worker.STOP_SECONDS))
+        self.assertEqual((shutdown.requested, music_stop.is_set(), shutdown.left()), (True, True, worker.STOP_SECONDS))
 
     def test_the_guest_listener_serves_music_but_not_tidal(self):
         from oh_identity.guest import ROUTES
