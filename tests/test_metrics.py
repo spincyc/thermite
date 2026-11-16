@@ -1168,6 +1168,12 @@ class Textfiles(unittest.TestCase):
                                              refresh=lambda: writes.append(threading.current_thread().name)).start()
             textfile.stop(timeout=0)
             self.assertEqual(writes, ["MainThread", "MainThread"])
+        # No timeout: as long as a write in progress takes.
+        writes = []
+        textfile = self.metrics.Textfile(self.metrics.CALLBACKS, "example", self.directory, every=60,
+                                         refresh=lambda: writes.append(threading.current_thread().name)).start()
+        textfile.stop(timeout=None)
+        self.assertEqual(writes, ["MainThread", "MainThread"])
 
     def test_labels_are_finite(self):
         text = self.metrics.prometheus_client.generate_latest(self.metrics.GATEWAY).decode()

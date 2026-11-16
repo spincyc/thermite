@@ -437,12 +437,13 @@ class Textfile:
 
     def stop(self, timeout=5):
         """Stop writing, after one last write of the final counts, waiting
-        timeout seconds at most for a write in progress; one that outlasts
-        it is the last. A writer between writes writes nothing more."""
+        timeout seconds at most (None: for as long as it takes) for a write
+        in progress; one that outlasts it is the last. A writer between
+        writes writes nothing more."""
         self._stop.set()
         if self._thread is not None:
             self._thread = None
-            if self._writing.acquire(timeout=timeout):
+            if self._writing.acquire(timeout=-1 if timeout is None else timeout):
                 try:
                     self.write()
                 finally:
