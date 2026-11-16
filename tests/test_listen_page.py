@@ -37,6 +37,8 @@ def speaker_house():
     built = model(house(extra=extra))
     built["devices"][OWNED]["control"]["power"] = OWNED + "_power"
     built["devices"][AMP]["remote"] = "sonos"
+    built["devices"]["example_display"]["control"]["input"] = {"item": "example_display_input",
+                                                               "options": [["hdmi1", "HDMI 1"], ["hdmi2", "HDMI 2"]]}
     return built
 
 
@@ -206,6 +208,25 @@ class ListenPage(unittest.TestCase):
         self.assertEqual(out["guest"], [True, blind, True, 0, "Playing"])
         self.assertEqual(out["told"][:4], [True, blind, True, 0])
 
+    def test_watch_and_listen_each_list_their_own_inputs_in_the_shared_sheet(self):
+        out = self.out["inputs"]
+        tv, speaker = [True, ["watch:hdmi1", "watch:hdmi2"]], [True, ["listen:wifi", "listen:bluetooth", "listen:line-in"]]
+        self.assertEqual([out["watch"], out["listen"], out["watchAgain"], out["listenAgain"]], [tv, speaker, tv, speaker])
+        # The TV reports while Listen's list is open: the list stays the speaker's, and a tap goes to the speaker.
+        self.assertEqual(out["reported"], speaker)
+        self.assertEqual(out["tapped"], [MINI + ":input"])
+
+    def test_the_signal_panel_polls_only_while_it_shows(self):
+        out = self.out["signal"]
+        # From 1200 px: every SIGNAL_REFRESH in Watch, none in Listen, and again back in Watch.
+        self.assertEqual((out["watch"], out["listen"], out["back"]), (2, 0, 2))
+        # D in Watch opens the signal; Listen's Info after it is the speaker's and reads none.
+        self.assertEqual(out["d"], [True, 1])
+        self.assertEqual(out["listenInfo"], [True, 0])
+
+    def test_without_the_right_column_the_library_opens_its_sheet(self):
+        self.assertEqual(self.out["sideways"]["library"], [True, True])
+
     def test_an_admin_signs_in_to_tidal_from_the_library(self):
         self.assertEqual(self.out["music"]["tidal"], [True, "TIDAL is not signed in.", True,
                                                       "Approve this code at link.tidal.com on any device."])
@@ -357,6 +378,16 @@ class ListenMarkup(unittest.TestCase):
         wide = 4 * value(".key--sm", "width", rules=self.shared) + value(".key--play", "width", rules=self.shared)
         self.assertLessEqual(wide + 4 * value(".listen-transport", "gap") + 8, 360 - 2 * side)
         self.assertIn((None, ".listen-transport .key", {"flex": "none"}), self.rules)
+        # A sixth key (a Sonos Arc's TV): the narrow sizes at every width, at 320 and 390 px alike.
+        six = ".listen-transport:has(> :nth-child(6))"
+        for width, media in ((320, narrow), (390, None)):
+            with self.subTest(width=width):
+                keys = [value(six + " .key--sm", "width", media)] * 5 + [value(six + " .key--play", "width", media)]
+                # The media's own gap where it sets one (css_rules lists media rules first).
+                gaps = [values["gap"] for at, one, values in self.rules if one == six and "gap" in values and at in (None, media)]
+                pad = value(".listen", "padding-inline", narrow) if media else side
+                self.assertLessEqual(sum(keys) + 5 * pixels(gaps[0], tokens) + 8, width - 2 * pad)
+                self.assertGreaterEqual(min(keys), 44)
         # Every target Listen sizes is at least 44 px tall, but a mouse's switch.
         heights = {one: pixels(values["min-height"], tokens) for media, one, values in self.rules
                    if "min-height" in values and media != "(hover: hover) and (pointer: fine)"}

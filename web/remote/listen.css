@@ -383,8 +383,28 @@
   animation: pending 0.9s ease-in-out infinite alternate;
 }
 
+/* A sixth key (a Sonos Arc's TV) takes the narrow sizes at any width. */
+.listen-transport:has(> :nth-child(6)) {
+  gap: var(--space-2);
+}
+
+.listen-transport:has(> :nth-child(6)) .key--sm {
+  width: var(--tap);
+  height: var(--tap);
+}
+
+.listen-transport:has(> :nth-child(6)) .key--play {
+  width: 48px;
+  height: 48px;
+}
+
 @media (max-width: 359px) {
-  .listen-transport {
+  .listen {
+    padding-inline: var(--space-3);
+  }
+
+  .listen-transport,
+  .listen-transport:has(> :nth-child(6)) {
     gap: var(--space-1);
   }
 

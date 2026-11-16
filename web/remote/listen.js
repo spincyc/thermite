@@ -22,8 +22,9 @@
   // What a member's locked room holds: the keys that move the whole group.
   const MOVES_GROUP = { shuffle: true, previous: true, play_pause: true, next: true, repeat: true };
   const SHORTCUT = { shuffle: "S", previous: "<", play_pause: "P", next: ">", repeat: "R" };
-  // From here the library sits beside the remote, in the right panel (remote.css).
-  const WIDE = "(min-width: 1200px)";
+  // From here the library sits beside the remote, in the right panel
+  // (listen.css), which a phone on its side 500 px tall or less never shows (shell.css).
+  const WIDE = "(min-width: 1200px) and (min-height: 501px)";
 
   // The sessions Listen draws, on the remote's backend: each speaker's own
   // (RemoteAudio) and, in a house with speakers, Music Assistant's.
@@ -396,6 +397,8 @@
       const view = listen.view();
       if (!view || !view.input) return;
       $("#input-sheet-title").textContent = "Input";
+      // Watch fills the same list (remote.js): drawn afresh, whatever this last drew there.
+      drawn.delete($("[data-input-list]"));
       fillInputs(view);
       ui.openSheet("input-sheet");
     }

@@ -112,7 +112,8 @@
     else if (event.type === "audio") updateAudio();
     else if (event.type === "device") {
       updateAudio();
-      if (session.inputsOf() === event.device && $("#input-sheet").open) fillInputs();
+      // Only Watch's list: Listen's (listen.js, data-listen) lists a speaker's inputs.
+      if (session.inputsOf() === event.device && $("#input-sheet").open && !$("[data-input-list]").hasAttribute("data-listen")) fillInputs();
     } else if (event.type === "matrix") updateSimulation();
     else if (event.type === "inputs") openInputs(event.title);
   }
@@ -145,7 +146,6 @@
     updateAudio();
     updateSimulation();
     updateSignal();
-    syncSignal();
     updateRoomLock();
     updateLockMenu();
     // The bubbles follow the lock themselves (updateTargets).
@@ -174,6 +174,8 @@
     if (listening) $("#controls").hidden = true;
     $("#info-open").setAttribute("aria-label", listening ? "Speaker settings" : "Room devices, signal and audio");
     if (shortcutsFor !== mode) buildShortcuts(mode);
+    // Once the mode is on the body: the Signal panel shows (remote.css) only in Watch.
+    syncSignal();
     listenPage.update();
   }
 
@@ -623,10 +625,11 @@
     return panel && getComputedStyle(panel).display !== "none";
   }
 
+  // Never in Listen: its Info is the speaker's.
   function signalVisible() {
     const sheet = $("#info-sheet");
     const dialogs = all("dialog[open]");
-    return document.visibilityState !== "hidden" && (dialogs.length
+    return document.visibilityState !== "hidden" && session.mode() !== "listen" && (dialogs.length
       ? dialogs.every((dialog) => dialog === sheet) && infoView === "signal" : inlineSignal());
   }
 
@@ -789,6 +792,8 @@
 
   function fillInputs() {
     const list = $("[data-input-list]");
+    // Watch's again, not Listen's (listen.js).
+    list.removeAttribute("data-listen");
     list.textContent = "";
     session.inputOptions().forEach((entry) => {
       list.appendChild(node("li", null, [

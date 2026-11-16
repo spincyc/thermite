@@ -24,7 +24,8 @@ function locking(room, guest) {
 }
 
 // The remote page at ?room=room. options: access (a client for the locks),
-// music (the mock music's settings), wide (a window 1200 px wide), stored.
+// music (the mock music's settings), wide (a window 1200 px wide), short
+// (and 500 px tall, a phone on its side), stored.
 function page(room, options = {}) {
   const time = clock();
   const document = new Document(fs.readFileSync(path.join(WEB, 'index.html'), 'utf8'));
@@ -43,8 +44,11 @@ function page(room, options = {}) {
       removeItem: (key) => stored.delete(key)},
     CSS: {escape: (text) => String(text).replace(/["\\]/g, '\\$&')},
     navigator: {},
-    matchMedia: (query) => ({matches: /min-width: 1200px/.test(query) ? Boolean(options.wide) : false, addEventListener() {}, addListener() {}}),
-    getComputedStyle: () => ({display: 'none', getPropertyValue: () => ''}),
+    matchMedia: (query) => ({matches: /min-width: 1200px/.test(query) ? Boolean(options.wide) && !(options.short && /min-height/.test(query))
+      : false, addEventListener() {}, addListener() {}}),
+    // remote.css and listen.css as far as the scripts ask: the Signal panel shows from 1200 px, tall, in Watch.
+    getComputedStyle: (element) => ({getPropertyValue: () => '', display: element.classList.contains('panel--signal') && options.wide
+      && !options.short && document.body.dataset.mode !== 'listen' ? 'flex' : 'none'}),
     addEventListener: (type, listener) => { (windowListeners[type] = windowListeners[type] || []).push(listener); },
     REMOTE_HOUSE: house,
   };
@@ -65,7 +69,12 @@ function page(room, options = {}) {
         const backend = made.remote = create(...args);
         const command = backend.command.bind(backend);
         backend.sent = [];
+        // Each room the Signal panel read, as it polls.
+        backend.diagnosed = [];
+        backend.getDiagnostics = (id) => { backend.diagnosed.push(id); return Promise.resolve(null); };
         backend.command = (device, action, value) => { backend.sent.push([device, action, String(value)]); return command(device, action, value); };
+        const setInput = backend.setInput.bind(backend);
+        backend.setInput = (room, device, value) => { backend.sent.push([device, 'input', String(value)]); return setInput(room, device, value); };
         return backend;
       };
     }
@@ -468,9 +477,91 @@ async function music(out) {
   out.tidal.push(admin.shown(admin.$('[data-tidal-code]')), admin.words(admin.$('[data-tidal-text]')));
 }
 
+// Watch and Listen share Remotes' input sheet: each lists its own device's inputs,
+// and a report from Watch's device leaves Listen's list as it is.
+async function inputs(out) {
+  const p = page(MIXED);
+  const {time, $, all, key, made} = p;
+  await time.tick(1500);
+  const listed = () => [$('#input-sheet').open, all('[data-input-list] button').map((button) => button.dataset.listenInput
+    ? 'listen:' + button.dataset.listenInput : 'watch:' + button.dataset.input)];
+  const watching = async () => {
+    $('[data-targets] [data-device="example_display"]').click();
+    await time.tick(400);
+    $('#controls [data-button="input"]').click();
+    await time.tick(50);
+    return listed();
+  };
+  const listening = async () => {
+    $('[data-action="listen-input"]').click();
+    await time.tick(50);
+    return listed();
+  };
+  out.watch = await watching();
+  $('#input-sheet').close();
+  await key('y', p.document.body);
+  out.listen = await listening();
+  $('#input-sheet').close();
+  await key('y', p.document.body);
+  out.watchAgain = await watching();
+  $('#input-sheet').close();
+  await key('y', p.document.body);
+  out.listenAgain = await listening();
+  // The TV reports while Listen's list is open.
+  made.remote.updateDevice('example_display', 'input', 'hdmi2');
+  await time.tick(1500);
+  out.reported = listed();
+  const sent = made.remote.sent.length;
+  $('[data-input-list] button').click();
+  await time.tick(400);
+  out.tapped = made.remote.sent.slice(sent).map(([device, action]) => device + ':' + action);
+}
+
+// Diagnostics poll while the Signal panel shows: from 1200 px only in Watch;
+// and Listen's Info, opened after D in Watch, is the speaker's, not the signal's.
+async function signal(out) {
+  const p = page(MIXED, {wide: true});
+  const {time, $, key, made} = p;
+  await time.tick(1500);
+  const reads = async (ms) => {
+    const from = made.remote.diagnosed.length;
+    await time.tick(ms);
+    return made.remote.diagnosed.length - from;
+  };
+  out.watch = await reads(25000);
+  await key('y', p.document.body);
+  out.listen = await reads(25000);
+  await key('y', p.document.body);
+  out.back = await reads(25000);
+  const narrow = page(MIXED);
+  await narrow.time.tick(1500);
+  const from = narrow.made.remote.diagnosed.length;
+  await narrow.key('d', narrow.document.body);
+  await narrow.time.tick(100);
+  out.d = [narrow.$('#info-sheet').open, narrow.made.remote.diagnosed.length - from];
+  narrow.$('#info-sheet').close();
+  await narrow.time.tick(100);
+  await narrow.key('y', narrow.document.body);
+  narrow.$('#info-open').click();
+  await narrow.time.tick(100);
+  const opened = narrow.made.remote.diagnosed.length;
+  await narrow.time.tick(25000);
+  out.listenInfo = [narrow.$('#info-sheet').open, narrow.made.remote.diagnosed.length - opened];
+}
+
+// 1200 px wide but 500 tall (a phone on its side): no right column, so the library opens its sheet.
+async function sideways(out) {
+  const p = page(MIXED, {wide: true, short: true, stored: {['remote.mode.' + MIXED]: 'listen'}});
+  await p.time.tick(1500);
+  p.$('[data-action="listen-library"]').click();
+  await p.time.tick(50);
+  out.library = [p.$('[data-library]').parentNode === p.$('[data-library-narrow]'), p.$('#library-sheet').open];
+}
+
 (async () => {
   const report = {};
-  for (const [name, run] of Object.entries({rooms, modes, face, alone, watch, locks, library, browse, group, covers, music})) {
+  for (const [name, run] of Object.entries({rooms, modes, face, alone, watch, locks, library, browse, group, covers, music, inputs, signal,
+    sideways})) {
     report[name] = {};
     // A scenario that throws says where, and the rest still run.
     await run(report[name]).catch((error) => { report[name].error = error.stack.split('\n').slice(0, 3).join(' '); });
