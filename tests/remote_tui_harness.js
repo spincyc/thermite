@@ -55,7 +55,12 @@ function openhab(house) {
     if (target.pathname === "/static/remote/diagnostics.json") return json({ version: 1, rooms: {}, devices: {} });
     return reply(method === "POST" ? 200 : 404, "");
   };
-  site.EventSource = stream(() => null);
+  // Its streams kept, for an event sent while the remote runs.
+  site.sources = [];
+  const Source = stream(() => null);
+  site.EventSource = class extends Source { constructor(url) { super(url); site.sources.push(this); } };
+  site.send = (item, value) => site.sources.forEach((source) => source.onmessage && source.onmessage({ data: JSON.stringify({
+    topic: "openhab/items/" + item + "/stateupdated", type: "ItemStateUpdatedEvent", payload: JSON.stringify({ type: "String", value }) }) }));
   return site;
 }
 
@@ -91,7 +96,7 @@ function assemble(options = {}) {
   const site = options.native ? openhab(shared.house) : options.gateway ? gateway(shared.house) : null;
   const args = !site ? ["--mock", "--still", "--latency", "0"] : ["--url", options.native ? ORIGIN : GATEWAY, "--still"].concat(options.native ? ["--native"] : []);
   const opened = [];
-  const parts = Main.assemble(Main.parse(args), { shared, setInterval: () => 0, clearInterval() {}, environ: {},
+  const parts = Main.assemble(Main.parse(args), { shared, setInterval: () => 0, clearInterval() {}, environ: {}, ...(options.store ? { store: options.store } : {}),
     screen: options.screen || "remote", onQuit: () => { parts.quit = true; }, openURL: (url) => { opened.push(url); return false; },
     ...(site ? { fetch: site.fetch, EventSource: site.EventSource } : {}) });
   parts.opened = opened;
@@ -452,6 +457,44 @@ async function pages(proof) {
   controller.stop();
 }
 
+// ---- start-up on a room of speakers alone -------------------------------------
+
+// The room kept from the last run is a room of speakers alone. Wide enough for
+// the signal beside the remote, it starts on Listen and reads no signal; a
+// routed room's Source that changes meanwhile shows in the rooms' list; d
+// and the arrows on to a routed room go on as ever. On the gateway, Room
+// settings started on it opens on a routed room.
+async function startup(proof) {
+  size = [150, 50];
+  const kept = (room) => { const data = { "remote.room": room }; return { get: (key) => data[key] ?? null, set: (key, value) => { data[key] = value; } }; };
+  let parts = await open({ native: true, store: kept(DEN) });
+  const { controller, session } = parts;
+  proof.startup = { start: [...room(parts), parts.diagnosed.slice()] };
+  await until(parts, () => parts.site.sources.length, "the stream");
+  parts.site.send("loc_" + EAST + "_source", "example_computer");
+  await until(parts, () => session.state(EAST).value === "example_computer", "the east room's Source");
+  proof.startup.stream = [...room(parts), text(parts).split("\n").some((line) => /Example East +Computer/.test(line))];
+  key(parts, "d");
+  proof.startup.signal = [controller.ui.overlay && controller.ui.overlay.kind, controller.ui.pane, toast(parts)];
+  key(parts, null, { name: "escape" });
+  size = [110, 50];
+  draw(parts);
+  key(parts, "d");
+  proof.startup.signal.push(controller.ui.overlay && controller.ui.overlay.kind, controller.ui.pane, parts.diagnosed.slice());
+  key(parts, null, { name: "escape" });
+  size = [150, 50];
+  key(parts, null, { name: "down" });
+  key(parts, null, { name: "down" });
+  await until(parts, () => parts.diagnosed.length, "the west room's signal");
+  proof.startup.walk = [...room(parts), parts.diagnosed.slice()];
+  controller.stop();
+  parts = await open({ gateway: true, screen: "settings", store: kept(LOUNGE) });
+  await until(parts, () => text(parts).includes("Edit schedule"), "the schedule");
+  proof.startup.settings = [parts.controller.ui.screen, text(parts).includes("Example West"),
+    parts.site.calls.filter((call) => call.endsWith("/policy")).filter((call, index, all) => all.indexOf(call) === index)];
+  parts.controller.stop();
+}
+
 // ---- the signal, and rooms of speakers alone -------------------------------
 
 // Wide, Watch's signal panel shows and reads; a room of speakers alone has
@@ -555,6 +598,7 @@ async function terminal(proof) {
   await mouse(proof);
   await narrow(proof);
   await pages(proof);
+  await startup(proof);
   await terminal(proof);
   await signal(proof, true);
   await settings(proof);

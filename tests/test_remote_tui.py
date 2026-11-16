@@ -121,6 +121,15 @@ class RemoteTUI(unittest.TestCase):
         # The player chosen with ↓, asked for a code with Enter, 123x5 typed (x refused), ⌫ and 4: the mock's code pairs it.
         self.assertEqual(self.proof["pages"]["paired"], ["1234", "paired", "device", True])
 
+    def test_kept_from_the_last_run_a_room_of_speakers_alone_starts_on_listen_and_reads_no_signal(self):
+        startup = self.proof["startup"]
+        self.assertEqual(startup["start"], [DEN, "listen", []])
+        self.assertEqual(startup["stream"], [DEN, "listen", True], "a routed room's Source, changed meanwhile, in the list")
+        # d has no signal to show in Listen, beside the remote or as a sheet.
+        self.assertEqual(startup["signal"], [None, "rooms", None, None, "rooms", []])
+        self.assertEqual(startup["walk"], [WEST, "watch", [WEST]])
+        self.assertEqual(startup["settings"], ["settings", True, ["GET /api/v1/rooms/" + WEST + "/policy"]])
+
     def test_a_room_of_speakers_alone_reached_with_the_signal_open_reads_none(self):
         signal = self.proof["signal"]
         # ↓ through every room and on, ], the rooms sheet's ↓ and Enter, and a click: none asks a room of speakers for its signal.
