@@ -115,7 +115,7 @@ class AudioPage(unittest.TestCase):
         self.assertEqual((locked["watchedAfterEarlyStop"], locked["watchingAtStart"]), (False, False))
         self.assertEqual(locked["view"], {"rooms": ["Example East"], "text": "Locked by Example East"})
         self.assertEqual(dict(locked["list"]), {FREE: False, OWNED: True})
-        self.assertEqual(locked["refused"], {"toasts": [["Locked by Example East", "bad"]] * 3, "sent": 0})
+        self.assertEqual(locked["refused"], {"toasts": [["Locked by Example East", "muted"]] * 3, "sent": 0})
         self.assertEqual(locked["free"], {"locked": None, "sent": [f"{FREE}_light"]})
         self.assertEqual((locked["watching"], locked["unwatched"]), (True, False))
 

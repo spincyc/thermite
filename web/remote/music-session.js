@@ -7,10 +7,11 @@
  * terminal remote draws the same one; neither decides anything this does
  * not. Load it after music-backend.js.
  *
- * RemoteMusic.create({backend, access, store}) returns a session on a
- * MusicBackend (access is the access.js client: the locks, who is signed
- * in and whether a Guest sees titles; store is {get(key), set(key, value)},
- * in memory if absent). As Audio's, it has access poll the locks while it
+ * RemoteMusic.create({backend, access, house, store}) returns a session on
+ * a MusicBackend (access is the access.js client: the locks, who is signed
+ * in and whether a Guest sees titles; house, REMOTE_HOUSE by default, says
+ * which rooms own each speaker; store is {get(key), set(key, value)}, in
+ * memory if absent). As Audio's, it has access poll the locks while it
  * runs, unless watchLocks is false. start(speaker) reads the speakers and
  * opens the music stream; stop() lets it go. subscribe(callback) hears:
  *
@@ -110,6 +111,7 @@
     const config = options || {};
     const backend = config.backend;
     const access = config.access && !config.access.native && !config.access.mock ? config.access : null;
+    const house = config.house || global.REMOTE_HOUSE || null;
     const store = config.store || memoryStore();
     const polls = Boolean(access) && config.watchLocks !== false;
     const now = config.now || (() => Date.now());
@@ -227,12 +229,24 @@
       if (seek && playing && Number.isFinite(playing.at) && playing.at * 1000 >= seek.at - 1000) delete held[owner + " seek"];
     }
 
+    // The rooms that hold a speaker when locked, as [id, label]: the routed
+    // rooms that own it (house.js devices[id].audio.rooms, as the gateway
+    // and Audio have them), else, without the house, its own room.
+    function holders(speaker) {
+      const page = house && house.devices && house.devices[speaker.id] && house.devices[speaker.id].audio;
+      if (!page) return [[speaker.room, speaker.room_label]];
+      return Object.keys(page.rooms || {}).filter((room) => page.rooms[room] === "own")
+        .map((room) => [room, ((house.rooms || []).find((entry) => entry.id === room) || { label: room }).label]);
+    }
+
     // The rooms of these speakers that are locked, by label.
     function lockedBy(ids) {
       if (!access) return [];
       const labels = [];
       ids.map(find).filter(Boolean).forEach((speaker) => {
-        if ((access.lockSummary(speaker.room) || {}).locked && !labels.includes(speaker.room_label)) labels.push(speaker.room_label);
+        holders(speaker).forEach(([room, label]) => {
+          if ((access.lockSummary(room) || {}).locked && !labels.includes(label)) labels.push(label);
+        });
       });
       return labels;
     }
@@ -247,7 +261,7 @@
       }
       const locked = lockedBy(ids || membersOf(speaker));
       if (!locked.length) return false;
-      toast(nameOf(speaker.id), "Locked by " + locked.join(", "), "bad");
+      toast(nameOf(speaker.id), "Locked by " + locked.join(", "), "muted");
       return true;
     }
 
@@ -283,19 +297,24 @@
       return { state: "ready", text: connected === false ? "Not connected to thermite. Reconnecting…" : "" };
     }
 
+    // What it plays, "Title · Artist", or null without a title (a Guest sees none).
+    function titleOf(speaker) {
+      const playing = speaker.available ? speaker.now_playing : null;
+      return playing && playing.title ? [playing.title, playing.artist].filter(Boolean).join(" · ") : null;
+    }
+
     function line(speaker) {
       if (!speaker.available) return "Not available";
-      const playing = speaker.now_playing;
-      const title = playing && playing.title ? [playing.title, playing.artist].filter(Boolean).join(" · ") : null;
-      const state = playingOf(speaker);
+      const title = titleOf(speaker);
       if (title) return title;
-      return state ? "Playing" : speaker.state === "paused" ? "Paused" : "Nothing playing";
+      return playingOf(speaker) ? "Playing" : speaker.state === "paused" ? "Paused" : "Nothing playing";
     }
 
     function row(speaker) {
       const locked = lockedBy([speaker.id]);
       return { id: speaker.id, name: nameOf(speaker.id), label: speaker.label, room: speaker.room_label, current: speaker.id === current,
         available: speaker.available, playing: speaker.available ? playingOf(speaker) : null, line: line(speaker),
+        title: titleOf(speaker), paused: speaker.available && !playingOf(speaker) && speaker.state === "paused",
         leader: Boolean(speaker.group) && speaker.group.leader === speaker.id, locked: locked.length > 0 };
     }
 

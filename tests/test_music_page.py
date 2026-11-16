@@ -195,25 +195,25 @@ class MusicPage(unittest.TestCase):
         self.assertEqual(out["view"]["locked"], "Locked by Kitchen")
         self.assertEqual([row[4] for block in out["rows"] for row in block["speakers"]], [True, True, False, False, False])
         self.assertEqual(out["blocked"]["sent"], [])
-        self.assertEqual(out["blocked"]["toasts"], [["Kitchen Sonos Amp", "Locked by Kitchen", "bad"]] * 3
-                         + [["Den", "Locked by Kitchen", "bad"]])
+        self.assertEqual(out["blocked"]["toasts"], [["Kitchen Sonos Amp", "Locked by Kitchen", "muted"]] * 3
+                         + [["Den", "Locked by Kitchen", "muted"]])
 
     def test_a_group_members_lock_holds_only_what_moves_the_group(self):
         out = self.report["locks"]["member"]
         self.assertEqual((out["locked"], out["group"]), (None, {"rooms": ["Den"], "text": "Group locked by Den"}))
         # The Kitchen speaker's own volume goes; Play and the group's volume wait for the Den.
         self.assertEqual(out["sent"], [["volume", "kitchen_amp", "level", 34]])
-        self.assertEqual(out["toasts"], [["Kitchen Sonos Amp", "Locked by Den", "bad"]] * 2)
+        self.assertEqual(out["toasts"], [["Kitchen Sonos Amp", "Locked by Den", "muted"]] * 2)
         self.assertEqual(out["den"], ["Locked by Den", "Locked by Den"])
 
     def test_a_group_change_is_stopped_by_a_lock_on_any_speaker_it_moves(self):
         out = self.report["involved"]
         self.assertEqual(out["formed"], ["kitchen_mini", "den_one"])
         # The Kitchen WiiM Mini leaves its group with the Den's speaker to join: the Den's lock stops it.
-        self.assertEqual(out["blocked"], {"sent": [], "toast": ["Kitchen Sonos Amp", "Locked by Den", "bad"]})
+        self.assertEqual(out["blocked"], {"sent": [], "toast": ["Kitchen Sonos Amp", "Locked by Den", "muted"]})
         self.assertEqual(out["refused"], {"sent": [["group", "kitchen_amp", "kitchen_mini"]], "toast": ["Group", "Locked by Den", "bad"],
                                           "result": None})
-        self.assertEqual(out["leave"], {"sent": [], "toast": ["Den", "Locked by Kitchen", "bad"]})
+        self.assertEqual(out["leave"], {"sent": [], "toast": ["Den", "Locked by Kitchen", "muted"]})
 
     def test_a_read_cut_short_or_refused_is_read_again(self):
         out = self.report["resuming"]

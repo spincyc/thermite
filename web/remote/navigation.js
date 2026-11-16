@@ -4,10 +4,8 @@
   const pages = [
     { id: "home", screen: "home", key: "F1", label: "Home", href: "home.html", top: true, guest: true },
     { id: "remotes", screen: "remote", key: "F2", label: "Remotes", href: "./", top: true, module: true, guest: true,
-      detail: "Rooms, sources and device controls", note: "Pair devices from the Remotes menu", compact: "Rooms, devices & pairing" },
+      detail: "Watch and listen in every room", note: "Pair devices from the Remotes menu", compact: "Rooms, devices & pairing" },
     { id: "pairing", screen: "pairing", key: "F6", label: "Pair devices", href: "pair.html", parent: "remotes", auth: true },
-    { id: "audio", screen: "audio", key: "U", label: "Audio", href: "audio.html", parent: "remotes", guest: true },
-    { id: "music", screen: "music", key: "Y", label: "Music", href: "music.html", parent: "remotes", guest: true },
     { id: "security", screen: "security", key: "F3", label: "Security", href: "security.html", top: true, module: true,
       detail: "Authentication and access", note: "Accounts, locks and schedules", compact: "Authentication & access" },
     { id: "cameras", screen: "cameras", key: "F4", label: "Cameras", href: "cameras.html", top: true, module: true,
@@ -19,7 +17,7 @@
     { id: "users", screen: "users", key: "F8", label: "Users", href: "users.html", parent: "system", admin: true, account: true },
     { id: "access", screen: "account", key: "F9", label: "Account", href: "access.html", account: true }
   ].map(entry => Object.freeze({ ...entry, path: {
-    home: "/", remotes: "/remotes/", pairing: "/pairing/", audio: "/audio/", music: "/music/", security: "/security/",
+    home: "/", remotes: "/remotes/", pairing: "/pairing/", security: "/security/",
     cameras: "/cameras/", site: "/site/", system: "/system/", settings: "/room-settings/",
     users: "/users/", access: "/account/"
   }[entry.id] }));
@@ -36,7 +34,7 @@
     return page?.path || null;
   }
   function allowed(entry, access) {
-    // The plain-HTTP Guest listener serves Home, Remotes, Audio and Music only (oh_identity/guest.py).
+    // The plain-HTTP Guest listener serves Home and Remotes only (oh_identity/guest.py).
     if (access?.guestOnly) return entry.guest === true;
     if (entry.auth && access?.authEnabled && !access.authEnabled()) return false;
     if (entry.id === "pairing" && access?.has && !access.has("pairing.manage")) return false;
@@ -44,12 +42,12 @@
     if (entry.account && access?.native) return false;
     return !entry.admin || Boolean(access && access.canEdit());
   }
-  // target: the room Remotes and Room settings open on, the device Audio does, or Music's speaker.
+  // target: the room Remotes and Room settings open on.
   function href(id, search = "", target) {
     const page = pages.find(entry => entry.id === id) || pages[0], params = new URLSearchParams();
     const backend = new URLSearchParams(search).get("backend");
     if (["mock", "native"].includes(backend)) params.set("backend", backend);
-    const key = { remotes: "room", settings: "room", audio: "device", music: "speaker" }[id];
+    const key = { remotes: "room", settings: "room" }[id];
     if (key && typeof target === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(target)) params.set(key, target);
     return (hosted() ? page.path : page.href) + (params.size ? "?" + params.toString() : "");
   }

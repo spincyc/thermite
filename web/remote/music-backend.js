@@ -269,14 +269,15 @@
     this.wanted = false;
     const at = this.now() / 1000;
     this.players = {};
-    SPEAKERS.forEach((spec) => {
+    this.specs = config.speakers || SPEAKERS;
+    this.specs.forEach((spec) => {
       this.players[spec.id] = { spec: spec, volume: spec.volume, muted: false, leader: null, members: [],
         queue: { items: [], current: null, elapsed: 0, at: at, state: "idle", shuffle: false, repeat: "off" } };
     });
-    const kitchen = this.players.kitchen_amp.queue;
-    Object.assign(kitchen, { items: this.items["library://album/10"].tracks.slice(), current: 1, elapsed: 63, state: "playing" });
-    const study = this.players.study_amp.queue;
-    Object.assign(study, { items: this.items["library://album/30"].tracks.slice(), current: 0, elapsed: 120, state: "paused", repeat: "all" });
+    // One plays and another is paused: the Kitchen's and the Study's, or a house's first two.
+    const [playing, paused] = this.players.kitchen_amp ? ["kitchen_amp", "study_amp"] : this.specs.slice(0, 2).map((spec) => spec.id);
+    if (playing) Object.assign(this.players[playing].queue, { items: this.items["library://album/10"].tracks.slice(), current: 1, elapsed: 63, state: "playing" });
+    if (paused) Object.assign(this.players[paused].queue, { items: this.items["library://album/30"].tracks.slice(), current: 0, elapsed: 120, state: "paused", repeat: "all" });
   }
 
   MockMusic.prototype.answer = function (work) {
@@ -326,7 +327,7 @@
   };
 
   MockMusic.prototype.music = function () {
-    const speakers = SPEAKERS.map((spec) => this.speaker(spec.id));
+    const speakers = this.specs.map((spec) => this.speaker(spec.id));
     if (this.problem) return { version: 1, available: false, problem: this.problem, sources: null, speakers: speakers };
     return { version: 1, available: true, problem: null, sources: { tidal: this.tidalSignedIn, libraries: { NAS: true } }, speakers: speakers };
   };
@@ -334,10 +335,10 @@
   // A change made: each speaker it changed reported on the stream, as the gateway does.
   MockMusic.prototype.change = function (work) {
     const before = {};
-    SPEAKERS.forEach((spec) => { before[spec.id] = JSON.stringify(this.speaker(spec.id)); });
+    this.specs.forEach((spec) => { before[spec.id] = JSON.stringify(this.speaker(spec.id)); });
     const result = work();
     if (this.wanted && this.active) {
-      SPEAKERS.forEach((spec) => {
+      this.specs.forEach((spec) => {
         const after = this.speaker(spec.id);
         if (JSON.stringify(after) !== before[spec.id]) this.emit({ type: "speaker", speaker: after });
       });
@@ -678,11 +679,26 @@
     this.change(() => { this.players[speaker].volume = level; });
   };
 
+  // A house's speakers (house.js devices with an audio page) as the mock's:
+  // each in its own room, a WiiM Amp Pro without AirPlay as the gateway's.
+  function speakersOf(house) {
+    const labels = {};
+    (house.rooms || []).concat(house.speakerRooms || []).forEach((room) => { labels[room.id] = room.label; });
+    const homes = {};
+    (house.speakerRooms || []).concat(house.rooms || []).forEach((room) => (room.speakers || []).forEach((id) => { homes[id] = homes[id] || room.id; }));
+    return Object.keys(house.devices || {}).filter((id) => house.devices[id].audio).map((id, index) => {
+      const device = house.devices[id], home = homes[id] || id;
+      return { id: id, label: device.short || device.label, room: home, room_label: device.audio.place || labels[home] || device.label,
+        provider: /^sonos/.test(device.remote || "") ? "sonos" : "wiim", airplay: !/Amp Pro/.test(device.model || ""), volume: 20 + (index * 7) % 30 };
+    });
+  }
+
   global.MusicBackend = {
     REOPEN_MS: REOPEN_MS,
     SLOW_MS: SLOW_MS,
     GatewayMusic: GatewayMusic,
     MockMusic: MockMusic,
+    speakersOf: speakersOf,
     create: function (settings) {
       const config = settings || {};
       const access = config.access || (global.ThermiteAccess && global.ThermiteAccess.client) || null;

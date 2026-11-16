@@ -229,7 +229,7 @@ async function browser(page, client) {
   await listener.loadPolicy("den"); await listener.command("den", "source", "off");
   await assert.rejects(listener.login("owner", "unused"), error => error.code === "secure_connection_required");
   assert.deepEqual(plainCalls, ["/api/v1/security", "/api/v1/me", "/api/v1/rooms/den/policy", "/api/v1/rooms/den/commands"]);
-  assert.deepEqual(Navigation.pages.filter(page => Navigation.allowed(page, listener)).map(page => page.id), ["home", "remotes", "audio", "music"]);
+  assert.deepEqual(Navigation.pages.filter(page => Navigation.allowed(page, listener)).map(page => page.id), ["home", "remotes"]);
   assert.equal(Access.create({ base: plain, guest: true, secure: "http://house.example.test:13601", fetch: async () => response(guest) }).secureSite(), null);
   for (const value of ["javascript:alert(1)", secure + "/account/", "https://user@house.example.test:13601", secure + "?next=x", "", null])
     assert.equal(Access.secureOrigin(value), null, String(value));

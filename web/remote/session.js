@@ -6,12 +6,21 @@
  * says and hands it the user's input, so another front end can do the same.
  * Load it after house.js, remotes.js and backend.js.
  *
- * RemoteSession.create({backend, house, layouts, store, volume}) returns a
- * session on a RemoteBackend (house and layouts default to REMOTE_HOUSE and
- * REMOTE_LAYOUTS; store is {get(key), set(key, value)}, in memory if absent;
- * volume is "slider" or "buttons", else what the store holds). start(room)
- * reads every room and device and resolves once the session can be drawn,
- * on that room, the stored one or the first. subscribe(callback) hears:
+ * RemoteSession.create({backend, house, layouts, store, volume, listen})
+ * returns a session on a RemoteBackend (house and layouts default to
+ * REMOTE_HOUSE and REMOTE_LAYOUTS; store is {get(key), set(key, value)}, in
+ * memory if absent; volume is "slider" or "buttons", else what the store
+ * holds; listen is a RemoteListen, listen-session.js, for the rooms'
+ * speakers). start(room) reads every room and device and resolves once the
+ * session can be drawn, on that room, the stored one or the first.
+ *
+ * rooms() are the routed rooms, then the rooms of speakers alone
+ * (house.js speakerRooms, listenOnly). Each room has speakers, and a mode:
+ * "watch", its sources and remotes, or "listen", its speakers through
+ * listen. modes() are those the room has (both where it has a screen and
+ * speakers), mode() the one on show, chosen with setMode() or toggleMode()
+ * and kept per room. In Listen the digits choose a speaker and the keys
+ * (pressKey) go to listen. subscribe(callback) hears:
  *
  *   {type: "change"}                     rooms, states or the buttons changed: draw it all again
  *   {type: "audio"}                      only the volume or Mute changed (audioView())
@@ -45,7 +54,8 @@
     ArrowUp: ["up"], ArrowDown: ["down"], ArrowLeft: ["left"], ArrowRight: ["right"],
     Backspace: ["back"], Escape: ["back"],
     "+": ["volume_up"], "=": ["volume_up"], "-": ["volume_down"], "_": ["volume_down"],
-    m: ["mute"], M: ["mute"], p: ["play_pause", "play"], P: ["play_pause", "play"]
+    m: ["mute"], M: ["mute"], p: ["play_pause", "play"], P: ["play_pause", "play"],
+    "<": ["previous"], ">": ["next"]
   };
   const SHORTCUTS = [
     [["←", "↑", "→", "↓"], "D-pad"],
@@ -56,7 +66,23 @@
     [["P"], "Play/pause"],
     [["0"], "Off"],
     [["1", "9"], "Source", "–"],
-    [["[", "]"], "Room"]
+    [["[", "]"], "Room"],
+    [["Y"], "Watch or listen"]
+  ];
+  // Listen's, where a room plays its speakers: the front ends take S, R, G
+  // and / themselves (shuffle, repeat, the group sheet, the search).
+  const LISTEN_SHORTCUTS = [
+    [["Space", "P"], "Play/pause"],
+    [["<", ">"], "Track"],
+    [["+", "−"], "Volume"],
+    [["M"], "Mute"],
+    [["S"], "Shuffle"],
+    [["R"], "Repeat"],
+    [["G"], "Group"],
+    [["/"], "Search"],
+    [["1", "9"], "Speaker", "–"],
+    [["[", "]"], "Room"],
+    [["Y"], "Watch or listen"]
   ];
   const DEVICE_ROLE = { display: true, audio: true };
   // A held key presses again after REPEAT_DELAY, then every REPEAT_EVERY.
@@ -96,6 +122,7 @@
     const house = config.house || global.REMOTE_HOUSE;
     const layouts = config.layouts || global.REMOTE_LAYOUTS;
     const store = config.store || memoryStore();
+    const listen = config.listen || null;
     const now = config.now || (() => Date.now());
     const later = config.setTimeout || ((callback, ms) => global.setTimeout(callback, ms));
     const cancel = config.clearTimeout || ((handle) => global.clearTimeout(handle));
@@ -166,7 +193,7 @@
     // room's saved policy, so it refuses every command there.
     function roomLock() {
       const access = backend.access, room = current;
-      const enabled = Boolean(room && access && !access.native && access.authEnabled());
+      const enabled = Boolean(room && !room.listenOnly && access && !access.native && access.authEnabled());
       const policy = enabled ? access.policy(room.id) : null, status = enabled ? access.policyStatus(room.id) : "off";
       const manual = Boolean(policy?.manual_lock), locked = policy?.effective?.locked === true;
       const state = room && states[room.id];
@@ -308,7 +335,7 @@
     // Both clients show this one answer.
     function controlBlock() {
       const access = backend.access;
-      if (!current || !access || access.canControl(current.id)) return null;
+      if (!current || current.listenOnly || !access || access.canControl(current.id)) return null;
       const lock = roomLock();
       if (lock.unavailable) return "Room lock status is unavailable, so controls are paused.";
       if (lock.locked) {
@@ -333,13 +360,32 @@
       };
     }
 
+    // A room of speakers alone as the routed rooms' getRooms() has them: no
+    // sources, no controls, its speakers as its devices.
+    function speakerRoom(entry) {
+      const devices = (entry.speakers || []).filter((id) => house.devices[id]).map((id) => {
+        const device = house.devices[id];
+        return { id: id, label: device.label, short: device.short || device.label, kind: device.kind, model: device.model };
+      });
+      return { id: entry.id, label: entry.label, item: null, options: [], order: [], display: null, audio: null, devices: devices,
+        controls: [], speakers: devices.map((device) => device.id), listenOnly: true };
+    }
+
     function start(roomId) {
       backend.subscribe(onEvent);
       return backend.getRooms()
         .then((list) => {
           list.forEach((room) => {
+            room.speakers = ((house.rooms || []).find((entry) => entry.id === room.id) || {}).speakers || [];
             rooms.push(room);
             roomsById[room.id] = room;
+          });
+          (house.speakerRooms || []).forEach((entry) => {
+            const room = speakerRoom(entry);
+            rooms.push(room);
+            roomsById[room.id] = room;
+            // Nothing to switch: always Off, as the remote's watch half sees it.
+            states[room.id] = { room: room.id, item: null, value: Remote.OFF, pending: null, status: "current", reason: "" };
           });
           const driven = Object.keys(house.devices).filter((id) => Remote.controlOf(house, id));
           const reading = driven.map((id) => backend.getDevice(id).then((state) => { devices[id] = state; }, console.warn));
@@ -436,8 +482,13 @@
     // what its source plays, else its audio device ("Disney+ · DuckTales"),
     // or null.
     function view(room, state) {
+      if (room.listenOnly) {
+        return listen ? Object.assign({}, listen.status(room.id)) : { led: "off", short: "\u2026", spoken: "reading", playing: null };
+      }
       const shown = sourceView(room, state);
       shown.playing = state.status === "current" && option(room, state.value) ? playing(room, state.value) : null;
+      // Nothing on the screen that says what plays: what its speakers play.
+      if (!shown.playing && listen && room.speakers.length) shown.playing = listen.status(room.id).playing;
       const problems = [shown.problem].concat(room.devices.map((device) => {
         const problem = backend.problemOf(device.id);
         return problem ? device.label + " " + problem : null;
@@ -478,8 +529,10 @@
       const room = roomsById[id] || rooms[0];
       if (!room) return null;
       current = room;
-      if (backend.access && !backend.access.native) backend.access.watchRoom(room.id);
+      // A room of speakers alone has no lock of its own: its speakers' rooms' are listen's.
+      if (backend.access && !backend.access.native) backend.access.watchRoom(room.listenOnly ? null : room.id);
       store.set("remote.room", room.id);
+      if (listen) listen.setRoom(room.id);
       if (signalOpen) { signalRoom = room.id; refreshDiagnostics(); }
       return room;
     }
@@ -518,6 +571,10 @@
 
     // 0 is Off, then the room's sources in order: the id chosen, or null.
     function chooseDigit(digit) {
+      if (current && mode() === "listen") {
+        const speaker = listen.speakers().find((entry) => entry.digit === String(digit));
+        return speaker && listen.choose(speaker.id) ? speaker.id : null;
+      }
       const choice = current && current.options[Number(digit)];
       if (!choice || refused()) return null;
       chooseSource(choice.id);
@@ -573,6 +630,7 @@
     // A key for a button the remote on show lacks still asks the backend,
     // which says why. Returns the button pressed.
     function pressKey(candidates) {
+      if (current && mode() === "listen") return listen.key(candidates);
       if (refused()) return null;
       const target = activeTarget(controls());
       const offered = target ? Remote.buttonsOf(target.remote) : [];
@@ -759,7 +817,48 @@
     // ---- the buttons -------------------------------------------------------
 
     function controls() {
+      if (current.listenOnly) return { targets: [], preferred: null };
       return Remote.controlsFor(house, current.id, Remote.showing(states[current.id]));
+    }
+
+    // ---- watch and listen ---------------------------------------------------
+
+    // What a room offers: "watch" where it has sources, "listen" where it
+    // has speakers and a listen to drive them.
+    function modes(room) {
+      const of = room || current;
+      if (!of) return [];
+      return (of.options.length ? ["watch"] : []).concat(listen && of.speakers.length ? ["listen"] : []);
+    }
+
+    // The room's mode on show: the one chosen there last, else Watch.
+    function mode(room) {
+      const of = room || current;
+      const offered = modes(of);
+      if (offered.length < 2) return offered[0] || "watch";
+      const stored = store.get("remote.mode." + of.id);
+      return offered.includes(stored) ? stored : "watch";
+    }
+
+    function setMode(next) {
+      if (!current || !modes().includes(next) || mode() === next) return false;
+      store.set("remote.mode." + current.id, next);
+      emit({ type: "change" });
+      announce(current.label + ": " + (next === "listen" ? "Listen" : "Watch"));
+      return true;
+    }
+
+    function toggleMode() {
+      return modes().length > 1 && setMode(mode() === "watch" ? "listen" : "watch");
+    }
+
+    // Listen to one of the room's speakers (a remote's volume caption names
+    // the room's sound): true once on show.
+    function listenTo(deviceId) {
+      if (!current || !modes().includes("listen") || !current.speakers.includes(deviceId)) return false;
+      listen.choose(deviceId);
+      if (mode() !== "listen") setMode("listen");
+      return true;
     }
 
     // A room that is off shows no remote until a device bubble is tapped.
@@ -986,6 +1085,12 @@
       start: start,
       subscribe: subscribe,
       rooms: () => rooms,
+      listen: listen,
+      modes: modes,
+      mode: mode,
+      setMode: setMode,
+      toggleMode: toggleMode,
+      listenTo: listenTo,
       room: (id) => roomsById[id] || null,
       current: () => current,
       state: (roomId) => states[roomId],
@@ -1050,6 +1155,7 @@
     KIND_NAME: KIND_NAME,
     KEYS: KEYS,
     SHORTCUTS: SHORTCUTS,
+    LISTEN_SHORTCUTS: LISTEN_SHORTCUTS,
     DEVICE_ROLE: DEVICE_ROLE,
     REPEAT_DELAY: REPEAT_DELAY,
     REPEAT_EVERY: REPEAT_EVERY,

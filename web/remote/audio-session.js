@@ -235,7 +235,7 @@
       if (!current) return true;
       const locked = lockedBy(current);
       if (!locked.length) return false;
-      toast(label(current), "Locked by " + locked.join(", "), "bad");
+      toast(label(current), "Locked by " + locked.join(", "), "muted");
       return true;
     }
 
@@ -259,7 +259,8 @@
         const track = page(id).track || {};
         const playing = playingOf(id);
         group.devices.push({ id: id, label: house.devices[id].label, name: label(id), current: id === current, playing: playing,
-          title: playing && track.title ? valueOf(id, track.title) : null, locked: lockedBy(id).length > 0 });
+          title: playing && track.title ? valueOf(id, track.title) : null, locked: lockedBy(id).length > 0,
+          problem: backend.problemOf ? backend.problemOf(id) : null });
       });
       return places;
     }
