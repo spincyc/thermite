@@ -69,8 +69,9 @@
     [["[", "]"], "Room"],
     [["Y"], "Watch or listen"]
   ];
-  // Listen's, where a room plays its speakers: the front ends take S, R, G
-  // and / themselves (shuffle, repeat, the group sheet, the search).
+  // Listen's, where a room plays its speakers: the front ends take Space,
+  // S, R, G and / themselves (play/pause off a control, shuffle, repeat, the
+  // group sheet, the search).
   const LISTEN_SHORTCUTS = [
     [["Space", "P"], "Play/pause"],
     [["<", ">"], "Track"],
@@ -380,7 +381,8 @@
             rooms.push(room);
             roomsById[room.id] = room;
           });
-          (house.speakerRooms || []).forEach((entry) => {
+          // Rooms of speakers alone, for a front end that can play them.
+          (listen ? house.speakerRooms || [] : []).forEach((entry) => {
             const room = speakerRoom(entry);
             rooms.push(room);
             roomsById[room.id] = room;
@@ -417,7 +419,8 @@
           Object.assign(fader, { room: null, device: null, value: null, at: 0, dragging: false, sent: null, sentTo: null, timer: 0, release: 0 });
           muteRelease = 0; inputsOf = null; offArmed = null; allOffArmed.at = 0; allOffArmed.timer = 0;
           Object.keys(devices).forEach((id) => delete devices[id]);
-          Object.keys(states).forEach((id) => { states[id] = { room: id, value: "NULL", pending: null, status: "unknown", reason: "" }; });
+          Object.keys(states).filter((id) => !roomsById[id] || !roomsById[id].listenOnly)
+            .forEach((id) => { states[id] = { room: id, value: "NULL", pending: null, status: "unknown", reason: "" }; });
         }
         emit(event); emit({ type: "change" }); return;
       }
@@ -573,7 +576,9 @@
     function chooseDigit(digit) {
       if (current && mode() === "listen") {
         const speaker = listen.speakers().find((entry) => entry.digit === String(digit));
-        return speaker && listen.choose(speaker.id) ? speaker.id : null;
+        if (!speaker) return null;
+        listen.choose(speaker.id);
+        return speaker.id;
       }
       const choice = current && current.options[Number(digit)];
       if (!choice || refused()) return null;
@@ -1044,7 +1049,7 @@
 
     function openDiagnostics(roomId) {
       const id = roomId || (current && current.id);
-      if (!roomsById[id]) return Promise.resolve(null);
+      if (!roomsById[id] || roomsById[id].listenOnly) return Promise.resolve(null);
       signalOpen = true;
       signalRoom = id;
       return refreshDiagnostics();
@@ -1062,7 +1067,7 @@
     // ---- the mock's demo ---------------------------------------------------
 
     function simulateExternal() {
-      if (!current || !demo) return;
+      if (!current || current.listenOnly || !demo) return;
       const state = states[current.id];
       const index = current.options.findIndex((candidate) => candidate.id === state.value);
       const next = current.options[(index + 1) % current.options.length];
@@ -1075,7 +1080,7 @@
     }
 
     function itemStateText() {
-      if (!current) return "";
+      if (!current || current.listenOnly) return "";
       const state = states[current.id];
       return current.item + " = " + state.value + (state.pending ? " (sent " + state.pending + ")" : "");
     }

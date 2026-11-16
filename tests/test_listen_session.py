@@ -64,6 +64,13 @@ class Rooms(unittest.TestCase):
         built = model(house(porch=porch))
         self.assertEqual([room["id"] for room in built["speakerRooms"]], ["fixture_porch", "fixture_den"])
 
+    def test_a_speaker_two_routed_rooms_own_is_in_both(self):
+        def both(data):
+            data["routing"]["rooms"]["example_west"]["audio"] = OWNED
+        built = model(house(both=both))
+        self.assertEqual([(room["id"], room["speakers"]) for room in built["rooms"]], [("example_west", [OWNED]), (ROOM, [OWNED])])
+        self.assertEqual(built["devices"][OWNED]["audio"]["rooms"], {"example_west": "own", ROOM: "own"})
+
     def test_a_house_without_speakers_lists_none(self):
         data = json.loads((AREA / "instance/devices.yaml").read_text())
         built = remote_model.build(House(data))
@@ -127,6 +134,20 @@ class Listen(unittest.TestCase):
     def test_a_locked_routed_room_locks_the_speaker_it_owns_and_no_other(self):
         self.assertEqual(self.out["lockedOwned"], {"rooms": ["Example East"], "text": "Locked by Example East"})
         self.assertIsNone(self.out["lockedFree"])
+        self.assertEqual(self.out["lockedVolume"], {"sent": [], "toast": ["Example East", "Locked by Example East", "muted"]})
+
+    def test_a_speaker_music_assistant_lacks_or_while_it_is_away_shows_what_the_device_reports(self):
+        self.assertEqual(self.out["unknownSpeaker"], {"speaker": MINI, "source": "device", "library": False, "canGroup": False})
+        self.assertEqual(self.out["away"]["source"], "device")
+        self.assertFalse(self.out["away"]["library"])
+        self.assertTrue(self.out["away"]["music"])
+
+    def test_a_room_drawn_before_its_speakers_are_read_opens_on_the_one_that_plays(self):
+        self.assertEqual(self.out["early"], {"listen": AMP, "music": AMP})
+        self.assertEqual(self.out["earlyChosen"], MINI)
+
+    def test_a_front_end_without_listen_lists_only_routed_rooms(self):
+        self.assertEqual(self.out["withoutListen"], [["example_west", ["watch"]], [ROOM, ["watch"]]])
 
 
 if __name__ == "__main__":

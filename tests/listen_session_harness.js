@@ -36,16 +36,25 @@ function locking(room) {
 
 async function remote(options = {}) {
   const backend = recording(RemoteBackend.create(house, {backend: 'mock', latency: 4}));
-  const audio = RemoteAudio.create({backend, house, watchLocks: false});
-  const musicBackend = new MusicBackend.MockMusic({speakers: MusicBackend.speakersOf(house), latency: 4});
+  const audio = RemoteAudio.create({backend, house, watchLocks: false, access: options.access});
+  // The mock plays the first of its speakers: options.playing puts that one first.
+  const speakers = MusicBackend.speakersOf(house).filter((spec) => !(options.unknown || []).includes(spec.id))
+    .sort((a, b) => (b.id === options.playing) - (a.id === options.playing));
+  const musicBackend = new MusicBackend.MockMusic({speakers, latency: 4});
+  if (options.problem) musicBackend.problem = options.problem;
   const music = options.music === false ? null : RemoteMusic.create({backend: musicBackend, house, watchLocks: false,
     access: options.access});
   const listen = RemoteListen.create({audio, music, house});
   const session = RemoteSession.create({backend, house, listen});
-  await Promise.all([audio.start(), music ? music.start() : null]);
+  const toasts = [];
+  listen.subscribe((event) => { if (event.type === 'toast') toasts.push([event.title, event.body, event.tone]); });
+  // Early: the remote may draw a room before either session has read its speakers.
+  const starting = Promise.all([audio.start(), music ? music.start() : null]);
+  if (!options.early) await starting;
   await session.start(options.room);
+  await starting;
   await settle();
-  return {backend, musicBackend, audio, music, listen, session};
+  return {backend, musicBackend, audio, music, listen, session, toasts};
 }
 
 async function main() {
@@ -95,6 +104,34 @@ async function main() {
   locked.session.selectRoom(locked.session.rooms().find((room) => room.listenOnly).id);
   await settle();
   out.lockedFree = locked.listen.view().locked;
+  // Locked, the device's own commands are held back too, with Remotes' muted word.
+  const sent0 = locked.backend.sent.length;
+  locked.session.selectRoom(mixed);
+  locked.session.pressKey(['volume_up']);
+  await settle();
+  out.lockedVolume = {sent: locked.backend.sent.slice(sent0), toast: locked.toasts.slice(-1)[0]};
+
+  // A speaker Music Assistant does not have, and Music Assistant away: the device's own face.
+  const den = session.rooms().find((room) => room.listenOnly).id;
+  const unknown = await remote({room: den, unknown: [mini]});
+  const face1 = unknown.listen.view();
+  out.unknownSpeaker = {speaker: face1.speaker.id, source: face1.source, library: face1.library, canGroup: face1.canGroup};
+  const away = await remote({room: den, problem: 'music_unavailable'});
+  const face2 = away.listen.view();
+  out.away = {source: face2.source, music: face2.music, library: face2.library};
+
+  // Drawn before the speakers were read, a room still opens on the one that plays.
+  const early = await remote({room: den, early: true, playing: amp});
+  await settle(60);
+  out.early = {listen: early.listen.selected(), music: early.music.selected()};
+  early.listen.choose(mini);
+  await settle();
+  out.earlyChosen = early.listen.selected();
+
+  // A front end without Listen lists no rooms of speakers alone.
+  const plainSession = RemoteSession.create({backend: RemoteBackend.create(house, {backend: 'mock', latency: 4}), house});
+  await plainSession.start();
+  out.withoutListen = plainSession.rooms().map((room) => [room.id, plainSession.modes(room)]);
   process.stdout.write(JSON.stringify(out));
   process.exit(0);
 }

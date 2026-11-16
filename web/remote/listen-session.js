@@ -13,8 +13,8 @@
  * started-or-not RemoteAudio and RemoteMusic (music null: a host without
  * music, whose speakers show only what they report themselves; house
  * defaults to REMOTE_HOUSE; store is {get(key), set(key, value)}, in memory
- * if absent). subscribe(callback) hears the two sessions' events, each
- * change once:
+ * if absent); stop() lets the two sessions go. subscribe(callback) hears
+ * the two sessions' events, each change once:
  *
  *   {type: "change"}                     draw it again
  *   {type: "toast", title, body, tone}   tone "", "muted" or "bad"
@@ -55,8 +55,10 @@
     const rooms = {};
     (house.rooms || []).forEach((room) => { rooms[room.id] = (room.speakers || []).filter(known); });
     (house.speakerRooms || []).forEach((room) => { rooms[room.id] = (room.speakers || []).filter(known); });
-    // Room ID -> the speaker chosen there.
+    // Room ID -> the speaker chosen there, and the rooms whose choice holds:
+    // one chosen or stored, or opened once what the speakers play was read.
     const chosen = {};
+    const fixed = {};
     let room = null;
     let pending = 0;
 
@@ -73,7 +75,7 @@
     // Both sessions change at once (a stream's snapshot): one draw for them all.
     function changed() {
       if (pending) return;
-      pending = later(() => { pending = 0; sync(); emit({ type: "change" }); }, 0);
+      pending = later(() => { pending = 0; reopen(); sync(); emit({ type: "change" }); }, 0);
     }
 
     // The two sessions show the speaker chosen here: a session started, or
@@ -90,8 +92,7 @@
       else emit(event);
     }
 
-    audio.subscribe(relay);
-    if (music) music.subscribe(relay);
+    const unsubscribe = [audio.subscribe(relay)].concat(music ? [music.subscribe(relay)] : []);
 
     // ---- the speakers -----------------------------------------------------------
 
@@ -145,22 +146,33 @@
     function opening(roomId) {
       const ids = rooms[roomId] || [];
       const stored = store.get("remote.speaker." + roomId);
-      if (ids.includes(stored)) return stored;
+      if (ids.includes(stored)) {
+        fixed[roomId] = true;
+        return stored;
+      }
+      // Until both sessions have read the speakers, which plays is not known yet.
+      fixed[roomId] = (!music || music.status().state !== "reading") && !ids.every((id) => stateOf(id).unknown);
       const playing = ids.find((id) => stateOf(id).playing);
       if (playing) return playing;
       const own = (house.rooms || []).find((entry) => entry.id === roomId);
       return own && ids.includes(own.audio) ? own.audio : ids[0] || null;
     }
 
+    // The room on show opens again on what its speakers play, once read.
+    function reopen() {
+      if (room && !fixed[room] && (rooms[room] || []).length) chosen[room] = opening(room);
+    }
+
     function setRoom(roomId) {
       room = roomId;
-      if (!(roomId in chosen) || !(rooms[roomId] || []).includes(chosen[roomId])) chosen[roomId] = opening(roomId);
+      if (!fixed[roomId] || !(rooms[roomId] || []).includes(chosen[roomId])) chosen[roomId] = opening(roomId);
       sync();
       emit({ type: "change" });
     }
 
     function choose(id) {
       if (!room || !(rooms[room] || []).includes(id) || chosen[room] === id) return false;
+      fixed[room] = true;
       chosen[room] = id;
       store.set("remote.speaker." + room, id);
       sync();
@@ -284,7 +296,15 @@
       return null;
     }
 
+    // Lets the two sessions go: a listen made again does not fight this one.
+    function stop() {
+      unsubscribe.splice(0).forEach((off) => off());
+      if (pending) (config.clearTimeout || ((handle) => global.clearTimeout(handle)))(pending);
+      pending = 0;
+    }
+
     return {
+      stop: stop,
       subscribe: function (callback) {
         listeners.push(callback);
         return () => { const index = listeners.indexOf(callback); if (index >= 0) listeners.splice(index, 1); };
