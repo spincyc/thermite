@@ -342,7 +342,7 @@
 }
 
 /* Shuffle, previous, play, next, repeat: below 375 px (a 390 px iPhone in
-   Display Zoom draws 320) the keys close up to 44 px, play to 52, and the
+   Display Zoom draws 320) the keys close up to 44 px, play to 48, and the
    card's padding narrows; no key ever shrinks out of round. */
 .music-transport {
   gap: var(--space-2);
@@ -364,8 +364,8 @@
   }
 
   .music-transport .key--play {
-    width: 52px;
-    height: 52px;
+    width: 48px;
+    height: 48px;
   }
 }
 

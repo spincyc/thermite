@@ -495,7 +495,8 @@ class MusicMarkup(unittest.TestCase):
         card = value(".music-now", "padding", narrow)
         keys = [value(".music-key", "width")] * 2 + [value(".music-transport .key--sm", "width", narrow)] * 2 + [value(".music-transport .key--play", "width", narrow)]
         gaps = 4 * value(".music-transport", "gap")
-        self.assertLessEqual(sum(keys) + gaps, 320 - 2 * page - 2 * card)
+        # With a few pixels to spare, for a font or a border a little wider.
+        self.assertLessEqual(sum(keys) + gaps + 8, 320 - 2 * page - 2 * card)
         self.assertGreaterEqual(min(keys), 44)
         self.assertIn(("flex", "none"), [(name, values[name]) for _, one, values in rules if one == ".music-transport .key" for name in values])
         # Every target the page sizes is at least 44 px tall.
