@@ -444,6 +444,18 @@ class MusicMarkup(unittest.TestCase):
         self.assertIn((True, True), page.hidden)
         self.assertEqual([covered for _, covered in page.hidden if not covered], [])
 
+    def test_what_shows_first_sits_12_px_under_the_bar(self):
+        # The head lent to the shell's bar, the first block shown sits at the page's padding: no margin above it.
+        shared, rules = css_rules((REMOTE / "remote.css").read_text()), css_rules((REMOTE / "music.css").read_text())
+        padding = [values["padding"] for media, one, values in shared if one == ".child-page"][0]
+        self.assertEqual(padding.split()[0], "var(--space-3)")
+        music = {name: value for media, one, values in rules if one == ".music" and media is None for name, value in values.items()}
+        self.assertEqual((music["display"], music["flex-direction"], music["gap"]), ("flex", "column", "var(--space-3)"))
+        zeroed = {one for media, one, values in rules if values.get("margin") == "0" and media is None}
+        self.assertLessEqual({".music > .child-page__mock", ".music > .child-page__alert"}, zeroed)
+        self.assertEqual([one for media, one, values in rules if one.startswith(".music__layout") and "margin-top" in values], [])
+        self.assertIn((None, ".thermite-app .music__head[data-lent]", {"display": "none"}), rules)
+
     def test_the_transport_fits_a_320_px_phone_and_every_target_is_44_px(self):
         shared, rules = css_rules((REMOTE / "remote.css").read_text()), css_rules((REMOTE / "music.css").read_text())
         tokens = {}

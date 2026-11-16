@@ -23,6 +23,20 @@
   cursor: default;
 }
 
+/* The head, the demo note, the alert and the columns, 12 px apart: under
+   the shell's bar (the head lent to it) what shows first sits 12 px down,
+   the page's padding, as on Audio. */
+.music {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.music > .child-page__mock,
+.music > .child-page__alert {
+  margin: 0;
+}
+
 /* The shell's bar takes the switch, and then the head has nothing left. */
 .thermite-app .music__head[data-lent] {
   display: none;
@@ -57,7 +71,6 @@
 
 .music__layout {
   display: grid;
-  margin-top: var(--space-3);
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas: "now" "library";
   gap: var(--space-5);
