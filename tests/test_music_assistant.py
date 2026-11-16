@@ -402,6 +402,21 @@ class Claim(Site):
         self.assertEqual([path.exists() for path in left], [False, False])
         self.assertEqual([path.exists() for path in kept], [True] * len(kept))
         self.assertTrue(linked.is_symlink())
+        # One record's sweep failing leaves the other's to run.
+        for path in left:
+            path.write_text("x")
+        real = provision.remove_temporaries
+
+        def failing(path):
+            if path.name == provision.TOKEN_FILE:
+                raise PermissionError(13, "Permission denied")
+            real(path)
+        with patch.object(provision, "remove_temporaries", failing), \
+                self.assertLogs("oh_music.provision", "WARNING") as logs:
+            provision.run(self.state, spec(self.port), stop)
+        self.assertEqual([path.exists() for path in left], [True, False])
+        self.assertEqual(logs.output, ["WARNING:oh_music.provision:Music Assistant: music-token.json's leftover "
+                                       "temporary files cannot be removed (PermissionError)."])
 
     def test_the_worker_thread_waits_for_the_server_then_claims_it(self):
         self.sim.status = "starting"
