@@ -568,6 +568,87 @@ async function plain(proof) {
   controller.stop();
 }
 
+// ---- the edges a review found ---------------------------------------------
+
+async function edges(proof) {
+  proof.edges = {};
+  const ready = (parts) => until(parts, () => parts.listen.view() && parts.listen.view().canGroup, "Music Assistant's speaker");
+  // Wide, Info sits beside Listen's remote: its controls take the keys, not the room's or the speaker's.
+  size = [150, 50];
+  let parts = await open({}, ROOM);
+  key(parts, "y");
+  await ready(parts);
+  click(parts, "audio-set:" + OWNED + "_sub_level", 5);
+  key(parts, null, { name: "right" });
+  await until(parts, () => parts.sent.length, "the level");
+  key(parts, null, { name: "down" });
+  const moved = parts.controller.ui.focus;
+  focusOn(parts, "audio-set:" + OWNED + "_eq");
+  key(parts, null, { name: "enter" });
+  await until(parts, () => parts.sent.length > 1, "EQ on");
+  key(parts, null, { name: "space" });
+  await until(parts, () => parts.sent.length > 2, "EQ off");
+  proof.edges.info = { pane: parts.controller.ui.pane, moved: moved !== "audio-set:" + OWNED + "_sub_level", room: parts.session.current().id,
+    mode: parts.session.mode(), sent: parts.sent, music: music(parts).sent };
+  parts.controller.stop();
+  size = [WIDTH, HEIGHT];
+  // ↓ from Watch's sources to a room of speakers lands on its speakers; to one of one speaker, on the rooms.
+  parts = await open({}, ROOM);
+  for (let i = 0; i < 6 && parts.controller.ui.pane !== "sources"; i++) key(parts, null, { name: "tab" });
+  key(parts, null, { name: "down" });
+  await shows(parts, "1 ● Mini");
+  proof.edges.walk = [parts.session.current().id, parts.controller.ui.pane];
+  key(parts, null, { name: "down" });
+  await shows(parts, "Fixture Lounge Arc");
+  proof.edges.walk.push(parts.session.current().id, parts.controller.ui.pane);
+  parts.session.selectRoom(ROOM, true);
+  // The remote's title, active, keeps its ├ before Watch | Listen.
+  key(parts, "1");
+  await until(parts, () => draw(parts).grid.hits.some((hit) => hit.hit.kind === "slider"), "Watch's volume");
+  toRemote(parts);
+  proof.edges.title = text(parts).split("\n").find((line) => line.includes("Watch │"));
+  // Watch's slider drawn, then y: a click or the wheel where it was reaches Listen, not Watch's volume.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const before = parts.sent.length, stale = draw(parts).grid.hits.find((hit) => hit.hit.kind === "slider");
+  const slid = [], slide = parts.session.slide;
+  parts.session.slide = (...args) => { slid.push(args); return slide(...args); };
+  parts.controller.key("y", { name: "y" });
+  parts.controller.mouse({ action: "wheelup", x: stale.x + 2, y: stale.y });
+  parts.controller.mouse({ action: "mousedown", button: "left", x: stale.x + 2, y: stale.y });
+  parts.controller.mouse({ action: "mouseup", button: "left", x: stale.x + 2, y: stale.y });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  proof.edges.stale = { mode: parts.session.mode(), slid, sent: parts.sent.slice(before) };
+  parts.controller.stop();
+  // A locked speaker's volume dragged: refused once, not at each move.
+  parts = await open({ locking: true, locks: [ROOM] }, ROOM);
+  key(parts, "y");
+  await ready(parts);
+  const toasts = [];
+  parts.listen.subscribe((event) => { if (event.type === "toast") toasts.push(event.title + ": " + event.body); });
+  const slider = click(parts, "listen-volume", 0);
+  for (let dx = 1; dx < 5; dx++) parts.controller.mouse({ action: "mousemove", button: "left", x: slider.x + dx, y: slider.y });
+  parts.controller.mouse({ action: "mouseup", button: "left", x: slider.x + 5, y: slider.y });
+  proof.edges.drag = { toasts, sent: parts.sent };
+  // K in a room of speakers alone: it has no lock to take.
+  parts.session.selectRoom(DEN, true);
+  await shows(parts, "1 ● Mini");
+  parts.controller.ui.toast = null;
+  key(parts, "K");
+  proof.edges.lock = toast(parts);
+  parts.controller.stop();
+  // Narrow, the speakers' row shows whole bubbles, the chosen one in sight, and ‹ › where more are.
+  size = [26, 40];
+  parts = await open({}, DEN);
+  if (parts.controller.ui.overlay) key(parts, null, { name: "escape" });
+  await shows(parts, "1 ● Mini");
+  const row = () => text(parts).split("\n").find((line) => line.includes("‹"));
+  proof.edges.bubbles = [row()];
+  key(parts, "2");
+  proof.edges.bubbles.push(row());
+  parts.controller.stop();
+  size = [WIDTH, HEIGHT];
+}
+
 (async () => {
   const proof = {};
   if (mode === "plain") await plain(proof);
@@ -580,6 +661,7 @@ async function plain(proof) {
     await widths(proof);
     await sizes(proof);
     await others(proof);
+    await edges(proof);
   }
   process.stdout.write(JSON.stringify(proof) + "\n");
 })().then(() => process.exit(0), (error) => { process.stderr.write(error.stack + "\n"); process.exit(1); });

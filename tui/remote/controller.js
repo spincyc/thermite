@@ -453,7 +453,10 @@ function create(options) {
         Object.assign(ui, { pane: field.pane, focus: field.key, focusVisible: true, revealFocus: true });
       }
       const panes = visiblePanes();
-      if (!panes.includes(ui.pane)) enterPane(panes.includes("remote") ? "remote" : panes[0]);
+      // A room walked to without the pane: its sources are the other mode's speakers, else the rooms.
+      const twin = { sources: "speakers", speakers: "sources" }[ui.pane];
+      if (!panes.includes(ui.pane)) enterPane(twin ? [twin, "rooms", "remote"].find((pane) => panes.includes(pane)) || panes[0]
+        : panes.includes("remote") ? "remote" : panes[0]);
       else if (!ui.focus || !frame.focusables.some((hit) => hit.key === ui.focus && hit.pane === ui.pane)) enterPane(ui.pane);
       ctx = context();
       frame = View.render(ctx, width, height);
@@ -494,8 +497,10 @@ function create(options) {
     else if (pane === "remote" && !hit) hit = list.find((entry) => ["key:ok", "listen-key:play_pause"].includes(entry.key))
       || list.find((entry) => ["key", "listen-key"].includes(entry.kind));
     else if (pane === "pair-card" && !hit) hit = list.find((entry) => entry.key === "code");
-    if (["info", "signal", "log", "sheet:info", "sheet:help"].includes(pane)) hit = null;
-    ui.focus = hit ? hit.key : list.length && !["info", "signal", "log", "sheet:info", "sheet:help"].includes(pane) ? list[0].key : null;
+    // Listen's Info panel has the speaker's settings to choose; Watch's only says.
+    const quiet = ["signal", "log", "sheet:info", "sheet:help"].concat(listening() ? [] : ["info"]);
+    if (quiet.includes(pane)) hit = null;
+    ui.focus = hit ? hit.key : list.length && !quiet.includes(pane) ? list[0].key : null;
     ui.focusVisible = true;
     ui.revealFocus = true;
   }
@@ -1037,7 +1042,9 @@ function create(options) {
 
   // K, or the button, from any Remotes pane: the D-pad keeps Enter and the arrows.
   function toggleRoomLock(room) {
-    const lock = session.roomLock();
+    const lock = session.roomLock(), current = session.current();
+    // Only a routed room has a lock: its speakers' locks are their rooms'.
+    if (current && current.listenOnly) return toast("Room lock", current.label + " has no room lock.", "muted");
     if (!lock.canManage) return toast("Room lock", manageRefusal(lock));
     if (lock.disabled) return toast("Room lock", lock.reason || "Wait for the current change to finish");
     session.toggleRoomLock(room);
@@ -1383,6 +1390,15 @@ function create(options) {
   // or Space presses it; elsewhere ↑ and ↓ choose the room, ← and → the
   // speaker. Digits choose a speaker; P (or Space off a control), + − M
   // < > go to it; S shuffles, R repeats, G groups, / searches, Y watches.
+  // The Info panel beside Listen's remote: its controls take the keys as the Info sheet's do.
+  function infoKey(name) {
+    const hit = focusedHit();
+    ui.focusVisible = true;
+    if ((name === "left" || name === "right") && hit && hit.kind === "audio-level") return listen.audio.step(hit.item, name === "left" ? -1 : 1);
+    if (["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
+    if (hit) activate(hit);
+  }
+
   function listenKey(ch, event) {
     const name = event.name;
     const lower = ch ? ch.toLowerCase() : "";
@@ -1390,6 +1406,8 @@ function create(options) {
     const hit = remote && ui.focusVisible ? focusedHit() : null;
     const level = Boolean(hit && LEVELS.includes(hit.kind));
     if (name === "pageup" || name === "pagedown") return pageScroll(name === "pageup" ? -1 : 1);
+    if (ui.pane === "info" && ["up", "down", "left", "right", "enter", "space"].includes(name)
+        && frame.focusables.some((entry) => entry.pane === "info")) return infoKey(name);
     if (["up", "down", "left", "right"].includes(name)) {
       const step = name === "up" || name === "left" ? -1 : 1;
       if (!remote) return name === "up" || name === "down" ? stepRoomFocus(step, true) : stepSpeaker(step);
@@ -1545,7 +1563,7 @@ function create(options) {
       }
       return;
     }
-    if (kind === "slider" && ui.screen === "remote") {
+    if (kind === "slider" && ui.screen === "remote" && !listening()) {
       slideBy(delta < 0 ? "up" : "down");
       return;
     }
@@ -1588,8 +1606,9 @@ function create(options) {
         ui.paneFocus[ui.pane] = hit.key;
       }
       // A right-click on a source or Off opens its lock menu; with none, it clicks.
-      if (event.button === "right" && hit.kind === "bubble" && ui.screen === "remote" && openLockMenu(hit.item)) return;
-      if (hit.kind === "slider" && ui.screen === "remote") {
+      // Watch's, not a frame drawn before y switched to Listen.
+      if (event.button === "right" && hit.kind === "bubble" && ui.screen === "remote" && !listening() && openLockMenu(hit.item)) return;
+      if (hit.kind === "slider" && ui.screen === "remote" && !listening()) {
         if (session.controlBlock()) return;
         dragging = entry;
         session.setDragging(true);
@@ -1609,7 +1628,10 @@ function create(options) {
       // dragged at most every SLIDE_EVERY, and the last); a click on the
       // position seeks there.
       if (LEVELS.includes(hit.kind) && listening()) {
+        const view = listen.view();
         if (hit.kind === "listen-progress") listen.seek(musicValue(entry, x));
+        // Locked, it is refused once (the session says why), not at each move.
+        else if (view && (hit.kind === "listen-volume" ? view.locked : view.groupLocked)) listenSlide(entry, x, true);
         else {
           listenDragging = entry;
           listenSlide(entry, x);

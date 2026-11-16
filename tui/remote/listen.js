@@ -12,7 +12,7 @@
  */
 "use strict";
 
-const { LOCK, ending, fit, length } = require("./grid");
+const { Grid, LOCK, ending, fit, length } = require("./grid");
 
 // The terminal's own keys in Listen, after the page's (RemoteSession.LISTEN_SHORTCUTS).
 const SHORTCUTS = [
@@ -87,24 +87,53 @@ function level(g, ctx, kit, x, y, w, label, kind, value, held, muted) {
 // ---- the speakers' bubbles ---------------------------------------------------
 
 // The room's speakers in a row, the chosen one marked, each lit while it
-// plays; the chosen one's padlock while its room is locked.
+// plays; the chosen one's padlock while its room is locked. A row too wide
+// starts at a bubble that keeps the focused one, else the chosen one, in
+// sight, with Watch's ‹ › where more are hidden.
 function speakers(g, w, ctx, kit) {
-  const listen = ctx.listen, view = listen.view();
-  let x = 1;
-  listen.speakers().forEach((speaker) => {
-    const key = "speaker:" + speaker.id, lock = speaker.current && view && view.locked;
-    const led = speaker.playing ? "ok" : "off";
-    const rest = " " + (lock ? LOCK : kit.ledChar(led)) + " " + speaker.name + " ";
-    const style = kit.focused(ctx, key) ? "bubble.focus" : ctx.ui.pressed[key] ? "bubble.switching" : speaker.current ? "bubble.current" : "bubble";
-    const hit = { kind: "listen-speaker", speaker: speaker.id, key, focus: true,
-      label: speaker.label + (speaker.playing ? ", playing" : "") + (speaker.current ? ", chosen" : "") + (lock ? ". " + view.locked.text : "")
-        + (speaker.digit ? "  (" + speaker.digit + ")" : "") };
-    let at = speaker.digit ? g.put(x, 0, " " + speaker.digit, style === "bubble" ? "bubble.digit" : style, hit) : x;
-    g.put(at, 0, rest, style, hit);
-    if (!lock && style !== "bubble.focus") g.put(at + 1, 0, kit.ledChar(led), style + "+" + kit.ledStyle(led));
-    x = at + length(rest) + 1;
+  const listen = ctx.listen, view = listen.view(), list = listen.speakers();
+  const width = (speaker) => (speaker.digit ? 1 + length(speaker.digit) : 0) + 4 + length(speaker.name);
+  const total = list.reduce((sum, speaker) => sum + width(speaker) + 1, 0) - 1;
+  const row = new Grid(Math.max(1, total), 1, "base"), starts = [], ends = [];
+  let x = 0, reveal = null;
+  list.forEach((speaker) => {
+    starts.push(x);
+    ends.push(x + width(speaker));
+    if (kit.focused(ctx, "speaker:" + speaker.id) || !reveal && speaker.current) reveal = { from: x, to: x + width(speaker) };
+    x = bubble(row, x, ctx, kit, view, speaker) + 1;
   });
+  const window = w - 2, over = total > window;
+  let offset = 0;
+  if (over && reveal) {
+    // The first bubble's start that keeps it in sight, the end of the row left blank rather than cut.
+    offset = starts.find((at) => at >= reveal.to - window && at <= reveal.from);
+    if (offset === undefined) offset = reveal.from;
+  }
+  // Only whole bubbles: one the edge would cut is left to the arrow (one alone wider than the row is cut).
+  const whole = Math.max(offset, ...ends.filter((end, index) => starts[index] >= offset && end <= offset + window)) - offset;
+  const shown = over && whole > 0 ? whole : window;
+  g.order.push.apply(g.order, row.order);
+  g.blit(kit.slice(row, offset, shown), 0, 1, 0, shown, 1);
+  if (over) {
+    g.put(0, 0, kit.ARROW.left, offset > 0 ? "hotkey" : "faint");
+    g.put(w - 1, 0, kit.ARROW.right, offset + shown < total ? "hotkey" : "faint");
+  }
   return 1;
+}
+
+// One speaker's bubble at x; returns the column after it.
+function bubble(g, x, ctx, kit, view, speaker) {
+  const key = "speaker:" + speaker.id, lock = speaker.current && view && view.locked;
+  const led = speaker.playing ? "ok" : "off";
+  const rest = " " + (lock ? LOCK : kit.ledChar(led)) + " " + speaker.name + " ";
+  const style = kit.focused(ctx, key) ? "bubble.focus" : ctx.ui.pressed[key] ? "bubble.switching" : speaker.current ? "bubble.current" : "bubble";
+  const hit = { kind: "listen-speaker", speaker: speaker.id, key, focus: true,
+    label: speaker.label + (speaker.playing ? ", playing" : "") + (speaker.current ? ", chosen" : "") + (lock ? ". " + view.locked.text : "")
+      + (speaker.digit ? "  (" + speaker.digit + ")" : "") };
+  const at = speaker.digit ? g.put(x, 0, " " + speaker.digit, style === "bubble" ? "bubble.digit" : style, hit) : x;
+  g.put(at, 0, rest, style, hit);
+  if (!lock && style !== "bubble.focus") g.put(at + 1, 0, kit.ledChar(led), style + "+" + kit.ledStyle(led));
+  return at + length(rest);
 }
 
 // ---- the face -----------------------------------------------------------------

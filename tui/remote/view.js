@@ -480,11 +480,13 @@ function modeSwitch(ctx, rect, label) {
   const mode = ctx.session.mode();
   const parts = [["watch", " Watch "], ["listen", " \u266a Listen "]];
   const width = parts.reduce((sum, part) => sum + length(part[1]), 0) + 5;
-  const room = rect.w - 8 - width - 1;
+  // An active pane's title starts "▸ ": two columns kept for it, active or not.
+  const room = rect.w - 8 - width - 1 - 2;
   if (room < 4) return null;
+  const active = ctx.ui.focusVisible && !ctx.ui.overlay && ctx.ui.pane === "remote";
   const title = fit(label, Math.min(room, length(label))).trimEnd();
-  const at = rect.x + 1 + length(title) + 4 + 1;
-  const border = "border.remote" + (ctx.ui.focusVisible && !ctx.ui.overlay && ctx.ui.pane === "remote" ? "+bold" : "");
+  const at = rect.x + 1 + length(title) + 4 + 1 + (active ? 2 : 0);
+  const border = "border.remote" + (active ? "+bold" : "");
   return {
     title, end: at + width,
     draw: (g) => inset(g, at, rect.y, border, parts.flatMap(([id, text], index) => (index ? [["\u2502", border]] : []).concat([[text,
@@ -1361,6 +1363,6 @@ function pairCardContent(g, w, ctx, narrow) {
 }
 
 // What listen.js draws with, so its keys, meters and rows look as the rest.
-const KIT = { focused, heading, paragraph, chip, button, rounded, meter, ledChar, ledStyle, GLYPHS, LIT, UNLIT };
+const KIT = { focused, heading, paragraph, chip, button, rounded, meter, ledChar, ledStyle, slice, GLYPHS, LIT, UNLIT, ARROW };
 
 module.exports = { render, GLYPHS, TUI_SHORTCUTS, PAIR_SHORTCUTS, WIDE, MEDIUM, pairDevices, pairColumns, PAIR_FIELDS, signalInline };

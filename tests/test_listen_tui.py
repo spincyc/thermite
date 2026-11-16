@@ -223,6 +223,30 @@ class ListenTUI(unittest.TestCase):
         self.assertEqual(self.proof["guest"], {"said": True, "titles": False, "chips": ["listen-group", "listen-library"], "playing": True, "sheet": None,
                                                "sent": [], "device": []})
 
+    def test_wide_infos_controls_take_the_keys_not_the_room_or_the_speaker(self):
+        info = self.proof["edges"]["info"]
+        self.assertEqual({key: info[key] for key in ("pane", "moved", "room", "mode", "music")},
+                         {"pane": "info", "moved": True, "room": ROOM, "mode": "listen", "music": []})
+        self.assertEqual(info["sent"], [[OWNED, OWNED + "_sub_level", "1"], [OWNED, OWNED + "_eq", "ON"], [OWNED, OWNED + "_eq", "OFF"]])
+
+    def test_walking_rooms_from_the_sources_lands_on_the_speakers_else_the_rooms(self):
+        self.assertEqual(self.proof["edges"]["walk"], [DEN, "speakers", LOUNGE, "rooms"])
+
+    def test_the_switch_leaves_an_active_titles_border(self):
+        self.assertIn("┤ ▸ Example East ├─┤  Watch │ ♪ Listen  ├", self.proof["edges"]["title"])
+
+    def test_a_click_or_the_wheel_on_watchs_volume_drawn_before_y_does_not_reach_it(self):
+        self.assertEqual(self.proof["edges"]["stale"], {"mode": "listen", "slid": [], "sent": []})
+
+    def test_a_locked_speakers_volume_dragged_is_refused_once(self):
+        self.assertEqual(self.proof["edges"]["drag"], {"toasts": ["Example East: Locked by Example East"], "sent": []})
+
+    def test_k_in_a_room_of_speakers_alone_says_it_has_no_lock(self):
+        self.assertEqual(self.proof["edges"]["lock"], ["Room lock", "Fixture Den has no room lock."])
+
+    def test_a_narrow_speakers_row_shows_whole_bubbles_and_the_chosen_one(self):
+        self.assertEqual(self.proof["edges"]["bubbles"], ["│‹ 1 ● Mini             ›│", "│‹ 2 ● Amp Pro          ›│"])
+
     def test_a_house_without_speakers_only_watches(self):
         self.assertEqual(self.plain["rooms"], ["example_west", "example_east"])
         self.assertIsNone(self.plain["music"])
