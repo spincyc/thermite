@@ -161,11 +161,21 @@ class Matching(SimpleTestCase):
         for value in ("Ar\u00a0tist", "\u66f2\u3000\u4e00", "\U0001f469\u200d\U0001f467", "\u200f\u05e9\u05d9\u05e8"):
             self.assertEqual(music.text(value), value)
         self.assertEqual(music.text("\u202eevil\u202c and \u2067isolated\u2069"), "evil and isolated")
-        # Zero widths, soft hyphens, tags, private-use and unassigned code points go; a line separator is a space.
+        # Zero widths, soft hyphens, stray tags, private-use code points and noncharacters go; a line
+        # separator is a space.
         for value, cleaned in (("\u200bA\u2060B\ufeffC\u00adD", "ABCD"), ("Flag\U000e0067\U000e007f", "Flag"),
-                               ("x\ue000\u0378y\u206a", "xy"), ("one\u2028two\u2029three", "one two three"),
-                               ("\u2764\ufe0f\u200c\u061c", "\u2764\ufe0f\u200c\u061c")):
+                               ("x\ue000\ufdd0y\u206a\ufffe\U0001ffff", "xy"),
+                               ("one\u2028two\u2029three", "one two three"),
+                               ("\U0001f3f4\U000e0067\U000e0062", "\U0001f3f4")):
             self.assertEqual(music.text(value), cleaned, value)
+        # What scripts and emoji are written with stays: joiners and marks, a subdivision flag, Arabic number
+        # signs and end of ayah, the Mongolian vowel separator, Kaithi number signs, and a code point this
+        # interpreter's Unicode has not assigned (a newer emoji, maybe).
+        england = "\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f"
+        for value in ("\u2764\ufe0f\u200c\u061c", "Fans " + england + " and " + england,
+                      "\u0600\u0661\u0662 \u06dd\u0663", "\u0645\u08e2", "\u1820\u180e\u1821",
+                      "\U000110bd\U000110cd", "Face \U0001fae9 \U0001fae9", "Newer \U0001fbff\U0003ffef"):
+            self.assertEqual(music.text(value), value, value)
         # A credential word is found whatever hides it: a removed character, or a kept joiner, mark or
         # invisible combining mark (variation selectors, the combining grapheme joiner, Mongolian free
         # variation selectors), or another form of its letters.
@@ -175,6 +185,8 @@ class Matching(SimpleTestCase):
             self.assertIsNone(music.text(value), value)
         # The text shown keeps them.
         self.assertEqual(music.text("Caf\u0065\u0301 \u2764\ufe0f"), "Caf\u0065\u0301 \u2764\ufe0f")
+        # Only the text shown is cut and cleaned, however long the value.
+        self.assertEqual(music.text("\u200b" * 10 + "A" * (8 * 1024 * 1024)), "A" * music.TEXT_LENGTH)
 
     def test_a_reference_names_a_known_provider_and_an_item_or_folder(self):
         sources = music.Sources([{"domain": "tidal", "instance_id": "tidal--a1", "available": True},

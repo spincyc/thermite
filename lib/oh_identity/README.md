@@ -576,22 +576,26 @@ Assistant down or failing), `device=<speaker> action=music.<action>` with
 the option, the transport value, the level or the members as its value,
 never a reference, a query or a title; one refused for its body (400, 404)
 is none, a play whose reference names a provider instance Music Assistant
-does not have included. Music Assistant has 15 seconds to answer a play
-(it resolves a whole TIDAL playlist or album first) or a grouping (several
+does not have included. Music Assistant has 15 seconds to answer a play (it
+resolves a whole TIDAL playlist or album first) or a grouping (several
 calls to the speakers), each under the rooms' locks; 5 for any other
 command or read; and 20 for a search, a browse, a queue or art, which hold
 no lock. At most 8 art fetches run at once in a gateway process, and 16
-more requests may wait for one, each for 10 seconds at most; one that
-gives up, or comes when 16 wait, answers 503 `music_unavailable` with
-`Retry-After: 1`. So art holds a quarter of the requests the gateway
-admits at most, and stalled art never takes those commands need. Reading a group back takes about 3.5 seconds at most, its reads
-included. Titles, names and art are free text. A name keeps any space,
-joiner or direction mark; it loses every other format character (zero
-widths, soft hyphens, bidirectional controls, tags) and private-use and
-unassigned code points, a line separator becomes a space, and one with a
-control or, once so cleaned, a credential word is none. A Guest who may
-not see free text gets speakers without it and 401 `login_required` for
-search, browse, queues and art.
+more requests may wait for one, each for 10 seconds at most; one that gives
+up, or comes when 16 wait, answers 503 `music_unavailable` with
+`Retry-After: 1`. So art holds a quarter of the requests the gateway admits
+at most, and stalled art never takes those commands need. Reading a group
+back takes about 3.5 seconds at most, its reads included. Titles, names and
+art are free text. A name keeps any space, the zero-width joiner and
+non-joiner, the direction marks, a subdivision flag's tags and the format
+characters scripts write with (Arabic number signs, the Mongolian vowel
+separator), and code points the server's Unicode has not assigned yet; it
+loses every other format character (zero widths, word joiners, soft
+hyphens, bidirectional controls, other tags), private-use code points and
+noncharacters, and a line separator becomes a space. One with a control, or
+with a credential word once its marks and format characters are set aside,
+is none. A Guest who may not see free text gets speakers without it and 401
+`login_required` for search, browse, queues and art.
 
 The music event stream is admitted, revalidated and heartbeated as the other
 streams. Its first frame is `{"type":"snapshot","view":"music","music":

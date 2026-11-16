@@ -107,24 +107,37 @@ QUEUE_ACTIONS = {"seek": ("player_queues/seek", "position"), "shuffle": ("player
 #: C0 and C1 controls, and lone surrogates, which no UTF-8 can carry to
 #: Music Assistant: refused in a reference, dropped from a query.
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\ud800-\udfff]")
-#: Format characters a name keeps: the joiners and the direction marks that
-#: shape emoji and right-to-left text. Every other one (zero widths, soft
-#: hyphens, bidirectional embeddings, overrides and isolates, tags) goes, as
-#: does a private-use or unassigned code point; a line or paragraph
-#: separator is a space.
-KEPT_FORMATS = frozenset("\u200c\u200d\u200e\u200f\u061c")
+#: Format characters a name keeps: the zero-width joiner and non-joiner and
+#: the direction marks that shape emoji and right-to-left text, and those
+#: scripts write with (Arabic number signs and end of ayah, the Mongolian
+#: vowel separator, Kaithi number signs). Every other one (zero widths,
+#: word joiners, soft hyphens, bidirectional embeddings, overrides and
+#: isolates, tags outside a flag) goes, as do private-use code points and
+#: noncharacters; a line or paragraph separator is a space. An unassigned
+#: code point stays: it may be a character newer than the interpreter's
+#: Unicode.
+KEPT_FORMATS = frozenset("\u200c\u200d\u200e\u200f\u061c\u0600\u0601\u0602\u0603\u0604\u0605\u06dd\u08e2"
+                         "\u180e\U000110bd\U000110cd")
+#: A subdivision flag (England, Scotland, Wales): the black flag, its tags,
+#: and the cancel tag.
+_FLAG = re.compile("(\U0001f3f4[\U000e0020-\U000e007e]+\U000e007f)")
 _music = weakref.WeakKeyDictionary()
 
 
 def shown(value):
-    """value as a page may show it (KEPT_FORMATS)."""
+    """value as a page may show it (KEPT_FORMATS), its flags whole."""
     kept = []
-    for char in value:
-        kind = unicodedata.category(char)
-        if kind in ("Zl", "Zp"):
-            kept.append(" ")
-        elif kind not in ("Cf", "Co", "Cn") or char in KEPT_FORMATS:
-            kept.append(char)
+    for index, part in enumerate(_FLAG.split(value)):
+        if index % 2:
+            kept.append(part)
+            continue
+        for char in part:
+            kind, code = unicodedata.category(char), ord(char)
+            if kind in ("Zl", "Zp"):
+                kept.append(" ")
+            elif not (kind == "Cf" and char not in KEPT_FORMATS or kind == "Co" or 0xFDD0 <= code <= 0xFDEF
+                      or code & 0xFFFE == 0xFFFE):
+                kept.append(char)
     return "".join(kept)
 
 
@@ -139,11 +152,12 @@ def bare(value):
 def text(value):
     """Music Assistant free text a client may see: as shown(), cut to
     TEXT_LENGTH, without controls (_CONTROL) or a credential word, looked
-    for in bare(); else None. Any space, joiner or mark a title holds
-    stays."""
+    for in bare(); else None. Any space, zero-width joiner or non-joiner,
+    or mark a title holds stays."""
     if not isinstance(value, str):
         return None
-    value = shown(value).strip()[:TEXT_LENGTH].strip()
+    # Cut first, with room for what shown() removes: a value may be megabytes long.
+    value = shown(value[:4 * TEXT_LENGTH]).strip()[:TEXT_LENGTH].strip()
     if not value or _CONTROL.search(value) or SENSITIVE_TEXT.search(bare(value)):
         return None
     return value
