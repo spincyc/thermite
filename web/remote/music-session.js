@@ -637,7 +637,7 @@
     // and a search still waiting for the typing to stop, whether the music
     // came from the overview or, that failing, the stream; after, what was
     // refused or never asked, now that who is signed in, or what Guests may
-    // see, changed.
+    // see, changed (the queue too, if it shows another speaker's).
     function resume() {
       if (given !== life || blindNow()) return;
       const fresh = resumed !== life;
@@ -647,7 +647,7 @@
       const top = browse.stack[browse.stack.length - 1];
       if (!top && tab === "browse") openRoot();
       else if (top && unfinished(top.state)) loadBrowse(top.items.length);
-      if (fresh && tab === "queue") loadQueue(0);
+      if (tab === "queue" && (fresh || unfinished(queue.state) || queue.speaker !== current)) loadQueue(0);
     }
 
     // Names as a sentence lists them: "A", "A and B", "A, B and C".

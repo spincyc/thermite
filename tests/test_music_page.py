@@ -223,6 +223,8 @@ class MusicPage(unittest.TestCase):
         # Refused as a Guest, then signed in: the next visit, or access saying so, reads again.
         self.assertEqual(out["guest"], [BLIND, None, "done"])
         self.assertEqual(out["told"], [BLIND, 0, None, 1, "done"])
+        # The queue kept from a Guest by access, or refused by the gateway, is read once they may.
+        self.assertEqual(out["queued"], [BLIND, 0, "done", 1, BLIND, 1, "done", 2, True])
         # Started again with the overview failing, the stream's snapshot reads again what was under way.
         self.assertEqual(out["streamed"], [2, "done", ["Library", "NAS"], "done"])
         self.assertEqual(out["streamedRoot"], [["Library"], "done"])
