@@ -40,6 +40,10 @@ class TerminalGrid(unittest.TestCase):
         # A joiner is drawn in the cell before it: the wide character's own, not its half.
         self.assertEqual(self.proof["zwj"], ["\U0001f468\u200d", "", "\U0001f469\u200d", "", "\U0001f467", "", " ", " "])
 
+    def test_a_wide_word_wraps_a_whole_character_to_a_line_and_no_more(self):
+        tokyo = ["\u6771", "\u4eac"]
+        self.assertEqual(self.proof["wrap"], [tokyo, tokyo, ["ab"] + tokyo + ["\u6771"]])
+
     def test_a_mono_character_stands_in_for_a_narrow_cell_only(self):
         self.assertEqual(self.proof["mono"], [None, None, "#", None])
 

@@ -245,9 +245,15 @@ function wrap(text, width) {
           lines.push(line);
           line = "";
         }
-        const cells = characters(word), at = Math.max(1, cut(cells, width));
-        lines.push(cells.slice(0, at).join(""));
+        // At least one whole character to a line, however narrow.
+        const cells = characters(word), at = cut(cells, width) || (cells[1] === "" ? 2 : 1);
+        const piece = cells.slice(0, at).join("");
         word = cells.slice(at).join("");
+        if (!word) {
+          word = piece;
+          break;
+        }
+        lines.push(piece);
       }
       if (!line) line = word;
       else if (length(line) + 1 + length(word) <= width) line += " " + word;

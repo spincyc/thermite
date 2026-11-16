@@ -158,6 +158,8 @@ proof.zwj = cells(grid)[0];
 grid = new Grid.Grid(5, 1);
 grid.put(0, 0, "\u0e01\u0e33\u0e25\u0e31\u0e07");
 proof.thai = cells(grid)[0];
+// Wrapped narrower than a wide character: one whole character to a line, and no empty line after.
+proof.wrap = [Grid.wrap("\u6771\u4eac", 1), Grid.wrap("\u6771\u4eac", 2), Grid.wrap("ab \u6771\u4eac\u6771", 3)];
 // The painter alone, on a row no grid draws now (a right half with no
 // character before it): what follows still lands in its own cell.
 const terminal = new Terminal(6, 1), row = [{ ch: "", style: "base" }, { ch: "a", style: "base" },
