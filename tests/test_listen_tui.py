@@ -94,8 +94,9 @@ class ListenTUI(unittest.TestCase):
     def test_listen_draws_the_speaker_its_transport_chips_and_volume_as_watch(self):
         self.assertEqual(self.proof["drawn"], [], "missing from the screen")
         self.assertEqual(self.proof["focus"], "listen-key:play_pause")
-        self.assertIn("y Watch", self.proof["footer"])
+        self.assertIn("y Watch   r Rooms", self.proof["footer"])
         self.assertEqual(self.proof["help"], [])
+        self.assertEqual(self.proof["helpKeys"], {"r": ["Rooms"], "R": ["Repeat"], "space": ["Space P"]})
 
     def test_the_keys_reach_the_speaker_its_volume_and_mute_its_own(self):
         self.assertEqual(self.proof["music"], [["transport", OWNED, "play", None]])
@@ -131,6 +132,12 @@ class ListenTUI(unittest.TestCase):
         self.assertEqual(self.proof["seek"][2], 0)
         self.assertEqual(self.proof["transport"], [["transport", MINI, "shuffle", True], ["transport", MINI, "repeat", "all"],
                                                    ["transport", MINI, "repeat", "one"], ["transport", MINI, "next", None]])
+
+    def test_r_opens_the_rooms_in_listen_as_in_watch_and_shift_r_repeats(self):
+        self.assertEqual(self.proof["rooms"], {"sheet": "rooms", "focus": "room:" + DEN, "repeat": "off", "closed": [None, DEN]})
+        # Only R reached Music Assistant's repeat: all, then one.
+        self.assertEqual([entry for entry in self.proof["transport"] if entry[2] == "repeat"],
+                         [["transport", MINI, "repeat", "all"], ["transport", MINI, "repeat", "one"]])
 
     def test_typing_goes_into_the_librarys_search_and_a_result_offers_how_to_play_it(self):
         search = self.proof["search"]

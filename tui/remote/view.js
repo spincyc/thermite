@@ -329,7 +329,7 @@ function listenHelp(ctx) {
     case "rooms": return ["Rooms", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "speaker"], [["Enter"], "listen"]];
     case "speakers": return ["Speakers", [["\u2190\u2192"], "speaker"], [["\u2191\u2193"], "room"], [["1-9"], "speaker"]];
     case "remote": return ["Listen", [["\u2191\u2193"], "choose"], [["\u2190\u2192"], "volume/position"], [["Enter"], "press"],
-      [["P"], "play/pause"], [["+\u2212"], "volume"]].concat(musicKeys(ctx, "search", "group"));
+      [["P"], "play/pause"], [["+\u2212"], "volume"], [["R"], "repeat"], [["r"], "rooms"]].concat(musicKeys(ctx, "search", "group"));
     case "info": return ["Info", [["i"], "settings"], [["\u2191\u2193"], "room"], [["\u2190\u2192"], "speaker"]];
     case "sheet:info": return ["Info", [["\u2191\u2193"], "choose"], [["\u2190\u2192"], "level"], [["Enter"], "press"], [["Esc"], "close"]];
     case "sheet:audio-choice": case "sheet:audio-inputs": return [title || "Choose", [["\u2191\u2193"], "choose"], [["Enter"], "select"], [["Esc"], "close"]];
@@ -361,7 +361,7 @@ function shortcutBar(frame, ctx, width, y) {
   const both = ctx.ui.screen === "remote" && ctx.ui.ready && ctx.session.current() && ctx.session.modes().length > 1;
   const other = both ? [[["y"], listening(ctx) ? "Watch" : "Listen"]] : [];
   const list = ctx.ui.overlay ? [[["Esc"], "Close"]]
-    : [[["Tab"], "Pane"]].concat(listening(ctx) ? other.concat(musicKeys(ctx, "Search", "Group").map(([keys, label]) => [keys.map((k) => k.toLowerCase()), label]),
+    : [[["Tab"], "Pane"]].concat(listening(ctx) ? other.concat([[["r"], "Rooms"]], musicKeys(ctx, "Search", "Group").map(([keys, label]) => [keys.map((k) => k.toLowerCase()), label]),
       [[["i"], "Info"], log, [["t"], "Theme"]])
       : ctx.ui.screen === "remote" ? other.concat([[["r"], "Rooms"], [["d"], "Signal"], [["h"], "Day"], log, [["v"], "Volume"], [["t"], "Theme"]])
       : ctx.ui.screen === "pairing" ? [[["Esc"], "Remotes"], log]
@@ -1167,7 +1167,7 @@ function helpContent(g, w, ctx) {
     y++;
   };
   const manage = ctx.ui.screen === "remote" && ctx.session?.roomLock().canManage;
-  if (listening(ctx)) rows("Listen", ctx.Session.LISTEN_SHORTCUTS.concat(Listen.SHORTCUTS, TUI_SHORTCUTS.filter(entry => ["h", "F6"].includes(entry[0][0])))
+  if (listening(ctx)) rows("Listen", ctx.Session.LISTEN_SHORTCUTS.concat(Listen.SHORTCUTS, TUI_SHORTCUTS.filter(entry => ["r", "h", "F6"].includes(entry[0][0])))
     .concat(manage ? [[["K"], "Lock or unlock this room (administrators)"]] : []));
   else if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "h", "v", "F6"].includes(entry[0][0])))
     .concat(manage ? [[["K"], "Lock or unlock this room (administrators)"],

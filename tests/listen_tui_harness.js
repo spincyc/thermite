@@ -120,6 +120,10 @@ async function mixed(proof) {
   shown = text(parts);
   proof.help = ["Watch or listen", "Speaker", "Shuffle", "Repeat", "Group", "Search", "Step a volume, or move 10 s on the",
     "Info: the speaker's power"].filter((words) => !shown.includes(words));
+  // The help's rows, a key and what it does: r the rooms, R repeat, Space once (play/pause).
+  const rows = shown.split("\n").map((line) => line.match(/│ {2}([^│ ]+(?: [^│ ]+)*) {2,}([^│]*?) *│/)).filter(Boolean).map((match) => [match[1], match[2]]);
+  proof.helpKeys = { r: rows.filter((row) => row[0] === "r").map((row) => row[1]), R: rows.filter((row) => row[0] === "R").map((row) => row[1]),
+    space: rows.filter((row) => row[0].split(" ").includes("Space")).map((row) => row[0]) };
   key(parts, null, { name: "escape" });
   toRemote(parts);
   proof.focus = controller.ui.focus;
@@ -234,13 +238,19 @@ async function den(proof) {
   click(parts, "listen-progress", 0);
   await until(parts, () => music(parts).sent.filter((entry) => entry[2] === "seek").length === 2, "a click's seek");
   proof.seek.push(music(parts).sent[music(parts).sent.length - 1][3]);
-  // Shuffle, repeat all then one (↻1), the next track.
+  // r opens the rooms, as in Watch, and repeats nothing; Esc closes them.
   const transport = music(parts).sent.length;
+  key(parts, "r");
+  proof.rooms = { sheet: controller.ui.overlay && controller.ui.overlay.kind, focus: controller.ui.focus,
+    repeat: session.listen.view().transport.find((entry) => entry.id === "repeat").mode };
+  key(parts, null, { name: "escape" });
+  proof.rooms.closed = [controller.ui.overlay, session.current().id];
+  // Shuffle, R repeat all then one (↻1), the next track.
   key(parts, "s");
   await until(parts, () => session.listen.view().transport.find((entry) => entry.id === "shuffle").on, "shuffle on");
-  key(parts, "r");
+  key(parts, "R");
   await until(parts, () => session.listen.view().transport.find((entry) => entry.id === "repeat").on, "repeat on");
-  key(parts, "r");
+  key(parts, "R");
   await shows(parts, "↻1");
   key(parts, ">");
   await shows(parts, "Signal Fires");

@@ -18,7 +18,7 @@ const { LOCK, ending, fit, length } = require("./grid");
 const SHORTCUTS = [
   [["↑", "↓"], "Choose a control"],
   [["←", "→"], "Step a volume, or move 10 s on the position"],
-  [["Enter", "Space"], "Press it, open an item, or offer how to play it"],
+  [["Enter"], "Press it, open an item, or offer how to play it"],
   [["i"], "Info: the speaker's power, settings and facts"],
   [["Backspace"], "Back a folder (Library)"],
   [["Esc"], "Clear the search, or close the sheet"]

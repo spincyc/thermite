@@ -1411,8 +1411,10 @@ function create(options) {
     if (lower === "t") return toggleTheme();
     if (lower === "a") return toggleStill();
     if (lower === "k") return toggleRoomLock();
+    // r is the rooms, as in Watch; R repeats.
     if (lower === "s") return listenPress(["shuffle"]);
-    if (lower === "r") return listenPress(["repeat"]);
+    if (ch === "R") return listenPress(["repeat"]);
+    if (ch === "r") return openSheet("rooms");
     if (lower === "g") return openGroup();
     if (ch === "/") return openLibrary(true);
     const buttons = !["backspace", "escape"].includes(name) && Session.KEYS[ch];
