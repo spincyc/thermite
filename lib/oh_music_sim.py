@@ -51,7 +51,8 @@ NO_AIRPLAY = ("Amp Pro",)
 LIBRARY = (("Example Quartet", "First Light", 2019, (("Opening", 241), ("Morning Rain", 198), ("Long Road", 305))),
            ("Documentation Band", "Reserved Range", 2021, (("Example Net", 222), ("Test Pattern", 187))))
 TIDAL = (("Placeholder Orchestra", "Sample Suite", 2023, (("Overture", 260), ("Interlude", 140), ("Finale", 331))),
-         ("Fictional Duo", "Not Real", 2020, (("Imaginary", 214), ("Made Up", 199))))
+         ("Fictional Duo", "Not Real", 2020, (("Imaginary", 214), ("Made Up", 199))),
+         ("Placeholder Orchestra", "Encore", 2024, (("Encore", 188),), "single"))
 TIDAL_PLAYLIST = "Example Mix"
 TIDAL_PLAYLIST_ID = "5f3a8c2e-1b4d-4e6f-9a7b-0c2d4e6f8a1b"
 #: RFC 6455's handshake GUID, and the opcodes the stand-in uses.
@@ -407,7 +408,7 @@ class Sim:
         self._changed(player, *[self.players[member] for member in player["group_members"] if member != queue_id])
         self._queue_updated(queue_id)
 
-    def play_media(self, queue_id, media, option=None, **_):
+    def play_media(self, queue_id, media, option=None, start_item=None, shuffle=None, **_):
         player = self.player(queue_id)
         if player["synced_to"]:
             # Playing to a member pulls it out of its group.
@@ -415,8 +416,16 @@ class Sim:
         tracks = []
         for uri in media if isinstance(media, list) else [media]:
             tracks += self.tracks(uri)
+        if start_item is not None:
+            # From the track named, by its URI or ID; none named, none at all.
+            at = next((index for index, track in enumerate(tracks) if start_item in (track["uri"], track["item_id"])), None)
+            tracks = [] if at is None else tracks[at:]
         option = option or ("play" if "://track/" in str(media) else "replace")
         queue = self.queues[queue_id]
+        if shuffle is not None:
+            queue["shuffle_enabled"] = bool(shuffle)
+            if shuffle:
+                tracks = tracks[::-1]  # Shuffled, as a test can tell.
         items = [{"queue_item_id": secrets.token_hex(16), "name": track["artists"][0]["name"] + " - " + track["name"],
                   "duration": track["duration"], "media_item": track, "image": track["album"]["image"],
                   "available": True} for track in tracks]
@@ -491,27 +500,28 @@ class Sim:
         if self.tidal_instance() and self.providers[self.tidal_instance()]["enabled"]:
             sources.append((self.tidal_instance(), "tidal", TIDAL))
         for provider, scheme, albums in sources:
-            tidal_tracks = []
-            for number, (artist, album, year, tracks) in enumerate(albums, 1):
+            tidal_tracks, artist_ids = [], {}
+            for number, (artist, album, year, tracks, *kind) in enumerate(albums, 1):
                 image = self._image(f"{scheme}:{album}")
                 if scheme == "file":
                     artist_id, album_id = artist, f"{artist}/{album}"
                 else:
-                    artist_id, album_id = str(number * 10), str(number * 100)
+                    # An artist of several albums is one artist.
+                    artist_id, album_id = artist_ids.setdefault(artist, str(number * 10)), str(number * 100)
                 artist_item = {"item_id": artist_id, "provider": provider, "name": artist, "media_type": "artist",
                                "uri": f"{provider}://artist/{artist_id}", "available": True}
                 album_item = {"item_id": album_id, "provider": provider, "name": album, "media_type": "album",
                               "uri": f"{provider}://album/{album_id}", "available": True, "image": image}
-                items[artist_item["uri"]] = {**artist_item, "metadata": {"images": [image]}}
+                items.setdefault(artist_item["uri"], {**artist_item, "metadata": {"images": [image]}})
                 items[album_item["uri"]] = {**album_item, "year": year, "artists": [artist_item],
-                                            "metadata": {"images": [image]}}
+                                            "album_type": kind[0] if kind else "album", "metadata": {"images": [image]}}
                 for position, (title, seconds) in enumerate(tracks, 1):
                     track_id = (f"{album_id}/{position:02d} - {title}.flac" if scheme == "file"
                                 else str(number * 100 + position))
                     track = {"item_id": track_id, "provider": provider, "name": title, "media_type": "track",
                              "uri": f"{provider}://track/{track_id}", "duration": seconds, "track_number": position,
-                             "artists": [artist_item], "album": album_item, "metadata": {"images": [image]},
-                             "favorite": False}
+                             "disc_number": 1, "artists": [artist_item], "album": album_item,
+                             "metadata": {"images": [image]}, "favorite": False}
                     items[track["uri"]] = track
                     tidal_tracks.append(track)
             if scheme == "tidal":
@@ -590,6 +600,12 @@ class Sim:
             return listing
         return listing + [item for item in items.values() if item["provider"] == instance
                           and item["media_type"] == "track" and item["item_id"].startswith(sub.rstrip("/") + "/")]
+
+    def artist(self, item_id, provider_instance_id_or_domain, **_):
+        uri = f"{provider_instance_id_or_domain}://artist/{item_id}"
+        if uri not in self.catalog():
+            raise Error(MEDIA_NOT_FOUND)
+        return uri
 
     def children(self, command, item_id, provider_instance_id_or_domain, **_):
         kind = {"music/albums/album_tracks": "album", "music/playlists/playlist_tracks": "playlist",
@@ -849,6 +865,13 @@ class Sim:
             return self.browse(**args)
         if command in ("music/albums/album_tracks", "music/playlists/playlist_tracks", "music/artists/artist_albums"):
             return self.children(command, **args)
+        if command == "music/artists/top_tracks":
+            return self.tracks(self.artist(**args))[:10]
+        if command == "music/artists/similar_artists":
+            uri = self.artist(**args)
+            provider = uri.partition("://")[0]
+            return [item for item in self.catalog().values() if item["media_type"] == "artist" and item["provider"] == provider
+                    and item["uri"] != uri][:args.get("limit", 25)]
         if command == "music/item_by_uri":
             item = self.catalog().get(args["uri"])
             if item is None:

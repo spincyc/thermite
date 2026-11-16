@@ -151,8 +151,24 @@ class ListenTUI(unittest.TestCase):
         self.assertEqual(self.proof["cleared"], ["", "music-library"])
 
     def test_browse_opens_a_folder_and_backspace_goes_back_and_the_queue_marks_what_plays(self):
-        self.assertEqual((self.proof["browsed"], self.proof["browsedBack"]), (["Library", "NAS"], ["Library"]))
+        # Back to Browse's own list returns to the folder that opened; Backspace there keeps the focus.
+        self.assertEqual((self.proof["browsed"], self.proof["browsedBack"]),
+                         (["Library", "NAS"], [["Library"], "music-item:page:0", "music-tab:browse"]))
         self.assertEqual(len(self.proof["queue"]), 1)
+
+    def test_an_artist_opens_over_the_search_and_its_pages_lead_to_each_other(self):
+        # Its Back is focused at once, while it reads.
+        self.assertEqual(self.proof["opened"], ["music-library", "music-back"])
+        self.assertEqual(self.proof["artist"], [])
+        self.assertEqual(self.proof["album"], [])
+        self.assertEqual(self.proof["track"], ["music-item", "music-action:from", []])
+        self.assertEqual(self.proof["played"], [["tidal--mock://album/902", "replace", {"shuffle": True}],
+                                              ["tidal--mock://album/902", "replace", {"start": "tidal--mock://track/9021"}]])
+        self.assertEqual(self.proof["again"], "music-back")
+        # Backspace walks back a page at a time, each time to what opened the page left: the header's
+        # artist, the single's row, the search's artist; with nothing left, the focus stays.
+        self.assertEqual(self.proof["back"], [[["Wide Awake", "music-artist:0"], ["Juniper Vale", "music-item:section:singles:0"],
+                                               [None, "music-item:search:artist:0"]], "music-item:search:track:0", "juniper"])
 
     def test_an_admin_sees_the_tidal_code_to_approve(self):
         self.assertEqual(self.proof["tidal"], [])

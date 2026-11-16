@@ -285,12 +285,16 @@ async function den(proof) {
   focusOn(parts, "music-tab:browse");
   key(parts, null, { name: "enter" });
   await shows(parts, "NAS");
-  focusOn(parts, "music-item:browse:0");
+  focusOn(parts, "music-item:page:0");
   key(parts, null, { name: "enter" });
   await shows(parts, "Mira Okafor");
-  proof.browsed = session.listen.music.library().browse.path;
+  proof.browsed = session.listen.music.library().page.path;
   key(parts, null, { name: "backspace" });
-  proof.browsedBack = session.listen.music.library().browse.path;
+  proof.browsedBack = [session.listen.music.library().page.path, controller.ui.focus];
+  // Backspace on Browse's own list goes nowhere and keeps the focus.
+  focusOn(parts, "music-tab:browse");
+  key(parts, null, { name: "backspace" });
+  proof.browsedBack.push(controller.ui.focus);
   focusOn(parts, "music-tab:queue");
   key(parts, null, { name: "space" });
   await until(parts, () => session.listen.music.library().queue.items.length, "the queue");
@@ -649,12 +653,69 @@ async function edges(proof) {
   size = [WIDTH, HEIGHT];
 }
 
+// ---- the library's pages ------------------------------------------------------
+
+// An artist found opens over the search; a single of it is numbered and
+// shuffles from its header; a track plays from where it is; the header's
+// artist opens again, and Backspace walks back to the row that opened it all.
+async function pages(proof) {
+  const parts = await open({ music: { tidal: true } }, DEN);
+  const { controller, session } = parts;
+  await until(parts, () => session.listen.view() && session.listen.view().library, "the library");
+  key(parts, "/");
+  for (const ch of "juniper") key(parts, ch);
+  key(parts, null, { name: "enter" });
+  await shows(parts, "Juniper Vale");
+  const artist = "music-item:search:artist:0";
+  focusOn(parts, artist);
+  key(parts, null, { name: "enter" });
+  proof.opened = [controller.ui.overlay.kind, controller.ui.focus];
+  await shows(parts, "Top tracks");
+  let shown = text(parts);
+  proof.artist = ["‹ Search", "Juniper Vale", "Artist · TIDAL", "▶ Play", "⤮ Shuffle", "⋯ More", "Top tracks", "Albums", "EPs and singles",
+    "Similar artists", "Saltmarsh · Artist"].filter((words) => !shown.includes(words));
+  focusOn(parts, "music-item:section:singles:0");
+  key(parts, null, { name: "enter" });
+  await shows(parts, "1 track");
+  shown = text(parts);
+  proof.album = ["‹ Juniper Vale", " 1  Wide Awake (Edit) · Juniper Vale", "Single · 2024 · 1 track · 3 min · TIDAL", " Juniper Vale "]
+    .filter((words) => !shown.includes(words));
+  const sent = music(parts).sent.length;
+  focusOn(parts, "music-head:shuffle");
+  key(parts, null, { name: "enter" });
+  await until(parts, () => music(parts).sent.length > sent, "the shuffle");
+  focusOn(parts, "music-item:page:0");
+  key(parts, null, { name: "enter" });
+  shown = text(parts).replace(/[│\s]+/g, " ");
+  proof.track = [controller.ui.overlay.kind, controller.ui.focus,
+    ["Play from here", "Play now", "Play next", "Add to queue", "Go to Juniper Vale"].filter((words) => !shown.includes(words))];
+  key(parts, null, { name: "enter" });
+  await until(parts, () => music(parts).sent.length > sent + 1, "the play from here");
+  proof.played = music(parts).sent.slice(sent).map((entry) => entry.slice(2));
+  focusOn(parts, "music-artist:0");
+  key(parts, null, { name: "enter" });
+  await shows(parts, "‹ Wide Awake");
+  proof.again = controller.ui.focus;
+  const walked = [];
+  for (let step = 0; step < 3; step++) {
+    key(parts, null, { name: "backspace" });
+    const page = session.listen.music.library().page;
+    walked.push([page ? page.name : null, controller.ui.focus]);
+  }
+  // Nothing left to go back to: the focus stays.
+  focusOn(parts, "music-item:search:track:0");
+  key(parts, null, { name: "backspace" });
+  proof.back = [walked, controller.ui.focus, session.listen.music.library().search.query];
+  controller.stop();
+}
+
 (async () => {
   const proof = {};
   if (mode === "plain") await plain(proof);
   else {
     await mixed(proof);
     await den(proof);
+    await pages(proof);
     await grouping(proof);
     await locked(proof);
     await vanished(proof);

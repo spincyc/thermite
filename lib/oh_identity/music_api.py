@@ -75,6 +75,14 @@ def browse(request):
 
 
 @api()
+def item(request):
+    """An album's, artist's or playlist's page (oh_identity.music.Music.details)."""
+    values = query(request, ("ref",))
+    require_text(request)
+    return JsonResponse(music_for(get_adapter()).details(values["ref"]))
+
+
+@api()
 def queue(request, speaker):
     values = query(request, ("offset", "limit"))
     require_text(request)
@@ -84,9 +92,9 @@ def queue(request, speaker):
 @api(methods=("POST",))
 def play(request, speaker):
     from .trail import origin
-    data = command_body(request, ("ref", "option"), ("ref",))
-    return accepted(music_for(get_adapter()).play(request.identity_user, speaker, data["ref"],
-                                                  data.get("option", "replace"), origin=origin(request)))
+    data = command_body(request, ("ref", "option", "start", "shuffle"), ("ref",))
+    return accepted(music_for(get_adapter()).play(request.identity_user, speaker, data["ref"], data.get("option", "replace"),
+                                                  start=data.get("start"), shuffle=data.get("shuffle"), origin=origin(request)))
 
 
 @api(methods=("POST",))

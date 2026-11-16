@@ -29,7 +29,7 @@ urlpatterns = [
     path("api/v1/devices/<slug:device>/commands", views.device_command),
     # Music through Music Assistant (oh_identity.music).
     path("api/v1/music", music_api.overview), path("api/v1/music/search", music_api.search),
-    path("api/v1/music/browse", music_api.browse),
+    path("api/v1/music/browse", music_api.browse), path("api/v1/music/item", music_api.item),
     path("api/v1/music/tidal", music_api.tidal), path("api/v1/music/tidal/start", music_api.tidal_start),
     path("api/v1/music/tidal/finish", music_api.tidal_finish),
     path("api/v1/music/<slug:speaker>/queue", music_api.queue), path("api/v1/music/<slug:speaker>/play", music_api.play),

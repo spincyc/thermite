@@ -88,7 +88,8 @@ function page(room, options = {}) {
   const focus = () => {
     const at = document.activeElement;
     if (at === document.body) return 'body';
-    return at.dataset.focus || (at.hasAttribute('data-browse-path') ? 'path' : at.localName + ':' + (at.getAttribute('aria-label') || at.textContent.trim()));
+    return at.dataset.focus || (at.hasAttribute('data-page-title') || at.hasAttribute('data-head-name') ? 'title'
+      : at.localName + ':' + (at.getAttribute('aria-label') || at.textContent.trim()));
   };
   // A key pressed where the focus is.
   const key = async (name, at) => {
@@ -310,7 +311,7 @@ async function library(out) {
   out.typing = [await wide.key('m'), await wide.key('Y'), wide.document.body.dataset.mode];
 }
 
-// Browse: a folder opened, Back, and an album opened from its sheet; the focus follows each.
+// Browse: a folder opened, Back, and a track's sheet; the focus follows each.
 async function browse(out) {
   const p = page(MIXED, {stored: {['remote.mode.' + MIXED]: 'listen'}});
   const {time, $, focus} = p;
@@ -320,18 +321,20 @@ async function browse(out) {
   await time.tick(400);
   // A key pressed on a button: it has the focus, then the click.
   const pressed = async (button) => { button.focus(); button.click(); await time.tick(0); };
-  await pressed($('[data-browse-items] [data-item]'));
-  out.opening = [$('[data-browse-path]').textContent, focus()];
+  const bar = (q) => [q.shown(q.$('[data-page-bar]')), q.$('[data-page-back-label]').textContent, q.$('[data-page-title]').textContent];
+  out.root = bar(p);
+  await pressed($('[data-page-items] [data-item]'));
+  out.opening = [...bar(p), focus()];
   await time.tick(400);
-  out.opened = [$('[data-browse-path]').textContent, focus()];
-  await pressed($('[data-browse-back]'));
-  out.back = [$('[data-browse-path]').textContent, focus(), $('[data-browse-back]').disabled];
+  out.opened = [...bar(p), focus()];
+  await pressed($('[data-page-back]'));
+  out.back = [...bar(p), focus()];
   for (let depth = 0; depth < 3; depth += 1) {
-    await pressed($('[data-browse-items] [data-item]'));
+    await pressed($('[data-page-items] [data-item]'));
     await time.tick(400);
   }
-  out.album = [$('[data-browse-path]').textContent, focus()];
-  await pressed($('[data-browse-items] [data-item]'));
+  out.album = [...bar(p), focus()];
+  await pressed($('[data-page-items] [data-item]'));
   out.sheet = [$('#item-sheet').open, focus()];
   await pressed($('[data-item-actions] [data-item-action="next"]'));
   out.played = [$('#item-sheet').open, focus()];
@@ -340,15 +343,15 @@ async function browse(out) {
   await other.time.tick(1500);
   other.$('[data-tab="browse"]').click();
   await other.time.tick(400);
-  const folder = other.$('[data-browse-items] [data-item]');
+  const folder = other.$('[data-page-items] [data-item]');
   folder.focus();
   folder.click();
   await other.time.tick(0);
-  out.elsewhere = [other.$('[data-browse-path]').textContent, other.focus()];
+  out.elsewhere = [...bar(other), other.focus()];
   other.$('#listen [data-button="volume_up"]').focus();
   await other.time.tick(400);
-  out.elsewhere.push(other.$('[data-browse-items]').querySelectorAll('[data-item]').length > 0, other.focus());
-  // A folder read that failed leaves the focus on the path once, then lets it be; nothing scrolls the page.
+  out.elsewhere.push(other.$('[data-page-items]').querySelectorAll('[data-item]').length > 0, other.focus());
+  // A folder read that failed leaves the focus on the title once, then lets it be; nothing scrolls the page.
   const failing = page(MIXED, {wide: true, stored: {['remote.mode.' + MIXED]: 'listen'}});
   await failing.time.tick(1500);
   const read = failing.made.music.browse.bind(failing.made.music);
@@ -356,13 +359,73 @@ async function browse(out) {
     : read(ref, ...rest));
   failing.$('[data-tab="browse"]').click();
   await failing.time.tick(400);
-  failing.$('[data-browse-items] [data-item]').click();
+  failing.$('[data-page-items] [data-item]').click();
   await failing.time.tick(400);
-  out.failed = [failing.$('[data-browse-text]').textContent !== '', failing.focus()];
-  failing.$('[data-browse-path]').blur();
+  out.failed = [failing.$('[data-page-text]').textContent !== '', failing.focus()];
+  failing.$('[data-page-title]').blur();
   failing.$('#listen [data-button="volume_up"]').click();
   await failing.time.tick(400);
   out.failed.push(failing.focus(), failing.document.scrolls);
+}
+
+// An artist found and opened over the search, a single of it, its header's
+// Play, Shuffle and artist, a track played from where it is, and Back to the search.
+async function pages(out) {
+  const p = page(MIXED, {music: {tidal: true}, stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const {time, $, all, words, made, focus} = p;
+  await time.tick(1500);
+  $('[data-action="listen-library"]').click();
+  await time.tick(50);
+  $('[data-query]').value = 'juniper';
+  $('[data-query]').dispatch('input');
+  await time.tick(2000);
+  const pressed = async (button) => { button.focus(); button.click(); await time.tick(400); };
+  const head = () => [p.shown($('[data-page-head]')), words($('[data-head-name]')), words($('[data-head-by]')), words($('[data-head-line]')),
+    $('[data-head-art]').dataset.kind];
+  const artist = all('[data-results] [data-item]').find((button) => /^Juniper Vale, Artist/.test(button.getAttribute('aria-label')));
+  out.row = [artist.getAttribute('aria-haspopup'), words(artist)];
+  await pressed(artist);
+  out.artist = {shown: [p.shown($('#library-panel-search')), p.shown($('[data-page]')), $('[data-page]').getAttribute('aria-labelledby')],
+    bar: [p.shown($('[data-page-bar]')), words($('[data-page-back-label]')), p.shown($('[data-page-title]'))], head: head(), focus: focus(),
+    sections: all('[data-page-sections] .library-section h3').map((title) => words(title)),
+    play: all('[data-head-action]').map((button) => [button.getAttribute('aria-label'), button.disabled])};
+  const single = all('[data-page-sections] [data-item]').find((button) => /^Wide Awake, Juniper Vale · Single/.test(button.getAttribute('aria-label')));
+  await pressed(single);
+  out.album = {back: words($('[data-page-back-label]')), head: head(), focus: focus(),
+    rows: all('[data-page-items] [data-item]').map((button) => [words(button.querySelector('.library-item__number')), words(button.querySelector('.library-item__name')),
+      words(button.querySelector('.library-item__line'))])};
+  let from = made.music.sent.length;
+  $('[data-head-action="replace"]').click();
+  await time.tick(400);
+  $('[data-head-action="shuffle"]').click();
+  await time.tick(400);
+  out.headPlayed = made.music.sent.slice(from).map((sent) => sent.slice(2));
+  await pressed($('[data-head-more]'));
+  out.more = [$('#item-sheet').open, all('[data-item-actions] button').map((button) => words(button))];
+  $('#item-sheet').close();
+  await pressed($('[data-page-items] [data-item]'));
+  out.track = [$('#item-sheet').open, all('[data-item-actions] button').map((button) => words(button)), focus()];
+  from = made.music.sent.length;
+  await pressed($('[data-item-actions] [data-item-action="from"]'));
+  out.from = [$('#item-sheet').open, made.music.sent.slice(from).map((sent) => sent.slice(2))];
+  // The header's artist opens its page again, over the single.
+  await pressed($('[data-head-artist]'));
+  out.again = [words($('[data-page-back-label]')), head()[1]];
+  // Home on the tab shown keeps its pages.
+  out.homeKey = [await p.key('Home', $('[data-tab="search"]')), p.shown($('[data-page]')), head()[1]];
+  // Back, page by page, returns the focus to what opened the page left.
+  await pressed($('[data-page-back]'));
+  out.backToSingle = [words($('[data-page-back-label]')), head()[1], focus()];
+  await pressed($('[data-page-back]'));
+  out.backToArtist = [words($('[data-page-back-label]')), head()[1], focus()];
+  await pressed($('[data-page-back]'));
+  out.backToSearch = [p.shown($('#library-panel-search')), p.shown($('[data-page]')), $('[data-query]').value,
+    all('[data-results] [data-item]').length > 0, focus()];
+  // The tab shown, chosen again, leaves a page for its own list.
+  await pressed(all('[data-page-sections] [data-item]')[0] || artist);
+  $('[data-tab="search"]').click();
+  await time.tick(100);
+  out.home = [p.shown($('#library-panel-search')), p.shown($('[data-page]'))];
 }
 
 // The group sheet: who joined, who could not and why, who was asked; leave and end.
@@ -565,7 +628,7 @@ async function sideways(out) {
 
 (async () => {
   const report = {};
-  for (const [name, run] of Object.entries({rooms, modes, face, alone, watch, locks, library, browse, group, covers, music, inputs, signal,
+  for (const [name, run] of Object.entries({rooms, modes, face, alone, watch, locks, library, browse, pages, group, covers, music, inputs, signal,
     sideways})) {
     report[name] = {};
     // A scenario that throws says where, and the rest still run.

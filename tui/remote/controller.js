@@ -93,7 +93,8 @@ function create(options) {
   // speakers ticked in the group sheet, and when the last key was typed
   // into the library's search field (null: the last was not).
   const listen = session.listen || null;
-  const music = { picked: new Set(), typed: null, running: false };
+  // openedFrom: what opened each of a library tab's pages (by hit key, at the depth it opened from), for Back.
+  const music = { picked: new Set(), typed: null, running: false, openedFrom: {} };
   const timers = { toast: 0, flash: {}, repeat: null, tick: 0 };
   let frame = null;
   let size = { width: 80, height: 24 };
@@ -993,21 +994,33 @@ function create(options) {
         player.setSource(hit.value);
         break;
       case "music-back":
-        player.back();
+        pageBack();
         break;
       case "music-more":
         player.more();
         break;
       case "music-item":
-        // A folder only opens; anything that plays offers how.
-        if (hit.item.opens && !hit.item.plays) player.open(hit.item);
-        else return openSheet("music-item", hit.item.name, { item: hit.item });
+        // A folder, album, artist or playlist opens; a track offers how to play it.
+        if (hit.item.opens) openPage(() => player.open(hit.item), hit.key);
+        else return openSheet("music-item", hit.item.name, { item: hit.item, from: hit.key });
+        break;
+      case "music-section":
+        openPage(() => player.openSection(hit.value), hit.key);
+        break;
+      case "music-artist":
+        openPage(() => player.open(hit.item), hit.key);
+        break;
+      case "music-head":
+        if (hit.disabled) return;
+        if (hit.action === "more") return openSheet("music-item", hit.item.name, { item: hit.item, from: hit.key });
+        player.act(hit.item, hit.action);
         break;
       case "music-action": {
-        const item = ui.overlay && ui.overlay.item;
+        const item = ui.overlay && ui.overlay.item, from = ui.overlay && ui.overlay.from;
         if (hit.disabled || !item) return;
         closeSheet();
-        player.act(item, hit.action);
+        if (hit.action === "open" || hit.action.startsWith("go:")) openPage(() => player.act(item, hit.action), from);
+        else player.act(item, hit.action);
         break;
       }
       case "music-pick":
@@ -1300,9 +1313,35 @@ function create(options) {
     }
   }
 
+  // A page opened on the library's tab shown: the focus to its Back, and
+  // what opened it kept for Back.
+  function openPage(open, from) {
+    const library = listen.music.library();
+    if (library) {
+      const depth = library.page ? library.page.depth : 0;
+      const opener = (music.openedFrom[library.tab] || []).slice(0, depth);
+      opener[depth] = from || null;
+      music.openedFrom[library.tab] = opener;
+    }
+    open();
+    Object.assign(ui, { focus: "music-back", revealFocus: true });
+  }
+
+  // Back a page, and the focus to what opened the one left (else its Back,
+  // or the tab when it has none: Browse's own list).
+  function pageBack() {
+    const library = listen.music.library();
+    const depth = library && library.page ? library.page.depth : 0;
+    if (!depth || !listen.music.back()) return;
+    const opener = music.openedFrom[library.tab] || [];
+    music.openedFrom[library.tab] = opener.slice(0, depth - 1);
+    const shown = listen.music.library().page;
+    Object.assign(ui, { focus: opener[depth - 1] || (shown && shown.back ? "music-back" : "music-tab:" + library.tab), revealFocus: true });
+  }
+
   // The library, the group sheet and Listen's Info, as Listen's controls:
   // the arrows choose a control (← and → step a level or a volume), Enter or
-  // Space presses it, Backspace goes back a folder and / goes to the
+  // Space presses it, Backspace goes back a page and / goes to the
   // search. Esc clears a search typed, else closes the sheet.
   function listenSheetKey(ch, event) {
     const name = event.name;
@@ -1330,7 +1369,7 @@ function create(options) {
       if (frame.focusables.some((entry) => entry.key === "music-search")) Object.assign(ui, { focus: "music-search", focusVisible: true, revealFocus: true });
       return changed();
     }
-    if (name === "backspace") return player.back();
+    if (name === "backspace") return pageBack();
   }
 
   function remoteKey(ch, key) {

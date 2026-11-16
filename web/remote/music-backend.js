@@ -13,8 +13,9 @@
  *   overview()                          GET /api/v1/music
  *   search(q, kind, source)             GET …/search
  *   browse(ref, offset, limit)          GET …/browse (ref null: the roots)
+ *   details(ref)                        GET …/item: an album's, artist's or playlist's page
  *   queue(speaker, offset, limit)       GET …/<speaker>/queue
- *   play(speaker, ref, option)          POST …/<speaker>/play
+ *   play(speaker, ref, option, extra)   POST …/<speaker>/play (extra: {start} or {shuffle})
  *   transport(speaker, action, value)   POST …/<speaker>/transport
  *   volume(speaker, level, group)       POST …/<speaker>/volume
  *   group(speaker, members), ungroup(speaker)
@@ -98,8 +99,9 @@
   GatewayMusic.prototype.queue = function (speaker, offset, limit) {
     return this.read("/" + encodeURIComponent(speaker) + "/queue" + query({ offset: offset, limit: limit }));
   };
-  GatewayMusic.prototype.play = function (speaker, ref, option) {
-    return this.command(encodeURIComponent(speaker) + "/play", { ref: ref, option: option });
+  GatewayMusic.prototype.details = function (ref) { return this.read("/item" + query({ ref: ref }), SLOW_MS); };
+  GatewayMusic.prototype.play = function (speaker, ref, option, extra) {
+    return this.command(encodeURIComponent(speaker) + "/play", Object.assign({ ref: ref, option: option }, extra));
   };
   GatewayMusic.prototype.transport = function (speaker, action, value) {
     return this.command(encodeURIComponent(speaker) + "/transport", value === undefined ? { action: action } : { action: action, value: value });
@@ -200,13 +202,17 @@
   const LIBRARY = "filesystem_local--flac";
   const TIDAL = "tidal--mock";
   const ARTISTS = [
-    ["library", "1", "The Lanterns"], ["library", "2", "Mira Okafor"], ["library", "3", "Northbound Quartet"], ["tidal", "900", "Juniper Vale"]
+    ["library", "1", "The Lanterns"], ["library", "2", "Mira Okafor"], ["library", "3", "Northbound Quartet"], ["tidal", "900", "Juniper Vale"],
+    ["tidal", "910", "Saltmarsh"]
   ];
+  // An album's source, ID, name, artist, year, tracks and type (an album unless named).
   const ALBUMS = [
     ["library", "10", "Harbour Lights", "1", 2019, [["Low Tide", 221], ["Harbour Lights", 245], ["Signal Fires", 192], ["Drift", 320]]],
     ["library", "20", "Paper Moons", "2", 2021, [["Paper Moons", 235], ["Glasshouse", 252], ["Undertow", 201]]],
     ["library", "30", "Slow Rivers", "3", 2016, [["Slow Rivers", 362], ["Rain on Tin", 284], ["Evening Train", 310]]],
-    ["tidal", "901", "Overture", "900", 2023, [["Overture", 178], ["Wide Awake", 213], ["Northern Lights", 240]]]
+    ["tidal", "901", "Overture", "900", 2023, [["Overture", 178], ["Wide Awake", 213], ["Northern Lights", 240]]],
+    ["tidal", "902", "Wide Awake", "900", 2024, [["Wide Awake (Edit)", 190]], "single"],
+    ["tidal", "903", "Tideline", "910", 2022, [["Tideline", 205], ["Brackish", 231]]]
   ];
   const PLAYLISTS = [["library", "1", "Kitchen Radio", ["101", "201", "302", "103"]], ["tidal", "950", "Sunday Morning", ["9011", "202", "9013"]]];
 
@@ -214,25 +220,27 @@
     const items = {};
     const provider = (source) => (source === "tidal" ? TIDAL : "library");
     const base = (source) => (source === "tidal" ? { source: "tidal" } : { source: "library" });
-    const artistName = {};
+    // An artist as an item names it: {ref, name}.
+    const artistOf = {};
     ARTISTS.forEach(([source, id, name]) => {
-      artistName[id] = name;
-      items[provider(source) + "://artist/" + id] = Object.assign({ ref: provider(source) + "://artist/" + id, kind: "artist", name: name,
-        artists: [], album: null, year: null, duration: null, art: null }, base(source));
+      const ref = provider(source) + "://artist/" + id;
+      artistOf[id] = { ref: ref, name: name };
+      items[ref] = Object.assign({ ref: ref, kind: "artist", name: name, artists: [], album: null, year: null, duration: null, art: null },
+        base(source));
     });
     const tracks = {};
-    ALBUMS.forEach(([source, id, name, artist, year, list]) => {
+    ALBUMS.forEach(([source, id, name, artist, year, list, type]) => {
       const album = provider(source) + "://album/" + id;
-      items[album] = Object.assign({ ref: album, kind: "album", name: name, artists: [artistName[artist]], album: null, year: year,
-        duration: list.reduce((sum, track) => sum + track[1], 0), art: null, artist: provider(source) + "://artist/" + artist }, base(source));
+      items[album] = Object.assign({ ref: album, kind: "album", name: name, artists: [artistOf[artist]], album: null, year: year,
+        duration: null, art: null, type: type || "album", artist: artistOf[artist].ref }, base(source));
       items[album].tracks = list.map(([title, seconds], index) => {
         const track = String(Number(id) * 10 + index + 1);
         const ref = provider(source) + "://track/" + track;
-        tracks[track] = items[ref] = Object.assign({ ref: ref, kind: "track", name: title, artists: [artistName[artist]], album: name,
-          year: year, duration: seconds, art: null }, base(source));
+        tracks[track] = items[ref] = Object.assign({ ref: ref, kind: "track", name: title, artists: [artistOf[artist]],
+          album: { ref: album, name: name }, year: year, duration: seconds, art: null, number: index + 1, disc: 1 }, base(source));
         // A library's files, as Browse finds them.
         if (source === "library") {
-          const file = LIBRARY + "://track/" + artistName[artist] + "/" + name + "/" + String(index + 1).padStart(2, "0") + " " + title + ".flac";
+          const file = LIBRARY + "://track/" + artistOf[artist].name + "/" + name + "/" + String(index + 1).padStart(2, "0") + " " + title + ".flac";
           items[file] = Object.assign({}, items[ref], { ref: file, library: "NAS", file: true });
         }
         return ref;
@@ -241,7 +249,7 @@
     PLAYLISTS.forEach(([source, id, name, list]) => {
       const ref = provider(source) + "://playlist/" + id;
       items[ref] = Object.assign({ ref: ref, kind: "playlist", name: name, artists: [], album: null, year: null, duration: null, art: null,
-        tracks: list.map((track) => tracks[track].ref) }, base(source));
+        owner: source === "tidal" ? "TIDAL" : null, tracks: list.map((track) => tracks[track].ref) }, base(source));
     });
     return items;
   }
@@ -321,7 +329,10 @@
     const track = queue.current !== null && this.items[queue.items[queue.current]];
     if (track && queue.state !== "idle") {
       view.now_playing = { duration: track.duration, elapsed: Math.round(queue.elapsed), at: queue.at };
-      if (!this.guest) Object.assign(view.now_playing, { title: track.name, artist: track.artists.join(", "), album: track.album, art: null });
+      if (!this.guest) {
+        Object.assign(view.now_playing, { title: track.name, artist: track.artists.map((artist) => artist.name).join(", "),
+          album: track.album.name, art: null });
+      }
     }
     return view;
   };
@@ -375,7 +386,12 @@
     const out = { ref: item.ref, kind: item.kind, name: item.name, source: item.source };
     if (item.library) out.library = item.library;
     if (item.kind === "folder") return out;
-    return Object.assign(out, { artists: item.artists.slice(), album: item.album, year: item.year, duration: item.duration, art: item.art });
+    Object.assign(out, { artists: item.artists.map((artist) => Object.assign({}, artist)), album: item.album ? Object.assign({}, item.album) : null,
+      year: item.year, duration: item.duration, art: item.art });
+    if (item.kind === "track") Object.assign(out, { number: item.number, disc: item.disc });
+    if (item.kind === "album") out.type = item.type;
+    if (item.kind === "playlist") out.owner = item.owner;
+    return out;
   };
 
   MockMusic.prototype.search = function (q, kind, source) {
@@ -388,7 +404,7 @@
       const answer = { query: words, kind: kind || null, source: source || null, artists: [], albums: [], tracks: [], playlists: [] };
       Object.keys(this.items).map((ref) => this.items[ref]).forEach((item) => {
         if (item.file || !this.visible(item) || (kind && item.kind !== kind) || (source && item.source !== source)) return;
-        const text = [item.name].concat(item.artists || [], item.album || []).join(" ").toLowerCase();
+        const text = [item.name].concat((item.artists || []).map((artist) => artist.name), item.album ? item.album.name : []).join(" ").toLowerCase();
         const list = answer[item.kind + "s"];
         if (list && text.includes(words) && list.length < 25) list.push(this.entry(item));
       });
@@ -439,6 +455,30 @@
     });
   };
 
+  // An album's, artist's or playlist's page: its entry, and an artist's
+  // top tracks, its albums by type and the other artists of its source.
+  MockMusic.prototype.details = function (ref) {
+    return this.answer(() => {
+      this.ready(true);
+      const item = this.items[ref];
+      if (!item || !this.visible(item) || !["album", "artist", "playlist"].includes(item.kind)) throw problem("invalid_query", 400);
+      const answer = { ref: ref, item: this.entry(item), sections: [] };
+      if (item.kind !== "artist") return answer;
+      const all = Object.keys(this.items).map((key) => this.items[key]);
+      const albums = all.filter((entry) => entry.kind === "album" && entry.artist === ref).sort((a, b) => b.year - a.year);
+      const of = (types) => albums.filter((album) => types.includes(album.type)).map((album) => this.entry(album));
+      answer.sections = [
+        { id: "tracks", items: this.tracksOf(ref).slice(0, 10).map((track) => this.entry(this.items[track])), failed: false },
+        { id: "albums", items: albums.filter((album) => !["single", "ep", "compilation"].includes(album.type)).map((album) => this.entry(album)), failed: false },
+        { id: "singles", items: of(["single", "ep"]), failed: false },
+        { id: "compilations", items: of(["compilation"]), failed: false },
+        { id: "artists", items: all.filter((entry) => entry.kind === "artist" && entry.source === item.source && entry.ref !== ref)
+          .map((entry) => this.entry(entry)), failed: false }
+      ];
+      return answer;
+    });
+  };
+
   MockMusic.prototype.queue = function (speaker, offset, limit) {
     return this.answer(() => {
       this.ready(true);
@@ -463,11 +503,21 @@
     return item.tracks.slice();
   };
 
-  MockMusic.prototype.play = function (speaker, ref, option) {
+  MockMusic.prototype.play = function (speaker, ref, option, extra) {
     const leader = this.players[speaker] ? this.leaderOf(speaker) : speaker;
-    return this.command(speaker, this.players[speaker] ? this.involved(speaker) : [], ["play", speaker, ref, option], () => {
-      const queue = this.queueOf(speaker), tracks = this.tracksOf(ref);
-      const at = this.now() / 1000;
+    const record = ["play", speaker, ref, option].concat(extra ? [extra] : []);
+    return this.command(speaker, this.players[speaker] ? this.involved(speaker) : [], record, () => {
+      const queue = this.queueOf(speaker), at = this.now() / 1000;
+      let tracks = this.tracksOf(ref);
+      // From one of its tracks (none, if it is not one), or shuffled, as the gateway plays it.
+      if (extra && extra.start) {
+        const at = tracks.indexOf(extra.start);
+        tracks = at < 0 ? [] : tracks.slice(at);
+      }
+      if (extra && extra.shuffle) {
+        tracks = tracks.slice().reverse();
+        queue.shuffle = true;
+      }
       if (option === "replace" || queue.current === null) Object.assign(queue, { items: tracks, current: 0, elapsed: 0, at: at, state: "playing" });
       else if (option === "next") queue.items.splice(queue.current + 1, 0, ...tracks);
       else if (option === "add") queue.items.push(...tracks);

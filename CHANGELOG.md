@@ -48,8 +48,10 @@ rollback. The unified deployment workflow uses a separate committed private site
     timing without PTP, and backups.
 - Music, the gateway's half: on a host with `music:`, the gateway drives
   Music Assistant for thermite's pages at `/api/v1/music` (the speakers and
-  what they play, search, browse, queues, play, transport, volume,
-  grouping, cover art and an event stream), with a device command's locks
+  what they play, search, browse, an album's, artist's or playlist's page,
+  queues, play (shuffled, or an album or playlist from one of its tracks),
+  transport, volume, grouping, cover art and an event stream), with a
+  device command's locks
   and trail for each speaker and its group. The policy worker claims Music
   Assistant for thermite, renews its token and keeps its providers and
   libraries; an Admin signs it into TIDAL from the gateway or with
@@ -66,7 +68,12 @@ rollback. The unified deployment workflow uses a separate committed private site
 - Music, on Listen: TIDAL and the NAS libraries on the Sonos and WiiM
   speakers, alone or grouped: search, browse and the queue (a sheet, or
   the right column on a wide screen), with Play now, Play next and Add to
-  queue; transport, position and volume; grouping that says why a speaker
+  queue. An artist, album or playlist opens as a page over the tab it was
+  found on, and Back returns there: an artist's top tracks, albums, EPs
+  and singles, compilations and similar artists; an album's or playlist's
+  tracks, an album's by number, with Play, Shuffle and Play from here; a
+  track leads to its album and its artists. Transport, position and
+  volume; grouping that says why a speaker
   could not join, and which Music Assistant was asked to group but has not
   confirmed; and an Admin's TIDAL sign-in. A Guest kept from free text
   sees no titles, covers or library. Every screen of the terminal remote

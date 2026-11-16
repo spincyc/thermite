@@ -29,10 +29,19 @@
  * cycleRepeat(), setVolume(v, final), stepVolume(±1), setGroupVolume(v,
  * final) and stepGroupVolume(±1) send its commands, each shown until the
  * speaker reads it back or HOLD_MS pass (final: a slide let go at v).
- * library() is the Search, Browse or Queue tab (setTab), with setQuery (sent
- * after SEARCH_MS), setKind, setSource, open, back, more and play(item,
- * option): "replace" (Play now), "next" or "add". grouping() is the chosen
- * speaker's group: join(ids), leave(id).
+ * library() is the Search, Browse or Queue tab (setTab; the tab shown, again,
+ * goes home to its own list), with setQuery (sent after SEARCH_MS), setKind
+ * and setSource. Each tab keeps its own pages: open(item) opens a folder,
+ * album, artist or playlist over it (library().page, drawn from what the
+ * entry said until the gateway's details answer), openSection(id) an
+ * artist's section whole, back() goes back a page and home() to the tab's
+ * list (each false when it shows already), more() reads the next page of
+ * items. actions(item) are what an
+ * entry offers (Play from here on an album's or playlist's page, Play now,
+ * Play next, Add to queue, Open, Go to its album or artists) and act(item,
+ * id) does one; play(item, option, extra) plays: "replace" (Play now),
+ * "next" or "add", extra {start, shuffle} with "replace". grouping() is
+ * the chosen speaker's group: join(ids), leave(id).
  * tidal() is an Admin's TIDAL sign-in: tidalStart(), tidalCancel(). A
  * speaker whose room is locked refuses its commands here with a toast, as
  * Audio's; the gateway checks every command anyway.
@@ -51,6 +60,13 @@
   const PAGE = 100;
   // Results of each kind shown while searching every kind.
   const SECTION = 5;
+  // An artist page's sections, as the gateway lists them: each one's title
+  // and how many of it show before All.
+  const SECTIONS = { tracks: ["Top tracks", 5], albums: ["Albums", 4], singles: ["EPs and singles", 4],
+    compilations: ["Compilations", 4], artists: ["Similar artists", 4] };
+  const ALBUM_TYPE = { album: "Album", single: "Single", ep: "EP", compilation: "Compilation", live: "Live album", soundtrack: "Soundtrack" };
+  // What opens as a page: a folder, or an album, artist or playlist with its own.
+  const OPENS = ["folder", "album", "artist", "playlist"];
   const VOLUME_STEP = 2;
   const SEEK_STEP = 10;
   const TABS = ["search", "browse", "queue"];
@@ -67,6 +83,12 @@
   function memoryStore() {
     const memory = {};
     return { get: (key) => (key in memory ? memory[key] : null), set: (key, value) => { memory[key] = value; } };
+  }
+
+  // A length as a page's header says it: 48 min, or 1 hr 12 min.
+  function span(seconds) {
+    const minutes = Math.max(1, Math.round(seconds / 60));
+    return minutes < 60 ? minutes + " min" : Math.floor(minutes / 60) + " hr" + (minutes % 60 ? " " + minutes % 60 + " min" : "");
   }
 
   // 3:07, or 1:02:07.
@@ -92,19 +114,27 @@
     return said({ code: code, message: "Music Assistant is not available." });
   }
 
-  // A search, browse or queue entry as a page lists it; a library's root
-  // folder, named as its library, names it once.
+  // A search, browse, page or queue entry as a page lists it; a library's
+  // root folder, named as its library, names it once. links are where it
+  // leads: a track's album, and a track's or an album's artists.
   function entry(item, extra) {
-    const artists = (item.artists || []).join(", ");
+    const named = (item.artists || []).filter((artist) => artist && artist.name);
+    const artists = named.map((artist) => artist.name).join(", ");
+    const album = item.album && item.album.name || null;
     const source = item.source === "tidal" ? "TIDAL" : item.library || (item.source === "library" ? "Library" : null);
-    const line = item.kind === "track" ? [artists, item.album].filter(Boolean).join(" · ")
-      : item.kind === "album" ? [artists, item.year].filter(Boolean).join(" · ") : KIND_LABEL[item.kind] || "";
+    const type = item.kind === "album" && item.type !== "album" ? ALBUM_TYPE[item.type] : null;
+    const line = item.kind === "track" ? [artists, album].filter(Boolean).join(" · ")
+      : item.kind === "album" ? [artists, type, item.year].filter(Boolean).join(" · ")
+        : item.kind === "playlist" ? [KIND_LABEL.playlist, item.owner].filter(Boolean).join(" · ") : KIND_LABEL[item.kind] || "";
+    const links = (item.kind === "track" && item.album && item.album.ref ? [{ ref: item.album.ref, kind: "album", name: album, label: "Go to album" }] : [])
+      .concat(named.filter((artist) => artist.ref).slice(0, 3)
+        .map((artist) => ({ ref: artist.ref, kind: "artist", name: artist.name, label: "Go to " + artist.name })));
     return Object.assign({
       key: (extra && extra.index != null ? extra.index + " " : "") + (item.ref || ""), ref: item.ref || null, kind: item.kind,
       name: item.name || "Untitled", line: line, source: source === item.name ? null : source,
       duration: item.duration ? clock(item.duration) : null, art: item.art || null,
-      opens: Boolean(item.ref) && ["folder", "album", "artist", "playlist"].includes(item.kind),
-      plays: Boolean(item.ref) && item.kind !== "folder"
+      opens: Boolean(item.ref) && OPENS.includes(item.kind), plays: Boolean(item.ref) && item.kind !== "folder",
+      number: item.kind === "track" && Number.isInteger(item.number) ? item.number : null, links: links, raw: item
     }, extra || {});
   }
 
@@ -140,7 +170,8 @@
     let blind = false;
     let tab = TABS.includes(store.get("music.tab")) ? store.get("music.tab") : "search";
     const search = { query: "", kind: "", source: "", state: "idle", answer: null, error: null, sequence: 0, timer: 0 };
-    const browse = { stack: [], sequence: 0 };
+    // Each tab's pages, opened on top of its own list (Browse's is its roots, a page too).
+    const pages = { search: [], browse: [], queue: [] };
     const queue = { speaker: null, owner: null, items: [], total: 0, current: null, state: "idle", error: null, sequence: 0, timer: 0 };
     const grouping = { pending: false, result: null };
     const tidal = { flow: null, pending: false, timer: 0, checked: false };
@@ -676,9 +707,11 @@
       resumed = life;
       const unfinished = (state) => (fresh ? state !== "done" : state === "idle" || state === "failed");
       if (search.query.trim() && !search.timer && unfinished(search.state)) runSearch();
-      const top = browse.stack[browse.stack.length - 1];
-      if (!top && tab === "browse") openRoot();
-      else if (top && unfinished(top.state)) loadBrowse(top.items.length);
+      const opened = tab === "browse" && !pages.browse.length ? (openRoot(), pages.browse[0]) : null;
+      TABS.forEach((name) => {
+        const shown = pages[name][pages[name].length - 1];
+        if (shown && shown !== opened && unfinished(shown.state)) load(shown, shown.kind === "artist" ? 0 : shown.items.length);
+      });
       if (tab === "queue" && (fresh || unfinished(queue.state) || queue.speaker !== current)) loadQueue(0);
     }
 
@@ -696,11 +729,16 @@
       return false;
     }
 
+    // Another tab; the one shown again goes back to its own list.
     function setTab(next) {
-      if (!TABS.includes(next) || next === tab) return;
+      if (!TABS.includes(next)) return;
+      if (next === tab) {
+        home();
+        return;
+      }
       tab = next;
       store.set("music.tab", next);
-      if (tab === "browse" && !browse.stack.length) openRoot();
+      if (tab === "browse" && !pages.browse.length) openRoot();
       if (tab === "queue") loadQueue(0);
       changed();
     }
@@ -779,66 +817,164 @@
       };
     }
 
-    // A folder (or album, artist, playlist) on the browse stack; ref null is the roots.
-    function folder(ref, name) {
-      return { ref: ref, name: name, items: [], total: 0, state: "idle", error: null };
+    // ---- pages ------------------------------------------------------------------
+
+    // A page a tab shows on top of its own list: a folder (ref null: the
+    // roots), an album, artist or playlist, or one of an artist's sections in
+    // full. from is the entry it was opened from, its header until the
+    // gateway's own answers.
+    function page(ref, kind, name, from) {
+      return { ref: ref, kind: kind, name: name, from: from || null, item: null, sections: null, items: [], total: 0,
+        state: "idle", error: null, sequence: 0 };
+    }
+
+    function shownPage() {
+      const list = pages[tab];
+      return list[list.length - 1] || null;
+    }
+
+    // The pages under which a tab's own list shows: Browse's roots stay.
+    function floor(name) {
+      return name === "browse" ? 1 : 0;
     }
 
     function openRoot() {
-      browse.stack = [folder(null, "Library")];
-      loadBrowse(0);
+      pages.browse = [page(null, "folder", "Library")];
+      return load(pages.browse[0], 0);
     }
 
-    function loadBrowse(offset) {
-      const top = browse.stack[browse.stack.length - 1];
-      if (!top || blindNow()) return Promise.resolve();
-      const sequence = ++browse.sequence, started = life;
-      top.state = "reading";
-      top.error = null;
+    // A page's reads, from offset on: a folder's items; an album's or a
+    // playlist's tracks, and its own entry beside them (the tracks stand
+    // without it); an artist's entry and sections, all or nothing.
+    function load(target, offset) {
+      if (!target || target.kind === "section" || blindNow()) return Promise.resolve();
+      const sequence = ++target.sequence, started = life;
+      const current = () => sequence === target.sequence && started === life;
+      target.state = "reading";
+      target.error = null;
       changed();
-      return Promise.resolve(backend.browse(top.ref, offset, PAGE)).then((answer) => {
-        if (sequence !== browse.sequence || started !== life) return;
-        top.items = offset ? top.items.concat(answer.items || []) : answer.items || [];
-        top.total = Number.isInteger(answer.total) ? answer.total : top.items.length;
-        top.state = "done";
+      const reads = [];
+      if (target.kind !== "artist") {
+        reads.push(Promise.resolve(backend.browse(target.ref, offset, PAGE)).then((answer) => {
+          if (!current()) return;
+          target.items = offset ? target.items.concat(answer.items || []) : answer.items || [];
+          target.total = Number.isInteger(answer.total) ? answer.total : target.items.length;
+        }));
+      }
+      if (target.kind !== "folder" && !offset) {
+        reads.push(Promise.resolve(backend.details(target.ref)).then((answer) => {
+          if (!current()) return;
+          target.item = answer.item || null;
+          target.sections = answer.sections || [];
+        }, (error) => {
+          if (target.kind === "artist" || error && error.code === "login_required") throw error;
+        }));
+      }
+      return Promise.all(reads).then(() => {
+        if (!current()) return;
+        target.state = "done";
         changed();
       }, (error) => {
-        if (sequence !== browse.sequence || started !== life) return;
+        if (!current()) return;
         refused(error);
-        top.state = "failed";
-        top.error = said(error);
+        target.state = "failed";
+        target.error = said(error);
         changed();
       });
     }
 
+    // An entry (or a link, {ref, kind, name}) opened as a page on the tab shown.
     function open(item) {
-      if (!item || !item.ref || !["folder", "album", "artist", "playlist"].includes(item.kind)) return Promise.resolve();
-      if (tab !== "browse") {
-        tab = "browse";
-        store.set("music.tab", tab);
-        if (!browse.stack.length) browse.stack = [folder(null, "Library")];
-      }
-      browse.stack.push(folder(item.ref, item.name || "Untitled"));
-      return loadBrowse(0);
+      if (!item || !item.ref || !OPENS.includes(item.kind)) return Promise.resolve();
+      if (tab === "browse" && !pages.browse.length) pages.browse = [page(null, "folder", "Library")];
+      const next = page(item.ref, item.kind, item.name || "Untitled", item.kind === "folder" ? null : item.raw || item);
+      pages[tab].push(next);
+      return load(next, 0);
     }
 
-    function back() {
-      if (browse.stack.length <= 1) return;
-      browse.stack.pop();
-      browse.sequence += 1;
-      const top = browse.stack[browse.stack.length - 1];
-      if (top.state !== "done") loadBrowse(0);
+    // One of the artist page's sections in full.
+    function openSection(id) {
+      const artist = shownPage();
+      const section = artist && artist.kind === "artist" && (artist.sections || []).find((each) => each.id === id);
+      if (!section || !SECTIONS[id]) return;
+      const next = page(artist.ref, "section", SECTIONS[id][0]);
+      Object.assign(next, { items: section.items.slice(), total: section.items.length, state: "done" });
+      pages[tab].push(next);
       changed();
     }
 
-    function browseView() {
-      const top = browse.stack[browse.stack.length - 1];
-      if (!top) return { path: ["Library"], depth: 0, state: "idle", text: "", items: [], more: false };
+    // The page under, read again if it never finished; the queue, read
+    // again, as what played may have changed while a page covered it.
+    function uncover() {
+      const below = shownPage();
+      if (below && (below.state === "idle" || below.state === "failed")) load(below, 0);
+      if (tab === "queue" && !pages.queue.length) loadQueue(0);
+      changed();
+    }
+
+    // Back a page; false when the tab shows its own list.
+    function back() {
+      if (pages[tab].length <= floor(tab)) return false;
+      pages[tab].pop();
+      uncover();
+      return true;
+    }
+
+    // The tab's own list again; false when it shows already.
+    function home() {
+      if (pages[tab].length <= floor(tab)) return false;
+      pages[tab].splice(floor(tab));
+      uncover();
+      return true;
+    }
+
+    // An album's, artist's or playlist's header: its own entry (the
+    // gateway's, else the one it opened from), what it is, and its length
+    // once every track is read.
+    function header(target) {
+      const own = Object.assign({ name: target.name }, target.from, target.item, { ref: target.ref, kind: target.kind });
+      const item = entry(own, { here: true });
+      const tracks = target.kind !== "artist" && target.state === "done" ? target.total : null;
+      const length = tracks && target.items.length === tracks
+        ? target.items.reduce((sum, track) => sum + (Number(track.duration) || 0), 0) : 0;
+      const facts = target.kind === "album" ? [ALBUM_TYPE[own.type] || KIND_LABEL.album, own.year]
+        : target.kind === "playlist" ? [KIND_LABEL.playlist, own.owner] : [KIND_LABEL.artist];
+      if (tracks !== null) facts.push(tracks + (tracks === 1 ? " track" : " tracks"));
+      if (length) facts.push(span(length));
+      return { kind: target.kind, name: item.name, art: item.art, source: item.source, item: item,
+        artists: target.kind === "album" ? (own.artists || []).filter((artist) => artist && artist.name)
+          .map((artist) => ({ ref: artist.ref || null, kind: "artist", name: artist.name })) : [],
+        line: facts.filter(Boolean).join(" · ") };
+    }
+
+    // The page the tab shows, or null on its own list: what Back returns
+    // to, its header, an artist's sections (a few of each, All the rest),
+    // and its items, an album's numbered.
+    function pageView() {
+      const list = pages[tab], target = list[list.length - 1];
+      if (!target) return null;
+      const below = list[list.length - 2];
+      const context = target.kind === "album" || target.kind === "playlist" ? { ref: target.ref, kind: target.kind, name: target.name } : null;
+      const sections = target.kind !== "artist" ? [] : (target.sections || [])
+        .filter((section) => SECTIONS[section.id] && (section.items.length || section.failed)).map((section) => {
+          const [title, size] = SECTIONS[section.id];
+          return { id: section.id, title: title, total: section.items.length, more: section.items.length > size,
+            text: section.failed ? "Could not read " + title.toLowerCase() + "." : "",
+            items: section.items.slice(0, size).map((item, index) => entry(item, { index: index, context: { ref: target.ref, kind: "artist" } })) };
+        });
+      // An album's tracks say only who plays each.
+      const items = target.items.map((item, index) => entry(item, Object.assign({ index: index, context: context || { ref: target.ref, kind: target.kind } },
+        target.kind === "album" ? { line: (item.artists || []).map((artist) => artist && artist.name).filter(Boolean).join(", ") } : null)));
+      const empty = !items.length && !sections.some((section) => section.items.length);
       return {
-        path: browse.stack.map((level) => level.name), depth: browse.stack.length - 1, state: top.state,
-        text: top.state === "reading" && !top.items.length ? "Reading…" : top.state === "failed" ? top.error
-          : top.state === "done" && !top.items.length ? "Nothing here." : "",
-        items: top.items.map((item) => entry(item)), more: top.state === "done" && top.items.length < top.total, total: top.total
+        kind: target.kind, ref: target.ref, name: target.kind === "section" ? target.name : header(target).name,
+        back: below ? below.name : tab === "search" ? "Search" : tab === "queue" ? "Queue" : null, depth: list.length - floor(tab),
+        path: list.map((level) => level.name),
+        state: target.state, header: ["album", "artist", "playlist"].includes(target.kind) ? header(target) : null,
+        text: target.state === "reading" && empty ? "Reading…" : target.state === "failed" ? target.error
+          : target.state === "done" && empty ? "Nothing here." : "",
+        sections: sections, items: items, numbered: target.kind === "album",
+        more: target.kind !== "section" && target.state === "done" && target.items.length < target.total, total: target.total
       };
     }
 
@@ -870,7 +1006,7 @@
 
     // Read again shortly when it shows: a track began, or a command changed it.
     function refreshQueue() {
-      if (tab !== "queue" || queue.timer) return;
+      if (tab !== "queue" || pages.queue.length || queue.timer) return;
       queue.timer = later(() => { queue.timer = 0; loadQueue(0); }, QUEUE_MS);
     }
 
@@ -890,58 +1026,81 @@
     }
 
     function more() {
-      if (tab === "browse") {
-        const top = browse.stack[browse.stack.length - 1];
-        if (top && top.state === "done" && top.items.length < top.total) return loadBrowse(top.items.length);
+      const target = shownPage();
+      if (target) {
+        if (target.kind !== "section" && target.state === "done" && target.items.length < target.total) return load(target, target.items.length);
       } else if (tab === "queue" && queue.state === "done" && queue.items.length < queue.total) return loadQueue(queue.items.length);
       return Promise.resolve();
     }
 
+    // The tab shown: a page opened on it, else its own list (Search's or the
+    // Queue's; Browse's roots are a page).
     function libraryView() {
-      const shownTab = tab;
       if (!music || !music.available) return null;
-      if (blindNow()) return { tab: shownTab, tabs: tabs(), blind: BLIND };
-      return { tab: shownTab, tabs: tabs(), blind: null,
-        search: shownTab === "search" ? searchView() : null,
-        browse: shownTab === "browse" ? browseView() : null,
-        queue: shownTab === "queue" ? queueView() : null };
+      if (blindNow()) return { tab: tab, tabs: tabs(), blind: BLIND };
+      const shown = pageView();
+      return { tab: tab, tabs: tabs(), blind: null, page: shown,
+        search: tab === "search" && !shown ? searchView() : null,
+        queue: tab === "queue" && !shown ? queueView() : null };
     }
 
     function tabs() {
       return TABS.map((id) => ({ id: id, label: id[0].toUpperCase() + id.slice(1), current: id === tab }));
     }
 
-    // What an item offers: Open, and the three ways to play it.
+    // What an item offers: Open (one not shown already), Play from here (a
+    // track of the album or playlist shown), the three ways to play it (a
+    // page's own: Play next and Add to queue, its header plays it now), and
+    // where it leads but the page it is on.
     function actions(item) {
       const speaker = chosen();
+      const off = !speaker || !speaker.available;
       const list = [];
-      if (item && item.opens) list.push({ id: "open", label: "Open" });
-      if (item && item.plays) {
-        Object.keys(OPTIONS).forEach((option) => list.push({ id: option, label: OPTIONS[option],
-          disabled: !speaker || !speaker.available }));
+      if (!item) return list;
+      if (item.opens && !item.here) list.push({ id: "open", label: "Open" });
+      if (item.plays && item.kind === "track" && item.context && ["album", "playlist"].includes(item.context.kind)) {
+        list.push({ id: "from", label: "Play from here", disabled: off });
       }
+      if (item.plays) {
+        Object.keys(OPTIONS).filter((option) => !(item.here && option === "replace"))
+          .forEach((option) => list.push({ id: option, label: OPTIONS[option], disabled: off }));
+      }
+      (item.links || []).forEach((link, index) => {
+        if (!item.context || link.ref !== item.context.ref) list.push({ id: "go:" + index, label: link.label });
+      });
       return list;
     }
 
     function act(item, action) {
+      if (!item) return Promise.resolve();
       if (action === "open") return open(item);
+      if (action === "from" && item.context) return play(item.context, "replace", { start: item });
+      if (action === "shuffle") return play(item, "replace", { shuffle: true });
+      if (/^go:\d+$/.test(action)) return open((item.links || [])[Number(action.slice(3))]);
       return play(item, action);
     }
 
-    function play(item, option) {
+    // Play an item as option says; extra may start an album or a playlist at
+    // one of its tracks ({start: entry}) or shuffle it ({shuffle: true}).
+    function play(item, option, extra) {
       const speaker = chosen();
       if (!item || !item.ref || item.kind === "folder" || !OPTIONS[option]) return Promise.resolve();
       if (blocked(speaker)) return Promise.resolve();
       const name = item.name || "Untitled";
-      const words = option === "replace" ? "Playing " + name : option === "next" ? name + " plays next" : name + " added to the queue";
-      return Promise.resolve(backend.play(speaker.id, item.ref, option)).then((answer) => {
+      const start = extra && extra.start, shuffled = Boolean(extra && extra.shuffle);
+      const title = shuffled ? "Shuffle" : OPTIONS[option];
+      const words = start ? "Playing " + name + " from " + (start.name || "Untitled") : shuffled ? "Shuffling " + name
+        : option === "replace" ? "Playing " + name : option === "next" ? name + " plays next" : name + " added to the queue";
+      const sent = start ? backend.play(speaker.id, item.ref, option, { start: start.ref })
+        : shuffled ? backend.play(speaker.id, item.ref, option, { shuffle: true }) : backend.play(speaker.id, item.ref, option);
+      return Promise.resolve(sent).then((answer) => {
         const where = answer && answer.queue && answer.queue !== speaker.id ? " (" + nameOf(answer.queue) + "'s group)" : "";
         if (option === "replace") announce(nameOf(speaker.id) + ": " + words + where);
-        else toast(OPTIONS[option], words + " on " + nameOf(speaker.id) + where);
+        else toast(title, words + " on " + nameOf(speaker.id) + where);
         refreshQueue();
         return answer;
       }, (error) => {
-        toast(OPTIONS[option], refusedWith(error, membersOf(speaker)), "bad");
+        toast(title, refusedWith(error, membersOf(speaker)), "bad");
         return null;
       });
     }
@@ -1149,6 +1308,8 @@
       // A session started again hears nothing of the time between: it draws,
       // holds and sends afresh.
       pending = search.timer = queue.timer = tidal.timer = 0;
+      // A page whose answer is now dropped is read again when it shows.
+      TABS.forEach((name) => pages[name].forEach((each) => { if (each.state === "reading") each.state = "idle"; }));
       grouping.pending = false;
       tidal.pending = false;
       tidal.checked = false;
@@ -1188,7 +1349,9 @@
       setSource: setSource,
       searchNow: runNow,
       open: open,
+      openSection: openSection,
       back: back,
+      home: home,
       more: more,
       actions: actions,
       act: act,

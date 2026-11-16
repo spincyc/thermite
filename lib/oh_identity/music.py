@@ -29,6 +29,7 @@ leader, and the answer says which speaker's queue it was.
 import math
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 import unicodedata
 import weakref
@@ -63,6 +64,16 @@ ART_SIZES = ("80", "160", "256", "512")
 #: A search's query length, and results per kind.
 QUERY_LENGTH = 100
 SEARCH_LIMIT = 25
+#: An album's types as Music Assistant names them; an artist's albums by the
+#: section of its page each is in (Music.details), the rest in "albums".
+ALBUM_TYPES = ("album", "single", "ep", "compilation", "live", "soundtrack")
+ALBUM_SECTIONS = {"single": "singles", "ep": "singles", "compilation": "compilations"}
+#: An artist page's sections, in order, and the items of each at most.
+ARTIST_SECTIONS = ("tracks", "albums", "singles", "compilations", "artists")
+SECTION_LIMIT = 500
+#: Music Assistant reads an artist page's sections make at once, for every
+#: page asked for together.
+DETAIL_READS = 8
 #: Items of one page of a browse or a queue, at most and by default.
 PAGE = 200
 DEFAULT_PAGE = 100
@@ -126,6 +137,16 @@ KEPT_FORMATS = frozenset("\u200c\u200d\u200e\u200f\u061c\u0600\u0601\u0602\u0603
 #: and the cancel tag.
 _FLAG = re.compile("(\U0001f3f4[\U000e0020-\U000e007e]+\U000e007f)")
 _music = weakref.WeakKeyDictionary()
+_pool, _pool_guard = None, threading.Lock()
+
+
+def _readers():
+    """The gateway's DETAIL_READS threads that read an artist page's sections."""
+    global _pool
+    with _pool_guard:
+        if _pool is None:
+            _pool = ThreadPoolExecutor(max_workers=DETAIL_READS, thread_name_prefix="thermite-music")
+        return _pool
 
 
 def shown(value):
@@ -453,14 +474,34 @@ class Music:
             return None
         entry = {"ref": ref, "kind": kind, "name": text(raw.get("name")), **sources.source(provider)}
         if kind != "folder":
-            artists = [name for artist in (raw.get("artists") or [])[:5] if isinstance(artist, dict)
-                       and (name := text(artist.get("name")))]
-            album = raw.get("album")
-            year = raw.get("year")
-            entry.update(artists=artists, album=text(album.get("name")) if isinstance(album, dict) else None,
+            album = raw.get("album") if kind == "track" and isinstance(raw.get("album"), dict) else None
+            # A track's year is its album's.
+            year = raw.get("year") if raw.get("year") is not None or album is None else album.get("year")
+            entry.update(artists=[found for artist in (raw.get("artists") or [])[:5]
+                                  if (found := self.link(artist, "artist", sources))],
+                         album=self.link(album, "album", sources),
                          year=year if type(year) is int and 0 < year < 10000 else None,
                          duration=number(raw.get("duration"), 10 ** 6), art=art(raw))
+            if kind == "track":
+                entry.update(number=number(raw.get("track_number"), 10 ** 4) if type(raw.get("track_number")) is int else None,
+                             disc=number(raw.get("disc_number"), 10 ** 4) if type(raw.get("disc_number")) is int else None)
+            elif kind == "album":
+                entry["type"] = raw.get("album_type") if raw.get("album_type") in ALBUM_TYPES else None
+            elif kind == "playlist":
+                entry["owner"] = text(raw.get("owner"))
         return entry
+
+    @staticmethod
+    def link(raw, kind, sources):
+        """{ref, name} of an item another names (a track's album, its artists),
+        its ref None when it is not one a client may open; None without a name."""
+        if not isinstance(raw, dict) or not (name := text(raw.get("name"))):
+            return None
+        try:
+            found = parse_ref(raw.get("uri"), sources)[1] == kind
+        except Problem:
+            found = False
+        return {"ref": raw["uri"] if found else None, "name": name}
 
     # ---- reads --------------------------------------------------------------
 
@@ -514,6 +555,50 @@ class Music:
             items = [entry for raw in (listed if isinstance(listed, list) else [])[:OFFSET]
                      if (entry := self.item(raw, sources))]
         return {"ref": ref, "offset": offset, "limit": limit, "total": len(items), "items": items[offset:offset + limit]}
+
+    def details(self, ref):
+        """An album's, artist's or playlist's own entry, as Music Assistant
+        has it now (a TIDAL item in its library may come back as the
+        library's), and an artist's sections: its top tracks, its albums by
+        their type, newest first, and artists like it. Each section is read
+        at once, of the provider the reference names; one that fails is
+        failed, empty, and the rest stand. An album's or a playlist's tracks
+        are browse's."""
+        sources = self.sources()
+        provider, kind, ident = parse_ref(ref, sources)
+        if kind in ("track", "folder"):
+            raise Problem("invalid_query")
+        own = {"item_id": ident, "provider_instance_id_or_domain": provider}
+        reads = {"tracks": ("music/artists/top_tracks", own), "albums": ("music/artists/artist_albums", own),
+                 "artists": ("music/artists/similar_artists", {**own, "limit": SEARCH_LIMIT})} if kind == "artist" else {}
+        pool = _readers()
+        later = {name: pool.submit(self.call, command, SLOW, **args) for name, (command, args) in reads.items()}
+        try:
+            entry = self.item(self.call("music/item_by_uri", SLOW, uri=ref), sources)
+        finally:
+            # Each section's items, or None when its read failed.
+            read = {}
+            for name, future in later.items():
+                try:
+                    found = future.result()
+                except Problem:
+                    read[name] = None
+                else:
+                    read[name] = [listed for raw in (found if isinstance(found, list) else [])[:SECTION_LIMIT]
+                                  if (listed := self.item(raw, sources))]
+        answer = {"ref": ref, "item": entry if entry and entry["kind"] == kind else None, "sections": []}
+        if kind != "artist":
+            return answer
+        sections = {"tracks": [each for each in read["tracks"] or () if each["kind"] == "track"],
+                    **{name: [] for name in ("albums", "singles", "compilations")},
+                    "artists": [each for each in read["artists"] or () if each["kind"] == "artist" and each["ref"] != ref]}
+        albums = [each for each in read["albums"] or () if each["kind"] == "album"]
+        for album in sorted(albums, key=lambda each: -(each["year"] or 0)):
+            sections[ALBUM_SECTIONS.get(album["type"], "albums")].append(album)
+        answer["sections"] = [{"id": name, "items": sections[name],
+                               "failed": read["albums" if name in ("singles", "compilations") else name] is None}
+                              for name in ARTIST_SECTIONS]
+        return answer
 
     def queue(self, speaker, offset, limit):
         self.known(speaker)
@@ -616,19 +701,27 @@ class Music:
             return player, speaker, player, [speaker]
         return player, leader, players[leader], members or [speaker]
 
-    def play(self, user, speaker, ref, option, *, origin=None):
+    def play(self, user, speaker, ref, option, *, start=None, shuffle=None, origin=None):
+        """Play ref as option says; replacing the queue, an album or a
+        playlist may start at one of its tracks, start, and anything may
+        play shuffled."""
         self.known(speaker)
-        if option not in OPTIONS:
+        if (option not in OPTIONS or shuffle is not None and type(shuffle) is not bool
+                or (start is not None or shuffle is not None) and option != "replace"):
             raise Problem("invalid_command")
         provider, kind, _ = parse_ref(ref)
-        if kind == "folder":
+        if kind == "folder" or start is not None and (kind not in ("album", "playlist") or parse_ref(start)[1] != "track"):
             raise Problem("invalid_ref")
+        extra = {**({"start_item": start} if start is not None else {}), **({"shuffle": shuffle} if shuffle is not None else {})}
 
         def plan(players):
             _, owner, lead, group = self.target(speaker, players)
-            return group, ("player_queues/play_media", {"queue_id": lead["player_id"], "media": ref, "option": option}), owner
+            return group, ("player_queues/play_media", {"queue_id": lead["player_id"], "media": ref, "option": option,
+                                                        **extra}), owner
         with self.record(user, origin, speaker, "play", option):
             parse_ref(ref, self.sources())
+            if start is not None:
+                parse_ref(start, self.sources())
             owner = self.guarded(user, "play", option, plan)
         return {"accepted": True, "speaker": speaker, "action": "play", "queue": owner}
 

@@ -70,9 +70,16 @@ libraries on the speakers, and Listen shows what it plays. The library
 (a sheet on a phone; beside the remote from 1200 pixels, where Info is then a
 tap on the Info button) has Search (all, or tracks, albums, artists or
 playlists; everywhere, in the libraries or on TIDAL), Browse (each library's
-folders and TIDAL's) and Queue (the chosen speaker's, or its group's); a tap
-offers Play now, which replaces the queue, Play next or Add to queue, and Open
-for an album, artist, playlist or folder. Group adds speakers to the chosen
+folders and TIDAL's) and Queue (the chosen speaker's, or its group's). A tap
+on a folder, album, artist or playlist opens its page over the tab, and Back
+(named for where it returns) goes back a page; the tab tapped again returns
+to its own list. An artist's page has its top tracks, albums, EPs and
+singles, compilations and similar artists, a few of each and All the rest;
+an album's or a playlist's has its tracks, an album's by number. Each has
+Play, Shuffle and More (Play next, Add to queue) in its header, and an
+album's artists open theirs. A tap on a track offers Play from here (on an
+album or playlist), Play now, which replaces the queue, Play next or Add to
+queue, and Go to its album or artists. Group adds speakers to the chosen
 one's group, removes them or ends it, and a group's volume shows under the
 speaker's; Sonos and WiiM speakers group only over AirPlay, and the sheet says
 which could not join and why, and which Music Assistant was asked to group

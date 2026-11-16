@@ -3,8 +3,9 @@
  * web/remote/listen-session.js gives them, drawn as the page's Listen
  * without covers. The speakers' bubbles; what the chosen one plays, where
  * it is in the track, its transport, the Group, Input and Library chips
- * and its volume as Watch's; in sheets the library (Search, Browse, Queue
- * and an Admin's TIDAL sign-in), an item's ways to play, the group, the
+ * and its volume as Watch's; in sheets the library (Search, Browse, Queue,
+ * the pages opened on them, and an Admin's TIDAL sign-in), an item's ways
+ * to play and where it leads, the group, the
  * inputs and a setting's choices; under Info the speaker's power, settings
  * and facts. view.js hands it its drawing kit (headings, rounded keys, the
  * meter) so a key here looks as Watch's; controller.js turns keys and
@@ -20,7 +21,7 @@ const SHORTCUTS = [
   [["←", "→"], "Step a volume, or move 10 s on the position"],
   [["Enter"], "Press it, open an item, or offer how to play it"],
   [["i"], "Info: the speaker's power, settings and facts"],
-  [["Backspace"], "Back a folder (Library)"],
+  [["Backspace"], "Back a page (Library)"],
   [["Esc"], "Clear the search, or close the sheet"]
 ];
 // What moves a speaker's group: a lock in the group holds these.
@@ -423,15 +424,8 @@ function librarySheet(g, w, ctx, kit) {
         y += 1;
       }
     });
-  } else if (library.browse) {
-    const browse = library.browse;
-    const x = kit.chip(g, ctx, 1, y, "‹ Back", { kind: "music-back", key: "music-back", focus: true, label: "Back a folder (Backspace)" },
-      browse.depth ? "key" : "key.off") + 1;
-    g.put(x, y, fit(browse.path.join(" › "), Math.max(4, w - x - 1)), "strong");
-    y += 1;
-    say(browse.text);
-    browse.items.forEach((item, index) => { y = itemRow(g, w, ctx, y, item, "browse:" + index); });
-    if (browse.more) { kit.chip(g, ctx, 1, y, "More", { kind: "music-more", key: "music-more", focus: true, label: "More of this folder" }, "key"); y += 1; }
+  } else if (library.page) {
+    y = pageBlock(g, w, ctx, kit, y, library.page);
   } else if (library.queue) {
     const queue = library.queue;
     if (queue.owner) say("The queue of " + queue.owner + "'s group");
@@ -442,25 +436,83 @@ function librarySheet(g, w, ctx, kit) {
   return y;
 }
 
-// An entry: its name and line, its source and length; a folder's arrow.
-function itemRow(g, w, ctx, y, item, id) {
+// A page: Back to what it opened from, and the title of one without a
+// header; an album's, artist's or playlist's header (its name, artists to
+// open, what it is, then Play, Shuffle and More); an artist's sections, a
+// few of each and All the rest; and its items, an album's by number.
+function pageBlock(g, w, ctx, kit, y, page) {
+  const music = ctx.listen.music;
+  const say = (text, style) => { if (text) y = kit.paragraph(g, 1, y, w - 2, text, style || "dim"); };
+  if (page.back) {
+    const back = "‹ " + fit(page.back, Math.max(4, Math.floor(w / 2) - 4));
+    const x = kit.chip(g, ctx, 1, y, back, { kind: "music-back", key: "music-back", focus: true, label: "Back to " + page.back + " (Backspace)" }, "key") + 1;
+    if (!page.header) g.put(x + 1, y, fit(page.name, Math.max(4, w - x - 2)), "strong");
+    y += 2;
+  }
+  const head = page.header;
+  if (head) {
+    g.put(1, y, fit(head.name, w - 2), "strong");
+    y += 1;
+    if (head.artists.length) {
+      let x = 1;
+      head.artists.forEach((artist, index) => {
+        if (index) x = g.put(x, y, ",", "dim");
+        x = artist.ref ? kit.chip(g, ctx, x, y, artist.name, { kind: "music-artist", item: artist, key: "music-artist:" + index, focus: true,
+          label: "Go to " + artist.name }, "link") : g.put(x + 1, y, artist.name, "base") + 1;
+      });
+      y += 1;
+    }
+    const line = [head.line, head.source].filter(Boolean).join(" · ");
+    if (line) g.put(1, y, fit(line, w - 2), "dim");
+    y += 2;
+    const plays = music.actions(head.item).some((action) => action.id === "next" && !action.disabled);
+    let x = 1;
+    [["replace", kit.GLYPHS.play + " Play", "Play "], ["shuffle", "⤮ Shuffle", "Shuffle "], ["more", "⋯ More", "More for "]].forEach(([action, text, said]) => {
+      const off = action !== "more" && !plays;
+      x = kit.chip(g, ctx, x, y, text, { kind: "music-head", action, item: head.item, key: "music-head:" + action, focus: true, disabled: off,
+        label: said + head.name }, off ? "key.off" : "key") + 1;
+    });
+    y += 2;
+  }
+  say(page.text);
+  page.sections.forEach((section) => {
+    y = kit.heading(g, y, section.title);
+    if (section.text) say(section.text, "alert");
+    section.items.forEach((item, index) => { y = itemRow(g, w, ctx, y, item, "section:" + section.id + ":" + index); });
+    if (section.more) {
+      const label = "All " + section.total + " " + section.title.toLowerCase();
+      kit.chip(g, ctx, 1, y, label, { kind: "music-section", value: section.id, key: "music-section:" + section.id, focus: true, label: label }, "key");
+      y += 1;
+    }
+    y += 1;
+  });
+  page.items.forEach((item, index) => { y = itemRow(g, w, ctx, y, item, "page:" + index, page.numbered); });
+  if (page.more) { kit.chip(g, ctx, 1, y, "More", { kind: "music-more", key: "music-more", focus: true, label: "More of " + page.name }, "key"); y += 1; }
+  return y;
+}
+
+// An entry: its name and line, its source and length; what opens, an
+// arrow; an album's track, its number first.
+function itemRow(g, w, ctx, y, item, id, numbered) {
   const key = "music-item:" + id;
   const focus = ctx.ui.focusVisible && ctx.ui.focus === key;
   const style = focus ? "row.focus" : item.current ? "row.current" : "row";
   g.fill(0, y, w, 1, style);
   if (item.current) g.put(0, y, "▎", "row.mark");
-  const right = [item.source, item.duration].filter(Boolean).join("  ") + (item.opens && !item.plays ? " ›" : "");
+  const right = [item.source, item.duration].filter(Boolean).join("  ") + (item.opens ? " ›" : "");
   const room = Math.max(4, w - 4 - length(right));
-  let at = g.put(2, y, fit(item.name, Math.min(room, length(item.name))), style + (item.current ? "+bold" : ""));
+  const from = numbered ? g.put(2, y, String(item.number || "").padStart(2) + "  ", style === "row" ? "dim" : style) : 2;
+  let at = g.put(from, y, fit(item.name, Math.max(2, Math.min(room - (from - 2), length(item.name)))), style + (item.current ? "+bold" : ""));
   if (item.line && room - (at - 2) > 6) g.put(at, y, fit(" · " + item.line, room - (at - 2)), style === "row" ? "dim" : style);
   if (right) g.put(w - 1 - length(right), y, right, style === "row" ? "dim" : style);
   g.hit(0, y, w, 1, { kind: "music-item", item, key, focus: true,
-    label: [item.name, item.current ? "playing now" : null, item.line, item.source, item.duration].filter(Boolean).join(", ")
-      + (item.plays ? "  (Enter: play)" : item.opens ? "  (Enter: open)" : "") });
+    label: [numbered && item.number ? "Track " + item.number : null, item.name, item.current ? "playing now" : null, item.line, item.source,
+      item.duration].filter(Boolean).join(", ") + (item.opens ? "  (Enter: open)" : item.plays ? "  (Enter: play)" : "") });
   return y + 1;
 }
 
-// The sheet an item opens: Open, Play now, Play next, Add to queue.
+// The sheet an item opens: Open, Play from here, Play now, Play next, Add
+// to queue, and where it leads (its album, its artists).
 function itemSheet(g, w, ctx, kit) {
   const music = ctx.listen.music;
   const item = ctx.ui.overlay.item;
@@ -469,7 +521,7 @@ function itemSheet(g, w, ctx, kit) {
   music.actions(item).forEach((action) => {
     const key = "music-action:" + action.id;
     kit.button(g, ctx, 1, y, action.label, key, { kind: "music-action", action: action.id, key, focus: true, disabled: action.disabled,
-      label: action.label + " " + item.name },
+      label: action.id.startsWith("go:") ? action.label : action.label + " " + item.name },
     action.disabled ? "key.off" : "key");
     y += 3;
   });

@@ -45,7 +45,7 @@ function clock() {
 function mock(time, settings = {}) {
   const backend = new MusicBackend.MockMusic({latency: 50, now: time.now, setTimeout: time.setTimeout, ...settings});
   backend.reads = [];
-  for (const name of ['overview', 'search', 'browse', 'queue', 'tidal']) {
+  for (const name of ['overview', 'search', 'browse', 'details', 'queue', 'tidal']) {
     const read = backend[name].bind(backend);
     backend[name] = (...args) => { backend.reads.push([name, ...args.map((value) => value === undefined ? null : value)]); return read(...args); };
   }
@@ -244,7 +244,7 @@ async function library(out) {
   // Browse: the roots, a folder at a time, and back.
   music.setTab('browse');
   await time.tick(100);
-  const browse = () => music.library().browse;
+  const browse = () => music.library().page;
   out.roots = [browse().path, names(browse().items), browse().items.map((item) => [item.source, item.line])];
   music.open(browse().items[0]); await time.tick(100);
   out.artists = names(browse().items);
@@ -515,14 +515,32 @@ async function resuming(out) {
   // A folder on its way.
   music.setTab('browse');
   await time.tick(100);
-  music.open(music.library().browse.items[0]);
+  music.open(music.library().page.items[0]);
   await time.tick(10);
-  out.folder = [music.library().browse.state];
+  out.folder = [music.library().page.state];
   music.stop();
   music.start();
   await time.tick(200);
-  const browse = music.library().browse;
+  const browse = music.library().page;
   out.folder.push(browse.path, browse.state, browse.items.length > 0);
+  // A page covered while it read, when the page sleeps: read again when Back shows it.
+  music.open(browse.items[0]);
+  await time.tick(10);
+  music.open({ref: 'library://artist/1', kind: 'artist', name: 'The Lanterns'});
+  music.stop();
+  music.start();
+  await time.tick(200);
+  music.back();
+  await time.tick(200);
+  out.covered = [music.library().page.path, music.library().page.state, music.library().page.items.length > 0];
+  music.stop();
+  // Started on Browse: its root is read once.
+  time = clock();
+  backend = mock(time);
+  music = session(time, backend, {store: {get: (key) => (key === 'music.tab' ? 'browse' : null), set() {}}});
+  music.start();
+  await time.tick(200);
+  out.root = [backend.reads.filter((read) => read[0] === 'browse'), music.library().page.state];
   music.stop();
   // A Guest refused, who signs in: the next visit, and access saying so, read again.
   time = clock();
@@ -555,7 +573,7 @@ async function resuming(out) {
   access.guest = false;
   access.tell('change');
   await time.tick(100);
-  out.told.push(music.library().blind, backend.reads.filter((read) => read[0] === 'browse').length, music.library().browse.state);
+  out.told.push(music.library().blind, backend.reads.filter((read) => read[0] === 'browse').length, music.library().page.state);
   music.stop();
   // The queue showing, kept from a Guest by access, then by the gateway: what Guests may see changes, or who is signed in.
   const queues = () => backend.reads.filter((read) => read[0] === 'queue').length;
@@ -598,7 +616,7 @@ async function resuming(out) {
   await time.tick(100);
   music.setTab('browse');
   await time.tick(100);
-  music.open(music.library().browse.items[0]);
+  music.open(music.library().page.items[0]);
   await time.tick(10);
   music.setTab('search');
   music.setQuery('lantern');
@@ -610,7 +628,7 @@ async function resuming(out) {
   await time.tick(200);
   out.streamed = [searches().length, music.library().search.state];
   music.setTab('browse');
-  out.streamed.push(music.library().browse.path, music.library().browse.state);
+  out.streamed.push(music.library().page.path, music.library().page.state);
   music.stop();
   // A Browse tab that never had a folder, the first overview failing.
   time = clock();
@@ -619,7 +637,7 @@ async function resuming(out) {
   failOnce(backend);
   music.start();
   await time.tick(200);
-  out.streamedRoot = [music.library().browse.path, music.library().browse.state];
+  out.streamedRoot = [music.library().page.path, music.library().page.state];
   music.stop();
   // Who is signed in changes before a page started again has its overview: the search waiting for the typing goes once.
   time = clock();
@@ -714,7 +732,7 @@ async function tidal(out) {
                 found: music.library().search.sections.map((section) => [section.title, names(section.items), section.items[0].source])};
   music.setTab('browse');
   await time.tick(100);
-  out.roots = names(music.library().browse.items);
+  out.roots = names(music.library().page.items);
   music.stop();
   // Cancelled half way.
   time = clock();
@@ -834,10 +852,10 @@ async function gateway(out) {
   // Paging, a folder at a time.
   music.setTab('browse');
   await time.tick(10);
-  out.page = [music.library().browse.items.length, music.library().browse.more];
+  out.page = [music.library().page.items.length, music.library().page.more];
   music.more();
   await time.tick(10);
-  out.paged = [music.library().browse.items.length, music.library().browse.more];
+  out.paged = [music.library().page.items.length, music.library().page.more];
   // A Guest refused free text: the library is closed.
   music.setTab('search');
   music.setQuery('low tide');
@@ -898,9 +916,100 @@ async function client(out) {
   access.stop();
 }
 
+// An artist found, its page, an album of it, and back: each tab its own pages.
+async function pages(out) {
+  const time = clock(), backend = mock(time, {tidal: true}), music = session(time, backend);
+  music.start();
+  await time.tick(100);
+  music.setQuery('juniper');
+  music.searchNow();
+  await time.tick(100);
+  const artist = music.library().search.sections.find((section) => section.kind === 'artist').items[0];
+  out.row = [artist.name, artist.opens, music.actions(artist).map((action) => action.label)];
+  let reads = backend.reads.length;
+  music.open(artist);
+  const page = () => music.library().page;
+  const header = () => page().header && {name: page().header.name, line: page().header.line, source: page().header.source,
+    artists: page().header.artists.map((each) => each.name)};
+  // Its header is the row's at once, while the page reads.
+  out.opening = {header: header(), back: page().back, text: page().text, search: music.library().search};
+  await time.tick(100);
+  out.artist = {reads: backend.reads.slice(reads), header: header(), text: page().text,
+    sections: page().sections.map((section) => [section.id, section.title, section.total, section.more, names(section.items)])};
+  const top = page().sections[0].items[0];
+  out.topActions = music.actions(top).map((action) => action.label);
+  // A single of it: its own entry and tracks read together, numbered.
+  const single = page().sections.find((section) => section.id === 'singles').items[0];
+  reads = backend.reads.length;
+  music.open(single);
+  await time.tick(100);
+  const track = page().items[0];
+  out.album = {reads: backend.reads.slice(reads).map((read) => read.slice(0, 2)), back: page().back, header: header(),
+    numbered: page().numbered, path: page().path, depth: page().depth,
+    track: [track.name, track.number, track.line, music.actions(track).map((action) => action.label)],
+    own: music.actions(page().header.item).map((action) => action.label)};
+  // Play from here, shuffled, and on from a track's artist.
+  let from = backend.sent.length;
+  music.act(track, 'from');
+  await time.tick(100);
+  music.act(page().header.item, 'shuffle');
+  await time.tick(100);
+  out.played = {sent: backend.sent.slice(from), said: music.log.announced.slice(-2), shuffle: music.view().shuffle.label};
+  music.act(track, 'go:' + track.links.findIndex((link) => link.kind === 'artist'));
+  await time.tick(100);
+  out.again = [page().name, page().back, page().depth];
+  // Every album, in full, on its own page.
+  music.openSection('albums');
+  out.section = [page().kind, page().name, page().back, page().header, names(page().items), page().more];
+  // Another tab keeps its own; the tab shown again goes back to its list.
+  music.setTab('browse');
+  await time.tick(100);
+  out.browse = [page().path, page().back, page().depth];
+  music.setTab('search');
+  out.kept = [page().name, page().depth];
+  music.back();
+  out.back = [page().name, page().depth];
+  music.setTab('search');
+  out.home = [music.library().page, music.library().search.query, names(music.library().search.sections[0].items)];
+  // The queue's track leads to its album, over the queue.
+  music.setTab('queue');
+  await time.tick(100);
+  const queued = music.library().queue.items[0];
+  music.act(queued, 'go:' + queued.links.findIndex((link) => link.kind === 'album'));
+  await time.tick(100);
+  out.queue = [page().name, page().back, names(page().items)];
+  // Played from it, and Back: the queue is read again, as it now is.
+  music.act(page().header.item, 'replace');
+  await time.tick(100);
+  reads = backend.reads.length;
+  music.back();
+  await time.tick(100);
+  out.queue.push(page(), names(music.library().queue.items), backend.reads.slice(reads).map((read) => read[0]));
+  // Back with no page to leave says so.
+  out.queue.push(music.back());
+  // An album whose own entry fails keeps its tracks and the row's header; an artist's page fails whole.
+  const details = backend.details;
+  backend.details = () => Promise.reject({code: 'music_failed', message: 'Music Assistant failed.'});
+  music.setTab('search');
+  music.open({ref: 'tidal--mock://album/901', kind: 'album', name: 'Overture'});
+  await time.tick(100);
+  out.failed = {album: [page().state, page().header.name, page().header.line, names(page().items), page().text]};
+  music.open({ref: 'tidal--mock://artist/910', kind: 'artist', name: 'Saltmarsh'});
+  await time.tick(100);
+  out.failed.artist = [page().state, page().text, page().sections];
+  backend.details = details;
+  music.back();
+  music.back();
+  // Reopened, it reads again.
+  music.open({ref: 'tidal--mock://artist/910', kind: 'artist', name: 'Saltmarsh'});
+  await time.tick(100);
+  out.failed.again = [page().state, page().sections.map((section) => section.id)];
+  music.stop();
+}
+
 (async () => {
   const report = {};
-  for (const [name, run] of Object.entries({overview, transport, library, resuming, grouping, unconfirmed, locks, involved, guests, absent, unavailable, tidal, gateway, client})) {
+  for (const [name, run] of Object.entries({overview, transport, library, pages, resuming, grouping, unconfirmed, locks, involved, guests, absent, unavailable, tidal, gateway, client})) {
     report[name] = {};
     await run(report[name]);
   }

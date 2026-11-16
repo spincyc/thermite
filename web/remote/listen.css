@@ -115,7 +115,7 @@
    length to seek in): dimmed as Watch's, and it takes no hand. */
 .listen :is(.key, .chip, .fader__step):disabled,
 .listen-progress__input:disabled,
-:is(.listen-actions .button, .listen-sheet__join, .listen-sheet__end, .listen-member .button, .library-path .icon-button):disabled {
+:is(.listen-actions .button, .listen-sheet__join, .listen-sheet__end, .listen-member .button, .library-head__actions .button):disabled {
   opacity: 0.38;
   cursor: default;
 }
@@ -289,7 +289,8 @@
 /* A cover that failed: laid out still (asked for again, a lazy one must
    be), its placeholder showing through. */
 .listen-art__image[data-failed],
-.library-item__art img[data-failed] {
+.library-item__art img[data-failed],
+.library-head__art img[data-failed] {
   visibility: hidden;
 }
 
@@ -782,31 +783,195 @@
   }
 }
 
+/* A page's bar: Back, named for what it returns to, and the title of a
+   page without a header (a folder, a section in full). */
 .library-path {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  min-height: var(--tap);
+  margin: calc(-1 * var(--space-1)) 0 var(--space-2) calc(-1 * var(--space-2));
+}
+
+.library-path__back {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  min-height: var(--tap);
+  padding: 0 var(--space-2) 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-row);
+  color: var(--accent);
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 560;
+  cursor: pointer;
+}
+
+.library-path__back .icon {
+  width: 22px;
+  height: 22px;
+}
+
+.library-path__label,
+.library-path__text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .library-path__text {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  direction: rtl;
-  text-align: left;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 650;
 }
 
-/* The focus waits here while a folder reads (tabindex -1): ringed as the
+/* The focus waits here while a page reads (tabindex -1): ringed as the
    slider is, inside the row's edge. */
-.library-path__text:focus-visible {
+.library-path__text:focus-visible,
+.library-head__name:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 0;
   border-radius: 4px;
+}
+
+/* An album's, artist's or playlist's header: its cover beside its name,
+   who made it and what it is, and under them Play, Shuffle and More. */
+.library-head {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-areas: "art text" "actions actions";
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.library-head__art {
+  grid-area: art;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+  overflow: hidden;
+  border-radius: 10px;
+  color: var(--ink-muted);
+  background: var(--well);
+}
+
+.library-head__art[data-kind="artist"] {
+  border-radius: 50%;
+}
+
+.library-head__art .icon {
+  width: 36px;
+  height: 36px;
+}
+
+.library-head__art img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.library-head__text {
+  grid-area: text;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.library-head__name {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  font-size: 20px;
+  font-weight: 680;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.library-head__by,
+.library-head__line {
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* What it is wraps, on a phone, before it loses its source. */
+.library-head__line {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+}
+
+.library-head__by {
+  font-size: 14px;
+}
+
+/* An artist's name opens its page: a link in the line, its target as tall
+   as a finger. */
+.library-head__link {
+  margin: -12px 0;
+  padding: 12px 0;
+  border: 0;
+  color: var(--accent);
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.library-head__line {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.library-head__actions {
+  grid-area: actions;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.library-head__actions .button {
+  gap: var(--space-2);
+  min-height: var(--tap);
+  margin: 0;
+  padding-inline: var(--space-3);
+}
+
+.library-head__actions .button .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.library-head__play {
+  border-color: transparent;
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+/* An album's track: its number where a cover would be. */
+.library-item__number {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
 }
 
 .library__more {

@@ -62,9 +62,16 @@
     const drawn = new WeakMap();
     // The entries the library lists, by their buttons' data-item, and the one a sheet acts on.
     const shown = new Map();
-    let chosenItem = null;
-    // Whether Browse moved (a folder opened, or Back) and its focus is to follow.
-    let browsing = false;
+    let chosenItem = null, itemOpener = null;
+    // The page shown: its own entry (its header's buttons play it) and its artists.
+    let pageHead = null;
+    // Whether a page moved (one opened, or Back) and its focus is to follow,
+    // and the tab it moved on.
+    let browsing = false, browsingTab = null;
+    // What opened each of a tab's pages (by data-focus, at the depth it
+    // opened from), and where Back is taking the focus: back to it.
+    const openedFrom = {};
+    let returnTo = null;
     // The speakers ticked in the group sheet, kept across its redraws.
     const picked = new Set();
     // Each cover image's address already asked for twice.
@@ -112,7 +119,7 @@
       if ($("#input-sheet").open && $("[data-input-list]").hasAttribute("data-listen")) fillInputs(view);
       // A redrawn control keeps the focus it had; a step at its end, its group's other.
       if (focused && (!document.activeElement || document.activeElement === document.body)) {
-        const again = document.querySelector('[data-focus="' + CSS.escape(focused) + '"]');
+        const again = all('[data-focus="' + CSS.escape(focused) + '"]').find((each) => !each.closest("[hidden]"));
         const target = again && again.disabled ? again.parentNode.querySelector("button:not(:disabled)") : again;
         if (target) target.focus();
       }
@@ -465,13 +472,51 @@
         button.setAttribute("aria-selected", String(current));
         button.tabIndex = current ? 0 : -1;
       });
-      // Another tab: a folder still reading no longer takes the focus.
-      if (library.tab !== "browse") browsing = false;
+      // Another tab: a page still reading no longer takes the focus.
+      if (library.tab !== browsingTab) browsing = false;
+      browsingTab = library.tab;
       text($("[data-blind]"), library.blind);
-      all("[data-panel]").forEach((panel) => { panel.hidden = Boolean(library.blind) || panel.dataset.panel !== library.tab; });
+      all("[data-panel]").forEach((panel) => {
+        panel.hidden = Boolean(library.blind) || panel.dataset.panel !== library.tab || Boolean(library.page);
+      });
+      const pagePanel = $("[data-page]");
+      pagePanel.hidden = Boolean(library.blind) || !library.page;
+      pagePanel.setAttribute("aria-labelledby", "library-tab-" + library.tab);
       if (library.search) drawSearch(library.search);
-      if (library.browse) drawBrowse(library.browse);
+      if (library.page) drawPage(library.page);
       if (library.queue) drawQueue(library.queue);
+      // Back to the tab's own list: to the row that opened the page, else the tab.
+      if (browsing && !library.page) {
+        browsing = false;
+        const row = returnTo && all('[data-panel="' + library.tab + '"] [data-focus]').find((each) => each.dataset.focus === returnTo);
+        returnTo = null;
+        (row || $('[data-tab][aria-selected="true"]')).focus({ preventScroll: true });
+      }
+    }
+
+    // A page opened: what opened it, for Back.
+    function opening(from) {
+      const library = music.library();
+      if (library) {
+        const depth = library.page ? library.page.depth : 0;
+        const opener = (openedFrom[library.tab] || []).slice(0, depth);
+        opener[depth] = (from && from.dataset.focus) || null;
+        openedFrom[library.tab] = opener;
+      }
+      returnTo = null;
+      browsing = true;
+    }
+
+    // Back a page, and the focus back to what opened the one left.
+    function goBack() {
+      const library = music.library();
+      const depth = library && library.page ? library.page.depth : 0;
+      if (!depth) return;
+      const opener = openedFrom[library.tab] || [];
+      returnTo = opener[depth - 1] || null;
+      openedFrom[library.tab] = opener.slice(0, depth - 1);
+      browsing = true;
+      music.back();
     }
 
     function drawSearch(search) {
@@ -500,31 +545,95 @@
       select.replaceChildren(...list.map((option) => node("option", { value: option.value, selected: option.current ? "" : null }, option.label)));
     }
 
-    function drawBrowse(browse) {
-      const back = $("[data-browse-back]");
-      back.disabled = browse.depth === 0;
-      $("[data-browse-path]").textContent = browse.path.join(" › ");
-      $("[data-browse-text]").textContent = browse.text;
-      $("#library-panel-browse [data-more]").hidden = !browse.more;
-      const list = $("[data-browse-items]");
-      if (stale(list, browse.items)) {
-        forget("browse:");
-        list.replaceChildren(...browse.items.map((item, index) => itemRow(item, "browse:" + index)));
+    // A page: Back to what it opened from (Browse's roots have none) and its
+    // title, an album's, artist's or playlist's header, an artist's
+    // sections, and its items.
+    function drawPage(page) {
+      $("[data-page-bar]").hidden = !page.back;
+      $("[data-page-back-label]").textContent = page.back || "";
+      $("[data-page-back]").setAttribute("aria-label", "Back to " + (page.back || ""));
+      text($("[data-page-title]"), page.header ? "" : page.name);
+      $("[data-page-head]").hidden = !page.header;
+      pageHead = page.header;
+      if (page.header) drawHead(page.header);
+      $("[data-page-text]").textContent = page.text;
+      $("[data-page] [data-more]").hidden = !page.more;
+      const sections = $("[data-page-sections]");
+      if (stale(sections, page.sections)) {
+        forget("section:");
+        sections.replaceChildren(...page.sections.map((section) => {
+          const title = "library-page-" + section.id;
+          return node("section", { class: "library-section", "aria-labelledby": title }, [
+            node("div", { class: "library-section__head" }, [
+              node("h3", { class: "panel__title", id: title }, section.title),
+              section.more ? node("button", { class: "library-section__all", type: "button", "data-section": section.id,
+                "data-focus": "section:" + section.id }, "All " + section.total) : null
+            ]),
+            section.text ? node("p", { class: "listen__note" }, section.text) : null,
+            node("ul", { class: "library-items" }, section.items.map((item, index) => itemRow(item, "section:" + section.id + ":" + index)))
+          ]);
+        }));
       }
-      // A folder opened, or Back: the focus waits on the path while it reads,
-      // then goes to the first entry (with none, it stays on the path) and
-      // the page lets it be, unless it was taken elsewhere meanwhile (not
-      // left on what went, or on what was hidden or disabled). It never
-      // scrolls the page there: a tap that moved no focus (iOS) left the
-      // reader where they are.
+      const list = $("[data-page-items]");
+      if (stale(list, [page.numbered, page.items])) {
+        forget("page:");
+        list.replaceChildren(...page.items.map((item, index) => itemRow(item, "page:" + index, page.numbered)));
+      }
+      // A page opened, or Back: the focus waits on its title while it
+      // reads, then goes to its header, or else to its first entry (with
+      // none, it stays on the title), and the page lets it be, unless it
+      // was taken elsewhere meanwhile (not left on what went, or on what was
+      // hidden or disabled). It never scrolls the page there: a tap that
+      // moved no focus (iOS) left the reader where they are.
       if (!browsing) return;
-      const path = $("[data-browse-path]"), first = list.querySelector("[data-item]"), at = document.activeElement;
-      const read = browse.state === "done" || browse.state === "failed";
-      if (at && at !== document.body && at !== path && !at.disabled && !at.closest("[hidden]")) browsing = false;
+      const title = page.header ? $("[data-head-name]") : page.back ? $("[data-page-title]") : null;
+      const first = $("[data-page]").querySelector("[data-item]"), at = document.activeElement;
+      const read = page.state === "done" || page.state === "failed";
+      // Back: to what opened the page left, once it is drawn.
+      const opener = returnTo && all("[data-page] [data-focus]").find((each) => each.dataset.focus === returnTo && !each.closest("[hidden]"));
+      if (opener || read) returnTo = null;
+      if (opener) {
+        browsing = false;
+        opener.focus({ preventScroll: true });
+        return;
+      }
+      if (at && at !== document.body && at !== title && !at.disabled && !at.closest("[hidden]")) browsing = false;
       else {
         browsing = !read;
-        (read && first || path).focus({ preventScroll: true });
+        const to = page.header ? title : read && first || title;
+        if (to) to.focus({ preventScroll: true });
       }
+    }
+
+    // An album's, artist's or playlist's header: its cover, name, artists
+    // (each opens), what it is, and Play, Shuffle and the rest in a sheet;
+    // a locked room's speaker plays nothing from it.
+    function drawHead(head) {
+      const art = $("[data-head-art]");
+      art.dataset.kind = head.kind;
+      if (stale(art, [head.kind, head.art])) {
+        const url = music.art(head.art, 256);
+        art.replaceChildren(...[icon(KIND_ICON[head.kind] || "i-note"),
+          url ? cover(node("img", { src: url, alt: "", width: "88", height: "88", decoding: "async" })) : null].filter(Boolean));
+      }
+      $("[data-head-name]").textContent = head.name;
+      const by = $("[data-head-by]");
+      by.hidden = !head.artists.length;
+      if (stale(by, head.artists)) {
+        by.replaceChildren(...head.artists.flatMap((artist, index) => [index ? ", " : null,
+          artist.ref ? node("button", { class: "library-head__link", type: "button", "data-head-artist": String(index),
+            "data-focus": "head-artist:" + index }, artist.name)
+            : artist.name]).filter(Boolean).map((part) => (typeof part === "string" ? document.createTextNode(part) : part)));
+      }
+      text($("[data-head-line]"), [head.line, head.source].filter(Boolean).join(" · "));
+      const view = listen.view();
+      const held = Boolean(view && (view.locked || view.groupLocked));
+      const plays = !held && music.actions(head.item).some((action) => action.id === "next" && !action.disabled);
+      all("[data-head-action]").forEach((button) => {
+        button.disabled = !plays;
+        button.setAttribute("aria-label", (button.dataset.headAction === "shuffle" ? "Shuffle " : "Play ") + head.name);
+      });
+      $("[data-head-more]").setAttribute("aria-label", "More for " + head.name);
     }
 
     function drawQueue(queue) {
@@ -541,17 +650,19 @@
       Array.from(shown.keys()).forEach((key) => { if (key.startsWith(prefix)) shown.delete(key); });
     }
 
-    // One entry: its cover (or its kind), its name and line, its source and length.
-    function itemRow(item, id) {
+    // One entry: its cover (or its kind), or its number on an album, its name
+    // and line, its source and length.
+    function itemRow(item, id, numbered) {
       shown.set(id, item);
-      const thumb = music.art(item.art, 80);
+      const thumb = numbered ? null : music.art(item.art, 80);
       const image = thumb ? cover(node("img", { src: thumb, alt: "", width: "40", height: "40", loading: "lazy", decoding: "async" })) : null;
       const label = [item.name, item.current ? "playing now" : null, item.line, item.source, item.duration].filter(Boolean).join(", ");
       return node("li", null, node("button", {
         class: "library-item", type: "button", "data-item": id, "data-focus": "item:" + item.key,
-        "aria-current": item.current ? "true" : null, "aria-label": label, "aria-haspopup": item.plays ? "dialog" : null
+        "aria-current": item.current ? "true" : null, "aria-label": label, "aria-haspopup": item.opens ? null : item.plays ? "dialog" : null
       }, [
-        node("span", { class: "library-item__art", "aria-hidden": "true" }, [icon(KIND_ICON[item.kind] || "i-note"), image]),
+        numbered ? node("span", { class: "library-item__number", "aria-hidden": "true" }, item.number ? String(item.number) : "")
+          : node("span", { class: "library-item__art", "aria-hidden": "true" }, [icon(KIND_ICON[item.kind] || "i-note"), image]),
         node("span", { class: "library-item__text" }, [node("span", { class: "library-item__name" }, item.name),
           item.line ? node("span", { class: "library-item__line" }, item.line) : null]),
         node("span", { class: "library-item__side", "aria-hidden": "true" }, [
@@ -562,16 +673,19 @@
       ]));
     }
 
-    // What an item offers, in a sheet: Open, Play now, Play next, Add to queue.
-    function openItem(item) {
+    // What an item offers, in a sheet: Play from here, Play now, Play next,
+    // Add to queue, Open, Go to its album or artists. from: what was pressed
+    // (Safari focuses no button a tap presses).
+    function openItem(item, from) {
       chosenItem = item;
+      itemOpener = from || null;
       const view = listen.view();
       const held = Boolean(view && (view.locked || view.groupLocked));
       $("[data-item-name]").textContent = item.name;
       $("[data-item-line]").textContent = [item.line, item.source, item.duration].filter(Boolean).join(" · ");
       $("[data-item-actions]").replaceChildren(...music.actions(item).map((action) => node("button", {
         class: "button", type: "button", "data-item-action": action.id,
-        disabled: action.disabled || held && action.id !== "open" ? "" : null
+        disabled: action.disabled || held && action.id !== "open" && !action.id.startsWith("go:") ? "" : null
       }, action.label)));
       $("[data-item-target]").textContent = view ? "On " + view.speaker.name + (view.queueOf ? ", in " + view.queueOf + "'s group" : "")
         + ". Play now replaces the queue." : "";
@@ -723,32 +837,42 @@
         const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
           : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
         tabs[next].focus();
-        music.setTab(tabs[next].dataset.tab);
+        // The tab shown again (Home or End on it) keeps its pages.
+        if (next !== index) music.setTab(tabs[next].dataset.tab);
         event.preventDefault();
       });
       query.addEventListener("input", () => music.setQuery(query.value));
       $("[data-search-form]").addEventListener("submit", (event) => { event.preventDefault(); music.searchNow(); });
       $("[data-kind]").addEventListener("change", (event) => music.setKind(event.target.value));
       $("[data-source]").addEventListener("change", (event) => music.setSource(event.target.value));
-      $("[data-browse-back]").addEventListener("click", () => { browsing = true; music.back(); });
+      $("[data-page-back]").addEventListener("click", goBack);
       on("[data-more]", "click", () => music.more());
       $("[data-library]").addEventListener("click", (event) => {
         const every = event.target.closest("[data-all]");
         if (every) { music.setKind(every.dataset.all); return; }
+        const section = event.target.closest("[data-section]");
+        if (section) { opening(section); music.openSection(section.dataset.section); return; }
+        const play = event.target.closest("[data-head-action]");
+        if (play && pageHead) { music.act(pageHead.item, play.dataset.headAction); return; }
+        const more = event.target.closest("[data-head-more]");
+        if (more && pageHead) { openItem(pageHead.item, more); return; }
+        const artist = event.target.closest("[data-head-artist]");
+        if (artist && pageHead) { opening(artist); music.open(pageHead.artists[Number(artist.dataset.headArtist)]); return; }
         const button = event.target.closest("[data-item]");
         const item = button && shown.get(button.dataset.item);
         if (!item) return;
-        // A folder only opens; anything that plays offers how.
-        if (item.opens && !item.plays) {
-          browsing = true;
+        // A folder, album, artist or playlist opens; a track offers how to play it.
+        if (item.opens) {
+          opening(button);
           music.open(item);
-        } else openItem(item);
+        } else openItem(item, button);
       });
       $("[data-item-actions]").addEventListener("click", (event) => {
         const button = event.target.closest("[data-item-action]");
         if (!button || !chosenItem) return;
         $("#item-sheet").close();
-        browsing = button.dataset.itemAction === "open";
+        if (button.dataset.itemAction === "open" || button.dataset.itemAction.startsWith("go:")) opening(itemOpener);
+        else browsing = false;
         music.act(chosenItem, button.dataset.itemAction);
       });
       $("[data-tidal-start]").addEventListener("click", () => music.tidalStart());

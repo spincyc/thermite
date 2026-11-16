@@ -511,8 +511,9 @@ Routes (`<speaker>` is a contract speaker ID):
 | GET `/api/v1/music` | `{version: 1, available, problem, sources: {tidal, libraries: {name: bool}}, speakers: [speaker]}` |
 | GET `/api/v1/music/search?q=&kind=&source=` | `{query, kind, source, artists, albums, tracks, playlists}`: items, 25 a kind and source |
 | GET `/api/v1/music/browse?ref=&offset=&limit=` | `{ref, offset, limit, total, items}`; without `ref`, each library's and TIDAL's root folder |
+| GET `/api/v1/music/item?ref=` | `{ref, item, sections}`: an album's, artist's or playlist's own item (null if Music Assistant has none thermite shows); an artist's `sections` |
 | GET `/api/v1/music/<speaker>/queue?offset=&limit=` | `{speaker, queue, offset, limit, total, current, items}` |
-| POST `/api/v1/music/<speaker>/play` `{ref, option?}` | 202 `{accepted, speaker, action, queue}` |
+| POST `/api/v1/music/<speaker>/play` `{ref, option?, start?, shuffle?}` | 202 `{accepted, speaker, action, queue}` |
 | POST `/api/v1/music/<speaker>/transport` `{action, value?}` | 202 `{accepted, speaker, action, queue}` |
 | POST `/api/v1/music/<speaker>/volume` `{level}` or `{group_level}` | 202 `{accepted, speaker, action, level}` |
 | POST `/api/v1/music/<speaker>/group` `{members}` | 200 `{accepted, speaker, joined, refused, pending}` |
@@ -531,7 +532,17 @@ title, artist, album, art}`, where `elapsed` seconds were measured at epoch
 `at`; `repeat` is `off`, `one` or `all`. An item is `{ref, kind, name,
 source, library?, artists, album, year, duration, art}` (a folder carries
 only the first five); `kind` is `track`, `album`, `artist`, `playlist` or
-`folder`, and a queue's items add their `index`. `ref` is the reference to
+`folder`; `artists` are `{ref, name}` and a track's `album` is one too (its
+`ref` null when it is not one to open); a track adds its `number` and
+`disc` on its album, an album its `type` (`album`, `single`, `ep`,
+`compilation`, `live`, `soundtrack` or null), a playlist its `owner`, and a
+queue's items their `index`. An artist's page has, in order, `tracks` (its
+top tracks), `albums`, `singles` (EPs and singles), `compilations` and
+`artists` (artists like it), each `{id, items, failed}`: its albums newest
+first, each section read at once, one that failed empty and `failed`. An
+album's or a playlist's tracks are its browse. `start`, a track's `ref`,
+plays an album or a playlist from that track, and `shuffle` plays it
+shuffled; each only with `replace`. `ref` is the reference to
 play or browse, a Music Assistant URI of TIDAL's, a library's or Music
 Assistant's own library (`<provider>://<kind>/<id>`, at most 1024
 characters, none a control or a lone surrogate), whose ID is one that

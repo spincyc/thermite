@@ -308,9 +308,11 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual([item["name"] for item in queue["items"]],
                          ["Opening", "Morning Rain", "Morning Rain", "Long Road", "Example Net", "Test Pattern"])
         self.assertEqual(queue["items"][0], {"ref": "library://track/101", "kind": "track", "name": "Opening",
-                                             "source": "library", "artists": ["Example Quartet"],
-                                             "album": "First Light", "year": None, "duration": 241,
-                                             "art": queue["items"][0]["art"], "index": 0})
+                                             "source": "library",
+                                             "artists": [{"ref": "library://artist/10", "name": "Example Quartet"}],
+                                             "album": {"ref": ALBUM, "name": "First Light"}, "year": None,
+                                             "duration": 241, "art": queue["items"][0]["art"], "number": 1, "disc": 1,
+                                             "index": 0})
         page = self.get(f"/api/v1/music/{AMP}/queue?offset=4&limit=1").json()
         self.assertEqual([item["name"] for item in page["items"]], ["Example Net"])
         # Replacing starts over.
@@ -579,6 +581,90 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertEqual([track["name"] for track in album], ["Opening", "Morning Rain", "Long Road"])
         self.assertEqual(self.get("/api/v1/music/browse?ref=" + TRACK).json(), {"error": "invalid_query"})
         self.assertEqual(self.get("/api/v1/music/browse?ref=spotify://folder/x").json(), {"error": "invalid_ref"})
+
+    def tidal(self):
+        """TIDAL signed in, as the owner approves its code: its instance."""
+        self.signin("owner")
+        self.post("/api/v1/music/tidal/start", {})
+        self.sim.approve_tidal()
+        self.post("/api/v1/music/tidal/finish", {})
+        return self.sim.tidal_instance()
+
+    def test_an_artist_page_reads_its_sections_at_once_and_sorts_its_albums_by_type(self):
+        tidal = self.tidal()
+        artist = f"{tidal}://artist/10"
+        response = self.get("/api/v1/music/item?ref=" + artist)
+        self.assertEqual(response["Cache-Control"], "no-store")
+        page = response.json()
+        self.assertEqual((page["ref"], page["item"]["kind"], page["item"]["name"], page["item"]["source"]),
+                         (artist, "artist", "Placeholder Orchestra", "tidal"))
+        self.assertRegex(page["item"]["art"], "^[0-9a-f]{64}$")
+        sections = {section["id"]: section for section in page["sections"]}
+        self.assertEqual([section["id"] for section in page["sections"]],
+                         ["tracks", "albums", "singles", "compilations", "artists"])
+        self.assertEqual([track["name"] for track in sections["tracks"]["items"]], ["Overture", "Interlude", "Finale", "Encore"])
+        self.assertEqual([(album["name"], album["type"], album["year"]) for album in sections["albums"]["items"]],
+                         [("Sample Suite", "album", 2023)])
+        self.assertEqual([(album["name"], album["type"]) for album in sections["singles"]["items"]], [("Encore", "single")])
+        self.assertEqual(sections["compilations"]["items"], [])
+        # Artists like it, never itself.
+        self.assertEqual([each["name"] for each in sections["artists"]["items"]], ["Fictional Duo"])
+        self.assertFalse(any(section["failed"] for section in page["sections"]))
+        # A track names its album and its artists, each a page to open, and its place on the album.
+        overture = sections["tracks"]["items"][0]
+        self.assertEqual((overture["album"], overture["artists"], overture["number"], overture["disc"]),
+                         ({"ref": f"{tidal}://album/100", "name": "Sample Suite"},
+                          [{"ref": artist, "name": "Placeholder Orchestra"}], 1, 1))
+        reads = [call[0] for call in self.sim.calls[-4:]]
+        self.assertEqual(sorted(reads), ["music/artists/artist_albums", "music/artists/similar_artists",
+                                         "music/artists/top_tracks", "music/item_by_uri"])
+        self.assertEqual(next(call[1] for call in self.sim.calls if call[0] == "music/artists/similar_artists"),
+                         {"item_id": "10", "provider_instance_id_or_domain": tidal, "limit": 25})
+
+    def test_an_album_or_playlist_page_is_its_entry_and_a_section_that_fails_stands_alone(self):
+        tidal = self.tidal()
+        album = self.get(f"/api/v1/music/item?ref={tidal}://album/300").json()
+        self.assertEqual((album["item"]["name"], album["item"]["type"], album["item"]["artists"], album["sections"]),
+                         ("Encore", "single", [{"ref": f"{tidal}://artist/10", "name": "Placeholder Orchestra"}], []))
+        playlist = self.get(f"/api/v1/music/item?ref={tidal}://playlist/{oh_music_sim.TIDAL_PLAYLIST_ID}").json()["item"]
+        self.assertEqual((playlist["kind"], playlist["name"], playlist["owner"]), ("playlist", "Example Mix", "TIDAL"))
+        self.sim.failing["music/artists/artist_albums"] = 1
+        page = self.get(f"/api/v1/music/item?ref={tidal}://artist/10").json()
+        self.assertEqual({section["id"]: (len(section["items"]), section["failed"]) for section in page["sections"]},
+                         {"tracks": (4, False), "albums": (0, True), "singles": (0, True), "compilations": (0, True),
+                          "artists": (1, False)})
+        # The item itself failing fails the page.
+        self.sim.failing["music/item_by_uri"] = 1
+        self.assertEqual(self.get(f"/api/v1/music/item?ref={tidal}://artist/10").json(), {"error": "music_failed"})
+        self.assertEqual(self.get("/api/v1/music/item?ref=" + TRACK).json(), {"error": "invalid_query"})
+        self.assertEqual(self.get(f"/api/v1/music/item?ref={tidal}://folder/albums").json(), {"error": "invalid_query"})
+        for bad in ("", "ref=spotify://album/1", "ref=library://album/x", f"ref={ALBUM}&ref={ALBUM}", f"ref={ALBUM}&x=1"):
+            self.assertIn(self.get("/api/v1/music/item?" + bad).json()["error"], ("invalid_query", "invalid_ref"), bad)
+
+    def test_an_album_plays_shuffled_or_from_one_of_its_tracks(self):
+        self.assertEqual(self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM, "start": TRACK}).status_code, 202)
+        self.assertEqual(self.sim.calls[-1][1]["start_item"], TRACK)
+        queue = self.get(f"/api/v1/music/{AMP}/queue").json()
+        self.assertEqual(([item["name"] for item in queue["items"]], self.speakers()[AMP]["now_playing"]["title"]),
+                         (["Morning Rain", "Long Road"], "Morning Rain"))
+        self.assertEqual(self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM, "shuffle": True}).status_code, 202)
+        self.assertIs(self.sim.calls[-1][1]["shuffle"], True)
+        self.assertEqual((self.speakers()[AMP]["shuffle"], self.get(f"/api/v1/music/{AMP}/queue").json()["total"]), (True, 3))
+        self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM})
+        self.assertNotIn("shuffle", self.sim.calls[-1][1])
+        calls = len(self.sim.calls)
+        for bad, error in (({"ref": ALBUM, "start": TRACK, "option": "add"}, "invalid_command"),
+                           ({"ref": ALBUM, "shuffle": True, "option": "next"}, "invalid_command"),
+                           ({"ref": ALBUM, "shuffle": False, "option": "add"}, "invalid_command"),
+                           ({"ref": ALBUM, "shuffle": "yes"}, "invalid_command"),
+                           ({"ref": ALBUM, "shuffle": 1}, "invalid_command"),
+                           ({"ref": ALBUM, "shuffle": 0}, "invalid_command"),
+                           ({"ref": TRACK, "start": TRACK}, "invalid_ref"),
+                           ({"ref": ALBUM, "start": ALBUM}, "invalid_ref"),
+                           ({"ref": ALBUM, "start": "library://track/x"}, "invalid_ref"),
+                           ({"ref": ALBUM, "start": 1}, "invalid_ref")):
+            self.assertEqual(self.post(f"/api/v1/music/{AMP}/play", bad).json(), {"error": error}, bad)
+        self.assertEqual([call for call in self.sim.calls[calls:] if call[0] == "player_queues/play_media"], [])
 
     def test_art_is_a_bounded_image_cached_privately(self):
         self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM})

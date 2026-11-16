@@ -113,8 +113,67 @@ class MusicPage(unittest.TestCase):
         self.assertEqual(out["album"]["tracks"], ["Low Tide", "Harbour Lights", "Signal Fires", "Drift"])
         self.assertEqual(out["album"]["first"]["source"], "NAS")
         self.assertEqual(out["back"], {"path": ["Library", "NAS", "The Lanterns"], "items": ["Harbour Lights"], "read": 0})
-        self.assertEqual(out["actions"], {"folder": ["Open"], "track": ["Play now", "Play next", "Add to queue"]})
+        # A library's file leads to its album and its artist in Music Assistant's library.
+        self.assertEqual(out["actions"], {"folder": ["Open"], "track": ["Play now", "Play next", "Add to queue", "Go to album",
+                                                                         "Go to The Lanterns"]})
         self.assertEqual(out["playlist"], ["Kitchen Radio", "Library", ["Open", "Play now", "Play next", "Add to queue"]])
+
+    def test_an_artist_found_opens_over_the_search_with_its_sections(self):
+        out = self.report["pages"]
+        self.assertEqual(out["row"][:2], ["Juniper Vale", True])
+        # The row's own header shows at once, over the search, while the page reads.
+        self.assertEqual(out["opening"], {"header": {"name": "Juniper Vale", "line": "Artist", "source": "TIDAL", "artists": []},
+                                          "back": "Search", "text": "Reading…", "search": None})
+        self.assertEqual(out["artist"]["reads"], [["details", "tidal--mock://artist/900"]])
+        self.assertEqual(out["artist"]["text"], "")
+        # Sections with nothing in them (compilations) are left out.
+        self.assertEqual(out["artist"]["sections"], [
+            ["tracks", "Top tracks", 4, False, ["Overture", "Wide Awake", "Northern Lights", "Wide Awake (Edit)"]],
+            ["albums", "Albums", 1, False, ["Overture"]],
+            ["singles", "EPs and singles", 1, False, ["Wide Awake"]],
+            ["artists", "Similar artists", 1, False, ["Saltmarsh"]]])
+        # A top track leads to its album, not to the artist shown.
+        self.assertEqual(out["topActions"], ["Play now", "Play next", "Add to queue", "Go to album"])
+
+    def test_an_album_reads_its_entry_beside_its_tracks_and_plays_from_one_or_shuffled(self):
+        out = self.report["pages"]
+        album = out["album"]
+        self.assertEqual(sorted(album["reads"]), [["browse", "tidal--mock://album/902"], ["details", "tidal--mock://album/902"]])
+        self.assertEqual((album["back"], album["path"], album["depth"], album["numbered"]),
+                         ("Juniper Vale", ["Juniper Vale", "Wide Awake"], 2, True))
+        self.assertEqual(album["header"], {"name": "Wide Awake", "line": "Single · 2024 · 1 track · 3 min", "source": "TIDAL",
+                                           "artists": ["Juniper Vale"]})
+        # A track of it: numbered, its artists alone, played from here, and its artist to go to.
+        self.assertEqual(album["track"], ["Wide Awake (Edit)", 1, "Juniper Vale",
+                                          ["Play from here", "Play now", "Play next", "Add to queue", "Go to Juniper Vale"]])
+        # The album's own: its header plays it now, or shuffled.
+        self.assertEqual(album["own"], ["Play next", "Add to queue", "Go to Juniper Vale"])
+        self.assertEqual(out["played"]["sent"], [
+            ["play", "kitchen_amp", "tidal--mock://album/902", "replace", {"start": "tidal--mock://track/9021"}],
+            ["play", "kitchen_amp", "tidal--mock://album/902", "replace", {"shuffle": True}]])
+        self.assertEqual(out["played"]["said"], ["Kitchen Sonos Amp: Playing Wide Awake from Wide Awake (Edit)",
+                                                 "Kitchen Sonos Amp: Shuffling Wide Awake"])
+        self.assertEqual(out["played"]["shuffle"], "Shuffle on")
+
+    def test_each_tab_keeps_its_pages_and_the_tab_again_goes_back_to_its_list(self):
+        out = self.report["pages"]
+        self.assertEqual(out["again"], ["Juniper Vale", "Wide Awake", 3])
+        self.assertEqual(out["section"], ["section", "Albums", "Juniper Vale", None, ["Overture"], False])
+        self.assertEqual(out["browse"], [["Library"], None, 0])
+        self.assertEqual(out["kept"], ["Albums", 4])
+        self.assertEqual(out["back"], ["Juniper Vale", 3])
+        # Search again: its results, as they were.
+        self.assertEqual(out["home"][:2], [None, "juniper"])
+        self.assertTrue(out["home"][2])
+        # The queue's track leads to its album over the queue, and Back returns to it.
+        # Played from a page over the queue, Back reads the queue again; Back on its own list does nothing.
+        self.assertEqual(out["queue"], ["Wide Awake", "Queue", ["Wide Awake (Edit)"], None, ["Wide Awake (Edit)"], ["queue"], False])
+
+    def test_an_albums_own_entry_failing_keeps_its_tracks_but_an_artist_fails_whole(self):
+        out = self.report["pages"]["failed"]
+        self.assertEqual(out["album"], ["done", "Overture", "Album · 3 tracks · 11 min", ["Overture", "Wide Awake", "Northern Lights"], ""])
+        self.assertEqual(out["artist"], ["failed", "Music Assistant could not do that. Try again in a moment.", []])
+        self.assertEqual(out["again"], ["done", ["tracks", "albums", "artists"]])
 
     def test_play_now_next_and_add_each_say_what_they_did(self):
         out = self.report["library"]["played"]
@@ -220,6 +279,9 @@ class MusicPage(unittest.TestCase):
         # The answer to harbour comes after signal is typed: it never shows.
         self.assertEqual(out["late"], ["idle", [], ["harbour", "signal"], "done", True])
         self.assertEqual(out["folder"], ["reading", ["Library", "NAS"], "done", True])
+        # A page covered while it read is read again when Back shows it; started on Browse, its root is read once.
+        self.assertEqual(out["covered"], [["Library", "NAS", "The Lanterns"], "done", True])
+        self.assertEqual(out["root"], [[["browse", None, 0, 100]], "done"])
         # Refused as a Guest, then signed in: the next visit, or access saying so, reads again.
         self.assertEqual(out["guest"], [BLIND, None, "done"])
         self.assertEqual(out["told"], [BLIND, 0, None, 1, "done"])

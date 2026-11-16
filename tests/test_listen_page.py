@@ -150,7 +150,8 @@ class ListenPage(unittest.TestCase):
         self.assertEqual(out["sheet"], [True, True, [["search", "true"], ["browse", "false"], ["queue", "false"]]])
         self.assertEqual((out["kinds"], out["sources"]), (["All", "Tracks", "Albums", "Artists", "Playlists"], ["Everywhere", "Library"]))
         self.assertEqual(out["sections"], ["Tracks", "Albums"])
-        self.assertEqual(out["item"], [True, ["Play now", "Play next", "Add to queue"], "On Mini. Play now replaces the queue."])
+        self.assertEqual(out["item"], [True, ["Play now", "Play next", "Add to queue", "Go to album", "Go to The Lanterns"],
+                                       "On Mini. Play now replaces the queue."])
         self.assertEqual(out["played"], [False, ["Play next", "Harbour Lights plays next on Example East Mini"], ["play", MINI, "next"]])
         self.assertEqual(out["queue"], [True, True])
         # / opens it on Search with the focus in the field.
@@ -162,16 +163,51 @@ class ListenPage(unittest.TestCase):
 
     def test_the_focus_follows_a_folder_opened_back_and_a_sheets_open(self):
         out = self.out["browse"]
-        lanterns, nas = "item:filesystem_local--flac://folder/The Lanterns", "item:filesystem_local--flac://folder/"
-        self.assertEqual(out["opening"], ["Library › NAS", "path"])
-        self.assertEqual(out["opened"], ["Library › NAS", lanterns])
-        self.assertEqual(out["back"], ["Library", nas, True])
-        self.assertEqual(out["album"][1], "item:filesystem_local--flac://track/The Lanterns/Harbour Lights/01 Low Tide.flac")
+        lanterns, nas = "item:0 filesystem_local--flac://folder/The Lanterns", "item:0 filesystem_local--flac://folder/"
+        # Browse's roots have no Back; a folder's bar names what Back returns to, and the folder.
+        self.assertEqual(out["root"], [False, "", "Library"])
+        self.assertEqual(out["opening"], [True, "Library", "NAS", "title"])
+        self.assertEqual(out["opened"], [True, "Library", "NAS", lanterns])
+        self.assertEqual(out["back"], [False, "", "Library", nas])
+        self.assertEqual(out["album"], [True, "The Lanterns", "Harbour Lights",
+                                        "item:0 filesystem_local--flac://track/The Lanterns/Harbour Lights/01 Low Tide.flac"])
         self.assertEqual(out["sheet"], [True, "button:Play now"])
-        self.assertEqual(out["played"], [False, out["album"][1]])
-        self.assertEqual(out["elsewhere"], ["Library › NAS", "path", True, "button:Volume up"])
-        # A read that failed leaves the focus on the path once, then lets it be; nothing scrolls the page.
-        self.assertEqual(out["failed"], [True, "path", "body", 0])
+        self.assertEqual(out["played"], [False, out["album"][3]])
+        self.assertEqual(out["elsewhere"], [True, "Library", "NAS", "title", True, "button:Volume up"])
+        # A read that failed leaves the focus on the title once, then lets it be; nothing scrolls the page.
+        self.assertEqual(out["failed"], [True, "title", "body", 0])
+
+    def test_an_artist_opens_over_the_search_and_its_pages_lead_to_each_other(self):
+        out = self.out["pages"]
+        # An artist's row opens its page, no sheet.
+        self.assertEqual(out["row"], [None, "Juniper ValeArtistTIDAL"])
+        artist = out["artist"]
+        self.assertEqual(artist["shown"], [False, True, "library-tab-search"])
+        # Back to the search; the header names the page, so the bar has no title.
+        self.assertEqual(artist["bar"], [True, "Search", False])
+        self.assertEqual(artist["head"], [True, "Juniper Vale", "", "Artist · TIDAL", "artist"])
+        self.assertEqual(artist["focus"], "title")
+        self.assertEqual(artist["sections"], ["Top tracks", "Albums", "EPs and singles", "Similar artists"])
+        self.assertEqual(artist["play"], [["Play Juniper Vale", False], ["Shuffle Juniper Vale", False]])
+        album = out["album"]
+        self.assertEqual((album["back"], album["head"], album["focus"]),
+                         ("Juniper Vale", [True, "Wide Awake", "Juniper Vale", "Single · 2024 · 1 track · 3 min · TIDAL", "album"], "title"))
+        # Its tracks by number, each with who plays it.
+        self.assertEqual(album["rows"], [["1", "Wide Awake (Edit)", "Juniper Vale"]])
+        self.assertEqual(out["headPlayed"], [["tidal--mock://album/902", "replace"],
+                                             ["tidal--mock://album/902", "replace", {"shuffle": True}]])
+        self.assertEqual(out["more"], [True, ["Play next", "Add to queue", "Go to Juniper Vale"]])
+        self.assertEqual(out["track"], [True, ["Play from here", "Play now", "Play next", "Add to queue", "Go to Juniper Vale"],
+                                        "button:Play from here"])
+        self.assertEqual(out["from"], [False, [["tidal--mock://album/902", "replace", {"start": "tidal--mock://track/9021"}]]])
+        self.assertEqual(out["again"], ["Wide Awake", "Juniper Vale"])
+        # Home on the tab shown keeps its pages.
+        self.assertEqual(out["homeKey"], [True, True, "Juniper Vale"])
+        # Back returns the focus to what opened the page left: the header's artist, the single's row, the artist's row.
+        self.assertEqual(out["backToSingle"], ["Juniper Vale", "Wide Awake", "head-artist:0"])
+        self.assertEqual(out["backToArtist"], ["Search", "Juniper Vale", "item:0 tidal--mock://album/902"])
+        self.assertEqual(out["backToSearch"], [True, False, "juniper", True, "item:tidal--mock://artist/900"])
+        self.assertEqual(out["home"], [True, False])
 
     def test_the_group_sheet_says_who_joined_who_could_not_and_who_was_asked(self):
         out = self.out["group"]
