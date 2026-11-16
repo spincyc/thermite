@@ -981,14 +981,18 @@
     }
 
     // Approved: the flow is finished, and the sources read again (the stream
-    // sends a fresh snapshot too, as Music Assistant's providers change).
+    // sends a fresh snapshot too, as Music Assistant's providers change), by
+    // this session only while it runs.
     function tidalDone() {
       cancel(tidal.timer);
       tidal.timer = 0;
       tidal.flow = null;
       toast("TIDAL", "Signed in. TIDAL is in Search and Browse.");
       changed();
-      return Promise.resolve(backend.tidalFinish()).catch(() => {}).then(() => backend.overview()).then(apply, () => {});
+      const started = life;
+      return Promise.resolve(backend.tidalFinish()).catch(() => {})
+        .then(() => (started === life ? backend.overview() : null))
+        .then((next) => { if (started === life) apply(next); }, () => {});
     }
 
     // Cancelled, or closed after it failed.

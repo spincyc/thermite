@@ -263,6 +263,10 @@ class MusicPage(unittest.TestCase):
         self.assertEqual(out["stopped"], 0)
         self.assertEqual(out["restarted"], ["ready", "Signal Fires"])
 
+    def test_a_tidal_sign_in_answered_after_music_was_left_reads_nothing_more(self):
+        # The overview read after the approval answers once the session stopped: nothing drawn, no queue read.
+        self.assertEqual(self.report["tidal"]["left"], [True, []])
+
     def test_an_admin_signs_in_to_tidal_with_a_code(self):
         out = self.report["tidal"]
         self.assertEqual((out["before"]["state"], out["before"]["text"]), ("idle", "TIDAL is not signed in."))

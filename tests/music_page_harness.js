@@ -728,6 +728,26 @@ async function tidal(out) {
   await time.tick(100);
   out.cancelled = {tidal: music.tidal(), sent: backend.sent.filter((entry) => entry[0] === 'tidal')};
   music.stop();
+  // Approved, and Music left before the overview read after it answers: a
+  // stopped session reads nothing more.
+  time = clock();
+  backend = mock(time);
+  music = session(time, backend);
+  music.start();
+  await time.tick(100);
+  music.setTab('queue');
+  await time.tick(100);
+  const overview = backend.overview;
+  let answer = null;
+  backend.overview = (...args) => new Promise((resolve) => { const read = overview(...args); answer = () => resolve(read); });
+  music.tidalStart();
+  await time.tick(RemoteMusic.TIDAL_POLL_MS * 2 + 500);
+  const asked = Boolean(answer);
+  music.stop();
+  const from = backend.reads.length;
+  answer();
+  await time.tick(RemoteMusic.TIDAL_POLL_MS * 2);
+  out.left = [asked, backend.reads.slice(from).map((read) => read[0])];
   // Not an Admin: no sign-in, and nothing asked.
   time = clock();
   backend = mock(time, {admin: false});
