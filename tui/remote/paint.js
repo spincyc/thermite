@@ -168,8 +168,11 @@ class Painter {
         if (old && old.ch === ch && old.code === code) continue;
         shown[x] = { ch: ch, code: code };
         // A wide character's right half: drawn with it, nothing to write.
-        // After either, where the cursor stands is the terminal's to say:
-        // the next write places it.
+        // After either, or a cell of more than one code unit (a code point
+        // past the BMP, one with its marks or VS16), where the cursor stands
+        // is the terminal's to say: some draw such a cell wider than wcwidth
+        // (kitty's \u2764\ufe0f takes two). The next write places it, so the
+        // difference stays in that cell.
         if (!ch) {
           at = null;
           continue;
@@ -178,7 +181,7 @@ class Painter {
         if (pen !== code) out += code;
         pen = code;
         out += ch;
-        at = cell.wide ? null : { x: x + 1, y: y };
+        at = cell.wide || ch.length > 1 ? null : { x: x + 1, y: y };
       }
     }
     // A terminal that knows synchronized output shows the frame at once.

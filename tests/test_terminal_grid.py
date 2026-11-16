@@ -62,6 +62,10 @@ class TerminalGrid(unittest.TestCase):
     def test_the_painter_places_what_follows_a_right_half_itself(self):
         self.assertEqual(self.proof["orphan"], [" a東b", []])
 
+    def test_a_cell_a_terminal_draws_wider_keeps_the_rest_of_the_row_in_place(self):
+        # kitty draws the heart with VS16 two columns wide: the space after clears it, and a and b keep their columns.
+        self.assertEqual(self.proof["wider"], ["  ab", []])
+
     def test_random_frames_show_on_a_terminal_as_the_grid_holds_them(self):
         for run in self.proof["fuzz"]:
             self.assertEqual(run, {"diverged": 0, "faults": []})

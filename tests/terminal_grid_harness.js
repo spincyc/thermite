@@ -89,6 +89,19 @@ class Terminal {
   }
 }
 
+// A terminal that draws an emoji asked for with VS16 two columns wide, as
+// kitty does, where wcwidth gives the heart one.
+class Wider extends Terminal {
+  print(point, expect) {
+    const row = this.cells[this.y];
+    if (point !== "\ufe0f" || row[this.x - 1] !== "\u2764") return super.print(point, expect);
+    row[this.x - 1] += point;
+    this.erase(this.x);
+    row[this.x] = "";
+    this.x += 1;
+  }
+}
+
 // mulberry32: a small seeded PRNG.
 function random(seed) {
   let state = seed >>> 0;
@@ -188,6 +201,14 @@ const terminal = new Terminal(6, 1), row = [{ ch: "", style: "base" }, { ch: "a"
   { ch: "\u6771", style: "base", wide: true }, { ch: "", style: "base" }, { ch: "b", style: "base" }, { ch: " ", style: "base" }];
 new Painter((out) => terminal.play(out, (x) => row[x].ch), 1).paint([row], 6, 1, () => "\x1b[0m");
 proof.orphan = [terminal.text(), terminal.faults];
+// On a terminal that draws a cell wider than the grid has it, the cell
+// after is placed in its own column: what it overwrites is that cell's,
+// and the rest of the row stays where the grid has it.
+grid = new Grid.Grid(5, 1);
+grid.put(0, 0, "\u2764\ufe0f ab");
+const wider = new Wider(5, 1);
+new Painter((out) => wider.play(out, (x) => grid.rows[0][x].ch), 1).paint(grid.rows, 5, 1, () => "\x1b[0m");
+proof.wider = [wider.text(), wider.faults];
 // Random frames, in color and without.
 proof.fuzz = [[1, 1], [2, 1], [3, 0], [4, 1], [5, 0]].map(([seed, depth]) => fuzz(seed, 200, depth));
 process.stdout.write(JSON.stringify(proof) + "\n");
