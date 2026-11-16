@@ -374,6 +374,16 @@ class MusicPageScript(unittest.TestCase):
         # A thumbnail that fails twice stays hidden over its kind's icon.
         self.assertEqual(out["thumbs"], [True, ["true,2"]])
 
+    def test_a_folder_takes_the_focus_only_while_browse_shows_and_it_reads(self):
+        out = self.report["following"]
+        self.assertEqual(out["reading"], "path")
+        # Search shown meanwhile: back on Browse, the folder read has not moved the focus to its entries.
+        self.assertEqual(out["tabbed"], ["Library › NAS", "path"])
+        # A read that failed leaves the focus on the path once, then lets it be.
+        self.assertEqual(out["failed"], [True, "path", "body"])
+        # Following a folder never scrolls the page.
+        self.assertEqual(out["scrolls"], [0, 0])
+
     def test_the_group_sheet_says_who_was_asked_and_not_confirmed(self):
         self.assertEqual(self.report["grouped"]["result"], [False, [
             ["Den joined Kitchen Sonos Amp.", None], ["Study was asked to join; Music Assistant has not confirmed it yet.", None]]])

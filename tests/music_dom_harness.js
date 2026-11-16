@@ -221,9 +221,11 @@ class Element {
   click() { this.dispatch('click'); }
 
   // As a browser's: nothing hidden takes the focus, nor anything an open modal dialog makes inert.
-  focus() {
+  // One that may scroll the page to it (no preventScroll) is counted.
+  focus(options) {
     const document = this.ownerDocument, before = document.focused, modal = document.modals[document.modals.length - 1];
     if (before === this || this.disabled || this.closest('[hidden]') || modal && !modal.contains(this)) return;
+    if (!(options && options.preventScroll)) document.scrolls += 1;
     document.focused = this;
     if (before && before.nodeType === 1) before.dispatch('blur');
   }
@@ -254,6 +256,7 @@ class Document {
     this.listeners = {};
     this.returns = [];
     this.modals = [];
+    this.scrolls = 0;
     this.focused = null;
     this.visibilityState = 'visible';
     // Each image address asked for, in order; answerImage(src) says whether it loads.
@@ -432,6 +435,40 @@ async function browse(out) {
   out.inert.push(other.focus());
 }
 
+// Taps that move no focus (iOS): a folder that reads on after the tab
+// changed, or ends with no entry to go to, takes the focus no more.
+async function following(out) {
+  const tabbed = page();
+  await tabbed.time.tick(400);
+  tabbed.$('[data-tab="browse"]').click();
+  await tabbed.time.tick(400);
+  tabbed.$('[data-browse-items] [data-item]').click();
+  await tabbed.time.tick(0);
+  out.reading = tabbed.focus();
+  tabbed.$('[data-tab="search"]').click();
+  await tabbed.time.tick(400);
+  tabbed.$('[data-tab="browse"]').click();
+  await tabbed.time.tick(0);
+  out.tabbed = [tabbed.$('[data-browse-path]').textContent, tabbed.focus()];
+  out.scrolls = [tabbed.document.scrolls];
+  const {time, $, focus, backend, document} = page();
+  await time.tick(400);
+  const browse = backend.browse.bind(backend);
+  backend.browse = (ref, ...rest) => (ref ? Promise.reject(Object.assign(new Error('music_failed'), {code: 'music_failed', status: 502}))
+    : browse(ref, ...rest));
+  $('[data-tab="browse"]').click();
+  await time.tick(400);
+  $('[data-browse-items] [data-item]').click();
+  await time.tick(400);
+  out.failed = [$('[data-browse-text]').textContent !== '', focus()];
+  // The focus let go, the next drawing leaves it be.
+  $('[data-browse-path]').blur();
+  $('[data-volume-step="1"]').click();
+  await time.tick(400);
+  out.failed.push(focus());
+  out.scrolls.push(document.scrolls);
+}
+
 // A grouping some of which no read-back confirmed: the sheet says who joined
 // and who was asked, and refuses no one.
 async function grouped(out) {
@@ -484,7 +521,7 @@ async function covers(out) {
 
 (async () => {
   const report = {};
-  for (const [name, run] of Object.entries({now, browse, grouped, covers})) {
+  for (const [name, run] of Object.entries({now, browse, following, grouped, covers})) {
     report[name] = {};
     await run(report[name]);
   }

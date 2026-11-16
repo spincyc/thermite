@@ -392,6 +392,8 @@
       button.setAttribute("aria-selected", String(current));
       button.tabIndex = current ? 0 : -1;
     });
+    // Another tab: a folder still reading no longer takes the focus.
+    if (library.tab !== "browse") browsing = false;
     $("[data-blind]").textContent = library.blind || "";
     $("[data-blind]").hidden = !library.blind;
     document.querySelectorAll("[data-panel]").forEach((panel) => { panel.hidden = Boolean(library.blind) || panel.dataset.panel !== library.tab; });
@@ -440,15 +442,19 @@
       list.replaceChildren(...browse.items.map((item, index) => itemRow(item, "browse:" + index)));
     }
     // A folder opened, or Back: the focus waits on the path while it reads,
-    // then goes to the first entry, unless it was taken elsewhere meanwhile
-    // (not left on what went, or on what was hidden or disabled).
+    // then goes to the first entry (with none, it stays on the path) and
+    // the page lets it be, unless it was taken elsewhere meanwhile (not
+    // left on what went, or on what was hidden or disabled). It never
+    // scrolls the page there: a tap that moved no focus (iOS) left the
+    // reader where they are.
     if (!browsing) return;
     const path = $("[data-browse-path]"), first = list.querySelector("[data-item]"), at = document.activeElement;
+    const read = browse.state === "done" || browse.state === "failed";
     if (at && at !== document.body && at !== path && !at.disabled && !at.closest("[hidden]")) browsing = false;
-    else if (first) {
-      browsing = false;
-      first.focus();
-    } else path.focus();
+    else {
+      browsing = !read;
+      (read && first || path).focus({ preventScroll: true });
+    }
   }
 
   function drawQueue(queue) {
