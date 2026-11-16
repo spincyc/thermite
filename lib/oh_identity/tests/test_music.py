@@ -12,8 +12,9 @@ import shutil
 import tempfile
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from asgiref.sync import async_to_sync
@@ -852,6 +853,64 @@ class Gateway(Stand_in, Requests, TestCase):
         self.assertLess(SLOW, worker.MUSIC_STOP)
         self.assertLess(worker.MUSIC_STOP, worker.STOP_SECONDS)
         self.assertLessEqual(worker.STOP_SECONDS + 3, timeout)
+
+    def test_a_stop_during_a_step_stops_music_at_once_and_the_observer_once_the_step_ends(self):
+        from oh_access import worker
+        happened, shutdowns, music_stops, stop = [], [], [], threading.Event()
+
+        class Recorded(worker.Shutdown):
+            def __init__(self, stop):
+                super().__init__(stop, poll=0.01)
+                shutdowns.append(self)
+        test = self
+
+        class Stepping:
+            """A step during which a signal comes: its handler records the request alone."""
+
+            def step(self):
+                happened.append("step")
+                shutdowns[0].request()
+                test.assertTrue(music_stops[0].wait(5))
+                happened.append("music stopped")
+                time.sleep(0.1)  # Nothing else is stopped meanwhile.
+                happened.append(("step ended", stop.is_set()))
+                return {}
+
+            def wake(self):
+                pass
+
+            def wait(self, maximum):
+                pass
+
+        async def observe(transport, cache, stop):
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                happened.append("observer cancelled")
+                raise
+            finally:
+                cache.clear()
+
+        @contextmanager
+        def music_running(state, music, stop, *, start, left):
+            music_stops.append(stop)
+            yield None
+
+        class Locks:
+            @contextmanager
+            def hold(self, keys, blocking):
+                yield
+        adapter = SimpleNamespace(transport=SimpleNamespace(), contract=SimpleNamespace(music=None))
+        with patch.object(worker, "Shutdown", Recorded), patch.object(worker, "observe", observe), \
+                patch.object(worker, "music_running", music_running), patch.object(worker, "maintain", lambda store: None):
+            worker.supervise(Stepping(), adapter, {"state": None}, locks=Locks(), store=None,
+                             telemetry=SimpleNamespace(stepped=lambda result: None),
+                             cache=SimpleNamespace(clear=lambda: happened.append("cleared")), stop=stop, interval=0.01)
+        # The music thread's own stop is set at the request; the shared one, which ends the observer and
+        # clears what it saw, once the step has ended.
+        self.assertIsNot(music_stops[0], stop)
+        self.assertEqual(happened, ["step", "music stopped", ("step ended", False), "observer cancelled", "cleared",
+                                    "cleared"])
 
     def test_the_worker_joins_its_threads_within_one_deadline_from_its_stop_request(self):
         from oh_access import worker

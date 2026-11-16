@@ -401,6 +401,15 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
         for room in rooms_by_item.get(item, ()):
             worker.notify(room)
     cache.on_change = changed
+    supervise(worker, adapter, config, locks=locks, store=store, telemetry=telemetry, cache=cache, stop=stop,
+              interval=interval)
+
+
+def supervise(worker, adapter, config, *, locks, store, telemetry, cache, stop=None, interval=5):
+    """Run a built worker until it is asked to stop: under the worker lease,
+    with the native feed observed into cache and the music thread
+    (music_running), each stopped and joined within STOP_SECONDS of the
+    request (Shutdown)."""
     stop = stop or threading.Event()
     previous = {}
     # Python may run a signal handler while this same thread holds an
