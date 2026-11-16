@@ -37,6 +37,9 @@ class TerminalGrid(unittest.TestCase):
         # two for each emoji, VS16 none (the heart is text by default), a lone regional indicator one.
         self.assertEqual(self.proof["columns"], [9, 4, 6, 1, 1, 4, 1])
         self.assertEqual(self.proof["thai"], ["\u0e01", "\u0e33", "\u0e25\u0e31", "\u0e07", " "])
+        # Where glibc's wcwidth parts from a block's: I Ching symbols, Khitan, Kana Extended-B and Tai Xuan Jing
+        # take two; a Hangul vowel of Jamo Extended-B, the Hangul fillers none.
+        self.assertEqual(self.proof["blocks"], [2, 2, 2, 2, 2, 2, 2, 1, 1])
         # A format character a terminal may draw (a soft hyphen) or act on (a bidi isolate) goes; a flag's tags stay.
         self.assertEqual(self.proof["format"], [[7, "Example"], [5, "ab cd"],
                                                 [2, "\U0001f3f4\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f"]])

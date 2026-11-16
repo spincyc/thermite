@@ -163,11 +163,12 @@ function length(text) {
   return characters(text).length;
 }
 
-// How many columns a code point takes, as wcwidth counts them (what most
-// terminals draw): none for a nonspacing or enclosing mark, ZWJ or a tag
-// (the format characters left), a variation selector or a Hangul medial vowel
-// or final consonant, drawn in the cell before it; two for an East Asian
-// wide or fullwidth one and an emoji by default (Emoji_Presentation); one
+// How many columns a code point takes, as wcwidth counts them (glibc's,
+// what most terminals draw): none for a nonspacing or enclosing mark, ZWJ
+// or a tag (the format characters left), a variation selector, a Hangul
+// medial vowel or final consonant (the Jamo's and Jamo Extended-B's) or a
+// Hangul filler, drawn in the cell before it; two for an East Asian wide
+// or fullwidth one and an emoji by default (Emoji_Presentation); one
 // for any other, a spacing mark (Devanagari's \u093f, Thai's \u0e33)
 // included. One convention for emoji, a code point at a time: an emoji by
 // default takes two, one that is text by default (\u25b6, \u26bf, \u2764)
@@ -175,11 +176,11 @@ function length(text) {
 // emoji's two. A regional indicator takes wcwidth's one, but a pair of them
 // (a flag) is one wide character: wcwidth's terminals draw each indicator in
 // a column, others the flag in two, and both take the two columns.
-const ZERO = "\\p{Mn}\\p{Me}\\p{Cf}\\u1160-\\u11ff";
-const WIDE = "\\u1100-\\u115f\\u2329\\u232a\\u2e80-\\u303e\\u3041-\\u33ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\ua000-\\ua4cf"
-  + "\\ua960-\\ua97f\\uac00-\\ud7a3\\uf900-\\ufaff\\ufe10-\\ufe19\\ufe30-\\ufe6f\\uff00-\\uff60\\uffe0-\\uffe6"
-  + "\\u{16fe0}-\\u{16fe4}\\u{17000}-\\u{18aff}\\u{1b000}-\\u{1b2ff}\\u{1f200}-\\u{1f2ff}\\u{20000}-\\u{2fffd}\\u{30000}-\\u{3fffd}"
-  + "\\p{Emoji_Presentation}";
+const ZERO = "\\p{Mn}\\p{Me}\\p{Cf}\\u1160-\\u11ff\\u3164\\ud7b0-\\ud7ff\\uffa0";
+const WIDE = "\\u1100-\\u115f\\u2329\\u232a\\u2630-\\u2637\\u268a-\\u268f\\u2e80-\\u303e\\u3041-\\u33ff\\u3400-\\u4dff"
+  + "\\u4e00-\\u9fff\\ua000-\\ua4cf\\ua960-\\ua97f\\uac00-\\ud7a3\\uf900-\\ufaff\\ufe10-\\ufe19\\ufe30-\\ufe6f"
+  + "\\uff00-\\uff60\\uffe0-\\uffe6\\u{16fe0}-\\u{16ff6}\\u{17000}-\\u{18dff}\\u{1aff0}-\\u{1afff}\\u{1b000}-\\u{1b2ff}"
+  + "\\u{1d300}-\\u{1d376}\\u{1f200}-\\u{1f2ff}\\u{20000}-\\u{2fffd}\\u{30000}-\\u{3fffd}\\p{Emoji_Presentation}";
 const UNEVEN = new RegExp("[" + ZERO + WIDE + "]", "u");
 const NONE = new RegExp("[" + ZERO + "]", "u");
 const TWO = new RegExp("[" + WIDE + "]", "u");

@@ -156,6 +156,11 @@ proof.mono = grid.rows[0].map((cell) => cell.mono || null);
 // Columns, a code point at a time.
 proof.columns = ["\u0939\u093f\u0902\u0926\u0940 \u0917\u093e\u0928\u093e", "\u0e01\u0e33\u0e25\u0e31\u0e07",
   "\u{1f468}\u200d\u{1f469}\u200d\u{1f467}", "\u2764\ufe0f", "\u{1f1e6}", "Cafe\u0301", "\u0301a"].map((text) => Grid.length(text));
+// Where glibc's wcwidth (2.44, Unicode 17) differs from the blocks: hexagrams,
+// trigrams and digrams, Khitan, Kana Extended-B and Tai Xuan Jing take two;
+// a Hangul vowel of Jamo Extended-B and the Hangul fillers none.
+proof.blocks = ["\u4dc0", "\u2630", "\u268a", "\u{18b00}", "\u{1aff0}", "\u{1d300}", "\u1100\u1161\ud7b0", "a\u3164", "a\uffa0"]
+  .map((text) => Grid.length(text));
 grid = new Grid.Grid(8, 1);
 grid.put(0, 0, "\u{1f468}\u200d\u{1f469}\u200d\u{1f467}");
 proof.zwj = cells(grid)[0];
