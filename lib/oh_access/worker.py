@@ -452,6 +452,9 @@ def run(config_path, *, stop=None, interval=5, wall_clock=None):
                     telemetry.stepped(worker.step())
                     if not shutdown.requested and not stop.is_set():
                         worker.wait(min(5, interval))
+                # The step has ended: the observer stops while the music thread is joined.
+                stop.set()
+                cancel_observer()
     finally:
         shutdown.request()
         stop.set()
