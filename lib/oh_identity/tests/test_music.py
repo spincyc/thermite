@@ -161,6 +161,14 @@ class Matching(SimpleTestCase):
         for value in ("Ar\u00a0tist", "\u66f2\u3000\u4e00", "\U0001f469\u200d\U0001f467", "\u200f\u05e9\u05d9\u05e8"):
             self.assertEqual(music.text(value), value)
         self.assertEqual(music.text("\u202eevil\u202c and \u2067isolated\u2069"), "evil and isolated")
+        # Zero widths, soft hyphens, tags, private-use and unassigned code points go; a line separator is a space.
+        for value, cleaned in (("\u200bA\u2060B\ufeffC\u00adD", "ABCD"), ("Flag\U000e0067\U000e007f", "Flag"),
+                               ("x\ue000\u0378y\u206a", "xy"), ("one\u2028two\u2029three", "one two three"),
+                               ("\u2764\ufe0f\u200c\u061c", "\u2764\ufe0f\u200c\u061c")):
+            self.assertEqual(music.text(value), cleaned, value)
+        # A credential word is found once cleaned.
+        for value in ("pass\u200bword", "pass\u00adword", "tok\u2060en"):
+            self.assertIsNone(music.text(value), value)
 
     def test_a_reference_names_a_known_provider_and_an_item_or_folder(self):
         sources = music.Sources([{"domain": "tidal", "instance_id": "tidal--a1", "available": True},

@@ -578,10 +578,13 @@ more requests may wait for one, each for 10 seconds at most; one that
 gives up, or comes when 16 wait, answers 503 `music_unavailable` with
 `Retry-After: 1`. So art holds a quarter of the requests the gateway
 admits at most, and stalled art never takes those commands need. Reading a group back takes about 3.5 seconds at most, its reads
-included. Titles, names and art are free text, shown by a reference's rule
-(any space, joiner or mark; no control; bidirectional controls removed):
-a Guest who may not see it gets speakers without them and 401
-`login_required` for search, browse, queues and art.
+included. Titles, names and art are free text. A name keeps any space,
+joiner or direction mark; it loses every other format character (zero
+widths, soft hyphens, bidirectional controls, tags) and private-use and
+unassigned code points, a line separator becomes a space, and one with a
+control or, once so cleaned, a credential word is none. A Guest who may
+not see free text gets speakers without it and 401 `login_required` for
+search, browse, queues and art.
 
 The music event stream is admitted, revalidated and heartbeated as the other
 streams. Its first frame is `{"type":"snapshot","view":"music","music":

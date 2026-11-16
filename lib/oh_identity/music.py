@@ -30,6 +30,7 @@ import math
 import re
 import threading
 import time
+import unicodedata
 import weakref
 from contextlib import contextmanager
 from pathlib import Path
@@ -106,20 +107,34 @@ QUEUE_ACTIONS = {"seek": ("player_queues/seek", "position"), "shuffle": ("player
 #: C0 and C1 controls, and lone surrogates, which no UTF-8 can carry to
 #: Music Assistant: refused in a reference, dropped from a query.
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\ud800-\udfff]")
-#: Bidirectional embeddings, overrides and isolates: removed from a name, so
-#: that a name cannot reorder the text a page shows after it.
-_BIDI = re.compile("[\u202a-\u202e\u2066-\u2069]")
+#: Format characters a name keeps: the joiners and the direction marks that
+#: shape emoji and right-to-left text. Every other one (zero widths, soft
+#: hyphens, bidirectional embeddings, overrides and isolates, tags) goes, as
+#: does a private-use or unassigned code point; a line or paragraph
+#: separator is a space.
+KEPT_FORMATS = frozenset("\u200c\u200d\u200e\u200f\u061c")
 _music = weakref.WeakKeyDictionary()
 
 
+def shown(value):
+    """value as a page may show it (KEPT_FORMATS)."""
+    kept = []
+    for char in value:
+        kind = unicodedata.category(char)
+        if kind in ("Zl", "Zp"):
+            kept.append(" ")
+        elif kind not in ("Cf", "Co", "Cn") or char in KEPT_FORMATS:
+            kept.append(char)
+    return "".join(kept)
+
+
 def text(value):
-    """Music Assistant free text a client may see, by a reference's rule:
-    without controls (_CONTROL) or a credential word, its bidirectional
-    controls removed, cut to TEXT_LENGTH; else None. Any space, joiner or
-    mark a title holds stays."""
+    """Music Assistant free text a client may see: as shown(), cut to
+    TEXT_LENGTH, without controls (_CONTROL) or, once cleaned, a credential
+    word; else None. Any space, joiner or mark a title holds stays."""
     if not isinstance(value, str):
         return None
-    value = _BIDI.sub("", value).strip()[:TEXT_LENGTH].strip()
+    value = shown(value).strip()[:TEXT_LENGTH].strip()
     if not value or _CONTROL.search(value) or SENSITIVE_TEXT.search(value):
         return None
     return value
