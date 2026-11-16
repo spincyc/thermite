@@ -337,6 +337,14 @@ class Claim(Site):
             self.assertEqual(provision.read_claim(self.state), damaged, claim)
         atomic_private(provision.token_file(self.state), b"{not json")
         self.assertEqual(provision.read_claim(self.state), damaged)
+        # One past its bound holds what thermite never wrote, whoever may read it.
+        atomic_private(provision.token_file(self.state), b" " * (provision.TOKEN_BYTES + 1))
+        self.assertEqual(provision.read_claim(self.state), damaged)
+        atomic_private(self.state / provision.LIBRARY_FILE, b" " * (provision.LIBRARY_BYTES + 1))
+        with self.assertRaises(provision.Untrusted) as oversized:
+            provision.read_libraries(self.state)
+        self.assertEqual(oversized.exception.reason, provision.CONTENTS)
+        atomic_private(provision.token_file(self.state), b"{not json")
         with self.assertLogs("oh_music.provision", "INFO") as logs:
             self.assertEqual(self.provisioner().step(), "unreadable")
         self.assertIn("thermite did not write it; restore it, or reset Music Assistant and delete it",

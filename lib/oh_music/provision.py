@@ -51,7 +51,7 @@ import time
 from pathlib import Path
 
 from oh_access import AccessError
-from oh_access.files import json_private, read_private
+from oh_access.files import Oversized, json_private, read_private
 
 from . import MEDIA
 from .client import SLOW, Client, Failed, NoUser, Stopped, Unauthorized, Unavailable
@@ -123,6 +123,8 @@ def stored(path, maximum):
         data = read_private(path, maximum)
     except FileNotFoundError:
         return None
+    except Oversized:
+        raise Untrusted(Path(path).name, CONTENTS) from None
     except (AccessError, OSError):
         raise Untrusted(Path(path).name, ACCESS) from None
     try:

@@ -84,17 +84,24 @@ def private_directory(value):
         os.close(descriptor)
 
 
+class Oversized(AccessError):
+    """A private file that is the service's own but past its bound: what it
+    holds is wrong, not who may read it."""
+
+
 def read_private(value, maximum=2 * 1024 * 1024):
     path = Path(value).expanduser().absolute()
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > maximum:
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:
             raise AccessError("Private file must be owned, regular, mode 0600 and bounded")
+        if info.st_size > maximum:
+            raise Oversized("Private file exceeds its limit")
         with os.fdopen(fd, "rb", closefd=False) as stream:
             content = stream.read(maximum + 1)
         if len(content) > maximum:
-            raise AccessError("Private file exceeds its limit")
+            raise Oversized("Private file exceeds its limit")
         return content
     finally:
         os.close(fd)

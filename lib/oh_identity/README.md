@@ -468,19 +468,19 @@ until then `music_unavailable`. A Music Assistant that has a user when
 thermite has no password stored had another user before thermite claimed
 it: `music_unclaimed` at once. Either recovers when the owner resets Music
 Assistant (stop it, delete its data directory and start it again): the
-worker claims it afresh within 30 seconds. A claim file the
-worker cannot trust is reported, never replaced, and the gateway answers
-`music_unavailable` until it is repaired: one not the service account's,
-or not mode 0600, by giving it back; one whose contents thermite did not
-write (not its JSON) by restoring it, or by resetting Music Assistant and
-deleting it. After each claim, whenever Music Assistant comes back with a new server ID (its
-state was reset) and every 15 minutes, the worker also brings Music
-Assistant's configuration to what thermite needs: the
-`sonos`, `wiim` and `airplay` player providers, with the speakers' addresses
-for discovery; one `filesystem_local` instance per library on
-`/media/<name>`, named `thermite <name>` (Music Assistant does not report an
-instance's path), and, once each library has its instance, no other; none
-of the providers that find other speaker families or act on their own
+worker claims it afresh within 30 seconds. A claim file the worker cannot
+trust is reported, never replaced, and the gateway answers
+`music_unavailable` until it is repaired: one not the service account's, or
+not mode 0600, by giving it back; one whose contents thermite did not write
+(not its JSON, or too large) by restoring it, or by resetting Music
+Assistant and deleting it. After each claim, whenever Music Assistant comes
+back with a new server ID (its state was reset) and every 15 minutes, the
+worker also brings Music Assistant's configuration to what thermite needs:
+the `sonos`, `wiim` and `airplay` player providers, with the speakers'
+addresses for discovery; one `filesystem_local` instance per library on
+`/media/<name>`, named `thermite <name>` (Music Assistant does not report
+an instance's path), and, once each library has its instance, no other;
+none of the providers that find other speaker families or act on their own
 (`chromecast`, `dlna`, `heos`, `bluesound`, `party`, `smart_fades`,
 `lastfm_recommendations`, `ambient_sounds`); remote access off; and
 onboarding complete. It never renames or disables a player. Each of those
