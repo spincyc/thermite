@@ -1,10 +1,11 @@
 /*
  * The page's own scripts in this process: web/remote/house.js, remotes.js,
- * backend.js, audio-session.js, session.js, pair.js, music-backend.js and
- * music-session.js run here as classic scripts, as the page runs them, so
- * the terminal remote and the page share one house, one set of remotes, one
- * backend, one Audio session, one session, one pairing backend and one
- * Music session. Nothing of them is copied.
+ * backend.js, audio-session.js, session.js, pair.js, music-backend.js,
+ * music-session.js and listen-session.js run here as classic scripts, as
+ * the page runs them, so the terminal remote and the page share one house,
+ * one set of remotes, one backend, one session, one pairing backend and
+ * one Listen over the device's own session and Music Assistant's. Nothing
+ * of them is copied.
  */
 "use strict";
 
@@ -14,7 +15,7 @@ const vm = require("vm");
 
 const WEB = path.join(__dirname, "..", "..", "web", "remote");
 const SCRIPTS = ["navigation.js", "access.js", "house.js", "remotes.js", "activity.js", "diagnostics.js", "backend.js", "audio-session.js", "session.js", "pair.js",
-  "music-backend.js", "music-session.js"];
+  "music-backend.js", "music-session.js", "listen-session.js"];
 
 function load(dir) {
   const from = dir || WEB;
@@ -34,6 +35,7 @@ function load(dir) {
     Session: globalThis.RemoteSession,
     Pairing: globalThis.PairingBackend,
     Music: globalThis.RemoteMusic,
+    Listen: globalThis.RemoteListen,
     MusicBackend: globalThis.MusicBackend
   };
 }

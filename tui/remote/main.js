@@ -2,10 +2,10 @@
  * bin/thermite remote's program: the house remote in a terminal. It runs
  * the page's scripts (shared.js), makes the backend the page would make
  * (the mock, or openHAB at --url over node's fetch and events.js), a
- * RemoteSession on a file store, the Pairing screen's PairingBackend, the
- * Audio screen's RemoteAudio, the Music screen's RemoteMusic (on the
- * gateway's music API, or the mock's speakers), the controller, and the
- * terminal (app.js) that draws it.
+ * RemoteSession on a file store with its Listen (a RemoteListen over a
+ * RemoteAudio and, in a house with speakers, a RemoteMusic on the gateway's
+ * music API or the mock's), the Pairing screen's PairingBackend, the
+ * controller, and the terminal (app.js) that draws it.
  *
  *   node tui/remote/main.js --modules DIR (--url URL | --mock) [--state FILE]
  *     [--pair] [--room ID] [--choose SOURCE] [--mode dark|light]
@@ -114,32 +114,31 @@ function assemble(args, env) {
   const backend = shared.Remote.create(shared.house, args.mock
     ? { backend: "mock", latency: args.latency != null ? Number(args.latency) : undefined, answering: !args.matrixDown }
     : { backend: "openhab", base: args.url, access, fetch: request, EventSource: Events });
+  const later = timers.setTimeout ? { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } : {};
+  const clock = timers.now ? { now: timers.now } : {};
+  // Listen's two sessions, on the remote's backend, locks and store: the
+  // device's own, and Music Assistant's through the gateway's music API (or
+  // with --mock invented music on the house's speakers), in a house with
+  // speakers. Neither reads locks of its own: the controller polls them
+  // (syncLocks), and holds both while a room list shows (syncListen).
+  const house = shared.house;
+  const speakers = (house.speakerRooms || []).length > 0 || (house.rooms || []).some((room) => (room.speakers || []).length);
+  const audio = shared.Audio.create(Object.assign({ backend: backend, house, access, store: store, watchLocks: false }, later, clock));
+  const music = speakers ? shared.Music.create(Object.assign({ access, house, store: store, watchLocks: false,
+    backend: shared.MusicBackend.create(Object.assign(args.mock
+      ? { backend: "mock", latency: args.latency != null ? Number(args.latency) : undefined, speakers: shared.MusicBackend.speakersOf(house) }
+      : { backend: "gateway", access, base: args.url, EventSource: Events }, later, clock)) }, later, clock)) : null;
+  const listen = shared.Listen.create(Object.assign({ audio, music, house, store: store }, later));
   const session = shared.Session.create(Object.assign({
-    backend: backend, house: shared.house, layouts: shared.layouts, store: store, volume: args.volume
+    backend: backend, house: shared.house, layouts: shared.layouts, store: store, volume: args.volume, listen
   }, timers));
   const createPairing = () => shared.Pairing.create(Object.assign({
     backend: args.mock ? "mock" : "openhab", base: args.url || "", fetch: request, EventSource: Events, location: null,
     native: !access || access.native === true
-  }, timers.setTimeout ? { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } : {},
-  timers.now ? { now: timers.now } : {}));
-  // The Audio screen's session, on the remote's backend, locks and store;
-  // the controller polls the locks for every screen (syncLocks).
-  const createAudio = () => shared.Audio.create(Object.assign({ backend: backend, house: shared.house, access, store: store, watchLocks: false },
-    timers.setTimeout ? { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } : {},
-    timers.now ? { now: timers.now } : {}));
-  // The Music screen's session: the gateway's music API through access, or
-  // with --mock the invented speakers; it reads no locks of its own.
-  const createMusic = () => shared.Music.create(Object.assign({ access, store: store, watchLocks: false,
-    backend: shared.MusicBackend.create(Object.assign(args.mock
-      ? { backend: "mock", latency: args.latency != null ? Number(args.latency) : undefined }
-      : { backend: "gateway", access, base: args.url, EventSource: Events },
-    timers.setTimeout ? { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } : {},
-    timers.now ? { now: timers.now } : {})) },
-  timers.setTimeout ? { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } : {},
-  timers.now ? { now: timers.now } : {}));
+  }, later, clock));
   const controller = Controller.create(Object.assign({
     session: session, Session: shared.Session, Pairing: shared.Pairing, Remote: shared.Remote, access,
-    layouts: shared.layouts, house: shared.house, store: store, backend: backend, createPairing, createAudio, createMusic,
+    layouts: shared.layouts, house: shared.house, store: store, backend: backend, createPairing,
     createCameras: () => Cameras.create({ base: args.url || "", mock: args.mock, fetch: request, ...timers }),
     createTopology: () => Topology.create({ base: args.url || "", mock: args.mock, fetch: request,
       manifest: options.topologyManifest }),
@@ -172,7 +171,7 @@ function assemble(args, env) {
     onChange: options.onChange,
     onQuit: options.onQuit
   }, timers));
-  return { access, shared: shared, store: store, backend: backend, session: session, controller: controller };
+  return { access, shared: shared, store: store, backend: backend, session: session, audio, music, listen, controller: controller };
 }
 
 function main(argv) {

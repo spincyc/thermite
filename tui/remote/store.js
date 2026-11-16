@@ -1,7 +1,7 @@
 /*
  * The terminal's localStorage: what the session keeps (remote.room,
- * remote.volume), the Audio screen's device (audio.device) and the theme
- * (remote.theme), in one JSON file
+ * remote.volume, each room's mode and speaker), Listen's (audio.device,
+ * music.speaker, music.tab) and the theme (remote.theme), in one JSON file
  * (bin/thermite remote: var/tui-remote/state.json). A file that cannot be
  * read starts empty; one that cannot be written keeps the values in memory.
  */
