@@ -3,18 +3,20 @@
 // against a small model of a terminal. Random frames are drawn into grids
 // and painted over one another as the remote paints; the bytes play on a
 // terminal that writes each character where its cursor stands and moves
-// the cursor the columns the character takes. Every write must land in the
+// the cursor the columns glibc's wcwidth gives the character. Every write must land in the
 // cell the grid has it in, and every frame must show what the grid holds.
 // The PRNG is seeded, so a run is the same each time. Prints what it found;
 // nothing leaves the process.
 const Grid = require("../tui/remote/grid"), { Painter } = require("../tui/remote/paint");
 
-// The model's widths, written apart from grid.js's (for the characters the
-// frames use): none for a mark or a format character, drawn in the cell
-// before; two for CJK and an emoji by default but a regional indicator; one
-// for any other.
-const ZERO = /[\p{Mn}\p{Me}\p{Cf}\u1160-\u11ff]/u;
-const WIDE = /(?!\p{Regional_Indicator})[\u3041-\u33ff\u4e00-\u9fff\uac00-\ud7a3\p{Emoji_Presentation}]/u;
+// The model's widths, apart from grid.js's: glibc 2.44's wcwidth for each
+// code point the frames use, written out. None is drawn in the cell
+// before; a code point not here is a fault.
+const WIDTHS = new Map([
+  ["a", 1], ["b", 1], [" ", 1], ["#", 1], ["e", 1], ["\u00e9", 1], ["\u0301", 0], ["\u00ad", 1], ["\u6771", 2], ["\u4eac", 2],
+  ["\u{1f3b5}", 2], ["\u0939", 1], ["\u093f", 1], ["\u0902", 0], ["\u0e01", 1], ["\u0e33", 1], ["\u0e31", 0], ["\u200d", 0],
+  ["\ufe0f", 0], ["\u2764", 1], ["\u{1f1e6}", 1], ["\u{1f1e7}", 1], ["\u{1f1ec}", 1], ["\u{1f1ef}", 1], ["\u{1f1f5}", 1],
+  ["\u2502", 1]]);
 
 // A terminal without autowrap: a write past the right edge is a fault, as
 // is one that lands where the grid has something else (but a wide
@@ -61,14 +63,18 @@ class Terminal {
   }
 
   print(point, expect) {
-    const row = this.cells[this.y];
-    if (ZERO.test(point)) {
+    const row = this.cells[this.y], width = WIDTHS.get(point);
+    if (width === undefined) {
+      this.faults.push("no width for " + JSON.stringify(point));
+      return;
+    }
+    if (!width) {
       const at = row[this.x - 1] === "" ? this.x - 2 : this.x - 1;
       if (at < 0) this.faults.push("a mark at the row's start");
       else row[at] += point;
       return;
     }
-    const wide = WIDE.test(point);
+    const wide = width === 2;
     if (this.x + (wide ? 2 : 1) > this.width) {
       this.faults.push(JSON.stringify(point) + " past the edge at " + this.x + "," + this.y);
       return;
@@ -114,8 +120,9 @@ function random(seed) {
   };
 }
 
-const ALPHABET = ["a", "b", " ", "\u00e9", "e\u0301", "\u6771", "\u4eac", "\u{1f3b5}", "\u0939", "\u093f", "\u0902", "\u0e01",
-  "\u0e33", "\u0e31", "\u200d", "\ufe0f", "\u2764", "\u{1f1e6}", "\u2502"];
+// A soft hyphen the grid drops (glibc's wcwidth would give it a column) and a flag among them.
+const ALPHABET = ["a", "b", " ", "\u00e9", "e\u0301", "\u00ad", "\u6771", "\u4eac", "\u{1f3b5}", "\u0939", "\u093f", "\u0902",
+  "\u0e01", "\u0e33", "\u0e31", "\u200d", "\ufe0f", "\u2764", "\u{1f1e6}", "\u{1f1ef}\u{1f1f5}", "\u2502"];
 const STYLES = ["base", "dim", "alert"];
 
 // Random frames painted one over another; how many diverged from the grid, and the first faults.

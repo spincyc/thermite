@@ -3,7 +3,8 @@ against a small model of a terminal (tests/terminal_grid_harness.js).
 
 Random frames from a seeded PRNG are painted over one another, as the
 remote paints, and played on a terminal that writes each character at its
-cursor and moves it the columns the character takes: every write must land
+cursor and moves it the columns glibc's wcwidth gives the character (a
+table of its own, not grid.js's classes): every write must land
 in the grid's cell for it, and every frame show what the grid holds.
 Nothing leaves the process.
 """
