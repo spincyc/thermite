@@ -463,11 +463,33 @@ class Configuration(Site):
                 self.assertLogs("oh_music.provision", "WARNING") as logs:
             for _ in range(3):
                 self.provisioner().step()
-        self.assertIn("could be neither named (Failed) nor recorded (OSError); removing it", logs.output[0])
+        self.assertIn("could be neither named (Failed) nor recorded (OSError); it was removed.", logs.output[0])
         self.assertEqual(self.domains().count("filesystem_local"), 0)
         self.provisioner().step()
         self.assertEqual([entry["name"] for entry in self.sim.providers.values()
                           if entry["domain"] == "filesystem_local"], ["thermite flac"])
+
+    def test_a_library_instance_that_cannot_even_be_removed_goes_at_the_next_reconcile(self):
+        def full(*_):
+            raise OSError(28, "No space left on device")
+
+        def refused(*_):
+            raise Failed(500)
+        self.sim.failing["config/providers/remove"] = 1
+        with patch.object(provision, "write_libraries", full), patch.object(provision.Provisioner, "name", refused), \
+                self.assertLogs("oh_music.provision", "WARNING") as logs:
+            self.provisioner().step()
+        self.assertIn("could be neither named (Failed) nor recorded (OSError), nor removed (Failed): the next "
+                      "reconcile removes it", logs.output[0])
+        # The reconcile's own log names the first failure, not the removal's.
+        self.assertIn("Failed", logs.output[1])
+        stray = [instance for instance, entry in self.sim.providers.items() if entry["domain"] == "filesystem_local"]
+        self.assertEqual(len(stray), 1)
+        self.provisioner().step()
+        kept = {instance: entry["name"] for instance, entry in self.sim.providers.items()
+                if entry["domain"] == "filesystem_local"}
+        self.assertEqual(list(kept.values()), ["thermite flac"])
+        self.assertNotIn(stray[0], kept)
 
     def test_a_part_that_fails_is_logged_and_the_others_still_applied(self):
         self.sim.remote_access = True

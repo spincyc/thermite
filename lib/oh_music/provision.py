@@ -484,7 +484,8 @@ class Provisioner:
         """Name a new library instance and record it ({library: instance}),
         each whatever the other does: either finds it again. One neither
         named nor recorded would be added again at every reconcile, so it
-        is removed."""
+        is removed; if that fails too, it is an instance of no library, which
+        the next reconcile removes once the library has another."""
         errors = []
         for keep in (lambda: self.name(client, library, instance), lambda: write_libraries(self.state, found)):
             try:
@@ -492,9 +493,16 @@ class Provisioner:
             except Exception as error:
                 errors.append(error)
         if len(errors) == 2:
-            LOG.warning("Music Assistant: library %s's new instance could be neither named (%s) nor recorded (%s); "
-                        "removing it.", library, type(errors[0]).__name__, type(errors[1]).__name__)
-            client.call("config/providers/remove", instance_id=instance)
+            named, recorded = (type(error).__name__ for error in errors)
+            try:
+                client.call("config/providers/remove", instance_id=instance)
+            except Exception as error:
+                LOG.warning("Music Assistant: library %s's new instance could be neither named (%s) nor recorded "
+                            "(%s), nor removed (%s): the next reconcile removes it once the library has another.",
+                            library, named, recorded, type(error).__name__)
+            else:
+                LOG.warning("Music Assistant: library %s's new instance could be neither named (%s) nor recorded "
+                            "(%s); it was removed.", library, named, recorded)
         if errors:
             raise errors[0]
 

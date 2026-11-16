@@ -490,12 +490,13 @@ worker names each library's new instance, then records its ID in
 `music-libraries.json` (mode 0600), each whatever the other does, so that
 an instance whose naming failed is named again, and one whose record was
 not written is found by its name, rather than removed, added again and
-rescanned; one that could be neither named nor recorded is removed at once. That record is trusted as
-the claim file is: while it is not the service account's, or not mode
-0600, or its contents are not thermite's, the worker warns once and leaves
-the libraries as they are, adding and removing none (a record with
-contents thermite did not write may be deleted: the libraries are then
-found by their names).
+rescanned; one that could be neither named nor recorded is removed at once,
+or, if that fails too, by the next reconcile once its library has another
+instance. That record is trusted as the claim file is: while it is not the
+service account's, or not mode 0600, or its contents are not thermite's,
+the worker warns once and leaves the libraries as they are, adding and
+removing none (a record with contents thermite did not write may be
+deleted: the libraries are then found by their names).
 
 Routes (`<speaker>` is a contract speaker ID):
 
