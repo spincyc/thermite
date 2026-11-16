@@ -1263,7 +1263,8 @@ function create(options) {
       return;
     }
     if (name === "pageup" || name === "pagedown") return pageScroll(name === "pageup" ? -1 : 1);
-    if (["remotes-menu", "lock-menu", "audio-choice", "audio-inputs", "music-item"].includes(ui.overlay.kind) && ["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
+    // Watch's Info as these: the arrows choose its buttons and switches, PgUp and PgDn scroll it.
+    if (["remotes-menu", "lock-menu", "audio-choice", "audio-inputs", "music-item", "info"].includes(ui.overlay.kind) && ["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
     if (ui.overlay.kind === "topology") {
       if (name === "up" || name === "down") return stepTopology("room", name === "up" ? -1 : 1);
       if (name === "left" || name === "right") return stepTopology("source", name === "left" ? -1 : 1);

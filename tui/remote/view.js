@@ -308,7 +308,7 @@ function paneHelp(ctx) {
       .concat(ctx.session?.roomLock().canManage ? [[["k"], "lock/unlock room"]] : []);
     case "info": return ["Info", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"]];
     case "signal": return ["Signal & audio", [["↑↓"], "room"], [["←→"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"]];
-    case "sheet:info": return ["Info", [["\u2191\u2193"], "scroll"]];
+    case "sheet:info": return ["Info", [["\u2191\u2193"], "choose"], [["Enter"], "press"], [["PgUp/PgDn"], "scroll"], [["Esc"], "close"]];
     case "log": return ctx.ui.screen === "pairing" ? ["Log", [["\u2191\u2193"], "scroll"], [["PgUp/PgDn"], "scroll"]]
       : ["Log", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"]];
     case "pair-list": return ["Pairing", [["\u2191\u2193"], "select device"], [["Enter"], "pair"], [["s/S"], "sort/reverse"]];

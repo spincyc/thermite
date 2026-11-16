@@ -109,5 +109,10 @@ class RemoteTUI(unittest.TestCase):
         self.assertEqual(terminal["kept"], ["no step", "no room", "no frame"])
         self.assertEqual(terminal["draws"], 1)
 
+    def test_infos_buttons_and_switches_are_chosen_with_the_arrows(self):
+        self.assertEqual(self.proof["sheets"]["info"], {"mode": ["buttons", "slider"], "sent": [[WEST, "screen", "down"]],
+                                                        "answering": False, "sheet": "info"})
+
+
 if __name__ == "__main__":
     unittest.main()

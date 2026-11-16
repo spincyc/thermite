@@ -218,6 +218,19 @@ async function sheets(proof) {
     key(parts, null, { name: "escape" });
     proof.sheets[ch] = opened.concat([sheet(), ui.pane]);
   }
+  // Info's controls, each reached with the arrows and pressed with Enter.
+  key(parts, "i");
+  const mode = session.volumeMode();
+  focusOn(parts, "volume-mode");
+  key(parts, null, { name: "enter" });
+  focusOn(parts, "control:screen:down");
+  key(parts, null, { name: "enter" });
+  focusOn(parts, "simulate-matrix");
+  key(parts, null, { name: "space" });
+  await until(parts, () => parts.sent.length, "the screen lowered");
+  proof.sheets.info = { mode: [mode, session.volumeMode()], sent: parts.sent.slice(), answering: session.isAnswering(), sheet: sheet() };
+  key(parts, null, { name: "enter" });
+  key(parts, null, { name: "escape" });
   // The rooms sheet: ↓ chooses the next room at once, Enter goes to its remote.
   key(parts, "r");
   key(parts, null, { name: "down" });
