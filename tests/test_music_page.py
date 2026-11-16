@@ -484,6 +484,12 @@ class MusicMarkup(unittest.TestCase):
         self.assertRegex(page, r":is\(\.music-transport \.key, \.music-path \.icon-button\):disabled \{\s*opacity: 0\.38;")
         self.assertIn((None, ".target:disabled", {"opacity": "0.38", "cursor": "default", "background": "transparent"}), shared)
 
+    def test_the_folder_path_shows_where_the_focus_waits(self):
+        rules = css_rules((REMOTE / "music.css").read_text())
+        self.assertIn((None, ".music-path__text:focus-visible", {"outline": "2px solid var(--focus)", "outline-offset": "0",
+                                                                 "border-radius": "4px"}), rules)
+        self.assertIn('class="music-path__text" tabindex="-1"', (REMOTE / "music.html").read_text())
+
     def test_the_transport_fits_a_320_px_phone_and_every_target_is_44_px(self):
         shared, rules = css_rules((REMOTE / "remote.css").read_text()), css_rules((REMOTE / "music.css").read_text())
         tokens = {}

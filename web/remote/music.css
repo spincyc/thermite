@@ -620,6 +620,14 @@
   font-weight: 600;
 }
 
+/* The focus waits here while a folder reads (tabindex -1): ringed as the
+   slider is, inside the row's edge. */
+.music-path__text:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+  border-radius: 4px;
+}
+
 .music__more {
   margin-top: var(--space-3);
 }
