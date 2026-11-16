@@ -8,9 +8,9 @@ instance/host.yaml opts a host in:
       libraries:
         flac: /mnt/music/flac
 
-Each library is a name and an absolute host directory the owner mounts
-separately (a NAS share, a local disk); the container sees it read-only at
-MEDIA/<name>. `port` and `stream_port` move Music Assistant's two thermite
+Each library is a name and an absolute host directory: on a network share
+Thermite mounts (oh_shares), or one the owner mounts (a local disk); the
+container sees it read-only at MEDIA/<name>. `port` and `stream_port` move Music Assistant's two thermite
 listeners (oh_ports.MUSIC): its API, which only the gateway uses, on
 loopback, and the audio streams speakers fetch, on the LAN. A host without
 `music:` runs no Music Assistant, and the gateway serves no music.

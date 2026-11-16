@@ -144,7 +144,9 @@ def missing_recovery(context: Context) -> str:
     return (f"Thermite's files are installed here, but {INSTALLED} is missing or damaged, so nothing can "
             "prove which of them this installation owns. Nothing was changed. To recover, as root: "
             f"stop Thermite (systemctl stop {oh_units.TARGET} {oh_units.SLICE}); move its units "
-            f"({UNITS}/thermite*, /etc/containers/systemd/thermite*, {WANTS}), {ingress.RULE_FILE}, "
+            f"({UNITS}/thermite*, /etc/containers/systemd/thermite*, {WANTS}, and the network shares' "
+            f"{UNITS}/*.mount whose Description starts Thermite share, with /etc/thermite/share-*.credentials), "
+            f"{ingress.RULE_FILE}, "
             f"{oh_apparmor.CONFIG} and {oh_apparmor.POLICY} aside, out of those directories; run "
             f"systemctl daemon-reload; then run thermite install --config {site}. The state under {root} "
             "stays where it is; see docs/installation.md#a-missing-manifest.")

@@ -241,15 +241,19 @@ class Units(unittest.TestCase):
                 self.assertEqual(service["Service"]["SyslogIdentifier"], Path(source).stem)
 
     def test_every_generated_unit_and_dropin_has_an_install_destination(self):
-        self.assertEqual(set(deploy.render_units(VERSIONS, MUSIC_HOST)), set(deploy.INSTALLED))
+        # A share's mount unit is named after its mount point (tests/test_shares.py).
+        full = {**MUSIC_HOST, "shares": {"music": {"type": "cifs", "server": "nas.example", "share": "music",
+                                                   "where": "/mnt/music"}}}
+        self.assertEqual(set(deploy.render_units(VERSIONS, full)), set(deploy.INSTALLED) | set(deploy.share_units(full)))
+        self.assertEqual(set(deploy.render_units(VERSIONS, full)), set(deploy.host_units(full)))
         self.assertEqual(set(deploy.render_units(VERSIONS, HOST)), set(deploy.host_units(HOST)))
-        self.assertEqual(set(deploy.INSTALLED) - set(deploy.host_units(HOST)), set(deploy.MUSIC_UNITS))
+        self.assertEqual(set(deploy.INSTALLED) - set(deploy.host_units(HOST)), set(deploy.OPTIONAL_UNITS))
 
     def test_target_groups_only_thermite_members_and_services_share_the_slice(self):
         rendered = deploy.render_units(VERSIONS, MUSIC_HOST)
         self.assertEqual(len(rendered), 28)
         self.assertEqual(sum(not name.endswith(".conf") for name in rendered), 17)
-        self.assertEqual({path.name for path in deploy.INSTALLED.values()},
+        self.assertEqual({path.name for path in deploy.host_units(MUSIC_HOST).values()},
                          {Path(name).name for name in rendered})
         containers = set()
         for name, text in rendered.items():
@@ -1563,7 +1567,7 @@ class HostFacts(unittest.TestCase):
             deploy.validate_host(["root"])
         self.refused("unknown metrics setting retension", metrics={"retension": "30d"})
         # The installation root replaced state_root, which has no other meaning now.
-        self.refused(r"unknown setting state_root \(allowed: gateway, gid, guest_http, http_port, https_port, metrics, music, root, timezone, uid\)",
+        self.refused(r"unknown setting state_root \(allowed: gateway, gid, guest_http, http_port, https_port, metrics, music, root, shares, timezone, uid\)",
                      state_root="/srv/thermite")
 
     def test_music_names_its_libraries_and_refuses_what_a_unit_cannot_hold(self):

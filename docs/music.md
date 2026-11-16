@@ -35,26 +35,43 @@ Upstream recommends 2 GB of RAM for Music Assistant; plan it on top of the
 
 ## Mount the libraries
 
-Thermite reads the libraries but never mounts them: making each directory
-available is yours to do, before Music Assistant starts. Mount a NAS share
-from `/etc/fstab`, read-only, so that it is there whenever the host boots:
+Each library's directory must be there before Music Assistant starts. For a
+NAS, declare its share in `instance/host.yaml` and Thermite mounts it, at
+boot and before Music Assistant (see
+[network shares](installation.md#network-shares)):
 
-```text
-192.0.2.20:/volume1/music  /mnt/music  nfs  ro,_netdev,nofail  0  0
+```yaml
+shares:
+  music:
+    type: cifs
+    server: nas.example
+    share: music
+    where: /mnt/music
+music:
+  libraries:
+    flac: /mnt/music/flac
+    mp3: /mnt/music/mp3
 ```
 
-The `thermite` account, UID 9001, must be able to read the files. Music
-Assistant sees each library at `/media/<name>`, read-only. Quadlet makes the
-service require the mounts its libraries are on, so Music Assistant starts
-after the shares `/etc/fstab` names, and does not start while one of them
-cannot be mounted or a library's directory is missing. An unreachable share
-therefore fails an install's or upgrade's start of Music Assistant, and with
-it the install transaction, which rolls back. Stopping a share's mount unit
-stops Music Assistant too; unmounting it by hand does not.
+A library may also be on a local disk, or on a share you mount yourself from
+`/etc/fstab`; Thermite then only reads it.
+
+The `thermite` account, UID 9001, must be able to read the files: an SMB
+share Thermite mounts gives them to it, an NFS export must let UID 9001
+read. Music Assistant sees each library at `/media/<name>`, read-only.
+Quadlet makes the service require the mounts its libraries are on, so Music
+Assistant starts after them (after a Thermite share's wait for the NAS's
+name, too), and does not start while one of them cannot be mounted or a
+library's directory is missing. An unreachable share therefore fails an
+install's or upgrade's start of Music Assistant, and with it the install
+transaction, which rolls back. Stopping a share's mount unit stops Music
+Assistant too; unmounting it by hand does not.
 
 Music Assistant sees only what was mounted when it started: a share mounted,
 or mounted again, after it started stays invisible to it, and the library
-looks empty. Restart it after mounting:
+looks empty. Thermite's shares are mounted before it starts, and never
+mounted on first access for that reason. After mounting one yourself,
+restart it:
 
 ```sh
 sudo systemctl restart thermite-music.service

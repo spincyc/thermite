@@ -558,7 +558,8 @@ def preparation(context: steps.Context) -> list[Step]:
     """What the transaction needs that is the host's, never an item: done
     while Thermite runs. It ends with the installation root, which the
     transaction plans and begins inside."""
-    return [*steps.configuration_steps(context), steps.Packages(), NativeIngressPrerequisites(context),
+    return [*steps.configuration_steps(context), steps.ShareLogins(context), steps.Packages(context),
+            NativeIngressPrerequisites(context),
             steps.AppArmorService(), steps.BootTest(context), steps.Account(context), steps.InstallationRoot(context)]
 
 
@@ -571,7 +572,8 @@ def switching(context: steps.Context, transaction: str | None, how: str = "upgra
     playing = music.enabled(context.host)
     return [steps.StateDirectories(context), steps.MetricsDirectories(context),
             *([steps.MusicDirectories(context)] if playing else []),
-            steps.Units(context), steps.NodeConfinement(context), steps.NativePreparation(context),
+            steps.Units(context), steps.ShareCredentials(context), steps.NodeConfinement(context),
+            steps.NativePreparation(context),
             NativeIngress(context), deployment, steps.Services(context, restart_runtime=context.restart_runtime),
             *([steps.MusicServices(context)] if playing else []), steps.Answers(context, native),
             steps.Token(context, native), *steps.gateway_steps(context, native, transaction=transaction),
@@ -663,7 +665,8 @@ def unchanged(context: steps.Context, system: System, installed: dict | None) ->
     items = manifest.desired(switching(context, None), system, context.installation.root)
     if {(item["path"], item["class"]) for item in installed["items"]} != {(str(item.path), item.cls) for item in items}:
         return False
-    if (steps.Units(context).stale(system) or not NativeIngress(context).current(system)
+    if (steps.Units(context).stale(system) or steps.ShareCredentials(context).stale(system)
+            or not NativeIngress(context).current(system)
             or not steps.NodeConfinement(context).check(system).done or not steps.Deploy(context).check(system).done):
         return False
     target = system.unit(oh_units.TARGET)

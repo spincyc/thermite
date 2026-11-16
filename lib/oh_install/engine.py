@@ -68,7 +68,10 @@ KINDS = ("install", "upgrade", "clean", "revert", "uninstall", "purge")
 UNINSTALLING = ("uninstall", "purge")
 
 ID = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}")
-UNIT = re.compile(r"thermite[A-Za-z0-9@._:-]*")
+#: A network share's mount unit (lib/oh_shares): systemd names it after its
+#: mount point, which Thermite keeps below /mnt or /media, never Thermite.
+MOUNT = re.compile(r"(?:mnt|media)-[A-Za-z0-9:_.\\-]+\.mount")
+UNIT = re.compile(r"thermite[A-Za-z0-9@._:-]*|" + MOUNT.pattern)
 PIN = re.compile(r"[a-z0-9_]{1,64}")
 IMAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,511}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -201,8 +204,9 @@ def allowed(root, path, cls, system=SYSTEM) -> bool:
     """Whether the fixed allowlist lets an item of class `cls` live at `path`.
 
     System paths are Thermite-named entries in the directories its units,
-    rules, policies and documentation go to. Below the installation root
-    only runtime/ and access/ hold items."""
+    rules, policies and documentation go to, and the mount units of its
+    network shares (MOUNT), which systemd names. Below the installation
+    root only runtime/ and access/ hold items."""
     if str(path).startswith("//"):
         return False
     path, root, system = PurePosixPath(path), PurePosixPath(root), PurePosixPath(system)
@@ -223,6 +227,8 @@ def allowed(root, path, cls, system=SYSTEM) -> bool:
             # guard and commit touch it, through systemctl.
             return (parts[3] in ("thermite.target.wants", "multi-user.target.wants")
                     and parts[4].startswith("thermite") and parts[4] != TARGET and cls == "link")
+        if len(parts) == 4 and MOUNT.fullmatch(parts[3]):
+            return cls == "unit"
         return parts[3].startswith("thermite") and cls in ("unit", "file")
     if parts[:3] == ("etc", "containers", "systemd") and len(parts) == 4:
         return parts[3].startswith("thermite") and cls in ("unit", "file")

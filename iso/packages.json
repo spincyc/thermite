@@ -8,6 +8,12 @@
       "packages": ["podman", "runc", "util-linux", "git", "make", "python", "python-yaml", "nodejs", "npm", "openssl", "nftables"]
     },
     {
+      "name": "shares",
+      "title": "Network shares",
+      "description": "The SMB/CIFS and NFS mount helpers; thermite install's Packages step asks for them only for a host whose instance/host.yaml declares shares:.",
+      "packages": ["cifs-utils", "nfs-utils"]
+    },
+    {
       "name": "host",
       "title": "Host services",
       "description": "Owner login and sudo, SSH and rsync, mDNS names, the network, zram swap, package cache cleanup and the running kernel's modules after an upgrade.",

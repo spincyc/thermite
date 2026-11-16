@@ -19,6 +19,8 @@ ATV_RESTART_PATH = "thermite-atv-restart.path"
 ATV_RESTART_SERVICE = "thermite-atv-restart.service"
 METRICS_RESTART_PATH = "thermite-metrics-restart.path"
 METRICS_RESTART_SERVICE = "thermite-metrics-restart.service"
+#: Waits for a network share's server name, one instance per server (oh_shares).
+SHARE_GATE = "thermite-share-gate@.service"
 
 #: The gateway, its policy worker and its callback relay: host services, not
 #: containers (oh_access.staging writes them).

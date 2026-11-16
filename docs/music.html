@@ -47,10 +47,20 @@
 <p>A library's name is lowercase letters, digits and <code>_</code>, starting with a letter, at most 32 characters. Its directory is a normalized absolute path of letters, digits and <code>._@+-</code>, and no two libraries share one. <code>music: {}</code> runs Music Assistant with no library, for TIDAL alone. <code>port</code> and <code>stream_port</code> move its two listeners; see <a href="#ports">ports</a>.</p>
 <p>A private site pins its own native versions: copy the <code>music_assistant</code> entry from Thermite's <code>versions.json</code> into the site's, or generating refuses the host. Commit both changes, then run <code>thermite upgrade --config DIR</code> (or <code>thermite install</code>). It pulls the image, about 760 MB, before it stops anything. Upstream recommends 2 GB of RAM for Music Assistant; plan it on top of the <a href="requirements.html">stack's own</a>.</p>
 <h2 id="mount-the-libraries">Mount the libraries</h2>
-<p>Thermite reads the libraries but never mounts them: making each directory available is yours to do, before Music Assistant starts. Mount a NAS share from <code>/etc/fstab</code>, read-only, so that it is there whenever the host boots:</p>
-<pre><code class="language-text">192.0.2.20:/volume1/music  /mnt/music  nfs  ro,_netdev,nofail  0  0</code></pre>
-<p>The <code>thermite</code> account, UID 9001, must be able to read the files. Music Assistant sees each library at <code>/media/&lt;name&gt;</code>, read-only. Quadlet makes the service require the mounts its libraries are on, so Music Assistant starts after the shares <code>/etc/fstab</code> names, and does not start while one of them cannot be mounted or a library's directory is missing. An unreachable share therefore fails an install's or upgrade's start of Music Assistant, and with it the install transaction, which rolls back. Stopping a share's mount unit stops Music Assistant too; unmounting it by hand does not.</p>
-<p>Music Assistant sees only what was mounted when it started: a share mounted, or mounted again, after it started stays invisible to it, and the library looks empty. Restart it after mounting:</p>
+<p>Each library's directory must be there before Music Assistant starts. For a NAS, declare its share in <code>instance/host.yaml</code> and Thermite mounts it, at boot and before Music Assistant (see <a href="installation.html#network-shares">network shares</a>):</p>
+<pre><code class="language-yaml">shares:
+  music:
+    type: cifs
+    server: nas.example
+    share: music
+    where: /mnt/music
+music:
+  libraries:
+    flac: /mnt/music/flac
+    mp3: /mnt/music/mp3</code></pre>
+<p>A library may also be on a local disk, or on a share you mount yourself from <code>/etc/fstab</code>; Thermite then only reads it.</p>
+<p>The <code>thermite</code> account, UID 9001, must be able to read the files: an SMB share Thermite mounts gives them to it, an NFS export must let UID 9001 read. Music Assistant sees each library at <code>/media/&lt;name&gt;</code>, read-only. Quadlet makes the service require the mounts its libraries are on, so Music Assistant starts after them (after a Thermite share's wait for the NAS's name, too), and does not start while one of them cannot be mounted or a library's directory is missing. An unreachable share therefore fails an install's or upgrade's start of Music Assistant, and with it the install transaction, which rolls back. Stopping a share's mount unit stops Music Assistant too; unmounting it by hand does not.</p>
+<p>Music Assistant sees only what was mounted when it started: a share mounted, or mounted again, after it started stays invisible to it, and the library looks empty. Thermite's shares are mounted before it starts, and never mounted on first access for that reason. After mounting one yourself, restart it:</p>
 <pre><code class="language-sh">sudo systemctl restart thermite-music.service</code></pre>
 <p>Thermite never relabels your files. Without podman's <code>:z</code> or <code>:Z</code> volume options a source keeps its SELinux label, so on an SELinux host label the directories for containers (<code>container_file_t</code>) or mount the share with a <code>context=</code> option. Ubuntu and Arch, with AppArmor or neither, need nothing.</p>
 <h2 id="what-thermite-runs">What Thermite runs</h2>

@@ -245,12 +245,15 @@ application and private-site backups.
 The installer writes `archinstall`'s package list and its package check from
 it, and a test holds this table to it. The first tier is everything
 `thermite install`'s Packages step installs, so that step finds nothing to
-do; install itself still checks only those. The other tiers are for the
-person at the console or on SSH.
+do; install itself still checks only those. The second is what it adds for
+a host that declares [network shares](installation.md#network-shares), so
+that one finds nothing to do either. The other tiers are for the person at
+the console or on SSH.
 
 | Tier | Packages |
 |---|---|
 | Thermite's own requirements | `podman` `runc` `util-linux` `git` `make` `python` `python-yaml` `nodejs` `npm` `openssl` `nftables` |
+| Network shares | `cifs-utils` `nfs-utils` |
 | Host services | `sudo` `openssh` `rsync` `avahi` `nss-mdns` `networkmanager` `wpa_supplicant` `zram-generator` `pacman-contrib` `kernel-modules-hook` |
 | Owner's picks | `btop` `emacs-nox` `jq` `miller` |
 | Operator tools | `nmap` `tcpdump` `bind` `arp-scan` `mtr` `traceroute` `ethtool` `socat` `openbsd-netcat` `inetutils` `ngrep` `usbutils` `picocom` `dmidecode` `go-yq` `ripgrep` `less` `htop` `lsof` `strace` `iotop-c` `smartmontools` `nvme-cli` `ncdu` `lm_sensors` `tmux` `bash-completion` `man-db` `man-pages` `nano` `vim` `tree` `pv` |
@@ -283,8 +286,9 @@ Boot Ubuntu's install entry, keep the bundled installer version, choose the
 disk and owner login, and review Ubuntu's destructive-storage confirmation.
 Every normal installer screen remains interactive. No `autoinstall` kernel
 flag, storage plan or identity defaults are added. Late commands copy the
-bundled media into the installed target, install `python3-venv` and `git`
-there when the media or a mirror provides them, then verify the bundled wheels
+bundled media into the installed target, install `python3-venv` and `git`,
+and the network share helpers `cifs-utils` and `nfs-common`, there when the
+media or a mirror provides them, then verify the bundled wheels
 and create the application environment without pip or network access. An
 offline installation without those packages still completes; the first-boot
 instructions give the one command to install them before `thermite install`.

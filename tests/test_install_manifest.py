@@ -97,8 +97,8 @@ class Inventory(unittest.TestCase):
     def test_music_is_its_unit_and_its_state_copied_aside_when_its_image_changes(self):
         music, state = deploy.INSTALLED[deploy.MUSIC_QUADLET], ROOT / "runtime/music"
         items = declared(host=MUSIC_HOST)
-        self.assertEqual({path: items[path].cls for path in deploy.INSTALLED.values()},
-                         {path: "unit" for path in deploy.INSTALLED.values()})
+        self.assertEqual({path: items[path].cls for path in deploy.host_units(MUSIC_HOST).values()},
+                         {path: "unit" for path in deploy.host_units(MUSIC_HOST).values()})
         self.assertEqual(items[music].unit, oh_units.MUSIC)
         self.assertNotIn(UNITS / "thermite.target.wants" / oh_units.MUSIC, items, "its generator enables a quadlet")
         self.assertEqual((items[state].cls, items[state].image, items[state].value),

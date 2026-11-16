@@ -177,9 +177,15 @@ def fetch(cache: Path, *, base: str = "arch") -> dict:
 #: installer's own package step runs. Install it with the OS when the media or
 #: mirror provides it; an offline image that lacks it still installs, and
 #: FIRST-BOOT.txt gives the one apt command to run first.
+#: The network shares' mount helpers (oh_shares.PACKAGES) follow, apart: one
+#: missing offline keeps neither python3-venv nor git from installing, and
+#: thermite install's Packages step adds them for a host with shares:.
 UBUNTU_PREREQUISITES = ("DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv git || "
                         "echo 'Thermite: python3-venv or git is unavailable offline; "
-                        "see /opt/thermite/FIRST-BOOT.txt before thermite install' >&2")
+                        "see /opt/thermite/FIRST-BOOT.txt before thermite install' >&2; "
+                        "DEBIAN_FRONTEND=noninteractive apt-get install -y cifs-utils nfs-common || "
+                        "echo 'Thermite: cifs-utils or nfs-common is unavailable offline; "
+                        "thermite install adds them for a host with network shares' >&2")
 
 
 def configuration() -> bytes:

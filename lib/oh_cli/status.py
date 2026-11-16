@@ -214,7 +214,7 @@ def show(args, host: dict) -> int:
             problems.append(f"unit {target}: {how}")
         say(f"unit     {target}: {how}" + (f" (the owner installs {name}: thermite upgrade)"
                                            if how in ("differs", "missing") else
-                                           " (instance/host.yaml has no music: now; thermite upgrade removes it)"
+                                           " (instance/host.yaml no longer needs it; thermite upgrade removes it)"
                                            if how == "unwanted" else ""))
     for service, active in deploy.service_states(deploy.services(host)).items():
         report["services"][service] = active

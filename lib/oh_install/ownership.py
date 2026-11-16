@@ -118,6 +118,10 @@ def _signature(raw: bytes) -> tuple[str, ...] | None:
     return tuple(lines)
 
 
+def _template(name: str) -> bool:
+    return "@." in name
+
+
 @dataclass(frozen=True)
 class Owned:
     # canonical role, effective unit name, source file
@@ -144,7 +148,11 @@ def inspect(context: Context, system: System) -> Owned:
     manifest = recorded(system) or {}
     builds = None
     candidates = []
-    for source, target in deploy.INSTALLED.items():
+    # A share's mount unit is named after its mount point: only this host's
+    # are known here. One a host no longer has is the install engine's to
+    # set aside, by the installed manifest.
+    units = deploy.every_unit(context.host)
+    for source, target in units.items():
         role = unit_name(target)
         if not system.safe_unit_parent(target.parent):
             problems.append(f"unsafe unit directory {target.parent}; refusing to install or remove files through it")
@@ -172,12 +180,18 @@ def inspect(context: Context, system: System) -> Owned:
                                 "this site's generated unit nor an earlier build; preserve it and resolve the collision")
                 continue
         matched.add(path)
-    names = list(dict.fromkeys(role for _, _, role in candidates))
+    # A template (the share gate) is never a unit systemd shows; its file's
+    # proof above is all there is to it.
+    names = list(dict.fromkeys(role for _, _, role in candidates if not _template(role)))
     origins = system.unit_origins(names)
-    dropins = {role: deploy.INSTALLED[source] for role, source in deploy.CONTAINER_DROPINS.items()}
-    primaries = {unit_name(path): path for path in deploy.INSTALLED.values() if path.suffix != '.conf'}
+    dropins = {role: units[source] for role, source in deploy.CONTAINER_DROPINS.items()}
+    primaries = {unit_name(path): path for path in units.values() if path.suffix != '.conf'}
     for _, path, name in candidates:
         if path in present and path not in matched:
+            continue
+        if _template(name):
+            if path in matched:
+                entries.append((name, name, path))
             continue
         role = name
         origin = origins[name]

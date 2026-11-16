@@ -1,4 +1,5 @@
-"""Owner-invoked, finite installation of the two monitoring credentials.
+"""Owner-invoked, finite installation of the two monitoring credentials and
+of each network share's SMB login.
 
 This standalone stdlib helper is invoked by an explicit approved administrative
 command. It never discovers credentials or rotates an existing Grafana password.
@@ -12,6 +13,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import time
@@ -19,6 +21,12 @@ import time
 NAMES = ("openhab-token", "grafana-admin-password")
 MAXIMUM = 65536
 DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+#: Where each network share's SMB login goes, root's alone: oh_shares.CREDENTIALS,
+#: named share-<name>.credentials after the share (oh_shares.NAME).
+SHARES = Path("/etc/thermite")
+SHARE = re.compile(r"[a-z][a-z0-9_]{0,31}")
+#: What a login may say, in mount.cifs's credentials format.
+LOGIN = ("username", "password", "domain")
 
 
 class SecretError(ValueError):
@@ -189,6 +197,105 @@ def install(runtime, *, name, source=None, uid, gid, preserve_existing=False, ge
         return {"installed": True, "name": name, "changed": changed, "preserved": preserved}
 
 
+def share_login(content):
+    """A mount.cifs login: username= and password= lines and an optional
+    domain=, each once; blank lines and # comments aside, nothing else.
+    The error never quotes the file."""
+    try:
+        text = content.decode("utf-8")
+    except UnicodeError:
+        raise SecretError("a share login must be UTF-8 text") from None
+    found = {}
+    for line in text.split("\n"):
+        if not line.strip() or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        if (not separator or key not in LOGIN or key in found or not value
+                or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+            raise SecretError("a share login holds one username= and one password= line, and may hold a domain= line")
+        found[key] = value
+    if not {"username", "password"} <= found.keys():
+        raise SecretError("a share login holds one username= and one password= line, and may hold a domain= line")
+    return found
+
+
+def install_share(name, *, source, directory=SHARES, uid=0, gid=0):
+    """Install the invoking administrator's private copy of a share's login
+    as directory/share-<name>.credentials, the owner's (root's) alone. The
+    file starts with a random salt, which mount.cifs skips: the installed
+    manifest records its digest, which must check no guessed password. While
+    the login stays the same the file and its salt stay; its time is renewed,
+    so that it is newer than the copy it was installed from."""
+    if not isinstance(name, str) or not SHARE.fullmatch(name):
+        raise SecretError("choose a share by its name")
+    if type(uid) is not int or type(gid) is not int or uid < 0 or gid < 0:
+        raise SecretError("choose the credential's owner")
+    if os.geteuid() != 0 and (uid, gid) != (os.geteuid(), os.getegid()):
+        raise SecretError("an administrative command is required to install a root-owned credential")
+    try:
+        source_uid = int(os.environ.get("SUDO_UID", str(os.getuid())))
+    except ValueError:
+        raise SecretError("invalid invoking administrator identity") from None
+    if source_uid < 0:
+        raise SecretError("invalid invoking administrator identity")
+    target = f"share-{name}.credentials"
+    with ExitStack() as stack:
+        source_path = _path(source)
+        parent = _directory(source_path.parent, stack)
+        source_fd = _keep(stack, os.open(source_path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent))
+        _regular(source_fd, source_uid=source_uid)
+        login = share_login(_read(source_fd))
+        root = _path(directory)
+        if root == Path("/"):
+            raise SecretError("the filesystem root cannot hold share credentials")
+        top = _directory(root.parent, stack)
+        try:
+            private = _keep(stack, os.open(root.name, DIRECTORY, dir_fd=top))
+        except FileNotFoundError:
+            os.mkdir(root.name, mode=0o755, dir_fd=top)
+            private = _keep(stack, os.open(root.name, DIRECTORY, dir_fd=top))
+        info = os.fstat(private)
+        if info.st_uid != uid or info.st_mode & 0o022:
+            raise SecretError("the share credentials directory must be the owner's and writable by no one else")
+        existing, same = None, False
+        try:
+            existing = _keep(stack, os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=private))
+        except FileNotFoundError:
+            pass
+        if existing is not None:
+            found = _regular(existing)
+            if found.st_uid != uid:
+                raise SecretError("an installed share credential belongs to someone else")
+            try:
+                same = share_login(_read(existing)) == login
+            except SecretError:
+                same = False
+        if same:
+            os.fchown(existing, uid, gid)
+            os.fchmod(existing, 0o600)
+            os.utime(existing)
+            return {"installed": True, "share": name, "changed": False}
+        lines = [f"# thermite share {name} {os.urandom(16).hex()}", *(f"{key}={login[key]}" for key in LOGIN if key in login)]
+        content = ("\n".join(lines) + "\n").encode("utf-8")
+        temporary = "." + target + "." + os.urandom(12).hex()
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=private)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                os.fchown(stream.fileno(), uid, gid)
+                os.fchmod(stream.fileno(), 0o600)
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, target, src_dir_fd=private, dst_dir_fd=private)
+            os.fsync(private)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=private)
+            except FileNotFoundError:
+                pass
+        return {"installed": True, "share": name, "changed": True}
+
+
 def _validate_runtime_token(url, content):
     """Verify a service credential with one bounded, read-only loopback request."""
     # Both modules are stdlib-only and ship together in every pinned release;
@@ -271,18 +378,27 @@ def recover_runtime_token(runtime, *, destination, uid, gid, url):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("runtime", type=Path)
-    parser.add_argument("--name", required=True, choices=NAMES)
+    parser.add_argument("runtime", type=Path, nargs="?")
+    parser.add_argument("--name", choices=NAMES)
+    parser.add_argument("--share", metavar="NAME", help=f"install a network share's SMB login into {SHARES}, root's alone")
     parser.add_argument("--source", type=Path, help="invoking administrator's private mode-0600 copy")
-    parser.add_argument("--uid", required=True, type=int)
-    parser.add_argument("--gid", required=True, type=int)
+    parser.add_argument("--uid", type=int, help="the service account's (not with --share: root's)")
+    parser.add_argument("--gid", type=int)
     parser.add_argument("--preserve-existing", action="store_true")
     parser.add_argument("--generate-if-missing", action="store_true", help="generate only a genuinely missing Grafana password and save the invoking administrator's private copy")
     parser.add_argument("--recover-runtime-token", action="store_true", help="restore a missing operator token from the installed service credential")
     parser.add_argument("--runtime-url", help="literal loopback runtime origin for credential recovery")
     args = parser.parse_args(argv)
     try:
-        if args.recover_runtime_token:
+        if args.share is not None:
+            if (args.runtime is not None or args.name is not None or args.source is None or args.preserve_existing
+                    or args.generate_if_missing or args.recover_runtime_token or args.runtime_url is not None
+                    or args.uid is not None or args.gid is not None):
+                raise SecretError("invalid share credential arguments")
+            result = install_share(args.share, source=args.source)
+        elif args.runtime is None or args.name is None or args.uid is None or args.gid is None:
+            raise SecretError("choose the runtime state, a credential and the service identity")
+        elif args.recover_runtime_token:
             if args.name != "openhab-token" or args.source is None or args.preserve_existing or args.generate_if_missing:
                 raise SecretError("invalid runtime recovery arguments")
             result = recover_runtime_token(args.runtime, destination=args.source, uid=args.uid, gid=args.gid, url=args.runtime_url)
@@ -292,6 +408,7 @@ def main(argv=None):
             values = vars(args).copy()
             values.pop("recover_runtime_token")
             values.pop("runtime_url")
+            values.pop("share")
             result = install(**values)
     except (OSError, SecretError):
         print("thermite credential: operation refused; check finite paths, file custody and service identity", file=sys.stderr)

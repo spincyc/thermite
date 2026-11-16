@@ -527,6 +527,89 @@ Weigh the trade-offs before enabling it:
   leaves this port alone; on a host with its own firewall, open 13600/tcp
   (or your `port`) from the guest network, and from nowhere else.
 
+## Network shares
+
+A site can have Thermite mount SMB/CIFS and NFS shares, for instance a NAS
+holding the [music](music.md) libraries. Name each under `shares:` in
+`instance/host.yaml`:
+
+```yaml
+shares:
+  music:
+    type: cifs              # or nfs
+    server: nas.example     # a host name, or an IPv4 address
+    share: music            # cifs: the share, and any directory inside it
+    where: /mnt/nas/music   # the mount point, below /mnt or /media
+    # version: "3.1.1"      # SMB's vers=, or NFS's nfsvers=
+    # writable: true        # read-only unless true
+  photos:
+    type: nfs
+    server: 192.0.2.20
+    export: /volume1/photos # nfs: the exported directory
+    where: /media/photos
+```
+
+A share's name is lowercase letters, digits and `_`, starting with a letter,
+at most 32 characters. Its mount point is a normalized absolute path of
+letters, digits and `._@+-` below `/mnt` or `/media`; no two shares share
+one or nest, and none overlaps the installation root. A `version` is quoted.
+Anything else is refused before anything is installed. Commit the change and
+run `thermite upgrade --config DIR` (or `thermite install`).
+
+Each share is a native systemd mount unit that Thermite generates
+(`deploy/share-<name>.mount`) and installs under the name systemd derives
+from its mount point, such as `/etc/systemd/system/mnt-nas-music.mount`;
+`/etc/fstab` stays yours. The mount is part of `thermite.target`: it is
+mounted when Thermite starts, at boot and after an install, and unmounted,
+even while a file there is open, when Thermite stops. systemd creates the
+mount point when it is missing. Every share is mounted `nosuid`, `nodev`,
+`nofail` and read-only unless `writable: true`, and a mount may take 30
+seconds. An SMB share's files belong to the `thermite` account (UID and GID
+9001), mode 0640 and its directories 0750, whoever owns them on the server;
+an NFS export keeps the server's owners, so it must let UID 9001 read.
+
+At boot, `network-online.target` is not enough: on many LANs the NAS's name
+resolves only seconds later. A share on a named server is therefore mounted
+only once `thermite-share-gate@<server>.service` has resolved that name,
+waiting at most 60 seconds after the network is online. A server that does
+not answer fails its shares' mounts, and the services that need them, such
+as Music Assistant, but never the boot or the rest of Thermite; a server
+given as an address needs no gate. Thermite mounts each share at
+boot rather than on first access (no automount): a container sees only what
+was mounted when it started, and Music Assistant's unit already waits for
+the mounts its libraries are on.
+
+An SMB share needs a login. Thermite keeps the owner's copy in the site's
+`var/<host>/share-<name>.credentials` (yours, 0600, beside the API token),
+never in Git or in generated files; the install asks for the user name and
+password the first time, before anything stops (`--yes` asks nothing, so
+write that file yourself first):
+
+```text
+username=alice
+password=<password>
+domain=WORKGROUP
+```
+
+The `domain=` line is optional. The install copies it to
+`/etc/thermite/share-<name>.credentials`, root's alone (0600), where the
+mount reads it; that copy also starts with a random line mount.cifs skips,
+so that the digest the installed manifest records cannot be used to guess the
+password. To change the password, edit your copy and run `thermite install`
+again. NFS needs no login.
+
+`thermite install` installs `cifs-utils` (an SMB share) and `nfs-utils` on
+Arch or `nfs-common` on Ubuntu (an NFS share) with Thermite's other
+packages; the [ISO](iso.md) ships them. The mount units, the gate and the
+installed logins are Thermite's like its other units: an install transaction
+sets them aside and a rollback or `thermite revert` puts them back; removing
+a share from `host.yaml` unmounts it and removes its unit and login at the
+next install, and `thermite uninstall` removes them all. A mount point that
+`/etc/fstab` or another unit already mounts is refused, untouched: remove
+that entry first. `thermite status` reports each share's mount, and
+`systemctl status mnt-nas-music.mount` and
+`journalctl -u 'thermite-share-gate@*'` tell why one failed.
+
 ## Trace a command
 
 Every command gets an 8-character ID, such as `1a2b3c4d`. The gateway
@@ -937,7 +1020,9 @@ installation owns, so `thermite install`, `upgrade`, `uninstall`,
 print these steps. To recover, as root: stop Thermite
 (`systemctl stop thermite.target thermite.slice`); move its units
 (`/etc/systemd/system/thermite*`, `/etc/containers/systemd/thermite*` and
-their links in `/etc/systemd/system/multi-user.target.wants`), the native-port
+their links in `/etc/systemd/system/multi-user.target.wants`), its shares'
+mount units (`/etc/systemd/system/*.mount` whose `Description` starts
+`Thermite share`) and logins (`/etc/thermite/share-*.credentials`), the native-port
 rule file `/etc/thermite-native.nft` and the node exporter's AppArmor files
 aside, out of those directories; run `systemctl daemon-reload`; then run
 `thermite install --config DIR`. The state under `/srv/thermite` stays where
@@ -953,6 +1038,7 @@ thermite uninstall --config "$HOME/thermite-site"
 Uninstall is one install transaction too, with the same exit statuses.
 Thermite stops, and the install engine sets aside everything it installed
 outside the installation root: the units and quadlets and their links, the
+network shares' mount units and logins, the
 boot-time `thermite-native-boundary.service`, the native-port rule file with
 its loaded `inet thermite_native` table, and the node exporter's AppArmor
 policy. The state stays where it is, `runtime/` and `access/` (accounts,

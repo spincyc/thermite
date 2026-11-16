@@ -48,6 +48,7 @@ import oh_service
 import oh_units
 import oh_metrics as metrics
 import oh_music as music
+import oh_shares as shares
 from oh_access import guest
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -66,6 +67,11 @@ CONTAINER_DROPINS = {unit: f"deploy/{unit}.d/50-container-lifecycle.conf" for un
 #: Music Assistant's unit and drop-in: generated and installed only for a
 #: host with music: (host_units).
 MUSIC_UNITS = (MUSIC_QUADLET, CONTAINER_DROPINS[oh_units.MUSIC])
+#: The network shares' gate (oh_shares): generated and installed only for a
+#: host with a share on a named server (host_units).
+SHARE_GATE = f"deploy/{oh_units.SHARE_GATE}"
+#: The units only some hosts have.
+OPTIONAL_UNITS = (*MUSIC_UNITS, SHARE_GATE)
 #: What thermite-metrics-restart.service restarts: the services a deploy
 #: cannot reload over HTTP.
 METRICS_RESTARTED = (oh_units.EXPORTER, oh_units.GRAFANA, oh_units.NOTIFICATIONS, oh_units.NTFY)
@@ -79,6 +85,7 @@ INSTALLED = {
     METRICS_RESTART_PATH: Path("/etc/systemd/system") / oh_units.METRICS_RESTART_PATH,
     METRICS_RESTART_SERVICE: Path("/etc/systemd/system") / oh_units.METRICS_RESTART_SERVICE,
     MUSIC_QUADLET: Path("/etc/containers/systemd") / Path(MUSIC_QUADLET).name,
+    SHARE_GATE: Path("/etc/systemd/system") / oh_units.SHARE_GATE,
     TARGET: Path("/etc/systemd/system") / oh_units.TARGET,
     SLICE: Path("/etc/systemd/system") / oh_units.SLICE,
     **{source: Path("/etc/systemd/system") / Path(source).relative_to("deploy")
@@ -90,16 +97,34 @@ SERVICES = (oh_units.RUNTIME, oh_units.ATV, oh_units.ATV_RESTART_PATH, *metrics.
             oh_units.METRICS_RESTART_PATH, oh_units.TARGET)
 
 
+def share_units(host: dict) -> dict[str, Path]:
+    """Each network share's mount unit (oh_shares), generated as
+    deploy/share-<name>.mount and installed under the name systemd derives
+    from its mount point."""
+    return {f"deploy/share-{name}.mount": Path("/etc/systemd/system") / share.unit
+            for name, share in sorted(shares.settings(host).items())}
+
+
 def host_units(host: dict) -> dict[str, Path]:
-    """INSTALLED as this host has it: without MUSIC_UNITS unless it has music:."""
-    if music.enabled(host):
-        return INSTALLED
-    return {source: target for source, target in INSTALLED.items() if source not in MUSIC_UNITS}
+    """INSTALLED as this host has it: without MUSIC_UNITS unless it has
+    music:, without SHARE_GATE unless a share needs it, and with its shares'
+    mount units."""
+    absent = (*(() if music.enabled(host) else MUSIC_UNITS), *(() if shares.gated(host) else (SHARE_GATE,)))
+    return {**{source: target for source, target in INSTALLED.items() if source not in absent},
+            **share_units(host)}
+
+
+def every_unit(host: dict) -> dict[str, Path]:
+    """Every unit a host may have installed and the ones this host wants:
+    INSTALLED and its shares' mount units."""
+    return {**INSTALLED, **share_units(host)}
 
 
 def services(host: dict) -> tuple[str, ...]:
-    """SERVICES as this host has them: with Music Assistant when it has music:."""
-    return (*SERVICES, oh_units.MUSIC) if music.enabled(host) else SERVICES
+    """SERVICES as this host has them: with Music Assistant when it has
+    music:, and each share's mount."""
+    return (*SERVICES, *((oh_units.MUSIC,) if music.enabled(host) else ()),
+            *(share.unit for _, share in sorted(shares.settings(host).items())))
 
 
 #: The area's files the Apple TV helper's container runs.
@@ -146,7 +171,7 @@ ACCESS = "access"
 #: The installation root's mode; root owns it.
 ROOT_MODE = 0o755
 HOST_REQUIRED = ("timezone", "http_port", "https_port", "uid", "gid")
-HOST_KEYS = frozenset((*HOST_REQUIRED, "root", "gateway", "metrics", "guest_http", "music"))
+HOST_KEYS = frozenset((*HOST_REQUIRED, "root", "gateway", "metrics", "guest_http", "music", "shares"))
 METRICS_KEYS = frozenset(("units", "retention", "retention_size", "yoke_targets",
                           *(name + "_port" for name in oh_ports.METRICS)))
 #: Host values are pasted into unit files, container arguments and shell
@@ -201,6 +226,9 @@ def validate_host(host: object, where: str = "instance/host.yaml") -> dict:
     try:
         guest.settings(host.get("guest_http"))
         music.settings(host)
+        for name, share in shares.settings(host).items():
+            if share.where == root or share.where.startswith(root + "/") or root.startswith(share.where + "/"):
+                raise ValueError(f"shares.{name}.where and the installation root ({root}) overlap")
         oh_service.validate_identity(host["uid"], host["gid"])
         oh_ports.effective(host)
         metrics.yoke_targets(host)
@@ -1072,12 +1100,73 @@ def render_music_quadlet(versions: dict, host: dict) -> str:
     return "\n".join(lines)
 
 
-def render_target() -> str:
-    """One boot entry point; members declare their own target membership."""
+def render_share_gate() -> str:
+    """Waits until a share's server name resolves (oh_shares), one instance
+    per server: the shares' mount units require it."""
+    return "\n".join([
+        "# Waits until a network share's server name resolves: its shares' mount units",
+        "# require it (lib/oh_shares). network-online.target alone is not enough where",
+        "# the LAN's DNS answers later. A name that does not resolve within",
+        f"# {shares.GATE_TIMEOUT} seconds fails its shares' mounts, never the boot.",
+        *HEADER,
+        "[Unit]",
+        "Description=Wait until %i resolves, for Thermite's network shares",
+        f"PartOf={oh_units.TARGET}",
+        "Wants=network-online.target",
+        "After=network-online.target nss-lookup.target",
+        "",
+        "[Service]",
+        f"Slice={oh_units.SLICE}",
+        "Type=oneshot",
+        "RemainAfterExit=yes",
+        f"TimeoutStartSec={shares.GATE_TIMEOUT}",
+        "# %i is a checked host name (oh_shares): letters, digits, dots and hyphens.",
+        "ExecStart=/usr/bin/sh -c 'until /usr/bin/getent ahosts %i >/dev/null; do /usr/bin/sleep 1; done'",
+        f"SyslogIdentifier={oh_units.SHARE_GATE.removesuffix('@.service')}",
+        "",
+    ])
+
+
+def render_share_mount(host: dict, share: shares.Share) -> str:
+    """A network share's mount unit (oh_shares): installed as
+    /etc/systemd/system/<share.unit>, after its mount point."""
+    oh_service.validate_identity(host["uid"], host["gid"])
+    return "\n".join([
+        f"# The network share {share.name}, {share.what} (lib/oh_shares,",
+        "# docs/installation.md#network-shares). Installed as",
+        f"# /etc/systemd/system/{share.unit}: systemd names a mount unit after its mount point.",
+        *HEADER,
+        "[Unit]",
+        f"Description=Thermite share {share.name} ({share.what})",
+        f"PartOf={oh_units.TARGET}",
+        *([f"# Mounted only once {share.server} resolves, a bounded wait after network-online.target.",
+           f"Requires={share.gate}",
+           f"After={share.gate}"] if share.gate else []),
+        "",
+        "[Mount]",
+        f"What={share.what}",
+        f"Where={share.where}",
+        f"Type={share.type}",
+        f"Options={share.options(host['uid'], host['gid'])}",
+        f"TimeoutSec={shares.MOUNT_TIMEOUT}",
+        f"Slice={oh_units.SLICE}",
+        "# Stopping Thermite unmounts it, also while a file there is open.",
+        "ForceUnmount=yes",
+        "LazyUnmount=yes",
+        "",
+    ])
+
+
+def render_target(host: dict | None = None) -> str:
+    """One boot entry point; members declare their own target membership.
+    It wants the host's network shares, which have no [Install] of their own."""
+    mounts = [share.unit for _, share in sorted(shares.settings(host).items())]
     return "\n".join([
         *HEADER,
         "[Unit]",
         "Description=Thermite home control and monitoring",
+        *(["# The network shares (lib/oh_shares), each nofail."] if mounts else []),
+        *(f"Wants={unit}" for unit in mounts),
         "",
         "[Install]",
         "WantedBy=multi-user.target",
@@ -1131,7 +1220,7 @@ def render_units(versions: dict, host: dict) -> dict[str, str]:
         ATV_QUADLET: render_atv_quadlet(versions, host),
         ATV_RESTART_PATH: render_atv_restart_path(host),
         ATV_RESTART_SERVICE: render_atv_restart_service(host),
-        TARGET: render_target(),
+        TARGET: render_target(host),
         SLICE: render_slice(),
     }
     for service in metrics.services(host):
@@ -1140,6 +1229,11 @@ def render_units(versions: dict, host: dict) -> dict[str, str]:
     units[METRICS_RESTART_SERVICE] = render_metrics_restart_service(host)
     if music.enabled(host):
         units[MUSIC_QUADLET] = render_music_quadlet(versions, host)
+    if shares.gated(host):
+        units[SHARE_GATE] = render_share_gate()
+    found = shares.settings(host)
+    units.update({source: render_share_mount(host, found[Path(source).stem.removeprefix("share-")])
+                  for source in share_units(host)})
     wanted = host_units(host)
     units.update({source: render_container_dropin() for source in CONTAINER_DROPINS.values() if source in wanted})
     return units
@@ -1187,8 +1281,8 @@ def installed_units(area: Path, installed: dict[str, Path] | None = None, *, rev
     "unreadable" | "unwanted") for each unit: whether the owner has
     installed the one the selected committed schema-2 site derives. Legacy
     checkouts retain comparison with their local generated units. One of
-    MUSIC_UNITS the site does not derive is left out, or "unwanted" while
-    it is still installed."""
+    OPTIONAL_UNITS the site does not derive is left out, or "unwanted" while
+    it is still installed. Share mounts are reported as services."""
     from oh_paths import SITE_FILE
     files = None
     try:
@@ -1209,8 +1303,8 @@ def installed_units(area: Path, installed: dict[str, Path] | None = None, *, rev
                 files = prepared_files(area, commit, Path(area) / "var")[0]
     out = []
     for name, target in (installed or INSTALLED).items():
-        if name in MUSIC_UNITS and (name not in files if files is not None else not (Path(area) / name).exists()):
-            # A host without music: has none; one still installed is left over.
+        if name in OPTIONAL_UNITS and (name not in files if files is not None else not (Path(area) / name).exists()):
+            # A host without music: (or shares:) has none; one still installed is left over.
             if Path(target).exists():
                 out.append((name, Path(target), "unwanted"))
             continue

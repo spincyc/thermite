@@ -152,7 +152,9 @@ def main(argv: list[str] | None = None) -> int:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(units[name], encoding="utf-8")
             print(f"wrote {name}")
-    for name in sorted(set(deploy.INSTALLED) - set(units)):
+    # A share's mount unit is named after the share: one removed from host.yaml stays behind.
+    shared = {f"deploy/{path.name}" for path in (root / "deploy").glob("share-*.mount")}
+    for name in sorted((set(deploy.INSTALLED) | shared) - set(units)):
         if not (root / name).is_file():
             continue
         if generated(root / name) and arguments.prune:

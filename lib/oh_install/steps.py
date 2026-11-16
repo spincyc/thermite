@@ -21,6 +21,7 @@ import oh_units
 import oh_ports
 import oh_metrics as metrics
 import oh_music as music
+import oh_shares as shares
 from oh_install import manifest, ownership, progress
 from oh_install.access import Gateway
 from oh_install.model import Action, Check, Command, ReadinessStep, Step, Task
@@ -241,6 +242,11 @@ class Context:
     @property
     def runtime_credentials_file(self) -> Path:
         return self.token_file.parent / "runtime-credentials.json"
+
+    def share_login(self, name: str) -> Path:
+        """The owner's private copy of an SMB share's login, relative to the
+        area, beside the API token (oh_shares)."""
+        return self.token_file.parent / f"share-{name}.credentials"
 
     @property
     def grafana_url(self) -> str:
@@ -471,11 +477,16 @@ def podman_version(system: System) -> tuple[int, int] | None:
 class Packages(Step):
     title = "Packages"
 
+    def __init__(self, context: Context | None = None):
+        #: With a context, also what mounts its host's network shares.
+        self.context = context
+
     def manager(self, system: System) -> str | None:
         return next((name for name in PACKAGES if system.which(name)), None)
 
     def names(self, system: System, manager: str) -> tuple[str, ...]:
-        return (*PACKAGES[manager], *(("apparmor",) if oh_apparmor.enabled(system) else ()))
+        return (*PACKAGES[manager], *(("apparmor",) if oh_apparmor.enabled(system) else ()),
+                *(shares.packages(self.context.host, manager) if self.context is not None else ()))
 
     def missing(self, system: System, manager: str) -> list[str]:
         names = self.names(system, manager)
@@ -967,7 +978,7 @@ class Units(Step):
 
     def stale(self, system: System, names: tuple[str, ...] | None = None) -> list[str]:
         """Units to install, and ones this host no longer has to remove."""
-        return [name for name, target in sorted(deploy.INSTALLED.items())
+        return [name for name, target in sorted(deploy.every_unit(self.context.host).items())
                 if (names is None or name in names)
                 and system.read_bytes(target) != self.context.unit(name)]
 
@@ -989,17 +1000,24 @@ class Units(Step):
 
     def actions(self, system: System) -> list[Action]:
         by_directory: dict[Path, list[str]] = {}
+        units = deploy.every_unit(self.context.host)
         stale = self.stale(system)
-        removed = [str(deploy.INSTALLED[name]) for name in stale if self.context.unit(name) is None]
+        removed = [str(units[name]) for name in stale if self.context.unit(name) is None]
+        # A share's mount unit is installed under its mount point's name.
+        renamed = [name for name in stale if self.context.unit(name) is not None and Path(name).name != units[name].name]
         for name in stale:
-            if self.context.unit(name) is not None:
-                by_directory.setdefault(deploy.INSTALLED[name].parent, []).append(name)
-        missing = [directory for directory in by_directory if system.stat(directory) is None]
+            if self.context.unit(name) is not None and name not in renamed:
+                by_directory.setdefault(units[name].parent, []).append(name)
+        missing = [directory for directory in dict.fromkeys([*by_directory, *(units[name].parent for name in renamed)])
+                   if system.stat(directory) is None]
+
+        def source(name: str) -> str:
+            return str(self.context.configuration / name) if self.context.prepared is not None else name
         return [*([Command(("rm", "-f", "--", *removed), root=True)] if removed else []),
                 *([Command(("install", "-d", "-o", "0", "-g", "0", "-m", "0755", *map(str, missing)), root=True)] if missing else []),
-                *(Command(("install", "-m", "0644", "-t", str(directory),
-                           *(str(self.context.configuration / name) if self.context.prepared is not None else name for name in names)), root=True)
+                *(Command(("install", "-m", "0644", "-t", str(directory), *map(source, names)), root=True)
                   for directory, names in by_directory.items()),
+                *(Command(("install", "-m", "0644", "-T", source(name), str(units[name])), root=True) for name in renamed),
                 *([Command(("systemctl", "daemon-reload"), root=True)] if stale else []),
                 # Ownership is later proved by these recorded hashes, so a
                 # changed template or host setting never strands the units.
@@ -1359,6 +1377,111 @@ class GrafanaPassword(Step):
             system.say("   could not prepare the private operator credential directory; check its ownership, permissions and symlinks, then rerun")
             return 1
         return 0
+
+
+class ShareLogins(Step):
+    """The owner's private copy of each SMB share's login (oh_shares), in the
+    site's var/ beside the API token: asked for once, while Thermite still
+    runs, and checked before anything stops. ShareCredentials installs it."""
+
+    title = "Network share logins"
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def shares(self) -> list[shares.Share]:
+        return [share for _, share in sorted(shares.settings(self.context.host).items()) if share.type == "cifs"]
+
+    def problem(self, system: System, share: shares.Share) -> str | None:
+        """Why its copy is not usable; "missing" when there is none yet."""
+        from oh_install import secrets
+        path = self.context.share_login(share.name)
+        try:
+            text = system.read_private(self.context.area / path)
+        except FileNotFoundError:
+            return "missing"
+        except (OSError, ValueError):
+            return f"{path} must be a regular file of yours with mode 0600"
+        try:
+            secrets.share_login(text.encode())
+        except secrets.SecretError as exc:
+            return f"{path}: {exc}"
+        return None
+
+    def check(self, system: System) -> Check:
+        found = {share.name: self.problem(system, share) for share in self.shares()}
+        wrong = [problem for problem in found.values() if problem not in (None, "missing")]
+        if wrong:
+            return Check(False, "", "; ".join(wrong))
+        missing = [str(self.context.share_login(name)) for name, problem in found.items() if problem == "missing"]
+        if missing:
+            return Check(False, "to ask for: " + ", ".join(missing))
+        return Check(True, f"{len(found)} in {self.context.token_file.parent}" if found else "no SMB share")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Task(f"ask for the login of {share.what} and keep it in {self.context.share_login(share.name)} "
+                     "(or write username= and password= lines there yourself, mode 0600)",
+                     lambda system, share=share: self.ask(system, share), interactive=True)
+                for share in self.shares() if self.problem(system, share) == "missing"]
+
+    def ask(self, system: System, share: shares.Share) -> int:
+        from oh_install import secrets
+        path = self.context.share_login(share.name)
+        username = system.ask(f"   User name for {share.what}: ").strip()
+        text = f"username={username}\npassword={system.secret(f'   Password for {share.what}: ')}\n"
+        try:
+            secrets.share_login(text.encode())
+        except secrets.SecretError:
+            system.say(f"   no usable login given; write username= and password= lines to {path} (mode 0600), "
+                       "then rerun")
+            return 1
+        try:
+            system.write_private(self.context.area / path, text)
+        except (OSError, ValueError):
+            system.say(f"   could not write {path}; check the site's var/ custody, then rerun")
+            return 1
+        return 0
+
+
+class ShareCredentials(Step):
+    """Each SMB share's login, from the owner's private copy (ShareLogins) to
+    root's alone, where its mount reads it (oh_shares.CREDENTIALS). The
+    administrative helper installs it with a random salt, kept while the
+    login stays the same, so that the digest the installed manifest records
+    checks no guessed password. A copy changed since the install is newer."""
+
+    title = "Network share credentials"
+
+    def __init__(self, context: Context):
+        self.context = context
+
+    def shares(self) -> list[shares.Share]:
+        return [share for _, share in sorted(shares.settings(self.context.host).items()) if share.type == "cifs"]
+
+    def stale(self, system: System) -> list[shares.Share]:
+        found = []
+        for share in self.shares():
+            target = system.stat(Path(share.credentials))
+            source = system.stat(self.context.area / self.context.share_login(share.name))
+            if (target is None or (target.uid, target.gid, target.mode) != (0, 0, 0o600)
+                    or source is None or source.mtime > target.mtime):
+                found.append(share)
+        return found
+
+    def check(self, system: System) -> Check:
+        stale = self.stale(system)
+        if stale:
+            return Check(False, "to install: " + ", ".join(str(share.credentials) for share in stale))
+        count = len(self.shares())
+        return Check(True, f"{count} installed, root's alone (0600)" if count else "no SMB share")
+
+    def actions(self, system: System) -> list[Action]:
+        return [Command(("python3", str(self.context.program / "lib/oh_install/secrets.py"), "--share", share.name,
+                         "--source", str(self.context.area / self.context.share_login(share.name))), root=True)
+                for share in self.stale(system)]
+
+    def desired(self, system: System) -> list[manifest.Item]:
+        return [manifest.Item(Path(share.credentials), "file") for share in self.shares()]
 
 
 class MetricsAnswer(ReadinessStep):
@@ -2131,8 +2254,13 @@ class Halt(Step):
         self.context = context
 
     def running(self, system: System) -> list[str]:
-        """What of Thermite runs, or cannot be shown not to."""
-        return [f"{name} ({origin.active})" for name, origin in system.unit_origins(self.UNITS).items()
+        """What of Thermite runs, or cannot be shown not to: its network
+        shares too, this host's and those it installed before (units.json),
+        which the target's stop unmounts."""
+        mounts = [*(share.unit for _, share in sorted(shares.settings(self.context.host).items())),
+                  *(Path(path).name for path in sorted(ownership.recorded(system) or {}) if path.endswith(".mount"))]
+        return [f"{name} ({origin.active})"
+                for name, origin in system.unit_origins(list(dict.fromkeys([*self.UNITS, *mounts]))).items()
                 if not origin.known or origin.active in ACTIVE]
 
     def check(self, system: System) -> Check:

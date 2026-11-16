@@ -7,6 +7,25 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Network shares: `shares:` in `instance/host.yaml` names SMB/CIFS and NFS
+  shares that Thermite mounts, such as the NAS that holds the Music
+  libraries. Install, upgrade, rollback, revert and uninstall handle them
+  like Thermite's other units; `/etc/fstab` stays the owner's.
+  - Each is a native mount unit in `thermite.target`, read-only unless
+    `writable`, `nosuid`, `nodev` and `nofail`, with a 30-second mount
+    timeout. One on a named server waits, at most 60 seconds after the
+    network is online, for that name to resolve
+    (`thermite-share-gate@<server>.service`), so a NAS whose name resolves
+    late is still mounted at boot and a missing one never holds it up.
+  - An SMB share's login is asked for once and kept in the site's ignored
+    `var/`; the install copies it, root's alone, to `/etc/thermite`. Its
+    files belong to the `thermite` account.
+  - Install adds `cifs-utils` and the NFS client to the packages it checks
+    for a host with shares, and both ISO images ship them.
+  - A declaration with a bad name, path, server or version, a mount point
+    outside `/mnt` and `/media`, shared or nested, or one another unit
+    already mounts is refused before anything stops. See
+    [network shares](docs/installation.md#network-shares).
 - Music: a host whose `instance/host.yaml` has `music:` runs Music
   Assistant 2.10.12, pinned by digest, as `thermite-music.service` in
   `thermite.target`. Install, upgrade, uninstall, `status` and `health`
