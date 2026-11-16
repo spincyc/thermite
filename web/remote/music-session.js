@@ -587,13 +587,18 @@
       return Promise.resolve(backend.group(lead.id, wanted)).then((answer) => {
         if (started !== life) return;
         grouping.pending = false;
-        const joined = (answer.joined || []).map(nameOf);
+        // Joined, or refused, as the speakers read back; pending, sent to
+        // Music Assistant with no read-back to confirm it.
+        const joined = (answer.joined || []).map(nameOf), pending = (answer.pending || []).map(nameOf);
         const refused = (answer.refused || []).map((id) => ({ id: id, name: nameOf(id), reason: refusal(lead, id) }));
-        grouping.result = { joined: joined, refused: refused, text: joined.length ? joined.join(", ") + " joined " + nameOf(lead.id) + "." : "" };
+        grouping.result = { joined: joined, pending: pending, refused: refused,
+          text: joined.length ? listed(joined) + " joined " + nameOf(lead.id) + "." : "",
+          waiting: pending.length ? listed(pending) + (pending.length > 1 ? " were" : " was") + " asked to join; Music Assistant has not confirmed it yet." : "" };
+        const told = [grouping.result.text, grouping.result.waiting].filter(Boolean).join(" ");
         if (refused.length) {
           toast(refused.length > 1 ? refused.length + " speakers could not join" : refused[0].name + " could not join",
-            refused.map((entry) => entry.reason).join(" "), "bad");
-        } else toast("Grouped", grouping.result.text);
+            refused.map((entry) => entry.reason).concat(grouping.result.waiting || []).join(" "), "bad");
+        } else toast(joined.length ? "Grouped" : "Group sent", told);
         // Said once: by the group sheet's result (a status) while the sheet is
         // open and the page behind it inert, else by the toast.
         changed();
@@ -637,6 +642,11 @@
       if (!top && tab === "browse") openRoot();
       else if (top && unfinished(top.state)) loadBrowse(top.items.length);
       if (fresh && tab === "queue") loadQueue(0);
+    }
+
+    // Names as a sentence lists them: "A", "A and B", "A, B and C".
+    function listed(names) {
+      return names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names[names.length - 1] : names.join("");
     }
 
     // A library read that a Guest without titles may not make.

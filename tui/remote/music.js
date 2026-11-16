@@ -306,6 +306,7 @@ function groupSheet(g, w, ctx, kit) {
   y += 3;
   if (grouping.result) {
     if (grouping.result.text) y = kit.paragraph(g, 1, y, w - 2, grouping.result.text, "base");
+    if (grouping.result.waiting) y = kit.paragraph(g, 1, y, w - 2, grouping.result.waiting, "base");
     grouping.result.refused.forEach((entry) => { y = kit.paragraph(g, 1, y, w - 2, entry.reason, "alert"); });
   }
   if (grouping.grouped) {

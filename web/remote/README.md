@@ -72,18 +72,19 @@ Queue (the chosen speaker's, or its group's) list what can play: a tap offers
 Play now, which replaces the queue, Play next or Add to queue, and Open for an
 album, artist, playlist or folder. Group adds speakers to the chosen one's
 group, removes them or ends it; Sonos and WiiM speakers group only over
-AirPlay, and the page says which could not join and why. A change shows at
-once; until the speaker reads it back, shuffle, repeat and a new position pulse
-and a volume dims. A speaker in a locked room is locked too; a locked room of
-another speaker in its group holds what moves the group, not the speaker's own
-volume. The gateway refuses their commands anyway. An administrator signs Music
-Assistant into TIDAL on the page, which shows the code to approve at
-link.tidal.com and follows the sign-in until it is done. A Guest kept from free
-text (Security) sees whether each speaker plays, but no titles, covers or
-library. Without music on the host, or while Music Assistant is away, the page
-says so in one line. Its keys: Space or P plays and pauses, + and − step the
-volume, < and > change the track, [ and ] choose the speaker, S shuffles, R
-repeats and / searches.
+AirPlay, and the page says which could not join and why, and which Music
+Assistant was asked to group but has not confirmed (not refused). A change
+shows at once; until the speaker reads it back, shuffle, repeat and a new
+position pulse and a volume dims. A speaker in a locked room is locked too; a
+locked room of another speaker in its group holds what moves the group, not the
+speaker's own volume. The gateway refuses their commands anyway. An
+administrator signs Music Assistant into TIDAL on the page, which shows the
+code to approve at link.tidal.com and follows the sign-in until it is done. A
+Guest kept from free text (Security) sees whether each speaker plays, but no
+titles, covers or library. Without music on the host, or while Music Assistant
+is away, the page says so in one line. Its keys: Space or P plays and pauses, +
+and − step the volume, < and > change the track, [ and ] choose the speaker, S
+shuffles, R repeats and / searches.
 
 Source previews use the fictional sample. Add `?backend=mock` to simulate
 controls without sending commands.

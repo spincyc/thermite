@@ -259,6 +259,7 @@
     this.guest = config.guest === true;
     this.problem = null;
     this.locked = new Set();
+    this.unconfirmed = null;
     this.items = catalogue();
     this.tidalSignedIn = config.tidal === true;
     this.flow = null;
@@ -539,7 +540,12 @@
         this.players[id].leader = speaker;
         if (!this.players[speaker].members.includes(id)) this.players[speaker].members.push(id);
       });
-      return { accepted: true, speaker: speaker, joined: joined, refused: members.filter((id) => !joined.includes(id)) };
+      // Music Assistant took it, but no read-back answered: those sent are pending, neither joined nor refused.
+      const unconfirmed = this.unconfirmed;
+      this.unconfirmed = null;
+      const pending = unconfirmed ? members.filter((id) => this.speaker(id).available && unconfirmed.has(id)) : [];
+      return { accepted: true, speaker: speaker, joined: joined.filter((id) => !pending.includes(id)),
+        refused: members.filter((id) => !joined.includes(id) && !pending.includes(id)), pending: pending };
     });
   };
 
@@ -647,6 +653,11 @@
   MockMusic.prototype.simulateDrop = function () {
     this.emit({ type: "connection", connected: false });
     this.listen();
+  };
+
+  // The next grouping goes, but no read-back confirms these members: they come back pending.
+  MockMusic.prototype.simulateUnconfirmed = function (ids) {
+    this.unconfirmed = new Set(ids || []);
   };
 
   // A room's lock holds these speakers: their commands are refused (423).

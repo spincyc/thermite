@@ -522,8 +522,8 @@
     const result = $("[data-group-result]");
     result.hidden = !grouping.result;
     if (grouping.result && stale(result, grouping.result)) {
-      result.replaceChildren(...[grouping.result.text ? node("p", null, grouping.result.text) : null]
-        .concat(grouping.result.refused.map((entry) => node("p", { class: "music-result__refused" }, entry.reason))).filter(Boolean));
+      result.replaceChildren(...[grouping.result.text, grouping.result.waiting].filter(Boolean).map((text) => node("p", null, text))
+        .concat(grouping.result.refused.map((entry) => node("p", { class: "music-result__refused" }, entry.reason))));
     }
     $("[data-group-end]").hidden = !grouping.grouped;
   }

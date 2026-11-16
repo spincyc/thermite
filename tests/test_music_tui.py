@@ -76,6 +76,10 @@ class MusicScreen(unittest.TestCase):
                                           "group only over AirPlay, and one of them has none."])
         self.assertEqual(group["drawn"], [])
 
+    def test_the_group_sheet_says_who_was_asked_and_not_confirmed(self):
+        asked = "Den was asked to join; Music Assistant has not confirmed it yet."
+        self.assertEqual(self.proof["unconfirmed"], {"toast": ["Group sent", asked], "refused": False, "said": True})
+
     def test_a_locked_speaker_is_refused_with_a_toast(self):
         locked = self.proof["locked"]
         self.assertEqual(locked["toast"], ["Kitchen Sonos Amp: Pause", "A locked room is using this device or route, so it cannot change now."])

@@ -305,6 +305,40 @@ async function grouping(out) {
   music.stop();
 }
 
+// Music Assistant took a grouping no read-back confirmed: those sent are
+// pending, said plainly, neither joined nor refused.
+async function unconfirmed(out) {
+  const time = clock(), backend = mock(time), music = session(time, backend);
+  music.start();
+  await time.tick(100);
+  const said = music.log.announced.length;
+  backend.simulateUnconfirmed(['den_one', 'study_amp']);
+  music.join(['den_one', 'study_amp']);
+  await time.tick(100);
+  out.all = {result: music.grouping().result, toast: music.log.toasts[music.log.toasts.length - 1], sent: backend.sent[backend.sent.length - 1]};
+  music.leave('kitchen_amp');
+  await time.tick(100);
+  // Some joined, one pending; then one refused beside them.
+  backend.simulateUnconfirmed(['study_amp']);
+  music.join(['den_one', 'study_amp']);
+  await time.tick(100);
+  out.mixed = {result: music.grouping().result, toast: music.log.toasts[music.log.toasts.length - 1]};
+  music.leave('kitchen_amp');
+  await time.tick(100);
+  backend.simulateUnconfirmed(['study_amp']);
+  music.join(['den_one', 'study_amp', 'patio_roam']);
+  await time.tick(100);
+  out.refused = {result: music.grouping().result, toast: music.log.toasts[music.log.toasts.length - 1]};
+  // Once only: the next grouping reads back as before.
+  music.leave('kitchen_amp');
+  await time.tick(100);
+  music.join(['den_one']);
+  await time.tick(100);
+  out.after = music.grouping().result;
+  out.announced = music.log.announced.slice(said).filter((message) => message.includes('join'));
+  music.stop();
+}
+
 async function locks(out) {
   // Music Assistant's gateway refuses: the page drops what it held and says why.
   let time = clock(), backend = mock(time), music = session(time, backend);
@@ -735,7 +769,7 @@ async function client(out) {
 
 (async () => {
   const report = {};
-  for (const [name, run] of Object.entries({overview, transport, library, resuming, grouping, locks, involved, guests, absent, unavailable, tidal, gateway, client})) {
+  for (const [name, run] of Object.entries({overview, transport, library, resuming, grouping, unconfirmed, locks, involved, guests, absent, unavailable, tidal, gateway, client})) {
     report[name] = {};
     await run(report[name]);
   }

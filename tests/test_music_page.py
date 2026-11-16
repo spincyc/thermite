@@ -149,6 +149,22 @@ class MusicPage(unittest.TestCase):
         self.assertEqual((group["group"], [row[1] for row in group["speakers"]]), (True, ["Kitchen Sonos Amp", "Den"]))
         self.assertEqual(len(out["blocks"]), 4)
 
+    def test_a_grouping_no_read_back_confirmed_says_who_was_asked(self):
+        out = self.report["unconfirmed"]
+        asked = "Den and Study were asked to join; Music Assistant has not confirmed it yet."
+        self.assertEqual(out["all"]["sent"], ["group", "kitchen_amp", "den_one,study_amp"])
+        self.assertEqual((out["all"]["result"]["joined"], out["all"]["result"]["pending"], out["all"]["result"]["refused"]),
+                         ([], ["Den", "Study"], []))
+        self.assertEqual((out["all"]["result"]["text"], out["all"]["result"]["waiting"]), ("", asked))
+        # Nothing the page knows joined: sent, not grouped.
+        self.assertEqual(out["all"]["toast"], ["Group sent", asked, ""])
+        waiting = "Study was asked to join; Music Assistant has not confirmed it yet."
+        self.assertEqual((out["mixed"]["result"]["text"], out["mixed"]["result"]["waiting"]), ("Den joined Kitchen Sonos Amp.", waiting))
+        self.assertEqual(out["mixed"]["toast"], ["Grouped", "Den joined Kitchen Sonos Amp. " + waiting, ""])
+        self.assertEqual(out["refused"]["toast"], ["Patio could not join", "Patio is not available. " + waiting, "bad"])
+        self.assertEqual((out["after"]["pending"], out["after"]["waiting"]), ([], ""))
+        self.assertEqual(out["announced"], [])
+
     def test_a_member_plays_its_leaders_queue_and_the_group_volume_moves_all(self):
         out = self.report["grouping"]
         self.assertEqual(out["member"]["group"], {"text": "With Kitchen Sonos Amp", "leader": "kitchen_amp", "volume": 32})
@@ -336,6 +352,10 @@ class MusicPageScript(unittest.TestCase):
         self.assertEqual(out["sheetOpened"], "item:library://track/101")
         # Taken elsewhere while a folder reads, the focus stays there.
         self.assertEqual(out["elsewhere"], "input:")
+
+    def test_the_group_sheet_says_who_was_asked_and_not_confirmed(self):
+        self.assertEqual(self.report["grouped"]["result"], [False, [
+            ["Den joined Kitchen Sonos Amp.", None], ["Study was asked to join; Music Assistant has not confirmed it yet.", None]]])
 
 
 def css_rules(text):

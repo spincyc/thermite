@@ -181,6 +181,30 @@ async function main(proof) {
   controller.stop();
 }
 
+// A grouping Music Assistant took but no read-back confirmed: the sheet says
+// who was asked, not that they were refused.
+async function unconfirmed(proof) {
+  const parts = assemble();
+  const { controller } = parts;
+  await controller.start();
+  await until(parts, () => controller.ui.ready, "ready");
+  key(parts, null, { name: "f2" });
+  key(parts, "y");
+  await shows(parts, "Harbour Lights");
+  key(parts, "g");
+  focusOn(parts, "music-pick:den_one");
+  key(parts, null, { name: "space" });
+  backend(parts).simulateUnconfirmed(["den_one"]);
+  focusOn(parts, "music-join");
+  key(parts, null, { name: "enter" });
+  await until(parts, () => toast(parts), "the toast");
+  // The sheet's lines (inside its border), not the status line's toast.
+  const shown = text(parts).split("\n").filter((line) => line.includes("\u2502")).join("\n");
+  proof.unconfirmed = { toast: toast(parts), refused: shown.includes("could not join") || shown.includes("cannot join"),
+    said: shown.replace(/[\u2502\s]+/g, " ").includes("Den was asked to join; Music Assistant has not confirmed it yet.") };
+  controller.stop();
+}
+
 // A narrow terminal: everything still fits, the header says where it is.
 async function narrow(proof) {
   const parts = assemble();
@@ -302,6 +326,7 @@ async function others(proof) {
 (async () => {
   const proof = {};
   await main(proof);
+  await unconfirmed(proof);
   await narrow(proof);
   await member(proof);
   await vanished(proof);

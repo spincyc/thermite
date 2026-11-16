@@ -309,8 +309,14 @@ function page() {
   vm.createContext(context);
   const Clocked = vm.runInContext('Date', context);
   context.Date = class extends Clocked { static now() { return time.now(); } };
+  const made = [];
   for (const name of ['music-backend.js', 'music-session.js', 'music.js']) {
     vm.runInContext(fs.readFileSync(path.join(WEB, name), 'utf8'), context, {filename: name});
+    // The page's backend kept, so a scenario can make the mock answer as it wants.
+    if (name === 'music-backend.js') {
+      const create = context.MusicBackend.create;
+      context.MusicBackend.create = (...args) => { const backend = create(...args); made.push(backend); return backend; };
+    }
   }
   const $ = (selector) => document.querySelector(selector);
   const focus = () => {
@@ -318,7 +324,7 @@ function page() {
     if (at === document.body) return 'body';
     return at.dataset.focus || (at.hasAttribute('data-browse-path') ? 'path' : at.localName + ':' + at.textContent.trim());
   };
-  return {time, document, $, focus};
+  return {time, document, $, focus, backend: made[0]};
 }
 
 // The speaker's name once (the bar's switch says it), and a dragged position let go without a change.
@@ -381,9 +387,27 @@ async function browse(out) {
   out.elsewhere = focus();
 }
 
+// A grouping some of which no read-back confirmed: the sheet says who joined
+// and who was asked, and refuses no one.
+async function grouped(out) {
+  const {time, $, backend} = page();
+  await time.tick(400);
+  $('[data-group-open]').click();
+  for (const id of ['den_one', 'study_amp']) {
+    const box = $('[data-candidates] input[value="' + id + '"]');
+    box.checked = true;
+    box.dispatch('change');
+  }
+  backend.simulateUnconfirmed(['study_amp']);
+  $('[data-join]').click();
+  await time.tick(400);
+  const result = $('[data-group-result]');
+  out.result = [result.hidden, result.querySelectorAll('p').map((line) => [line.textContent, line.getAttribute('class')])];
+}
+
 (async () => {
   const report = {};
-  for (const [name, run] of Object.entries({now, browse})) {
+  for (const [name, run] of Object.entries({now, browse, grouped})) {
     report[name] = {};
     await run(report[name]);
   }
