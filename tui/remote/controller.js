@@ -234,6 +234,7 @@ function create(options) {
       if (day.backend) day.backend.stop();
       if (audio.session && ui.screen === "audio") audio.session.stop();
       if (music.session && ui.screen === "music") music.session.stop();
+      music.typing = false;
       system.backend?.close(); system.expanded = false; system.link = null;
       access.cancel(); access.state.users = []; access.state.policy = null;
       access.state.kind = "account"; access.state.error = ui.error; ui.screen = "account"; ui.overlay = null; ui.pane = "account"; ui.focus = null;
@@ -431,6 +432,11 @@ function create(options) {
         ui.pane = "sheet:rooms";
         frame = View.render(context(), width, height);
       }
+      // Music's search field back under the typing that went on without it: the focus goes back to it.
+      const field = music.typing && ui.screen === "music" && !ui.overlay && frame.focusables.find((hit) => hit.key === "music-search");
+      if (field && ui.focus !== field.key) {
+        Object.assign(ui, { pane: field.pane, focus: field.key, focusVisible: true, revealFocus: true });
+      }
       const panes = visiblePanes();
       if (!panes.includes(ui.pane)) enterPane(panes.includes("remote") ? "remote" : panes[0]);
       else if (!ui.focus || !frame.focusables.some((hit) => hit.key === ui.focus && hit.pane === ui.pane)) enterPane(ui.pane);
@@ -570,6 +576,7 @@ function create(options) {
 
   function openSheet(kind, title, extra) {
     stopRepeat();
+    music.typing = false;
     if (kind === "cameras") return setScreen("cameras");
     if (kind === "topology") return setScreen("topology");
     if (kind === "signal" && ui.screen === "remote" && View.signalInline(size.width, size.height, ui.logVisible !== false)) {
@@ -668,6 +675,7 @@ function create(options) {
     if (page?.system && !Navigation.allowed(page, access)) return toast("System", "Only administrators can view System.");
     if (ui.screen === name && !ui.overlay) return;
     stopRepeat();
+    music.typing = false;
     if (dragging) { dragging = null; session.setDragging(false); }
     audioDragging = null;
     musicDragging = null;
@@ -1354,14 +1362,16 @@ function create(options) {
   // character, a space, Backspace. Enter, Esc, Tab and the arrows keep theirs.
   // Should the field go under the typing (Music Assistant away, a Guest
   // refused), what is typed while it is gone goes nowhere, q included,
-  // until another key or a click.
+  // until another key, a click or another screen or sheet; back, the field
+  // has the focus again (render).
   function musicTyping(ch, event) {
     const typed = event.name === "backspace"
       || Boolean(ch) && !event.ctrl && !event.meta && Array.from(ch).length === 1 && !/[\u0000-\u001f\u007f-\u009f]/.test(ch);
-    const field = ui.screen === "music" && !ui.overlay && music.session && ui.focusVisible && ui.focus === "music-search";
-    const library = ui.screen === "music" && music.session && music.session.library();
+    const here = ui.screen === "music" && !ui.overlay && Boolean(music.session);
+    const field = here && ui.focusVisible && ui.focus === "music-search";
+    const library = here && music.session.library();
     const search = library && library.search;
-    if (!typed || !field && !(music.typing && !search)) {
+    if (!typed || !here || !field && !(music.typing && !search)) {
       music.typing = false;
       return false;
     }

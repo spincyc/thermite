@@ -279,14 +279,33 @@ async function vanished(proof) {
   proof.vanished = { focus: controller.ui.focus };
   key(parts, "q");
   proof.vanished.typed = [Boolean(parts.quit), controller.ui.screen];
-  // Back again (the search with it), the field takes / once more: keys go to the screen.
+  // Back again (the search with it) under the typing: the field has the focus again, and takes q.
   backend(parts).recover();
   await shows(parts, "Low Tide · The Lanterns");
-  key(parts, "/");
   proof.vanished.back = controller.ui.focus;
+  key(parts, "q");
+  proof.vanished.query = [Boolean(parts.quit), session(parts).library().search.query];
+  // Another key, and q is the screen's again.
   key(parts, null, { name: "down" });
   key(parts, "q");
   proof.vanished.after = Boolean(parts.quit);
+  controller.stop();
+  // Gone under the typing, then the sign-in ends: on Account, q quits as anywhere.
+  const again = assemble();
+  await again.controller.start();
+  await until(again, () => again.controller.ui.ready, "ready");
+  key(again, null, { name: "f2" });
+  key(again, "y");
+  await shows(again, "type / to search");
+  for (const ch of "/lo") key(again, ch);
+  backend(again).simulateUnavailable();
+  await shows(again, "Music Assistant is not answering yet.");
+  key(again, "q");
+  again.backend.emit({ type: "access", unauthorized: true, guest: false });
+  await until(again, () => again.controller.ui.screen === "account", "the account screen");
+  key(again, "q");
+  proof.vanished.account = Boolean(again.quit);
+  again.controller.stop();
 }
 
 // A title in CJK with an emoji and a decomposed accent takes the columns a
