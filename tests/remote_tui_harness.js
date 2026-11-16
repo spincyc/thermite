@@ -75,10 +75,13 @@ function gateway(house) {
   site.fetch = async (url, init = {}) => {
     const target = new URL(url), route = target.pathname, method = (init.method || "GET").toUpperCase();
     site.calls.push(method + " " + route);
+    // A sign-in ended (site.expired): every request refused.
+    if (site.expired) return json({ error: "unauthorized" }, 401);
     if (route === "/api/v1/security") return json({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf: "C".repeat(32) });
     if (route === "/api/v1/session") return json({ csrf: "C".repeat(32) });
     if (route === "/api/v1/me") return json({ id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, auth_enabled: true,
       permissions: ["site.read", "room.control", "camera.view", "settings.manage", "users.manage", "pairing.manage"] });
+    if (route === "/api/v1/users") return json({ users: [{ id: 1, username: "Admin", admin: true, active: true }, { id: 2, username: "example", admin: false, active: true }] });
     if (route === "/api/v1/locks") return json({ rooms: Object.fromEntries(house.rooms.map((room) => [room.id, { locked: false, manual: false, until: null, reason: "unlocked" }])) });
     const match = /^\/api\/v1\/rooms\/([a-z0-9_]+)\/(policy|commands)$/.exec(route);
     if (match && routed(match[1])) return match[2] === "policy" ? json(policy(match[1])) : json({ accepted: true }, 202);
@@ -498,6 +501,41 @@ async function startup(proof) {
   parts.controller.stop();
 }
 
+// ---- the gateway's pages -------------------------------------------------------
+
+// An administrator on the gateway, from a room of speakers alone: F3
+// Security, F8 Users (a user's form from the arrows and Enter, Esc out of
+// it), F9 Account. A sign-in that ends puts the remote on Account, saying
+// so; Ctrl-C quits.
+async function admin(proof) {
+  size = [110, 50];
+  const parts = await open({ gateway: true }, LOUNGE);
+  const { controller } = parts;
+  const ui = controller.ui;
+  proof.admin = {};
+  key(parts, null, { name: "f3" });
+  await until(parts, () => text(parts).includes("Security"), "Security");
+  proof.admin.security = ui.screen;
+  key(parts, null, { name: "f8" });
+  await until(parts, () => text(parts).includes("+ Add user"), "the users");
+  focusOn(parts, "access:edit-user:2");
+  key(parts, null, { name: "enter" });
+  proof.admin.users = [ui.screen, ui.overlay && ui.overlay.kind, text(parts).includes("Username: example")];
+  key(parts, null, { name: "escape" });
+  proof.admin.users.push(ui.overlay);
+  key(parts, null, { name: "f9" });
+  proof.admin.account = ui.screen;
+  key(parts, null, { name: "f2" });
+  parts.site.expired = true;
+  parts.session.selectRoom(WEST, true);
+  key(parts, "1");
+  await until(parts, () => ui.screen === "account", "the sign-in ended");
+  proof.admin.ended = [ui.screen, ui.error, text(parts).includes("thermite access login")];
+  key(parts, null, { name: "c", ctrl: true });
+  proof.admin.quit = Boolean(parts.quit);
+  controller.stop();
+}
+
 // ---- the signal, and rooms of speakers alone -------------------------------
 
 // Wide, Watch's signal panel shows and reads; a room of speakers alone has
@@ -602,6 +640,7 @@ async function terminal(proof) {
   await narrow(proof);
   await pages(proof);
   await startup(proof);
+  await admin(proof);
   await terminal(proof);
   await signal(proof, true);
   await settings(proof);

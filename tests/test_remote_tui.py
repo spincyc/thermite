@@ -133,6 +133,17 @@ class RemoteTUI(unittest.TestCase):
     def test_a_speakers_input_not_read_yet_reads_as_reading_not_null(self):
         self.assertEqual(self.proof["startup"]["input"], ["Reading… ▾", "Input: Reading… (Enter: choose)"])
 
+    def test_an_administrators_security_users_and_account_pages_from_the_keys(self):
+        admin = self.proof["admin"]
+        self.assertEqual(admin["security"], "security")
+        self.assertEqual(admin["users"], ["users", "access-form", True, None])
+        self.assertEqual(admin["account"], "account")
+
+    def test_a_sign_in_that_ends_puts_the_remote_on_account_and_ctrl_c_quits(self):
+        admin = self.proof["admin"]
+        self.assertEqual(admin["ended"], ["account", "Your sign-in has ended. Run thermite access login again.", True])
+        self.assertTrue(admin["quit"])
+
     def test_a_room_of_speakers_alone_reached_with_the_signal_open_reads_none(self):
         signal = self.proof["signal"]
         # ↓ through every room and on, ], the rooms sheet's ↓ and Enter, and a click: none asks a room of speakers for its signal.
