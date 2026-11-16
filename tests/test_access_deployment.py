@@ -121,8 +121,13 @@ class PrivateFiles(PrivateFixture):
             with patch.object(os, "fsync", lambda descriptor: fsync(descriptor, code)):
                 path = self.private("record.json", str(code))
             self.assertEqual(path.read_text(), str(code))
-        with patch.object(os, "fsync", lambda descriptor: fsync(descriptor, errno.EIO)), self.assertRaises(OSError):
-            self.private("record.json", "lost")
+        # Any other failure: the file is in place, but a crash may undo it.
+        from oh_access.files import Unsynced
+        with patch.object(os, "fsync", lambda descriptor: fsync(descriptor, errno.EIO)), \
+                self.assertRaises(Unsynced) as unsynced:
+            self.private("record.json", "unsynced")
+        self.assertEqual(unsynced.exception.errno, errno.EIO)
+        self.assertEqual((self.root / "record.json").read_text(), "unsynced")
 
 
 class Adoption(PrivateFixture):

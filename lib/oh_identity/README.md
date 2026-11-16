@@ -448,7 +448,8 @@ The policy worker holds the claim: once Music Assistant reports running and
 has no user, it stores a random password in `music-token.json` in the
 gateway's private state (mode 0600, written atomically, its directory
 synced, so that a crash keeps the latest write: a file system that refuses
-to sync a directory, answering `EINVAL` or `ENOTSUP`, may lose it; what a
+to sync a directory, answering `EINVAL` or `ENOTSUP`, may lose it, and a
+write whose directory sync fails otherwise is kept, with a warning; what a
 write killed midway leaves beside it goes when the worker starts), then
 creates the admin `thermite` with it. With the session it is answered with
 it mints a long-lived token (a year), stores it beside the password, and

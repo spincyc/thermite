@@ -108,6 +108,11 @@ def read_private(value, maximum=2 * 1024 * 1024):
         os.close(fd)
 
 
+class Unsynced(OSError):
+    """atomic_private put the new contents in place, but its directory could
+    not be synced: a crash may yet undo the write."""
+
+
 #: Random bytes in the name of atomic_private's temporary file, written
 #: beside its target as "." + the target's name + "." + their hex.
 TEMPORARY_BYTES = 12
@@ -127,15 +132,16 @@ def atomic_private(value, content):
             os.fsync(stream.fileno())
         os.replace(temporary, path)
         # The rename outlives a crash only once its directory is on disk too.
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
-            os.fsync(directory)
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
         except OSError as error:
             # Some file systems (vboxsf, some CIFS) cannot sync a directory; the file is in place.
             if error.errno not in (errno.EINVAL, errno.ENOTSUP):
-                raise
-        finally:
-            os.close(directory)
+                raise Unsynced(error.errno, error.strerror) from error
     finally:
         temporary.unlink(missing_ok=True)
 

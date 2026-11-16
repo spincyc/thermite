@@ -4,8 +4,10 @@ failures, the websocket the gateway reads events from, TIDAL's sign-in, and
 the stand-in's own Music Assistant semantics (oh_music_sim). Fictional
 speakers, documentation addresses and demo MACs only."""
 import asyncio
+import errno
 import json
 import os
+import stat
 import shutil
 import sys
 import tempfile
@@ -237,6 +239,40 @@ class Claim(Site):
                 with self.assertRaises(OSError):
                     provisioner.step()
         self.assertEqual((list(self.sim.tokens), self.token()), ([first], first))
+
+    def test_a_minted_token_in_place_but_not_synced_is_kept_on_either_path(self):
+        from oh_access import files
+        real = os.fsync
+
+        def unsynced(fd):
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                raise OSError(errno.EIO, "Input/output error")
+            real(fd)
+        now = [time.time()]
+        provisioner = self.provisioner(clock=lambda: now[0])
+        for path in ("claiming", "renewing"):
+            with patch.object(files.os, "fsync", unsynced), self.assertLogs("oh_music.provision", "WARNING") as logs:
+                self.assertEqual(provisioner.step(), "ready", path)
+            self.assertIn("WARNING:oh_music.provision:Music Assistant: music-token.json was written, but its directory "
+                          "could not be synced (EIO); a crash may undo the write.", logs.output)
+            self.assertEqual(list(self.sim.tokens), [self.token()], path)
+            self.assertEqual(provisioner.step(), "ready")
+            now[0] += 340 * DAY
+
+    def test_a_token_the_claim_file_holds_is_never_logged_out(self):
+        real = provision.write_claim
+
+        def failed_after(state, claim):
+            real(state, claim)
+            if "token" in claim:
+                raise OSError(5, "Input/output error")
+        provisioner = self.provisioner()
+        with patch.object(provision, "write_claim", failed_after), self.assertRaises(OSError):
+            provisioner.step()
+        stored = self.token()
+        self.assertIn(stored, self.sim.tokens)
+        self.assertEqual(provisioner.step(), "ready")
+        self.assertEqual((list(self.sim.tokens), self.token()), ([stored], stored))
 
     def test_every_other_token_goes_past_the_hundred_music_assistant_lists(self):
         provisioner = self.provisioner()

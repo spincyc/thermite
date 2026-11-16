@@ -43,6 +43,7 @@ Players are never renamed or disabled.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
@@ -51,7 +52,7 @@ import time
 from pathlib import Path
 
 from oh_access import AccessError
-from oh_access.files import Oversized, json_private, read_private, remove_temporaries
+from oh_access.files import Oversized, Unsynced, json_private, read_private, remove_temporaries
 
 from . import MEDIA
 from .client import SLOW, Client, Failed, NoUser, Stopped, Unauthorized, Unavailable
@@ -204,8 +205,18 @@ def problem(claim):
     return None if "token" in claim else "music_unavailable"
 
 
+def record(path, data):
+    """Write a private record (version 1). One in place whose directory
+    could not be synced (Unsynced) is written: it is warned of, and kept."""
+    try:
+        json_private(path, {"version": 1, **data})
+    except Unsynced as error:
+        LOG.warning("Music Assistant: %s was written, but its directory could not be synced (%s); a crash may "
+                    "undo the write.", Path(path).name, errno.errorcode.get(error.errno, error.errno))
+
+
 def write_claim(state, claim):
-    json_private(token_file(state), {"version": 1, **claim})
+    record(token_file(state), claim)
 
 
 def read_libraries(state):
@@ -220,7 +231,7 @@ def read_libraries(state):
 
 
 def write_libraries(state, libraries):
-    json_private(Path(state) / LIBRARY_FILE, {"version": 1, "libraries": libraries})
+    record(Path(state) / LIBRARY_FILE, {"libraries": libraries})
 
 
 def digest(token):
@@ -331,7 +342,7 @@ class Provisioner:
             token = self.mint(client, claim)
         except Exception:
             if client.token == session:  # No token was stored.
-                self.log_out(client)
+                self.log_out(client, session)
             raise
         LOG.info("Music Assistant claimed by thermite.")
         return token
@@ -352,7 +363,8 @@ class Provisioner:
         token of the user is revoked. One that cannot be stored is logged
         out at once, the client left on the token it had: held nowhere, a
         year-long admin token would be left behind by every pass whose
-        write fails."""
+        write fails; one the claim file holds is kept, however the write
+        failed."""
         token = client.call("auth/token/create", name=USERNAME)
         if not secret(token):
             raise Failed(200)
@@ -361,24 +373,25 @@ class Provisioner:
             write_claim(self.state, {"password": claim["password"], "token": token, "issued_at": issued,
                                      "expires_at": issued + TOKEN_DAYS * DAY})
         except BaseException:
-            minting, client.token = client.token, token
-            try:
-                self.log_out(client)
-            finally:
-                client.token = minting
+            if (read_claim(self.state) or {}).get("token") != token:
+                self.log_out(client, token)
             raise
         client.token = token
         self.revoke_others(client, token)
         return token
 
     @staticmethod
-    def log_out(client):
-        """Revoke the client's own token, as far as Music Assistant answers:
-        one left goes with the others once a token is stored."""
+    def log_out(client, token):
+        """Revoke token with auth/logout, as far as Music Assistant answers
+        (one left goes with the others once a token is stored); the client
+        keeps the token it had."""
+        using, client.token = client.token, token
         try:
             client.call("auth/logout")
         except Exception:
             pass
+        finally:
+            client.token = using
 
     def revoke_others(self, client, token, tokens=None):
         """Revoke every token of thermite's user but this one: a session it
