@@ -115,7 +115,8 @@ class MusicScreen(unittest.TestCase):
         self.assertEqual(self.proof["tidal"], [])
 
     def test_a_narrow_terminal_still_draws_it(self):
-        self.assertEqual(self.proof["narrow"], {"header": True, "keys": True, "volume": True})
+        # A query in wide characters longer than the field shows its end, the caret with it.
+        self.assertEqual(self.proof["narrow"], {"header": True, "keys": True, "volume": True, "caret": [True, True]})
 
     def test_without_music_one_line_says_so_and_no_key_sends(self):
         self.assertEqual(self.proof["absent"], {"said": True, "speakers": False, "titles": False, "playing": False, "sent": []})

@@ -146,6 +146,13 @@ function cut(cells, width) {
   return Math.max(0, cells[width] === "" ? width - 1 : width);
 }
 
+// The end of text that fits in width columns (a wide character whole, or not at all).
+function ending(text, width) {
+  const cells = characters(text);
+  const at = Math.max(0, cells.length - Math.max(0, width));
+  return cells.slice(cells[at] === "" ? at + 1 : at).join("");
+}
+
 // Text cut to leave tail whole after it (a padlock), padded to width.
 function fitTail(text, tail, width) {
   return fit(fit(text, width - length(tail)).trimEnd() + tail, width);
@@ -267,4 +274,4 @@ function wrap(text, width) {
   return lines;
 }
 
-module.exports = { Grid, LOCK, box, inset, fit, fitTail, wrap, length };
+module.exports = { Grid, LOCK, box, inset, ending, fit, fitTail, wrap, length };

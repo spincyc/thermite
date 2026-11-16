@@ -9,7 +9,7 @@
  */
 "use strict";
 
-const { LOCK, fit, length } = require("./grid");
+const { LOCK, ending, fit, length } = require("./grid");
 
 const SHORTCUTS = [
   [["↑", "↓"], "Choose a control"],
@@ -197,7 +197,7 @@ function libraryBlock(g, w, ctx, kit, y, library) {
     const width = Math.max(8, w - 10);
     const shown = search.query + (focus ? "▏" : "");
     g.put(1, y, "Search", "base");
-    g.put(8, y, fit(length(shown) > width ? "…" + Array.from(shown).slice(-(width - 1)).join("") : shown || (focus ? "" : "type / to search"), width),
+    g.put(8, y, fit(length(shown) > width ? "…" + ending(shown, width - 1) : shown || (focus ? "" : "type / to search"), width),
       focus ? "field.focus" : search.query ? "field" : "field+dim",
       { kind: "music-search", key, focus: true, label: "Search: " + (search.query || "empty") + "  (type; Enter searches)" });
     y += 1;

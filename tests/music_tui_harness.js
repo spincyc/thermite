@@ -236,6 +236,11 @@ async function narrow(proof) {
   const shown = controller.frame(44, 60).grid.text();
   proof.narrow = { header: shown.split("\n")[0].includes("Remotes / Music"), keys: shown.includes("‖ Pause"),
     volume: /Volume\n? *−/.test(shown) || shown.includes("Volume") };
+  // A query in wide characters longer than the field: its end shows, the caret with it.
+  key(parts, "/");
+  for (const ch of "\u6771\u4eac".repeat(10)) key(parts, ch);
+  const field = controller.frame(44, 60).grid.text().split("\n").find((line) => line.includes("Search ") && !line.includes("Browse"));
+  proof.narrow.caret = [field.includes("\u2026"), field.includes("\u4eac\u258f")];
   controller.stop();
 }
 
