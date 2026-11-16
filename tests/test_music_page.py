@@ -456,6 +456,16 @@ class MusicMarkup(unittest.TestCase):
         self.assertEqual([one for media, one, values in rules if one.startswith(".music__layout") and "margin-top" in values], [])
         self.assertIn((None, ".thermite-app .music__head[data-lent]", {"display": "none"}), rules)
 
+    def test_a_control_a_locked_room_holds_is_dimmed_once(self):
+        shared = css_rules((REMOTE / "remote.css").read_text())
+        self.assertIn((None, ".child-page__controls:disabled", {"opacity": "0.45"}), shared)
+        # Inside the dimmed fieldset a control's own :disabled (a page's, of three classes) adds nothing.
+        self.assertIn((None, ".child-page .child-page__controls:disabled :disabled", {"opacity": "1"}), shared)
+        # Disabled, a key is as dim as the remote's.
+        page = (REMOTE / "music.css").read_text()
+        self.assertRegex(page, r":is\(\.music-transport \.key, \.music-path \.icon-button\):disabled \{\s*opacity: 0\.38;")
+        self.assertIn((None, ".target:disabled", {"opacity": "0.38", "cursor": "default", "background": "transparent"}), shared)
+
     def test_the_transport_fits_a_320_px_phone_and_every_target_is_44_px(self):
         shared, rules = css_rules((REMOTE / "remote.css").read_text()), css_rules((REMOTE / "music.css").read_text())
         tokens = {}

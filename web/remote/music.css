@@ -17,8 +17,13 @@
 }
 
 /* A control that cannot act now (a lock, nothing to skip to, no length to
-   seek in) is dimmed and takes no hand. */
-:is(.music-transport .key, .music-progress__input, .music-path .icon-button, .music-actions .button, .music-sheet__join):disabled {
+   seek in) is dimmed and takes no hand; a key as dim as the remote's. */
+:is(.music-transport .key, .music-path .icon-button):disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+:is(.music-progress__input, .music-actions .button, .music-sheet__join):disabled {
   opacity: 0.45;
   cursor: default;
 }

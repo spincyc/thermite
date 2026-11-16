@@ -1997,7 +1997,9 @@ kbd {
   margin: var(--space-3) 0 0;
 }
 
-/* The controls a locked room holds, all at once. */
+/* The controls a locked room holds, all at once: dimmed together, and
+   what it holds not again by its own :disabled (the class twice outranks
+   a page's rule for it). */
 .child-page__controls {
   min-width: 0;
   margin: 0;
@@ -2007,6 +2009,10 @@ kbd {
 
 .child-page__controls:disabled {
   opacity: 0.45;
+}
+
+.child-page .child-page__controls:disabled :disabled {
+  opacity: 1;
 }
 
 /* A level in words, under its fader. */
