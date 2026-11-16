@@ -573,10 +573,11 @@ does not have included. Music Assistant has 15 seconds to answer a play
 (it resolves a whole TIDAL playlist or album first) or a grouping (several
 calls to the speakers), each under the rooms' locks; 5 for any other
 command or read; and 20 for a search, a browse, a queue or art, which hold
-no lock. At most 8 art fetches run at once in a gateway process; one more
-waits a second for a slot, then answers 503 `music_unavailable` with
-`Retry-After: 1`, so that stalled art never takes the requests commands
-need. Reading a group back takes about 3.5 seconds at most, its reads
+no lock. At most 8 art fetches run at once in a gateway process, and 16
+more requests may wait for one, each for 10 seconds at most; one that
+gives up, or comes when 16 wait, answers 503 `music_unavailable` with
+`Retry-After: 1`. So art holds a quarter of the requests the gateway
+admits at most, and stalled art never takes those commands need. Reading a group back takes about 3.5 seconds at most, its reads
 included. Titles, names and art are free text, shown by a reference's rule
 (any space, joiner or mark; no control; bidirectional controls removed):
 a Guest who may not see it gets speakers without them and 401

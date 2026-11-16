@@ -30,7 +30,7 @@ from oh_identity.services import Problem, bootstrap
 from oh_identity.tests.test_core import PASSPHRASE
 from oh_identity.tests.test_trail import Requests, lines
 from oh_music import provision
-from oh_music.client import SLOW
+from oh_music.client import SLOW, Failed
 
 WEST, EAST, KITCHEN, ESTATE = "example_west", "example_east", "example_kitchen", "example_estate"
 WIIM, MINI, AMP = "example_desk_wiim", "example_kitchen_mini", "example_kitchen_amp"
@@ -565,34 +565,71 @@ class Gateway(Stand_in, Requests, TestCase):
 
     def test_art_takes_at_most_its_share_of_the_gateways_requests(self):
         from oh_access.service import MAX_REQUESTS
-        asked, answer = threading.Semaphore(0), threading.Event()
+        fetching, answer, answered = threading.Semaphore(0), threading.Event(), []
 
         class Stalled:
             def __init__(self, port, token):
                 self.token = token
 
             def image(self, proxy_id, size):
-                asked.release()
+                fetching.release()
                 answer.wait(10)
                 return "image/png", b"x"
         stalled = music.Music(self.adapter, self.state, connect=Stalled)
-        fetches = [threading.Thread(target=stalled.image, args=("0" * 64, 80)) for _ in range(music.ART_FETCHES)]
-        for fetch in fetches:
-            fetch.start()
-        for _ in fetches:
-            self.assertTrue(asked.acquire(timeout=5))
-        started = time.monotonic()
-        with patch.object(music, "ART_WAIT", 0.1), self.assertRaises(Problem) as refused:
+
+        def fetch():
+            answered.append(stalled.image("0" * 64, 80))
+        running = [threading.Thread(target=fetch) for _ in range(music.ART_FETCHES)]
+        for thread in running:
+            thread.start()
+        for _ in running:
+            self.assertTrue(fetching.acquire(timeout=5))
+        # A request waits ART_WAIT for a fetch to end, then gives up.
+        with patch.object(music, "ART_WAIT", 0.1), self.assertRaises(Problem) as gave_up:
             stalled.image("0" * 64, 80)
-        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual((gave_up.exception.status, gave_up.exception.retry_after), (503, 1))
+        queued, slots = threading.Semaphore(0), stalled._art
+
+        class Counted:
+            """The fetch slots, telling the test of each request that waits for one."""
+
+            def acquire(self, timeout):
+                queued.release()
+                return slots.acquire(timeout=timeout)
+
+            def release(self):
+                slots.release()
+        stalled._art = Counted()
+        waiting = [threading.Thread(target=fetch) for _ in range(music.ART_WAITING)]
+        for thread in waiting:
+            thread.start()
+        for _ in waiting:
+            self.assertTrue(queued.acquire(timeout=5))
+        # One past the queue is refused at once.
+        started = time.monotonic()
+        with self.assertRaises(Problem) as refused:
+            stalled.image("0" * 64, 80)
+        self.assertLess(time.monotonic() - started, 1)
         self.assertEqual((refused.exception.code, refused.exception.status, refused.exception.retry_after),
                          ("music_unavailable", 503, 1))
         answer.set()
-        for fetch in fetches:
-            fetch.join(5)
-        self.assertEqual(stalled.image("0" * 64, 80), ("image/png", b"x"))
-        # Art takes a small share of the requests the gateway admits.
-        self.assertLessEqual(4 * music.ART_FETCHES, MAX_REQUESTS)
+        for thread in running + waiting:
+            thread.join(5)
+        self.assertEqual(answered, [("image/png", b"x")] * (music.ART_FETCHES + music.ART_WAITING))
+        self.assertLessEqual(4 * (music.ART_FETCHES + music.ART_WAITING), MAX_REQUESTS)
+
+    def test_a_failed_art_fetch_gives_its_place_back(self):
+        class Failing:
+            def __init__(self, port, token):
+                self.token = token
+
+            def image(self, proxy_id, size):
+                raise Failed(404)
+        failing = music.Music(self.adapter, self.state, connect=Failing)
+        for _ in range(music.ART_FETCHES + music.ART_WAITING + 1):
+            with self.assertRaises(Problem) as missing:
+                failing.image("0" * 64, 80)
+            self.assertEqual(missing.exception.status, 404)
 
     def test_a_guest_who_may_not_see_text_sees_speakers_but_no_titles(self):
         self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM})
