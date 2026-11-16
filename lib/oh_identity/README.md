@@ -580,17 +580,19 @@ does not have included. Music Assistant has 15 seconds to answer a play (it
 resolves a whole TIDAL playlist or album first) or a grouping (several
 calls to the speakers), each under the rooms' locks; 5 for any other
 command or read; and 20 for a search, a browse, a queue or art, which hold
-no lock. At most 8 art fetches run at once in a gateway process, and 16
-more requests may wait for one, each for 10 seconds at most; one that gives
-up, or comes when 16 wait, answers 503 `music_unavailable` with
-`Retry-After: 1`. So art holds a quarter of the requests the gateway admits
-at most, and stalled art never takes those commands need. Reading a group
-back takes about 3.5 seconds at most, its reads included. Titles, names and
-art are free text. A name keeps any space, the zero-width joiner and
-non-joiner, the direction marks, a subdivision flag's tags and the format
-characters scripts write with (Arabic number signs, the Mongolian vowel
-separator), and code points the server's Unicode has not assigned yet; it
-loses every other format character (zero widths, word joiners, soft
+no lock. At most 8 art fetches run at once in a gateway process; 16 more
+requests may wait for one, each for 10 seconds at most, and 16 more for 2
+seconds for a place among those (a cold page asks for dozens of covers at
+once). One that gives up, or comes when all of them wait, answers 503
+`music_unavailable` with `Retry-After: 1`. So art holds no more than a
+quarter of the requests the gateway admits for longer than 2 seconds, and
+two fifths at all, and stalled art never takes those commands need. Reading
+a group back takes about 3.5 seconds at most, its reads included. Titles,
+names and art are free text. A name keeps any space, the zero-width joiner
+and non-joiner, the direction marks, a subdivision flag's tags and the
+format characters scripts write with (Arabic number signs, the Mongolian
+vowel separator), and code points the server's Unicode has not assigned
+yet; it loses every other format character (zero widths, word joiners, soft
 hyphens, bidirectional controls, other tags), private-use code points and
 noncharacters, and a line separator becomes a space. One with a control, or
 with a credential word once its marks and format characters are set aside,

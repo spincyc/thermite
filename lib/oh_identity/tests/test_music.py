@@ -4,6 +4,7 @@ serves finite projections of what they play and commands them with a
 device's locks and trail, against the stateful stand-in (oh_music_sim).
 Fictional devices, documentation addresses and demo MACs only."""
 import asyncio
+import collections
 import copy
 import json
 import os
@@ -11,6 +12,7 @@ import shutil
 import tempfile
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -602,47 +604,65 @@ class Gateway(Stand_in, Requests, TestCase):
                 answer.wait(10)
                 return "image/png", b"x"
         stalled = music.Music(self.adapter, self.state, connect=Stalled)
+        asked, seen = collections.Counter(), threading.Condition()
+
+        class Counted:
+            """Slots that tell the test of each request that asks for one."""
+
+            def __init__(self, name):
+                self.name, self.slots = name, getattr(stalled, name)
+
+            def acquire(self, timeout):
+                with seen:
+                    asked[self.name] += 1
+                    seen.notify_all()
+                return self.slots.acquire(timeout=timeout)
+
+            def release(self):
+                self.slots.release()
+
+        def reached(name, count):
+            with seen:
+                self.assertTrue(seen.wait_for(lambda: asked[name] >= count, 5), (name, asked))
+        for name in ("_art", "_art_queue", "_art_requests"):
+            setattr(stalled, name, Counted(name))
 
         def fetch():
             answered.append(stalled.image("0" * 64, 80))
+
+        def refused(**waits):
+            started = time.monotonic()
+            with patch.multiple(music, **waits) if waits else nullcontext(), self.assertRaises(Problem) as problem:
+                stalled.image("0" * 64, 80)
+            self.assertEqual((problem.exception.code, problem.exception.status, problem.exception.retry_after),
+                             ("music_unavailable", 503, 1))
+            return time.monotonic() - started
         running = [threading.Thread(target=fetch) for _ in range(music.ART_FETCHES)]
         for thread in running:
             thread.start()
         for _ in running:
             self.assertTrue(fetching.acquire(timeout=5))
         # A request waits ART_WAIT for a fetch to end, then gives up.
-        with patch.object(music, "ART_WAIT", 0.1), self.assertRaises(Problem) as gave_up:
-            stalled.image("0" * 64, 80)
-        self.assertEqual((gave_up.exception.status, gave_up.exception.retry_after), (503, 1))
-        queued, slots = threading.Semaphore(0), stalled._art
-
-        class Counted:
-            """The fetch slots, telling the test of each request that waits for one."""
-
-            def acquire(self, timeout):
-                queued.release()
-                return slots.acquire(timeout=timeout)
-
-            def release(self):
-                slots.release()
-        stalled._art = Counted()
+        self.assertGreaterEqual(refused(ART_WAIT=0.1), 0.1)
         waiting = [threading.Thread(target=fetch) for _ in range(music.ART_WAITING)]
         for thread in waiting:
             thread.start()
-        for _ in waiting:
-            self.assertTrue(queued.acquire(timeout=5))
-        # One past the queue is refused at once.
-        started = time.monotonic()
-        with self.assertRaises(Problem) as refused:
-            stalled.image("0" * 64, 80)
-        self.assertLess(time.monotonic() - started, 1)
-        self.assertEqual((refused.exception.code, refused.exception.status, refused.exception.retry_after),
-                         ("music_unavailable", 503, 1))
-        answer.set()
-        for thread in running + waiting:
-            thread.join(5)
-        self.assertEqual(answered, [("image/png", b"x")] * (music.ART_FETCHES + music.ART_WAITING))
+        reached("_art", music.ART_FETCHES + 1 + music.ART_WAITING)
+        # With the queue full, one waits ART_ARRIVING_WAIT for a place in it, then gives up.
+        self.assertGreaterEqual(refused(ART_ARRIVING_WAIT=0.1), 0.1)
+        with patch.object(music, "ART_ARRIVING_WAIT", 10):
+            arriving = [threading.Thread(target=fetch) for _ in range(music.ART_ARRIVING)]
+            for thread in arriving:
+                thread.start()
+            reached("_art_queue", music.ART_FETCHES + 1 + music.ART_WAITING + 1 + music.ART_ARRIVING)
+            # Past all of those, one is refused at once.
+            self.assertLess(refused(), 1)
+            answer.set()
+            for thread in running + waiting + arriving:
+                thread.join(5)
+        self.assertEqual(answered, [("image/png", b"x")] * (music.ART_FETCHES + music.ART_WAITING + music.ART_ARRIVING))
         self.assertLessEqual(4 * (music.ART_FETCHES + music.ART_WAITING), MAX_REQUESTS)
+        self.assertLessEqual(5 * (music.ART_FETCHES + music.ART_WAITING + music.ART_ARRIVING), 2 * MAX_REQUESTS)
 
     def test_a_failed_art_fetch_gives_its_place_back(self):
         class Failing:

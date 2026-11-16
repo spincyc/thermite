@@ -69,16 +69,20 @@ DEFAULT_PAGE = 100
 OFFSET = 100000
 #: Seconds the gateway waits for a group to show its members after it asks.
 GROUP_SETTLE = 3.0
-#: Art fetches from Music Assistant at once, per gateway process, and art
-#: requests that may wait for one: each fetch may take SLOW seconds on the
-#: image proxy, and the gateway admits oh_access.service.MAX_REQUESTS
-#: requests in all, so that art never holds more than a quarter of them,
-#: the room commands' share untouched. A waiting request gives up after
-#: ART_WAIT seconds, and one past the queue at once: music_unavailable,
-#: with Retry-After.
+#: Art fetches from Music Assistant at once, per gateway process (each may
+#: take SLOW seconds on the image proxy); art requests that may wait
+#: ART_WAIT seconds for one; and more that may wait ART_ARRIVING_WAIT
+#: seconds for a place among those, as a cold page asks for dozens of
+#: covers at once. The gateway admits oh_access.service.MAX_REQUESTS
+#: requests in all: art holds no more than a quarter of them for longer
+#: than ART_ARRIVING_WAIT, and two fifths at most, the room commands' share
+#: untouched. A request that gives up, or comes when all wait, is
+#: music_unavailable, with Retry-After.
 ART_FETCHES = 8
 ART_WAITING = 16
 ART_WAIT = 10.0
+ART_ARRIVING = 16
+ART_ARRIVING_WAIT = 2.0
 #: Times at most a command takes its rooms' locks: again each time a group
 #: changed while it waited for them to reach another speaker.
 LOCK_ATTEMPTS = 3
@@ -161,6 +165,18 @@ def text(value):
     if not value or _CONTROL.search(value) or SENSITIVE_TEXT.search(bare(value)):
         return None
     return value
+
+
+@contextmanager
+def held(slots, wait):
+    """One of slots for the block, waited for `wait` seconds at most; else
+    music_unavailable."""
+    if not slots.acquire(timeout=wait):
+        raise Problem("music_unavailable", 503, retry_after=1)
+    try:
+        yield
+    finally:
+        slots.release()
 
 
 def number(value, high):
@@ -266,6 +282,7 @@ class Music:
         self._client, self._guard = None, threading.Lock()
         self._art = threading.BoundedSemaphore(ART_FETCHES)
         self._art_queue = threading.BoundedSemaphore(ART_FETCHES + ART_WAITING)
+        self._art_requests = threading.BoundedSemaphore(ART_FETCHES + ART_WAITING + ART_ARRIVING)
         # Blocks using each client: one the token replaced is closed by its last.
         self._using = {}
         self.flow = None
@@ -528,18 +545,10 @@ class Music:
                 "current": current if type(current) is int and current >= 0 else None, "items": items}
 
     def image(self, proxy_id, size):
-        if not self._art_queue.acquire(blocking=False):
-            raise Problem("music_unavailable", 503, retry_after=1)
-        try:
-            if not self._art.acquire(timeout=ART_WAIT):
-                raise Problem("music_unavailable", 503, retry_after=1)
-            try:
-                with self.connected(failed=("not_found", 404)) as client:
-                    return client.image(proxy_id, size)
-            finally:
-                self._art.release()
-        finally:
-            self._art_queue.release()
+        # In turn: a request's place (at once), a place in the queue, a fetch.
+        with held(self._art_requests, 0), held(self._art_queue, ART_ARRIVING_WAIT), held(self._art, ART_WAIT):
+            with self.connected(failed=("not_found", 404)) as client:
+                return client.image(proxy_id, size)
 
     # ---- commands -------------------------------------------------------------
 
