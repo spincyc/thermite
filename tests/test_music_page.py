@@ -362,8 +362,10 @@ class MusicPageScript(unittest.TestCase):
         self.assertEqual(out["found"], [True, "button:Open"])
         self.assertEqual(out["sheetOpening"][::2], [False, "path"])
         self.assertEqual(out["sheetOpened"], "item:library://track/101")
-        # Taken elsewhere while a folder reads, the focus stays there.
-        self.assertEqual(out["elsewhere"], "input:")
+        # Taken elsewhere, to a control in sight, while a folder reads, the focus stays there.
+        self.assertEqual(out["elsewhere"], ["Library › NAS", "path", True, "button:Volume up"])
+        # The stand-in browser gives no focus to what is hidden, or behind an open sheet.
+        self.assertEqual(out["inert"], ["button:Volume up", "button:Volume up", "button:Search"])
 
     def test_a_cover_the_gateway_was_too_busy_for_is_asked_for_once_more(self):
         out = self.report["covers"]

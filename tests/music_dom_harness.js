@@ -220,9 +220,10 @@ class Element {
 
   click() { this.dispatch('click'); }
 
+  // As a browser's: nothing hidden takes the focus, nor anything an open modal dialog makes inert.
   focus() {
-    const document = this.ownerDocument, before = document.focused;
-    if (before === this || this.disabled) return;
+    const document = this.ownerDocument, before = document.focused, modal = document.modals[document.modals.length - 1];
+    if (before === this || this.disabled || this.closest('[hidden]') || modal && !modal.contains(this)) return;
     document.focused = this;
     if (before && before.nodeType === 1) before.dispatch('blur');
   }
@@ -231,6 +232,7 @@ class Element {
 
   showModal() {
     this.ownerDocument.returns.push(this.ownerDocument.activeElement);
+    this.ownerDocument.modals.push(this);
     this.setAttribute('open', '');
   }
 
@@ -238,6 +240,7 @@ class Element {
   close() {
     if (!this.open) return;
     this.removeAttribute('open');
+    this.ownerDocument.modals.splice(this.ownerDocument.modals.indexOf(this), 1);
     const back = this.ownerDocument.returns.pop();
     if (back && back !== this.ownerDocument.body) back.focus();
     this.dispatch('close');
@@ -250,6 +253,7 @@ class Document {
   constructor(html) {
     this.listeners = {};
     this.returns = [];
+    this.modals = [];
     this.focused = null;
     this.visibilityState = 'visible';
     // Each image address asked for, in order; answerImage(src) says whether it loads.
@@ -289,10 +293,10 @@ class Document {
     this.later(() => { if (image.getAttribute('src') === src) image.dispatch(this.answerImage(src) ? 'load' : 'error'); }, 0);
   }
 
-  // The focus falls back to the body when what had it went, or was disabled.
+  // The focus falls back to the body when what had it went, or was disabled or hidden.
   get activeElement() {
     const focused = this.focused;
-    return focused && this.documentElement.contains(focused) && !focused.disabled ? focused : this.body;
+    return focused && this.documentElement.contains(focused) && !focused.disabled && !focused.closest('[hidden]') ? focused : this.body;
   }
 
   querySelector(selector) { return this.documentElement.querySelector(selector); }
@@ -337,7 +341,7 @@ function page() {
   const focus = () => {
     const at = document.activeElement;
     if (at === document.body) return 'body';
-    return at.dataset.focus || (at.hasAttribute('data-browse-path') ? 'path' : at.localName + ':' + at.textContent.trim());
+    return at.dataset.focus || (at.hasAttribute('data-browse-path') ? 'path' : at.localName + ':' + (at.getAttribute('aria-label') || at.textContent.trim()));
   };
   return {time, document, $, focus, backend: made[0]};
 }
@@ -404,12 +408,28 @@ async function browse(out) {
   out.sheetOpening = [$('#item-sheet').open, $('[data-browse-path]').textContent, focus()];
   await time.tick(400);
   out.sheetOpened = focus();
-  // Moved elsewhere while a folder reads: the focus stays where it was taken.
-  await pressed($('[data-browse-back]'));
-  await pressed($('[data-browse-items] [data-item]'));
-  $('[data-query]').focus();
-  await time.tick(400);
-  out.elsewhere = focus();
+  // Moved elsewhere while a folder reads, to a control in sight: the focus stays there.
+  const other = page();
+  await other.time.tick(400);
+  other.$('[data-tab="browse"]').click();
+  await other.time.tick(400);
+  const folder = other.$('[data-browse-items] [data-item]');
+  folder.focus();
+  folder.click();
+  await other.time.tick(0);
+  out.elsewhere = [other.$('[data-browse-path]').textContent, other.focus()];
+  other.$('[data-volume-step="1"]').focus();
+  await other.time.tick(400);
+  out.elsewhere.push(other.$('[data-browse-items]').querySelectorAll('[data-item]').length > 0, other.focus());
+  // As a browser's, the stand-in gives no focus to what is hidden, or behind an open sheet.
+  other.$('[data-query]').focus();
+  out.inert = [other.focus()];
+  other.$('#item-sheet').showModal();
+  other.$('[data-tab="search"]').focus();
+  out.inert.push(other.focus());
+  other.$('#item-sheet').close();
+  other.$('[data-tab="search"]').focus();
+  out.inert.push(other.focus());
 }
 
 // A grouping some of which no read-back confirmed: the sheet says who joined
