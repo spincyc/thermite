@@ -23,10 +23,6 @@
   letter-spacing: -0.035em;
 }
 
-.audio [hidden] {
-  display: none;
-}
-
 .audio .targets-wrap {
   margin: var(--space-3) 0 0;
 }

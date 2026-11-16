@@ -428,21 +428,24 @@ class MusicMarkup(unittest.TestCase):
         self.assertEqual(sorted(name for name in icons if f'id="i-{name}"' not in page), [])
 
     def test_hidden_hides_every_part_of_the_page_the_sheets_included(self):
-        # .button and other classes set display; the page's rule must reach every part marked hidden.
-        rule = re.search(r"^\.([\w-]+) \[hidden\] \{\s*display: none !important;", (REMOTE / "music.css").read_text(), re.M)
+        # .button and other classes set display; one rule for both child pages (remote.css) reaches every
+        # part marked hidden, Music's sheets outside main included, and neither page has its own.
+        rule = re.search(r"^\.audio-page \[hidden\],\s*\.music-page \[hidden\] \{\s*display: none !important;",
+                         (REMOTE / "remote.css").read_text(), re.M)
         self.assertIsNotNone(rule)
-        scope = rule.group(1)
+        for name in ("audio", "music"):
+            self.assertNotIn("[hidden] {", (REMOTE / (name + ".css")).read_text())
 
         class Page(HTMLParser):
-            def __init__(self):
+            def __init__(self, scope):
                 super().__init__()
-                self.open, self.hidden = [], []
+                self.scope, self.open, self.hidden = scope, [], []
 
             def handle_starttag(self, tag, attrs):
                 attrs = dict(attrs)
                 classes = (attrs.get("class") or "").split()
                 if "hidden" in attrs:
-                    self.hidden.append(("data-group-end" in attrs, any(scope in each for each in self.open + [classes])))
+                    self.hidden.append(("data-group-end" in attrs, any(self.scope in each for each in self.open + [classes])))
                 if tag not in ("br", "img", "input", "link", "meta", "source", "use", "path"):
                     self.open.append(classes)
 
@@ -450,11 +453,14 @@ class MusicMarkup(unittest.TestCase):
                 if tag not in ("use", "path") and self.open:
                     self.open.pop()
 
-        page = Page()
-        page.feed((REMOTE / "music.html").read_text())
-        self.assertGreater(len(page.hidden), 10)
-        self.assertIn((True, True), page.hidden)
-        self.assertEqual([covered for _, covered in page.hidden if not covered], [])
+        for name in ("audio", "music"):
+            page = Page(name + "-page")
+            page.feed((REMOTE / (name + ".html")).read_text())
+            with self.subTest(page=name):
+                self.assertGreater(len(page.hidden), 8)
+                self.assertEqual([covered for _, covered in page.hidden if not covered], [])
+            if name == "music":
+                self.assertIn((True, True), page.hidden)
 
     def test_what_shows_first_sits_12_px_under_the_bar(self):
         # The head lent to the shell's bar, the first block shown sits at the page's padding: no margin above it.

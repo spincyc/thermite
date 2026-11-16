@@ -1943,6 +1943,13 @@ kbd {
 
 /* ---- a page under Remotes: Audio's and Music's -------------------------- */
 
+/* Hidden is hidden on a child page, whatever a class says (.button shows
+   itself): its sheets too, outside main. */
+.audio-page [hidden],
+.music-page [hidden] {
+  display: none !important;
+}
+
 /* One column clear of a notch and the home bar; each page sets how wide. */
 .child-page {
   width: 100%;

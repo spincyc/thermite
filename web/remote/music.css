@@ -10,12 +10,6 @@
   overflow-y: auto;
 }
 
-/* Hidden is hidden, whatever a class says (.button shows itself): the
-   sheets' parts too, outside .music. */
-.music-page [hidden] {
-  display: none !important;
-}
-
 /* A control that cannot act now (a lock, nothing to skip to, no length to
    seek in) is dimmed and takes no hand; a key as dim as the remote's. */
 :is(.music-transport .key, .music-path .icon-button):disabled {
