@@ -166,9 +166,15 @@ class Matching(SimpleTestCase):
                                ("x\ue000\u0378y\u206a", "xy"), ("one\u2028two\u2029three", "one two three"),
                                ("\u2764\ufe0f\u200c\u061c", "\u2764\ufe0f\u200c\u061c")):
             self.assertEqual(music.text(value), cleaned, value)
-        # A credential word is found once cleaned.
-        for value in ("pass\u200bword", "pass\u00adword", "tok\u2060en"):
+        # A credential word is found whatever hides it: a removed character, or a kept joiner, mark or
+        # invisible combining mark (variation selectors, the combining grapheme joiner, Mongolian free
+        # variation selectors), or another form of its letters.
+        for value in ("pass\u200bword", "pass\u00adword", "tok\u2060en", "pass\u200dword", "pass\u200cword",
+                      "pass\u200eword", "pass\u200fword", "pass\u061cword", "tok\U000e0100en", "tok\ufe0fen",
+                      "pass\u034fword", "pass\u180bword", "\uff50\uff41\uff53\uff53word", "the S\u0301ecret"):
             self.assertIsNone(music.text(value), value)
+        # The text shown keeps them.
+        self.assertEqual(music.text("Caf\u0065\u0301 \u2764\ufe0f"), "Caf\u0065\u0301 \u2764\ufe0f")
 
     def test_a_reference_names_a_known_provider_and_an_item_or_folder(self):
         sources = music.Sources([{"domain": "tidal", "instance_id": "tidal--a1", "available": True},

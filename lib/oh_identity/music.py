@@ -128,14 +128,23 @@ def shown(value):
     return "".join(kept)
 
 
+def bare(value):
+    """value as a credential word is looked for in it: compatibility
+    decomposed, without the marks and format characters a name may keep, so
+    that none hides a word ("pass" ZWJ "word")."""
+    return "".join(char for char in unicodedata.normalize("NFKD", value)
+                   if unicodedata.category(char) not in ("Mn", "Me", "Cf"))
+
+
 def text(value):
     """Music Assistant free text a client may see: as shown(), cut to
-    TEXT_LENGTH, without controls (_CONTROL) or, once cleaned, a credential
-    word; else None. Any space, joiner or mark a title holds stays."""
+    TEXT_LENGTH, without controls (_CONTROL) or a credential word, looked
+    for in bare(); else None. Any space, joiner or mark a title holds
+    stays."""
     if not isinstance(value, str):
         return None
     value = shown(value).strip()[:TEXT_LENGTH].strip()
-    if not value or _CONTROL.search(value) or SENSITIVE_TEXT.search(value):
+    if not value or _CONTROL.search(value) or SENSITIVE_TEXT.search(bare(value)):
         return None
     return value
 
