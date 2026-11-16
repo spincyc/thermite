@@ -220,6 +220,8 @@ class ListenPage(unittest.TestCase):
         out = self.out["signal"]
         # From 1200 px: every SIGNAL_REFRESH in Watch, none in Listen, and again back in Watch.
         self.assertEqual((out["watch"], out["listen"], out["back"]), (2, 0, 2))
+        # A room of speakers alone, chosen while it shows, has no signal to read.
+        self.assertEqual(out["speakers"], ["listen", []])
         # D in Watch opens the signal; Listen's Info after it is the speaker's and reads none.
         self.assertEqual(out["d"], [True, 1])
         self.assertEqual(out["listenInfo"], [True, 0])

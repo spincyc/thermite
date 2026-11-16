@@ -1082,7 +1082,11 @@
   };
 
   OpenHabBackend.prototype.getDiagnostics = function (roomId, sourceId, pendingId, acquiredAfter) {
-    findRoom(this.house, roomId);
+    try {
+      findRoom(this.house, roomId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     if (!global.RemoteDiagnostics) return Promise.resolve(null);
     if (!this.diagnosticsModel && !this.diagnosticsLoading) {
       const loading = (this.diagnosticsSpec ? Promise.resolve(this.diagnosticsSpec)

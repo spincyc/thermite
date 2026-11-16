@@ -533,6 +533,11 @@ async function signal(out) {
   out.listen = await reads(25000);
   await key('y', p.document.body);
   out.back = await reads(25000);
+  // A room of speakers alone chosen while it shows: it has no signal, so none is read.
+  const before = made.remote.diagnosed.length;
+  $('#room-sheet [data-room="' + DEN + '"]').click();
+  await time.tick(25000);
+  out.speakers = [p.document.body.dataset.mode, made.remote.diagnosed.slice(before)];
   const narrow = page(MIXED);
   await narrow.time.tick(1500);
   const from = narrow.made.remote.diagnosed.length;

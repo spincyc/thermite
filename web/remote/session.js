@@ -33,7 +33,8 @@
  *   {type: "diagnostics", room}         diagnostics(room) has refreshed signal rows
  *
  * openDiagnostics(room?) reads read-only signal snapshots now and every ten
- * seconds while open. It follows room changes and confirmed source readback.
+ * seconds while open. It follows room changes and confirmed source readback,
+ * and reads nothing while a room of speakers alone is on show.
  * diagnostics(room?) returns its cached structured model, or null while a
  * different confirmed path is being read. closeDiagnostics() stops refresh;
  * callers close it when hiding the view or ending their session.
@@ -1032,12 +1033,15 @@
       cancel(signalTimer);
       signalTimer = 0;
       const id = signalRoom;
-      if (!signalOpen || !id || !states[id]) return Promise.resolve(null);
+      // A room of speakers alone has no signal path: nothing is read while it shows.
+      if (!signalOpen || !id || !states[id] || roomsById[id].listenOnly) return Promise.resolve(null);
       const state = states[id];
       const acquiredAfter = signalSince[id] || 0;
       const generation = ++signalGeneration;
-      const reading = backend.getDiagnostics ? backend.getDiagnostics(id, state.value, state.pending, acquiredAfter) : Promise.resolve(null);
-      return Promise.resolve(reading).catch(() => null).then((model) => {
+      // A backend that throws reads as one that answered nothing.
+      const reading = new Promise((resolve) => resolve(backend.getDiagnostics
+        ? backend.getDiagnostics(id, state.value, state.pending, acquiredAfter) : null));
+      return reading.catch(() => null).then((model) => {
         if (!signalOpen || generation !== signalGeneration || signalRoom !== id) return null;
         if (!model && global.RemoteDiagnostics) model = global.RemoteDiagnostics.unavailable(id, roomsById[id].label, now());
         signalViews[id] = { confirmedValue: state.value, acquiredAfter: acquiredAfter, model: model };
