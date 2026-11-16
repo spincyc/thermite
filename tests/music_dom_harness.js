@@ -373,6 +373,16 @@ async function now(out) {
   volume.dispatch('change');
   await time.tick(400);
   out.letGo = backend.sent.slice(from).map((sent) => sent.slice(0, 2).concat(sent.slice(3)));
+  // An arrow key held on it for a second: every step is an input and a change.
+  const held = backend.sent.length;
+  for (let step = 1; step <= 30; step += 1) {
+    volume.value = String(40 + step);
+    volume.dispatch('input');
+    volume.dispatch('change');
+    await time.tick(33);
+  }
+  await time.tick(600);
+  out.held = [backend.sent.length - held, backend.sent[backend.sent.length - 1][3]];
 }
 
 // Browse: a folder opened, Back, and an album opened from its sheet; the focus follows each.

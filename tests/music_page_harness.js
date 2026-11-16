@@ -185,7 +185,7 @@ async function transport(out) {
   await time.tick(RemoteMusic.SLIDE_EVERY + 100);
   out.wake.read = [music.view().volume.value, music.view().volume.pending, sentSince(backend, from).length];
   // Let go after resting past SLIDE_EVERY, a slide sends its last level no
-  // more; let go while it moves, at once.
+  // more; let go while it moves, with the slide's next.
   from = backend.sent.length;
   music.setVolume(30);
   music.setVolume(32);
@@ -196,6 +196,16 @@ async function transport(out) {
   out.letGo = [sentSince(backend, from).map((entry) => entry[3])];
   await time.tick(RemoteMusic.SLIDE_EVERY * 2);
   out.letGo.push(sentSince(backend, from).length, music.view().volume.value);
+  // A key held on the slider for a second: each step moves it and lets go
+  // (input, then change), and the slide still sends one level a SLIDE_EVERY.
+  from = backend.sent.length;
+  for (let step = 1; step <= 30; step += 1) {
+    music.setVolume(40 + step);
+    music.setVolume(40 + step, true);
+    await time.tick(33);
+  }
+  await time.tick(RemoteMusic.SLIDE_EVERY * 2);
+  out.keyHeld = [sentSince(backend, from).length, sentSince(backend, from).slice(-1)[0][3], music.view().volume.value];
   // A command that reaches no reader: what it held ends after HOLD_MS.
   backend.answer = () => new Promise(() => {});
   music.toggleShuffle();

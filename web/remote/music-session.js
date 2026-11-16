@@ -504,11 +504,13 @@
       return {
         set: set,
         flush: flush,
-        // The slide let go at value: its last level sent now, but never one
-        // already sent (a slide held still past SLIDE_EVERY is over).
+        // The slide let go at value: its last level goes as set's would
+        // (with a slide under way, within SLIDE_EVERY), but never one
+        // already sent (a slide held still past SLIDE_EVERY is over). Not
+        // flushed: a key held on a slider lets go at every step (input,
+        // then change), and the slide would never slow.
         end(id, value) {
           if (slide.timer || value !== slide.sent || id !== slide.sentTo) set(id, value);
-          flush();
         }
       };
     }
