@@ -156,13 +156,14 @@ def bare(value):
 def text(value):
     """Music Assistant free text a client may see: as shown(), cut to
     TEXT_LENGTH, without controls (_CONTROL) or a credential word, looked
-    for in bare(); else None. Any space, zero-width joiner or non-joiner,
-    or mark a title holds stays."""
+    for in the text as shown and in bare(); else None. Any space, zero-width
+    joiner or non-joiner, or mark a title holds stays."""
     if not isinstance(value, str):
         return None
     # Cut first, with room for what shown() removes: a value may be megabytes long.
     value = shown(value[:4 * TEXT_LENGTH]).strip()[:TEXT_LENGTH].strip()
-    if not value or _CONTROL.search(value) or SENSITIVE_TEXT.search(bare(value)):
+    if (not value or _CONTROL.search(value) or SENSITIVE_TEXT.search(value)
+            or SENSITIVE_TEXT.search(bare(value))):
         return None
     return value
 
