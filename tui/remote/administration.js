@@ -8,8 +8,10 @@ function create(client, house, changed) {
   let generation = 0, ruleSerial = 0;
   function ruleId(prefix) { const ids = [...state.form.data.daily_off, ...state.form.data.locks].map((rule) => rule.id); let id; do { id = prefix + "-" + (++ruleSerial); } while (ids.includes(id)); return id; }
   const canEdit = () => client && client.canEdit();
+  // Only a routed room has a schedule: from a room of speakers alone, the one shown last, else the first.
+  const routed = (id) => house.rooms.some((entry) => entry.id === id);
   async function open(kind, room) {
-    state.kind = kind; state.room = room || state.room || house.rooms[0]?.id; state.form = null;
+    state.kind = kind; state.room = [room, state.room].find(routed) || house.rooms[0]?.id; state.form = null;
     state.loading = true; state.error = ""; const turn = ++generation; changed();
     try {
       if (!client || client.native) return;

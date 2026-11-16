@@ -4,8 +4,8 @@ drives them (tests/remote_tui_harness.js).
 
 The house is test_listen_tui's: the public example's two routed rooms, the
 east one watching and listening, and two rooms of speakers alone, the den
-and the lounge. On the mock, and on openHAB itself (--native) through a
-stand-in for its REST API and event stream. Nothing leaves the process.
+and the lounge. On the mock, on openHAB itself (--native) and on the
+gateway, each through a stand-in. Nothing leaves the process.
 """
 
 import json
@@ -50,6 +50,12 @@ class RemoteTUI(unittest.TestCase):
         signal = self.proof["signal"]
         self.assertEqual(signal["unknown"], [True, "unknown room: " + DEN])
         self.assertEqual(signal["thrown"], [False, EAST, "watch"])
+
+    def test_room_settings_from_a_room_of_speakers_alone_edit_a_routed_rooms_schedule(self):
+        settings = self.proof["settings"]
+        self.assertEqual(settings["room"], [True, DEN])
+        self.assertEqual(settings["read"], ["GET /api/v1/rooms/" + WEST + "/policy"])
+        self.assertEqual((settings["sheet"], settings["form"], settings["closed"]), ("access-form", True, None))
 
 
 if __name__ == "__main__":
