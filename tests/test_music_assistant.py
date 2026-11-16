@@ -209,6 +209,39 @@ class Claim(Site):
         self.assertEqual(provisioner.step(), "ready")
         self.assertEqual(list(self.sim.tokens), [claim["token"]])
 
+    def test_a_minted_token_that_cannot_be_stored_is_logged_out_on_either_path(self):
+        real = provision.write_claim
+
+        def full(state, claim):
+            if "token" in claim:
+                raise OSError(28, "No space left on device")
+            real(state, claim)
+        now = [time.time()]
+        provisioner = self.provisioner(clock=lambda: now[0])
+        # Claiming: neither the token nor the session it was minted with is left.
+        with patch.object(provision, "write_claim", full), self.assertRaises(OSError):
+            provisioner.step()
+        self.assertEqual(self.sim.tokens, {})
+        self.assertEqual(provisioner.step(), "ready")
+        first = self.token()
+        # Renewing: the stored token stays, alone.
+        now[0] += 340 * DAY
+        with patch.object(provision, "write_claim", full):
+            for _ in range(3):
+                with self.assertRaises(OSError):
+                    provisioner.step()
+        self.assertEqual((list(self.sim.tokens), self.token()), ([first], first))
+
+    def test_every_other_token_goes_past_the_hundred_music_assistant_lists(self):
+        provisioner = self.provisioner()
+        provisioner.step()
+        with self.sim.lock:
+            for _ in range(250):
+                self.sim._token("thermite", "stray", long_lived=True)
+        provisioner.reconciled = None
+        self.assertEqual(provisioner.step(), "ready")
+        self.assertEqual(list(self.sim.tokens), [self.token()])
+
     def test_a_session_whose_token_was_not_minted_is_logged_out_and_signed_in_again(self):
         self.sim.failing["auth/token/create"] = 1
         provisioner = self.provisioner()

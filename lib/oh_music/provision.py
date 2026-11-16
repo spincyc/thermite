@@ -65,6 +65,11 @@ USERNAME = "thermite"
 #: replaces it.
 TOKEN_DAYS = 365
 RENEW_DAYS = 30
+#: Music Assistant lists a user's newest tokens, this many at most
+#: (auth/tokens' TOKEN_LIST_LIMIT), and the times revoke_others lists them
+#: again while a list comes back full.
+TOKEN_LIST = 100
+REVOKE_ROUNDS = 20
 DAY = 24 * 3600
 #: The player providers thermite drives.
 PLAYERS = ("sonos", "wiim", "airplay")
@@ -288,8 +293,6 @@ class Provisioner:
             self.revoke_others(client, claim["token"], tokens)
             return claim["token"]
         token = self.mint(client, claim)
-        client.token = token
-        self.revoke_others(client, token)
         LOG.info("Music Assistant token renewed.")
         return token
 
@@ -312,13 +315,9 @@ class Provisioner:
         try:
             token = self.mint(client, claim)
         except Exception:
-            try:
-                client.call("auth/logout")
-            except Exception:
-                pass  # It goes with the others once a token is minted.
+            if client.token == session:  # No token was stored.
+                self.log_out(client)
             raise
-        client.token = token
-        self.revoke_others(client, token)
         LOG.info("Music Assistant claimed by thermite.")
         return token
 
@@ -331,23 +330,54 @@ class Provisioner:
             write_claim(self.state, {**claim, "refusals": refusals + 1})
 
     def mint(self, client, claim):
-        """A new long-lived token, stored with thermite's password."""
+        """A new long-lived token, minted with the client's token and stored
+        with thermite's password; then the client uses it, and every other
+        token of the user is revoked. One that cannot be stored is logged
+        out at once, the client left on the token it had: held nowhere, a
+        year-long admin token would be left behind by every pass whose
+        write fails."""
         token = client.call("auth/token/create", name=USERNAME)
         if not secret(token):
             raise Failed(200)
         issued = int(self.clock())
-        write_claim(self.state, {"password": claim["password"], "token": token, "issued_at": issued,
-                                 "expires_at": issued + TOKEN_DAYS * DAY})
+        try:
+            write_claim(self.state, {"password": claim["password"], "token": token, "issued_at": issued,
+                                     "expires_at": issued + TOKEN_DAYS * DAY})
+        except BaseException:
+            minting, client.token = client.token, token
+            try:
+                self.log_out(client)
+            finally:
+                client.token = minting
+            raise
+        client.token = token
+        self.revoke_others(client, token)
         return token
+
+    @staticmethod
+    def log_out(client):
+        """Revoke the client's own token, as far as Music Assistant answers:
+        one left goes with the others once a token is stored."""
+        try:
+            client.call("auth/logout")
+        except Exception:
+            pass
 
     def revoke_others(self, client, token, tokens=None):
         """Revoke every token of thermite's user but this one: a session it
         was minted with, one it replaced, one minted by a pass that never
-        stored it."""
+        stored it. Music Assistant lists only the newest TOKEN_LIST, so a
+        full list is read again once its others are revoked, REVOKE_ROUNDS
+        times at most."""
         mine = digest(token)
-        for entry in (client.call("auth/tokens") if tokens is None else tokens) or ():
-            if isinstance(entry, dict) and entry.get("token_hash") != mine and isinstance(entry.get("token_id"), str):
-                client.call("auth/token/revoke", token_id=entry["token_id"])
+        for _ in range(REVOKE_ROUNDS):
+            listed = client.call("auth/tokens") if tokens is None else tokens
+            tokens = None
+            for entry in listed if isinstance(listed, list) else ():
+                if isinstance(entry, dict) and entry.get("token_hash") != mine and isinstance(entry.get("token_id"), str):
+                    client.call("auth/token/revoke", token_id=entry["token_id"])
+            if not isinstance(listed, list) or len(listed) < TOKEN_LIST:
+                return
 
     # ---- configuration ----------------------------------------------------
 

@@ -739,9 +739,11 @@ class Sim:
         if command == "auth/token/create":
             return self._token(self.tokens[token]["user_id"], args["name"], long_lived=True)
         if command == "auth/tokens":
+            # The user's newest 100, as Music Assistant lists them.
             user = self.tokens[token]["user_id"]
-            return [{key: value for key, value in entry.items()} for entry in self.tokens.values()
-                    if entry["user_id"] == user]
+            mine = sorted((entry for entry in self.tokens.values() if entry["user_id"] == user),
+                          key=lambda entry: entry["created_at"], reverse=True)
+            return [dict(entry) for entry in mine[:100]]
         if command == "auth/token/revoke":
             return self.revoke(args["token_id"])
         if command == "auth/logout":
