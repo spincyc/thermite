@@ -260,7 +260,10 @@ rollback. The unified deployment workflow uses a separate committed private site
   generated and nothing generates now, as `thermite generate --prune` does.
   An upgrade that stopped generating a file used to stop there, with
   nothing installed, until the file was deleted by hand. A file there
-  without the generated header still stops the check.
+  without the generated header still stops the check, except in
+  `conf/html/remote/`: the remote page's files are copied there without
+  one, and the page fills that directory whole, so a release that drops a
+  page's file removes the site's copy.
 - A locked room with a passive display (`passive: true`) is now verified
   once everything else on its route reads back, and the policy page says
   so. It used to stay degraded ("needs attention") for as long as it was

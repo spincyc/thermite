@@ -184,6 +184,24 @@ class Generate(Scratch):
         (conf / "mine.txt").unlink()
         self.assertEqual(run(*argv, "--check")[0], 0)
 
+    def test_prune_removes_the_remote_pages_copy_of_a_file_a_later_release_dropped(self):
+        # The page's files are copied unmarked; the remote's directory is its own.
+        house, conf = self.house(EXAMPLE), self.root / "conf"
+        argv = ["generate", "--house", str(house), "--conf", str(conf), "--root", str(self.root)]
+        self.assertEqual(run(*argv)[0], 0)
+        (conf / "html/remote/audio.css").write_text(".audio { display: grid; }\n")
+        (conf / "html/mine.html").write_text("<p>the owner's page</p>\n")
+        code, _, err = run(*argv)
+        self.assertEqual(code, 1)
+        self.assertIn("conf/html/remote/audio.css: nothing generates it now; an earlier generate wrote it; "
+                      "thermite generate --prune removes it", err)
+        code, out, err = run(*argv, "--prune")
+        self.assertEqual(code, 1)
+        self.assertIn("removed conf/html/remote/audio.css", out)
+        self.assertFalse((conf / "html/remote/audio.css").exists())
+        self.assertIn("conf/html/mine.html: nothing generates it now; thermite generate writes conf/ whole", err)
+        self.assertTrue((conf / "html/mine.html").exists())
+
     def test_prune_removes_music_assistants_units_once_the_host_has_no_music(self):
         import oh_deploy
         import oh_units

@@ -204,14 +204,16 @@ problem. Writing never deletes: a file under conf/ or metrics/, or a unit
 in deploy/ (Music Assistant&#x27;s, once the host file has no music:), that
 nothing generates is reported and makes the exit status 1; --prune removes
 such a file when it carries the generated header (an earlier generate
-wrote it) and only reports any other.
+wrote it) or lies in conf/html/remote/, which the remote page&#x27;s copies fill
+whole, and only reports any other.
 
 options:
   -h, --help            show this help message and exit
   --config, --site DIR  use this private configuration directory
   --check               change nothing; exit 1 if conf/, metrics/ or deploy/ is stale
   --prune               also remove files under conf/, metrics/ and deploy/ with the
-                        generated header that nothing generates now
+                        generated header, or in conf/html/remote/, that nothing
+                        generates now
   --house FILE          the house file (default: instance/devices.yaml)
   --conf DIR            the runtime conf directory (default: conf/)
 
