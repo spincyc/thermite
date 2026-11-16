@@ -143,6 +143,8 @@ class Element {
   get tabIndex() { return Number(this.getAttribute('tabindex') ?? -1); }
   set src(value) { this.setAttribute('src', value); }
   get src() { return this.getAttribute('src') || ''; }
+  get loading() { return this.getAttribute('loading') === 'lazy' ? 'lazy' : 'eager'; }
+  set loading(value) { this.setAttribute('loading', value); }
   get value() {
     if (this.localName === 'select') {
       const options = this.querySelectorAll('option');
@@ -290,10 +292,16 @@ class Document {
     return root.children[0];
   }
 
-  // An image asked for its address: it loads or fails a moment later, as a browser's, unless it was asked for another since.
+  // An image asked for its address: it loads or fails a moment later, as a browser's, unless it was asked for another
+  // since. A lazy one is not asked for at all while it is not laid out (hidden, or out of the page), as a browser's is
+  // not until it nears the viewport, and a display:none one never does.
   fetchImage(image, src) {
-    this.images.push(src);
-    this.later(() => { if (image.getAttribute('src') === src) image.dispatch(this.answerImage(src) ? 'load' : 'error'); }, 0);
+    this.later(() => {
+      if (image.getAttribute('src') !== src) return;
+      if (image.loading === 'lazy' && (!this.documentElement.contains(image) || image.closest('[hidden]'))) return;
+      this.images.push(src);
+      image.dispatch(this.answerImage(src) ? 'load' : 'error');
+    }, 0);
   }
 
   // The focus falls back to the body when what had it went, or was disabled or hidden.
@@ -498,7 +506,8 @@ async function grouped(out) {
 }
 
 // Covers the gateway was too busy to fetch (503): each asked for once more
-// after ART_RETRY_MS, then left to its placeholder.
+// after ART_RETRY_MS and up to ART_JITTER_MS (a thumbnail, lazy, eagerly),
+// then left to its placeholder.
 async function covers(out) {
   const {time, $, backend, document} = page();
   const art = (n) => n.toString(16).padStart(64, '0'), playing = art(4095);
@@ -512,20 +521,28 @@ async function covers(out) {
   };
   // Every cover fails when first asked for; the one playing loads when asked again.
   const asked = (src) => document.images.filter((image) => image === src).length;
-  document.answerImage = (src) => src.includes(playing) && asked(src) > 1;
+  const answered = new Map();
+  document.answerImage = (src) => {
+    answered.set(src, (answered.get(src) || []).concat(time.now()));
+    return src.includes(playing) && asked(src) > 1;
+  };
   const image = $('[data-art-image]');
   await time.tick(400);
-  out.cover = [[image.hidden, asked(image.src)]];
-  await time.tick(2000);
-  out.cover.push([image.hidden, asked(image.src)]);
-  // Search results: each thumbnail asked for twice, then hidden over its kind's icon.
+  const failed = (img) => [img.hidden, img.hasAttribute('data-failed'), asked(img.getAttribute('src'))];
+  out.cover = [failed(image)];
+  await time.tick(3000);
+  out.cover.push(failed(image));
+  // Search results: each thumbnail asked for twice, then invisible over its kind's icon.
   $('[data-tab="search"]').click();
   $('[data-query]').value = 'harbour';
   $('[data-query]').dispatch('input');
   await time.tick(2000);
   await time.tick(5000);
   const thumbs = $('[data-results]').querySelectorAll('img');
-  out.thumbs = [thumbs.length > 0, [...new Set(thumbs.map((thumb) => [thumb.hidden, asked(thumb.getAttribute('src'))].join()))]];
+  out.thumbs = [thumbs.length > 0, [...new Set(thumbs.map((thumb) => failed(thumb).join()))]];
+  // Each asked again 2 to 3 s after it failed, and not all at once.
+  const after = thumbs.map((thumb) => answered.get(thumb.getAttribute('src'))).map(([first, again]) => again - first);
+  out.jitter = [after.length, after.every((ms) => ms >= 2000 && ms <= 3000), new Set(after).size > 1];
   out.cover.push(asked(image.src));
 }
 

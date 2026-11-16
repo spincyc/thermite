@@ -377,10 +377,14 @@ class MusicPageScript(unittest.TestCase):
 
     def test_a_cover_the_gateway_was_too_busy_for_is_asked_for_once_more(self):
         out = self.report["covers"]
-        # Hidden while it failed, shown once asked again; never asked a third time.
-        self.assertEqual(out["cover"], [[True, 1], [False, 2], 2])
-        # A thumbnail that fails twice stays hidden over its kind's icon.
-        self.assertEqual(out["thumbs"], [True, ["true,2"]])
+        # Invisible (laid out, not hidden) while it failed, shown once asked again; never asked a third time.
+        self.assertEqual(out["cover"], [[False, True, 1], [False, False, 2], 2])
+        # A lazy thumbnail that fails is asked again all the same (eagerly); failed twice, it stays invisible over
+        # its kind's icon.
+        self.assertEqual(out["thumbs"], [True, ["false,true,2"]])
+        # A page of them asked again 2 to 3 s after each failed, not in step.
+        self.assertGreater(out["jitter"][0], 1)
+        self.assertEqual(out["jitter"][1:], [True, True])
 
     def test_a_folder_takes_the_focus_only_while_browse_shows_and_it_reads(self):
         out = self.report["following"]

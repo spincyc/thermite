@@ -20,8 +20,10 @@
   window.addEventListener("pageshow", syncLive);
 
   const KIND_ICON = { track: "note", album: "album", artist: "artist", playlist: "playlist", folder: "folder" };
-  // A cover that failed is asked for once more this long after.
+  // A cover that failed is asked for once more this long after, and up to
+  // ART_JITTER_MS more, so a page of them does not come back at once.
   const ART_RETRY_MS = 2000;
+  const ART_JITTER_MS = 1000;
 
   const $ = (selector) => document.querySelector(selector);
   const volume = $("[data-volume]");
@@ -349,18 +351,24 @@
     image.src = url;
   }
 
-  // A cover from the gateway's art route, hidden (its placeholder shows)
-  // while it fails. The gateway fetches only so many at once and answers
-  // the rest 503, which a browser never asks again: a cover that fails is
-  // asked for once more ART_RETRY_MS later, once for each address it has.
+  // A cover from the gateway's art route, invisible (its placeholder shows
+  // through) while it fails. The gateway fetches only so many at once and
+  // answers the rest 503, which a browser never asks again: a cover that
+  // fails is asked for once more ART_RETRY_MS later, once for each address
+  // it has. Laid out still, and asked for eagerly: a lazy image the browser
+  // takes for out of view is never asked for.
   function cover(image) {
-    image.addEventListener("load", () => { image.hidden = false; });
+    image.addEventListener("load", () => { delete image.dataset.failed; });
     image.addEventListener("error", () => {
       const src = image.getAttribute("src");
-      image.hidden = true;
+      image.dataset.failed = "";
       if (!src || retried.get(image) === src) return;
       retried.set(image, src);
-      setTimeout(() => { if (image.getAttribute("src") === src) image.setAttribute("src", src); }, ART_RETRY_MS);
+      setTimeout(() => {
+        if (image.getAttribute("src") !== src) return;
+        image.loading = "eager";
+        image.setAttribute("src", src);
+      }, ART_RETRY_MS + Math.random() * ART_JITTER_MS);
     });
     return image;
   }

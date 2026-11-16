@@ -260,6 +260,13 @@
   object-fit: cover;
 }
 
+/* A cover that failed: laid out still (asked for again, a lazy one must
+   be), its placeholder showing through. */
+.music-art__image[data-failed],
+.music-item__art img[data-failed] {
+  visibility: hidden;
+}
+
 .music-art__note {
   width: 36px;
   height: 36px;
