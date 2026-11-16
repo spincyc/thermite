@@ -508,6 +508,10 @@ class MusicMarkup(unittest.TestCase):
         for name in ("remote", "audio", "music"):
             with self.subTest(sheet=name):
                 self.assertNotRegex((REMOTE / (name + ".css")).read_text(), r"safe-area-inset-(left|right)")
+        # pair.css pads the Pair page's sides by the insets for a page without the shell; in it, shell.css's rule
+        # for its content's pages (two classes to pair.css's one) sets that padding instead, wide and narrow.
+        shell = (REMOTE / "shell.css").read_text()
+        self.assertEqual(len(re.findall(r"\.thermite-content > :is\([^)]*\.pair\b[^)]*\) \{[^}]*\bpadding:", shell)), 2)
 
     def test_the_transport_fits_a_320_px_phone_and_every_target_is_44_px(self):
         shared, rules = css_rules((REMOTE / "remote.css").read_text()), css_rules((REMOTE / "music.css").read_text())
