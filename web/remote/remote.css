@@ -1950,16 +1950,13 @@ kbd {
   display: none !important;
 }
 
-/* One column clear of a notch and the home bar; each page sets how wide. */
+/* One column clear of the home bar; each page sets how wide. The shell's
+   frame keeps the sides clear of a notch (shell.css), as the top. */
 .child-page {
   width: 100%;
   min-width: 0;
   margin: 0 auto;
-  padding:
-    var(--space-3)
-    calc(env(safe-area-inset-right) + var(--space-4))
-    calc(env(safe-area-inset-bottom) + var(--space-7))
-    calc(env(safe-area-inset-left) + var(--space-4));
+  padding: var(--space-3) var(--space-4) calc(env(safe-area-inset-bottom) + var(--space-7));
 }
 
 .child-page__head {

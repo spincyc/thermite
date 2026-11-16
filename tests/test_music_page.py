@@ -490,6 +490,13 @@ class MusicMarkup(unittest.TestCase):
                                                                  "border-radius": "4px"}), rules)
         self.assertIn('class="music-path__text" tabindex="-1"', (REMOTE / "music.html").read_text())
 
+    def test_only_the_frame_keeps_a_child_pages_sides_clear_of_a_notch(self):
+        # shell.css pads the content by the side insets below 1180 px; a page adding them again doubles them.
+        self.assertRegex((REMOTE / "shell.css").read_text(), r"\.thermite-content \{[^}]*env\(safe-area-inset-right")
+        for name in ("remote", "audio", "music"):
+            with self.subTest(sheet=name):
+                self.assertNotRegex((REMOTE / (name + ".css")).read_text(), r"safe-area-inset-(left|right)")
+
     def test_the_transport_fits_a_320_px_phone_and_every_target_is_44_px(self):
         shared, rules = css_rules((REMOTE / "remote.css").read_text()), css_rules((REMOTE / "music.css").read_text())
         tokens = {}
