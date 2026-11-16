@@ -162,16 +162,23 @@ class Painter {
       const shown = this.front[y];
       for (let x = 0; x < width; x += 1) {
         const cell = row[x] || { ch: " ", style: "base" };
-        const ch = !this.depth && cell.mono ? cell.mono : cell.ch;
+        const ch = !this.depth && cell.mono && cell.ch ? cell.mono : cell.ch;
         const code = codeOf(cell.style);
         const old = shown[x];
         if (old && old.ch === ch && old.code === code) continue;
+        shown[x] = { ch: ch, code: code };
+        // A wide character's right half: drawn with it, nothing to write.
+        // After either, where the cursor stands is the terminal's to say:
+        // the next write places it.
+        if (!ch) {
+          at = null;
+          continue;
+        }
         if (!at || at.y !== y || at.x !== x) out += "\x1b[" + (y + 1) + ";" + (x + 1) + "H";
         if (pen !== code) out += code;
         pen = code;
         out += ch;
-        at = { x: x + 1, y: y };
-        shown[x] = { ch: ch, code: code };
+        at = cell.wide ? null : { x: x + 1, y: y };
       }
     }
     // A terminal that knows synchronized output shows the frame at once.

@@ -38,7 +38,8 @@ class Grid {
 
   // Writes text at (x, y), clipped to the grid; returns the column after it.
   // mono is an optional character to use when color cannot distinguish a
-  // glyph's foreground and background (the torch's two-tone metal cells).
+  // glyph's foreground and background (the torch's two-tone metal cells),
+  // in a narrow cell only.
   put(x, y, text, style, hit, mono) {
     const chars = characters(text);
     if (hit && chars.length && hit.focus) this.order.push(hit);
@@ -48,7 +49,7 @@ class Grid {
       if (at >= 0 && at < this.width) {
         this.rows[y][at] = { ch: ch, style: style || this.style };
         if (chars[index + 1] === "") this.rows[y][at].wide = true;
-        if (mono) this.rows[y][at].mono = mono;
+        if (mono && ch && chars[index + 1] !== "") this.rows[y][at].mono = mono;
       }
     });
     mend(this.rows[y], x, x + chars.length);
@@ -111,11 +112,12 @@ class Grid {
   }
 }
 
-// The edges of cells left..right of row, just drawn: a wide character cut
-// in two there (by what was drawn, or by the grid's edge) leaves a space for
-// the half that remains.
+// The edges of cells left..right of row, just drawn (clipped to the row): a
+// wide character cut in two there, by what was drawn or by the row's edge
+// (a wide one in the last column), leaves a space for the half that remains.
 function mend(row, left, right) {
-  [left - 1, left, right - 1, right].forEach((at) => {
+  const first = Math.max(0, left), last = Math.min(row.length, right);
+  [first - 1, first, last - 1, last].forEach((at) => {
     const cell = row[at];
     if (!cell) return;
     const whole = cell.wide ? Boolean(row[at + 1]) && row[at + 1].ch === "" : cell.ch !== "" || Boolean(row[at - 1] && row[at - 1].wide);
