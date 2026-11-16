@@ -90,6 +90,8 @@ class MusicPage(unittest.TestCase):
         self.assertEqual(out["elsewhere"], 12)
         # Woken to a level moved elsewhere, a step to the level last sent goes again.
         self.assertEqual(out["wake"], {"woke": 38, "sent": [["volume", "kitchen_amp", "level", 40]], "read": [40, False, 1]})
+        # Let go after a rest, nothing goes twice; let go while moving, the last level goes at once.
+        self.assertEqual(out["letGo"], [[30, 32, 34, 36], 4, 36])
 
     def test_search_waits_for_the_typing_and_filters_by_kind(self):
         out = self.report["library"]
@@ -341,6 +343,9 @@ class MusicPageScript(unittest.TestCase):
     def test_a_position_dragged_and_let_go_unchanged_shows_the_speakers_again(self):
         self.assertEqual(self.report["now"]["dragged"], "3:20")
         self.assertEqual(self.report["now"]["released"], [True, True])
+
+    def test_a_volume_let_go_after_a_rest_sends_its_level_once(self):
+        self.assertEqual(self.report["now"]["letGo"], [["volume", "kitchen_amp", 30], ["volume", "kitchen_amp", 32]])
 
     def test_the_focus_follows_a_folder_opened_back_and_a_sheets_open(self):
         out = self.report["browse"]

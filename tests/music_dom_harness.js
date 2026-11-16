@@ -329,7 +329,7 @@ function page() {
 
 // The speaker's name once (the bar's switch says it), and a dragged position let go without a change.
 async function now(out) {
-  const {time, $} = page();
+  const {time, $, backend} = page();
   await time.tick(400);
   out.place = [$('[data-switch-name]').textContent, $('[data-place]').textContent, $('[data-model]').textContent];
   const seek = $('[data-seek]');
@@ -341,6 +341,16 @@ async function now(out) {
   $('[data-volume-step="1"]').click();
   await time.tick(400);
   out.released = [seek.value !== '200', $('[data-elapsed]').textContent !== '3:20'];
+  // A volume dragged, held still, then let go: its change sends nothing the drag sent.
+  const volume = $('[data-volume]'), from = backend.sent.length;
+  for (const level of ['30', '32']) {
+    volume.value = level;
+    volume.dispatch('input');
+  }
+  await time.tick(600);
+  volume.dispatch('change');
+  await time.tick(400);
+  out.letGo = backend.sent.slice(from).map((sent) => sent.slice(0, 2).concat(sent.slice(3)));
 }
 
 // Browse: a folder opened, Back, and an album opened from its sheet; the focus follows each.

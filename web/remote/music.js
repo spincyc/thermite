@@ -79,8 +79,8 @@
   document.querySelectorAll("[data-group-step]").forEach((button) => {
     button.addEventListener("click", () => session.stepGroupVolume(Number(button.dataset.groupStep)));
   });
-  slider(volume, "volume", (value) => session.setVolume(value));
-  slider(groupVolume, "group", (value) => session.setGroupVolume(value));
+  slider(volume, "volume", (value, final) => session.setVolume(value, final));
+  slider(groupVolume, "group", (value, final) => session.setGroupVolume(value, final));
   // A position is sent once let go; while dragged, only the time shown moves.
   seek.addEventListener("input", () => {
     dragging.seek = true;
@@ -188,7 +188,7 @@
   // A volume slider: a drag sends as the session lets it, the finger shown meanwhile.
   function slider(input, name, set) {
     input.addEventListener("input", () => { dragging[name] = true; set(input.value); });
-    input.addEventListener("change", () => { dragging[name] = false; set(input.value); });
+    input.addEventListener("change", () => { dragging[name] = false; set(input.value, true); });
     input.addEventListener("pointerup", () => { dragging[name] = false; });
     input.addEventListener("blur", () => { dragging[name] = false; });
   }

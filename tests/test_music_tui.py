@@ -80,6 +80,9 @@ class MusicScreen(unittest.TestCase):
         asked = "Den was asked to join; Music Assistant has not confirmed it yet."
         self.assertEqual(self.proof["unconfirmed"], {"toast": ["Group sent", asked], "refused": False, "said": True})
 
+    def test_a_volume_let_go_ends_the_slide_there(self):
+        self.assertEqual(self.proof["dragged"], [[0, False], [100, False], [100, True]])
+
     def test_a_locked_speaker_is_refused_with_a_toast(self):
         locked = self.proof["locked"]
         self.assertEqual(locked["toast"], ["Kitchen Sonos Amp: Pause", "A locked room is using this device or route, so it cannot change now."])

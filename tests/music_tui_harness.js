@@ -205,6 +205,25 @@ async function unconfirmed(proof) {
   controller.stop();
 }
 
+// A volume dragged with the mouse: let go, it tells the session the slide ended there.
+async function dragged(proof) {
+  const parts = assemble();
+  const { controller } = parts;
+  await controller.start();
+  await until(parts, () => controller.ui.ready, "ready");
+  key(parts, null, { name: "f2" });
+  key(parts, "y");
+  await shows(parts, "Harbour Lights");
+  const told = [], music = session(parts), setVolume = music.setVolume;
+  music.setVolume = (value, final) => { told.push([value, Boolean(final)]); return setVolume(value, final); };
+  const entry = draw(parts).grid.hits.find((hit) => hit.hit.kind === "music-volume");
+  controller.mouse({ action: "mousedown", button: "left", x: entry.x, y: entry.y });
+  controller.mouse({ action: "mousemove", button: "left", x: entry.x + entry.w - 1, y: entry.y });
+  controller.mouse({ action: "mouseup", button: "left", x: entry.x + entry.w - 1, y: entry.y });
+  proof.dragged = told;
+  controller.stop();
+}
+
 // A narrow terminal: everything still fits, the header says where it is.
 async function narrow(proof) {
   const parts = assemble();
@@ -327,6 +346,7 @@ async function others(proof) {
   const proof = {};
   await main(proof);
   await unconfirmed(proof);
+  await dragged(proof);
   await narrow(proof);
   await member(proof);
   await vanished(proof);

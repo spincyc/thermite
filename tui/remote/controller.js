@@ -1108,9 +1108,10 @@ function create(options) {
     return Math.round(entry.hit.min + fraction * (entry.hit.max - entry.hit.min));
   }
 
-  function musicSlide(entry, x) {
-    if (entry.hit.kind === "music-volume") music.session.setVolume(musicValue(entry, x));
-    else music.session.setGroupVolume(musicValue(entry, x));
+  // final: the mouse let go there.
+  function musicSlide(entry, x, final) {
+    if (entry.hit.kind === "music-volume") music.session.setVolume(musicValue(entry, x), final);
+    else music.session.setGroupVolume(musicValue(entry, x), final);
   }
 
   function sliderValue(entry, x) {
@@ -1623,7 +1624,7 @@ function create(options) {
         dragging = null;
       }
       if (audioDragging && ui.screen === "audio") audio.session.setVolume(sliderValue(audioDragging, x));
-      if (musicDragging && ui.screen === "music") musicSlide(musicDragging, x);
+      if (musicDragging && ui.screen === "music") musicSlide(musicDragging, x, true);
       audioDragging = null;
       musicDragging = null;
       stopRepeat();

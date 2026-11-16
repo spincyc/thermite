@@ -24,12 +24,13 @@
  * so a page redraws it each second); select(id) chooses another, and
  * selectNext(±1) the next or previous in the list ([ and ]).
  * playPause(), next(), previous(), seek(s), seekBy(±s), toggleShuffle(),
- * cycleRepeat(), setVolume(v), stepVolume(±1), setGroupVolume(v) and
- * stepGroupVolume(±1) send its commands, each shown until the speaker
- * reads it back or HOLD_MS pass. library() is the Search, Browse or Queue
- * tab (setTab), with setQuery (sent after SEARCH_MS), setKind, setSource,
- * open, back, more and play(item, option): "replace" (Play now), "next" or
- * "add". grouping() is the chosen speaker's group: join(ids), leave(id).
+ * cycleRepeat(), setVolume(v, final), stepVolume(±1), setGroupVolume(v,
+ * final) and stepGroupVolume(±1) send its commands, each shown until the
+ * speaker reads it back or HOLD_MS pass (final: a slide let go at v).
+ * library() is the Search, Browse or Queue tab (setTab), with setQuery (sent
+ * after SEARCH_MS), setKind, setSource, open, back, more and play(item,
+ * option): "replace" (Play now), "next" or "add". grouping() is the chosen
+ * speaker's group: join(ids), leave(id).
  * tidal() is an Admin's TIDAL sign-in: tidalStart(), tidalCancel(). A
  * speaker whose room is locked refuses its commands here with a toast, as
  * Audio's; the gateway checks every command anyway.
@@ -483,34 +484,43 @@
         deliver();
         slide.timer = later(tick, SLIDE_EVERY);
       }
+      function set(id, value) {
+        slide.speaker = id;
+        slide.value = value;
+        hold(holder(id), action, value);
+        if (!slide.timer) {
+          deliver();
+          slide.timer = later(tick, SLIDE_EVERY);
+        }
+        changed();
+      }
+      // The last of a slide still under way, sent now and no later.
+      function flush() {
+        if (!slide.timer) return;
+        cancel(slide.timer);
+        slide.timer = 0;
+        if (slide.value !== slide.sent || slide.speaker !== slide.sentTo) deliver();
+      }
       return {
-        set(id, value) {
-          slide.speaker = id;
-          slide.value = value;
-          hold(holder(id), action, value);
-          if (!slide.timer) {
-            deliver();
-            slide.timer = later(tick, SLIDE_EVERY);
-          }
-          changed();
-        },
-        // The last of a slide still under way, sent now and no later.
-        flush() {
-          if (!slide.timer) return;
-          cancel(slide.timer);
-          slide.timer = 0;
-          if (slide.value !== slide.sent || slide.speaker !== slide.sentTo) deliver();
+        set: set,
+        flush: flush,
+        // The slide let go at value: its last level sent now, but never one
+        // already sent (a slide held still past SLIDE_EVERY is over).
+        end(id, value) {
+          if (slide.timer || value !== slide.sent || id !== slide.sentTo) set(id, value);
+          flush();
         }
       };
     }
     const faders = { volume: fader("volume"), group_volume: fader("group_volume") };
 
-    function setVolume(value) {
+    // A volume moved to value; final, let go there (as a slider's change).
+    function setVolume(value, final) {
       const speaker = chosen();
       const parsed = Math.round(Number(value));
       if (!speaker || !Number.isFinite(parsed) || level(speaker.id, "volume", speaker.volume).value === null) return;
       if (blocked(speaker, [speaker.id])) return;
-      faders.volume.set(speaker.id, Math.max(0, Math.min(100, parsed)));
+      faders.volume[final ? "end" : "set"](speaker.id, Math.max(0, Math.min(100, parsed)));
     }
 
     function stepVolume(direction) {
@@ -524,12 +534,12 @@
       if (!lockedBy([speaker.id]).length) announce(nameOf(speaker.id) + ": Volume " + next);
     }
 
-    function setGroupVolume(value) {
+    function setGroupVolume(value, final) {
       const speaker = chosen();
       const parsed = Math.round(Number(value));
       if (!speaker || !speaker.group || !Number.isFinite(parsed)) return;
       if (blocked(speaker)) return;
-      faders.group_volume.set(speaker.id, Math.max(0, Math.min(100, parsed)));
+      faders.group_volume[final ? "end" : "set"](speaker.id, Math.max(0, Math.min(100, parsed)));
     }
 
     function stepGroupVolume(direction) {
