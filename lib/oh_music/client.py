@@ -132,13 +132,13 @@ class Client:
     def _session(self, path, refused, **body):
         """The session token a POST of /setup or /auth/login answers; None
         for its refusal's status, NoUser for 403 (no user to sign in as)."""
-        response, answer = self._request("POST", path, ANSWER_BYTES, json=body)
+        response, content = self._request("POST", path, ANSWER_BYTES, json=body)
         if response.status_code == refused:
             return None
         if response.status_code == 403:
             raise NoUser("Music Assistant has no user")
         try:
-            answer = json.loads(answer) if response.status_code == 200 else None
+            answer = json.loads(content) if response.status_code == 200 else None
         except ValueError:
             answer = None
         if not isinstance(answer, dict) or answer.get("success") is not True or not isinstance(answer.get("token"), str):

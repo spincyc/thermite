@@ -178,9 +178,12 @@ def unreadable(claim):
     return claim is not None and claim.get("problem") == UNREADABLE
 
 
-#: What the owner does about a claim file that cannot be trusted, by why.
+#: What the owner does about a claim file, or a library record, that cannot
+#: be trusted, by why.
 REPAIR_CLAIM = {ACCESS: "give the file to the service account, mode 0600",
                 CONTENTS: "thermite did not write it; restore it, or reset Music Assistant and delete it"}
+REPAIR_LIBRARIES = {ACCESS: "give it to the service account, mode 0600",
+                    CONTENTS: "thermite did not write it; delete it to have the libraries found by name"}
 
 
 def unclaimed_because(claim):
@@ -448,10 +451,8 @@ class Provisioner:
         except Untrusted as error:
             if "libraries" not in self.warned:
                 self.warned.add("libraries")
-                repair = ("give it to the service account, mode 0600" if error.reason == ACCESS else
-                          "thermite did not write it; delete it to have the libraries found by name")
                 LOG.warning("Music Assistant: its library record %s cannot be trusted; %s. Its libraries are left "
-                            "as they are until then.", LIBRARY_FILE, repair)
+                            "as they are until then.", LIBRARY_FILE, REPAIR_LIBRARIES[error.reason])
             return 0
         self.warned.discard("libraries")
         names = {LIBRARY_NAME.format(library): library for library in self.spec["libraries"]}
