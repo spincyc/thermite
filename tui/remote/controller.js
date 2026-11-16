@@ -27,6 +27,9 @@ const LOG_KEEP = 200;
 // A mouse button held on a repeating key presses at most this long: a
 // terminal that loses the release must not run the volume to its limit.
 const REPEAT_LIMIT_MS = 8000;
+// What is typed while Music's search field is gone goes nowhere this long
+// after the last key; a q typed later is the screen's again.
+const TYPING_MS = 3000;
 // Blessed key names for the page's KeyboardEvent.key names in RemoteSession.KEYS.
 const KEY_NAMES = { up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight", backspace: "Backspace", escape: "Escape" };
 // The keys a focused volume slider takes, as a focused range input does on the page.
@@ -81,9 +84,9 @@ function create(options) {
   // The Audio screen's RemoteAudio (audio-session.js): started while it shows.
   const audio = { session: null };
   // The Music screen's RemoteMusic (music-session.js), likewise, the
-  // speakers ticked in its group sheet, and whether the last key was typed
-  // into its search field.
-  const music = { session: null, picked: new Set(), typing: false };
+  // speakers ticked in its group sheet, and when the last key was typed
+  // into its search field (null: the last was not).
+  const music = { session: null, picked: new Set(), typed: null };
   const timers = { toast: 0, flash: {}, repeat: null, tick: 0 };
   let frame = null;
   let size = { width: 80, height: 24 };
@@ -234,7 +237,7 @@ function create(options) {
       if (day.backend) day.backend.stop();
       if (audio.session && ui.screen === "audio") audio.session.stop();
       if (music.session && ui.screen === "music") music.session.stop();
-      music.typing = false;
+      music.typed = null;
       system.backend?.close(); system.expanded = false; system.link = null;
       access.cancel(); access.state.users = []; access.state.policy = null;
       access.state.kind = "account"; access.state.error = ui.error; ui.screen = "account"; ui.overlay = null; ui.pane = "account"; ui.focus = null;
@@ -436,7 +439,7 @@ function create(options) {
         frame = View.render(context(), width, height);
       }
       // Music's search field back under the typing that went on without it: the focus goes back to it.
-      const field = music.typing && ui.screen === "music" && !ui.overlay && frame.focusables.find((hit) => hit.key === "music-search");
+      const field = typing() && ui.screen === "music" && !ui.overlay && frame.focusables.find((hit) => hit.key === "music-search");
       if (field && ui.focus !== field.key) {
         Object.assign(ui, { pane: field.pane, focus: field.key, focusVisible: true, revealFocus: true });
       }
@@ -579,7 +582,7 @@ function create(options) {
 
   function openSheet(kind, title, extra) {
     stopRepeat();
-    music.typing = false;
+    music.typed = null;
     if (kind === "cameras") return setScreen("cameras");
     if (kind === "topology") return setScreen("topology");
     if (kind === "signal" && ui.screen === "remote" && View.signalInline(size.width, size.height, ui.logVisible !== false)) {
@@ -678,7 +681,7 @@ function create(options) {
     if (page?.system && !Navigation.allowed(page, access)) return toast("System", "Only administrators can view System.");
     if (ui.screen === name && !ui.overlay) return;
     stopRepeat();
-    music.typing = false;
+    music.typed = null;
     if (dragging) { dragging = null; session.setDragging(false); }
     audioDragging = null;
     musicDragging = null;
@@ -1366,8 +1369,9 @@ function create(options) {
   // character, a space, Backspace. Enter, Esc, Tab and the arrows keep theirs.
   // Should the field go under the typing (Music Assistant away, a Guest
   // refused), what is typed while it is gone goes nowhere, q included,
-  // until another key, a click or another screen or sheet; back, the field
-  // has the focus again (render).
+  // until TYPING_MS pass without a key, or another key, a click or another
+  // screen or sheet; back in that time, the field has the focus again
+  // (render).
   function musicTyping(ch, event) {
     const typed = event.name === "backspace"
       || Boolean(ch) && !event.ctrl && !event.meta && Array.from(ch).length === 1 && !/[\u0000-\u001f\u007f-\u009f]/.test(ch);
@@ -1375,15 +1379,20 @@ function create(options) {
     const field = here && ui.focusVisible && ui.focus === "music-search";
     const library = here && music.session.library();
     const search = library && library.search;
-    if (!typed || !here || !field && !(music.typing && !search)) {
-      music.typing = false;
+    if (!typed || !here || !field && !(typing() && !search)) {
+      music.typed = null;
       return false;
     }
-    music.typing = true;
+    music.typed = now();
     if (!field || !search) return true;
     if (event.name === "backspace") music.session.setQuery(Array.from(search.query).slice(0, -1).join(""));
     else music.session.setQuery(search.query + ch);
     return true;
+  }
+
+  // A key typed into Music's search, or where it was, within TYPING_MS.
+  function typing() {
+    return music.typed !== null && now() - music.typed < TYPING_MS;
   }
 
   // The Music screen's keys, as the page's: the arrows choose a control (←
@@ -1577,7 +1586,7 @@ function create(options) {
     if (stopped || !frame) return;
     const { action, x, y } = event;
     if (action === "mousedown") {
-      music.typing = false;
+      music.typed = null;
       const regions = frame.regions.filter((region) => !ui.overlay || region.key === "sheet:" + ui.overlay.kind);
       const region = regions.find((candidate) => x >= candidate.x - 1 && x <= candidate.x + candidate.w
         && y >= candidate.y - 1 && y <= candidate.y + candidate.h);

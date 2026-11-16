@@ -10,8 +10,9 @@ console.log = console.info = () => {};
 const WIDTH = 110, HEIGHT = 70;
 
 // The remote on the mock, the music backend each Music session makes kept
-// (with settings over the mock's own: a house without music, a Guest).
-function assemble(settings = {}) {
+// (with settings over the mock's own: a house without music, a Guest), and
+// env over the remote's own (a clock).
+function assemble(settings = {}, env = {}) {
   const shared = Shared.load(Shared.WEB);
   const parts = { backends: [] };
   const create = shared.MusicBackend.create;
@@ -21,7 +22,7 @@ function assemble(settings = {}) {
     return backend;
   } });
   Object.assign(parts, Main.assemble(Main.parse(["--mock", "--still", "--latency", "0"]),
-    { shared, setInterval: () => 0, clearInterval() {}, onQuit: () => { parts.quit = true; } }));
+    { shared, setInterval: () => 0, clearInterval() {}, onQuit: () => { parts.quit = true; }, ...env }));
   return parts;
 }
 
@@ -319,6 +320,24 @@ async function vanished(proof) {
   key(again, "q");
   proof.vanished.account = Boolean(again.quit);
   again.controller.stop();
+  // Gone under the typing, and a q typed long after: the screen's again (a clock run on, not waited for).
+  let ahead = 0;
+  const later = assemble({}, { now: () => Date.now() + ahead });
+  await later.controller.start();
+  await until(later, () => later.controller.ui.ready, "ready");
+  key(later, null, { name: "f2" });
+  key(later, "y");
+  await shows(later, "type / to search");
+  for (const ch of "/lo") key(later, ch);
+  backend(later).simulateUnavailable();
+  await shows(later, "Music Assistant is not answering yet.");
+  ahead += 2000;
+  key(later, "q");
+  proof.vanished.lapsed = [Boolean(later.quit)];
+  ahead += 4000;
+  key(later, "q");
+  proof.vanished.lapsed.push(Boolean(later.quit), later.controller.ui.screen);
+  later.controller.stop();
 }
 
 // A title in CJK with an emoji and a decomposed accent takes the columns a

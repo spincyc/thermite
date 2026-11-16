@@ -99,9 +99,10 @@ class MusicScreen(unittest.TestCase):
     def test_a_q_typed_after_the_search_field_went_does_not_quit(self):
         vanished = self.proof["vanished"]
         # Music Assistant went away under the typing: the focus moved, and q went nowhere; back, the
-        # field has the focus again and takes q, until another key.
+        # field has the focus again and takes q, until another key. Two seconds on, q still goes nowhere;
+        # four more without a key, it quits.
         self.assertEqual(vanished, {"focus": "music-speaker:kitchen_amp", "typed": [False, "music"], "back": "music-search",
-                                    "query": [False, "loq"], "after": True, "account": True})
+                                    "query": [False, "loq"], "after": True, "account": True, "lapsed": [False, True, "music"]})
 
     def test_a_title_in_wide_characters_keeps_its_row_on_the_panel(self):
         widths = self.proof["widths"]
