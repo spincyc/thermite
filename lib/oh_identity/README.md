@@ -615,7 +615,7 @@ in again re-authenticates the same TIDAL instance.
 | `device_locked` | 423 | A locked room owns, or holds a route through, an involved speaker. |
 | `music_failed` | 502 | Music Assistant refused or failed it, or has no available player for the speaker. |
 | `music_unavailable` | 503 | Music Assistant is down, starting, not claimed yet, or refuses the token. |
-| `music_unclaimed` | 503 | Music Assistant belongs to another user, or has refused thermite's password for a day's passes: reset it. |
+| `music_unclaimed` | 503 | Music Assistant belongs to another user (reset it), or has refused thermite's password for a day's passes (reset it, or restore the claim file). |
 | `tidal_not_started` | 409 | No TIDAL sign-in to finish. |
 
 GET `/api/v1/music` answers 200 with `available: false` and the problem

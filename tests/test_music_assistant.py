@@ -179,11 +179,17 @@ class Claim(Site):
             self.assertEqual((stored["password"], stored["token"], stored["refusals"]),
                              (claim["password"], claim["token"], 2))
             self.assertIsNone(provision.problem(stored))
-            self.assertEqual(provisioner.step(), "refused")
+            with self.assertLogs("oh_music.provision", "INFO") as logs:
+                self.assertEqual(provisioner.step(), "refused")
             self.assertEqual(provision.problem(provision.read_claim(self.state)), provision.UNCLAIMED)
-            # A full count is not written again on every pass.
+            # Said once, with the repair, as the gateway turns to music_unclaimed.
+            self.assertEqual([record.getMessage() for record in logs.records],
+                             ["Music Assistant: unclaimed: it has refused thermite's password for a day; reset its "
+                              "state, or restore the claim file thermite stored"])
+            # A full count is not written again on every pass, nor said again.
             before = os.stat(provision.token_file(self.state)).st_ino
-            self.assertEqual(provisioner.step(), "refused")
+            with self.assertNoLogs("oh_music.provision", "INFO"):
+                self.assertEqual(provisioner.step(), "refused")
             self.assertEqual(os.stat(provision.token_file(self.state)).st_ino, before)
             # The owner resets Music Assistant: no user, so it is claimed afresh with the password.
             self.reset()
@@ -786,7 +792,10 @@ class Tidal(Site):
         with self.assertRaisesRegex(AccessError, "not claimed yet"):
             tidal.site(config)
         provision.write_claim(self.state, {"problem": provision.UNCLAIMED})
-        with self.assertRaisesRegex(AccessError, "another user"):
+        with self.assertRaisesRegex(AccessError, "another user set it up"):
+            tidal.site(config)
+        provision.write_claim(self.state, {"password": "x", "refusals": provision.REFUSALS})
+        with self.assertRaisesRegex(AccessError, "refused thermite's password for a day; reset its state, or restore"):
             tidal.site(config)
         contract.write_text("{}")
         with self.assertRaisesRegex(AccessError, "no music"):

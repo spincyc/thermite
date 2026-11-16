@@ -181,6 +181,14 @@ REPAIR_CLAIM = {ACCESS: "give the file to the service account, mode 0600",
                 CONTENTS: "thermite did not write it; restore it, or reset Music Assistant and delete it"}
 
 
+def unclaimed_because(claim):
+    """Why problem() calls a claim UNCLAIMED, and the owner's repair."""
+    if claim.get("refusals", 0) >= REFUSALS:
+        return ("it has refused thermite's password for a day; reset its state, or restore the claim file "
+                "thermite stored")
+    return "another user set it up; reset its state to let thermite claim it"
+
+
 def problem(claim):
     """Why the gateway cannot use a claim (read_claim's), as its problem
     code; None when it holds a token to try."""
@@ -256,7 +264,7 @@ class Provisioner:
                 if client.has_user():
                     if claim is None:
                         write_claim(self.state, {"problem": UNCLAIMED})
-                    self.report("unclaimed: another user set it up; reset its state to let thermite claim it")
+                    self.report("unclaimed: " + unclaimed_because({"problem": UNCLAIMED}))
                     return "unclaimed"
                 # Stored before Music Assistant is asked: a setup whose answer is lost is signed in to.
                 claim = {"password": secrets.token_urlsafe(32)}
@@ -266,8 +274,10 @@ class Provisioner:
             if signed_in:
                 token = self.sign_in(client, claim)
                 if token is None:
-                    self.count_refusal(claim)
-                    self.report("refused: it refuses thermite's password; trying again")
+                    claim = self.count_refusal(claim)
+                    # Once, as the gateway turns to music_unclaimed.
+                    self.report("unclaimed: " + unclaimed_because(claim) if problem(claim) == UNCLAIMED else
+                                "refused: it refuses thermite's password; trying again")
                     return "refused"
             client.token = token
             server, now, changed = info.get("server_id"), self.clock(), 0
@@ -323,11 +333,13 @@ class Provisioner:
 
     def count_refusal(self, claim):
         """Count a pass whose password Music Assistant refused, up to
-        REFUSALS. Nothing was written earlier in such a pass, so the claim
-        read at its start is the one stored."""
+        REFUSALS; the claim as stored then. Nothing was written earlier in
+        such a pass, so the claim read at its start is the one stored."""
         refusals = claim.get("refusals", 0)
         if refusals < REFUSALS:
-            write_claim(self.state, {**claim, "refusals": refusals + 1})
+            claim = {**claim, "refusals": refusals + 1}
+            write_claim(self.state, claim)
+        return claim
 
     def mint(self, client, claim):
         """A new long-lived token, minted with the client's token and stored
