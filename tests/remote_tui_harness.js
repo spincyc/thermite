@@ -11,10 +11,17 @@
 // never for a fixed time.
 const assert = require("node:assert/strict"), { EventEmitter } = require("node:events");
 const Main = require("../tui/remote/main"), Shared = require("../tui/remote/shared"), App = require("../tui/remote/app");
+const Cameras = require("../tui/remote/cameras");
 console.log = console.info = () => {};
 const [WEST, EAST, DEN, LOUNGE] = process.argv.slice(2);
 const ORIGIN = "http://openhab.example:8080", GATEWAY = "https://thermite.example:13601";
 
+// Two cameras for the mock's catalogue, which has none.
+const camera = (id, label) => ({ id, label, thing: "unifi:camera:example:" + id, media: { snapshot: "/unifi/media/image/unifi:camera:example:" + id },
+  items: { online: id + "_online", motion: id + "_motion", recording: id + "_recording" } });
+const createCameras = Cameras.create;
+Cameras.create = (options) => createCameras({ ...options, manifest: { version: 1, statusGroup: "house_camera_status", pollSeconds: 5,
+  cameras: [camera("front_door", "Front Door"), camera("yard", "Yard")] } });
 const reply = (status, body, type) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => type || "text/plain", getSetCookie: () => [] },
   text: async () => body, json: async () => JSON.parse(body), clone() { return reply(status, body, type); } });
 const json = (value, status = 200) => reply(status, JSON.stringify(value), "application/json");
@@ -83,8 +90,11 @@ function assemble(options = {}) {
   const shared = Shared.load();
   const site = options.native ? openhab(shared.house) : options.gateway ? gateway(shared.house) : null;
   const args = !site ? ["--mock", "--still", "--latency", "0"] : ["--url", options.native ? ORIGIN : GATEWAY, "--still"].concat(options.native ? ["--native"] : []);
+  const opened = [];
   const parts = Main.assemble(Main.parse(args), { shared, setInterval: () => 0, clearInterval() {}, environ: {},
-    screen: options.screen || "remote", onQuit: () => { parts.quit = true; }, ...(site ? { fetch: site.fetch, EventSource: site.EventSource } : {}) });
+    screen: options.screen || "remote", onQuit: () => { parts.quit = true; }, openURL: (url) => { opened.push(url); return false; },
+    ...(site ? { fetch: site.fetch, EventSource: site.EventSource } : {}) });
+  parts.opened = opened;
   parts.site = site;
   // What the remote's buttons, choices and volume sent, as [room or device, what, value].
   parts.sent = [];
@@ -363,6 +373,85 @@ async function narrow(proof) {
   size = [110, 50];
 }
 
+// ---- the other screens --------------------------------------------------------
+
+// Home, Cameras, Site and Pair devices from the keys, from a room of
+// speakers alone; Esc goes Home from a page, back to Remotes from Pairing.
+async function pages(proof) {
+  size = [110, 50];
+  const parts = await open({ screen: "home" }, LOUNGE);
+  const { controller, session } = parts;
+  const ui = controller.ui;
+  const sheet = () => ui.overlay && ui.overlay.kind;
+  proof.pages = { home: [ui.screen, ui.focus] };
+  // Home: the arrows choose, Enter opens; h is the day.
+  key(parts, null, { name: "enter" });
+  proof.pages.home.push(ui.screen, ...room(parts));
+  key(parts, null, { name: "f1" });
+  focusOn(parts, "home-room:" + WEST);
+  key(parts, null, { name: "enter" });
+  proof.pages.home.push(ui.screen, ...room(parts));
+  key(parts, null, { name: "f1" });
+  key(parts, "h");
+  proof.pages.home.push(sheet());
+  key(parts, null, { name: "escape" });
+  key(parts, null, { name: "escape" });
+  proof.pages.home.push(ui.screen);
+  session.selectRoom(LOUNGE, true);
+  // Cameras: the arrows choose one, Enter opens it in the browser.
+  key(parts, null, { name: "f4" });
+  await until(parts, () => String(ui.focus).startsWith("camera:"), "the cameras");
+  const first = ui.focus;
+  key(parts, null, { name: "down" });
+  const second = ui.focus;
+  key(parts, null, { name: "enter" });
+  await until(parts, () => toast(parts), "the camera opened");
+  proof.pages.cameras = [first !== second, parts.opened.slice(-1)[0].includes("/cameras/"), toast(parts) && toast(parts)[0]];
+  key(parts, null, { name: "escape" });
+  proof.pages.cameras.push(ui.screen);
+  // Site from a room of speakers alone: the topology's first room; the arrows step its rooms and sources, s sorts, Enter opens the map.
+  key(parts, null, { name: "f5" });
+  await until(parts, () => controller.context().topology.source, "the topology");
+  const topology = controller.context().topology;
+  const start = [topology.room, topology.source];
+  key(parts, null, { name: "down" });
+  const next = topology.room;
+  key(parts, null, { name: "right" });
+  const source = topology.source;
+  const sort = [topology.sortField, topology.sortDescending];
+  key(parts, "s");
+  key(parts, "S");
+  key(parts, null, { name: "enter" });
+  await until(parts, () => parts.opened.some((url) => url.includes("/site/") || url.includes("topology")), "the map opened");
+  proof.pages.topology = { start, moved: next !== start[0], source: source !== start[1],
+    sort: [sort, [topology.sortField, topology.sortDescending]], opened: parts.opened.slice(-1)[0] };
+  // F6 opens Pair devices only from Remotes; Ctrl-P too. Esc goes back to Remotes.
+  key(parts, null, { name: "f6" });
+  proof.pages.pairing = [ui.screen];
+  key(parts, null, { name: "f2" });
+  key(parts, null, { name: "p", ctrl: true });
+  proof.pages.pairing.push(ui.screen);
+  await until(parts, () => controller.pairing.loaded && controller.pairing.selected, "the devices");
+  // ↑ ↓ choose a device; Enter asks it for a code, typed (what it does not take ignored, Backspace a slip) and sent with Enter.
+  const pairing = controller.pairing, PLAYER = "example_player";
+  for (let i = 0; i < 4 && pairing.selected !== PLAYER; i++) key(parts, null, { name: "down" });
+  key(parts, null, { name: "enter" });
+  await until(parts, () => pairing.backend.view(PLAYER).form, "the code's field");
+  for (const ch of ["1", "2", "3", "x", "5"]) key(parts, ch);
+  key(parts, null, { name: "backspace" });
+  key(parts, "4");
+  const code = pairing.codes[PLAYER];
+  key(parts, null, { name: "enter" });
+  await until(parts, () => pairing.backend.device(PLAYER).status === "paired", "paired");
+  // s sorts by the next column, S reverses it.
+  key(parts, "s");
+  key(parts, "S");
+  proof.pages.paired = [code, pairing.backend.device(PLAYER).status, pairing.sortField, pairing.sortDescending];
+  key(parts, null, { name: "escape" });
+  proof.pages.pairing.push(ui.screen, ...room(parts));
+  controller.stop();
+}
+
 // ---- the signal, and rooms of speakers alone -------------------------------
 
 // Wide, Watch's signal panel shows and reads; a room of speakers alone has
@@ -465,6 +554,7 @@ async function terminal(proof) {
   await sheets(proof);
   await mouse(proof);
   await narrow(proof);
+  await pages(proof);
   await terminal(proof);
   await signal(proof, true);
   await settings(proof);

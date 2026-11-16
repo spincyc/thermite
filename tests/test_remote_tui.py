@@ -103,6 +103,24 @@ class RemoteTUI(unittest.TestCase):
         # The sources' row, wider than the terminal: › scrolls it on, the wheel back.
         self.assertEqual(narrow["bubbles"], [0, True, True])
 
+    def test_homes_arrows_and_enter_open_remotes_on_a_room_and_h_the_day_and_esc_stays_home(self):
+        self.assertEqual(self.proof["pages"]["home"], ["home", "home:remote", "remote", LOUNGE, "listen", "remote", WEST, "watch", "day", "home"])
+
+    def test_cameras_arrows_choose_one_and_enter_opens_it_in_the_browser(self):
+        self.assertEqual(self.proof["pages"]["cameras"], [True, True, "Camera web view", "home"])
+
+    def test_site_from_a_room_of_speakers_alone_opens_on_a_routed_room_and_steps_sorts_and_opens_the_map(self):
+        topology = self.proof["pages"]["topology"]
+        self.assertEqual(topology["start"], [EAST, "example_computer"])
+        self.assertTrue(topology["moved"] and topology["source"])
+        self.assertEqual(topology["sort"], [[None, None], ["matrix", True]])
+        self.assertIn("/site/?room=" + WEST + "&source=example_player", topology["opened"])
+
+    def test_f6_and_ctrl_p_open_pair_devices_only_from_remotes_and_esc_goes_back(self):
+        self.assertEqual(self.proof["pages"]["pairing"], ["topology", "pairing", "remote", LOUNGE, "listen"])
+        # The player chosen with ↓, asked for a code with Enter, 123x5 typed (x refused), ⌫ and 4: the mock's code pairs it.
+        self.assertEqual(self.proof["pages"]["paired"], ["1234", "paired", "device", True])
+
     def test_a_room_of_speakers_alone_reached_with_the_signal_open_reads_none(self):
         signal = self.proof["signal"]
         # ↓ through every room and on, ], the rooms sheet's ↓ and Enter, and a click: none asks a room of speakers for its signal.
