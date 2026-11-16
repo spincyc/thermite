@@ -228,11 +228,15 @@ function header(frame, ctx, width) {
     g.hit(at - size, 0, size, 1, hit);
   });
   if (["settings", "users", "account"].includes(ctx.ui.screen)) at = g.put(at + 1, 0, fit("› " + ({ settings: "Room settings", users: "Users", account: "Account" })[ctx.ui.screen], Math.max(0, width - at - 2)), "tab.current");
-  if (remotes && width - at >= 23 && Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) at = g.put(at + 1, 0, ctx.ui.screen === "pairing" ? " › Pair devices " : " F6 Pair devices ",
+  // A narrow remote's sheets (its rooms, Info) before Pair devices, which F6 and the Remotes menu open; each whole or not at all.
+  const sheets = ctx.ui.screen === "remote" && frame.layout.sheets ? frame.layout.sheets : [];
+  const chips = sheets.reduce((sum, entry) => sum + length(entry[1]) + 3, 0);
+  if (remotes && width - at - chips >= 23 && Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) at = g.put(at + 1, 0, ctx.ui.screen === "pairing" ? " › Pair devices " : " F6 Pair devices ",
     focused(ctx, "remotes:pairing") ? "key.focus" : "tab", { kind: "screen", screen: "pairing", key: "remotes:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
-  if (ctx.ui.screen === "remote" && frame.layout.sheets) {
-    frame.layout.sheets.forEach((entry) => {
+  if (sheets.length) {
+    sheets.forEach((entry) => {
       const key = "open:" + entry[0];
+      if (at + length(entry[1]) + 3 > width) return;
       at = g.put(at, 0, " ", "header");
       at = g.put(at, 0, " " + entry[1] + " ", focused(ctx, key) ? "key.focus" : "tab",
         { kind: "open", sheet: entry[0], key: key, focus: true, label: entry[2] });

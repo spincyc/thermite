@@ -328,6 +328,41 @@ async function mouse(proof) {
   controller.stop();
 }
 
+// Narrow: the rooms and Info are sheets the header opens, and the sources
+// a row the arrows at its ends, and the wheel, scroll.
+async function narrow(proof) {
+  size = [70, 40];
+  const parts = await open({}, WEST);
+  const { controller, session } = parts;
+  const ui = controller.ui;
+  proof.narrow = { start: ui.overlay && ui.overlay.kind, header: {} };
+  // The header's chips for the rooms and Info, each whole, before Pair devices.
+  for (const width of [60, 70, 90]) {
+    const frame = parts.controller.frame(width, 40);
+    proof.narrow.header[width] = [frame.grid.text().split("\n")[0].trimEnd().split("   ").slice(-2),
+      frame.grid.hits.filter((hit) => hit.y === 0 && /^(open|remotes):/.test(hit.hit.key)).map((hit) => hit.hit.key)];
+  }
+  key(parts, null, { name: "escape" });
+  click(parts, "open:info");
+  proof.narrow.info = ui.overlay && ui.overlay.kind;
+  key(parts, null, { name: "escape" });
+  click(parts, "open:rooms");
+  proof.narrow.rooms = ui.overlay && ui.overlay.kind;
+  click(parts, "room:" + EAST);
+  proof.narrow.chosen = [session.current().id, ui.overlay];
+  key(parts, "[");
+  size = [40, 40];
+  const offset = () => ui.bubbles.offset || 0;
+  const before = offset();
+  click(parts, "scroll-bubbles:1");
+  const clicked = offset();
+  const row = draw(parts).grid.hits.find((hit) => hit.hit.kind === "bubbles-row");
+  controller.mouse({ action: "wheelup", x: row.x + 3, y: row.y });
+  proof.narrow.bubbles = [before, clicked > before, offset() < clicked];
+  controller.stop();
+  size = [110, 50];
+}
+
 // ---- the signal, and rooms of speakers alone -------------------------------
 
 // Wide, Watch's signal panel shows and reads; a room of speakers alone has
@@ -429,6 +464,7 @@ async function terminal(proof) {
   await watch(proof);
   await sheets(proof);
   await mouse(proof);
+  await narrow(proof);
   await terminal(proof);
   await signal(proof, true);
   await settings(proof);

@@ -94,6 +94,15 @@ class RemoteTUI(unittest.TestCase):
     def test_the_headers_theme_tabs_and_remotes_menu_and_homes_rooms_go_where_they_say(self):
         self.assertEqual(self.proof["mouse"]["header"], [True, "home", "remote", DEN, "listen", "remotes-menu", "pairing", "remote"])
 
+    def test_narrow_the_headers_chips_open_the_rooms_and_info_each_drawn_whole(self):
+        narrow = self.proof["narrow"]
+        self.assertEqual(narrow["header"], {"60": [["F5 Site", "≡ Rooms"], ["open:rooms"]],
+                                            "70": [["≡ Rooms", "i Info"], ["open:rooms", "open:info"]],
+                                            "90": [["", "○ mock  ◐"], ["open:info"]]})
+        self.assertEqual((narrow["start"], narrow["info"], narrow["rooms"], narrow["chosen"]), ("rooms", "info", "rooms", [EAST, None]))
+        # The sources' row, wider than the terminal: › scrolls it on, the wheel back.
+        self.assertEqual(narrow["bubbles"], [0, True, True])
+
     def test_a_room_of_speakers_alone_reached_with_the_signal_open_reads_none(self):
         signal = self.proof["signal"]
         # ↓ through every room and on, ], the rooms sheet's ↓ and Enter, and a click: none asks a room of speakers for its signal.
