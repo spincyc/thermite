@@ -1152,12 +1152,22 @@ class Textfiles(unittest.TestCase):
         textfile = self.metrics.Textfile(self.metrics.CALLBACKS, "example", self.directory, every=0.01,
                                          refresh=refresh).start()
         self.assertTrue(stalled.wait(5))
-        started = time.monotonic()
+        writer, started = textfile._thread, time.monotonic()
         textfile.stop(timeout=0.1)
         self.assertLess(time.monotonic() - started, 2)
         # The write in progress is the last: none is started beside it.
         self.assertEqual(writes, ["MainThread", "metrics-textfile"])
         release.set()
+        writer.join(5)
+        self.assertEqual(writes, ["MainThread", "metrics-textfile"])
+
+    def test_a_stop_that_waits_for_nothing_still_writes_the_final_counts_when_none_is_in_progress(self):
+        for _ in range(20):
+            writes = []
+            textfile = self.metrics.Textfile(self.metrics.CALLBACKS, "example", self.directory, every=60,
+                                             refresh=lambda: writes.append(threading.current_thread().name)).start()
+            textfile.stop(timeout=0)
+            self.assertEqual(writes, ["MainThread", "MainThread"])
 
     def test_labels_are_finite(self):
         text = self.metrics.prometheus_client.generate_latest(self.metrics.GATEWAY).decode()

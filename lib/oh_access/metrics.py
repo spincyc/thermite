@@ -392,6 +392,7 @@ class Textfile:
         self.path = self.directory / f"{name}.prom"
         self._stop = threading.Event()
         self._thread = None
+        self._writing = threading.Lock()  # Held by the writer's writes and the last.
         self._failing = False
 
     def write(self):
@@ -425,7 +426,10 @@ class Textfile:
     def start(self):
         def loop():
             while not self._stop.wait(self.every):
-                self.write()
+                with self._writing:
+                    if self._stop.is_set():
+                        return  # stop() writes the last.
+                    self.write()
         self.write()
         self._thread = threading.Thread(target=loop, name="metrics-textfile", daemon=True)
         self._thread.start()
@@ -434,13 +438,15 @@ class Textfile:
     def stop(self, timeout=5):
         """Stop writing, after one last write of the final counts, waiting
         timeout seconds at most for a write in progress; one that outlasts
-        it is the last."""
+        it is the last. A writer between writes writes nothing more."""
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=timeout)
-            stopped, self._thread = not self._thread.is_alive(), None
-            if stopped:
-                self.write()
+            self._thread = None
+            if self._writing.acquire(timeout=timeout):
+                try:
+                    self.write()
+                finally:
+                    self._writing.release()
 
 
 def start(registry, name, *, refresh=None, environ=None):
