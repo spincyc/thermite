@@ -130,6 +130,8 @@
     let current = null;
     let pending = 0;
     let life = 0;
+    // The last life that had music, and the last whose library was read again.
+    let given = 0, resumed = 0;
     // A Guest who may not see titles has no library (oh_identity.music).
     let blind = false;
     let tab = TABS.includes(store.get("music.tab")) ? store.get("music.tab") : "search";
@@ -629,13 +631,17 @@
       return blind || Boolean(user && user.is_guest && security && security.guest_text === false);
     }
 
-    // What the library shows and has not finished reading, read (again).
-    // Started afresh, that is also what was under way when it stopped (the
-    // answers dropped) and a search still waiting for the typing to stop;
-    // else what was refused or never asked, now that who is signed in, or
-    // what Guests may see, changed.
-    function resume(fresh) {
-      if (blindNow()) return;
+    // What the library shows and has not finished reading, read (again),
+    // once the session has music. The first time in a life (started afresh)
+    // that is also what was under way when it stopped (the answers dropped)
+    // and a search still waiting for the typing to stop, whether the music
+    // came from the overview or, that failing, the stream; after, what was
+    // refused or never asked, now that who is signed in, or what Guests may
+    // see, changed.
+    function resume() {
+      if (given !== life || blindNow()) return;
+      const fresh = resumed !== life;
+      resumed = life;
       const unfinished = (state) => (fresh ? state !== "done" : state === "idle" || state === "failed");
       if (search.query.trim() && !search.timer && unfinished(search.state)) runSearch();
       const top = browse.stack[browse.stack.length - 1];
@@ -998,6 +1004,8 @@
         tidal.checked = true;
         tidalCheck();
       }
+      given = life;
+      if (resumed !== life) resume();
       changed();
     }
 
@@ -1067,7 +1075,7 @@
           // Who is signed in, or what Guests may see, changed: ask again what was refused.
           if (event.type === "change" || event.type === "security") {
             blind = false;
-            if (music) resume(false);
+            resume();
           }
           changed();
         }));
@@ -1080,7 +1088,6 @@
         if (id && answer && Array.isArray(answer.speakers) && answer.speakers.some((speaker) => speaker.id === id)) current = id;
         apply(answer);
         backend.open();
-        resume(true);
       }, (error) => {
         if (life !== started) return;
         reading = false;

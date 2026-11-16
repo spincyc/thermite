@@ -223,6 +223,11 @@ class MusicPage(unittest.TestCase):
         # Refused as a Guest, then signed in: the next visit, or access saying so, reads again.
         self.assertEqual(out["guest"], [BLIND, None, "done"])
         self.assertEqual(out["told"], [BLIND, 0, None, 1, "done"])
+        # Started again with the overview failing, the stream's snapshot reads again what was under way.
+        self.assertEqual(out["streamed"], [2, "done", ["Library", "NAS"], "done"])
+        self.assertEqual(out["streamedRoot"], [["Library"], "done"])
+        # Who is signed in changed before the overview came: still one search.
+        self.assertEqual(out["early"], [["harbour"], "done"])
 
     def test_a_guest_without_free_text_sees_whether_it_plays_but_no_library(self):
         out = self.report["guests"]

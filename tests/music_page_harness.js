@@ -535,6 +535,62 @@ async function resuming(out) {
   await time.tick(100);
   out.told.push(music.library().blind, backend.reads.filter((read) => read[0] === 'browse').length, music.library().browse.state);
   music.stop();
+  // Started again, the overview fails: the stream's snapshot brings the music, and with it what was under way.
+  time = clock();
+  backend = mock(time);
+  music = session(time, backend);
+  music.start();
+  await time.tick(100);
+  music.setTab('browse');
+  await time.tick(100);
+  music.open(music.library().browse.items[0]);
+  await time.tick(10);
+  music.setTab('search');
+  music.setQuery('lantern');
+  music.searchNow();
+  await time.tick(10);
+  music.stop();
+  failOnce(backend);
+  music.start();
+  await time.tick(200);
+  out.streamed = [searches().length, music.library().search.state];
+  music.setTab('browse');
+  out.streamed.push(music.library().browse.path, music.library().browse.state);
+  music.stop();
+  // A Browse tab that never had a folder, the first overview failing.
+  time = clock();
+  backend = mock(time);
+  music = session(time, backend, {store: {get: (key) => (key === 'music.tab' ? 'browse' : null), set() {}}});
+  failOnce(backend);
+  music.start();
+  await time.tick(200);
+  out.streamedRoot = [music.library().browse.path, music.library().browse.state];
+  music.stop();
+  // Who is signed in changes before a page started again has its overview: the search waiting for the typing goes once.
+  time = clock();
+  backend = mock(time);
+  access = fakeAccess();
+  music = session(time, backend, {access});
+  music.start();
+  await time.tick(100);
+  music.setTab('search');
+  music.setQuery('harbour');
+  await time.tick(100);
+  music.stop();
+  music.start();
+  access.tell('change');
+  await time.tick(200);
+  out.early = [searches(), music.library().search.state];
+  music.stop();
+}
+
+// The next overview fails, as a gateway restarting answers.
+function failOnce(backend) {
+  const overview = backend.overview;
+  backend.overview = () => {
+    backend.overview = overview;
+    return Promise.reject(Object.assign(new Error('music_failed'), {code: 'music_failed', status: 502}));
+  };
 }
 
 async function absent(out) {
