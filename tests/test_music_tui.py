@@ -90,7 +90,11 @@ class MusicScreen(unittest.TestCase):
         self.assertTrue(locked["drawn"])
 
     def test_a_group_members_lock_leaves_the_speakers_own_volume(self):
-        self.assertEqual(self.proof["member"], {"sent": [["volume", "kitchen_amp", "level", 34]], "toast": ["Kitchen Sonos Amp", "Locked by Den"]})
+        member = self.proof["member"]
+        self.assertEqual((member["sent"], member["toast"]), ([["volume", "kitchen_amp", "level", 34]], ["Kitchen Sonos Amp", "Locked by Den"]))
+        # Play and Next move the group: refused, they do not flash pressed; the group sheet stays shut.
+        self.assertEqual(member["refused"], {"pressed": [False, False], "sheet": None, "toast": ["Kitchen Sonos Amp", "Locked by Den"],
+                                             "sent": member["sent"]})
 
     def test_a_q_typed_after_the_search_field_went_does_not_quit(self):
         vanished = self.proof["vanished"]

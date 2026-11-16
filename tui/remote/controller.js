@@ -390,9 +390,12 @@ function create(options) {
   }
 
   // G, or Group…: the chosen speaker's group in a sheet, nothing ticked yet.
+  // As the page's Group… button, a locked room in the group keeps it shut.
   function openGroup() {
     const grouping = music.session && music.session.grouping();
     if (!grouping) return;
+    const view = music.session.view();
+    if (view && view.groupLocked) return toast(view.speaker.name, "Locked by " + view.groupLocked.rooms.join(", "), "bad");
     music.picked.clear();
     openSheet("music-group", "Group with " + grouping.leaderName);
   }
@@ -951,7 +954,8 @@ function create(options) {
         if (hit.kind === "music-play") player.playPause();
         else if (hit.kind === "music-next") player.next();
         else player.previous();
-        if (!player.view()?.locked) flash(hit.key);
+        // They move the group: a locked room in it refuses them, not pressed.
+        if (!player.view()?.groupLocked) flash(hit.key);
         break;
       case "music-shuffle":
         player.toggleShuffle();
@@ -1427,8 +1431,8 @@ function create(options) {
     if (!view) return;
     if (lower === "p" || name === "space") {
       player.playPause();
-      // A locked speaker's key is refused, not pressed.
-      return view.locked ? undefined : flash("music-play");
+      // A key a locked room in the group refuses is not pressed.
+      return view.groupLocked ? undefined : flash("music-play");
     }
     if (ch === "+" || ch === "=") return player.stepVolume(1);
     if (ch === "-" || ch === "_") return player.stepVolume(-1);

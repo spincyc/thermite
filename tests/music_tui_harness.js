@@ -261,6 +261,14 @@ async function member(proof) {
   key(parts, "p");
   await until(parts, () => toast(parts) && toast(parts)[1] === "Locked by Den", "the lock's toast");
   proof.member = { sent: backend(parts).sent.slice(sent), toast: toast(parts) };
+  // Refused, a key that moves the group is not pressed, by its letter or on its button; the group sheet stays shut.
+  const pressed = [Boolean(controller.ui.pressed["music-play"])];
+  focusOn(parts, "music-next");
+  key(parts, null, { name: "enter" });
+  pressed.push(Boolean(controller.ui.pressed["music-next"]));
+  key(parts, "g");
+  proof.member.refused = { pressed, sheet: controller.ui.overlay && controller.ui.overlay.kind, toast: toast(parts),
+    sent: backend(parts).sent.slice(sent) };
   controller.stop();
 }
 
