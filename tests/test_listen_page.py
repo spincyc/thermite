@@ -274,6 +274,20 @@ class ListenMarkup(unittest.TestCase):
         icons |= {"play", "pause", "previous", "next", "shuffle", "repeat", "repeat-one", "lock", "mute", "tv", "note"}
         self.assertEqual(sorted(name for name in icons if f'id="i-{name}"' not in self.page), [])
 
+    def test_the_face_keeps_together_above_the_volume_and_the_track_shows_what_is_to_come(self):
+        # Seen in a browser: shared out evenly, the parts drifted apart, and the
+        # groove, the page's own tone, hid the track's length.
+        self.assertIn((None, ".listen-now", {"margin-top": "auto"}), self.rules)
+        self.assertIn((None, ".listen-chips + .listen-volume", {"margin-top": "auto"}), self.rules)
+        self.assertNotIn("justify-content", dict((sel, d) for media, sel, d in self.rules if media is None)[".listen__face"])
+        tracks = [d for media, sel, d in self.rules if sel.startswith(".listen-progress__input::") and "track" in sel]
+        self.assertEqual(len(tracks), 2)
+        self.assertTrue(all("--key-top" in d["background"] and "--groove" not in d["background"] for d in tracks))
+        landscape = [sel for media, sel, d in self.rules if media and "landscape" in media and d.get("margin-top") == "0"]
+        self.assertEqual(sorted(landscape), [".listen-chips + .listen-volume", ".listen-now", ".listen-progress"])
+        self.assertIn((None, ".listen-chips", {"display": "flex", "flex-wrap": "wrap", "align-items": "center",
+                                              "justify-content": "center", "gap": "var(--space-2)"}), self.rules)
+
     def test_hidden_hides_every_part_of_listen_the_sheets_included(self):
         # .button and .chip set display; one rule reaches every part of Listen marked hidden.
         self.assertIn((None, ":is(.listen, .listen-info, .library, #item-sheet, #group-sheet) [hidden]", {"display": "none"}),

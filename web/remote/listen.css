@@ -85,12 +85,18 @@
   display: none;
 }
 
+/* What plays, its keys and chips keep together in the room above the
+   volume, which sits at the foot where Watch has its own. */
 .listen__face {
   flex: 1;
   display: flex;
   flex-direction: column;
-  justify-content: space-evenly;
   gap: var(--space-4);
+}
+
+.listen-now,
+.listen-chips + .listen-volume {
+  margin-top: auto;
 }
 
 .listen__reading,
@@ -292,8 +298,10 @@
   height: 30px;
 }
 
-/* Where it is in the track: the time gone, a slider, the time left. */
+/* Where it is in the track: the time gone, a slider, the time left, close
+   under what plays. */
 .listen-progress {
+  margin-top: calc(var(--space-1) - var(--space-4));
   display: grid;
   grid-template-columns: 3.2em minmax(0, 1fr) 3.2em;
   align-items: center;
@@ -319,10 +327,11 @@
   appearance: none;
 }
 
+/* The time to come in the volume bar's tone: the groove is the page's own. */
 .listen-progress__input::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: var(--radius-pill);
-  background: linear-gradient(90deg, var(--accent) var(--fill), var(--groove) var(--fill));
+  background: linear-gradient(90deg, var(--accent) var(--fill), var(--key-top) var(--fill));
 }
 
 .listen-progress__input::-webkit-slider-thumb {
@@ -339,7 +348,7 @@
 .listen-progress__input::-moz-range-track {
   height: 4px;
   border-radius: var(--radius-pill);
-  background: var(--groove);
+  background: var(--key-top);
 }
 
 .listen-progress__input::-moz-range-progress {
@@ -423,6 +432,7 @@
 .listen-chips {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: center;
   gap: var(--space-2);
 }
@@ -467,9 +477,10 @@
 }
 
 /* The speaker's volume and Mute; a group's volume under it. */
+/* Mute beside the bar (60 px, remote.css), not beside the bar and its caption. */
 .listen-volume {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   width: 100%;
 }
@@ -485,6 +496,7 @@
 
 .listen-volume__mute {
   flex: none;
+  margin-top: calc((60px - var(--key-sm)) / 2);
 }
 
 /* ---- Info: the speaker's power, settings and facts ------------------------ */
@@ -1007,5 +1019,12 @@
   .listen-chips,
   .listen-volume {
     grid-column: 2;
+  }
+
+  /* The grid places them: no room to share out above. */
+  .listen-now,
+  .listen-progress,
+  .listen-chips + .listen-volume {
+    margin-top: 0;
   }
 }
