@@ -118,7 +118,10 @@ class Element {
   get children() { return this.childNodes.filter((child) => child.nodeType === 1); }
   get namespaceURI() { return ['svg', 'use', 'path', 'symbol'].includes(this.localName) ? 'http://www.w3.org/2000/svg' : 'http://www.w3.org/1999/xhtml'; }
   getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
-  setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+    if (this.localName === 'img' && name === 'src') this.ownerDocument.fetchImage(this, String(value));
+  }
   removeAttribute(name) { this.attributes.delete(name); }
   hasAttribute(name) { return this.attributes.has(name); }
   toggleAttribute(name, force) {
@@ -207,8 +210,9 @@ class Element {
     const event = Object.assign({type, target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }}, extra);
     const path = [];
     for (let at = this; at; at = at.parentNode) path.push(at);
-    if (!['blur', 'focus'].includes(type)) path.push(this.ownerDocument);
-    for (const at of type === 'blur' || type === 'focus' ? [this] : path) {
+    const alone = ['blur', 'focus', 'load', 'error'].includes(type);
+    if (!alone) path.push(this.ownerDocument);
+    for (const at of alone ? [this] : path) {
       (at.listeners[type] || []).slice().forEach((listener) => listener.call(at, event));
     }
     return event;
@@ -248,6 +252,10 @@ class Document {
     this.returns = [];
     this.focused = null;
     this.visibilityState = 'visible';
+    // Each image address asked for, in order; answerImage(src) says whether it loads.
+    this.images = [];
+    this.answerImage = () => true;
+    this.later = (callback) => callback();
     this.documentElement = this.read(html);
     this.body = this.documentElement.querySelector('body');
   }
@@ -273,6 +281,12 @@ class Document {
       } else if (token[5]) top.appendChild(new Text(decode(token[5])));
     }
     return root.children[0];
+  }
+
+  // An image asked for its address: it loads or fails a moment later, as a browser's, unless it was asked for another since.
+  fetchImage(image, src) {
+    this.images.push(src);
+    this.later(() => { if (image.getAttribute('src') === src) image.dispatch(this.answerImage(src) ? 'load' : 'error'); }, 0);
   }
 
   // The focus falls back to the body when what had it went, or was disabled.
@@ -304,6 +318,7 @@ function page() {
     CSS: {escape: (text) => String(text).replace(/["\\]/g, '\\$&')},
     addEventListener() {},
   };
+  document.later = time.setTimeout;
   context.window = context;
   context.globalThis = context;
   vm.createContext(context);
@@ -415,9 +430,41 @@ async function grouped(out) {
   out.result = [result.hidden, result.querySelectorAll('p').map((line) => [line.textContent, line.getAttribute('class')])];
 }
 
+// Covers the gateway was too busy to fetch (503): each asked for once more
+// after ART_RETRY_MS, then left to its placeholder.
+async function covers(out) {
+  const {time, $, backend, document} = page();
+  const art = (n) => n.toString(16).padStart(64, '0'), playing = art(4095);
+  backend.art = (id, size) => (id ? '/api/v1/music/art/' + id + '?size=' + size : null);
+  Object.values(backend.items).forEach((item, index) => { item.art = art(index + 1); });
+  const speaker = backend.speaker.bind(backend);
+  backend.speaker = (id) => {
+    const view = speaker(id);
+    if (view.now_playing && view.now_playing.title) view.now_playing.art = playing;
+    return view;
+  };
+  // Every cover fails when first asked for; the one playing loads when asked again.
+  const asked = (src) => document.images.filter((image) => image === src).length;
+  document.answerImage = (src) => src.includes(playing) && asked(src) > 1;
+  const image = $('[data-art-image]');
+  await time.tick(400);
+  out.cover = [[image.hidden, asked(image.src)]];
+  await time.tick(2000);
+  out.cover.push([image.hidden, asked(image.src)]);
+  // Search results: each thumbnail asked for twice, then hidden over its kind's icon.
+  $('[data-tab="search"]').click();
+  $('[data-query]').value = 'harbour';
+  $('[data-query]').dispatch('input');
+  await time.tick(2000);
+  await time.tick(5000);
+  const thumbs = $('[data-results]').querySelectorAll('img');
+  out.thumbs = [thumbs.length > 0, [...new Set(thumbs.map((thumb) => [thumb.hidden, asked(thumb.getAttribute('src'))].join()))]];
+  out.cover.push(asked(image.src));
+}
+
 (async () => {
   const report = {};
-  for (const [name, run] of Object.entries({now, browse, grouped})) {
+  for (const [name, run] of Object.entries({now, browse, grouped, covers})) {
     report[name] = {};
     await run(report[name]);
   }

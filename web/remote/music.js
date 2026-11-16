@@ -20,6 +20,8 @@
   window.addEventListener("pageshow", syncLive);
 
   const KIND_ICON = { track: "note", album: "album", artist: "artist", playlist: "playlist", folder: "folder" };
+  // A cover that failed is asked for once more this long after.
+  const ART_RETRY_MS = 2000;
 
   const $ = (selector) => document.querySelector(selector);
   const volume = $("[data-volume]");
@@ -39,8 +41,11 @@
   // when that changes, so a stream's frame keeps an open list, a tap under
   // way and a screen reader's place.
   const drawn = new WeakMap();
+  // Each cover image's address already asked for twice.
+  const retried = new WeakMap();
 
   $("[data-mock]").hidden = !backend.mock;
+  cover($("[data-art-image]"));
   session.subscribe((event) => {
     if (event.type === "change") draw();
     else if (event.type === "toast") toast(event.title, event.body, event.tone);
@@ -341,8 +346,23 @@
       return;
     }
     image.hidden = false;
-    image.onerror = () => { image.hidden = true; };
     image.src = url;
+  }
+
+  // A cover from the gateway's art route, hidden (its placeholder shows)
+  // while it fails. The gateway fetches only so many at once and answers
+  // the rest 503, which a browser never asks again: a cover that fails is
+  // asked for once more ART_RETRY_MS later, once for each address it has.
+  function cover(image) {
+    image.addEventListener("load", () => { image.hidden = false; });
+    image.addEventListener("error", () => {
+      const src = image.getAttribute("src");
+      image.hidden = true;
+      if (!src || retried.get(image) === src) return;
+      retried.set(image, src);
+      setTimeout(() => { if (image.getAttribute("src") === src) image.setAttribute("src", src); }, ART_RETRY_MS);
+    });
+    return image;
   }
 
   function drawProgress(view) {
@@ -450,8 +470,7 @@
   function itemRow(item, id) {
     shown.set(id, item);
     const thumb = session.art(item.art, 80);
-    const image = thumb ? node("img", { src: thumb, alt: "", width: "40", height: "40", loading: "lazy", decoding: "async" }) : null;
-    if (image) image.addEventListener("error", () => image.remove());
+    const image = thumb ? cover(node("img", { src: thumb, alt: "", width: "40", height: "40", loading: "lazy", decoding: "async" })) : null;
     const label = [item.name, item.current ? "playing now" : null, item.line, item.source, item.duration].filter(Boolean).join(", ");
     return node("li", null, node("button", {
       class: "music-item", type: "button", "data-item": id, "data-focus": "item:" + item.key,

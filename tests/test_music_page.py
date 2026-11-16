@@ -365,6 +365,13 @@ class MusicPageScript(unittest.TestCase):
         # Taken elsewhere while a folder reads, the focus stays there.
         self.assertEqual(out["elsewhere"], "input:")
 
+    def test_a_cover_the_gateway_was_too_busy_for_is_asked_for_once_more(self):
+        out = self.report["covers"]
+        # Hidden while it failed, shown once asked again; never asked a third time.
+        self.assertEqual(out["cover"], [[True, 1], [False, 2], 2])
+        # A thumbnail that fails twice stays hidden over its kind's icon.
+        self.assertEqual(out["thumbs"], [True, ["true,2"]])
+
     def test_the_group_sheet_says_who_was_asked_and_not_confirmed(self):
         self.assertEqual(self.report["grouped"]["result"], [False, [
             ["Den joined Kitchen Sonos Amp.", None], ["Study was asked to join; Music Assistant has not confirmed it yet.", None]]])
