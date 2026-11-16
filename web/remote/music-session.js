@@ -1,11 +1,12 @@
 /*
- * The Music page's behavior without a page: the house's Sonos and WiiM
+ * Music's behavior without a page: the house's Sonos and WiiM
  * speakers as Music Assistant plays them (through the gateway), what each
  * plays, its volume and group, the library to search and browse, a
  * speaker's queue, TIDAL's sign-in, and every command the page sends
- * (music-backend.js). music.js draws a session in a browser and the
- * terminal remote draws the same one; neither decides anything this does
- * not. Load it after music-backend.js.
+ * (music-backend.js). RemoteListen (listen-session.js) puts it beside the
+ * speaker's own session; Remotes' Listen draws them in a browser and the
+ * terminal remote draws the same; neither decides anything this does not.
+ * Load it after music-backend.js.
  *
  * RemoteMusic.create({backend, access, house, store}) returns a session on
  * a MusicBackend (access is the access.js client: the locks, who is signed

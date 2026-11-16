@@ -180,7 +180,7 @@ A control module whose devices Music Assistant plays on (oh_music) provides
               Music Assistant's discovery (oh_site_contract.music)
 
 A control module gives the remote page what it drives, and may give an
-audio device a page of its own (the remote's Audio page; the gateway's
+audio device controls of its own (Listen on the remote; the gateway's
 device route, oh_identity.runtime, commands what both declare):
 
     remote(device) -> {"power", "mute": Switch Items, "volume": {"item",

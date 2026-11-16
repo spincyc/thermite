@@ -1,10 +1,11 @@
 /*
- * The Audio page's behavior without a page: each device with an audio page
+ * A speaker's own behavior without a page: each device with an audio page
  * (house.js devices[id].audio, beside its remote's control), what it plays,
  * its volume, mute and input, its settings and facts, and every command the
- * page sends (RemoteBackend command()). audio.js draws a session in a
- * browser and the terminal remote draws the same one; neither decides
- * anything this does not. Load it after house.js and backend.js.
+ * page sends (RemoteBackend command()). RemoteListen (listen-session.js)
+ * puts it beside Music's; Remotes' Listen draws them in a browser and the
+ * terminal remote draws the same; neither decides anything this does not.
+ * Load it after house.js and backend.js.
  *
  * RemoteAudio.create({backend, house, access, store}) returns a session on
  * a RemoteBackend (house defaults to REMOTE_HOUSE; access is the access.js
