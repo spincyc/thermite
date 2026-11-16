@@ -3,7 +3,10 @@
  * resizes, and paint.js draws the controller's frame, in the theme's own
  * colors, redrawing only the cells that changed. A frame that asks for
  * animation (frame.animate, in ms) is drawn again that much later; any
- * input or resize draws at once.
+ * input or resize draws at once. A key, a click or a frame the remote
+ * fails on does not end it: the error goes to options.onError (main.js
+ * writes it out at the exit), the remote says that a key or a click did
+ * not work (controller.fault), and it goes on.
  */
 "use strict";
 
@@ -31,6 +34,7 @@ function run(options) {
   let destroyed = false;
   let timer = null;
   let draws = 0;
+  const failed = options.onError || ((error) => console.error(error));
 
   function codeOf(look, mode) {
     if (codes.mode !== mode || codes.look !== look || codes.map.size > CODES_KEPT) {
@@ -57,7 +61,14 @@ function run(options) {
     if (timer) cancel(timer);
     timer = null;
     const { width, height } = size();
-    const frame = controller.frame(width, height);
+    let frame;
+    try {
+      frame = controller.frame(width, height);
+    } catch (error) {
+      // Not said on the screen: that would draw, and fail, again.
+      failed(error);
+      return;
+    }
     painter.paint(frame.grid.rows, width, height, codeOf(controller.look, controller.ui.theme));
     draws += 1;
     if (frame.animate != null && width > 0 && height > 0) {
@@ -86,8 +97,19 @@ function run(options) {
     program.destroy();
   }
 
-  program.on("keypress", (ch, key) => controller.key(ch, key));
-  program.on("mouse", (data) => controller.mouse(data));
+  function guarded(handle) {
+    return (...args) => {
+      try {
+        handle(...args);
+      } catch (error) {
+        failed(error);
+        controller.fault(error);
+      }
+    };
+  }
+
+  program.on("keypress", guarded((ch, key) => controller.key(ch, key)));
+  program.on("mouse", guarded((data) => controller.mouse(data)));
   program.on("resize", () => {
     painter.reset();
     schedule();

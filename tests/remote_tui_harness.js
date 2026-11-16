@@ -9,8 +9,8 @@
 // (the signal, a room's schedule). Prints what the screen drew and
 // sent; nothing leaves the process. It waits for what it expects to draw,
 // never for a fixed time.
-const assert = require("node:assert/strict");
-const Main = require("../tui/remote/main"), Shared = require("../tui/remote/shared");
+const assert = require("node:assert/strict"), { EventEmitter } = require("node:events");
+const Main = require("../tui/remote/main"), Shared = require("../tui/remote/shared"), App = require("../tui/remote/app");
 console.log = console.info = () => {};
 const [WEST, EAST, DEN, LOUNGE] = process.argv.slice(2);
 const ORIGIN = "http://openhab.example:8080", GATEWAY = "https://thermite.example:13601";
@@ -193,8 +193,47 @@ async function settings(proof) {
   parts.controller.stop();
 }
 
+// ---- the terminal ----------------------------------------------------------
+
+// app.js on a stand-in for blessed's program: a key or a click the remote
+// fails on is said and kept, a frame that fails is kept, and the terminal
+// goes on.
+async function terminal(proof) {
+  const parts = await open({}, WEST);
+  const program = Object.assign(new EventEmitter(), { cols: 110, rows: 50, destroy() {} });
+  const kept = [];
+  const app = App.run({ blessed: { program: () => program }, controller: parts.controller, env: {},
+    output: { columns: 110, rows: 50, write: () => true }, onError: (error) => kept.push(error.message) });
+  const press = (ch, name) => program.emit("keypress", ch, { name: name || ch });
+  const stepRoom = parts.session.stepRoom, selectRoom = parts.session.selectRoom;
+  parts.session.stepRoom = () => { throw new Error("no step"); };
+  press("]");
+  const toast = () => parts.controller.ui.toast && [parts.controller.ui.toast.title, parts.controller.ui.toast.body];
+  proof.terminal = { key: toast() };
+  parts.session.stepRoom = stepRoom;
+  press("]");
+  proof.terminal.after = parts.session.current().id;
+  parts.session.selectRoom = () => { throw new Error("no room"); };
+  parts.controller.ui.toast = null;
+  const row = parts.controller.lastFrame().grid.hits.find((hit) => hit.hit.key === "room:" + DEN);
+  program.emit("mouse", { action: "mousedown", button: "left", x: row.x, y: row.y });
+  proof.terminal.click = toast();
+  parts.session.selectRoom = selectRoom;
+  const frame = parts.controller.frame;
+  parts.controller.frame = () => { throw new Error("no frame"); };
+  const draws = app.draws();
+  app.draw();
+  parts.controller.frame = frame;
+  app.draw();
+  proof.terminal.kept = kept;
+  proof.terminal.draws = app.draws() - draws;
+  app.destroy();
+  parts.controller.stop();
+}
+
 (async () => {
   const proof = {};
+  await terminal(proof);
   await signal(proof, true);
   await settings(proof);
   process.stdout.write(JSON.stringify(proof) + "\n");

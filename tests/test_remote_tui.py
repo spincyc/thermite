@@ -57,6 +57,14 @@ class RemoteTUI(unittest.TestCase):
         self.assertEqual(settings["read"], ["GET /api/v1/rooms/" + WEST + "/policy"])
         self.assertEqual((settings["sheet"], settings["form"], settings["closed"]), ("access-form", True, None))
 
+    def test_a_key_a_click_or_a_frame_that_fails_does_not_end_the_terminal(self):
+        terminal = self.proof["terminal"]
+        self.assertEqual(terminal["key"], ["That did not work", "no step"])
+        self.assertEqual(terminal["after"], EAST, "the next key still goes")
+        self.assertEqual(terminal["click"], ["That did not work", "no room"])
+        self.assertEqual(terminal["kept"], ["no step", "no room", "no frame"])
+        self.assertEqual(terminal["draws"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

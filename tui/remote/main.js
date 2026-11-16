@@ -211,10 +211,14 @@ function main(argv) {
     const report = parts && parts.access && parts.access.flushTelemetry ? parts.access.flushTelemetry(true).catch(() => null) : null;
     Promise.race([report, new Promise((resolve) => setTimeout(resolve, 1000))]).then(() => process.exit(status));
   };
+  const keep = (error) => kept.push(String((error && error.stack) || error));
   process.on("uncaughtException", (error) => {
-    kept.push(String((error && error.stack) || error));
+    keep(error);
     finish(1);
   });
+  // A promise nothing waited on that failed (a read given up on) is kept
+  // as a warning is, and the remote goes on.
+  process.on("unhandledRejection", keep);
   ["SIGTERM", "SIGINT", "SIGHUP"].forEach((signal) => process.on(signal, () => finish(0)));
   parts = assemble(args, {
     onChange: () => {
@@ -222,7 +226,7 @@ function main(argv) {
     },
     onQuit: () => finish(0)
   });
-  app = App.run({ blessed: blessed, controller: parts.controller });
+  app = App.run({ blessed: blessed, controller: parts.controller, onError: keep });
   parts.controller.start(args.room, args.choose);
   return null;
 }

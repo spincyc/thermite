@@ -4,8 +4,8 @@
  * offsets) and turns keys and mouse events into RemoteSession,
  * PairingBackend and RemoteListen calls (Listen's library, group sheet and
  * settings on its RemoteMusic and RemoteAudio), as remote.js and pair.js
- * do for the page. app.js draws its frame() and feeds it key() and mouse();
- * the tests call the same three.
+ * do for the page. app.js draws its frame(), feeds it key() and mouse(),
+ * and hands fault() what either threw; the tests call the same.
  *
  * The views get the time (ctx.now, ms, from options.now) and whether
  * motion is off (ctx.still: --still, THERMITE_REMOTE_STILL, or the a key).
@@ -223,6 +223,12 @@ function create(options) {
   function quit() {
     stop();
     onQuit();
+  }
+
+  // What app.js caught from a key or a click: said, and the remote goes on.
+  function fault(error) {
+    stopRepeat();
+    toast("That did not work", String((error && error.message) || error), "bad");
   }
 
   // ---- what the session and the pairing backend say ----------------------
@@ -1669,6 +1675,7 @@ function create(options) {
     lastFrame: () => frame,
     key: key,
     mouse: mouse,
+    fault,
     context: context
   };
 }
