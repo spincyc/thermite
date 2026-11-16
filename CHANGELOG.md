@@ -54,36 +54,43 @@ rollback. The unified deployment workflow uses a separate committed private site
   Assistant for thermite, renews its token and keeps its providers and
   libraries; an Admin signs it into TIDAL from the gateway or with
   `thermite access music-tidal`.
-- Music: a page (`/music/`, and the terminal remote's Music screen, `y`
-  from Remotes) that plays TIDAL and the NAS libraries on the Sonos and
-  WiiM speakers, alone or grouped: search, browse and the queue, with Play
-  now, Play next and Add to queue; transport, position and volume;
-  grouping that says why a speaker could not join, and which Music
-  Assistant was asked to group but has not confirmed; and an Admin's TIDAL
-  sign-in. A Guest kept from free text sees no titles, covers or library.
-  Every screen of the terminal remote now gives CJK, emoji and accented
-  text the columns a terminal draws it in.
-- Audio: a page (`/audio/`, and the terminal remote's Audio screen, `u`
-  from Remotes) for each WiiM or Sonos speaker or streamer under `control`,
-  routed by a room or not. It shows:
+- Remotes, web and terminal, is one remote for watching and listening.
+  Its room list has every room: the routed rooms, then each room of
+  speakers alone (a WiiM or Sonos under `control` that no routed room
+  owns), each saying what plays there. A room with a screen and speakers
+  switches between Watch and Listen just under its name (`Y`), and keeps
+  the one last chosen; Watch is the remote it was. Listen shows the room's
+  speakers, what the chosen one plays and its controls, and a lock on a
+  routed room locks the speakers it owns. Watch's volume caption names
+  the room's speaker and opens it in Listen.
+- Music, on Listen: TIDAL and the NAS libraries on the Sonos and WiiM
+  speakers, alone or grouped: search, browse and the queue (a sheet, or
+  the right column on a wide screen), with Play now, Play next and Add to
+  queue; transport, position and volume; grouping that says why a speaker
+  could not join, and which Music Assistant was asked to group but has not
+  confirmed; and an Admin's TIDAL sign-in. A Guest kept from free text
+  sees no titles, covers or library. Every screen of the terminal remote
+  now gives CJK, emoji and accented text the columns a terminal draws it
+  in.
+- A speaker, on Listen: each WiiM or Sonos speaker or streamer under
+  `control`, routed by a room or not, with or without Music Assistant:
   - what plays: title, artist and album, the service, its length and format;
   - the transport keys, volume, mute and input;
-  - its settings by section: play mode, EQ and its preset, bass and treble,
-    loudness, subwoofer, surround and height levels, night and speech modes,
-    and the status light, as each device has them;
-  - folded, what it reports about itself.
+  - in Info, its power and settings by section: play mode, EQ and its
+    preset, bass and treble, loudness, subwoofer, surround and height
+    levels, night and speech modes, and the status light, as each device
+    has them; then what it reports about itself.
   A setting shows only while the device reports it and where it applies.
-  A change shows at once until the device reads it back.
-  A remote whose volume or keys drive the device links to its page. Guests
-  may use it without signing in.
+  A change shows at once until the device reads it back. Guests may use it
+  without signing in.
   - A WiiM now reads its album, length, service, sample rate and bit depth,
     and controls its play mode, EQ, EQ preset, subwoofer level and status
     light. It also reports its firmware, a waiting update, its temperatures,
     its remote's battery, internet and subwoofer, polled every 60 s on a
     second Thing. The activity log leaves out the readings that drift with
     every poll.
-  - A WiiM Mini, a new `audio_streamer` kind, gets the same page with the
-    inputs it has (Wi-Fi, Bluetooth, line in) and without the subwoofer
+  - A WiiM Mini, a new `audio_streamer` kind, gets the same controls with
+    the inputs it has (Wi-Fi, Bluetooth, line in) and without the subwoofer
     and temperatures it lacks. A WiiM's `model` is now `Amp Pro` (kind
     `streaming_amp`) or `Mini` (kind `audio_streamer`); `generate` refuses
     any other model, or a kind its model is not. An audio streamer counts
@@ -91,7 +98,7 @@ rollback. The unified deployment workflow uses a separate committed private site
     levels, and the locks of a room routed there.
   - A Sonos Arc or Amp reads back its sound settings, and an Amp's remote
     no longer offers TV audio.
-  - The gateway takes a page's commands at
+  - The gateway takes a speaker's commands at
     `POST /api/v1/devices/<id>/commands`, each checked against the device's
     actions and the locks of the rooms it serves. A room owns its `audio`
     device and the soundbars and streaming amplifiers in its own room. When
