@@ -82,6 +82,18 @@ class RemoteTUI(unittest.TestCase):
         self.assertEqual(kept, after)
         self.assertTrue(sheets["quit"])
 
+    def test_a_click_on_a_bubble_a_key_an_input_the_slider_or_all_off_does_what_it_says(self):
+        mouse = self.proof["mouse"]
+        self.assertEqual(mouse["bubbles"], [[[WEST, "source", "example_player"]], "example_tv"])
+        self.assertEqual(mouse["inputs"], ["inputs", "input:hdmi1", None, [["example_tv", "input", "hdmi2"]]])
+        self.assertEqual(mouse["held"], [True, True], "a held key repeats until let go")
+        # Dragged to its end (100), then a step down on the wheel.
+        self.assertEqual(mouse["slider"], ["slider", [WEST, "volume", 99]])
+        self.assertEqual(mouse["allOff"], [[True, True, 0], [["all", "off"]]])
+
+    def test_the_headers_theme_tabs_and_remotes_menu_and_homes_rooms_go_where_they_say(self):
+        self.assertEqual(self.proof["mouse"]["header"], [True, "home", "remote", DEN, "listen", "remotes-menu", "pairing", "remote"])
+
     def test_a_room_of_speakers_alone_reached_with_the_signal_open_reads_none(self):
         signal = self.proof["signal"]
         # ↓ through every room and on, ], the rooms sheet's ↓ and Enter, and a click: none asks a room of speakers for its signal.

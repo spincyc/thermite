@@ -256,6 +256,78 @@ async function sheets(proof) {
   size = [110, 50];
 }
 
+// ---- Watch with the mouse ---------------------------------------------------
+
+async function mouse(proof) {
+  size = [110, 50];
+  const parts = await open({}, WEST);
+  const { controller, session } = parts;
+  const ui = controller.ui;
+  const hits = () => draw(parts).grid.hits;
+  const at = (hitKey, dx = 0, action = "mousedown", button = "left") => {
+    const entry = hits().find((hit) => hit.hit.key === hitKey);
+    assert.ok(entry, "no " + hitKey);
+    controller.mouse({ action, button, x: entry.x + dx, y: entry.y });
+    draw(parts);
+    return entry;
+  };
+  proof.mouse = {};
+  // A source's bubble switches the room; a device's brings up its buttons.
+  click(parts, "bubble:example_player");
+  await until(parts, () => session.state(WEST).value === "example_player", "the player");
+  click(parts, "bubble:example_tv");
+  proof.mouse.bubbles = [parts.sent.slice(), session.target().id];
+  // The TV's Input key lists its inputs; ↓ and Enter choose one.
+  click(parts, "key:input");
+  proof.mouse.inputs = [ui.overlay && ui.overlay.kind, ui.focus];
+  key(parts, null, { name: "down" });
+  key(parts, null, { name: "enter" });
+  proof.mouse.inputs.push(ui.overlay, parts.sent.filter((entry) => entry[1] === "input"));
+  // A key held repeats until let go.
+  let from = parts.sent.length;
+  at("key:volume_up");
+  await until(parts, () => sent(parts, from).length >= 3, "the held key repeating");
+  at("key:volume_up", 0, "mouseup");
+  const held = sent(parts, from).length;
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  proof.mouse.held = [sent(parts, from).every((entry) => entry[1] === "volume_up"), sent(parts, from).length === held];
+  // The slider: dragged to its end and let go; the wheel steps it.
+  key(parts, "v");
+  from = parts.sent.length;
+  const slider = at("slider");
+  controller.mouse({ action: "mousemove", button: "left", x: slider.x + slider.w - 1, y: slider.y });
+  controller.mouse({ action: "mouseup", button: "left", x: slider.x + slider.w - 1, y: slider.y });
+  await until(parts, () => sent(parts, from).some((entry) => entry[2] === 100), "the volume at its end");
+  controller.mouse({ action: "wheeldown", x: slider.x + 2, y: slider.y });
+  await until(parts, () => sent(parts, from).some((entry) => entry[2] === 99), "the wheel's step");
+  proof.mouse.slider = [ui.focus, sent(parts, from).slice(-1)[0]];
+  key(parts, "v");
+  // All off takes a second click.
+  from = parts.sent.length;
+  click(parts, "all-off");
+  const armed = [session.allOffArmed(), text(parts).includes("Press again to confirm"), sent(parts, from).length];
+  click(parts, "all-off");
+  await until(parts, () => sent(parts, from).length, "all off");
+  proof.mouse.allOff = [armed, sent(parts, from).filter((entry) => entry[0] === "all")];
+  // The header: the theme (where it has room for it), a page's tab, the Remotes menu.
+  const theme = ui.theme;
+  size = [150, 50];
+  click(parts, "theme");
+  size = [110, 50];
+  proof.mouse.header = [theme !== ui.theme];
+  click(parts, "tab:home");
+  proof.mouse.header.push(ui.screen);
+  click(parts, "home-room:" + DEN);
+  proof.mouse.header.push(ui.screen, ...room(parts));
+  click(parts, "tab:remote");
+  proof.mouse.header.push(ui.overlay && ui.overlay.kind);
+  click(parts, "menu:pairing");
+  proof.mouse.header.push(ui.screen);
+  key(parts, null, { name: "escape" });
+  proof.mouse.header.push(ui.screen);
+  controller.stop();
+}
+
 // ---- the signal, and rooms of speakers alone -------------------------------
 
 // Wide, Watch's signal panel shows and reads; a room of speakers alone has
@@ -356,6 +428,7 @@ async function terminal(proof) {
   const proof = {};
   await watch(proof);
   await sheets(proof);
+  await mouse(proof);
   await terminal(proof);
   await signal(proof, true);
   await settings(proof);
