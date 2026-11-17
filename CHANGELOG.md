@@ -98,8 +98,9 @@ rollback. The unified deployment workflow uses a separate committed private site
   controls, and a lock on a routed room locks the speakers it owns.
   Watch's volume caption names the room's speaker and opens it in Listen.
   A speaker Music Assistant cannot reach, that reports nothing itself,
-  says "Not answering" rather than "…". A locked room's padlock has its
-  own column, between the room and its source.
+  says "Not answering" rather than "…". A room's light (on, off or a
+  problem) and a locked room's padlock have columns of their own, right
+  after the room's name, and Remotes' sources end at the right edge.
 - Music, on Listen: TIDAL and the NAS libraries on the Sonos and WiiM
   speakers, alone or grouped: search, browse and the queue (a sheet, or
   the right column on a wide screen), with Play now, Play next and Add to

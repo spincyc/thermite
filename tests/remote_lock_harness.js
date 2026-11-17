@@ -486,7 +486,7 @@ const pause = () => new Promise(resolve => setTimeout(resolve, 5));
 
   // Room lists: another room's lock comes from the summary of every room, read
   // only while a list is on show; the terminal's room list and Home show ⚿
-  // after its source and say the lock in the row's label.
+  // in its own column and say the lock in the row's label.
   const lists = gateway({ principal: guest }), other = ROOMS[1];
   lists.summary[other] = { locked: true, manual: true, until: null, reason: "manual_lock" };
   const listed = assemble(lists, room), watched = [], watch = listed.access.watchLocks;
@@ -500,9 +500,12 @@ const pause = () => new Promise(resolve => setTimeout(resolve, 5));
   const rowOf = (text, label) => text.split("\n").find(line => line.includes(label));
   const hitOf = (kind, id) => frame.grid.hits.find(entry => entry.hit.kind === kind && entry.hit.room === id).hit.label;
   frame = listed.parts.controller.frame(149, 40);
-  // The padlock in its own column, between the room and its source.
-  assert.match(rowOf(panelText(frame, "rooms"), otherLabel), new RegExp(otherLabel + " +\u26bf +Off"));
-  assert.doesNotMatch(rowOf(panelText(frame, "rooms"), roomLabel), /\u26bf/);
+  // The room's light, then the padlock, in columns of their own after the room; the source at the right edge.
+  const locked = rowOf(panelText(frame, "rooms"), otherLabel), unlocked = rowOf(panelText(frame, "rooms"), roomLabel);
+  assert.match(locked, new RegExp(otherLabel + " +\u25cb \u26bf +Off $"));
+  assert.match(unlocked, new RegExp(roomLabel + " +\u25cb +Off $"));
+  assert.equal(locked.indexOf("\u25cb"), unlocked.indexOf("\u25cb"));
+  assert.doesNotMatch(unlocked, /\u26bf/);
   assert.equal(hitOf("room", other), otherLabel + ", Off. Locked · until unlocked");
   assert.equal(hitOf("room", room), roomLabel + ", Off");
   proof.terminalRoomList = true;

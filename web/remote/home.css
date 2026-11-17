@@ -46,9 +46,13 @@
 .home tr[data-state="reported"] .home__source { color: var(--th-text); background: var(--th-raised); border-color: var(--th-line); }
 .home tr[data-state="switching"] .home__source { border-color: var(--th-busy); }
 .home .thermite-room-state { font-size: 11px; line-height: 1.5; color: var(--th-muted); }
-.home .thermite-room-state::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: var(--th-faint); vertical-align: 1px; }
-.home tr[data-state="reported"] .thermite-room-state::before { background: var(--th-accent); }
-.home tr[data-state="switching"] .thermite-room-state::before { background: var(--th-busy); }
+/* A room's light, in a column of its own at the right of the room's cell, so
+   a screen reader's table keeps its columns: the status says it in words. */
+.home .thermite-rooms td:first-child { position: relative; padding-right: 26px; }
+.home .thermite-rooms td:first-child::after { content: ""; position: absolute; top: 50%; right: 10px; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--th-faint); }
+.home tr[data-state="reported"] td:first-child::after { background: var(--th-accent); }
+.home tr[data-state="switching"] td:first-child::after { background: var(--th-busy); }
+.home tr[data-state="unavailable"] td:first-child::after { background: var(--th-bad); }
 .home .home__note { margin: 14px 0 0; font-size: 11px; color: var(--th-muted); }
 .home .thermite-modules { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin: 0; }
 .home .thermite-module { display: grid; grid-template-columns: 24px minmax(0, 1fr) 12px; gap: 12px; align-items: center; min-height: 76px; padding: 12px; border: 1px solid transparent; border-radius: 9px; background: transparent; transition: background 220ms, border-color 220ms; }
@@ -74,6 +78,8 @@
   .home .home__mark { width: 44px; height: 35px; }
   .home .home__panel { padding: 16px 12px; }
   .home .thermite-rooms th, .home .thermite-rooms td { padding-left: 6px; padding-right: 6px; }
+  .home .thermite-rooms td:first-child { padding-right: 18px; }
+  .home .thermite-rooms td:first-child::after { right: 6px; }
   .home .thermite-rooms th:nth-child(2) { width: 22px; }
   .home .home__source { padding-inline: 8px; }
   .home .home__views .thermite-modules { grid-template-columns: minmax(0, 1fr); }

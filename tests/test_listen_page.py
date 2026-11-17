@@ -85,13 +85,59 @@ class ListenPage(unittest.TestCase):
         # Its switch is two icons, as the remote's, each radio named by its label and tooltip.
         self.assertEqual(out["icons"], [["Watch", "Watch (Y)", "", "#i-tv"], ["Listen", "Listen (Y)", "", "#i-note"]])
 
-    def test_the_padlock_has_its_own_column_between_the_room_and_its_source(self):
-        self.assertEqual(self.out["rooms"]["columns"], ["room__name", "icon room__lock", "room__source"])
-        # Only the room lists have the columns: an input sheet's rows keep their name and "In use".
+    def test_the_light_and_the_padlock_have_columns_of_their_own_and_the_source_ends_at_the_right(self):
+        # The room's light right after its name, then the padlock; the source alone in its cell.
+        self.assertEqual(self.out["rooms"]["columns"], ["room__name", "led", "icon room__lock", "room__source"])
+        self.assertEqual(self.out["rooms"]["source"], ["room__source-text"])
+        # Only the room lists have the columns: an input sheet's rows keep their name, light and "In use".
         self.assertEqual(self.out["rooms"]["lists"], [[True, True], [True, True], [False, False]])
+        self.assertEqual(self.out["inputs"]["inUse"], [["led", "room__source-text"], [], []])
         css = (AREA / "web/remote/remote.css").read_text()
         self.assertIn(".room {\n  display: flex;", css)
-        self.assertIn(".rooms--house {\n  grid-template-columns: minmax(0, 1fr) 14px fit-content(42%);", css)
+        # No layout here, so the rules as a browser reads them. The shared columns: the name as wide as the
+        # widest, the light's as wide as the light, the padlock's at least the padlock's and what is spare,
+        # then the source, at most 42%, its text against the right edge.
+        rules = {one: values for media, one, values in ListenMarkup.shared if media is None and one.startswith((".rooms--house", ".room__", ".led"))}
+        name, light, lock, source = re.findall(r"[\w-]+\([^)]*\)|\S+", rules[".rooms--house"]["grid-template-columns"])
+        self.assertEqual((name, source), ("minmax(0, max-content)", "fit-content(42%)"))
+        self.assertEqual((light, lock), (rules[".led"]["width"], "minmax(%s, 1fr)" % rules[".room__lock"]["width"]))
+        self.assertEqual(rules[".rooms--house .room__source"], {"justify-content": "flex-end"})
+        # The light, padlock and source on the name's line; what plays under it, across the row, sizing no column.
+        self.assertEqual(rules[".rooms--house .room__name"], {"display": "contents"})
+        self.assertEqual(rules[".rooms--house .room__playing"], {"grid-row": "2", "grid-column": "1 / -1"})
+        self.assertEqual(rules[".rooms--house .room"]["row-gap"], "0")
+        # The room sheet at 320 px, summed: what its sides, the row's, the gaps, the light and the padlock leave
+        # the name and the source, which share it; a source takes at most 42%, so a long name keeps the rest,
+        # nine or ten letters of the sheet's 17 px before its ellipsis.
+        tokens = {}
+        for media, one, values in ListenMarkup.shared:
+            if media is None and one == ":root":
+                tokens.update(values)
+
+        def px(selector, name, part=0):
+            found = [values[name] for media, one, values in ListenMarkup.shared if media is None and one == selector and name in values]
+            return pixels(found[0].split()[part], tokens)
+
+        sheet = 320 - 2 * px(".sheet__inner", "padding", 1)
+        side = px(".room", "padding", 1)
+        shared = sheet - 2 * side - 3 * px(".rooms--house", "column-gap") - px(".led", "width") - px(".room__lock", "width")
+        self.assertGreaterEqual(shared - (0.42 * sheet - side), 90)
+
+    def test_homes_light_has_its_own_column_after_the_room_and_its_table_keeps_its_cells(self):
+        # The status's words no longer carry the light: the room's cell keeps a strip at its right for it, and
+        # the rows keep their four cells (the Home test above), so a screen reader's table is as it was.
+        rules = css_rules((REMOTE / "home.css").read_text())
+        self.assertEqual([one for media, one, values in rules if "thermite-room-state::" in one], [])
+        lights = sorted(one for media, one, values in rules if one.endswith("td:first-child::after") and "background" in values)
+        self.assertEqual(lights, ['.home .thermite-rooms td:first-child::after', '.home tr[data-state="reported"] td:first-child::after',
+                                  '.home tr[data-state="switching"] td:first-child::after',
+                                  '.home tr[data-state="unavailable"] td:first-child::after'])
+        # Clear of the name at both widths: the cell's right padding holds the 6 px light, its inset and a gap as wide.
+        cell, light = ".home .thermite-rooms td:first-child", ".home .thermite-rooms td:first-child::after"
+        for media in (None, "(max-width: 600px)"):
+            px = {(one, name): pixels(values[name], {}) for at, one, values in rules if at == media and one in (cell, light)
+                  for name in ("right", "padding-right") if name in values}
+            self.assertGreaterEqual(px[cell, "padding-right"], 2 * px[light, "right"] + 6, media)
 
     def test_the_switch_shows_in_every_room_and_y_toggles_it(self):
         out = self.out["modes"]

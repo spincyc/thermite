@@ -210,9 +210,9 @@
               node("span", { class: "room__label" }, room.label),
               node("span", { class: "room__playing" })
             ]),
+            node("span", { class: "led", "aria-hidden": "true" }),
             icon("i-lock", "room__lock"),
             node("span", { class: "room__source" }, [
-              node("span", { class: "led", "aria-hidden": "true" }),
               node("span", { class: "room__source-text" })
             ])
           ])

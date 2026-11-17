@@ -386,6 +386,31 @@ async function narrow(proof) {
   size = [110, 50];
 }
 
+// The rooms' rows, in the sheet (narrow) and the panel (80 columns and
+// more), with a long name, a locked room and sources of two lengths: each
+// row as drawn, the room's hit across it.
+async function columns(proof) {
+  const parts = await open({}, WEST);
+  const { session } = parts;
+  const east = session.room(EAST), label = east.label, roomLocked = session.roomLocked;
+  east.label = "Example East, the long way round";
+  session.roomLocked = (id) => id === EAST ? { locked: true, text: "Locked · until unlocked" } : roomLocked(id);
+  parts.backend.choose(WEST, "example_computer");
+  await until(parts, () => session.state(WEST).value === "example_computer", "the west room's Computer");
+  proof.columns = {};
+  for (const width of [40, 60, 80, 120]) {
+    size = [width, 40];
+    if (width < 80) key(parts, "r");
+    const frame = draw(parts);
+    proof.columns[width] = frame.grid.hits.filter((hit) => hit.hit.kind === "room")
+      .map((hit) => [hit.hit.room, frame.grid.rows[hit.y].slice(hit.x, hit.x + hit.w).map((cell) => cell.ch).join("")]);
+    if (width < 80) key(parts, null, { name: "escape" });
+  }
+  east.label = label;
+  parts.controller.stop();
+  size = [110, 50];
+}
+
 // ---- the other screens --------------------------------------------------------
 
 // Home, Cameras, Site and Pair devices from the keys, from a room of
@@ -500,7 +525,7 @@ async function startup(proof) {
   size = [150, 50];
   key(parts, "y");
   await until(parts, () => parts.diagnosed.length, "the west room's signal");
-  proof.startup.walk = [...room(parts), parts.diagnosed.slice(), text(parts).split("\n").some((line) => /Example East +Computer/.test(line))];
+  proof.startup.walk = [...room(parts), parts.diagnosed.slice(), text(parts).split("\n").some((line) => /Example East +● +Computer/.test(line))];
   controller.stop();
   parts = await open({ gateway: true, screen: "settings", store: kept(LOUNGE) });
   await until(parts, () => text(parts).includes("Edit schedule"), "the schedule");
@@ -654,6 +679,7 @@ async function terminal(proof) {
   await sheets(proof);
   await mouse(proof);
   await narrow(proof);
+  await columns(proof);
   await pages(proof);
   await startup(proof);
   await admin(proof);

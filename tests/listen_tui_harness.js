@@ -206,7 +206,7 @@ async function den(proof) {
   await shows(parts, "Harbour Lights");
   let shown = text(parts);
   proof.den = { mode: session.mode(), switch: shown.includes("♪ Listen"), footer: shown.split("\n").slice(-1)[0].includes("y Watch"),
-    bubbles: /1 ● Mini +2 ○ Amp Pro/.test(shown), listed: /Fixture Den +Playing/.test(shown),
+    bubbles: /1 ● Mini +2 ○ Amp Pro/.test(shown), listed: /Fixture Den +● +Playing/.test(shown),
     drawn: ["The Lanterns · Harbour Lights", "‖ Pause", "1:0", "4:05", " Group ", " Library "].filter((words) => !shown.includes(words)) };
   // Digits, and ← → off the remote, choose a speaker; [ ] the room.
   key(parts, "2");
@@ -546,7 +546,7 @@ async function others(proof) {
     const shown = text(parts);
     const hits = draw(parts).grid.hits.map((hit) => hit.hit.key);
     proof[name] = { said: shown.includes(words), titles: shown.includes("Harbour Lights"), chips: ["listen-group", "listen-library"].filter((id) => hits.includes(id)),
-      playing: /Fixture Den +Playing/.test(shown) };
+      playing: /Fixture Den +● +Playing/.test(shown) };
     key(parts, null, { name: "escape" });
     if (name === "absent") for (const ch of ["p", "+", "/", "g"]) key(parts, ch);
     proof[name].sheet = parts.controller.ui.overlay;

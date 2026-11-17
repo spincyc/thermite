@@ -125,8 +125,8 @@ function mend(row, left, right) {
   });
 }
 
-// A locked room's padlock, on its lit bubble and after its source in a room
-// list. The padlock emoji takes two columns; this squared key takes one.
+// A locked room's padlock, on its lit bubble and after the room's light in
+// a room list. The padlock emoji takes two columns; this squared key takes one.
 const LOCK = "\u26bf";
 
 // Text cut to width with an ellipsis, or padded to it.

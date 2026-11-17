@@ -1558,12 +1558,15 @@ button {
   text-overflow: ellipsis;
 }
 
-/* The house's rooms share three columns, name, padlock and source, so the
-   padlocks and lights line up: the source column is as wide as the widest
-   source, at most 42%, and names have the rest. Without subgrid each row
-   keeps a 42% source column of its own, aligned too. */
+/* The house's rooms share four columns, so the lights, padlocks and sources
+   line up: the name, as wide as the widest; right after it the room's light
+   and padlock; and the source, as wide as the widest source and at most 42%,
+   at the right edge, what is spare before it. Short of room, names and
+   sources share it and ellipsize. What plays runs under them, the row's
+   width. Without subgrid each row keeps a 42% source column of its own and
+   names the rest, aligned too. */
 .rooms--house {
-  grid-template-columns: minmax(0, 1fr) 14px fit-content(42%);
+  grid-template-columns: minmax(0, max-content) 8px minmax(14px, 1fr) fit-content(42%);
   column-gap: var(--space-3);
 }
 
@@ -1576,8 +1579,24 @@ button {
 }
 
 .rooms--house .room {
-  grid-template-columns: minmax(0, 1fr) 14px minmax(0, 42%);
+  grid-template-columns: minmax(0, 1fr) 8px 14px minmax(0, 42%);
   grid-template-columns: subgrid;
+  align-content: center;
+  row-gap: 0;
+}
+
+/* The light, padlock and source on the name's line, what plays under it. */
+.rooms--house .room__name {
+  display: contents;
+}
+
+.rooms--house .room__playing {
+  grid-row: 2;
+  grid-column: 1 / -1;
+}
+
+.rooms--house .room__source {
+  justify-content: flex-end;
 }
 
 /* A locked room's padlock, in its own column; the column stays when unlocked. */

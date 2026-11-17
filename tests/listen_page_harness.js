@@ -116,7 +116,8 @@ function page(room, options = {}) {
 }
 
 // The room sheet's rows: in Watch the rooms with a screen, in Listen those
-// with speakers, what each plays; the padlock in its own column.
+// with speakers, what each plays; the light and the padlock in columns of
+// their own, the source alone in its cell.
 async function rooms(out) {
   const p = page(WATCH);
   const {time, $, all, words, key} = p;
@@ -126,6 +127,7 @@ async function rooms(out) {
   out.sheet = rows();
   out.sidebar = all('.panel--rooms [data-room-list] .room').length;
   out.columns = Array.from($('#room-sheet [data-room-list] .room').children).map((child) => child.getAttribute('class'));
+  out.source = Array.from($('#room-sheet [data-room-list] .room__source').children).map((child) => child.getAttribute('class'));
   out.lists = all('[data-room-list], [data-input-list]').map((list) => [list.hasAttribute('data-room-list'), list.classList.contains('rooms--house')]);
   await key('y', p.document.body);
   await time.tick(400);
@@ -609,6 +611,8 @@ async function inputs(out) {
   $('#input-sheet').close();
   await key('y', p.document.body);
   out.listen = await listening();
+  // An input's light stays beside its "In use": the sheet is no room list.
+  out.inUse = all('[data-input-list] .room__source').map((source) => Array.from(source.children).map((child) => child.getAttribute('class')));
   $('#input-sheet').close();
   await key('y', p.document.body);
   out.watchAgain = await watching();

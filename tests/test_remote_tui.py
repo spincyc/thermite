@@ -105,6 +105,22 @@ class RemoteTUI(unittest.TestCase):
         # The sources' row, wider than the terminal: › scrolls it on, the wheel back.
         self.assertEqual(narrow["bubbles"], [0, True, True])
 
+    def test_the_rooms_rows_keep_name_light_padlock_and_source_in_columns_at_every_width(self):
+        # The sheet's rows at 40 and 60 columns, the panel's at 80 and 120: the name, cut where the row is short.
+        names = {"40": "Example East, the lo…", "60": "Example East, the long way round", "80": "Example East…", "120": "Example East…"}
+        self.assertEqual(sorted(self.proof["columns"], key=int), list(names))
+        for width, rows in self.proof["columns"].items():
+            with self.subTest(width=width):
+                (west, computer), (east, off) = rows
+                self.assertEqual((west, east), (WEST, EAST))
+                # The light right after the widest name, in the same column on each row; the padlock after it.
+                light = 1 + len(names[width]) + 1
+                self.assertEqual((off[1:light], off[light:light + 3]), (names[width] + " ", "○ ⚿"))
+                self.assertEqual((computer[1:light].rstrip(), computer[light]), ("Example West", "●"))
+                self.assertNotIn("⚿", computer)
+                # The sources against the right edge, one column in.
+                self.assertEqual((computer[-9:], off[-4:]), ("Computer ", "Off "))
+
     def test_homes_arrows_and_enter_open_remotes_on_a_room_and_h_the_day_and_esc_stays_home(self):
         self.assertEqual(self.proof["pages"]["home"], ["home", "home:remote", "remote", LOUNGE, "listen", "watch", "remote", WEST, "watch", "day", "home"])
 
