@@ -23,8 +23,9 @@ from oh_features import reboots
 DESCRIPTION = """\
 Restart a device as the nightly reboots do (lib/oh_features/reboots):
 production thermite restarts it only if it answers and is idle (a receiver
-with every zone off, a switch whose input has no signal), then waits for
-it to stop answering and answer again, and reports how that went. DEVICE
+with every zone off, a switch whose input has no signal, a USB matrix whose
+rooms are all Off), then waits for it to stop answering and answer again,
+and reports how that went. DEVICE
 need not have `reboot: nightly` in the house file; it needs an integration
 under control that can restart it without cutting its power. Without
 DEVICE, each such device: whether it restarts nightly, and its last

@@ -4,6 +4,12 @@ One Number point per device port, `<id>_device<N>_host`: the host it is
 attached to, read back at each poll (_instr.REFRESH), and moved by
 commanding the Item. The matrix cannot detach a port; parking it on a host
 with nothing cabled does that.
+
+`<id>_reboot` (String), commanded `reboot`, sends `set_system_reboot`, as
+the Reboot button on the matrix's own System page does: it restarts and
+keeps each port's host. Only a matrix with `reboot: nightly` restarts
+unasked, at night while every room whose device ports it switches is Off
+(reboot(), oh_features.reboots).
 """
 
 from __future__ import annotations
@@ -18,15 +24,21 @@ FILE = "yaml/ukm404.yaml"
 HEADER = (
     "USB matrix switching over the UKM-404's JSON API (HTTP binding). Each",
     "device port's host is polled with one `get_matrix_status` request per",
-    "Thing and moved with `host_switch`. Items are autoupdate off: they show",
-    "only what the matrix reports.",
+    "Thing and moved with `host_switch`; `set_system_reboot` restarts it.",
+    "Items are autoupdate off: they show only what the matrix reports.",
 )
 ADDONS = instr.ADDONS
 ASSETS: dict[str, str] = {}
 HOSTS = DEVICES = 4
 KINDS = {"usb_matrix"}
 #: All that the Thing ever sends.
-COMHEADS = frozenset({"get_matrix_status", "host_switch"})
+COMHEADS = frozenset({"get_matrix_status", "host_switch", "set_system_reboot"})
+#: The reboot channel's command: the vendor page's body for `reboot`, and no
+#: request for anything else (the HTTP binding sends nothing for a null
+#: transformation, 5.2.3), since a body the matrix does not know stalls it.
+REBOOT = "JS(|input === 'reboot' ? JSON.stringify({comhead:'set_system_reboot'}) : null)"
+#: A state transformation that keeps nothing of a reply.
+NOTHING = "JS(|null)"
 thing_uid = instr.thing_uid
 url = instr.url
 
@@ -51,6 +63,18 @@ def fields(device: dict) -> dict[str, dict]:
                                         "values": [str(n) for n in range(1, HOSTS + 1)], "ack": "result",
                                         "independent": True}
             for port in range(1, DEVICES + 1)}
+
+
+def reboot_item(device: dict) -> str:
+    return f"{device['id']}_reboot"
+
+
+def reboot(device: dict) -> dict:
+    """Nightly reboots (oh_features.reboots): the matrix answers while its
+    ports read. Nothing it reports shows that a port is in use, so it has no
+    idle readings of its own; oh_features.reboots adds its rooms'."""
+    return {"item": reboot_item(device), "answers": [switch_item(device, 1)], "things": [thing_uid(device)],
+            "idle": []}
 
 
 def validate(device: dict) -> list[str]:
@@ -78,4 +102,13 @@ def render(device: dict, house: House, out: YamlFile) -> None:
             "autoupdate": False,
             "channel": f"{uid}:{channel}",
         }
+    # Write-only, yet with the ports' poll and a state that keeps nothing:
+    # oh_render.read_only() turning it READONLY then polls nothing more.
+    thing["channels"]["reboot"] = {"type": "string", "label": "Reboot", "config": {
+        "mode": "WRITEONLY", "stateContent": instr.body("get_matrix_status", language=0),
+        "stateTransformation": [NOTHING], "commandTransformation": [REBOOT]}}
+    out.items[reboot_item(device)] = {
+        "type": "String", "label": "Reboot", "groups": [ident], "tags": ["Control"], "autoupdate": False,
+        "channel": f"{uid}:reboot", "metadata": {"commandDescription": {"config": {"options": "reboot=Reboot"}}},
+    }
     out.things[uid] = thing

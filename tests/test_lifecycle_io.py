@@ -40,10 +40,16 @@ class Rendering(unittest.TestCase):
         self.assertEqual(descriptor['io']['status'],lifecycle_io.STATUS_ITEM)
         self.assertTrue(conf.yaml[lifecycle_io.ITEMS].items[lifecycle_io.STATUS_ITEM]['metadata']['stateDescription']['config']['readOnly'])
         self.assertEqual(conf.executor_controls,set(cap))
-        for item in out.items.values():
+        # The reboot is no route's: its Item keeps its own write-only channel.
+        reboot=ukm404_http.reboot_item(data['devices'][0])
+        for name,item in out.items.items():
+            if name==reboot:
+                self.assertEqual(item['channel'],'http:url:desk_usb:reboot')
+                continue
             self.assertNotIn('channel',item)
             self.assertEqual(next(iter(item['channels'].values()))['toItemScript'],'|input')
-        self.assertTrue(all(c['config']['mode']=='READONLY' for t in out.things.values() for c in t['channels'].values()))
+        self.assertEqual({k:c['config']['mode'] for t in out.things.values() for k,c in t['channels'].items()},
+                         {**{f'device{n}_host':'READONLY' for n in range(1,5)},'reboot':'WRITEONLY'})
 
     def test_an_integration_settle_reaches_its_field_and_the_planner_resource(self):
         from tests.test_zone_sync import LOUNGE, device, house

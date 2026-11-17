@@ -25,6 +25,8 @@ import yaml  # noqa: E402
 from oh_cli import reboot as cli  # noqa: E402
 from oh_conf import House  # noqa: E402
 from oh_features import reboots  # noqa: E402
+from oh_integrations import ukm404_http  # noqa: E402
+from tests.test_zone_sync import HOUSE as ROUTED  # noqa: E402
 
 SWITCH = {"id": "example_switch", "room": "example_desk", "kind": "hdmi_switch", "make": "HDFury", "model": "VRROOM",
           "ip": "192.0.2.40", "controls": {"observe": ["vrroom_http"], "control": ["vrroom_telnet"]}, "reboot": "nightly"}
@@ -73,7 +75,8 @@ class Validation(unittest.TestCase):
         device(data, "example_tv")["reboot"] = "nightly"
         device(data, "example_receiver")["reboot"] = "daily"
         self.assertEqual(render.validate(data), [
-            "example_tv.reboot: none of its integrations under control can restart it; these can: heos, vrroom_telnet",
+            "example_tv.reboot: none of its integrations under control can restart it; "
+            "these can: heos, ukm404_http, vrroom_telnet",
             "example_receiver.reboot: 'daily' is not nightly"])
 
     def test_a_switch_restarts_only_with_its_web_page_to_say_it_is_idle(self):
@@ -106,6 +109,76 @@ class Table(unittest.TestCase):
             "answers": ["example_switch_input"], "things": [], "signs": [],
             "idle": [{"item": "example_switch_signal", "field": "RX0", "is": "no signal", "maxAge": 125,
                       "unreadIsIdle": True}]})
+
+
+def routed():
+    """A fictional two-room house whose USB matrix (example_usb) switches a
+    port in each room, and restarts nightly."""
+    data = copy.deepcopy(ROUTED)
+    device(data, "example_usb")["reboot"] = "nightly"
+    return data
+
+
+def usb_thing(files):
+    return yaml.safe_load(files[ukm404_http.FILE])["things"]["http:url:example_usb"]
+
+
+class UsbMatrix(unittest.TestCase):
+    def test_a_usb_matrix_restarts_only_while_each_room_it_switches_is_off(self):
+        data = routed()
+        self.assertEqual(render.validate(data), [])
+        self.assertEqual(reboots.table(House(data))["devices"], [{
+            "id": "example_usb", "nightly": True, "item": "example_usb_reboot",
+            "answers": ["example_usb_device1_host"], "things": ["http:url:example_usb"], "signs": [],
+            "idle": [{"item": "loc_example_cinema_source", "is": "off"},
+                     {"item": "loc_example_lounge_source", "is": "off"}]}])
+
+    def test_a_usb_matrix_no_room_switches_cannot_restart_nightly(self):
+        data = routed()
+        for spec in data["routing"]["rooms"].values():
+            spec.pop("usb")
+            spec.pop("usb_unused", None)
+        self.assertEqual(render.validate(data), [
+            "example_usb.reboot: nothing would show it idle; a USB matrix restarts nightly only while the rooms "
+            "whose ports it switches (routing.rooms.<room>.usb) are Off, and no room lists it"])
+        del device(data, "example_usb")["reboot"]
+        self.assertEqual(render.validate(data), [])
+
+    def test_its_reboot_item_writes_past_the_routing_actor(self):
+        files = render.render(routed())
+        self.assertIn("automation/js/thermite_routing_io_example_usb.js", files)
+        channel = usb_thing(files)["channels"]["reboot"]
+        self.assertEqual(channel["config"]["mode"], "WRITEONLY")
+        self.assertEqual(channel["config"]["commandTransformation"], [ukm404_http.REBOOT])
+        item = yaml.safe_load(files[ukm404_http.FILE])["items"]["example_usb_reboot"]
+        self.assertEqual(item["channel"], "http:url:example_usb:reboot")
+        self.assertIs(item["autoupdate"], False)
+
+    def test_the_read_only_copy_polls_nothing_more(self):
+        files = render.read_only(render.render(routed()))
+        thing = usb_thing(files)
+        modes = {channel["config"]["mode"] for channel in thing["channels"].values()}
+        polls = {(channel["config"].get("stateExtension"), channel["config"].get("stateContent"))
+                 for channel in thing["channels"].values()}
+        self.assertEqual((modes, polls), ({"READONLY"}, {(None, '{"comhead":"get_matrix_status","language":0}')}))
+        self.assertEqual(thing["channels"]["reboot"]["config"]["stateTransformation"], [ukm404_http.NOTHING])
+        # A command would still refresh that poll (HttpThingHandler 5.2.3), and
+        # the reboots rule runs in the read-only copy too: the Item passes none.
+        item = yaml.safe_load(files[ukm404_http.FILE])["items"]["example_usb_reboot"]
+        self.assertNotIn("channel", item)
+        self.assertEqual(set(item["channels"]), {"http:url:example_usb:reboot"})
+        self.assertTrue(render.safe_link("http:url:example_usb:reboot", item["channels"]["http:url:example_usb:reboot"],
+                                         set()))
+
+    @unittest.skipUnless(shutil.which("node"), "node is required to run the reboot channel's transformation")
+    def test_only_reboot_builds_a_request_and_it_is_the_vendor_pages(self):
+        script = ukm404_http.REBOOT[len("JS(|"):-1]
+        commands = ["reboot", "REFRESH", "Reboot", "reboot ", "", "set_system_reboot"]
+        program = (f"const run = (input) => ({script});\n"
+                   f"console.log(JSON.stringify({json.dumps(commands)}.map(run)));")
+        result = subprocess.run([shutil.which("node"), "-e", program], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), ['{"comhead":"set_system_reboot"}', None, None, None, None, None])
 
 
 class Render(unittest.TestCase):

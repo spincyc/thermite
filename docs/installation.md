@@ -358,7 +358,9 @@ A device that does better after a restart can restart every night. Give it
 `reboot: nightly` in the house file. The top-level `reboots: {time:
 "03:00"}` sets when, in the host's time zone; 03:00 is the default. Only a
 device Thermite can restart without cutting its power can opt in: an
-HDFury VRROOM, or a Denon or Marantz receiver under HEOS control. Whether
+HDFury VRROOM, a Denon or Marantz receiver under HEOS control, or an OREI
+UKM-404 USB matrix (or a rebadge of it), which its own web page's Reboot
+command restarts with each port's host kept. Whether
 a receiver's HEOS restart also restarts its audio and video processing,
 and not only its network module, is not confirmed. Apple TVs have no such
 command, and a SHIELD needs ADB, which Thermite does not use.
@@ -366,7 +368,8 @@ command, and a SHIELD needs ADB, which Thermite does not use.
 The devices restart one at a time, two minutes apart: receivers before
 switches, so each switch then reads its receiver's EDID afresh. A device
 is skipped while it does not answer or is in use, meaning a receiver with
-a zone on, or a VRROOM whose input has a signal. A VRROOM whose web page has
+a zone on, a VRROOM whose input has a signal, or a USB matrix while a room
+whose USB ports it switches is on. A VRROOM whose web page has
 stopped answering while its telnet port still answers is restarted anyway,
 since that hang is what the restart cures. After each restart
 Thermite waits up to five minutes for the device to answer again. A

@@ -145,6 +145,16 @@ rollback. The unified deployment workflow uses a separate committed private site
   and logs each outcome. `thermite reboot DEVICE` restarts one now past
   the same checks and reports how it went; `thermite reboot` lists each
   device's last reboot.
+  - An OREI UKM-404 USB matrix (`ukm404_http`) can opt in too. It is sent
+    `set_system_reboot`, which is what its own web page's Reboot button
+    sends, and it keeps each port's host. Nothing it reports shows a port
+    in use, so it restarts only while every room whose USB ports it
+    switches is Off; `generate` refuses `reboot: nightly` on a matrix no
+    room lists. Its `<id>_reboot` Item writes through a write-only channel
+    that sends nothing for any other command. In the read-only copy that
+    channel shares the ports' poll, and the read-only copy now guards the
+    Items of every channel that was write-only, since openHAB's HTTP
+    binding refreshes a channel's poll after any command to it.
 - A new critical alert, ThermiteThingStuck, fires for each device Thing
   that openHAB has left neither online nor offline (unknown, initializing
   or uninitialized) for fifteen minutes: one whose binding failed as

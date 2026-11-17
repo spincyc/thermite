@@ -137,8 +137,9 @@ def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
     """conf files that read every device and command none. The sandbox and
     the boot check run on this. It fails closed: every HTTP binding channel
     is made READONLY; every Item with a link that is neither to a READONLY
-    channel nor a guard is guarded (oh_conf.GUARD_NOTE), whatever its
-    binding; a rule has its SEND declaration turned into RULE_SILENT (and
+    channel (one that was WRITEONLY does not count) nor a guard is guarded
+    (oh_conf.GUARD_NOTE), whatever its binding; a rule has its SEND
+    declaration turned into RULE_SILENT (and
     avpro_telnet's, vrroom_telnet's and sony_adcp's then read nothing
     either: the matrix and the switch serve few sessions, the projector one
     request at a time, and the live runtime holds theirs); and a rule with none (but ITEM_ONLY_RULES),
@@ -163,10 +164,14 @@ def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
     for path, document in documents.items():
         for uid, thing in (document.get("things") or {}).items():
             for channel_id, channel in (thing.get("channels") or {}).items():
+                # A command still refreshes the poll a channel shares, READONLY
+                # or not (HttpThingHandler 5.2.3), so the Items of one that
+                # only takes commands are guarded too.
+                commanded = ((channel or {}).get("config") or {}).get("mode") == "WRITEONLY"
                 if uid.startswith("http:"):
                     channel.setdefault("config", {})["mode"] = "READONLY"
                     changed.add(path)
-                if ((channel or {}).get("config") or {}).get("mode") == "READONLY":
+                if not commanded and ((channel or {}).get("config") or {}).get("mode") == "READONLY":
                     readonly.add(f"{uid}:{channel_id}")
     guarded = False
     for path, document in documents.items():

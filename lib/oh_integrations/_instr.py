@@ -5,7 +5,7 @@ Both answer `POST /cgi-bin/instr` with a JSON body whose `comhead` names the
 command, and neither checks a login. A comhead the firmware does not know
 gets no answer at all and stalls its single-threaded CGI for the next
 request too, so only the comheads in COMHEADS, each seen working on these
-units, are ever sent.
+units or sent by their own web pages, are ever sent.
 """
 
 from __future__ import annotations
@@ -43,6 +43,8 @@ COMHEADS = frozenset({
     "get video status", "video switch", "get input status", "get output status",
     "set edid", "set video scaler", "set hdr conversion", "tx hdcp",
     "get_matrix_status", "host_switch",
+    # The UKM-404 System page's Reboot button.
+    "set_system_reboot",
 })
 
 

@@ -13,8 +13,12 @@ in, restarts each nightly device in turn, from the screen back to the
 sources (ORDER), so that each reads the EDID of what follows it once that
 has restarted. It skips a device that does not answer, or that its idle
 readings do not show idle: a receiver that is on, a switch whose input has
-a signal. A room's source is not read: a desk left on its computer
-overnight is idle while the computer sleeps, which only the switch sees. It
+a signal. A room's source is not read for those: a desk left on its
+computer overnight is idle while the computer sleeps, which only the switch
+sees. A USB matrix shows nothing of its use, and its restart drops every
+keyboard and mouse on it, so it is idle only while each room whose device
+ports it switches (routing `usb`) is Off; one no room lists cannot opt in,
+and a port no room lists is not read. It
 commands the device's reboot Item, then waits for it to stop answering and
 answer again, up to 5 minutes, and pauses 2 minutes before the next.
 
@@ -34,6 +38,8 @@ from pathlib import Path
 
 import oh_integrations as integrations
 from oh_conf import Addon, Conf, House, uses
+
+from .. import routing
 
 NAME = "reboots"
 ITEM = "house_reboot"
@@ -90,6 +96,10 @@ def validate(data: dict) -> list[str]:
         elif provider(device) is None:
             problems.append(f"{where}.reboot: none of its integrations under control can restart it; "
                             f"these can: {', '.join(able)}")
+        elif device.get("id") and not provider(device).reboot(device)["idle"] and not rooms_off(data, device):
+            problems.append(f"{where}.reboot: nothing would show it idle; a USB matrix restarts nightly only "
+                            "while the rooms whose ports it switches (routing.rooms.<room>.usb) are Off, "
+                            "and no room lists it")
     return problems
 
 
@@ -97,11 +107,22 @@ def rank(device: dict) -> int:
     return next((index for index, kinds in enumerate(ORDER) if device.get("kind") in kinds), len(ORDER))
 
 
-def entry(device: dict) -> dict:
+def rooms_off(data: dict, device: dict) -> list[dict]:
+    """Idle readings for a USB matrix: each room whose device ports it
+    switches is Off. Ports no room lists are not read."""
+    routed = data.get("routing")
+    rooms = routed.get("rooms") if isinstance(routed, dict) else None
+    return [{"item": routing.item_name(room), "is": routing.OFF}
+            for room, spec in (rooms if isinstance(rooms, dict) else {}).items()
+            if isinstance(spec, dict) and isinstance(spec.get("usb"), dict) and device["id"] in spec["usb"]]
+
+
+def entry(house: House, device: dict) -> dict:
     spec = provider(device).reboot(device)
     return {"id": device["id"], "nightly": device.get("reboot") == NIGHTLY,
             "item": spec["item"], "answers": list(spec["answers"]), "things": list(spec.get("things", ())),
-            "signs": list(spec.get("signs", ())), "idle": [dict(check) for check in spec["idle"]]}
+            "signs": list(spec.get("signs", ())),
+            "idle": [dict(check) for check in spec["idle"]] + rooms_off(house.data, device)}
 
 
 def table(house: House) -> dict:
@@ -110,7 +131,7 @@ def table(house: House) -> dict:
     able = sorted((device for device in house.devices if provider(device)), key=rank)
     hour, minute = TIME.fullmatch(time_of(house.data)).groups()
     return {"item": ITEM, "command": COMMAND, "time": time_of(house.data), "cron": f"0 {int(minute)} {int(hour)} * * ?",
-            "devices": [entry(device) for device in able]}
+            "devices": [entry(house, device) for device in able]}
 
 
 def rule(house: House) -> str:

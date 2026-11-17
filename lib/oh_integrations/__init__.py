@@ -155,7 +155,8 @@ provides, for nightly reboots (oh_features.reboots),
               uses it, each {"item", "is"}, or {"item", "field", "is",
               "maxAge"} for a field of a diagnostics snapshot, with
               "unreadIsIdle": True where a missing snapshot is a hang
-              that the restart cures}
+              that the restart cures; oh_features.reboots adds, for a USB
+              matrix, that each room whose ports it switches is Off}
 
 A module whose Items tell what its devices play provides, for what is
 playing (oh_features.playing),
