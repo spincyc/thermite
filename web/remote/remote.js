@@ -206,15 +206,13 @@
       session.listed().forEach((room) => {
         list.appendChild(node("li", {}, [
           node("button", { type: "button", class: "room", "data-action": "room", "data-room": room.id }, [
-            node("span", { class: "room__name" }, [
-              node("span", { class: "room__label" }, room.label),
-              node("span", { class: "room__playing" })
-            ]),
-            node("span", { class: "led", "aria-hidden": "true" }),
+            node("span", { class: "room__label" }, room.label),
             icon("i-lock", "room__lock"),
             node("span", { class: "room__source" }, [
-              node("span", { class: "room__source-text" })
-            ])
+              node("span", { class: "room__source-text" }),
+              node("span", { class: "led", "aria-hidden": "true" })
+            ]),
+            node("span", { class: "room__playing" })
           ])
         ]));
       });

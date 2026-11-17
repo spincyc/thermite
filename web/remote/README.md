@@ -13,14 +13,14 @@ own, else its display. In
 a locked room the bubble for what it shows, Off included, carries a padlock and
 every other bubble is greyed out; tapping the padlocked bubble says why it is
 locked and, for a schedule, until when. The room lists, on Home and in Remotes'
-sidebar and room sheet, show each room's light and a locked room's padlock
-right after the room (on Home the light at the room cell's right edge, so a
-screen reader's table keeps its columns), and a screen reader hears how it is
-locked. In Remotes the source ends at the row's right edge, and what plays runs
-under the row. Only a lock the remote has read greys its controls. If a room's
-lock cannot be read, the remote says “Room lock status unknown” and still sends
-commands: the server checks each one and refuses it in a locked room, and the
-remote then says why and reads the lock again.
+sidebar and room sheet, show a locked room's padlock in its own column, between
+the room and its source, and a screen reader hears how it is locked. Each
+room's light follows its source: in Remotes at the row's right edge, the source
+against it, and what plays under the row; on Home it leads the room's status.
+Only a lock the remote has read greys its controls. If a room's lock cannot be
+read, the remote says “Room lock status unknown” and still sends commands: the
+server checks each one and refuses it in a locked room, and the remote then
+says why and reads the lock again.
 
 When authentication is enabled, administrators can use **Lock room**, under
 Info, to hold

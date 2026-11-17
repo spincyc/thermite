@@ -518,13 +518,12 @@ function roomsContent(g, w, ctx) {
   const current = session.current();
   let y = 0;
   const listed = session.listed().map((room) => [room, session.view(room, session.state(room.id))]);
-  // The room, its light, its padlock and its source in columns: the name as
-  // wide as the widest, the light and padlock right after it, and the source
-  // at the right edge, as wide as the widest, up to 12 and two fifths of the
-  // row; names keep the rest.
+  // The room, its padlock, its source and its light in columns: the source
+  // as wide as the widest, up to 12 and two fifths of the row, against the
+  // light at the right edge, so the padlocks, sources and lights line up and
+  // names keep the most of it.
   const sourceWidth = Math.min(12, Math.max(4, Math.floor((w - 7) * 2 / 5)), Math.max(1, ...listed.map(([, shown]) => length(shown.short))));
-  const labelWidth = Math.max(4, Math.min(w - 7 - sourceWidth, Math.max(...listed.map(([room]) => length(room.label)))));
-  const ledAt = labelWidth + 2, lockAt = ledAt + 2;
+  const ledAt = w - 2, lockAt = ledAt - 1 - sourceWidth - 2, labelWidth = Math.max(4, lockAt - 2);
   listed.forEach(([room, shown]) => {
     const lock = session.roomLocked(room.id);
     const key = "room:" + room.id;
@@ -532,10 +531,10 @@ function roomsContent(g, w, ctx) {
     g.fill(0, y, w, 1, style);
     if (style === "row.current") g.put(0, y, "\u258e", "row.mark");
     g.put(1, y, fit(room.label, labelWidth), style);
-    g.put(ledAt, y, ledChar(shown.led, ctx.ui.blink), style === "row.focus" ? style : style + "+" + ledStyle(shown.led));
     if (lock.locked) g.put(lockAt, y, LOCK, style);
     const short = fit(shown.short, sourceWidth).trimEnd();
-    g.put(w - 1 - length(short), y, short, style === "row" ? "dim" : style);
+    g.put(ledAt - 1 - length(short), y, short, style === "row" ? "dim" : style);
+    g.put(ledAt, y, ledChar(shown.led, ctx.ui.blink), style === "row.focus" ? style : style + "+" + ledStyle(shown.led));
     g.hit(0, y, w, 1, { kind: "room", room: room.id, key: key, focus: true,
       label: room.label + ", " + shown.spoken + (lock.locked ? ". " + lock.text : "") });
     y += 1;

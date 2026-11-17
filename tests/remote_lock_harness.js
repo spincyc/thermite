@@ -500,11 +500,10 @@ const pause = () => new Promise(resolve => setTimeout(resolve, 5));
   const rowOf = (text, label) => text.split("\n").find(line => line.includes(label));
   const hitOf = (kind, id) => frame.grid.hits.find(entry => entry.hit.kind === kind && entry.hit.room === id).hit.label;
   frame = listed.parts.controller.frame(149, 40);
-  // The room's light, then the padlock, in columns of their own after the room; the source at the right edge.
+  // The padlock in its own column, between the room and its source; the room's light after its source, at the right edge.
   const locked = rowOf(panelText(frame, "rooms"), otherLabel), unlocked = rowOf(panelText(frame, "rooms"), roomLabel);
-  assert.match(locked, new RegExp(otherLabel + " +\u25cb \u26bf +Off $"));
-  assert.match(unlocked, new RegExp(roomLabel + " +\u25cb +Off $"));
-  assert.equal(locked.indexOf("\u25cb"), unlocked.indexOf("\u25cb"));
+  assert.match(locked, new RegExp(otherLabel + " +\u26bf +Off \u25cb $"));
+  assert.match(unlocked, new RegExp(roomLabel + " +Off \u25cb $"));
   assert.doesNotMatch(unlocked, /\u26bf/);
   assert.equal(hitOf("room", other), otherLabel + ", Off. Locked · until unlocked");
   assert.equal(hitOf("room", room), roomLabel + ", Off");

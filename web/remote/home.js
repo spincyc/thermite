@@ -55,8 +55,10 @@
     const room = house.rooms.find(room => room.id === id);
     const choice = room.sources.includes(value?.value) ? house.sources[value.value] : null;
     row.source.textContent = connected === false ? "Unknown" : choice?.label || (value?.value === "off" ? "Off" : "Unknown");
-    row.status.textContent = connected === false ? "Live unavailable" : value?.pending ? "Switching" : choice ? "Reported" : value?.value === "off" ? "Room off" : "Unknown";
-    row.element.dataset.state = connected === false ? "unavailable" : value?.pending ? "switching" : choice ? "reported" : value?.value === "off" ? "off" : "unknown";
+    // A room whose source cannot be read is a problem, as in Remotes' list.
+    const unread = value?.status === "unavailable" && !value?.pending;
+    row.status.textContent = connected === false ? "Live unavailable" : value?.pending ? "Switching" : unread ? "Source unknown" : choice ? "Reported" : value?.value === "off" ? "Room off" : "Unknown";
+    row.element.dataset.state = connected === false || unread ? "unavailable" : value?.pending ? "switching" : choice ? "reported" : value?.value === "off" ? "off" : "unknown";
   }
   // What a room's speakers play (listen-session.js status): its title, else nothing or not known.
   function hear(id) {

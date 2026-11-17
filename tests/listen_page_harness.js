@@ -116,8 +116,8 @@ function page(room, options = {}) {
 }
 
 // The room sheet's rows: in Watch the rooms with a screen, in Listen those
-// with speakers, what each plays; the light and the padlock in columns of
-// their own, the source alone in its cell.
+// with speakers, what each plays; the padlock in its own column, the light
+// after the source in its cell.
 async function rooms(out) {
   const p = page(WATCH);
   const {time, $, all, words, key} = p;
@@ -675,6 +675,11 @@ async function home(out) {
   await time.tick(1500);
   const rows = () => all('[data-home-rooms] tr').map((row) => row.children.map((cell) => words(cell)));
   out.watch = [rows(), $('[data-home-modes]').hidden, words($('[data-home-what]')), all('[data-home-rooms] a').map((link) => link.getAttribute('href'))];
+  // A room whose source cannot be read is a problem, its light in the problem colour.
+  const west = p.made.home.snapshot('example_west');
+  p.made.home.emit({type: 'state', room: 'example_west', state: Object.assign({}, west, {value: 'UNDEF', status: 'unavailable'})});
+  out.unread = [rows()[0], $('[data-home-rooms] tr').dataset.state];
+  p.made.home.emit({type: 'state', room: 'example_west', state: west});
   // Two icons, as the remote's; each radio named by its label.
   out.icons = all('[data-home-modes] [data-mode]').map((option) => [option.getAttribute('aria-label'), option.title, words(option),
     option.querySelector('use').getAttribute('href')]);

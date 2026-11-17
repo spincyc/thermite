@@ -1514,11 +1514,6 @@ button {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.room__name {
-  display: grid;
-  min-width: 0;
-}
-
 .room__label {
   overflow: hidden;
   font-weight: 620;
@@ -1526,7 +1521,7 @@ button {
   text-overflow: ellipsis;
 }
 
-/* What the room's source plays, under its name. */
+/* What the room's source plays, under its name (in the room lists, across the row). */
 .room__playing {
   overflow: hidden;
   white-space: nowrap;
@@ -1558,15 +1553,14 @@ button {
   text-overflow: ellipsis;
 }
 
-/* The house's rooms share four columns, so the lights, padlocks and sources
-   line up: the name, as wide as the widest; right after it the room's light
-   and padlock; and the source, as wide as the widest source and at most 42%,
-   at the right edge, what is spare before it. Short of room, names and
-   sources share it and ellipsize. What plays runs under them, the row's
-   width. Without subgrid each row keeps a 42% source column of its own and
-   names the rest, aligned too. */
+/* The house's rooms share three columns, name, padlock and source, so the
+   padlocks, sources and lights line up: the source column is as wide as the
+   widest source and its light, at most 42%, the light at the right edge and
+   the source against it, and names have the rest. What plays runs under the
+   row. Without subgrid each row keeps a 42% source column of its own,
+   aligned too. */
 .rooms--house {
-  grid-template-columns: minmax(0, max-content) 8px minmax(14px, 1fr) fit-content(42%);
+  grid-template-columns: minmax(0, 1fr) 14px fit-content(42%);
   column-gap: var(--space-3);
 }
 
@@ -1579,15 +1573,10 @@ button {
 }
 
 .rooms--house .room {
-  grid-template-columns: minmax(0, 1fr) 8px 14px minmax(0, 42%);
+  grid-template-columns: minmax(0, 1fr) 14px minmax(0, 42%);
   grid-template-columns: subgrid;
   align-content: center;
   row-gap: 0;
-}
-
-/* The light, padlock and source on the name's line, what plays under it. */
-.rooms--house .room__name {
-  display: contents;
 }
 
 .rooms--house .room__playing {

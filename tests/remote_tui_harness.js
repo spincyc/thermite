@@ -525,7 +525,7 @@ async function startup(proof) {
   size = [150, 50];
   key(parts, "y");
   await until(parts, () => parts.diagnosed.length, "the west room's signal");
-  proof.startup.walk = [...room(parts), parts.diagnosed.slice(), text(parts).split("\n").some((line) => /Example East +● +Computer/.test(line))];
+  proof.startup.walk = [...room(parts), parts.diagnosed.slice(), text(parts).split("\n").some((line) => /Example East +Computer ●/.test(line))];
   controller.stop();
   parts = await open({ gateway: true, screen: "settings", store: kept(LOUNGE) });
   await until(parts, () => text(parts).includes("Edit schedule"), "the schedule");
