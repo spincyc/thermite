@@ -362,8 +362,10 @@ A device that does better after a restart can restart every night. Give it
 "03:00"}` sets when, in the host's time zone; 03:00 is the default. Only a
 device Thermite can restart without cutting its power can opt in: an
 HDFury VRROOM, a Denon or Marantz receiver under HEOS control, or an OREI
-UKM-404 USB matrix (or a rebadge of it), which its own web page's Reboot
-command restarts with each port's host kept. Whether
+UKM-404 USB matrix (or a rebadge of it), whose own web page's Reboot
+command restarts its controller with each port's host kept. That does not
+restart the matrix's network module, so it does not cure a matrix whose
+web page or network has stopped answering. Whether
 a receiver's HEOS restart also restarts its audio and video processing,
 and not only its network module, is not confirmed. Apple TVs have no such
 command, and a SHIELD needs ADB, which Thermite does not use.
@@ -375,7 +377,12 @@ a zone on, a VRROOM whose input has a signal, or a USB matrix while a room
 whose USB ports it switches is on. A VRROOM whose web page has
 stopped answering while its telnet port still answers is restarted anyway,
 since that hang is what the restart cures. After each restart
-Thermite waits up to five minutes for the device to answer again. A
+Thermite waits up to five minutes for the device to answer again. A USB
+matrix's controller restarts in about half a second while its network
+module keeps answering, so Thermite listens on the matrix's console (TCP
+port 8000) instead, sending nothing, and counts it back once the console
+says it started and the matrix still answers a poll later; it skips the
+matrix if the console does not open. A
 device that does not come back is left to its health alerts, and nothing
 cuts its power. To try a device before opting it in, or to see how each
 device's last reboot went:

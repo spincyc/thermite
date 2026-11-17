@@ -1578,8 +1578,9 @@ examples:
 Restart a device as the nightly reboots do (lib/oh_features/reboots):
 production thermite restarts it only if it answers and is idle (a receiver
 with every zone off, a switch whose input has no signal, a USB matrix whose
-rooms are all Off), then waits for it to stop answering and answer again,
-and reports how that went. DEVICE
+rooms are all Off), then waits for it to stop answering and answer again
+(a USB matrix: for its console to say it started), and reports how that
+went. DEVICE
 need not have `reboot: nightly` in the house file; it needs an integration
 under control that can restart it without cutting its power. Without
 DEVICE, each such device: whether it restarts nightly, and its last
@@ -1601,8 +1602,8 @@ switches every verb takes:
 
 exit status:
   0  the device is back, or the list was shown
-  1  it was skipped (in use, or not answering), was not seen to restart,
-     or did not answer again in time
+  1  it was skipped (in use, not answering, or its console does not
+     open), was not seen to restart, or did not answer again in time
   2  the house file is invalid, no such device thermite can restart, or
      thermite could not be reached or has no house_reboot Item
 

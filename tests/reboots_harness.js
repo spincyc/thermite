@@ -1,8 +1,11 @@
 'use strict';
 // Runs the production nightly reboots rule against stub openHAB, a fake
-// clock and its timers. argv: reboots.js.
+// clock and its timers, and a fake bounded I/O for the matrix's console
+// that has no write; one test embeds the real _io.js, as the renderer does,
+// over a scripted socket (integration_io_harness.js). argv: reboots.js
+// _io.js.
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
-const source = fs.readFileSync(process.argv[2], 'utf8');
+const [source, ioSource] = process.argv.slice(2).map(path => fs.readFileSync(path, 'utf8'));
 const tests = [];
 function test(name, fn) { fn(); tests.push(name); }
 
@@ -12,16 +15,26 @@ const SWITCH = { id: 'sw', nightly: true, item: 'sw_reboot', answers: ['sw_input
   idle: [{ item: 'sw_signal', field: 'RX0', is: 'no signal', maxAge: 125, unreadIsIdle: true }] };
 const OTHER = { id: 'other', nightly: false, item: 'other_reboot', answers: ['other_input'], things: [],
   signs: [], idle: [] };
-const TABLE = { item: 'house_reboot', command: 'reboot', time: '03:00', cron: '0 0 3 * * ?', devices: [RECEIVER, SWITCH, OTHER] };
+const MATRIX = { id: 'usb', nightly: false, item: 'usb_reboot', answers: ['usb_device1_host'], things: ['http:url:usb'],
+  signs: [], idle: [{ item: 'loc_den_source', is: 'off' }],
+  console: { host: '192.0.2.21', port: 8000, ready: 'initialization finished!', polled: 12 } };
+const TABLE = { item: 'house_reboot', command: 'reboot', time: '03:00', cron: '0 0 3 * * ?',
+  devices: [RECEIVER, SWITCH, OTHER, MATRIX] };
+// What the matrix's controller prints as it starts.
+const BOOT = ['4x4 USB3.2 Gen1 Matrix Switcher', 'system initializing...', 'initialization finished!',
+  'mcu fw version : v1.00.05'];
 const START = Date.UTC(2026, 10, 14, 9, 0, 0);
 
-function load({ kept = 'NULL', unreadIsIdle = true } = {}) {
+// With `chunks`, the console is a socket that reads them in turn.
+function load({ kept = 'NULL', unreadIsIdle = true, refused = false, send = true, chunks = null } = {}) {
   const clock = { now: START };
   const signal = (rx0, age = 0) => JSON.stringify({ version: 1, observedAt: clock.now - age * 1000, values: { RX0: rx0 } });
   const items = { house_reboot: kept, rx_main_power: 'OFF', rx_zone2_power: 'OFF', sw_input: '1', sw_signal: signal('no signal'),
-    other_input: '2', rx_reboot: 'NULL', sw_reboot: 'NULL', other_reboot: 'NULL' };
-  const things = { 'denonmarantz:avr:rx': { status: 'ONLINE' } };
-  const commands = [], logs = [], rules = {};
+    other_input: '2', rx_reboot: 'NULL', sw_reboot: 'NULL', other_reboot: 'NULL', usb_device1_host: '4',
+    loc_den_source: 'off', usb_reboot: 'NULL' };
+  const things = { 'denonmarantz:avr:rx': { status: 'ONLINE' }, 'http:url:usb': { status: 'ONLINE' } };
+  // events: each console opened and each command, in order.
+  const commands = [], logs = [], rules = {}, consoles = [], disposers = [], events = [];
   let timers = [];
   const openhab = {
     items: { getItem(name, nullable) {
@@ -29,7 +42,10 @@ function load({ kept = 'NULL', unreadIsIdle = true } = {}) {
       if (!(name in items)) return null;
       return { get state() { return items[name]; },
         postUpdate(value) { items[name] = String(value); },
-        sendCommand(value) { commands.push([name, String(value), clock.now - START]); } };
+        sendCommand(value) {
+          events.push(`command ${name}`);
+          commands.push([name, String(value), clock.now - START]);
+        } };
     } },
     things: { getThing: uid => things[uid] || null },
     rules: { JSRule(rule) { rules[rule.id] = rule; } },
@@ -39,19 +55,67 @@ function load({ kept = 'NULL', unreadIsIdle = true } = {}) {
     constructor(...args) { super(...(args.length ? args : [clock.now])); }
     static now() { return clock.now; }
   }
+  // Each console holds the lines it has sent and not been read; a read
+  // that finds none runs out its short wait.
+  const thermiteIO = {
+    deadline: ms => clock.now + ms,
+    open(host, port) {
+      if (refused) throw new Error('Connection refused');
+      const link = { host, port, opened: clock.now - START, lines: [], closed: false };
+      consoles.push(link);
+      events.push(`open ${host}:${port}`);
+      return link;
+    },
+    line(link, timeout, keep) {
+      assert.equal(keep, true);
+      if (link.closed) return null;
+      if (link.lines.length) return link.lines.shift();
+      throw new Error('device operation deadline exceeded');
+    },
+    close(link) { link.closed = true; },
+  };
+  let runtime = { lifecycleTracker: { addDisposeHook: fn => disposers.push(fn) } }, Java;
+  if (chunks) {
+    const classes = {};
+    ({ runtime } = require('./integration_io_harness.js').install(classes, {}, { Socket: class {} }));
+    classes['java.net.InetSocketAddress'] = class { constructor(address, port) { Object.assign(this, { address, port }); } };
+    classes['java.nio.channels.SocketChannel'] = class {
+      static open() { const channel = new this(); consoles.push(channel); return channel; }
+      configureBlocking() {} register() {}
+      connect({ address, port }) {
+        Object.assign(this, { host: address, port, opened: clock.now - START });
+        events.push(`open ${address}:${port}`);
+        return true;
+      }
+      read(buffer) {
+        if (!chunks.length) return 0;
+        const chunk = chunks.shift();
+        for (const c of chunk) buffer.bytes[buffer.pos++] = c.charCodeAt(0);
+        return chunk.length;
+      }
+      write() { assert.fail('nothing is sent to the console'); }
+      close() { this.closed = true; }
+    };
+    Java = { type: name => classes[name] || assert.fail('unexpected Java type ' + name), to: values => values };
+  }
   const context = vm.createContext({
-    require: name => name === 'openhab' ? openhab : assert.fail('unexpected module ' + name),
+    require: name => ({ openhab, '@runtime': runtime })[name] || assert.fail('unexpected module ' + name),
+    ...(chunks ? { Java } : { thermiteIO }),
     console: { info: m => logs.push(`info: ${m}`), warn: m => logs.push(`warn: ${m}`) },
     setTimeout: (fn, ms) => { const timer = { at: clock.now + ms, fn }; timers.push(timer); return timer; },
+    clearTimeout: timer => { timers = timers.filter(other => other !== timer); },
     Date: FakeDate, JSON, Map, Object, String, Number, Math, Array,
   });
   const table = JSON.parse(JSON.stringify(TABLE));
   table.devices[1].idle[0].unreadIsIdle = unreadIsIdle;
-  vm.runInContext(source.replace('const TABLE = null;', `const TABLE = ${JSON.stringify(table)};`), context);
+  const rule = source.replace('const TABLE = null;', `const TABLE = ${JSON.stringify(table)};`)
+    .replace('// THERMITE_BOUNDED_IO', () => chunks ? ioSource : '');
+  vm.runInContext(send ? rule : rule.replace('const SEND = true;', 'const SEND = false;'), context);
   assert.deepEqual(rules.reboots_nightly.triggers, [{ cron: '0 0 3 * * ?' }]);
   assert.deepEqual(rules.reboots_command.triggers, [{ item: 'house_reboot' }]);
   return {
-    items, things, commands, logs, signal,
+    items, things, commands, logs, signal, consoles, events, openhab,
+    dispose() { for (const fn of disposers) fn(); },
     // Runs every timer due within `ms`, in order, after `before` (at each
     // second) has set what the devices report. The switch's web page keeps
     // its snapshot fresh.
@@ -156,6 +220,107 @@ test('a device that keeps answering was not seen to restart; one that stays away
   assert.deepEqual(away.report().sw, { at: new Date(START + 300_000).toISOString(), by: 'schedule', outcome: 'not back',
     detail: 'it does not answer', seconds: 300 });
   assert.equal(away.logs[away.logs.length - 1], 'warn: reboot sw: not back (it does not answer) after 300 s');
+});
+
+test('a device with a console is back once it says it started and answers a poll later; nothing is sent there', () => {
+  const r = load();
+  r.command('usb');
+  assert.deepEqual(r.events, ['open 192.0.2.21:8000', 'command usb_reboot']);
+  // Its greeting to each connection is not a start.
+  r.consoles[0].lines.push('****welcome**** fw version :v1.00.05');
+  // It restarts in half a second; its Items never show it.
+  r.advance(13_000, at => { if (at === 1000) r.consoles[0].lines.push(...BOOT); });
+  assert.equal(r.report().usb.outcome, 'rebooting');
+  r.advance(2000);
+  assert.deepEqual(r.report().usb, { at: new Date(START + 14_000).toISOString(), by: 'command', outcome: 'back', seconds: 14 });
+  assert.equal(r.consoles[0].closed, true);
+  assert.equal(r.pending(), 0);
+  // One whose ports stop reading as it starts is back once they read again.
+  const away = load();
+  away.command('usb');
+  away.advance(20_000, at => {
+    if (at === 1000) away.consoles[0].lines.push(...BOOT);
+    away.items.usb_device1_host = at < 11_000 ? 'UNDEF' : '4';
+  });
+  assert.deepEqual([away.report().usb.outcome, away.report().usb.seconds], ['back', 12]);
+});
+
+test('a console that does not say it started, or does not open, or is not to be opened', () => {
+  const quiet = load();
+  quiet.command('usb');
+  quiet.consoles[0].lines.push('****welcome**** fw version :v1.00.05');
+  quiet.advance(31_000);
+  assert.deepEqual(quiet.report().usb, { at: new Date(START + 30_000).toISOString(), by: 'command',
+    outcome: 'no restart seen', detail: 'its console never said it started', seconds: 30 });
+  assert.equal(quiet.consoles[0].closed, true);
+  // One that says it started but stops answering is not back.
+  const gone = load();
+  gone.command('usb');
+  gone.advance(301_000, at => {
+    if (at === 1000) gone.consoles[0].lines.push(...BOOT);
+    if (at === 10_000) gone.items.usb_device1_host = 'UNDEF';
+  });
+  assert.deepEqual([gone.report().usb.outcome, gone.report().usb.seconds], ['not back', 300]);
+  assert.equal(gone.consoles[0].closed, true);
+  const closed = load();
+  closed.command('usb');
+  closed.consoles[0].closed = true;
+  closed.advance(31_000);
+  assert.equal(closed.report().usb.outcome, 'no restart seen');
+  const refused = load({ refused: true });
+  refused.command('usb');
+  assert.deepEqual([refused.commands, refused.report().usb.outcome, refused.report().usb.detail],
+    [[], 'skipped', 'its console does not open: Error: Connection refused']);
+  // The read-only copy opens no console, and watches its Items as any other.
+  const silent = load({ send: false });
+  silent.command('usb');
+  assert.deepEqual([silent.commands.length, silent.consoles], [1, []]);
+  silent.advance(91_000);
+  assert.deepEqual([silent.report().usb.outcome, silent.report().usb.detail], ['no restart seen', 'it kept answering']);
+});
+
+test('the real bounded I/O keeps a line the console has not finished, and the console, for the next read', () => {
+  const chunks = [];
+  const r = load({ chunks });
+  r.command('usb');
+  assert.deepEqual(r.events, ['open 192.0.2.21:8000', 'command usb_reboot']);
+  chunks.push('****welcome**** fw version :v1.00.05\r\n');
+  r.advance(2000, at => {
+    if (at === 1000) chunks.push('\r\n4x4 USB3.2 Gen1 Matrix Switcher\r\nsystem initializing...\r\ninitialization fin');
+  });
+  assert.equal(r.report().usb.outcome, 'rebooting');
+  assert(!r.consoles[0].closed);
+  r.advance(14_000, at => { if (at === 3000) chunks.push('ished!\r\nmcu fw version : v1.00.05\r\n'); });
+  assert.deepEqual([r.report().usb.outcome, r.report().usb.seconds], ['back', 16]);
+  assert(r.consoles[0].closed);
+});
+
+test('a reload stops the reboot under way and the wait before the next, and closes the console', () => {
+  const r = load();
+  r.command('usb');
+  r.dispose();
+  assert.equal(r.consoles[0].closed, true);
+  assert.equal(r.pending(), 0);
+  const waiting = load();
+  waiting.command('usb');
+  waiting.command('other');
+  waiting.advance(31_000);
+  assert.equal(waiting.report().usb.outcome, 'no restart seen');
+  assert.equal(waiting.pending(), 1, 'the next waits its gap');
+  waiting.dispose();
+  assert.equal(waiting.pending(), 0);
+  load().dispose();
+});
+
+test('a command that cannot be sent closes the console', () => {
+  const r = load();
+  const getItem = r.openhab.items.getItem;
+  r.openhab.items.getItem = (name, nullable) => Object.assign(getItem(name, nullable) || {},
+    name === 'usb_reboot' ? { sendCommand() { throw new Error('no such Item'); } } : {});
+  r.command('usb');
+  assert.deepEqual([r.report().usb.outcome, r.report().usb.detail], ['not sent', 'Error: no such Item']);
+  assert.equal(r.consoles[0].closed, true);
+  assert.equal(r.pending(), 0);
 });
 
 test('a command restarts one device now, nightly or not, past the same checks', () => {

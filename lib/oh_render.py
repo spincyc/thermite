@@ -142,7 +142,8 @@ def read_only(files: dict[str, str | bytes]) -> dict[str, str | bytes]:
     declaration turned into RULE_SILENT (and
     avpro_telnet's, vrroom_telnet's and sony_adcp's then read nothing
     either: the matrix and the switch serve few sessions, the projector one
-    request at a time, and the live runtime holds theirs); and a rule with none (but ITEM_ONLY_RULES),
+    request at a time, and the live runtime holds theirs; the reboots rule
+    opens no USB matrix console); and a rule with none (but ITEM_ONLY_RULES),
     Things or Items in a format it cannot read, or a guard without the
     add-on that runs it, is a ValueError."""
     out = dict(files)

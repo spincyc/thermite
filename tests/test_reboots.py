@@ -25,7 +25,7 @@ import yaml  # noqa: E402
 from oh_cli import reboot as cli  # noqa: E402
 from oh_conf import House  # noqa: E402
 from oh_features import reboots  # noqa: E402
-from oh_integrations import ukm404_http  # noqa: E402
+from oh_integrations import _io, ukm404_http  # noqa: E402
 from tests.test_zone_sync import HOUSE as ROUTED  # noqa: E402
 
 SWITCH = {"id": "example_switch", "room": "example_desk", "kind": "hdmi_switch", "make": "HDFury", "model": "VRROOM",
@@ -131,7 +131,8 @@ class UsbMatrix(unittest.TestCase):
             "id": "example_usb", "nightly": True, "item": "example_usb_reboot",
             "answers": ["example_usb_device1_host"], "things": ["http:url:example_usb"], "signs": [],
             "idle": [{"item": "loc_example_cinema_source", "is": "off"},
-                     {"item": "loc_example_lounge_source", "is": "off"}]}])
+                     {"item": "loc_example_lounge_source", "is": "off"}],
+            "console": {"host": "192.0.2.21", "port": 8000, "ready": "initialization finished!", "polled": 12}}])
 
     def test_a_usb_matrix_no_room_switches_cannot_restart_nightly(self):
         data = routed()
@@ -195,9 +196,12 @@ class Render(unittest.TestCase):
         for ident in ("example_receiver", "example_small_receiver", "example_switch"):
             self.assertEqual(items[f"{ident}_reboot"]["metadata"], {"commandDescription": {"config": {"options": "reboot=Reboot"}}})
             self.assertIs(items[f"{ident}_reboot"]["autoupdate"], False)
-        # It commands Items only: the read-only copy keeps it as it is.
-        self.assertIn(reboots.RULE, render.ITEM_ONLY_RULES)
-        self.assertEqual(render.read_only(files)[reboots.RULE], text)
+        # It listens on a USB matrix's console through the bounded I/O; the
+        # read-only copy opens none.
+        self.assertIn("const thermiteIO = ", text)
+        self.assertNotIn(reboots.RULE, render.ITEM_ONLY_RULES)
+        self.assertEqual(render.read_only(files)[reboots.RULE],
+                         text.replace("\nconst SEND = true;\n", "\nconst SEND = false;\n"))
 
     def test_a_house_with_nothing_to_restart_has_no_rule(self):
         files = render.render(house(devices=[TV]))
@@ -214,10 +218,11 @@ class Render(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "node is required for the production reboots rule")
 class Rule(unittest.TestCase):
     def test_the_production_rule(self):
-        result = subprocess.run([shutil.which("node"), str(AREA / "tests/reboots_harness.js"), str(reboots.SOURCE)],
+        result = subprocess.run([shutil.which("node"), str(AREA / "tests/reboots_harness.js"), str(reboots.SOURCE),
+                                 str(_io.SOURCE)],
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 6)
+        self.assertEqual(json.loads(result.stdout)["passed"], 11)
 
 
 class FakeOpenHAB:

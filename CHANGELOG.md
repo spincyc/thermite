@@ -176,7 +176,14 @@ rollback. The unified deployment workflow uses a separate committed private site
     sends, and it keeps each port's host. Nothing it reports shows a port
     in use, so it restarts only while every room whose USB ports it
     switches is Off; `generate` refuses `reboot: nightly` on a matrix no
-    room lists. Its `<id>_reboot` Item writes through a write-only channel
+    room lists. That restarts its controller, in about half a second, but
+    not the network module in front of it, which keeps answering, so its
+    Items cannot show the restart: thermite listens on the matrix's
+    console (TCP port 8000) from before the command, sending nothing, and
+    counts it back once the console prints `initialization finished!` and
+    its ports still read a poll later; it skips a matrix whose console does
+    not open. Its
+    `<id>_reboot` Item writes through a write-only channel
     that sends nothing for any other command. In the read-only copy that
     channel shares the ports' poll, and the read-only copy now guards the
     Items of every channel that was write-only, since openHAB's HTTP

@@ -6,13 +6,15 @@ commanding the Item. The matrix cannot detach a port; parking it on a host
 with nothing cabled does that.
 
 `<id>_reboot` (String), commanded `reboot`, sends `set_system_reboot`, as
-the Reboot button on the matrix's own System page does: it restarts and
-keeps each port's host. Only a matrix with `reboot: nightly` restarts
-unasked, at night while every room whose device ports it switches is Off
-(reboot(), oh_features.reboots).
+the Reboot button on the matrix's own System page does: its controller
+restarts, in about half a second, and keeps each port's host. Only a matrix
+with `reboot: nightly` restarts unasked, at night while every room whose
+device ports it switches is Off (reboot(), oh_features.reboots).
 """
 
 from __future__ import annotations
+
+import math
 
 from oh_conf import House, YamlFile, uses
 
@@ -39,6 +41,14 @@ COMHEADS = frozenset({"get_matrix_status", "host_switch", "set_system_reboot"})
 REBOOT = "JS(|input === 'reboot' ? JSON.stringify({comhead:'set_system_reboot'}) : null)"
 #: A state transformation that keeps nothing of a reply.
 NOTHING = "JS(|null)"
+#: The TCP port where the controller prints what it does, and the line it
+#: prints once it has started. The network module in front of it keeps
+#: answering while it restarts.
+CONSOLE_PORT = 8000
+READY = "initialization finished!"
+#: Seconds after which its Items have been polled again: one poll and its
+#: timeout.
+POLLED = instr.REFRESH + math.ceil(instr.TIMEOUT / 1000)
 thing_uid = instr.thing_uid
 url = instr.url
 
@@ -71,10 +81,11 @@ def reboot_item(device: dict) -> str:
 
 def reboot(device: dict) -> dict:
     """Nightly reboots (oh_features.reboots): the matrix answers while its
-    ports read. Nothing it reports shows that a port is in use, so it has no
-    idle readings of its own; oh_features.reboots adds its rooms'."""
+    ports read, and restarts too briefly for that to show, so its console
+    says when it has; it is back once they still read a poll later. Nothing it reports shows that a port is in use, so it
+    has no idle readings of its own; oh_features.reboots adds its rooms'."""
     return {"item": reboot_item(device), "answers": [switch_item(device, 1)], "things": [thing_uid(device)],
-            "idle": []}
+            "idle": [], "console": {"host": device.get("ip"), "port": CONSOLE_PORT, "ready": READY, "polled": POLLED}}
 
 
 def validate(device: dict) -> list[str]:
