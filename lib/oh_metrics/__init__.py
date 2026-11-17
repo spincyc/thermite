@@ -425,7 +425,9 @@ def select_point(name: str, item: dict) -> tuple[str, str] | None:
     Item tagged with the property Power, SoundVolume or Channel (power,
     power state, volume, mute, input), plus the Number Items a matrix or
     switch is commanded with (routing) and a Number measuring a device's
-    temperature or a battery's charge (MEASURED). Not kept: `<id>_online` (its Thing's
+    temperature or a battery's charge (MEASURED). A speaker's playing state
+    is kept too, from its audio page (exporter_map() `playing` points).
+    Not kept: `<id>_online` (its Thing's
     status says the same), EDID selections (fixed settings), titles,
     artists and apps (what a device plays is kept once, joined, as
     thermite_playing_timestamp_seconds: exporter_map() `playing`), and keys
@@ -452,9 +454,13 @@ def select_point(name: str, item: dict) -> tuple[str, str] | None:
 def exporter_map(inventory: dict, conf=None) -> dict:
     """The exporter's map: every device with its Things, and every Item kept
     (select_point()) with how its state becomes a number, plus each room's
-    Source selector."""
+    Source selector and each speaker's playing state: the state Item of its
+    audio page (oh_integrations audio(), as the remotes' Listen reads it),
+    with the page's playing values and its title Item, which tell a track
+    from TV audio or line-in (exporter PLAYING_TRACK)."""
     import oh_conf
     import oh_integrations
+    from oh_features import remote_model
 
     conf = conf if conf is not None else _build(inventory)
     house = oh_conf.House(inventory)
@@ -491,6 +497,12 @@ def exporter_map(inventory: dict, conf=None) -> dict:
         for name, power in oh_integrations.powered(device, dict(conf.points(ident))).items():
             if name in kept and power in kept:
                 kept[name]["power"] = power
+        page = remote_model.audio_page(device) or {}
+        state, title = page.get("state") or {}, (page.get("track") or {}).get("title")
+        if state.get("item") in dict(conf.points(ident)) and state.get("playing"):
+            items[state["item"]] = {"device": ident, "room": device["room"], "kind": device["kind"], "point": "playing",
+                                    "convert": "playing", "playing": [str(value) for value in state["playing"]],
+                                    **({"title": title} if title in dict(conf.points(ident)) else {})}
     for file in conf.yaml.values():
         for name, item in file.items.items():
             groups = item.get("groups") or []
@@ -562,6 +574,9 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
     availability checks; an optional Cast observer cannot invalidate working
     Sony control.
     Infrastructure serving routing is monitored even when every zone is Off.
+    A speaker (a `playing` point, exporter_map()) is in use while it plays,
+    or did within alerts.IN_USE: its demand is {"item": its playing Item,
+    "playing": True}.
     Each check names its device and what it checks (CHECKS); a device marked
     `monitor: optional` in the house file is shown but never required. The
     exporter ignores these map fields: alerts.rules() records them as
@@ -638,6 +653,9 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
     for ident, device in devices.items():
         if device.get("kind") in ("hdmi_matrix", "usb_matrix", "hdmi_switch"):
             device_checks(ident, None)
+    for name, spec in sorted(items.items()):
+        if spec.get("point") == "playing":
+            device_checks(spec["device"], {"item": name, "playing": True})
     return paths, list(checks.values())
 
 

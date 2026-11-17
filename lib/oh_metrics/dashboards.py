@@ -113,6 +113,8 @@ ONLINE = value_map({0: ("Offline", FAIL), 1: ("Online", OK)})
 OPEN = value_map({0: ("Closed", FAIL), 1: ("Open", OK)})
 PROBLEM = value_map({0: ("None", OK), 1: ("Reported", WARN)})
 NEEDED = value_map({0: ("No", OFF), 1: ("Yes", IN_USE)})
+#: A speaker's playing state (exporter_map() `playing` points).
+PLAYBACK = value_map({0: ("Idle", OFF), 1: ("TV or line-in", IN_USE), 2: ("Playing", IN_USE)})
 CHECK_STATE = value_map({-1: ("Unknown", UNKNOWN), 0: ("OK", OK), 1: ("Failing", FAIL)})
 CONTROL = value_map({-1: ("Unknown", UNKNOWN), 0: ("Ready", OK), 1: ("Needs attention", FAIL)})
 REMOTES = value_map({0: ("OK", OK), 1: ("Timing out", WARN), 2: ("Not live", FAIL), 3: ("Gateway down", FAIL)})
@@ -492,6 +494,31 @@ def _device_words(mapping: dict) -> dict:
     return {ident: device.get("label", ident) for ident, device in (mapping.get("devices") or {}).items()}
 
 
+def _speakers(mapping: dict) -> list[tuple[str, str, str]]:
+    """(playing Item, device, room) of each speaker (a `playing` point),
+    by room label, then device label."""
+    rooms, devices = mapping.get("rooms") or {}, mapping.get("devices") or {}
+    found = [(name, spec["device"], str(spec.get("room", ""))) for name, spec in (mapping.get("items") or {}).items()
+             if spec.get("point") == "playing" and spec.get("device")]
+    return sorted(found, key=lambda row: (rooms.get(row[2], row[2]), (devices.get(row[1]) or {}).get("label", row[1])))
+
+
+def _speaker_rooms(mapping: dict) -> list[str]:
+    """The rooms of the speakers, in _speakers()' order."""
+    return list(dict.fromkeys(room for _, _, room in _speakers(mapping)))
+
+
+def _listening_timeline(mapping: dict) -> dict:
+    """Each speaker room's playing state through the range."""
+    rooms = mapping.get("rooms") or {}
+    queries = [(f'max(thermite_item_value{{point="playing",room={_q(room)}}})', rooms.get(room, room))
+               for room in _speaker_rooms(mapping)]
+    return state_timeline("Listening through the day", queries, PLAYBACK,
+                          "Each room's speakers as they report themselves every 30 s. Playing: one plays a track. TV "
+                          "or line-in: one plays sound with no track named, such as a soundbar's TV audio. Idle: "
+                          "paused or stopped. A gap: none answered.", show_values=True)
+
+
 def _points(mapping: dict, device: str) -> set[str]:
     return {spec["point"] for spec in (mapping.get("items") or {}).values() if spec.get("device") == device}
 
@@ -600,16 +627,29 @@ def _since(panel: dict) -> dict:
 def house(mapping: dict, probes: list[dict]) -> dict:
     board = Board()
     zones = _zones(mapping)
+    speakers = _speakers(mapping)
+    # With speakers, a tile of their own: three of the others narrow to make room.
+    narrow = 3 if speakers else 4
     board.add(stat("Control", alerts.HEALTH, mappings=CONTROL,
-                   description="Every check a room's selected source needs, routing infrastructure, the runtime "
-                               "and monitoring. A sleeping device no room uses is never a failure; a missing "
-                               "report is Unknown. Needs attention now lists the checks. This checks control, not "
-                               "picture or sound."), 4, 4)
+                   description="Every check a room's selected source needs, routing infrastructure, each speaker "
+                               f"in use (it played in the last {alerts.IN_USE}, or was playing when it stopped "
+                               "answering), the runtime and monitoring. A sleeping device no room uses, or an idle "
+                               "speaker, is never a failure; a missing report is Unknown. Needs attention now "
+                               "lists the checks. This checks control, not picture or sound."), 4, 4)
     ready = (f'count(count by (zone) ({alerts.CHECK}{{check="source"}} == 0) unless on(zone) '
              f'({alerts.CHECK}{{required="true",zone!=""}} != 0)) or vector(0)')
     board.add(stat("Rooms ready", ready, f"suffix: of {len(zones)}", steps=((WARN, None), (OK, len(zones) or 1)),
                    description="Routing zones whose source is known and whose required checks all pass. A zone "
-                               "that is Off and reports Off is ready."), 4, 4)
+                               "that is Off and reports Off is ready."), narrow, 4)
+    if speakers:
+        names = "|".join(re.escape(device) for _, device, _ in speakers)
+        answering = f'count(max by (device) (abs({alerts.CHECK}{{device=~{_q(names)}}})) == 0) or vector(0)'
+        board.add(stat("Speakers ready", answering, f"suffix: of {len(speakers)}",
+                       steps=((WARN, None), (OK, len(speakers))),
+                       description="Speakers whose checks all pass: the runtime reaches each, playing or idle. One "
+                                   "that does not answer is a failure only while in use (Control): it played in "
+                                   f"the last {alerts.IN_USE}, or was playing when it stopped answering."),
+                  narrow, 4)
     # Only where the gateway is installed, as for ThermiteGatewayDown: elsewhere its probe always fails.
     down = f'(max(probe_success{{job="{alerts.GATEWAY_JOB}"}}) == bool 0) and on() ({alerts.GATEWAY_INSTALLED})'
     stale = 'max(min_over_time(thermite_gateway_upstream_state{state="connecting"}[5m])) or vector(0)'
@@ -624,7 +664,7 @@ def house(mapping: dict, probes: list[dict]) -> dict:
                                "yet."), 4, 4)
     board.add(stat("Alerts firing", 'count(ALERTS{alertstate="firing",alertname!="ThermiteWatchdog"}) or vector(0)',
                    steps=((OK, None), (WARN, 1)), description="Alerts firing now, without the monitoring heartbeat."),
-              4, 4)
+              narrow, 4)
     phone = stat("Phone delivery", "", description="Alerts reach a local ntfy that listens on this host only, so "
                  "no phone receives them yet. Subscribers: clients of that ntfy now. Last delivered: since ntfy "
                  "last accepted an alert or the heartbeat.")
@@ -646,7 +686,7 @@ def house(mapping: dict, probes: list[dict]) -> dict:
                      description="Scrape targets down, failed Thermite units and file systems under 10% free. "
                                  "The Host board says which.")
     host_tile["fieldConfig"]["defaults"]["thresholds"] = _thresholds((OK, None), (FAIL, 1))
-    board.add(host_tile, 4, 4)
+    board.add(host_tile, narrow, 4)
     board.add(_attention(mapping), 14, 8)
     # Routing's counts read 0 only while its telemetry is valid, else
     # Unknown; device failures only where an executor counts them, while its
@@ -684,6 +724,8 @@ def house(mapping: dict, probes: list[dict]) -> dict:
                   24, max(6, len(queries) + 2))
     else:
         board.add(note("No routing zones", "This house has no routed source Items; Devices shows each device."), 24, 3)
+    if speakers:
+        board.add(_listening_timeline(mapping), 24, max(5, len(_speaker_rooms(mapping)) + 2))
     # Every zone's series is there at zero from routing's first report, and the quantile of no changes is
     # NaN: only a room with a confirmed change in the range gets a row, so an idle house reads "No source
     # changes".
@@ -711,8 +753,9 @@ def house(mapping: dict, probes: list[dict]) -> dict:
     height = max(6, min(len(zones), 12) + 2)
     board.add(_since(switch), 12, height)
     board.add(_firing(mapping), 12, height)
-    return dashboard(HOUSE, board, "Is the house OK? Control, rooms, remotes, alerts, phone delivery and the host; "
-                     "what needs attention now; each room's source; switching since yesterday evening.")
+    return dashboard(HOUSE, board, "Is the house OK? Control, rooms, speakers, remotes, alerts, phone delivery and "
+                     "the host; what needs attention now; each room's source and what its speakers play; switching "
+                     "since yesterday evening.")
 
 
 # ---------------------------------------------------------------- switching and remotes
@@ -918,8 +961,9 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
                   "One row per device. Thing: the runtime's connection to it (Things not online says in what "
                   "status). Port: its control port accepts a TCP connection; Probe: how long that took. Offline "
                   "since: when its Thing was last online, within "
-                  "a week. Needed now: a room's selected source uses it, or it is routing infrastructure. An "
-                  "offline device no room needs is usually asleep.",
+                  f"a week. Needed now: a room's selected source uses it, it is routing infrastructure, or it is a "
+                  f"speaker in use: it played in the last {alerts.IN_USE}, or was playing when it stopped "
+                  "answering. An offline device no room needs is usually asleep.",
                   names={"room": "Room", "label": "Device", "Value #B": "Thing", "Value #C": "Port",
                          "Value #D": "Probe", "Value #E": "Offline since", "Value #F": "Problem",
                          "Value #G": "Needed now"})
@@ -956,20 +1000,28 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
         sources.add("Source · " + label)
     for room, item, label in _power_rows(mapping):
         by_room.setdefault(room, []).append((f"max(thermite_item_value{{item={_q(item)}}})", label))
+    # A speaker's row: what it plays, as a display's says its power.
+    playback: set[str] = set()
+    for item, ident, room in _speakers(mapping):
+        label = str((known.get(ident) or {}).get("label", ident)) + " · Playing"
+        by_room.setdefault(room, []).append((f"max(thermite_item_value{{item={_q(item)}}})", label))
+        playback.add(label)
     rooms = mapping.get("rooms") or {}
     if by_room:
-        board.row("Power and source by room")
+        board.row("Power, source and playback by room")
     for room in sorted(by_room, key=lambda room: (rooms.get(room, room), room)):
         rows = by_room[room]
         timeline = state_timeline(rooms.get(room, room), rows, ON_OFF, show_values=True,
-                                  description="Source: the room's confirmed source. Other rows: device power, On "
-                                              "in tan, Off in slate; Off is normal. A gap: unknown.")
+                                  description="Source: the room's confirmed source. Playing: a speaker playing a "
+                                              "track, or TV or line-in, in tan, idle in slate. Other rows: device "
+                                              "power, On in tan, Off in slate; Off is normal. A gap: unknown.")
         for index, (_, label) in enumerate(rows):
-            if label in sources:
+            shown = names if label in sources else PLAYBACK if label in playback else None
+            if shown:
                 timeline["fieldConfig"]["overrides"].append({
                     "matcher": {"id": "byFrameRefID", "options": chr(ord("A") + index)},
-                    "properties": [{"id": "mappings", "value": names},
-                                   {"id": "thresholds", "value": mapped_thresholds(names)}]})
+                    "properties": [{"id": "mappings", "value": shown},
+                                   {"id": "thresholds", "value": mapped_thresholds(shown)}]})
         board.add(timeline, 12, max(4, len(rows) + 2))
     volumes = [(f'thermite_item_value{{device={_q(ident)},point="volume"}}', device.get("label", ident))
                for ident, device in sorted(known.items()) if device.get("kind") in LISTENING_KINDS
@@ -980,7 +1032,7 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
                              description="Receivers', amplifiers' and speakers' volume settings in their own "
                                          "scales: not percentages, not loudness. Unknown stays a gap."), 24, 8)
     return dashboard(DEVICES, board, "Every device's connection, control port, problem and whether a room needs it "
-                     "now; then each room's power and source.")
+                     "now; then each room's power, source and what its speakers play.")
 
 
 # ---------------------------------------------------------------- openHAB and the host
@@ -1167,13 +1219,19 @@ def usage(mapping: dict) -> dict:
     # A known zero is valid only while the exporter can read the runtime.
     active_count = f"(sum({active}) or vector(0)) and on() ({available})"
     unknown_count = f"({len(zones)} - (count({observed}) or vector(0))) and on() ({available})"
-    board.add(note("How the house is used", "Selected sources through the day, **not** a health signal: House "
-                   "health is. Off is normal; gaps mean unknown. History builds from installation, with no "
-                   "backfill."), 24, 2)
+    board.add(note("How the house is used", "Selected sources and what speakers play through the day, **not** a "
+                   "health signal: House health is. Off and idle are normal; gaps mean unknown. History builds "
+                   "from installation, with no backfill."), 24, 2)
     if not zones:
-        board.add(note("No source observations configured", "This house has no routed source Items; no use is "
-                       "inferred from power or reachability."), 24, 3)
-        return dashboard(USAGE, board, "Observed room/source use; Off is not a failure.", annotations=False)
+        if _speakers(mapping):
+            if mapping.get("playing"):
+                _played(board, mapping)
+            _listened(board, mapping)
+        else:
+            board.add(note("No source observations configured", "This house has no routed source Items or "
+                           "speakers; no use is inferred from power or reachability."), 24, 3)
+        return dashboard(USAGE, board, "Observed room/source use and listening; Off is not a failure.",
+                         annotations=False)
     use = timeseries("The house through the day", [
         (active_count, "In use"),
         (f'(sum(thermite_item_info{{point="source",value="off"}}) or vector(0)) and on() ({available})', "Off"),
@@ -1210,8 +1268,31 @@ def usage(mapping: dict) -> dict:
     board.add(mix, 12, 9)
     if mapping.get("playing"):
         _played(board, mapping)
-    return dashboard(USAGE, board, "How the house is used: zones in use, where time went, the source mix and "
-                     "what played. Off is normal; missing observations stay unknown.", annotations=False)
+    if _speakers(mapping):
+        _listened(board, mapping)
+    return dashboard(USAGE, board, "How the house is used: zones in use, where time went, the source mix, what "
+                     "played and where speakers played. Off is normal; missing observations stay unknown.",
+                     annotations=False)
+
+
+def _listened(board: Board, mapping: dict) -> None:
+    """Where the speakers played: through the day, and for how long."""
+    rooms = mapping.get("rooms") or {}
+    board.row("Listening")
+    board.add(_listening_timeline(mapping), 24, max(5, len(_speaker_rooms(mapping)) + 2))
+    duration = []
+    for room in _speaker_rooms(mapping):
+        # A room's speakers sampled as one, so two playing at once count once.
+        series = f'max(thermite_item_value{{point="playing",room={_q(room)}}})'
+        played = f"count_over_time(({series} == 2)[$__range:{SAMPLE_SECONDS}s])"
+        known = f"count_over_time({series}[$__range:{SAMPLE_SECONDS}s])"
+        duration.append(f'label_replace((({played}) or ({known}) * 0) * {SAMPLE_SECONDS}, "room", '
+                        f'{_q(rooms.get(room, room))}, "", "")')
+    board.add(bars("Where listening time went", [(" or ".join(duration), "{{room}}")], "Time each room's speakers "
+                   "reported playing a track in the selected range, sampled every 30 s; two speakers playing in one "
+                   "room count once, and TV audio and line-in not at all. Gaps are not extrapolated. Playback time, "
+                   "not people.", horizontal=True),
+              24, max(5, len(_speaker_rooms(mapping)) + 3))
 
 
 #: The playing series: the Unix time each device was read playing its app

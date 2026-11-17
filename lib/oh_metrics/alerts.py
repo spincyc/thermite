@@ -78,7 +78,7 @@ BTRFS_UNALLOCATED = 5 * 2**30
 
 # Notification text is finite, so runtime error bodies/labels can never reach ntfy.
 CATALOG = {
-    "ThermiteCheckFailing": ("A room's control path needs attention", "A device a room is using now, or routing infrastructure, has failed a control check for five minutes. House health lists the room, device and check under Needs attention now."),
+    "ThermiteCheckFailing": ("A room's control path needs attention", "A device a room is using now, a speaker in use (it played in the last half hour, or was playing when it stopped answering), or routing infrastructure, has failed a control check for five minutes. House health lists the room, device and check under Needs attention now."),
     "ThermiteControlUnknown": ("Control telemetry is incomplete", "Expected control readbacks have been missing for ten minutes. Check the runtime and exporter."),
     "ThermiteScrapeFailed": ("Monitoring target is unreachable", "Open Prometheus Targets and check the failed local monitoring service."),
     "ThermiteRuntimeUnavailable": ("Runtime API is unavailable", "The metrics exporter cannot read the runtime. Check the runtime service and its API credential."),
@@ -136,6 +136,23 @@ def _check_value(selectors: list[str], bad: int) -> str:
     if len(selectors) == 1:
         return f"{failing} or vector(-1)"
     return f"({failing} == 1) or ({failing} and on() (count({union}) == {len(selectors)})) or vector(-1)"
+
+
+#: How long a speaker counts as in use after it was last read playing, so
+#: a pause is still use; one left idle never is.
+IN_USE = "30m"
+#: How long a speaker that went unread while playing stays in use: its
+#: failure lasts until it answers again, as a display's does while its room
+#: still has the source, at most this long.
+LAST_HEARD = "1d"
+
+
+def _playing(item: str) -> str:
+    """Whether a speaker is in use (its playing Item): it played within
+    IN_USE, or was playing when last read, within LAST_HEARD."""
+    series = f'thermite_item_value{{item={_q(item)},point="playing"}}'
+    return (f"((max(max_over_time({series}[{IN_USE}])) >= 1)"
+            f" or (max(last_over_time({series}[{LAST_HEARD}])) >= 1))")
 
 
 def _demand(demands: list[dict]) -> str:
@@ -203,7 +220,10 @@ def checks(mapping: dict) -> tuple[list[dict], int]:
             continue
         for item, demanded in sorted(group["zones"].items()):
             value = _check_value(demanded["selectors"], group["bad"])
-            room, zone, used = _zone_room(mapping, item), _zone(mapping, item), _demand(demanded["demands"])
+            # A speaker's own demand: its room, no zone, in use while it plays.
+            speaker = any(demand.get("playing") for demand in demanded["demands"])
+            room, zone = _zone_room(mapping, item), "" if speaker else _zone(mapping, item)
+            used = _playing(item) if speaker else _demand(demanded["demands"])
             if group["optional"]:
                 record(value, room, device, name, False, zone)
                 continue

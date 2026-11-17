@@ -186,7 +186,7 @@ class Render(unittest.TestCase):
     def test_temperatures_and_the_remotes_battery_are_kept_as_their_own_points(self):
         kept = {spec["point"] for name, spec in oh_metrics.exporter_map(house())["items"].items()
                 if name.startswith("example_amp_")}
-        self.assertEqual(kept, {"volume", "mute", "input", "temperature", "battery"})
+        self.assertEqual(kept, {"volume", "mute", "input", "temperature", "battery", "playing"})
 
     def test_the_feed_leaves_out_what_drifts_with_every_poll(self):
         data = house()

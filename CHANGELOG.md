@@ -56,6 +56,28 @@ rollback. The unified deployment workflow uses a separate committed private site
   Assistant for thermite, renews its token and keeps its providers and
   libraries; an Admin signs it into TIDAL from the gateway or with
   `thermite access music-tidal`.
+- Metrics: speakers have what displays have. Each WiiM or Sonos speaker
+  the remotes' Listen controls keeps its playing state as a
+  `thermite_item_value` with `point="playing"`: 2 while it plays a track,
+  1 while it plays sound no track names (a soundbar's TV audio, line-in),
+  0 while idle, paused or stopped, and unknown while it does not answer
+  or a Thing of it is not online.
+  - Its Thing, and its control port where one is probed, are checks of
+    its own room. They are required while it is in use: it played in the
+    last 30 minutes, or was playing when it stopped answering (for up to
+    a day). A speaker that stops answering mid-track fires
+    ThermiteCheckFailing until it answers again; an idle one that sleeps
+    never does. A routed room's `audio` device is checked for both, so
+    while its room uses it and it plays, a failure of it shows twice.
+  - House health gains **Speakers ready**, how many answer, and
+    **Listening through the day**, each room's speakers playing, playing
+    TV or line-in, or idle.
+  - Devices shows each speaker's playing beside its room's power and
+    source, and counts it as needed now while it is in use.
+  - Usage gains a Listening row: the same timeline and **Where listening
+    time went**, the time each room's speakers played a track. A house of
+    speakers alone, with no routed rooms, now shows what played and its
+    listening there.
 - Remotes, web and terminal, is one remote for watching and listening.
   One Watch | Listen switch (`Y`), on Home and Remotes alike, chooses the
   rooms their lists hold: Watch the rooms with a screen, with their

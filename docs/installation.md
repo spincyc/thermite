@@ -409,6 +409,15 @@ in a speaker, paused or not, so a device left on keeps counting. In the
 remotes, Guests see titles unless an Admin turns that off under Security.
 Grafana shows them to anyone on your network.
 
+Each speaker the remotes' Listen controls also reports whether it plays a
+track, or sound no track names, such as a soundbar's TV audio. House health
+shows each room's speakers through the day and how many answer; Usage shows
+how long each room listened to tracks. A speaker that played in the last 30
+minutes, or was playing when it stopped answering, is in use: if it does
+not answer, Control needs attention and an alert fires until it does, as
+for a display a room is watching. An idle speaker that sleeps is never a
+failure.
+
 ## Set up HTTPS and accounts
 
 Installation prints the verified HTTPS URL, on port 13601 unless

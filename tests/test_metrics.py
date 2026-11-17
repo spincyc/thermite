@@ -352,6 +352,127 @@ class Playing(unittest.TestCase):
             "sum by (device, zones, app, title) (count_over_time(thermite_playing_timestamp_seconds[$__range])) * 30"])
 
 
+def with_speakers():
+    """The example house with a controlled WiiM in a routed room and a Sonos
+    in a room of its own."""
+    from tests.test_playing import SPEAKER
+    from tests.test_wiim import AMP
+    inventory = copy.deepcopy(INVENTORY)
+    inventory["rooms"]["example_patio"] = {"label": "Example Patio", "tag": "Room"}
+    inventory["devices"] += [{**AMP, "room": "example_east"}, {**SPEAKER, "room": "example_patio"}]
+    return inventory
+
+
+class Speakers(unittest.TestCase):
+    """A speaker has what a display has: a state over time, checks while it
+    is in use and its own rows on the boards."""
+    FILES = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.FILES = rendered(with_speakers())
+        cls.MAP = json.loads(cls.FILES[oh_metrics.EXPORTER_MAP])
+        cls.BOARDS = {name.rsplit("/", 1)[1].removesuffix(".json"): json.loads(text)
+                      for name, text in cls.FILES.items() if name.startswith(oh_metrics.GRAFANA_DASHBOARDS)}
+
+    def test_each_speaker_the_remotes_listen_to_has_a_playing_point(self):
+        playing = {name: (spec["device"], spec["room"], spec["playing"], spec["title"])
+                   for name, spec in self.MAP["items"].items() if spec["point"] == "playing"}
+        self.assertEqual(playing, {
+            "example_amp_status": ("example_amp", "example_east", ["play"], "example_amp_title"),
+            "example_speaker_state": ("example_speaker", "example_patio", ["PLAYING"], "example_speaker_title")})
+        self.assertNotIn("playing", {spec["point"] for spec in MAP["items"].values()})
+
+    def test_playing_reads_a_track_two_other_sound_one_idle_zero_and_no_answer_unknown(self):
+        spec = self.MAP["items"]["example_amp_status"]
+        labels = {"device": "example_amp", "room": "example_east", "kind": "streaming_amp",
+                  "item": "example_amp_status", "point": "playing"}
+        mapping = {"devices": {"example_amp": self.MAP["devices"]["example_amp"]}, "items": {"example_amp_status": spec}}
+        things = lambda status: [{"UID": uid, "statusInfo": {"status": status}}  # noqa: E731
+                                 for uid in self.MAP["devices"]["example_amp"]["things"]]
+        for (state, title), sample in ((("play", "Example Track"), ("thermite_item_value", labels, 2.0)),
+                                       # TV audio or line-in: nothing names a track.
+                                       (("play", " "), ("thermite_item_value", labels, 1.0)),
+                                       (("play", "Unknown"), ("thermite_item_value", labels, 1.0)),
+                                       (("play", "UNDEF"), ("thermite_item_value", labels, 1.0)),
+                                       (("pause", "Example Track"), ("thermite_item_value", labels, 0.0)),
+                                       (("stop", "NULL"), ("thermite_item_value", labels, 0.0)),
+                                       (("UNDEF", "UNDEF"), ("thermite_item_unknown", labels, 1.0))):
+            answer = items(example_amp_status=state, example_amp_title=title)
+            self.assertEqual(exporter._items(mapping, answer, things("ONLINE"))[0], sample, (state, title))
+        # A binding may leave a speaker it lost playing: while a Thing of it is offline, it is unknown.
+        answer = items(example_amp_status="play", example_amp_title="Example Track")
+        self.assertEqual(exporter._items(mapping, answer, things("OFFLINE"))[0], ("thermite_item_unknown", labels, 1.0))
+
+    def test_a_speaker_is_required_while_it_played_lately_or_was_playing_when_last_read(self):
+        recorded = [rule for rule in yaml.safe_load(self.FILES["prometheus/alerts.yml"])["groups"][0]["rules"]
+                    if rule.get("record") == alerts.CHECK and rule["labels"].get("device") == "example_speaker"]
+        self.assertEqual({(rule["labels"]["check"], rule["labels"]["required"]) for rule in recorded},
+                         {("thing", "true"), ("thing", "false"), ("port", "true"), ("port", "false")})
+        for rule in recorded:
+            # Its own room, no routing zone.
+            self.assertEqual(rule["labels"]["room"], "example_patio")
+            self.assertNotIn("zone", rule["labels"])
+            series = 'thermite_item_value{item="example_speaker_state",point="playing"}'
+            used = (f"((max(max_over_time({series}[{alerts.IN_USE}])) >= 1)"
+                    f" or (max(last_over_time({series}[{alerts.LAST_HEARD}])) >= 1))")
+            self.assertTrue(rule["expr"].endswith(("and on() " if rule["labels"]["required"] == "true"
+                                                   else "unless on() ") + used), rule["expr"])
+            self.assertIn("vector(-1)", rule["expr"], "missing telemetry must read unknown")
+
+    def test_a_rooms_audio_speaker_is_checked_for_its_zone_and_for_its_own_playing(self):
+        inventory = with_speakers()
+        inventory["routing"]["rooms"]["example_east"]["audio"] = "example_amp"
+        recorded, _ = alerts.checks(json.loads(rendered(inventory)[oh_metrics.EXPORTER_MAP]))
+        amp = {(rule["labels"].get("zone", ""), rule["labels"]["required"]) for rule in recorded
+               if rule["labels"].get("device") == "example_amp" and rule["labels"]["check"] == "thing"}
+        self.assertEqual(amp, {("example_east", "true"), ("example_east", "false"), ("", "true"), ("", "false")})
+
+    def test_an_optional_speaker_is_never_required(self):
+        inventory = with_speakers()
+        next(device for device in inventory["devices"] if device["id"] == "example_speaker")["monitor"] = "optional"
+        recorded, _ = alerts.checks(json.loads(rendered(inventory)[oh_metrics.EXPORTER_MAP]))
+        speaker = [rule for rule in recorded if rule["labels"].get("device") == "example_speaker"]
+        self.assertTrue(speaker)
+        self.assertEqual({rule["labels"]["required"] for rule in speaker}, {"false"})
+
+    def test_boards_show_speakers_beside_rooms(self):
+        house = self.BOARDS[dashboards.HOUSE]
+        titles = [panel["title"] for panel in panels(house)]
+        self.assertEqual(titles[:7], ["Control", "Rooms ready", "Speakers ready", "Remotes", "Alerts firing",
+                                      "Phone delivery", "Host"])
+        # The tiles still fill one row.
+        self.assertEqual(sum(panel["gridPos"]["w"] for panel in list(panels(house))[:7]), 24)
+        ready = next(panel for panel in panels(house) if panel["title"] == "Speakers ready")
+        self.assertIn('device=~"example_amp|example_speaker"', ready["targets"][0]["expr"])
+        listening = next(panel for panel in panels(house) if panel["title"] == "Listening through the day")
+        self.assertEqual([target["legendFormat"] for target in listening["targets"]], ["Example East", "Example Patio"])
+        self.assertEqual(listening["fieldConfig"]["defaults"]["mappings"], dashboards.PLAYBACK)
+        devices = self.BOARDS[dashboards.DEVICES]
+        patio = next(panel for panel in panels(devices) if panel["title"] == "Example Patio")
+        self.assertEqual([target["legendFormat"] for target in patio["targets"]], ["Sonos Arc · Playing"])
+        self.assertEqual(patio["fieldConfig"]["overrides"][0]["properties"][0]["value"], dashboards.PLAYBACK)
+        usage = [panel["title"] for panel in panels(self.BOARDS[dashboards.USAGE])]
+        self.assertLessEqual({"Listening", "Listening through the day", "Where listening time went"}, set(usage))
+
+    def test_a_house_of_speakers_alone_shows_what_played_and_listening_on_its_usage_board(self):
+        from tests.test_wiim import house
+        files = rendered(house())
+        usage = json.loads(files[f"{oh_metrics.GRAFANA_DASHBOARDS}/{dashboards.USAGE}.json"])
+        titles = [panel["title"] for panel in panels(usage)]
+        self.assertLessEqual({"What played, where and for how long", "Where listening time went"}, set(titles))
+        self.assertNotIn("No source observations configured", titles)
+        bars = next(panel for panel in panels(usage) if panel["title"] == "Where listening time went")
+        # Only a track is listening: TV audio and line-in (1) are not.
+        self.assertIn('max(thermite_item_value{point="playing",room="example_desk"}) == 2)',
+                      bars["targets"][0]["expr"])
+
+    def test_boards_with_speakers_keep_valid_layouts_and_one_meaning_per_colour(self):
+        with mock.patch(f"{__name__}.boards", lambda: self.BOARDS):
+            Dashboards("test_boards_have_fixed_uids_and_valid_layouts").test_boards_have_fixed_uids_and_valid_layouts()
+            Dashboards("test_colours_have_one_meaning").test_colours_have_one_meaning()
+
+
 class RoutingSeries(unittest.TestCase):
     def series(self, **states):
         """The samples of a house with only the routing Items given."""

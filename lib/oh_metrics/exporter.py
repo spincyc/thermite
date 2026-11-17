@@ -100,7 +100,9 @@ FAMILIES = {
                            "label."),
     "thermite_thing_online": ("gauge", "1 when the Thing is ONLINE."),
     "thermite_thing_status_info": ("gauge", "The Thing's status, as a label; always 1."),
-    "thermite_item_value": ("gauge", "A numeric Item state: switches 1 or 0, numbers as they are."),
+    "thermite_item_value": ("gauge", "A numeric Item state: switches 1 or 0, numbers as they are; a speaker's "
+                            "playing state (point playing) 0 idle, 1 sound with no track named (TV audio, "
+                            "line-in), 2 a track."),
     "thermite_item_info": ("gauge", "A selection Item's state, as a label; always 1. A routing zone's source Item "
                            "names its zone too: join it with a check on(zone), as a room may have two zones."),
     "thermite_item_unknown": ("gauge", "1 while a kept Item is NULL or UNDEF (a selection also while empty) and "
@@ -332,7 +334,7 @@ def collect(mapping: dict, fetch: Fetch, clock: Callable[[], float] = time.monot
     if "things" in answers:
         samples += _things(mapping, answers["things"])
     if "items" in answers:
-        samples += _items(mapping, answers["items"])
+        samples += _items(mapping, answers["items"], answers.get("things"))
         samples += _playing(mapping, answers["items"])
     samples += _handler_pool(mapping, answers.get("items", []))
     if "items" in answers:
@@ -503,9 +505,25 @@ def _no_value(spec: dict, state_of: dict) -> str:
         else "thermite_item_unknown"
 
 
-def _items(mapping: dict, answer: list) -> list[Sample]:
+#: A speaker's playing values (point playing): idle, sound with no track
+#: named (TV audio or line-in: a blank title), a track.
+PLAYING_IDLE, PLAYING_SOUND, PLAYING_TRACK = 0.0, 1.0, 2.0
+#: Titles that name nothing, as oh_features.playing reads them.
+NO_TITLE = ("Unknown",)
+
+
+def _offline(mapping: dict, things: list | None) -> set[str]:
+    """The devices with a Thing the runtime reports and not ONLINE."""
+    status_of = {thing["UID"]: (thing.get("statusInfo") or {}).get("status") for thing in things or []
+                 if isinstance(thing, dict) and isinstance(thing.get("UID"), str)}
+    return {ident for ident, device in (mapping.get("devices") or {}).items()
+            if any(status_of.get(uid, "ONLINE") != "ONLINE" for uid in device.get("things") or [])}
+
+
+def _items(mapping: dict, answer: list, things: list | None = None) -> list[Sample]:
     state_of = {item["name"]: item.get("state") for item in answer
                 if isinstance(item, dict) and isinstance(item.get("name"), str)}
+    offline = _offline(mapping, things)
     samples: list[Sample] = []
     missing = 0
     for name, spec in sorted((mapping.get("items") or {}).items()):
@@ -521,6 +539,19 @@ def _items(mapping: dict, answer: list) -> list[Sample]:
             # joins a source Item with that zone's checks one to one.
             item["zone"] = str(spec["zone"])
         convert = spec.get("convert")
+        if convert == "playing":
+            # A speaker: what it plays while its state is a playing value, and
+            # unknown while a Thing of it is not online, whatever its binding
+            # last left there.
+            if device in offline or not isinstance(state, str) or state in NO_VALUE:
+                if device in offline or state in NO_VALUE:
+                    samples.append((_no_value(spec, state_of), item, 1.0))
+                continue
+            title = to_text(state_of.get(spec["title"])) if spec.get("title") else "?"
+            value = PLAYING_IDLE if state not in (spec.get("playing") or []) \
+                else PLAYING_TRACK if title and title not in NO_TITLE else PLAYING_SOUND
+            samples.append(("thermite_item_value", item, value))
+            continue
         if convert == "enum":
             text = to_label(state, spec.get("options"))
             samples.append(("thermite_item_info", {**item, "value": text}, 1.0) if text is not None
