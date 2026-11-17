@@ -156,6 +156,23 @@ async function main() {
   await settle();
   out.earlyChosen = early.listen.selected();
 
+  // A speaker Music Assistant plays whose own report is a silent TV input
+  // (audio.silent, as an Arc's) plays nothing, in its room's line and on its
+  // face; Music Assistant keeps its library.
+  const tv = await remote({room: den, playing: mini});
+  tv.listen.choose(mini);
+  await settle();
+  const heardPlaying = [tv.listen.status(den).short, tv.listen.view().playing];
+  tv.audio.silent = (id) => id === mini;
+  const face3 = tv.listen.view();
+  out.silentTv = {before: heardPlaying, status: tv.listen.status(den), playing: face3.playing, now: face3.now === tv.audio.view().now,
+    play: face3.transport.find((key) => key.id === 'play_pause').label, source: face3.source, library: Boolean(face3.library),
+    progress: face3.progress};
+  // Play resumes Music Assistant's queue there, where its toggle would pause.
+  await tv.listen.press('play_pause');
+  await settle();
+  out.silentTv.pressed = tv.musicBackend.sent.slice(-1);
+
   // A front end without Listen lists no rooms of speakers alone.
   const plainSession = RemoteSession.create({backend: RemoteBackend.create(house, {backend: 'mock', latency: 4}), house});
   await plainSession.start();

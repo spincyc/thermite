@@ -194,7 +194,10 @@ device route, oh_identity.runtime, commands what both declare):
               optional):
         transport  button ids of its keys the page shows as transport
                    (previous, play_pause, next, tv)
-        state      {"item", "playing": [values while it plays]}
+        state      {"item", "playing": [values while it plays], "silent"
+                   (optional): {"item", "is": [values]} while which it
+                   plays nothing unless it names a track: a soundbar's TV
+                   input, which reads as playing with the TV silent}
         track      {"title", "artist", "album", "service" (Item names,
                    free text), "duration" (seconds), "sample_rate" (Hz),
                    "bit_depth" (bits): plain Number Items}

@@ -129,6 +129,15 @@ class Listen(unittest.TestCase):
         self.assertEqual([(s["id"], s["name"], s["playing"], s["current"], s["digit"]) for s in den["speakers"]],
                          [(MINI, "Mini", True, True, "1"), (AMP, "Amp Pro", False, False, "2")])
 
+    def test_a_speaker_whose_own_report_is_a_silent_tv_input_plays_nothing_though_music_assistant_says_it_plays(self):
+        out = self.out["silentTv"]
+        self.assertEqual(out["before"], ["Playing", True])
+        # The den's other speaker is paused in the mock Music Assistant.
+        self.assertEqual(out["status"], {"led": "off", "short": "Paused", "spoken": "paused", "playing": None})
+        self.assertEqual((out["playing"], out["now"], out["play"], out["progress"]), (False, True, "Play", None))
+        self.assertEqual((out["source"], out["library"]), ("music", True))
+        self.assertEqual(out["pressed"], [["transport", MINI, "play", None]])
+
     def test_music_assistant_plays_the_face_and_the_device_its_volume(self):
         self.assertEqual(self.out["face"], {"source": "music", "now": "Harbour Lights", "line": "The Lanterns · Harbour Lights",
                                             "transport": ["shuffle", "previous", "play_pause", "next", "repeat"],

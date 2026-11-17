@@ -14,6 +14,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 AREA = Path(__file__).resolve().parents[1]
@@ -21,6 +22,8 @@ sys.path.insert(0, str(AREA / "lib"))
 
 from oh_conf import House  # noqa: E402
 from oh_features import remote_model  # noqa: E402
+from oh_integrations import sonos  # noqa: E402
+from tests.test_playing import SPEAKER as ARC  # noqa: E402
 
 FREE, OWNED, ROOM = "fixture_den_amp", "fixture_amp", "example_east"
 WIIM = {"kind": "streaming_amp", "make": "WiiM", "model": "Amp Pro",
@@ -36,6 +39,14 @@ def model():
     return remote_model.build(House(data))
 
 
+def bar():
+    """The example house with a controlled Sonos Arc in a den."""
+    data = json.loads((AREA / "instance/devices.yaml").read_text())
+    data["rooms"]["fixture_den"] = {"label": "Fixture Den", "tag": "Room"}
+    data["devices"].append({**ARC, "room": "fixture_den"})
+    return remote_model.build(House(data))
+
+
 def settings(view):
     return {setting["item"].removeprefix(FREE + "_"): setting for section in view["sections"]
             for setting in section["settings"]}
@@ -46,12 +57,37 @@ class AudioPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         env = {key: value for key, value in os.environ.items() if key != "THERMITE_REMOTE_HOUSE_FILE"}
-        run = subprocess.run([shutil.which("node"), str(AREA / "tests/audio_page_harness.js"), OWNED, FREE, ROOM],
-                             input=json.dumps(model()), text=True, env=env, capture_output=True, timeout=30)
+        with tempfile.TemporaryDirectory() as scratch:
+            arc = Path(scratch) / "arc.json"
+            arc.write_text(json.dumps(bar()))
+            run = subprocess.run([shutil.which("node"), str(AREA / "tests/audio_page_harness.js"), OWNED, FREE, ROOM,
+                                  str(arc)], input=json.dumps(model()), text=True, env=env, capture_output=True,
+                                 timeout=30)
         if run.returncode:
             raise AssertionError(run.stderr)
         cls.report = json.loads(run.stdout)
         cls.mock = cls.report["mock"]
+
+    def test_an_arc_on_a_silent_tv_input_plays_nothing_unless_it_names_a_track(self):
+        out = self.report["arc"]
+        arc = ARC["id"]
+        self.assertEqual(out["silent"], {"item": f"{arc}_codec", "is": list(sonos.TV_SILENT)})
+        # Its TV audio format is read with the page's Items, a fact or not.
+        self.assertTrue(out["watched"])
+        # Its TV is off but holds its link open, or sends nothing at all: silent,
+        # which Listen trusts over Music Assistant.
+        self.assertEqual(out["silence"], [False, "Nothing playing", True])
+        self.assertEqual(out["noSignal"], [False, "Nothing playing", True])
+        # TV sound, or a format not read yet, is TV audio as before.
+        self.assertEqual(out["sound"], [True, "Playing", False])
+        self.assertEqual(out["unread"], [True, "Playing", False])
+        # A track is a track whatever the TV input carries.
+        self.assertEqual(out["track"], [True, "Sample Track", False])
+        self.assertEqual(out["stopped"], [False, "Nothing playing", False])
+        # A silent TV input has nothing to play or pause: Play is off and sends nothing.
+        self.assertEqual(out["silentKey"], {"key": {"id": "play_pause", "label": "Play", "icon": "play", "disabled": True},
+                                            "sent": [], "playing": False})
+        self.assertEqual(out["soundKey"], {"id": "play_pause", "label": "Pause", "icon": "pause"})
 
     def test_each_place_lists_its_devices_and_what_they_play(self):
         places = {place["place"]: place["devices"] for place in self.mock["devices"]}

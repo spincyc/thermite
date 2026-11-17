@@ -62,6 +62,13 @@ rollback. The unified deployment workflow uses a separate committed private site
   1 while it plays sound no track names (a soundbar's TV audio, line-in),
   0 while idle, paused or stopped, and unknown while it does not answer
   or a Thing of it is not online.
+  - A Sonos Arc on its TV input reads as playing whatever its TV sends,
+    and a TV that is off may keep its link open with silence. While its TV
+    audio format reads `noSignal` or `silence` and it names no track, the
+    Arc is idle: on the boards, in the checks, and in the remotes' Listen,
+    where its room had shown Playing, whatever Music Assistant says. Its
+    Play key there resumes Music Assistant's queue, where it had paused
+    the TV input; without Music it is off, as in the Sonos app.
   - Its Thing, and its control port where one is probed, are checks of
     its own room. They are required while it is in use: it played in the
     last 30 minutes, or was playing when it stopped answering (for up to

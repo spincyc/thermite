@@ -1,6 +1,7 @@
 'use strict';
 // stdin: a generated house model (remote_model.build) with argv's two audio
-// devices: the first owned by a room argv[3] locks, the second by none. Runs
+// devices: the first owned by a room argv[3] locks, the second by none;
+// argv[4], a file of a house model with a Sonos Arc. Runs
 // the Audio page's session (audio-session.js) on the mock backend, and the
 // openHAB backend's command() and audio Items on a fake fetch and stream;
 // prints what each showed and sent. Nothing leaves the process.
@@ -11,7 +12,7 @@ for (const name of ['navigation.js', 'remotes.js', 'backend.js', 'audio-session.
   vm.runInThisContext(fs.readFileSync(path.join(WEB, name), 'utf8'), {filename: name});
 }
 const house = JSON.parse(fs.readFileSync(0, 'utf8'));
-const [owned, free, lockedRoom] = process.argv.slice(2);
+const [owned, free, lockedRoom, barFile] = process.argv.slice(2);
 const {RemoteBackend, RemoteAudio} = globalThis;
 const settle = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 const sectionsOf = (view) => view.sections.map((section) => [section.id, section.settings.map((s) => [s.item, s.kind, s.text, s.pending])]);
@@ -280,9 +281,45 @@ async function openhab() {
           unread, heard, audio: native.audioOf(free)};
 }
 
+// An Arc on its TV input reads PLAYING whatever its TV sends: with no
+// track named, its TV audio format says whether that is any sound.
+async function arc() {
+  const bar = JSON.parse(fs.readFileSync(barFile, 'utf8'));
+  const id = Object.keys(bar.devices).find((name) => ((bar.devices[name].audio || {}).state || {}).silent);
+  const at = (suffix) => id + '_' + suffix;
+  const fetch = async () => ({ok: true, status: 200, text: async () => '', json: async () => ({})});
+  const backend = recording(RemoteBackend.create(bar, {backend: 'openhab', fetch, access: {native: true}}));
+  const session = RemoteAudio.create({backend, house: bar});
+  // Read with the page's other Items, a fact or not.
+  const bare = JSON.parse(JSON.stringify(bar));
+  delete bare.devices[id].audio.facts;
+  const watched = RemoteBackend.create(bare, {backend: 'openhab', fetch, access: {native: true}}).watched().includes(at('codec'));
+  await session.start(id);
+  // A snapshot replaces the last: each names its state, title and format.
+  const playing = (state, title, codec) => {
+    backend.applySnapshot({[at('state')]: state, [at('title')]: title, [at('codec')]: codec});
+    return [session.devices().flatMap((place) => place.devices).find((device) => device.id === id).playing,
+            session.view().now, session.silent(id)];
+  };
+  const out = {silent: bar.devices[id].audio.state.silent, watched};
+  out.silence = playing('PLAYING', ' ', 'silence');
+  // Nothing to play or pause: the key is off and sends nothing.
+  const key = () => session.view().transport.find((button) => button.id === 'play_pause');
+  await session.press('play_pause');
+  out.silentKey = {key: key(), sent: backend.sent, playing: session.view().playing};
+  out.noSignal = playing('PLAYING', ' ', 'noSignal');
+  out.sound = playing('PLAYING', ' ', 'dolbyDigital');
+  out.soundKey = key();
+  out.unread = playing('PLAYING', ' ', 'NULL');
+  out.track = playing('PLAYING', 'Sample Track', 'silence');
+  out.stopped = playing('STOPPED', ' ', 'dolbyDigital');
+  session.stop();
+  return out;
+}
+
 (async () => {
   const report = {mock: await mock(), locked: await locked(), unheard: await unheard(), review: await review(),
-                  restart: await restart(), openhab: await openhab()};
+                  restart: await restart(), openhab: await openhab(), arc: await arc()};
   process.stdout.write(JSON.stringify(report));
   process.exit(0);
 })().catch((error) => { process.stderr.write(String(error.stack)); process.exit(1); });

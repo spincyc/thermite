@@ -55,7 +55,10 @@ one kind alone, opened from a link, brings its kind. A routed room owns
 its `audio` device and the soundbars, streaming amplifiers and audio streamers
 in its own room; a WiiM or a Sonos under `control` in the house file is a
 speaker. Watch's volume caption names the room's speaker as a button to
-Listen to it.
+Listen to it. A Sonos Arc on its TV input reads as playing whatever its TV
+sends; while its TV audio format is no signal or silence and it names no
+track, Listen counts it idle, whatever Music Assistant says, and its Play
+resumes Music Assistant's queue (without Music, Play is off).
 
 Listen shows the room's speakers as bubbles (when it has more than one; 1 to
 9 choose), then for the chosen one what plays: its cover, title, artist and

@@ -336,7 +336,7 @@
     Object.keys(house.devices).forEach((id) => {
       const page = house.devices[id].audio;
       if (!page || !controlOf(house, id)) return;
-      const reads = [page.state && page.state.item].concat(Object.values(page.track || {}),
+      const reads = [page.state && page.state.item, page.state && page.state.silent && page.state.silent.item].concat(Object.values(page.track || {}),
         (page.settings || []).map((setting) => setting.item), (page.settings || []).map((setting) => setting.when && setting.when.item),
         (page.facts || []).map((fact) => fact.item));
       reads.forEach((item) => { if (item && !controlled[item]) items[item] = id; });

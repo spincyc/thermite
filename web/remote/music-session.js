@@ -25,7 +25,7 @@
  * (its progress moves on from the speaker's {elapsed, at} while it plays,
  * so a page redraws it each second); select(id) chooses another, and
  * selectNext(±1) the next or previous in the list ([ and ]).
- * playPause(), next(), previous(), seek(s), seekBy(±s), toggleShuffle(),
+ * playPause(play), next(), previous(), seek(s), seekBy(±s), toggleShuffle(),
  * cycleRepeat(), setVolume(v, final), stepVolume(±1), setGroupVolume(v,
  * final) and stepGroupVolume(±1) send its commands, each shown until the
  * speaker reads it back or HOLD_MS pass (final: a slide let go at v).
@@ -453,10 +453,12 @@
       return find(current);
     }
 
-    function playPause() {
+    // With play, it plays whatever it shows: a soundbar's silent TV input
+    // plays to Music Assistant (RemoteListen).
+    function playPause(play) {
       const speaker = chosen();
       if (blocked(speaker)) return Promise.resolve();
-      const owner = ownerOf(speaker), plays = playingOf(speaker) === true;
+      const owner = ownerOf(speaker), plays = play !== true && playingOf(speaker) === true;
       // It shows what it asked for until the speaker says: a second press undoes the first.
       hold(owner, "playing", !plays);
       changed();

@@ -20,7 +20,9 @@
  *   {type: "announce", message}          for a screen reader
  *
  * devices() lists each place's devices; view() is the chosen device's page,
- * or null without one; select(id) chooses another. press(key),
+ * or null without one; select(id) chooses another. silent(id) is whether
+ * the device reports playing only a silent TV input (its state's silent),
+ * which Music Assistant cannot tell from sound. press(key),
  * setVolume(value), stepVolume(±1), toggleMute(), togglePower(),
  * chooseInput(value), set(item, value), toggle(item) and step(item, ±1)
  * send its commands. Each shows what it sent until the device reads it
@@ -243,12 +245,25 @@
     // ---- reading --------------------------------------------------------------
 
     // Whether it plays: true, false, or null while its state is not known;
-    // a play/pause just pressed shows what it asked for.
+    // a play/pause just pressed shows what it asked for. Sound with no
+    // track named while its silent Item reads silent is nothing: a soundbar's
+    // TV input with the TV sending none.
     function playingOf(id) {
       const state = page(id).state;
       const status = state ? valueOf(id, state.item) : null;
-      const value = shown(id, "playing", status === null ? null : String(state.playing.includes(status))).value;
+      const plays = status === null ? null : state.playing.includes(status) && !silenced(id, state);
+      const value = shown(id, "playing", plays === null ? null : String(plays)).value;
       return value === null ? null : value === "true";
+    }
+
+    function silenced(id, state) {
+      const title = (page(id).track || {}).title;
+      return Boolean(state.silent) && !(title && valueOf(id, title)) && state.silent.is.includes(valueOf(id, state.silent.item));
+    }
+
+    function silent(id) {
+      const state = ((house.devices[id] || {}).audio || {}).state;
+      return Boolean(state && state.silent) && state.playing.includes(valueOf(id, state.item)) && silenced(id, state);
     }
 
     function devicesView() {
@@ -334,8 +349,10 @@
         // sound, an input or a title kept from guests has none).
         now: track ? track.title : isPlaying === null ? "Reading…"
           : isPlaying ? "Playing" + (from ? " from " + from[1] : "") : "Nothing playing",
+        // A silent TV input has nothing to play or pause, as the Sonos app has it.
         transport: (audio.transport || []).map((key) => key === "play_pause"
-          ? { id: key, label: isPlaying ? "Pause" : "Play", icon: isPlaying ? "pause" : "play" }
+          ? Object.assign({ id: key, label: isPlaying ? "Pause" : "Play", icon: isPlaying ? "pause" : "play" },
+            silent(id) ? { disabled: true } : {})
           : { id: key, label: (TRANSPORT[key] || { label: key }).label, icon: (TRANSPORT[key] || { icon: key }).icon }),
         volume: volumeView(id),
         muted: mute && mute.value !== null ? mute.value === "ON" : null,
@@ -355,7 +372,7 @@
     function press(key) {
       if (blocked()) return Promise.resolve();
       const id = current, audio = page(id);
-      if (!(audio.transport || []).includes(key)) return Promise.resolve();
+      if (!(audio.transport || []).includes(key) || key === "play_pause" && silent(id)) return Promise.resolve();
       const entry = view().transport.find((button) => button.id === key);
       // Play/pause shows what it asked for until the device says: the
       // opposite of what shows, so a second press undoes the first.
@@ -556,6 +573,7 @@
       },
       devices: devicesView,
       view: view,
+      silent: silent,
       select: select,
       selected: () => current,
       press: press,

@@ -81,6 +81,10 @@ ARC_SETTINGS = {"subwoofer": ("subwoofer", "Switch", "Subwoofer", "sound", None)
 KEYS = {"previous": "PREVIOUS", "play_pause": "PLAY_PAUSE", "next": "NEXT", "night": "NIGHT", "speech": "SPEECH"}
 #: The presses its audio page offers; Night and Speech are settings there.
 TRANSPORT = ("previous", "play_pause", "next")
+#: An Arc's TV audio format (channel codec) while its TV sends no sound: no
+#: signal, or a signal of silence, which a TV that is off may keep sending.
+#: On its TV input its state reads PLAYING all the same.
+TV_SILENT = ("noSignal", "silence")
 
 ARC_KEYS = {**KEYS, "tv": "TV"}
 RULE = "automation/js/sonos_control.js"
@@ -237,7 +241,8 @@ def remote(device: dict) -> dict | None:
 
 def audio(device: dict) -> dict | None:
     """Its audio page beside its remote() (oh_integrations audio()): None
-    unless controlled."""
+    unless controlled. An Arc whose TV audio format is TV_SILENT plays
+    nothing unless it names a track."""
     if remote(device) is None:
         return None
     ident = device["id"]
@@ -247,7 +252,8 @@ def audio(device: dict) -> dict | None:
             return {"kind": "number", **values}
         return {"kind": "enum", "options": [list(pair) for pair in values]} if kind == "String" else {"kind": "switch"}
     page = {"transport": [*TRANSPORT, *(["tv"] if device["model"] == "Arc" else [])],
-            "state": {"item": f"{ident}_state", "playing": ["PLAYING"]},
+            "state": {"item": f"{ident}_state", "playing": ["PLAYING"],
+                      **({"silent": {"item": f"{ident}_codec", "is": list(TV_SILENT)}} if device["model"] == "Arc" else {})},
             "track": {field: f"{ident}_{field}" for field in ("title", "artist", "album")},
             "settings": [{"item": f"{ident}_{suffix}", "label": label, "section": section, **shape(kind, values)}
                          for suffix, (_, kind, label, section, values) in settings(device).items()]}

@@ -457,7 +457,8 @@ def exporter_map(inventory: dict, conf=None) -> dict:
     Source selector and each speaker's playing state: the state Item of its
     audio page (oh_integrations audio(), as the remotes' Listen reads it),
     with the page's playing values and its title Item, which tell a track
-    from TV audio or line-in (exporter PLAYING_TRACK)."""
+    from TV audio or line-in (exporter PLAYING_TRACK), and its silent
+    reading, which tells TV audio from a silent TV."""
     import oh_conf
     import oh_integrations
     from oh_features import remote_model
@@ -499,10 +500,13 @@ def exporter_map(inventory: dict, conf=None) -> dict:
                 kept[name]["power"] = power
         page = remote_model.audio_page(device) or {}
         state, title = page.get("state") or {}, (page.get("track") or {}).get("title")
+        silent = state.get("silent") or {}
         if state.get("item") in dict(conf.points(ident)) and state.get("playing"):
             items[state["item"]] = {"device": ident, "room": device["room"], "kind": device["kind"], "point": "playing",
                                     "convert": "playing", "playing": [str(value) for value in state["playing"]],
-                                    **({"title": title} if title in dict(conf.points(ident)) else {})}
+                                    **({"title": title} if title in dict(conf.points(ident)) else {}),
+                                    **({"silent": {"item": silent["item"], "is": [str(value) for value in silent["is"]]}}
+                                       if silent.get("item") in dict(conf.points(ident)) else {})}
     for file in conf.yaml.values():
         for name, item in file.items.items():
             groups = item.get("groups") or []

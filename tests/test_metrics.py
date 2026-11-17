@@ -382,6 +382,10 @@ class Speakers(unittest.TestCase):
             "example_amp_status": ("example_amp", "example_east", ["play"], "example_amp_title"),
             "example_speaker_state": ("example_speaker", "example_patio", ["PLAYING"], "example_speaker_title")})
         self.assertNotIn("playing", {spec["point"] for spec in MAP["items"].values()})
+        # An Arc's TV audio format tells sound from a silent TV.
+        self.assertEqual(self.MAP["items"]["example_speaker_state"]["silent"],
+                         {"item": "example_speaker_codec", "is": ["noSignal", "silence"]})
+        self.assertNotIn("silent", self.MAP["items"]["example_amp_status"])
 
     def test_playing_reads_a_track_two_other_sound_one_idle_zero_and_no_answer_unknown(self):
         spec = self.MAP["items"]["example_amp_status"]
@@ -403,6 +407,19 @@ class Speakers(unittest.TestCase):
         # A binding may leave a speaker it lost playing: while a Thing of it is offline, it is unknown.
         answer = items(example_amp_status="play", example_amp_title="Example Track")
         self.assertEqual(exporter._items(mapping, answer, things("OFFLINE"))[0], ("thermite_item_unknown", labels, 1.0))
+
+    def test_an_arc_on_a_silent_tv_input_is_idle_unless_it_names_a_track(self):
+        spec = self.MAP["items"]["example_speaker_state"]
+        labels = {"device": "example_speaker", "room": "example_patio", "kind": "soundbar",
+                  "item": "example_speaker_state", "point": "playing"}
+        mapping = {"devices": {"example_speaker": self.MAP["devices"]["example_speaker"]},
+                   "items": {"example_speaker_state": spec}}
+        online = [{"UID": uid, "statusInfo": {"status": "ONLINE"}} for uid in self.MAP["devices"]["example_speaker"]["things"]]
+        for (title, codec), value in (((" ", "silence"), 0.0), ((" ", "noSignal"), 0.0), ((" ", "dolbyDigital"), 1.0),
+                                      ((" ", "NULL"), 1.0), (("Example Track", "silence"), 2.0)):
+            answer = items(example_speaker_state="PLAYING", example_speaker_title=title, example_speaker_codec=codec)
+            self.assertEqual(exporter._items(mapping, answer, online)[0], ("thermite_item_value", labels, value),
+                             (title, codec))
 
     def test_a_speaker_is_required_while_it_played_lately_or_was_playing_when_last_read(self):
         recorded = [rule for rule in yaml.safe_load(self.FILES["prometheus/alerts.yml"])["groups"][0]["rules"]

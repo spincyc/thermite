@@ -165,6 +165,16 @@ class AudioPage(unittest.TestCase):
         self.assertLessEqual({f"{ARC}_line_in", f"{ARC}_codec", f"{ARC}_title"}, set(feed))
         self.assertNotIn(f"{ARC}_album", feed)
 
+    def test_an_arcs_tv_audio_format_says_when_its_tv_input_is_silent_and_the_remote_reads_it(self):
+        data = house()
+        page = sonos.audio(data["devices"][0])
+        self.assertEqual(page["state"], {"item": f"{ARC}_state", "playing": ["PLAYING"],
+                                         "silent": {"item": f"{ARC}_codec", "is": ["noSignal", "silence"]}})
+        self.assertNotIn("silent", sonos.audio(self.amp())["state"])
+        # The remote's stream carries it (the activity feed's Items do too).
+        contract = oh_site_contract.compile(oh_conf.House(data), oh_render.build(data))
+        self.assertIn(f"{ARC}_codec", contract["views"]["remote"]["statechanged"])
+
     def test_an_arcs_page_adds_tv_audio_and_its_bonded_speakers_levels(self):
         page = sonos.audio(house()["devices"][0])
         self.assertEqual(page["transport"], ["previous", "play_pause", "next", "tv"])
