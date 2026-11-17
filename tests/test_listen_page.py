@@ -82,6 +82,8 @@ class ListenPage(unittest.TestCase):
         # Home's own stream runs in Watch alone, and Y on a row it rebuilds focuses the switch.
         self.assertEqual(out["streams"], [True, False])
         self.assertEqual(out["focus"], ["button:Watch", "watch", True])
+        # Its switch is two icons, as the remote's, each radio named by its label and tooltip.
+        self.assertEqual(out["icons"], [["Watch", "Watch (Y)", "", "#i-tv"], ["Listen", "Listen (Y)", "", "#i-note"]])
 
     def test_the_padlock_has_its_own_column_between_the_room_and_its_source(self):
         self.assertEqual(self.out["rooms"]["columns"], ["room__name", "icon room__lock", "room__source"])
@@ -94,6 +96,8 @@ class ListenPage(unittest.TestCase):
     def test_the_switch_shows_in_every_room_and_y_toggles_it(self):
         out = self.out["modes"]
         self.assertEqual((out["watchOnly"]["switch"], out["watchOnly"]["mode"]), (True, "watch"))
+        # Two icons, no words: each radio named by its label and tooltip.
+        self.assertEqual(out["icons"], [["Watch", "Watch (Y)", "", "#i-tv"], ["Listen", "Listen (Y)", "", "#i-note"]])
         self.assertEqual(out["watchOnlyY"], [True, "listen", "Example East"])
         self.assertEqual(out["watchAgain"], [True, "watch", "Example East"])
         self.assertEqual((out["mixed"]["switch"], out["mixed"]["checked"], out["mixed"]["listen"]), (True, ["watch"], False))
@@ -112,6 +116,14 @@ class ListenPage(unittest.TestCase):
         # A room of speakers alone listens, with no switch; the mode is kept per room.
         self.assertEqual((out["den"]["switch"], out["den"]["mode"], out["den"]["listen"]), (True, "listen", True))
         self.assertEqual(out["kept"], "listen")
+
+    def test_under_1180_px_the_bar_holds_the_room_then_the_switch_and_its_keys_reach_the_page(self):
+        out = self.out["bar"]
+        self.assertEqual(out["lent"], [["room-switch", "modes"], ["info-open", "log-toggle"], True, True])
+        # The arrows and Y from the switch in the bar, as from the head; the shell's own controls keep their keys.
+        self.assertEqual(out["arrow"], [True, "listen", "button:Listen"])
+        self.assertEqual(out["y"], [True, "watch", "button:Watch"])
+        self.assertEqual(out["menu"], [False, "watch"])
 
     def test_listen_draws_the_speakers_what_plays_its_keys_chips_and_volume(self):
         out = self.out["face"]
@@ -390,17 +402,63 @@ class ListenMarkup(unittest.TestCase):
             for kind in ("html", "js", "css"):
                 self.assertFalse((REMOTE / f"{name}.{kind}").exists())
 
-    def test_the_switch_is_one_radiogroup_under_the_head_44_px_on_touch(self):
-        switch = re.search(r'<header class="remote__top".*?</header>\s*(<!--[^>]*-->\s*)?(<div class="modes"[^>]*>)(.*?)</div>\s*'
-                           r'<div class="targets-wrap">', self.page, re.S)
-        self.assertIsNotNone(switch, "the switch sits between the head and Watch's bubbles")
+    def test_the_switch_is_one_radiogroup_of_two_icons_beside_the_room_44_px_on_touch(self):
+        switch = re.search(r'<header class="remote__top".*?<button class="room-switch"[^>]*>.*?</button>\s*(<!--[^>]*-->\s*)?'
+                           r'(<div class="modes"[^>]*>)(.*?)</div>\s*<button class="icon-button" id="info-open"', self.page, re.S)
+        self.assertIsNotNone(switch, "the switch sits in the head between the room and Info")
         self.assertIn('role="radiogroup"', switch.group(2))
+        self.assertIn('data-thermite-bar="title"', switch.group(2))
         radios = re.findall(r"<button[^>]*>", switch.group(3))
         self.assertEqual(len(radios), 2)
         self.assertTrue(all('role="radio"' in radio and 'aria-keyshortcuts="Y"' in radio for radio in radios))
         self.assertEqual(sum('tabindex="-1"' in radio for radio in radios), 1)
-        heights = {media: values["min-height"] for media, one, values in self.rules if one == ".modes__option" and "min-height" in values}
-        self.assertEqual(heights, {None: "var(--tap)", "(hover: hover) and (pointer: fine)": "36px"})
+        self.assertEqual(re.sub(r"<[^>]*>|\s", "", switch.group(3)), "", "icons alone, no words")
+        fine = "(hover: hover) and (pointer: fine)"
+        sizes = {(media, name): values[name] for media, one, values in self.rules if one == ".modes__option"
+                 for name in ("width", "min-height") if name in values}
+        self.assertEqual(sizes, {(None, "width"): "var(--tap)", (None, "min-height"): "var(--tap)",
+                                 (fine, "width"): "36px", (fine, "min-height"): "36px"})
+        # The head's free space follows the switch while it shows, and the room's button as before while it does not.
+        self.assertIn((None, ".remote__top:has(> .modes:not([hidden])) > .room-switch", {"flex": "0 1 auto"}), self.rules)
+        self.assertEqual([values.get("margin-right") for media, one, values in self.rules if one == ".modes"], ["auto"])
+
+    def test_the_bar_fits_the_room_its_chevron_and_the_switch_at_320_px(self):
+        # No layout here: the bar's own widths (shell.css), summed as a browser lays them out in one row.
+        frame = css_rules((REMOTE / "shell.css").read_text())
+        tokens = {"--thermite-inset-top": "0px"}
+        for media, selector, values in self.shared:
+            if media is None and selector == ":root":
+                tokens.update(values)
+        bar = "(max-width:1179px)"
+
+        def px(rules, selector, name, media=bar):
+            return pixels([values[name] for at, one, values in rules if one == selector and name in values and at == media][-1], tokens)
+
+        # 40 px square keys in a well as tall as the bar: 44 px ones would overflow it.
+        key, well = px(frame, ".thermite-title .modes__option", "width"), px(frame, ".thermite-title .modes", "padding")
+        self.assertEqual(px(frame, ".thermite-title .modes__option", "min-height"), key)
+        self.assertGreaterEqual(key, 40)
+        self.assertEqual(2 * well + key, px(frame, "body.thermite-app", "--thermite-header-height"))
+        switch = 2 * well + 2 * key + px(self.rules, ".modes", "gap", None)
+        # The rest of the row: its sides, ☰, Info and Log and the gaps between; the mark, shown from 360 px
+        # without the switch, gives way to it.
+        side = pixels(re.search(r"max\(([\d.]+px)", [values["padding"] for at, one, values in frame
+                                                    if one == ".thermite-shell" and at == bar][0]).group(1), tokens)
+        gap = px(frame, ".thermite-shell", "gap")
+        actions = 2 * px(frame, ".thermite-actions .icon-button", "width") + px(frame, ".thermite-actions", "gap")
+        fixed = 2 * side + px(frame, ".thermite-shell .thermite-menu", "width") + actions + 2 * gap
+        self.assertIn(("(max-width:359px)", ".thermite-shell .thermite-brand", {"display": "none"}), frame)
+        self.assertIn((bar, ".thermite-shell:has(.thermite-title .modes:not([hidden])) .thermite-brand", {"display": "none"}),
+                      frame)
+        # The room's button: its sides, the chevron and the gap before it; the name ellipsizes in what is left.
+        padding = [values["padding"] for at, one, values in frame if one == ".thermite-title .room-switch" and at == bar][-1].split()
+        room = 2 * pixels(padding[1 % len(padding)], tokens) + px(self.shared, ".room-switch__name .icon", "width", None) \
+            + px(self.shared, ".room-switch__name", "gap", None)
+        names = {width: width - fixed - switch - room for width in (320, 360, 390)}
+        # Enough for a letter or two and the ellipsis of the 18 px name at the narrowest, and a
+        # room's whole name, such as "Upper Lounge", at an iPhone's 390 px.
+        self.assertGreaterEqual(names[320], 30, names)
+        self.assertGreaterEqual(names[390], 100, names)
 
     def test_listen_takes_the_right_column_from_1200_px_and_info_stays_a_tap_away(self):
         wide = "(min-width: 1200px)"

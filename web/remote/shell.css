@@ -63,7 +63,7 @@ body.thermite-app::before { content: ""; position: fixed; inset: 0 0 auto; z-ind
   .thermite-navigation { display: none; position: absolute; top: calc(var(--thermite-inset-top) + 64px); left: calc(100% - 1px); width: 220px; padding: 12px; background: var(--th-surface); border: 1px solid var(--th-line); border-radius: 0 9px 9px 0; box-shadow: 0 12px 24px #0002; }
   .thermite-shell.is-open .thermite-navigation { display: flex; }
 }
-/* The bar: menu, page title (on Remotes the room), the page's actions, then the mark. */
+/* The bar: menu, page title (on Remotes the room and its Watch | Listen switch), the page's actions, then the mark. */
 @media(max-width:1179px) {
   body.thermite-app { --thermite-header-height: calc(44px + var(--thermite-inset-top)); }
   .thermite-shell { position: sticky; inset: auto; top: 0; width: 100%; height: var(--thermite-header-height); padding: var(--thermite-inset-top) max(8px, env(safe-area-inset-right, 0px)) 0 max(8px, env(safe-area-inset-left, 0px)); flex-direction: row; align-items: center; gap: 4px; border-right: none; box-shadow: 0 1px 0 var(--th-line); }
@@ -84,9 +84,15 @@ body.thermite-app::before { content: ""; position: fixed; inset: 0 0 auto; z-ind
   .thermite-shell.is-open .thermite-navigation { display: flex; }
   .thermite-content { margin-left: 0; padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); }
   .thermite-app .app { max-height: calc(100dvh - var(--thermite-header-height)); }
-  /* Remotes lends the bar its room switch, Info and Log; the room row they leave is gone. */
+  /* Remotes lends the bar its room switch, the Watch | Listen switch beside it, Info and Log; the room row they leave is gone. */
   .thermite-title .room-switch { flex: 0 1 auto; min-width: 0; min-height: 44px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; }
   .thermite-title .room-switch__name { font-size: 18px; }
+  /* The switch keeps listen.css's look, not the shell's button frame: 40 px keys in a well as tall as the bar. The room's name gives way to it. */
+  .thermite-title .modes { padding: 2px; }
+  .thermite-title .modes__option { width: 40px; min-height: 40px; padding: 0; border: 0; border-radius: 50%; outline-offset: -2px; }
+  .thermite-title .modes__option[aria-checked="false"] { color: var(--th-muted); }
+  /* While the switch shows, the mark gives its place to the room's name; ☰ still leads Home. */
+  .thermite-shell:has(.thermite-title .modes:not([hidden])) .thermite-brand { display: none; }
   .thermite-actions .icon-button { width: 44px; height: 44px; min-height: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--th-text); }
   .thermite-actions .icon-button:hover { background: var(--th-raised); }
   .thermite-actions .log-toggle[aria-expanded="true"] { color: var(--th-accent); background: var(--th-raised); }

@@ -161,7 +161,7 @@
   }
 
   // Watch or Listen: the switch where the house has both, then the half on
-  // show. Listen (listen.js) takes Watch's place under the switch.
+  // show. Listen (listen.js) takes Watch's place.
   function updateMode() {
     const mode = session.mode(), listening = mode === "listen";
     document.body.dataset.mode = mode;
@@ -1014,7 +1014,10 @@
       return;
     }
     if (event.key === "y" || event.key === "Y") {
-      if (session.toggleMode()) event.preventDefault();
+      if (!session.toggleMode()) return;
+      event.preventDefault();
+      // Focus on the switch follows its choice, as with its arrows.
+      if (event.target.closest && event.target.closest("[data-modes]")) $('[data-modes] [aria-checked="true"]').focus();
       return;
     }
     if (/^[0-9]$/.test(event.key)) {

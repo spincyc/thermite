@@ -1,9 +1,9 @@
 'use strict';
 // A small stand-in for a browser, for the remote page's scripts: a page's
 // HTML read into elements that keep their attributes, children, listeners
-// and the focus, as much of the DOM as the scripts use, and a clock the
-// harness moves for every timer. listen_page_harness.js runs the remote on
-// it; nothing leaves the process.
+// and the focus, as much of the DOM as the scripts (and shell.js, the frame)
+// use, and a clock the harness moves for every timer.
+// listen_page_harness.js runs the remote on it; nothing leaves the process.
 const START = Date.UTC(2026, 10, 15, 12, 0, 0);
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 const ENTITIES = {amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0'};
@@ -96,11 +96,26 @@ class Node {
     other.parentNode = parent;
     this.parentNode = null;
   }
+  // Nodes moved in beside this one, in order, as shell.js lends the bar a page's controls.
+  before(...nodes) { nodes.forEach((node) => this.beside(node, 0)); }
+  after(...nodes) { nodes.slice().reverse().forEach((node) => this.beside(node, 1)); }
+  beside(node, offset) {
+    const parent = this.parentNode;
+    if (node.parentNode) node.remove();
+    parent.childNodes.splice(parent.childNodes.indexOf(this) + offset, 0, node);
+    node.parentNode = parent;
+  }
 }
 
 class Text extends Node {
   constructor(data) { super(); this.nodeType = 3; this.nodeName = '#text'; this.data = data; this.parentNode = null; }
   get textContent() { return this.data; }
+}
+
+// A comment says nothing in its parent's text.
+class Comment extends Node {
+  constructor(data) { super(); this.nodeType = 8; this.nodeName = '#comment'; this.data = data; this.parentNode = null; }
+  get textContent() { return ''; }
 }
 
 class Element extends Node {
@@ -180,6 +195,7 @@ class Element extends Node {
   set disabled(value) { this.toggleAttribute('disabled', Boolean(value)); }
   get open() { return this.hasAttribute('open'); }
   get id() { return this.getAttribute('id') || ''; }
+  set id(value) { this.setAttribute('id', value); }
   get title() { return this.getAttribute('title') || ''; }
   set title(value) { this.setAttribute('title', value); }
   set tabIndex(value) { this.setAttribute('tabindex', value); }
@@ -251,15 +267,17 @@ class Element extends Node {
 
   addEventListener(type, listener) { (this.listeners[type] = this.listeners[type] || []).push(listener); }
 
-  // An event at this element, bubbling up to the document unless it is one that does not.
+  // An event at this element, bubbling up to the document unless it is one that does not, or a listener stops it.
   dispatch(type, extra) {
-    const event = Object.assign({type, target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }}, extra);
+    const event = Object.assign({type, target: this, defaultPrevented: false, stopped: false,
+      preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }}, extra);
     const path = [];
     for (let at = this; at; at = at.parentNode) path.push(at);
     const alone = ['blur', 'focus', 'load', 'error'].includes(type);
     if (!alone) path.push(this.ownerDocument);
     for (const at of alone ? [this] : path) {
       (at.listeners[type] || []).slice().forEach((listener) => listener.call(at, event));
+      if (event.stopped) break;
     }
     return event;
   }
@@ -370,6 +388,7 @@ class Document {
   createElement(tag) { return new Element(this, tag); }
   createElementNS(namespace, tag) { return new Element(this, tag); }
   createTextNode(text) { return new Text(text); }
+  createComment(text) { return new Comment(text); }
   addEventListener(type, listener) { (this.listeners[type] = this.listeners[type] || []).push(listener); }
 }
 

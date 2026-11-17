@@ -82,7 +82,8 @@
   const crumbs = node("nav", "thermite-breadcrumbs"); crumbs.setAttribute("aria-label", "Page hierarchy");
   if (page.parent) { crumbs.append(link(pages.find(entry => entry.id === page.parent)), node("span", "", "›")); }
   const active = node("span", "", page.label); active.setAttribute("aria-current", "page"); crumbs.append(active);
-  // A page may lend the narrow bar a control that names it (Remotes: the room) and a few actions.
+  // A page may lend the narrow bar a control that names it, in the page's order with what sits beside it
+  // (Remotes: the room, then its Watch | Listen switch), and a few actions.
   const title = node("div", "thermite-title"), actions = node("div", "thermite-actions");
   shell.append(menu, crumbs, title, actions, nav, theme, brand);
   const main = document.querySelector("main, .app");

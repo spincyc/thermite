@@ -103,6 +103,15 @@
         <button class="room-switch" id="room-switch" data-thermite-bar="title" type="button" aria-haspopup="dialog" aria-controls="room-sheet">
           <span class="room-switch__name"><span data-room-name>Loading</span><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-down"></use></svg></span>
         </button>
+        <!-- Watch or Listen, where the house has both: beside the room, and with it in the bar. -->
+        <div class="modes" role="radiogroup" aria-label="Watch or listen" data-modes data-thermite-bar="title" hidden>
+          <button class="modes__option" type="button" role="radio" aria-checked="true" aria-label="Watch" aria-keyshortcuts="Y" title="Watch (Y)" data-action="mode" data-mode="watch">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-tv"></use></svg>
+          </button>
+          <button class="modes__option" type="button" role="radio" aria-checked="false" aria-label="Listen" aria-keyshortcuts="Y" title="Listen (Y)" tabindex="-1" data-action="mode" data-mode="listen">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-note"></use></svg>
+          </button>
+        </div>
         <button class="icon-button" id="info-open" data-thermite-bar="action" type="button" aria-haspopup="dialog" aria-controls="info-sheet" aria-label="Room devices, signal and audio">
           <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-info"></use></svg>
         </button>
@@ -111,18 +120,6 @@
           <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-sun"></use></svg>
         </button>
       </header>
-
-      <!-- In a room with a screen and speakers: what the remote drives. -->
-      <div class="modes" role="radiogroup" aria-label="Watch or listen" data-modes hidden>
-        <button class="modes__option" type="button" role="radio" aria-checked="true" aria-keyshortcuts="Y" data-action="mode" data-mode="watch">
-          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-tv"></use></svg>
-          <span>Watch</span>
-        </button>
-        <button class="modes__option" type="button" role="radio" aria-checked="false" aria-keyshortcuts="Y" tabindex="-1" data-action="mode" data-mode="listen">
-          <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-note"></use></svg>
-          <span>Listen</span>
-        </button>
-      </div>
 
       <div class="targets-wrap">
         <!-- The arrows are for a mouse: a keyboard reaches each bubble with Tab, a finger swipes. -->

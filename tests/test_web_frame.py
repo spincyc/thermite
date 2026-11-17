@@ -43,10 +43,13 @@ class WebFrame(unittest.TestCase):
                 with self.subTest(sheet=sheet.name, selector=selector):
                     self.assertEqual(selector, ".toast", "a page under the bar must not add the inset again")
 
-    def test_remotes_lends_the_bar_its_room_info_and_log(self):
+    def test_remotes_lends_the_bar_its_room_its_switch_info_and_log(self):
         page = (REMOTE / "index.html").read_text()
         lent = dict(re.findall(r'id="([a-z-]+)" data-thermite-bar="(title|action)"', page))
         self.assertEqual(lent, {"room-switch": "title", "info-open": "action", "log-toggle": "action"})
+        # The Watch | Listen switch follows the room into the title.
+        self.assertLess(page.index('id="room-switch"'), page.index('data-modes data-thermite-bar="title"'))
+        self.assertLess(page.index('data-modes data-thermite-bar="title"'), page.index('id="info-open"'))
         self.assertIn('class="remote__top" data-thermite-bar-host', page)
 
 

@@ -7,32 +7,35 @@
 
 /* ---- the switch: Watch or Listen ------------------------------------------ */
 
-/* Under the bar (or the remote's head) in every room, the same place each
-   time, where the house has both; it chooses the rooms the lists hold. */
+/* Two icons beside the room's name, in the remote's head or the bar
+   (shell.css), in every room where the house has both; it chooses the rooms
+   the lists hold. */
 .modes {
   display: flex;
+  flex: none;
   gap: 2px;
-  margin: var(--space-2) var(--space-4) 0;
+  margin-right: auto;
   padding: 3px;
   border-radius: var(--radius-pill);
   background: var(--well);
   box-shadow: var(--well-edge);
 }
 
+/* The room's button keeps to its name's width, so the switch follows the
+   name and the head's free space comes after the switch. */
+.remote__top:has(> .modes:not([hidden])) > .room-switch {
+  flex: 0 1 auto;
+}
+
 .modes__option {
-  flex: 1 1 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
-  min-width: 0;
+  width: var(--tap);
   min-height: var(--tap);
-  padding: 0 var(--space-3);
+  padding: 0;
   border: 0;
   border-radius: var(--radius-pill);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 640;
   color: var(--key-ink-muted);
   background: transparent;
   cursor: pointer;
@@ -40,8 +43,8 @@
 }
 
 .modes__option .icon {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
 }
 
 .modes__option[aria-checked="true"] {
@@ -50,13 +53,15 @@
   box-shadow: var(--key-shadow);
 }
 
-.modes__option:focus-visible {
+/* Inside the key: the page's own ring, 3 px out, would cross its neighbour. */
+.modes .modes__option:focus-visible {
   outline-offset: -2px;
 }
 
 /* A mouse needs less than a thumb. */
 @media (hover: hover) and (pointer: fine) {
   .modes__option {
+    width: 36px;
     min-height: 36px;
   }
 }
@@ -1151,10 +1156,6 @@
    so Listen fits without scrolling. */
 
 @media (orientation: landscape) and (max-height: 500px) {
-  .modes {
-    margin-top: var(--space-1);
-  }
-
   .listen {
     padding: var(--space-2) var(--space-5);
   }

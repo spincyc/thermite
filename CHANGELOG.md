@@ -83,14 +83,16 @@ rollback. The unified deployment workflow uses a separate committed private site
   rooms their lists hold: Watch the rooms with a screen, with their
   sources; Listen the rooms with speakers (a routed room's own, then each
   room of speakers alone: a WiiM or Sonos under `control` that no routed
-  room owns), each saying what plays there. The choice is kept, the same
-  on both pages; a room of one kind alone, opened from a link, brings its
-  kind. Watch is the remote it was. Listen shows the room's speakers, what
-  the chosen one plays and its controls, and a lock on a routed room locks
-  the speakers it owns. Watch's volume caption names the room's speaker
-  and opens it in Listen. A speaker Music Assistant cannot reach, that
-  reports nothing itself, says "Not answering" rather than "…". A locked
-  room's padlock has its own column, between the room and its source.
+  room owns), each saying what plays there. On the web it is two icons, a
+  screen and a note, on Remotes beside the room's name. The choice is
+  kept, the same on both pages; a room of one kind alone, opened from a
+  link, brings its kind. Watch is the remote it was.
+  Listen shows the room's speakers, what the chosen one plays and its
+  controls, and a lock on a routed room locks the speakers it owns.
+  Watch's volume caption names the room's speaker and opens it in Listen.
+  A speaker Music Assistant cannot reach, that reports nothing itself,
+  says "Not answering" rather than "…". A locked room's padlock has its
+  own column, between the room and its source.
 - Music, on Listen: TIDAL and the NAS libraries on the Sonos and WiiM
   speakers, alone or grouped: search, browse and the queue (a sheet, or
   the right column on a wide screen), with Play now, Play next and Add to

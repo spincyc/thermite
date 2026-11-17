@@ -11,9 +11,9 @@ const {clock, Document} = require('./remote_dom');
 const WEB = path.join(__dirname, '..', 'web', 'remote');
 const house = JSON.parse(fs.readFileSync(0, 'utf8'));
 const [MINI, OWNED, MIXED, WATCH, AMP, DEN, PATIO_MINI, PATIO] = process.argv.slice(2);
-// The scripts a page loads, but the house (stdin's) and the shell's frame.
-const scripts = (html) => [...fs.readFileSync(path.join(WEB, html), 'utf8').matchAll(/<script[^>]*\ssrc="([^"]+)"/g)].map((match) => match[1])
-  .filter((name) => !['house.js', 'shell.js', 'access-config.js'].includes(name));
+// The scripts a page loads, but the house (stdin's) and, unless asked for, the shell's frame.
+const scripts = (html, shell) => [...fs.readFileSync(path.join(WEB, html), 'utf8').matchAll(/<script[^>]*\ssrc="([^"]+)"/g)].map((match) => match[1])
+  .filter((name) => !['house.js', 'access-config.js'].concat(shell ? [] : ['shell.js']).includes(name));
 
 // An access client whose only lock is room's, as listen_session_harness.js's;
 // guest, a Guest kept from free text.
@@ -25,8 +25,9 @@ function locking(room, guest) {
 
 // The remote page at ?room=room. options: access (a client for the locks),
 // music (the mock music's settings), wide (a window 1200 px wide), short
-// (and 500 px tall, a phone on its side), stored, html (another page: Home's
-// home.html, room null).
+// (and 500 px tall, a phone on its side), narrow (under 1180 px, in the
+// shell's frame and its bar), stored, html (another page: Home's home.html,
+// room null).
 function page(room, options = {}) {
   const time = clock();
   const html = options.html || 'index.html';
@@ -47,7 +48,7 @@ function page(room, options = {}) {
     CSS: {escape: (text) => String(text).replace(/["\\]/g, '\\$&')},
     navigator: {},
     matchMedia: (query) => ({matches: /min-width: 1200px/.test(query) ? Boolean(options.wide) && !(options.short && /min-height/.test(query))
-      : false, addEventListener() {}, addListener() {}}),
+      : /max-width: 1179px/.test(query) ? Boolean(options.narrow) : false, addEventListener() {}, addListener() {}}),
     // remote.css and listen.css as far as the scripts ask: the Signal panel shows from 1200 px, tall, in Watch.
     getComputedStyle: (element) => ({getPropertyValue: () => '', display: element.classList.contains('panel--signal') && options.wide
       && !options.short && document.body.dataset.mode !== 'listen' ? 'flex' : 'none'}),
@@ -63,7 +64,7 @@ function page(room, options = {}) {
   const Clocked = vm.runInContext('Date', context);
   context.Date = class extends Clocked { static now() { return time.now(); } };
   const made = {};
-  for (const name of scripts(html)) {
+  for (const name of scripts(html, options.narrow)) {
     vm.runInContext(fs.readFileSync(path.join(WEB, name), 'utf8'), context, {filename: name});
     if (name === 'access.js' && options.access) context.ThermiteAccess.client = options.access;
     // The page's backends kept, so a scenario can see what they sent and make them answer as it wants.
@@ -145,6 +146,9 @@ async function modes(out) {
     mode: p.document.body.dataset.mode, listen: shown($('#listen')), controls: shown($('#controls')), bubbles: shown($('[data-targets]')),
     speakers: shown($('[data-speakers]')), shortcuts: all('[data-shortcuts] li span').map((span) => span.textContent).slice(0, 2)});
   out.watchOnly = state();
+  // Two icons, each radio named by its label.
+  out.icons = all('[data-modes] [data-mode]').map((option) => [option.getAttribute('aria-label'), option.title, p.words(option),
+    option.querySelector('use').getAttribute('href')]);
   // A room without speakers gives way to the first with them, and Watch keeps it.
   out.watchOnlyY = [await key('y'), state().mode, p.words($('[data-room-name]'))];
   out.watchAgain = [await key('y'), state().mode, p.words($('[data-room-name]'))];
@@ -170,6 +174,22 @@ async function modes(out) {
   $('#room-sheet [data-room="' + MIXED + '"]').click();
   await time.tick(400);
   out.kept = state().mode;
+}
+
+// Under 1180 px the shell lends its bar the room, then the switch beside it,
+// and Info and Log; the switch's keys still reach the page from there.
+async function bar(out) {
+  const p = page(MIXED, {narrow: true});
+  const {time, $, key, shown} = p;
+  await time.tick(1500);
+  const lent = (selector) => $(selector).children.map((child) => child.id || child.className);
+  out.lent = [lent('.thermite-title'), lent('.thermite-actions'), $('.remote__top').hasAttribute('data-lent'), shown($('.thermite-title [data-modes]'))];
+  const radio = $('.thermite-title [data-mode="watch"]');
+  radio.focus();
+  out.arrow = [await key('ArrowRight', radio), p.document.body.dataset.mode, p.focus()];
+  out.y = [await key('y'), p.document.body.dataset.mode, p.focus()];
+  // The shell's own controls keep their keys.
+  out.menu = [await key('y', $('.thermite-menu')), p.document.body.dataset.mode];
 }
 
 // Listen in the mixed room: bubbles, what plays, keys, chips, volume, Info.
@@ -651,6 +671,9 @@ async function home(out) {
   await time.tick(1500);
   const rows = () => all('[data-home-rooms] tr').map((row) => row.children.map((cell) => words(cell)));
   out.watch = [rows(), $('[data-home-modes]').hidden, words($('[data-home-what]')), all('[data-home-rooms] a').map((link) => link.getAttribute('href'))];
+  // Two icons, as the remote's; each radio named by its label.
+  out.icons = all('[data-home-modes] [data-mode]').map((option) => [option.getAttribute('aria-label'), option.title, words(option),
+    option.querySelector('use').getAttribute('href')]);
   $('[data-home-modes] [data-mode="listen"]').click();
   await time.tick(1500);
   out.listen = [rows(), words($('[data-home-what]')), stored.get('remote.mode'), words($('[data-home-status]')),
@@ -680,7 +703,7 @@ async function sideways(out) {
 
 (async () => {
   const report = {};
-  for (const [name, run] of Object.entries({rooms, modes, face, alone, watch, locks, library, browse, pages, group, covers, music, inputs, signal,
+  for (const [name, run] of Object.entries({rooms, modes, bar, face, alone, watch, locks, library, browse, pages, group, covers, music, inputs, signal,
     sideways, home})) {
     report[name] = {};
     // A scenario that throws says where, and the rest still run.

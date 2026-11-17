@@ -15,13 +15,15 @@
 .home .home__panel h2 { margin: 0; color: var(--th-muted); font-size: 11px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; }
 .home .home__panel-head p { margin: 7px 0 0; color: var(--th-muted); font-size: 12px; line-height: 1.5; }
 .home .home__panel-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-/* Watch or Listen: the rooms with a screen, or those with speakers. */
+/* Watch or Listen, two icons: the rooms with a screen, or those with speakers. */
 .home .home__modes { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--th-line); border-radius: 999px; background: var(--th-bg); }
 .home .home__modes[hidden] { display: none; }
-.home .home__modes button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--th-muted); font: inherit; font-size: 12px; font-weight: 620; cursor: pointer; }
+.home .home__modes button { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--th-muted); cursor: pointer; }
 .home .home__modes svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .home .home__modes [aria-checked="true"] { background: var(--th-raised); color: var(--th-text); box-shadow: inset 0 0 0 1px var(--th-line); }
 .home .home__modes button:focus-visible { outline: 2px solid var(--th-focus); outline-offset: -2px; }
+/* Without words a key is only its icon: a thumb needs more. */
+@media (pointer: coarse) { .home .home__modes button { min-width: 44px; min-height: 40px; justify-content: center; } }
 .home .home__hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .home .thermite-rooms { table-layout: fixed; border-collapse: separate; border-spacing: 0 2px; font-size: 13px; }
 .home .thermite-rooms th { padding: 0 10px 8px; border-bottom: 1px solid var(--th-line); font-size: 10px; font-weight: 500; }

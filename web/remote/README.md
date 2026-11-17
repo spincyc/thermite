@@ -45,13 +45,13 @@ the device itself is the device's to apply.
 
 Remotes watches and listens. Watch is the remote above, in the rooms with a
 screen; Listen is the speakers', in the rooms whose speakers thermite controls.
-A house with both shows a Watch | Listen switch under the bar, and Home one
-over its rooms (Y toggles either); it chooses the rooms the lists hold, and
-the choice is kept, the same on both pages: each page opens in the last one
-made. Watch lists the routed rooms with
-their sources; Listen the routed rooms with speakers, then the rooms of
-speakers no routed room owns, each with what it plays. A room of one kind
-alone, opened from a link, brings its kind. A routed room owns
+A house with both shows a Watch | Listen switch, two icons (a screen and a
+note), beside the room's name, and Home one over its rooms (Y toggles
+either); it chooses the rooms the lists hold, and the choice is kept, the
+same on both pages: each page opens in the last one made. Watch lists the
+routed rooms with their sources; Listen the routed rooms with speakers, then
+the rooms of speakers no routed room owns, each with what it plays. A room of
+one kind alone, opened from a link, brings its kind. A routed room owns
 its `audio` device and the soundbars, streaming amplifiers and audio streamers
 in its own room; a WiiM or a Sonos under `control` in the house file is a
 speaker. Watch's volume caption names the room's speaker as a button to
@@ -122,12 +122,13 @@ answered. Pages opened with `?backend=mock` or in native mode report nothing.
 
 Below 1180 pixels a bar runs across the top: ☰ opens every view and the
 light/dark switch, followed by the page title, the page's actions and the
-thermite mark. On Remotes the title is the room, which opens the room list, and
-the actions are Info and Log. From 1180 pixels a narrow sidebar lists the views
-with the theme switch at its foot; until Remotes shows its right-hand panels at
-1200 pixels it is a rail whose ☰ opens the same list. A phone on its side, 500
-pixels tall or less, shows the remote across the whole width with its keys
-beside the volume.
+thermite mark. On Remotes the title is the room, which opens the room list,
+with the Watch | Listen switch beside it (the mark then gives way to the
+name), and the actions are Info and Log. From 1180 pixels a narrow sidebar
+lists the views with the theme switch at its foot; until Remotes shows its
+right-hand panels at 1200 pixels it is a rail whose ☰ opens the same list. A
+phone on its side, 500 pixels tall or less, shows the remote across the whole
+width with its keys beside the volume.
 
 Added to an iPhone home screen, every page draws under the translucent status
 bar: the bar (or sidebar) pads itself by the safe-area inset and the remote
