@@ -101,11 +101,27 @@ class Listen(unittest.TestCase):
                                                  "playing": "♪ Harbour Lights · The Lanterns"})
         self.assertEqual(listed[ROOM]["short"], "Off")
 
-    def test_a_room_with_both_opens_on_watch_and_keeps_listen_once_chosen(self):
+    def test_the_mode_is_every_rooms_and_a_room_of_one_mode_brings_it(self):
         self.assertEqual(self.out["mixedMode"], "watch")
         self.assertEqual(self.out["mixedListen"]["mode"], "listen")
         self.assertEqual(self.out["back"], {"mode": "listen", "selected": OWNED})
-        self.assertEqual(self.out["watchOnly"], {"mode": "watch", "modes": ["watch"], "toggled": False, "face": None})
+        self.assertEqual(self.out["watchOnly"], {"mode": "watch", "modes": ["watch"], "listed": ["example_west", ROOM]})
+        # In Listen the room lists hold the rooms with speakers, each with what its speakers do.
+        self.assertEqual(self.out["toggled"], {"toggled": True, "room": ROOM, "mode": "listen", "listed": [ROOM, "fixture_den"],
+                                               "view": "Idle"})
+
+    def test_the_mode_on_show_is_read_once_and_a_kept_room_must_still_have_it(self):
+        # Another page's choice waits for the next page: the room on show stays in its list.
+        self.assertEqual(self.out["otherPage"], {"mode": "watch", "room": "example_west",
+                                                 "listed": ["example_west", ROOM]})
+        self.assertEqual(self.out["nextPage"]["mode"], "listen")
+        self.assertIn(self.out["nextPage"]["room"], [ROOM, "fixture_den"])
+        self.assertEqual(self.out["staleRoom"], {"mode": "listen", "room": ROOM, "kept": "listen"})
+
+    def test_a_speaker_music_cannot_reach_that_reports_nothing_is_not_answering(self):
+        self.assertEqual(self.out["notAnswering"], {"led": "bad", "short": "Not answering", "spoken": "not answering", "playing": None})
+        # One Music Assistant does not have is still being read.
+        self.assertEqual(self.out["reading"], "…")
 
     def test_a_room_of_speakers_opens_on_the_one_that_plays(self):
         den = self.out["den"]

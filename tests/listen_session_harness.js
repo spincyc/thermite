@@ -39,13 +39,14 @@ async function remote(options = {}) {
   const audio = RemoteAudio.create({backend, house, watchLocks: false, access: options.access});
   // The mock plays the first of its speakers: options.playing puts that one first.
   const speakers = MusicBackend.speakersOf(house).filter((spec) => !(options.unknown || []).includes(spec.id))
+    .map((spec) => ((options.away || []).includes(spec.id) ? {...spec, away: true} : spec))
     .sort((a, b) => (b.id === options.playing) - (a.id === options.playing));
   const musicBackend = new MusicBackend.MockMusic({speakers, latency: 4});
   if (options.problem) musicBackend.problem = options.problem;
   const music = options.music === false ? null : RemoteMusic.create({backend: musicBackend, house, watchLocks: false,
     access: options.access});
   const listen = RemoteListen.create({audio, music, house});
-  const session = RemoteSession.create({backend, house, listen});
+  const session = RemoteSession.create({backend, house, listen, store: options.store});
   const toasts = [];
   listen.subscribe((event) => { if (event.type === 'toast') toasts.push([event.title, event.body, event.tone]); });
   // Early: the remote may draw a room before either session has read its speakers.
@@ -85,8 +86,25 @@ async function main() {
   out.badDigit = session.chooseDigit('7');
   session.selectRoom(mixed);
   out.back = {mode: session.mode(), selected: listen.selected()};
+  // A room of Watch alone brings Watch; Listen from it goes back to the room last in Listen.
   session.selectRoom(session.rooms()[0].id);
-  out.watchOnly = {mode: session.mode(), modes: session.modes(), toggled: session.toggleMode(), face: listen.view()};
+  out.watchOnly = {mode: session.mode(), modes: session.modes(), listed: session.listed().map((room) => room.id)};
+  out.toggled = {toggled: session.toggleMode(), room: session.current().id, mode: session.mode(),
+    listed: session.listed().map((room) => room.id), view: session.view(session.room(mixed), session.state(mixed)).short};
+
+  // Another page choosing Listen changes the next page opened, not this one under its Watch room.
+  const shared = RemoteSession.memoryStore();
+  const watching = await remote({room: session.rooms()[0].id, store: shared});
+  shared.set('remote.mode', 'listen');
+  out.otherPage = {mode: watching.session.mode(), room: watching.session.current().id,
+    listed: watching.session.listed().map((room) => room.id)};
+  const next = await remote({store: shared});
+  out.nextPage = {mode: next.session.mode(), room: next.session.current().id};
+  // A kept Listen room that has no speakers now gives way to the first that has; Listen stays.
+  const stale = RemoteSession.memoryStore();
+  stale.set('remote.mode', 'listen'); stale.set('remote.room.listen', session.rooms()[0].id);
+  const reopened = await remote({store: stale});
+  out.staleRoom = {mode: reopened.session.mode(), room: reopened.session.current().id, kept: stale.get('remote.mode')};
 
   // No music on the host: the speakers show and play what they report themselves.
   const plain = await remote({room: session.rooms().find((room) => room.listenOnly).id, music: false});
@@ -119,6 +137,16 @@ async function main() {
   const away = await remote({room: den, problem: 'music_unavailable'});
   const face2 = away.listen.view();
   out.away = {source: face2.source, music: face2.music, library: face2.library};
+  // Speakers Music Assistant cannot reach, that report nothing themselves, are not answering.
+  // Ones it does not have are still being read.
+  const silent = async (options) => {
+    const made = await remote({room: den, ...options});
+    [mini, amp].forEach((id) => made.backend.updateAudio(id, house.devices[id].audio.state.item, 'UNDEF'));
+    await settle();
+    return made.session.view(made.session.room(den), made.session.state(den));
+  };
+  out.notAnswering = await silent({away: [mini, amp]});
+  out.reading = (await silent({unknown: [mini, amp]})).short;
 
   // Drawn before the speakers were read, a room still opens on the one that plays.
   const early = await remote({room: den, early: true, playing: amp});

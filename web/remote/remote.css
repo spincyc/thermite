@@ -1520,8 +1520,10 @@ button {
 }
 
 .room__label {
+  overflow: hidden;
   font-weight: 620;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* What the room's source plays, under its name. */
@@ -1556,16 +1558,39 @@ button {
   text-overflow: ellipsis;
 }
 
-/* A locked room's padlock follows its source, in the source's ink. */
+/* The house's rooms share three columns, name, padlock and source, so the
+   padlocks and lights line up: the source column is as wide as the widest
+   source, at most 42%, and names have the rest. Without subgrid each row
+   keeps a 42% source column of its own, aligned too. */
+.rooms--house {
+  grid-template-columns: minmax(0, 1fr) 14px fit-content(42%);
+  column-gap: var(--space-3);
+}
+
+.rooms--house > li,
+.rooms--house .room {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: subgrid;
+}
+
+.rooms--house .room {
+  grid-template-columns: minmax(0, 1fr) 14px minmax(0, 42%);
+  grid-template-columns: subgrid;
+}
+
+/* A locked room's padlock, in its own column; the column stays when unlocked. */
 .room__lock {
-  display: none;
-  width: 13px;
-  height: 13px;
+  visibility: hidden;
+  width: 14px;
+  height: 14px;
   stroke-width: 2.2;
+  color: var(--ink);
 }
 
 .room[data-locked] .room__lock {
-  display: block;
+  visibility: visible;
 }
 
 .rooms--sheet .room {

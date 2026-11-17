@@ -106,7 +106,8 @@ async function mixed(proof) {
   proof.reach.f6 = key(parts, null, { name: "f6" });
   proof.reach.back = key(parts, null, { name: "escape" });
   proof.reach.kept = session.mode();
-  proof.reach.homeY = (key(parts, null, { name: "f1" }), key(parts, "y"));
+  // Home's y is the remote's: Watch, then Listen again.
+  proof.reach.homeY = [key(parts, null, { name: "f1" }), (key(parts, "y"), session.mode()), (key(parts, "y"), session.mode())];
   key(parts, null, { name: "f2" });
   proof.reach.f8 = (key(parts, "u"), key(parts, null, { name: "f8" }));
   key(parts, null, { name: "f2" });
@@ -596,16 +597,21 @@ async function edges(proof) {
     mode: parts.session.mode(), sent: parts.sent, music: music(parts).sent };
   parts.controller.stop();
   size = [WIDTH, HEIGHT];
-  // ↓ from Watch's sources to a room of speakers lands on its speakers; to one of one speaker, on the rooms.
+  // ↓ from Watch's sources walks Watch's rooms alone; ↓ from Listen's speakers
+  // walks Listen's, and to a room of one speaker lands on the rooms.
   parts = await open({}, ROOM);
   for (let i = 0; i < 6 && parts.controller.ui.pane !== "sources"; i++) key(parts, null, { name: "tab" });
   key(parts, null, { name: "down" });
-  await shows(parts, "1 ● Mini");
   proof.edges.walk = [parts.session.current().id, parts.controller.ui.pane];
+  parts.session.selectRoom(DEN, true);
+  await shows(parts, "1 ● Mini");
+  for (let i = 0; i < 6 && parts.controller.ui.pane !== "speakers"; i++) key(parts, null, { name: "tab" });
+  proof.edges.walk.push(parts.session.current().id, parts.controller.ui.pane);
   key(parts, null, { name: "down" });
   await shows(parts, "Fixture Lounge Arc");
   proof.edges.walk.push(parts.session.current().id, parts.controller.ui.pane);
   parts.session.selectRoom(ROOM, true);
+  parts.session.setMode("watch");
   // The remote's title, active, keeps its ├ before Watch | Listen.
   key(parts, "1");
   await until(parts, () => draw(parts).grid.hits.some((hit) => hit.hit.kind === "slider"), "Watch's volume");

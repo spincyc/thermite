@@ -532,7 +532,7 @@ function create(options) {
   // Rooms are a live selection: every arrow changes the rest of the remote.
   // Keep arrows within the room list rather than reaching All off or Pairing.
   function stepRoomFocus(delta, keepPane) {
-    const rooms = session.rooms();
+    const rooms = session.listed();
     if (!rooms.length) return;
     const hit = focusedHit();
     const id = !keepPane && hit && hit.kind === "room" ? hit.room : session.current().id;
@@ -776,8 +776,10 @@ function create(options) {
   function activate(hit) {
     // A page switch can outrun a terminal redraw. Old control hit boxes must
     // not operate a device once its page has been left.
-    if (["bubble", "key", "volume-mode", "control", "input", "all-off", "room-lock", "lock-menu", "simulate-matrix", "simulate-external", "scroll-bubbles", "mode"].includes(hit.kind)
+    if (["bubble", "key", "volume-mode", "control", "input", "all-off", "room-lock", "lock-menu", "simulate-matrix", "simulate-external", "scroll-bubbles"].includes(hit.kind)
         && ui.screen !== "remote") return;
+    // Watch or Listen is Home's switch too; it commands no device.
+    if (hit.kind === "mode" && !["remote", "home"].includes(ui.screen)) return;
     if (hit.kind.startsWith("pair-") || ["send-code", "new-code", "code"].includes(hit.kind)) {
       if (ui.screen !== "pairing") return;
     }
@@ -1553,6 +1555,7 @@ function create(options) {
       if (["up", "down", "left", "right"].includes(name)) return moveControl(name === "up" || name === "left" ? -1 : 1);
       if (name === "enter" || name === "space") { const hit = focusedHit(); if (hit) activate(hit); }
       if (ch === "h" || ch === "H") return openSheet("day");
+      if (ch === "y" || ch === "Y") return session.toggleMode();
     } else if (ui.screen === "cameras") {
       if (["up", "down", "left", "right"].includes(name)) return stepCamera(name === "up" || name === "left" ? -1 : 1);
       if (name === "enter") return openCamera();

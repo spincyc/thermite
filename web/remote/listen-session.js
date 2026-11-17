@@ -13,7 +13,9 @@
  * started-or-not RemoteAudio and RemoteMusic (music null: a host without
  * music, whose speakers show only what they report themselves; house
  * defaults to REMOTE_HOUSE; store is {get(key), set(key, value)}, in memory
- * if absent); stop() lets the two sessions go. subscribe(callback) hears
+ * if absent); stop() lets the two sessions go. RemoteListen.sessions({backend,
+ * house, store, access, mock, active}) makes both and one on them, as the
+ * remote page and Home's Listen rooms do. subscribe(callback) hears
  * the two sessions' events, each change once:
  *
  *   {type: "change"}                     draw it again
@@ -96,15 +98,22 @@
 
     // ---- the speakers -----------------------------------------------------------
 
-    // Music Assistant's word on a speaker, or null while it has none: no
-    // music on the host, not read yet, away, or a speaker it does not have.
-    function heard(id) {
+    // Music Assistant's row for a speaker, available or not, or null while
+    // it has none: no music on the host, not read yet, away, or a speaker it
+    // does not have.
+    function row(id) {
       if (!music || music.status().state !== "ready") return null;
       for (const block of music.speakers()) {
-        const row = block.speakers.find((speaker) => speaker.id === id);
-        if (row) return row.available ? row : null;
+        const found = block.speakers.find((speaker) => speaker.id === id);
+        if (found) return found;
       }
       return null;
+    }
+
+    // Its word on a speaker it can play.
+    function heard(id) {
+      const found = row(id);
+      return found && found.available ? found : null;
     }
 
     function reported(id) {
@@ -115,13 +124,15 @@
       return null;
     }
 
-    // What a speaker plays, as the room lists and its bubble show it.
+    // What a speaker plays, as the room lists and its bubble show it. One
+    // Music Assistant cannot reach, that reports nothing itself, is not
+    // answering rather than still being read.
     function stateOf(id) {
-      const row = heard(id);
-      if (row) return { playing: row.playing === true, paused: row.paused, title: row.title, unknown: false };
+      const shown = heard(id);
+      if (shown) return { playing: shown.playing === true, paused: shown.paused, title: shown.title, unknown: false };
       const device = reported(id);
       return { playing: device ? device.playing === true : false, paused: false, title: device && device.title || null,
-        unknown: !device || device.playing === null, problem: Boolean(device && device.problem) };
+        unknown: !device || device.playing === null, problem: Boolean(device && device.problem || row(id)) };
     }
 
     // A speaker's name on its bubble: its model, unless another of the room's shares it.
@@ -330,5 +341,26 @@
     };
   }
 
-  global.RemoteListen = { create: create };
+  // The sessions Listen draws, on a remote-view backend (backend.js): each
+  // speaker's own (RemoteAudio) and, in a house with speakers, Music
+  // Assistant's; the remote page and Home's Listen rooms make them here.
+  // start() starts both; setActive() lets Music's stream go while hidden.
+  function sessions(options) {
+    const house = options.house;
+    const speakers = (house.speakerRooms || []).concat(house.rooms || []).some((room) => (room.speakers || []).length);
+    const audio = global.RemoteAudio.create({ backend: options.backend, house: house, access: options.access, store: options.store, watchLocks: false });
+    const musicBackend = speakers ? global.MusicBackend.create({ backend: options.mock ? "mock" : undefined, access: options.access,
+      active: options.active, speakers: global.MusicBackend.speakersOf(house) }) : null;
+    const music = musicBackend ? global.RemoteMusic.create({ backend: musicBackend, access: options.access, house: house,
+      store: options.store, watchLocks: false }) : null;
+    return {
+      audio: audio,
+      music: music,
+      listen: create({ audio: audio, music: music, house: house, store: options.store }),
+      start: () => Promise.all([audio.start(), music ? music.start() : null]),
+      setActive: (active) => { if (musicBackend) musicBackend.setActive(active); }
+    };
+  }
+
+  global.RemoteListen = { create: create, sessions: sessions };
 })(globalThis);

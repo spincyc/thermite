@@ -21,7 +21,7 @@
   });
   const store = storage();
   const activityLog = globalThis.RemoteLog.create({ document: document, store: store });
-  const heard = globalThis.RemoteListenPage.sessions({ backend: backend, house: house, store: store,
+  const heard = globalThis.RemoteListen.sessions({ backend: backend, house: house, store: store,
     access: globalThis.ThermiteAccess && globalThis.ThermiteAccess.client, mock: params.get("backend") === "mock",
     active: document.visibilityState !== "hidden" });
   const session = Session.create({ backend: backend, house: house, layouts: layouts, store: store, volume: params.get("volume"),
@@ -65,6 +65,8 @@
   let press = null;
   let listenPage = null;
   let shortcutsFor = "";
+  // The mode whose rooms the room lists hold.
+  let listedFor = "";
 
   session.subscribe(onSession);
   heard.listen.subscribe(onListen);
@@ -158,12 +160,12 @@
     updateMode();
   }
 
-  // Watch or Listen: the switch where the room has both, then the half on
+  // Watch or Listen: the switch where the house has both, then the half on
   // show. Listen (listen.js) takes Watch's place under the switch.
   function updateMode() {
-    const modes = session.modes(), mode = session.mode(), listening = mode === "listen";
+    const mode = session.mode(), listening = mode === "listen";
     document.body.dataset.mode = mode;
-    $("[data-modes]").hidden = modes.length < 2;
+    $("[data-modes]").hidden = session.kinds().length < 2;
     all("[data-modes] [data-mode]").forEach((option) => {
       const on = option.getAttribute("data-mode") === mode;
       option.setAttribute("aria-checked", String(on));
@@ -196,21 +198,22 @@
     });
   }
 
+  // The rooms of the mode on show: those with a screen in Watch, those with speakers in Listen.
   function buildRoomLists() {
+    listedFor = session.mode();
     all("[data-room-list]").forEach((list) => {
       list.textContent = "";
-      // The rooms of speakers alone follow the routed ones, a rule between them (remote.css).
-      session.rooms().forEach((room) => {
-        list.appendChild(node("li", { "data-listen-only": room.listenOnly ? "" : null }, [
+      session.listed().forEach((room) => {
+        list.appendChild(node("li", {}, [
           node("button", { type: "button", class: "room", "data-action": "room", "data-room": room.id }, [
             node("span", { class: "room__name" }, [
               node("span", { class: "room__label" }, room.label),
               node("span", { class: "room__playing" })
             ]),
+            icon("i-lock", "room__lock"),
             node("span", { class: "room__source" }, [
               node("span", { class: "led", "aria-hidden": "true" }),
-              node("span", { class: "room__source-text" }),
-              icon("i-lock", "room__lock")
+              node("span", { class: "room__source-text" })
             ])
           ])
         ]));
@@ -220,6 +223,13 @@
 
   function updateRoomLists() {
     const current = session.current();
+    if (listedFor !== session.mode()) {
+      // Focus in a list it rebuilds moves to the room on show there.
+      const held = document.activeElement && document.activeElement.closest("[data-room-list]");
+      buildRoomLists();
+      const room = held && Array.from(held.querySelectorAll(".room")).find((button) => button.getAttribute("data-room") === current.id);
+      if (room) room.focus();
+    }
     all("[data-room-list] .room").forEach((button) => {
       const room = session.room(button.getAttribute("data-room"));
       const shown = session.view(room, session.state(room.id)), lock = session.roomLocked(room.id);

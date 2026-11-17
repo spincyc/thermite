@@ -1,10 +1,24 @@
 /* Home is navigation and reported room state, never a device control. */
 "use strict";
-const { LOCK, fit, fitTail, length, wrap } = require("./grid");
+const { LOCK, fit, length, wrap } = require("./grid");
 const Torch = require("./torch");
 const Navigation = require("../../web/remote/navigation");
 
 const MODULES = Navigation.pages.filter(page => page.module).map(page => ({ ...page, id: page.screen }));
+const MODES = [["watch", " Watch ", "Watch: the rooms with a screen"], ["listen", " \u266a Listen ", "Listen: the rooms with speakers"]];
+const SWITCH_WIDTH = MODES.reduce((sum, [, text]) => sum + length(text), MODES.length - 1);
+
+// Watch | Listen where the house has both, as the remote has it: the rooms
+// under it are that mode's. A click or Enter chooses one, Y the other.
+function modeSwitch(g, x, y, ctx) {
+  const mode = ctx.session.mode();
+  MODES.forEach(([id, text, label], index) => {
+    if (index) g.put(x++, y, "\u2502", "dim");
+    const key = "home:mode:" + id, style = ctx.ui.focusVisible && ctx.ui.focus === key ? "row.focus" : id === mode ? "tab.current" : "dim";
+    g.put(x, y, text, style, { kind: "mode", mode: id, key, focus: true, label: label + " (Y)" });
+    x += length(text);
+  });
+}
 
 function content(g, width, ctx, height) {
   let y = 1;
@@ -35,22 +49,31 @@ function content(g, width, ctx, height) {
     const key = "home:" + screen;
     g.put(accessX, y, label, ctx.ui.focus === key ? "row.focus" : "link", { kind: "screen", screen, key, focus: true, label }); accessX += label.length + 3;
   }); if (accessLinks.length) y += 2;
-  line("Rooms · reported sources", "section");
+  const caption = "Rooms · " + (ctx.ui.ready && ctx.session.mode() === "listen" ? "what plays" : "reported sources");
+  g.put(2, y, fit(caption, width - 4), "section");
+  if (ctx.ui.ready && ctx.session.kinds().length > 1) {
+    // Beside the heading where both fit, else under it.
+    const beside = 2 + length(caption) + 3 + SWITCH_WIDTH <= width - 2;
+    modeSwitch(g, beside ? 2 + length(caption) + 3 : 2, beside ? y : ++y, ctx);
+  }
+  y++;
   if (!ctx.ui.ready) { line("Reading rooms…"); return y; }
-  if (!ctx.session.rooms().length) { line("No rooms configured"); return y; }
+  if (!ctx.session.listed().length) { line("No rooms configured"); return y; }
   const nameWidth = Math.min(25, Math.max(10, Math.floor((width - 5) * .4)));
-  ctx.session.rooms().forEach(room => {
+  ctx.session.listed().forEach(room => {
     const state = ctx.session.state(room.id), shown = ctx.session.view(room, state), lock = ctx.session.roomLocked(room.id);
     const key = "home-room:" + room.id, active = ctx.ui.focusVisible && ctx.ui.focus === key;
     const style = active ? "row.focus" : "row";
     g.fill(1, y, width - 2, 1, style);
     g.put(2, y, fit(room.label, nameWidth), active ? style : "base");
+    // A locked room's padlock in its own column, between the room and its source.
+    if (lock.locked) g.put(nameWidth + 3, y, LOCK, active ? style : "base");
     // The source, then what it plays where the row has room: "Shield · Disney+ · DuckTales".
-    const sourceWidth = Math.max(1, width - nameWidth - 6);
-    const source = fitTail(shown.short, lock.locked ? " " + LOCK : "", sourceWidth).trimEnd();
-    g.put(nameWidth + 4, y, source, active ? style : "dim");
+    const sourceWidth = Math.max(1, width - nameWidth - 7);
+    const source = fit(shown.short, sourceWidth).trimEnd();
+    g.put(nameWidth + 5, y, source, active ? style : "dim");
     const rest = sourceWidth - length(source) - 3;
-    if (shown.playing && rest >= 8) g.put(nameWidth + 4 + length(source), y, " \u00b7 " + fit(shown.playing, rest).trimEnd(), active ? style : "dim");
+    if (shown.playing && rest >= 8) g.put(nameWidth + 5 + length(source), y, " \u00b7 " + fit(shown.playing, rest).trimEnd(), active ? style : "dim");
     g.hit(1, y++, width - 2, 1, { kind: "home-room", room: room.id, key, focus: true,
       label: room.label + ", " + shown.spoken + (shown.playing ? ", playing " + shown.playing : "")
         + (lock.locked ? ". " + lock.text : "") + ". Open Remotes" });

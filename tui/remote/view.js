@@ -11,7 +11,7 @@
  */
 "use strict";
 
-const { Grid, LOCK, box, inset, fit, fitTail, wrap, length } = require("./grid");
+const { Grid, LOCK, box, inset, fit, wrap, length } = require("./grid");
 const { METER } = require("./theme");
 const Cameras = require("./cameras");
 const Day = require("./day");
@@ -361,15 +361,15 @@ function shortcutBar(frame, ctx, width, y) {
   const log = [["L"], ctx.ui.logVisible === false ? "Show log" : "Hide log"];
   // Pane controls already appear on the status line. Keep the footer quiet
   // and reserve Help/Quit before adding optional shortcuts.
-  // Y first where the room has both: the other mode is one key away.
-  const both = ctx.ui.screen === "remote" && ctx.ui.ready && ctx.session.current() && ctx.session.modes().length > 1;
-  const other = both ? [[["y"], listening(ctx) ? "Watch" : "Listen"]] : [];
+  // Y first where the house has both: the other mode is one key away.
+  const both = ["remote", "home"].includes(ctx.ui.screen) && ctx.ui.ready && ctx.session.current() && ctx.session.kinds().length > 1;
+  const other = both ? [[["y"], ctx.session.mode() === "listen" ? "Watch" : "Listen"]] : [];
   const list = ctx.ui.overlay ? [[["Esc"], "Close"]]
     : [[["Tab"], "Pane"]].concat(listening(ctx) ? other.concat([[["r"], "Rooms"]], musicKeys(ctx, "Search", "Group").map(([keys, label]) => [keys.map((k) => k.toLowerCase()), label]),
       [[["i"], "Info"], log, [["t"], "Theme"]])
       : ctx.ui.screen === "remote" ? other.concat([[["r"], "Rooms"], [["d"], "Signal"], [["h"], "Day"], log, [["v"], "Volume"], [["t"], "Theme"]])
       : ctx.ui.screen === "pairing" ? [[["Esc"], "Remotes"], log]
-        : (ctx.ui.screen === "home" ? [[["h"], "Day"]] : [[["F1"], "Home"]]).concat([[["t"], "Theme"]]));
+        : (ctx.ui.screen === "home" ? other.concat([[["h"], "Day"]]) : [[["F1"], "Home"]]).concat([[["t"], "Theme"]]));
   g.fill(0, y, width, 1, "footer");
   const essentials = ctx.ui.overlay
     ? [[[ctx.ui.overlay.kind === "access-form" ? "Ctrl-C" : "q"], "Quit"]]
@@ -476,11 +476,11 @@ function remoteScreen(frame, ctx, rect) {
   logPanel(frame, ctx, rect, logHeight);
 }
 
-// Watch | Listen in the remote's top edge, after its title, where a room
+// Watch | Listen in the remote's top edge, after its title, where the house
 // has both: a click chooses one, Y the other. Null where it has one, or
 // the edge has no room for it beside four columns of the title.
 function modeSwitch(ctx, rect, label) {
-  if (ctx.session.modes().length < 2) return null;
+  if (ctx.session.kinds().length < 2) return null;
   const mode = ctx.session.mode();
   const parts = [["watch", " Watch "], ["listen", " \u266a Listen "]];
   const width = parts.reduce((sum, part) => sum + length(part[1]), 0) + 5;
@@ -495,7 +495,7 @@ function modeSwitch(ctx, rect, label) {
     title, end: at + width,
     draw: (g) => inset(g, at, rect.y, border, parts.flatMap(([id, text], index) => (index ? [["\u2502", border]] : []).concat([[text,
       id === mode ? "tab.current" : "dim", { kind: "mode", mode: id, key: "mode:" + id,
-        label: (id === "watch" ? "Watch: the room's sources and remotes" : "Listen: the room's speakers") + " (Y)" }]])))
+        label: (id === "watch" ? "Watch: the rooms' sources and remotes" : "Listen: the rooms' speakers") + " (Y)" }]])))
   };
 }
 
@@ -517,18 +517,22 @@ function roomsContent(g, w, ctx) {
   const session = ctx.session;
   const current = session.current();
   let y = 0;
-  session.rooms().forEach((room) => {
-    const shown = session.view(room, session.state(room.id));
-    const lock = session.roomLocked(room.id), mark = lock.locked ? " " + LOCK : "";
+  const listed = session.listed().map((room) => [room, session.view(room, session.state(room.id))]);
+  // The room, its padlock and its source in columns: the source as wide as
+  // the widest, up to 12 and two fifths of the row, so the padlocks line up
+  // and names keep the most of it.
+  const sourceWidth = Math.min(12, Math.max(4, Math.floor((w - 7) * 2 / 5)), Math.max(1, ...listed.map(([, shown]) => length(shown.short))));
+  const lockAt = w - 1 - sourceWidth - 2, labelWidth = Math.max(4, lockAt - 4);
+  listed.forEach(([room, shown]) => {
+    const lock = session.roomLocked(room.id);
     const key = "room:" + room.id;
     const style = focused(ctx, key) ? "row.focus" : room === current ? "row.current" : "row";
     g.fill(0, y, w, 1, style);
     if (style === "row.current") g.put(0, y, "\u258e", "row.mark");
     g.put(1, y, ledChar(shown.led, ctx.ui.blink), style === "row.focus" ? style : style + "+" + ledStyle(shown.led));
-    const labelWidth = Math.max(4, w - 4 - Math.min(12, length(shown.short)) - mark.length - 1);
     g.put(3, y, fit(room.label, labelWidth), style);
-    // A locked room's padlock follows its source, which is cut to leave it room.
-    const short = fitTail(shown.short, mark, Math.max(0, w - 4 - labelWidth));
+    if (lock.locked) g.put(lockAt, y, LOCK, style);
+    const short = fit(shown.short, sourceWidth).trimEnd();
     g.put(w - 1 - length(short), y, short, style === "row" ? "dim" : style);
     g.hit(0, y, w, 1, { kind: "room", room: room.id, key: key, focus: true,
       label: room.label + ", " + shown.spoken + (lock.locked ? ". " + lock.text : "") });

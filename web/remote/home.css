@@ -14,10 +14,20 @@
 .home .home__panel-head { margin-bottom: 16px; }
 .home .home__panel h2 { margin: 0; color: var(--th-muted); font-size: 11px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; }
 .home .home__panel-head p { margin: 7px 0 0; color: var(--th-muted); font-size: 12px; line-height: 1.5; }
+.home .home__panel-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* Watch or Listen: the rooms with a screen, or those with speakers. */
+.home .home__modes { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--th-line); border-radius: 999px; background: var(--th-bg); }
+.home .home__modes[hidden] { display: none; }
+.home .home__modes button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--th-muted); font: inherit; font-size: 12px; font-weight: 620; cursor: pointer; }
+.home .home__modes svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.home .home__modes [aria-checked="true"] { background: var(--th-raised); color: var(--th-text); box-shadow: inset 0 0 0 1px var(--th-line); }
+.home .home__modes button:focus-visible { outline: 2px solid var(--th-focus); outline-offset: -2px; }
+.home .home__hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .home .thermite-rooms { table-layout: fixed; border-collapse: separate; border-spacing: 0 2px; font-size: 13px; }
 .home .thermite-rooms th { padding: 0 10px 8px; border-bottom: 1px solid var(--th-line); font-size: 10px; font-weight: 500; }
-.home .thermite-rooms th:first-child { width: 38%; }
-.home .thermite-rooms th:nth-child(2) { width: 37%; }
+.home .thermite-rooms th:first-child { width: 36%; }
+.home .thermite-rooms th:nth-child(2) { width: 32px; }
+.home .thermite-rooms th:nth-child(3) { width: 37%; }
 .home .thermite-rooms th:last-child { width: 25%; }
 .home .thermite-rooms td { padding: 4px 10px; border: 0; vertical-align: middle; overflow-wrap: anywhere; }
 .home .thermite-rooms td:first-child { border-radius: 9px 0 0 9px; }
@@ -27,8 +37,9 @@
 .home .thermite-rooms a:focus-visible { outline: 2px solid var(--th-focus); outline-offset: 3px; }
 .home .home__source { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 32px; padding: 6px 10px; border: 1px solid transparent; border-radius: 999px; background: var(--th-surface); color: var(--th-muted); font-size: 12px; line-height: 1.4; }
 .home .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
-/* A locked room's padlock follows its source, in the source's ink. */
-.home .home__lock { display: none; flex: none; width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+/* A locked room's padlock, in its own column between the room and its source. */
+.home .thermite-rooms td.home__lock-cell { padding-inline: 0; text-align: center; color: var(--th-text); }
+.home .home__lock { display: none; width: 14px; height: 14px; margin: 0 auto; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .home tr[data-locked] .home__lock { display: block; }
 .home tr[data-state="reported"] .home__source { color: var(--th-text); background: var(--th-raised); border-color: var(--th-line); }
 .home tr[data-state="switching"] .home__source { border-color: var(--th-busy); }
@@ -61,6 +72,7 @@
   .home .home__mark { width: 44px; height: 35px; }
   .home .home__panel { padding: 16px 12px; }
   .home .thermite-rooms th, .home .thermite-rooms td { padding-left: 6px; padding-right: 6px; }
+  .home .thermite-rooms th:nth-child(2) { width: 22px; }
   .home .home__source { padding-inline: 8px; }
   .home .home__views .thermite-modules { grid-template-columns: minmax(0, 1fr); }
 }

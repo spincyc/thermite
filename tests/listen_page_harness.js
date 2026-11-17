@@ -11,8 +11,8 @@ const {clock, Document} = require('./remote_dom');
 const WEB = path.join(__dirname, '..', 'web', 'remote');
 const house = JSON.parse(fs.readFileSync(0, 'utf8'));
 const [MINI, OWNED, MIXED, WATCH, AMP, DEN, PATIO_MINI, PATIO] = process.argv.slice(2);
-// The scripts index.html loads, but the house (stdin's) and the shell's frame.
-const SCRIPTS = [...fs.readFileSync(path.join(WEB, 'index.html'), 'utf8').matchAll(/<script src="([^"]+)"/g)].map((match) => match[1])
+// The scripts a page loads, but the house (stdin's) and the shell's frame.
+const scripts = (html) => [...fs.readFileSync(path.join(WEB, html), 'utf8').matchAll(/<script[^>]*\ssrc="([^"]+)"/g)].map((match) => match[1])
   .filter((name) => !['house.js', 'shell.js', 'access-config.js'].includes(name));
 
 // An access client whose only lock is room's, as listen_session_harness.js's;
@@ -25,16 +25,18 @@ function locking(room, guest) {
 
 // The remote page at ?room=room. options: access (a client for the locks),
 // music (the mock music's settings), wide (a window 1200 px wide), short
-// (and 500 px tall, a phone on its side), stored.
+// (and 500 px tall, a phone on its side), stored, html (another page: Home's
+// home.html, room null).
 function page(room, options = {}) {
   const time = clock();
-  const document = new Document(fs.readFileSync(path.join(WEB, 'index.html'), 'utf8'));
+  const html = options.html || 'index.html';
+  const document = new Document(fs.readFileSync(path.join(WEB, html), 'utf8'));
   const stored = new Map(Object.entries(options.stored || {}));
   const windowListeners = {};
   const toasts = [];
   const context = {
     document, console: {log() {}, info() {}, warn() {}, error: (...args) => { throw new Error(args.map((arg) => (arg && arg.stack) || arg).join(' ')); }},
-    location: {search: '?backend=mock&latency=4&room=' + room, href: 'file:///remote/index.html', protocol: 'file:', origin: 'null'},
+    location: {search: '?backend=mock&latency=4' + (room ? '&room=' + room : ''), href: 'file:///remote/' + html, protocol: 'file:', origin: 'null'},
     URLSearchParams, URL, Promise, JSON, Math, Map, Set, WeakMap, Array, Object, String, Number, Boolean, Error, RegExp, Symbol,
     setTimeout: time.setTimeout, clearTimeout: time.clearTimeout,
     setInterval: (callback, ms) => { const again = () => { callback(); time.setTimeout(again, ms); }; return time.setTimeout(again, ms); },
@@ -51,6 +53,8 @@ function page(room, options = {}) {
       && !options.short && document.body.dataset.mode !== 'listen' ? 'flex' : 'none'}),
     addEventListener: (type, listener) => { (windowListeners[type] = windowListeners[type] || []).push(listener); },
     REMOTE_HOUSE: house,
+    // The shell's links, as shell.js makes them.
+    ThermiteShell: {href: (id, search, target) => id + (target ? '?room=' + target : '')},
   };
   document.later = time.setTimeout;
   context.window = context;
@@ -59,7 +63,7 @@ function page(room, options = {}) {
   const Clocked = vm.runInContext('Date', context);
   context.Date = class extends Clocked { static now() { return time.now(); } };
   const made = {};
-  for (const name of SCRIPTS) {
+  for (const name of scripts(html)) {
     vm.runInContext(fs.readFileSync(path.join(WEB, name), 'utf8'), context, {filename: name});
     if (name === 'access.js' && options.access) context.ThermiteAccess.client = options.access;
     // The page's backends kept, so a scenario can see what they sent and make them answer as it wants.
@@ -67,6 +71,12 @@ function page(room, options = {}) {
       const create = context.RemoteBackend.create;
       context.RemoteBackend.create = (...args) => {
         const backend = made.remote = create(...args);
+        // Home's own: whether its stream runs, as each call left it.
+        if ((args[1] || {}).view === 'home') {
+          made.home = backend;
+          backend.streaming = [Boolean(args[1].active)];
+          backend.setActive = (active) => backend.streaming.push(Boolean(active));
+        }
         const command = backend.command.bind(backend);
         backend.sent = [];
         // Each room the Signal panel read, as it polls.
@@ -104,16 +114,29 @@ function page(room, options = {}) {
   return {time, document, $, all, focus, key, toast, shown, words, made, stored, windowListeners, toasts};
 }
 
-// A room's rows in the room sheet: routed rooms, then those of speakers alone.
+// The room sheet's rows: in Watch the rooms with a screen, in Listen those
+// with speakers, what each plays; the padlock in its own column.
 async function rooms(out) {
-  const {time, all, words} = page(WATCH);
+  const p = page(WATCH);
+  const {time, $, all, words, key} = p;
   await time.tick(1500);
-  out.sheet = all('#room-sheet [data-room-list] li').map((row) => [row.hasAttribute('data-listen-only'),
-    words(row.querySelector('.room__label')), words(row.querySelector('.room__source-text')), words(row.querySelector('.room__playing'))]);
+  const rows = () => all('#room-sheet [data-room-list] li').map((row) => [words(row.querySelector('.room__label')),
+    words(row.querySelector('.room__source-text')), words(row.querySelector('.room__playing'))]);
+  out.sheet = rows();
   out.sidebar = all('.panel--rooms [data-room-list] .room').length;
+  out.columns = Array.from($('#room-sheet [data-room-list] .room').children).map((child) => child.getAttribute('class'));
+  out.lists = all('[data-room-list], [data-input-list]').map((list) => [list.hasAttribute('data-room-list'), list.classList.contains('rooms--house')]);
+  await key('y', p.document.body);
+  await time.tick(400);
+  out.listen = [rows(), words($('[data-room-name]')), all('.panel--rooms [data-room-list] .room').length];
+  // Y on a room the switch rebuilds keeps the focus on the room on show.
+  $('.panel--rooms [data-room-list] .room[aria-current="true"]').focus();
+  await key('y');
+  await time.tick(400);
+  out.focus = [p.focus(), words($('[data-room-name]'))];
 }
 
-// The switch, only where a room has both, the same place in each; Y and the arrows.
+// The switch in every room of a house with both, the same place in each; Y and the arrows.
 async function modes(out) {
   const p = page(WATCH);
   const {time, $, all, key, shown} = p;
@@ -122,7 +145,9 @@ async function modes(out) {
     mode: p.document.body.dataset.mode, listen: shown($('#listen')), controls: shown($('#controls')), bubbles: shown($('[data-targets]')),
     speakers: shown($('[data-speakers]')), shortcuts: all('[data-shortcuts] li span').map((span) => span.textContent).slice(0, 2)});
   out.watchOnly = state();
-  out.watchOnlyY = [await key('y'), state().mode];
+  // A room without speakers gives way to the first with them, and Watch keeps it.
+  out.watchOnlyY = [await key('y'), state().mode, p.words($('[data-room-name]'))];
+  out.watchAgain = [await key('y'), state().mode, p.words($('[data-room-name]'))];
   $('#room-sheet [data-room="' + MIXED + '"]').click();
   await time.tick(400);
   out.mixed = state();
@@ -139,7 +164,7 @@ async function modes(out) {
   $('#room-sheet [data-room="' + DEN + '"]').click();
   await time.tick(400);
   out.den = state();
-  // Kept per room: back in the mixed room it is still in Listen.
+  // Kept for every room: back in the mixed room it is still in Listen.
   await key(']', p.document.body);
   await key('[', p.document.body);
   $('#room-sheet [data-room="' + MIXED + '"]').click();
@@ -149,7 +174,7 @@ async function modes(out) {
 
 // Listen in the mixed room: bubbles, what plays, keys, chips, volume, Info.
 async function face(out) {
-  const p = page(MIXED, {stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const p = page(MIXED, {stored: {'remote.mode': 'listen'}});
   const {time, $, all, key, words, shown, made} = p;
   await time.tick(1500);
   out.speakers = all('[data-speakers] .target').map((bubble) => [bubble.dataset.speaker, words(bubble), bubble.getAttribute('aria-current'),
@@ -257,7 +282,7 @@ async function watch(out) {
 
 // The room's lock, as Watch shows one: padlock, controls disabled, the alert's words.
 async function locks(out) {
-  const p = page(MIXED, {access: locking(MIXED), stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const p = page(MIXED, {access: locking(MIXED), stored: {'remote.mode': 'listen'}});
   const {time, $, all, words, made, toast} = p;
   await time.tick(1500);
   out.bubbles = all('[data-speakers] .target').map((bubble) => [bubble.hasAttribute('data-locked'), bubble.getAttribute('aria-current')]);
@@ -275,7 +300,7 @@ async function locks(out) {
 
 // The library: in its sheet on a phone, beside the remote on a desktop.
 async function library(out) {
-  const p = page(MIXED, {stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const p = page(MIXED, {stored: {'remote.mode': 'listen'}});
   const {time, $, all, words, made, toast, focus} = p;
   await time.tick(1500);
   $('[data-action="listen-library"]').click();
@@ -301,7 +326,7 @@ async function library(out) {
   out.queue = [p.shown($('#library-panel-queue')), all('[data-queue-items] [data-item]').length > 0];
   $('#library-sheet').close();
   out.slash = [await p.key('/', p.document.body), $('#library-sheet').open, focus(), all('[data-tab]').find((tab) => tab.getAttribute('aria-selected') === 'true').dataset.tab];
-  const wide = page(MIXED, {wide: true, stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const wide = page(MIXED, {wide: true, stored: {'remote.mode': 'listen'}});
   await wide.time.tick(1500);
   wide.$('[data-action="listen-library"]').click();
   await wide.time.tick(50);
@@ -313,7 +338,7 @@ async function library(out) {
 
 // Browse: a folder opened, Back, and a track's sheet; the focus follows each.
 async function browse(out) {
-  const p = page(MIXED, {stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const p = page(MIXED, {stored: {'remote.mode': 'listen'}});
   const {time, $, focus} = p;
   await time.tick(1500);
   $('[data-action="listen-library"]').click();
@@ -339,7 +364,7 @@ async function browse(out) {
   await pressed($('[data-item-actions] [data-item-action="next"]'));
   out.played = [$('#item-sheet').open, focus()];
   // Taken elsewhere while a folder reads, to a control in sight: the focus stays there.
-  const other = page(MIXED, {wide: true, stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const other = page(MIXED, {wide: true, stored: {'remote.mode': 'listen'}});
   await other.time.tick(1500);
   other.$('[data-tab="browse"]').click();
   await other.time.tick(400);
@@ -352,7 +377,7 @@ async function browse(out) {
   await other.time.tick(400);
   out.elsewhere.push(other.$('[data-page-items]').querySelectorAll('[data-item]').length > 0, other.focus());
   // A folder read that failed leaves the focus on the title once, then lets it be; nothing scrolls the page.
-  const failing = page(MIXED, {wide: true, stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const failing = page(MIXED, {wide: true, stored: {'remote.mode': 'listen'}});
   await failing.time.tick(1500);
   const read = failing.made.music.browse.bind(failing.made.music);
   failing.made.music.browse = (ref, ...rest) => (ref ? Promise.reject(Object.assign(new Error('music_failed'), {code: 'music_failed', status: 502}))
@@ -371,7 +396,7 @@ async function browse(out) {
 // An artist found and opened over the search, a single of it, its header's
 // Play, Shuffle and artist, a track played from where it is, and Back to the search.
 async function pages(out) {
-  const p = page(MIXED, {music: {tidal: true}, stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const p = page(MIXED, {music: {tidal: true}, stored: {'remote.mode': 'listen'}});
   const {time, $, all, words, made, focus} = p;
   await time.tick(1500);
   $('[data-action="listen-library"]').click();
@@ -430,7 +455,7 @@ async function pages(out) {
 
 // The group sheet: who joined, who could not and why, who was asked; leave and end.
 async function group(out) {
-  const p = page(MIXED, {stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const p = page(MIXED, {stored: {'remote.mode': 'listen'}});
   const {time, $, all, words, made, key} = p;
   await time.tick(1500);
   out.chip = [words($('[data-action="listen-group"]')), $('[data-action="listen-group"]').getAttribute('aria-keyshortcuts')];
@@ -463,7 +488,7 @@ async function group(out) {
 // after ART_RETRY_MS and up to ART_JITTER_MS (a thumbnail, lazy, eagerly),
 // then left to its placeholder.
 async function covers(out) {
-  const p = page(MIXED, {stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const p = page(MIXED, {stored: {'remote.mode': 'listen'}});
   const {time, $, document, made} = p;
   const backend = made.music;
   const art = (n) => n.toString(16).padStart(64, '0'), playing = art(4095);
@@ -512,18 +537,18 @@ async function covers(out) {
 
 // Without music on the host, or Music Assistant away, or a Guest kept from titles.
 async function music(out) {
-  const absent = page(MIXED, {music: {configured: false}, stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const absent = page(MIXED, {music: {configured: false}, stored: {'remote.mode': 'listen'}});
   await absent.time.tick(1500);
   out.absent = [absent.all('[data-listen-chips] .chip').filter((chip) => absent.shown(chip)).map((chip) => chip.dataset.action),
     absent.all('[data-listen-info] .info__note').map((note) => absent.words(note)), absent.words(absent.$('[data-listen-title]'))];
-  const away = page(MIXED, {stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const away = page(MIXED, {stored: {'remote.mode': 'listen'}});
   await away.time.tick(1500);
   away.made.music.simulateUnavailable('music_unavailable');
   await away.time.tick(1500);
   out.away = [away.shown(away.$('#alert')), away.words(away.$('#alert-text')), away.shown(away.$('[data-action="listen-library"]'))];
   // The gateway says so once the library is read; access says so before.
   for (const [name, options] of [['guest', {music: {guest: true}}], ['told', {access: locking(null, true)}]]) {
-    const guest = page(MIXED, Object.assign({stored: {['remote.mode.' + MIXED]: 'listen'}}, options));
+    const guest = page(MIXED, Object.assign({stored: {'remote.mode': 'listen'}}, options));
     await guest.time.tick(1500);
     guest.$('[data-action="listen-library"]').click();
     guest.$('[data-tab="browse"]').click();
@@ -532,7 +557,7 @@ async function music(out) {
       guest.all('[data-panel]').filter((panel) => guest.shown(panel)).length, guest.words(guest.$('[data-listen-title]'))];
   }
   // An Admin signs Music Assistant into TIDAL from the library.
-  const admin = page(MIXED, {wide: true, music: {tidal: false}, stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const admin = page(MIXED, {wide: true, music: {tidal: false}, stored: {'remote.mode': 'listen'}});
   await admin.time.tick(1500);
   out.tidal = [admin.shown(admin.$('[data-tidal]')), admin.words(admin.$('[data-tidal-text]'))];
   admin.$('[data-tidal-start]').click();
@@ -597,6 +622,7 @@ async function signal(out) {
   await key('y', p.document.body);
   out.back = await reads(25000);
   // A room of speakers alone chosen while it shows: it has no signal, so none is read.
+  await key('y', p.document.body);
   const before = made.remote.diagnosed.length;
   $('#room-sheet [data-room="' + DEN + '"]').click();
   await time.tick(25000);
@@ -617,9 +643,35 @@ async function signal(out) {
   out.listenInfo = [narrow.$('#info-sheet').open, narrow.made.remote.diagnosed.length - opened];
 }
 
+// Home: Watch's rooms with their sources, then Listen's with what plays, the
+// padlock in its own column; the switch is the remote's own choice, and Y too.
+async function home(out) {
+  const p = page(null, {html: 'home.html'});
+  const {time, $, all, words, key, stored} = p;
+  await time.tick(1500);
+  const rows = () => all('[data-home-rooms] tr').map((row) => row.children.map((cell) => words(cell)));
+  out.watch = [rows(), $('[data-home-modes]').hidden, words($('[data-home-what]')), all('[data-home-rooms] a').map((link) => link.getAttribute('href'))];
+  $('[data-home-modes] [data-mode="listen"]').click();
+  await time.tick(1500);
+  out.listen = [rows(), words($('[data-home-what]')), stored.get('remote.mode'), words($('[data-home-status]')),
+    all('[data-home-modes] [data-mode]').map((option) => [option.getAttribute('aria-checked'), option.getAttribute('tabindex')])];
+  await key('y', p.document.body);
+  out.y = [stored.get('remote.mode'), rows().length];
+  // Its stream runs in Watch alone; Listen's sessions read the speakers.
+  const streaming = made => made.home.streaming[made.home.streaming.length - 1];
+  out.streams = [streaming(p.made)];
+  $('[data-home-modes] [data-mode="listen"]').click();
+  await time.tick(50);
+  out.streams.push(streaming(p.made));
+  // Y on a row the switch rebuilds moves the focus to the switch.
+  $('[data-home-rooms] a').focus();
+  await key('y');
+  out.focus = [p.focus(), stored.get('remote.mode'), streaming(p.made)];
+}
+
 // 1200 px wide but 500 tall (a phone on its side): no right column, so the library opens its sheet.
 async function sideways(out) {
-  const p = page(MIXED, {wide: true, short: true, stored: {['remote.mode.' + MIXED]: 'listen'}});
+  const p = page(MIXED, {wide: true, short: true, stored: {'remote.mode': 'listen'}});
   await p.time.tick(1500);
   p.$('[data-action="listen-library"]').click();
   await p.time.tick(50);
@@ -629,7 +681,7 @@ async function sideways(out) {
 (async () => {
   const report = {};
   for (const [name, run] of Object.entries({rooms, modes, face, alone, watch, locks, library, browse, pages, group, covers, music, inputs, signal,
-    sideways})) {
+    sideways, home})) {
     report[name] = {};
     // A scenario that throws says where, and the rest still run.
     await run(report[name]).catch((error) => { report[name].error = error.stack.split('\n').slice(0, 3).join(' '); });

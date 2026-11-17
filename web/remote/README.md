@@ -13,8 +13,8 @@ own, else its display. In
 a locked room the bubble for what it shows, Off included, carries a padlock and
 every other bubble is greyed out; tapping the padlocked bubble says why it is
 locked and, for a schedule, until when. The room lists, on Home and in Remotes'
-sidebar and room sheet, show a padlock after a locked room's source, and a
-screen reader hears how it is locked. Only a lock the remote has read greys
+sidebar and room sheet, show a locked room's padlock in its own column, between
+the room and its source, and a screen reader hears how it is locked. Only a lock the remote has read greys
 its controls. If a room's lock cannot be read, the remote says “Room lock
 status unknown” and still sends commands: the server checks each one and
 refuses it in a locked room, and the remote then says why and reads the lock
@@ -43,11 +43,15 @@ its maximum, and each press of + or − moves one of the device's own steps
 (0.5 on a receiver, 1 elsewhere). Nothing caps or rescales it; a limit set on
 the device itself is the device's to apply.
 
-Remotes watches and listens. A room with a screen opens on Watch, the remote
-above; a room whose speakers thermite controls also has Listen, and a room
-with both shows a Watch | Listen switch under the bar (Y toggles it; the
-choice is kept per room). The room lists name the rooms of speakers no routed
-room owns after the routed ones, each with what it plays. A routed room owns
+Remotes watches and listens. Watch is the remote above, in the rooms with a
+screen; Listen is the speakers', in the rooms whose speakers thermite controls.
+A house with both shows a Watch | Listen switch under the bar, and Home one
+over its rooms (Y toggles either); it chooses the rooms the lists hold, and
+the choice is kept, the same on both pages: each page opens in the last one
+made. Watch lists the routed rooms with
+their sources; Listen the routed rooms with speakers, then the rooms of
+speakers no routed room owns, each with what it plays. A room of one kind
+alone, opened from a link, brings its kind. A routed room owns
 its `audio` device and the soundbars, streaming amplifiers and audio streamers
 in its own room; a WiiM or a Sonos under `control` in the house file is a
 speaker. Watch's volume caption names the room's speaker as a button to

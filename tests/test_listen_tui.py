@@ -89,7 +89,7 @@ class ListenTUI(unittest.TestCase):
         reach = self.proof["reach"]
         self.assertEqual((reach["u"], reach["Y"], reach["again"]), ("remote", "listen", "watch"))
         self.assertEqual((reach["f6"], reach["back"], reach["kept"]), ("pairing", "remote", "listen"))
-        self.assertEqual((reach["homeY"], reach["f8"]), ("home", "users"))
+        self.assertEqual((reach["homeY"], reach["f8"]), (["home", "watch", "listen"], "users"))
 
     def test_listen_draws_the_speaker_its_transport_chips_and_volume_as_watch(self):
         self.assertEqual(self.proof["drawn"], [], "missing from the screen")
@@ -122,7 +122,7 @@ class ListenTUI(unittest.TestCase):
     def test_a_room_of_speakers_alone_shows_their_bubbles_and_the_digits_choose(self):
         den = self.proof["den"]
         self.assertEqual({key: den[key] for key in ("mode", "switch", "footer", "bubbles", "listed", "drawn")},
-                         {"mode": "listen", "switch": False, "footer": False, "bubbles": True, "listed": True, "drawn": []})
+                         {"mode": "listen", "switch": True, "footer": True, "bubbles": True, "listed": True, "drawn": []})
         self.assertEqual((den["digit"], den["arrow"], den["room"]), (FREE, MINI, LOUNGE))
         self.assertEqual(den["kinds"], [], "Info draws each kind of control")
         self.assertEqual(den["info"], [[FREE, FREE + "_play_mode", "0"]])
@@ -245,8 +245,8 @@ class ListenTUI(unittest.TestCase):
                          {"pane": "info", "moved": True, "room": ROOM, "mode": "listen", "music": []})
         self.assertEqual(info["sent"], [[OWNED, OWNED + "_sub_level", "1"], [OWNED, OWNED + "_eq", "ON"], [OWNED, OWNED + "_eq", "OFF"]])
 
-    def test_walking_rooms_from_the_sources_lands_on_the_speakers_else_the_rooms(self):
-        self.assertEqual(self.proof["edges"]["walk"], [DEN, "speakers", LOUNGE, "rooms"])
+    def test_walking_rooms_keeps_to_the_modes_rooms_and_one_speaker_lands_on_the_rooms(self):
+        self.assertEqual(self.proof["edges"]["walk"], ["example_west", "sources", DEN, "speakers", LOUNGE, "rooms"])
 
     def test_the_switch_leaves_an_active_titles_border(self):
         self.assertIn("┤ ▸ Example East ├─┤  Watch │ ♪ Listen  ├", self.proof["edges"]["title"])

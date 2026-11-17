@@ -58,16 +58,44 @@ class ListenPage(unittest.TestCase):
     def test_every_scenario_ran_to_its_end(self):
         self.assertEqual(self.errors, {})
 
-    def test_the_room_sheet_lists_rooms_of_speakers_after_the_routed_ones_with_what_they_do(self):
+    def test_watchs_rooms_are_those_with_a_screen_and_listens_those_with_speakers(self):
         out = self.out["rooms"]
-        self.assertEqual(out["sheet"], [
-            [False, "Example West", "Off", ""], [False, "Example East", "Off", "♪ Harbour Lights · The Lanterns"],
-            [True, "Fixture Den", "Paused", ""], [True, "Fixture Patio", "Idle", ""]])
-        self.assertEqual(out["sidebar"], 4)
+        self.assertEqual(out["sheet"], [["Example West", "Off", ""], ["Example East", "Off", "♪ Harbour Lights · The Lanterns"]])
+        self.assertEqual(out["sidebar"], 2)
+        # In Listen each says what its speakers do, and the routed room with speakers comes first.
+        self.assertEqual(out["listen"], [[["Example East", "Playing", "♪ Harbour Lights · The Lanterns"],
+                                          ["Fixture Den", "Paused", ""], ["Fixture Patio", "Idle", ""]], "Example East", 3])
+        # Y on a room of a list it rebuilds keeps the focus on the room on show.
+        self.assertEqual(out["focus"], ["button:Example East, Off, playing ♪ Harbour Lights · The Lanterns", "Example East"])
 
-    def test_the_switch_shows_only_in_a_room_with_both_and_y_toggles_it(self):
+    def test_home_lists_watchs_rooms_then_listens_with_what_plays_and_keeps_the_remotes_choice(self):
+        out = self.out["home"]
+        self.assertEqual(out["watch"], [[["Example West", "", "Off", "Room off"], ["Example East", "", "Off", "Room off"]], False,
+                                        "Reported source", ["remotes?room=example_west", "remotes?room=example_east"]])
+        rows, what, stored, status, radios = out["listen"]
+        self.assertEqual(rows, [["Example East", "", "Harbour Lights · The Lanterns", "Playing"],
+                                ["Fixture Den", "", "Nothing playing", "Paused"], ["Fixture Patio", "", "Nothing playing", "Idle"]])
+        # The remote opens on the mode Home shows; the radio on show takes the Tab stop.
+        self.assertEqual((what, stored, status, radios), ("Playing", "listen", "Sample speakers · no device commands",
+                                                          [["false", "-1"], ["true", "0"]]))
+        self.assertEqual(out["y"], ["watch", 2])
+        # Home's own stream runs in Watch alone, and Y on a row it rebuilds focuses the switch.
+        self.assertEqual(out["streams"], [True, False])
+        self.assertEqual(out["focus"], ["button:Watch", "watch", True])
+
+    def test_the_padlock_has_its_own_column_between_the_room_and_its_source(self):
+        self.assertEqual(self.out["rooms"]["columns"], ["room__name", "icon room__lock", "room__source"])
+        # Only the room lists have the columns: an input sheet's rows keep their name and "In use".
+        self.assertEqual(self.out["rooms"]["lists"], [[True, True], [True, True], [False, False]])
+        css = (AREA / "web/remote/remote.css").read_text()
+        self.assertIn(".room {\n  display: flex;", css)
+        self.assertIn(".rooms--house {\n  grid-template-columns: minmax(0, 1fr) 14px fit-content(42%);", css)
+
+    def test_the_switch_shows_in_every_room_and_y_toggles_it(self):
         out = self.out["modes"]
-        self.assertEqual((out["watchOnly"]["switch"], out["watchOnly"]["mode"], out["watchOnlyY"]), (False, "watch", [False, "watch"]))
+        self.assertEqual((out["watchOnly"]["switch"], out["watchOnly"]["mode"]), (True, "watch"))
+        self.assertEqual(out["watchOnlyY"], [True, "listen", "Example East"])
+        self.assertEqual(out["watchAgain"], [True, "watch", "Example East"])
         self.assertEqual((out["mixed"]["switch"], out["mixed"]["checked"], out["mixed"]["listen"]), (True, ["watch"], False))
         pressed, listening = out["y"]
         self.assertTrue(pressed)
@@ -82,7 +110,7 @@ class ListenPage(unittest.TestCase):
         self.assertEqual(out["arrow"], [True, "watch", "button:Watch"])
         self.assertEqual(out["tabStops"], ["0", "-1"])
         # A room of speakers alone listens, with no switch; the mode is kept per room.
-        self.assertEqual((out["den"]["switch"], out["den"]["mode"], out["den"]["listen"]), (False, "listen", True))
+        self.assertEqual((out["den"]["switch"], out["den"]["mode"], out["den"]["listen"]), (True, "listen", True))
         self.assertEqual(out["kept"], "listen")
 
     def test_listen_draws_the_speakers_what_plays_its_keys_chips_and_volume(self):
@@ -125,7 +153,7 @@ class ListenPage(unittest.TestCase):
         self.assertEqual(out["input"], [False, ["input:line-in"], "Line in"])
 
     def test_one_speaker_has_no_bubbles_and_its_name_by_the_volume(self):
-        self.assertEqual(self.out["alone"]["den"], [False, False, "Amp Pro · 60", False])
+        self.assertEqual(self.out["alone"]["den"], [True, False, "Amp Pro · 60", False])
 
     def test_watch_is_unchanged_and_its_audio_caption_listens(self):
         out = self.out["watch"]

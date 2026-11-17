@@ -500,14 +500,15 @@ const pause = () => new Promise(resolve => setTimeout(resolve, 5));
   const rowOf = (text, label) => text.split("\n").find(line => line.includes(label));
   const hitOf = (kind, id) => frame.grid.hits.find(entry => entry.hit.kind === kind && entry.hit.room === id).hit.label;
   frame = listed.parts.controller.frame(149, 40);
-  assert.match(rowOf(panelText(frame, "rooms"), otherLabel), /Off \u26bf/);
+  // The padlock in its own column, between the room and its source.
+  assert.match(rowOf(panelText(frame, "rooms"), otherLabel), new RegExp(otherLabel + " +\u26bf +Off"));
   assert.doesNotMatch(rowOf(panelText(frame, "rooms"), roomLabel), /\u26bf/);
   assert.equal(hitOf("room", other), otherLabel + ", Off. Locked · until unlocked");
   assert.equal(hitOf("room", room), roomLabel + ", Off");
   proof.terminalRoomList = true;
   listed.parts.controller.key(null, { name: "f1" });
   frame = listed.parts.controller.frame(149, 40);
-  assert.match(rowOf(frame.grid.text(), otherLabel), /Off \u26bf/);
+  assert.match(rowOf(frame.grid.text(), otherLabel), new RegExp(otherLabel + " +\u26bf +Off"));
   assert.doesNotMatch(rowOf(frame.grid.text(), roomLabel), /\u26bf/);
   assert.equal(hitOf("home-room", other), otherLabel + ", Off. Locked · until unlocked. Open Remotes");
   assert.equal(hitOf("home-room", room), roomLabel + ", Off. Open Remotes");
@@ -537,26 +538,31 @@ const pause = () => new Promise(resolve => setTimeout(resolve, 5));
   assert.deepEqual(lister.roomLocked(room), { locked: false, text: "" }, "a summary read since the policy");
   proof.currentRoomPolicy = proof.fresherPolicy = true;
 
-  // Browser Home, run as the page runs it: the padlock follows the reported
-  // source, its label is the lock in words; an unlocked room shows none.
+  // Browser Home, run as the page runs it: the padlock in its own column,
+  // between the room and its reported source, its label the lock in words;
+  // an unlocked room shows none.
   const homeShared = Shared.load(), homeAccess = homeShared.Access.create({ base: origin, fetch: lists.fetch, policyInterval: 3600000 });
   const homeBackend = homeShared.Remote.create(homeShared.house, { backend: "openhab", base: origin, access: homeAccess,
     fetch: homeAccess.fetch, EventSource: homeAccess.eventSource(views(lists)), view: "home" });
-  const tbody = new Element("tbody"), notice = new Element("p"), homeCalls = lists.calls.length;
+  const tbody = new Element("tbody"), notice = new Element("p"), what = new Element("th"), note = new Element("p"), homeCalls = lists.calls.length;
+  const options = ["watch", "listen"].map(mode => Object.assign(new Element("button"), { dataset: { mode }, focus() {} }));
+  const switcher = Object.assign(new Element("div"), { hidden: true, querySelectorAll: () => options, addEventListener() {}, contains: () => false });
   const page = { URLSearchParams, REMOTE_HOUSE: homeShared.house, RemoteSession: homeShared.Session, ThermiteAccess: { client: homeAccess },
     RemoteBackend: { create: () => homeBackend }, ThermiteShell: { href: () => "#" }, location: { search: "" }, addEventListener() {},
-    document: { visibilityState: "visible", querySelector: selector => ({ "[data-home-rooms]": tbody, "[data-home-status]": notice })[selector] || null,
+    document: { visibilityState: "visible", querySelector: selector => ({ "[data-home-rooms]": tbody, "[data-home-status]": notice, "[data-home-modes]": switcher,
+      "[data-home-what]": what, "[data-home-note]": note })[selector] || null,
       createElement: tag => new Element(tag), createElementNS: (namespace, tag) => new Element(tag, namespace), addEventListener() {} } };
   vm.createContext(page); vm.runInContext(fs.readFileSync(path.join(__dirname, "../web/remote/home.js"), "utf8"), page);
   await settle(() => tbody.children.some(row => row.hasAttribute("data-locked")));
   assert(lists.calls.slice(homeCalls).includes("GET /api/v1/locks"), "Home reads every room's lock");
-  const homeRow = id => tbody.children[ROOMS.indexOf(id)], padlockOf = row => row.children[1].children[0].lastChild;
+  const homeRow = id => tbody.children[ROOMS.indexOf(id)], padlockOf = row => row.children[1].children[0];
+  assert.deepEqual(homeRow(other).children.map(cell => cell.className || ""), ["", "home__lock-cell", "", "thermite-room-state"]);
   assert(homeRow(other).hasAttribute("data-locked") && !homeRow(room).hasAttribute("data-locked"));
   assert.equal(padlockOf(homeRow(other)).getAttribute("aria-label"), "Locked · until unlocked");
   assert.equal(padlockOf(homeRow(other)).getAttribute("role"), "img");
   assert.equal(padlockOf(homeRow(other)).children[0].getAttribute("href"), "#i-lock");
   assert.equal(padlockOf(homeRow(room)).getAttribute("aria-label"), "");
-  assert.equal(tbody.children.length, ROOMS.length, "no column or row added");
+  assert.equal(tbody.children.length, ROOMS.length, "no row added");
   proof.browserHome = true;
   homeBackend.stop();
   listed.parts.controller.stop();

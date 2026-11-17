@@ -152,13 +152,17 @@ function response(value = manifest) {
   empty.controller.key(null, { name: "f10" }); await tick(); assert.equal(empty.controller.ui.screen, "system"); empty.controller.stop();
   // Browser Home's empty-room lifecycle also stays honest and issues no commands.
   const notice = { textContent: "" }, listeners = {};
+  const parts = { "[data-home-status]": notice, "[data-home-rooms]": { textContent: "", appendChild() {} },
+    "[data-home-modes]": { hidden: false, querySelectorAll: () => [], addEventListener() {}, contains: () => false },
+    "[data-home-what]": { textContent: "" }, "[data-home-note]": { textContent: "" } };
   const context = { URLSearchParams, REMOTE_HOUSE: { rooms: [] }, location: { search: "" },
     RemoteBackend: { create: () => ({ subscribe() {}, setActive() {} }) },
-    document: { visibilityState: "visible", querySelector: name => name === "[data-home-status]" ? notice : null,
+    document: { visibilityState: "visible", querySelector: name => parts[name] || null,
       addEventListener: (name, fn) => { listeners[name] = fn; } }, addEventListener() {} };
   vm.createContext(context); vm.runInContext(fs.readFileSync(path.join(__dirname, "../web/remote/home.js"), "utf8"), context);
   assert.equal(notice.textContent, "No rooms configured"); context.document.visibilityState = "hidden"; listeners.visibilitychange();
   assert.equal(notice.textContent, "No rooms configured");
+  assert(parts["[data-home-modes]"].hidden, "no switch without rooms of either kind");
   process.stdout.write(JSON.stringify({ pass: true, safeEndpoints: true, gatedMetadata: true, noAutomaticLaunch: true,
     cancelledReads: true, browserLifecycle: true, systemKeyboard: true, localToolsStayLocal: true, emptyRooms: true, commands }) + "\n");
 })().then(() => process.exit(0), error => { process.stderr.write(error.stack + "\n"); process.exit(1); });

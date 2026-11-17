@@ -15,12 +15,17 @@
  * session can be drawn, on that room, the stored one or the first.
  *
  * rooms() are the routed rooms, then the rooms of speakers alone
- * (house.js speakerRooms, listenOnly). Each room has speakers, and a mode:
- * "watch", its sources and remotes, or "listen", its speakers through
- * listen. modes() are those the room has (both where it has a screen and
- * speakers), mode() the one on show, chosen with setMode() or toggleMode()
- * and kept per room. In Listen the digits choose a speaker and the keys
- * (pressKey) go to listen. subscribe(callback) hears:
+ * (house.js speakerRooms, listenOnly). Each room has speakers, and modes()
+ * (room?): "watch", its sources and remotes, and "listen", its speakers
+ * through listen (both where it has a screen and speakers). mode() is the
+ * one on show in every room, of kinds(), those any room has; setMode() or
+ * toggleMode() chooses it, and it is kept ("remote.mode", as Home keeps
+ * it). listed() are the rooms of that mode, those the room lists show,
+ * where view() gives what each plays in Listen and its source in Watch.
+ * Choosing a room of the other mode alone brings its mode; choosing the
+ * mode the room lacks goes to the room last on show in it. In Listen the
+ * digits choose a speaker and the keys (pressKey) go to listen.
+ * subscribe(callback) hears:
  *
  *   {type: "change"}                     rooms, states or the buttons changed: draw it all again
  *   {type: "audio"}                      only the volume or Mute changed (audioView())
@@ -141,6 +146,8 @@
     // what it showed then, and the buttons follow the next source after that.
     const picked = {};
     let current = null;
+    // The mode chosen (mode()); undefined until the kept one is read.
+    let chosen;
     let answering = backend.isMatrixAnswering ? backend.isMatrixAnswering() : true;
     let volumeMode = { slider: "slider", buttons: "buttons" }[config.volume || store.get("remote.volume")] || "buttons";
     // The volume slider: what it last set, for which room and device, and what it sent.
@@ -405,7 +412,13 @@
             if (!Object.prototype.hasOwnProperty.call(states, state.room)) states[state.room] = state;
             rememberSignalSource(state.room, states[state.room]);
           });
-          setRoom(roomId || store.get("remote.room"));
+          // A room asked for brings its mode, as does the room kept last while
+          // no mode is kept; a kept mode stays, on its kept room while that
+          // room still has it, else on the first of its rooms.
+          const shown = mode(), modeKept = kinds().includes(chosen);
+          const kept = [store.get("remote.room." + shown), store.get("remote.room")]
+            .map((id) => roomsById[id]).find((room) => room && (!modeKept || modes(room).includes(shown)));
+          setRoom(roomId || (kept && kept.id));
         });
     }
 
@@ -467,7 +480,7 @@
       rememberSignalSource(event.room, event.state);
       if (signalOpen && signalRoom === event.room && differs(before, event.state)) refreshDiagnostics();
       emit({ type: "change" });
-      if (current && event.room === current.id && differs(before, event.state)) {
+      if (current && event.room === current.id && mode() === "watch" && differs(before, event.state)) {
         announce(current.label + ": " + view(current, event.state).spoken);
       }
     }
@@ -480,13 +493,14 @@
       return room.options.find((candidate) => candidate.id === id) || null;
     }
 
-    // What a room shows, for the room list, announcements and the alert line:
-    // the alert names the source's problem, then each of the room's devices
-    // openHAB cannot drive (backend problemOf), after its label. playing is
-    // what its source plays, else its audio device ("Disney+ · DuckTales"),
-    // or null.
+    // What a room shows, for the room list, announcements and the alert line.
+    // In Listen (and in a room of speakers alone), what its speakers play
+    // (listen status). Else its source: the alert names the source's problem,
+    // then each of the room's devices openHAB cannot drive (backend
+    // problemOf), after its label; playing is what its source plays, else
+    // its audio device ("Disney+ · DuckTales"), or null.
     function view(room, state) {
-      if (room.listenOnly) {
+      if (room.listenOnly || (listen && room.speakers.length && mode() === "listen")) {
         return listen ? Object.assign({}, listen.status(room.id)) : { led: "off", short: "\u2026", spoken: "reading", playing: null };
       }
       const shown = sourceView(room, state);
@@ -530,9 +544,12 @@
     }
 
     function setRoom(id) {
-      const room = roomsById[id] || rooms[0];
+      const room = roomsById[id] || listed()[0] || rooms[0];
       if (!room) return null;
       current = room;
+      // A room of the other mode alone brings its mode with it.
+      if (!modes(room).includes(mode()) && modes(room).length) keepMode(modes(room)[0]);
+      store.set("remote.room." + mode(), room.id);
       // A room of speakers alone has no lock of its own: its speakers' rooms' are listen's.
       if (backend.access && !backend.access.native) backend.access.watchRoom(room.listenOnly ? null : room.id);
       store.set("remote.room", room.id);
@@ -549,9 +566,10 @@
     }
 
     function stepRoom(delta) {
-      if (!current) return;
-      const index = rooms.indexOf(current);
-      selectRoom(rooms[(index + delta + rooms.length) % rooms.length].id, true);
+      const list = listed();
+      if (!current || !list.length) return;
+      const index = list.indexOf(current);
+      selectRoom(list[(index + delta + list.length) % list.length].id, true);
     }
 
     function choose(sourceId) {
@@ -837,25 +855,47 @@
       return (of.options.length ? ["watch"] : []).concat(listen && of.speakers.length ? ["listen"] : []);
     }
 
-    // The room's mode on show: the one chosen there last, else Watch.
-    function mode(room) {
-      const of = room || current;
-      const offered = modes(of);
-      if (offered.length < 2) return offered[0] || "watch";
-      const stored = store.get("remote.mode." + of.id);
-      return offered.includes(stored) ? stored : "watch";
+    // The modes any room has, Watch first.
+    function kinds() {
+      return ["watch", "listen"].filter((kind) => rooms.some((room) => modes(room).includes(kind)));
     }
 
+    // The mode on show in every room: the one chosen last, else the first
+    // kind. The kept choice is read once: another page choosing changes the
+    // next page opened, never this one under its room.
+    function mode() {
+      const offered = kinds();
+      if (chosen === undefined) chosen = store.get("remote.mode");
+      return offered.includes(chosen) ? chosen : offered[0] || "watch";
+    }
+
+    function keepMode(next) {
+      chosen = next;
+      store.set("remote.mode", next);
+    }
+
+    // The rooms of the mode on show, as the room lists have them.
+    function listed() {
+      const shown = mode();
+      return rooms.filter((room) => modes(room).includes(shown));
+    }
+
+    // A room without the mode gives way to the room last on show in it.
     function setMode(next) {
-      if (!current || !modes().includes(next) || mode() === next) return false;
-      store.set("remote.mode." + current.id, next);
+      if (!current || !kinds().includes(next) || mode() === next) return false;
+      keepMode(next);
+      if (modes(current).includes(next)) store.set("remote.room." + next, current.id);
+      else {
+        const last = roomsById[store.get("remote.room." + next)];
+        setRoom(last && modes(last).includes(next) ? last.id : listed()[0].id);
+      }
       emit({ type: "change" });
       announce(current.label + ": " + (next === "listen" ? "Listen" : "Watch"));
       return true;
     }
 
     function toggleMode() {
-      return modes().length > 1 && setMode(mode() === "watch" ? "listen" : "watch");
+      return kinds().length > 1 && setMode(mode() === "watch" ? "listen" : "watch");
     }
 
     // Listen to one of the room's speakers (a remote's volume caption names
@@ -1094,8 +1134,10 @@
       start: start,
       subscribe: subscribe,
       rooms: () => rooms,
+      listed: listed,
       listen: listen,
       modes: modes,
+      kinds: kinds,
       mode: mode,
       setMode: setMode,
       toggleMode: toggleMode,

@@ -93,6 +93,8 @@ class RemoteTUI(unittest.TestCase):
 
     def test_the_headers_theme_tabs_and_remotes_menu_and_homes_rooms_go_where_they_say(self):
         self.assertEqual(self.proof["mouse"]["header"], [True, "home", "remote", DEN, "listen", "remotes-menu", "pairing", "remote"])
+        # Home's switch, as the remote's: Watch's rooms, then Listen's.
+        self.assertEqual(self.proof["mouse"]["home"], ["watch", [WEST, EAST], "listen", [EAST, DEN, LOUNGE]])
 
     def test_narrow_the_headers_chips_open_the_rooms_and_info_each_drawn_whole(self):
         narrow = self.proof["narrow"]
@@ -104,7 +106,7 @@ class RemoteTUI(unittest.TestCase):
         self.assertEqual(narrow["bubbles"], [0, True, True])
 
     def test_homes_arrows_and_enter_open_remotes_on_a_room_and_h_the_day_and_esc_stays_home(self):
-        self.assertEqual(self.proof["pages"]["home"], ["home", "home:remote", "remote", LOUNGE, "listen", "remote", WEST, "watch", "day", "home"])
+        self.assertEqual(self.proof["pages"]["home"], ["home", "home:remote", "remote", LOUNGE, "listen", "watch", "remote", WEST, "watch", "day", "home"])
 
     def test_cameras_arrows_choose_one_and_enter_opens_it_in_the_browser(self):
         self.assertEqual(self.proof["pages"]["cameras"], [True, True, "Camera web view", "home"])
@@ -124,10 +126,10 @@ class RemoteTUI(unittest.TestCase):
     def test_kept_from_the_last_run_a_room_of_speakers_alone_starts_on_listen_and_reads_no_signal(self):
         startup = self.proof["startup"]
         self.assertEqual(startup["start"], [DEN, "listen", []])
-        self.assertEqual(startup["stream"], [DEN, "listen", True], "a routed room's Source, changed meanwhile, in the list")
+        self.assertEqual(startup["stream"], [DEN, "listen", [EAST, DEN, LOUNGE]])
         # d has no signal to show in Listen, beside the remote or as a sheet.
         self.assertEqual(startup["signal"], [None, "rooms", None, None, "rooms", []])
-        self.assertEqual(startup["walk"], [WEST, "watch", [WEST]])
+        self.assertEqual(startup["walk"], [WEST, "watch", [WEST], True], "a routed room's Source, changed meanwhile, in Watch's list")
         self.assertEqual(startup["settings"], ["settings", True, ["GET /api/v1/rooms/" + WEST + "/policy"]])
 
     def test_a_speakers_input_not_read_yet_reads_as_reading_not_null(self):
@@ -146,9 +148,10 @@ class RemoteTUI(unittest.TestCase):
 
     def test_a_room_of_speakers_alone_reached_with_the_signal_open_reads_none(self):
         signal = self.proof["signal"]
-        # ↓ through every room and on, ], the rooms sheet's ↓ and Enter, and a click: none asks a room of speakers for its signal.
-        self.assertEqual(signal["walk"], [[DEN, "listen"], [LOUNGE, "listen"], [WEST, "watch"], [EAST, "watch"],
-                                          [DEN, "listen"], [LOUNGE, "listen"], [DEN, "listen"]])
+        # Watch's ↓ stays in its rooms; y, Listen's ↓ and on, ], the rooms sheet's ↓ and Enter, and a click
+        # ask none of Listen's rooms for a signal; y again is Watch on the room last in it.
+        self.assertEqual(signal["walk"], [[WEST, "watch"], [EAST, "listen"], [DEN, "listen"], [LOUNGE, "listen"], [EAST, "listen"],
+                                          [DEN, "listen"], [LOUNGE, "listen"], [DEN, "listen"], [WEST, "watch"]])
         self.assertEqual(signal["diagnosed"], [EAST, WEST])
         self.assertTrue(signal["shown"])
 

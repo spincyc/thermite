@@ -2,8 +2,9 @@
  * Listen on the remote page: draws RemoteListen (listen-session.js) for the
  * room on show, its speakers, what the chosen one plays, its keys, volume,
  * input and group, its settings under Info and Music's library, and hands
- * the sessions its taps. remote.js makes the sessions here (sessions()),
- * draws Listen through create() while a room is in it, and keeps what both
+ * the sessions its taps. remote.js makes the sessions (RemoteListen.sessions,
+ * listen-session.js), draws Listen through create() while a room is in it,
+ * and keeps what both
  * modes share: the room lists, the switch, the alert line, the keys
  * (data-button) and their hold-to-repeat, the sheets, toasts and theme.
  */
@@ -26,27 +27,7 @@
   // (listen.css), which a phone on its side 500 px tall or less never shows (shell.css).
   const WIDE = "(min-width: 1200px) and (min-height: 501px)";
 
-  // The sessions Listen draws, on the remote's backend: each speaker's own
-  // (RemoteAudio) and, in a house with speakers, Music Assistant's.
-  // start() starts both; setActive() lets Music's stream go while hidden.
-  function sessions(options) {
-    const house = options.house;
-    const speakers = (house.speakerRooms || []).concat(house.rooms || []).some((room) => (room.speakers || []).length);
-    const audio = global.RemoteAudio.create({ backend: options.backend, house: house, access: options.access, store: options.store, watchLocks: false });
-    const musicBackend = speakers ? global.MusicBackend.create({ backend: options.mock ? "mock" : undefined, access: options.access,
-      active: options.active, speakers: global.MusicBackend.speakersOf(house) }) : null;
-    const music = musicBackend ? global.RemoteMusic.create({ backend: musicBackend, access: options.access, house: house,
-      store: options.store, watchLocks: false }) : null;
-    return {
-      audio: audio,
-      music: music,
-      listen: global.RemoteListen.create({ audio: audio, music: music, house: house, store: options.store }),
-      start: () => Promise.all([audio.start(), music ? music.start() : null]),
-      setActive: (active) => { if (musicBackend) musicBackend.setActive(active); }
-    };
-  }
-
-  // options: {session, sessions (above), ui: remote.js's $, all, node, icon,
+  // options: {session, sessions (RemoteListen.sessions), ui: remote.js's $, all, node, icon,
   // openSheet, flash}. update() draws Listen, or hides it in Watch.
   function create(options) {
     const session = options.session;
@@ -944,5 +925,5 @@
     return { update: update, press: press, key: key, alert: alert, openInputs: openInputs };
   }
 
-  global.RemoteListenPage = { sessions: sessions, create: create };
+  global.RemoteListenPage = { create: create };
 })(globalThis);

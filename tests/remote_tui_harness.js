@@ -335,6 +335,11 @@ async function mouse(proof) {
   proof.mouse.header = [theme !== ui.theme];
   click(parts, "tab:home");
   proof.mouse.header.push(ui.screen);
+  // Home lists Watch's rooms; its switch lists Listen's, as the remote's does.
+  const listed = () => draw(parts).grid.hits.filter((hit) => hit.hit.kind === "home-room").map((hit) => hit.hit.room);
+  proof.mouse.home = [session.mode(), listed()];
+  click(parts, "home:mode:listen");
+  proof.mouse.home.push(session.mode(), listed());
   click(parts, "home-room:" + DEN);
   proof.mouse.header.push(ui.screen, ...room(parts));
   click(parts, "tab:remote");
@@ -396,6 +401,9 @@ async function pages(proof) {
   key(parts, null, { name: "enter" });
   proof.pages.home.push(ui.screen, ...room(parts));
   key(parts, null, { name: "f1" });
+  // From a room of speakers alone Home lists Listen's rooms; y lists Watch's.
+  key(parts, "y");
+  proof.pages.home.push(session.mode());
   focusOn(parts, "home-room:" + WEST);
   key(parts, null, { name: "enter" });
   proof.pages.home.push(ui.screen, ...room(parts));
@@ -463,10 +471,11 @@ async function pages(proof) {
 // ---- start-up on a room of speakers alone -------------------------------------
 
 // The room kept from the last run is a room of speakers alone. Wide enough for
-// the signal beside the remote, it starts on Listen and reads no signal; a
-// routed room's Source that changes meanwhile shows in the rooms' list; d
-// and the arrows on to a routed room go on as ever. On the gateway, Room
-// settings started on it opens on a routed room.
+// the signal beside the remote, it starts on Listen, whose rooms the list
+// holds, and reads no signal; d has none to show. y goes on to Watch's
+// first room, reads its signal, and the list shows a routed room's Source
+// that changed meanwhile. On the gateway, Room settings started on it
+// opens on a routed room.
 async function startup(proof) {
   size = [150, 50];
   const kept = (room) => { const data = { "remote.room": room }; return { get: (key) => data[key] ?? null, set: (key, value) => { data[key] = value; } }; };
@@ -476,7 +485,7 @@ async function startup(proof) {
   await until(parts, () => parts.site.sources.length, "the stream");
   parts.site.send("loc_" + EAST + "_source", "example_computer");
   await until(parts, () => session.state(EAST).value === "example_computer", "the east room's Source");
-  proof.startup.stream = [...room(parts), text(parts).split("\n").some((line) => /Example East +Computer/.test(line))];
+  proof.startup.stream = [...room(parts), session.listed().map((entry) => entry.id)];
   key(parts, "d");
   proof.startup.signal = [controller.ui.overlay && controller.ui.overlay.kind, controller.ui.pane, toast(parts)];
   key(parts, null, { name: "escape" });
@@ -489,10 +498,9 @@ async function startup(proof) {
     draw(parts).grid.hits.find((hit) => hit.hit.kind === "listen-inputs").hit.label];
   key(parts, null, { name: "escape" });
   size = [150, 50];
-  key(parts, null, { name: "down" });
-  key(parts, null, { name: "down" });
+  key(parts, "y");
   await until(parts, () => parts.diagnosed.length, "the west room's signal");
-  proof.startup.walk = [...room(parts), parts.diagnosed.slice()];
+  proof.startup.walk = [...room(parts), parts.diagnosed.slice(), text(parts).split("\n").some((line) => /Example East +Computer/.test(line))];
   controller.stop();
   parts = await open({ gateway: true, screen: "settings", store: kept(LOUNGE) });
   await until(parts, () => text(parts).includes("Edit schedule"), "the schedule");
@@ -538,14 +546,20 @@ async function admin(proof) {
 
 // ---- the signal, and rooms of speakers alone -------------------------------
 
-// Wide, Watch's signal panel shows and reads; a room of speakers alone has
-// none, however it is reached: ↓ in the rooms, ], the rooms sheet, a click.
+// Wide, Watch's signal panel shows and reads; its ↓ walks the rooms with a
+// screen. Listen's rooms, a room of speakers alone among them, read none,
+// however they are reached: y, ↓ in the rooms, ], the rooms sheet, a click.
+// y again: Watch, on the room last in it, which reads again.
 async function signal(proof, native) {
   size = [150, 50];
   const parts = await open({ native }, EAST);
   await until(parts, () => parts.diagnosed.includes(EAST) && text(parts).includes("signal & audio"), "the signal read");
   const walk = [];
-  for (let i = 0; i < 4; i++) {
+  key(parts, null, { name: "down" });
+  walk.push(room(parts));
+  key(parts, "y");
+  walk.push(room(parts));
+  for (let i = 0; i < 3; i++) {
     key(parts, null, { name: "down" });
     walk.push(room(parts));
   }
@@ -559,19 +573,21 @@ async function signal(proof, native) {
   click(parts, "room:" + EAST);
   click(parts, "room:" + DEN);
   walk.push(room(parts));
-  click(parts, "room:" + WEST);
-  await until(parts, () => parts.diagnosed.slice(-1)[0] === WEST, "the signal read again");
+  const read = parts.diagnosed.length;
+  key(parts, "y");
+  await until(parts, () => parts.diagnosed.length > read && parts.diagnosed.slice(-1)[0] === WEST, "the signal read again");
+  walk.push(room(parts));
   proof.signal = { walk, diagnosed: [...new Set(parts.diagnosed)], shown: text(parts).includes("signal & audio") };
   // The backend's read of a room it does not know rejects; it never throws.
   const asked = Object.getPrototypeOf(parts.backend).getDiagnostics.call(parts.backend, DEN);
   proof.signal.unknown = [asked instanceof Promise, await asked.then(() => "resolved", (error) => error.message)];
   // A backend that throws all the same: the panel says the signal is unavailable.
-  const read = text(parts).includes("Unavailable");
+  const unavailable = text(parts).includes("Unavailable");
   parts.backend.getDiagnostics = () => { throw new Error("thrown"); };
   key(parts, null, { name: "tab" });
   click(parts, "room:" + EAST);
   await until(parts, () => text(parts).includes("Unavailable"), "the signal unavailable");
-  proof.signal.thrown = [read, ...room(parts)];
+  proof.signal.thrown = [unavailable, ...room(parts)];
   parts.controller.stop();
   size = [110, 50];
 }
@@ -616,7 +632,7 @@ async function terminal(proof) {
   proof.terminal.after = parts.session.current().id;
   parts.session.selectRoom = () => { throw new Error("no room"); };
   parts.controller.ui.toast = null;
-  const row = parts.controller.lastFrame().grid.hits.find((hit) => hit.hit.key === "room:" + DEN);
+  const row = parts.controller.lastFrame().grid.hits.find((hit) => hit.hit.key === "room:" + WEST);
   program.emit("mouse", { action: "mousedown", button: "left", x: row.x, y: row.y });
   proof.terminal.click = toast();
   parts.session.selectRoom = selectRoom;

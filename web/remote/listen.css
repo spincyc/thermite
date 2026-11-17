@@ -7,8 +7,8 @@
 
 /* ---- the switch: Watch or Listen ------------------------------------------ */
 
-/* Under the bar (or the remote's head) in every room that has both, the
-   same place each time; a room with one mode has no switch. */
+/* Under the bar (or the remote's head) in every room, the same place each
+   time, where the house has both; it chooses the rooms the lists hold. */
 .modes {
   display: flex;
   gap: 2px;
@@ -59,13 +59,6 @@
   .modes__option {
     min-height: 36px;
   }
-}
-
-/* The rooms of speakers alone, after a rule under the routed rooms. */
-[data-room-list] > li:not([data-listen-only]) + li[data-listen-only] {
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--panel-border);
 }
 
 /* ---- Listen ---------------------------------------------------------------- */
