@@ -1,7 +1,9 @@
 // The handheld bridge (handheld/bridge.js) on the page's own session and
 // mock backend, with a fake base and simulated remotes (link.js RemoteEnd):
 // the handshake, every operation, dedupe, screens and audio as PROTOCOL.md
-// derives them, sleep and delivery, two remotes, and the base's lines.
+// derives them, sleep and delivery, two remotes, and the base's lines; and
+// on the gateway's backend through a stand-in, what a screen says while a
+// choice is not read back and while the house is not heard.
 // Prints {cases: {name: {ok, ...}}}; nothing reaches a network or a device.
 "use strict";
 const assert = require("assert/strict");
@@ -13,6 +15,7 @@ const Link = require(path.join(area, "handheld/link"));
 const Bridge = require(path.join(area, "handheld/bridge"));
 const Screen = require(path.join(area, "handheld/screen"));
 const Base = require(path.join(area, "handheld/base"));
+const Main = require(path.join(area, "handheld/main"));
 const vectors = require(path.join(area, "handheld/vectors.json"));
 
 console.info = console.log = () => {};
@@ -65,9 +68,67 @@ function memoryStore() {
   return { data, get: (key) => (key in data ? data[key] : null), set: (key, value) => { data[key] = value; } };
 }
 
+// The gateway as the bridge reads it (handheld/main.js assemble): its
+// answers to a signed-in client, and the remote view's stream, which the
+// test feeds (send), loses as a stream is lost while it reconnects (lose)
+// and brings back with a snapshot of what the house reads (restore).
+function gateway(house) {
+  const reply = (value, status) => {
+    const body = JSON.stringify(value);
+    return { ok: status < 300, status, headers: { get: () => "application/json", getSetCookie: () => [] },
+      text: async () => body, json: async () => JSON.parse(body), clone: () => reply(value, status) };
+  };
+  const site = { sources: [], states: Object.fromEntries(house.rooms.map((room) => ["loc_" + room.id + "_source", "off"])) };
+  site.fetch = async (url, init) => {
+    const route = new URL(url).pathname;
+    if (route === "/api/v1/security") return reply({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf: "C".repeat(32) }, 200);
+    if (route === "/api/v1/session") return reply({ csrf: "C".repeat(32) }, 200);
+    if (route === "/api/v1/me") return reply({ id: 1, username: "example", admin: false, can_edit: true, is_guest: false, auth_enabled: true, permissions: ["site.read", "room.control"] }, 200);
+    if (/^\/api\/v1\/rooms\/[a-z0-9_]+\/commands$/.test(route) && init && init.method === "POST") return reply({ accepted: true }, 202);
+    return reply({ error: "not_found" }, 404);
+  };
+  const snapshot = () => JSON.stringify({ type: "snapshot", view: "remote", states: Object.assign({}, site.states) });
+  site.EventSource = class {
+    constructor(url) {
+      this.readyState = 0;
+      site.sources.push(this);
+      setImmediate(() => {
+        if (this.readyState === 2) return;
+        this.readyState = 1;
+        if (this.onopen) this.onopen({});
+        if (this.onmessage && url.endsWith("/api/v1/events/remote")) this.onmessage({ data: snapshot() });
+      });
+    }
+    close() { this.readyState = 2; }
+  };
+  const each = (state, tell) => site.sources.filter((source) => source.readyState === state).forEach(tell);
+  site.send = (item, value) => {
+    site.states[item] = value;
+    each(1, (source) => source.onmessage && source.onmessage({ data: JSON.stringify({ topic: "openhab/items/" + item + "/stateupdated",
+      type: "ItemStateUpdatedEvent", payload: JSON.stringify({ type: "String", value }) }) }));
+  };
+  site.lose = () => each(1, (source) => { source.readyState = 0; if (source.onerror) source.onerror({}); });
+  site.restore = () => each(0, (source) => {
+    source.readyState = 1;
+    if (source.onopen) source.onopen({});
+    if (source.onmessage) source.onmessage({ data: snapshot() });
+  });
+  return site;
+}
+
+// Waits, a bounded while, for what the test expects.
+async function eventually(check, what) {
+  for (let index = 0; index < 400; index += 1) {
+    if (check()) return;
+    await wait(5);
+  }
+  throw new Error("Never: " + what);
+}
+
 // The base in memory: every frame for a remote reaches its handheld, unless the test says it failed.
-function world(house) {
-  const backend = shared.Remote.create(house, { backend: "mock", latency: LATENCY });
+// made is the backend, if not the mock.
+function world(house, made) {
+  const backend = made || shared.Remote.create(house, { backend: "mock", latency: LATENCY });
   const calls = spy(backend);
   const handhelds = new Map();
   const sent = [];
@@ -519,6 +580,43 @@ async function run(name, body) {
     const messages = a.take();
     assert.ok(messages.some((message) => message.ack === op && message.screen), JSON.stringify(messages));
     return { awake: state.bridge.remote(MAC_A).awake };
+  });
+
+  await run("what_has_failed_reaches_the_screen", async () => {
+    const site = gateway(shared.house);
+    const backend = Main.assemble({ url: "https://thermite.example:13601" },
+      { shared, fetch: site.fetch, EventSource: site.EventSource, environ: {}, hostname: "example" }).backend;
+    const state = world(shared.house, backend);
+    const remote = state.handheld(MAC_A, KEY_A);
+    await eventually(() => state.bridge.remote(MAC_A).ready, "the session");
+    remote.hello();
+    remote.send({ room: "example_west" });
+    site.send("loc_example_west_source", "example_player");
+    const bubble = (id) => remote.screen.bubbles.find((item) => item.id === id).state;
+    await eventually(() => remote.screen && remote.screen.room === "example_west" && remote.screen.led === "ok", "the player read");
+    const heard = [remote.screen.led, bubble("example_player"), remote.screen.problem];
+    // Chosen, accepted by the gateway, and never read back.
+    backend.timeout = 20;
+    remote.send({ bubble: "example_computer" });
+    await eventually(() => bubble("example_computer") === "unconfirmed", "the choice not confirmed");
+    const unconfirmed = [remote.screen.led, bubble("example_player"), remote.screen.problem];
+    site.send("loc_example_west_source", "off");
+    await eventually(() => bubble("example_computer") === "idle", "the room read off");
+    site.send("loc_example_west_source", "example_player");
+    await eventually(() => remote.screen.led === "ok", "the player again");
+    // The stream lost: every light and source bubble is stale, and the screen says why.
+    site.lose();
+    await eventually(() => remote.screen.led === "stale", "the house not heard");
+    const sources = remote.screen.bubbles.filter((item) => ["off", "example_player", "example_computer"].includes(item.id));
+    const lost = [Array.from(new Set(remote.screen.rooms.map((room) => room.led))).join(), Array.from(new Set(sources.map((item) => item.state))).join(),
+      remote.screen.problem, remote.screen.short];
+    checkId(remote.screen);
+    site.states.loc_example_west_source = "example_computer";
+    site.restore();
+    await eventually(() => remote.screen.led === "ok", "the house heard again");
+    const again = [bubble("example_computer"), bubble("example_player"), remote.screen.problem];
+    backend.stop();
+    return { heard, unconfirmed, lost, again };
   });
 
   await run("forget_stops_the_session", async () => {

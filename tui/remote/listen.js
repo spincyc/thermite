@@ -125,7 +125,7 @@ function speakers(g, w, ctx, kit) {
 // One speaker's bubble at x; returns the column after it.
 function bubble(g, x, ctx, kit, view, speaker) {
   const key = "speaker:" + speaker.id, lock = speaker.current && view && view.locked;
-  const led = speaker.playing ? "ok" : "off";
+  const led = kit.lightOf(ctx, speaker.playing ? "ok" : "off");
   const rest = " " + (lock ? LOCK : kit.ledChar(led)) + " " + speaker.name + " ";
   const style = kit.focused(ctx, key) ? "bubble.focus" : ctx.ui.pressed[key] ? "bubble.switching" : speaker.current ? "bubble.current" : "bubble";
   const hit = { kind: "listen-speaker", speaker: speaker.id, key, focus: true,
@@ -153,7 +153,7 @@ function face(g, w, ctx, kit) {
   // As Watch's: the lock in words, then what is wrong.
   if (view.locked) say("Read-only · " + view.locked.text, "dim");
   else if (view.groupLocked) say(view.groupLocked.text, "dim");
-  if (view.connected === false) say("⚠ Not connected to thermite. Reconnecting…", "alert");
+  if (!kit.heard(ctx)) say("⚠ " + ctx.Session.NOT_CONNECTED, "alert");
   if (view.problem) say("⚠ " + view.speaker.label + " " + view.problem, "alert");
   if (view.music) say("⚠ " + view.music, "alert");
   // Its name where no bubble says it.

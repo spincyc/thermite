@@ -77,7 +77,6 @@ function create(options) {
     still: options.still != null ? Boolean(options.still) : store.get("remote.still") === true,
     clock: clock(),
     target: options.target || { label: "", mock: true },
-    connected: null,
     error: null,
     ready: false
   };
@@ -155,7 +154,6 @@ function create(options) {
   }
 
   function context() {
-    if (options.backend && "connected" in options.backend) ui.connected = options.backend.connected;
     return {
       session: session, Session: Session, Remote: options.Remote, layouts: options.layouts, house: options.house,
       Pairing: Pairing, hints: hints, ui: ui, access, pairing: pairing, cameras: cameras, topology: topology, system, day, listen, music, look: options.look || null,
@@ -169,11 +167,6 @@ function create(options) {
     if (stopped) return Promise.resolve();
     session.subscribe(onSession);
     if (listen) listen.subscribe(onListen);
-    if (options.backend && options.backend.subscribe) {
-      options.backend.subscribe((event) => {
-        if (event.type === "connection") changed();
-      });
-    }
     timers.tick = (options.setInterval || setInterval)(() => {
       ui.blink = !ui.blink;
       ui.clock = clock();
@@ -683,7 +676,7 @@ function create(options) {
     if (axis === "room") { index = (index + delta + rooms.length) % rooms.length; topology.source = null; }
     topology.room = rooms[index].id;
     topology.link = null;
-    const sources = Topology.orderedRows(Topology.routeRows(manifest, topology.room, session.state(topology.room) || {}, ui.connected),
+    const sources = Topology.orderedRows(Topology.routeRows(manifest, topology.room, session.state(topology.room) || {}, session.connected()),
       topology.sortField, topology.sortDescending).map(row => row.id);
     if (!sources.includes(topology.source)) {
       const reading = session.state(topology.room);

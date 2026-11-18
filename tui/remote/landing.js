@@ -1,4 +1,7 @@
-/* Home is navigation and reported room state, never a device control. */
+/* Home is navigation and reported room state, never a device control.
+   Each row is the session's view of its room; while the house is not heard
+   (session.js connected()) a line above the rooms says so, and no row
+   shows what was read before. */
 "use strict";
 const { LOCK, fit, length, wrap } = require("./grid");
 const Torch = require("./torch");
@@ -59,6 +62,8 @@ function content(g, width, ctx, height) {
   y++;
   if (!ctx.ui.ready) { line("Reading rooms…"); return y; }
   if (!ctx.session.listed().length) { line("No rooms configured"); return y; }
+  const heard = ctx.session.connected();
+  if (!heard) line("\u26a0 " + ctx.Session.NOT_CONNECTED, "alert");
   const nameWidth = Math.min(25, Math.max(10, Math.floor((width - 5) * .4)));
   ctx.session.listed().forEach(room => {
     const state = ctx.session.state(room.id), shown = ctx.session.view(room, state), lock = ctx.session.roomLocked(room.id);
@@ -70,12 +75,12 @@ function content(g, width, ctx, height) {
     if (lock.locked) g.put(nameWidth + 3, y, LOCK, active ? style : "base");
     // The source, then what it plays where the row has room: "Shield · Disney+ · DuckTales".
     const sourceWidth = Math.max(1, width - nameWidth - 7);
-    const source = fit(shown.short, sourceWidth).trimEnd();
+    const source = fit(heard ? shown.short : "Unknown", sourceWidth).trimEnd();
     g.put(nameWidth + 5, y, source, active ? style : "dim");
     const rest = sourceWidth - length(source) - 3;
-    if (shown.playing && rest >= 8) g.put(nameWidth + 5 + length(source), y, " \u00b7 " + fit(shown.playing, rest).trimEnd(), active ? style : "dim");
+    if (heard && shown.playing && rest >= 8) g.put(nameWidth + 5 + length(source), y, " \u00b7 " + fit(shown.playing, rest).trimEnd(), active ? style : "dim");
     g.hit(1, y++, width - 2, 1, { kind: "home-room", room: room.id, key, focus: true,
-      label: room.label + ", " + shown.spoken + (shown.playing ? ", playing " + shown.playing : "")
+      label: room.label + ", " + (heard ? shown.spoken + (shown.playing ? ", playing " + shown.playing : "") : "not connected to thermite")
         + (lock.locked ? ". " + lock.text : "") + ". Open Remotes" });
   });
   y += 1;

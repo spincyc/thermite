@@ -155,9 +155,19 @@ A message over 8192 bytes is split so that `screen` travels alone.
   echo it as `have`; they never compute it.
 - `rooms`: every room, with `session.view()`'s `led` and `short`.
 - `led`, `short`, `problem`: `session.view()` for this room. `notice` is
-  `session.lockNotice()`; `locked` is `session.roomLocked()`.
-- `bubbles`: `session.bubbles()` in order. `state` is `bubbleState()`;
-  `lock` and `inert` are `bubbleLock()`. `selected` is `selectedBubble()`.
+  `session.lockNotice()`; `locked` is `session.roomLocked()`. `problem` is
+  what has failed, in words, for as long as it lasts: the house not heard,
+  a source that cannot be known, a choice never read back, a device openHAB
+  cannot drive.
+- `bubbles`: `session.bubbles()` in order. `state` is `bubbleState()`
+  (`current`, `switching` or `idle`), or `unconfirmed` for the source that
+  was chosen, sent and never read back; `lock` and `inert` are
+  `bubbleLock()`. `selected` is `selectedBubble()`.
+- While the bridge does not hear the house (`session.connected()` is
+  false), every `led` and every source bubble's `state` is `stale`: what
+  was read before says nothing of now, so a remote draws a light of no
+  colour that does not blink. A remote draws any `led` or `state` it does
+  not know that way.
 - `hidden`: `session.remoteHidden()`. When true, `remote` and `pad` are
   `null`, `rows` and `beside` are empty and `channel` is false.
 - `remote`: the layout on show (`remoteOf(target)`): its `label`, and its

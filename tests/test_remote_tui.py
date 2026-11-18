@@ -6,7 +6,8 @@ The house is test_listen_tui's: the public example's two routed rooms, the
 east one watching and listening, and two rooms of speakers alone, the den
 and the lounge; the west room's TV also lists its inputs, and the room has
 a control (not connected) to raise or lower its screen. On the mock, on openHAB itself (--native) and on the
-gateway, each through a stand-in. Nothing leaves the process.
+gateway, each through a stand-in; the gateway's stream is also lost and brought back, for what the remote
+shows of what has failed. Nothing leaves the process.
 """
 
 import json
@@ -14,13 +15,20 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 from tests.test_listen_tui import DEN, LOUNGE, ROOM as EAST, model
 
 AREA = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(AREA / "lib"))
+from oh_integrations import _commands
+
 WEST = "example_west"
+NOT_CONNECTED = "\u26a0 Not connected to thermite. Reconnecting\u2026"
+# A light read before the house was lost, and a choice never read back.
+STALE, UNCONFIRMED = "\u25cc", "?"
 
 
 def fixture():
@@ -226,6 +234,61 @@ class RemoteTUI(unittest.TestCase):
         self.assertEqual(settings["room"], [True, DEN])
         self.assertEqual(settings["read"], ["GET /api/v1/rooms/" + WEST + "/policy"])
         self.assertEqual((settings["sheet"], settings["form"], settings["closed"]), ("access-form", True, None))
+
+    def test_a_devices_problem_is_the_words_its_item_gives_the_code_and_never_the_code(self):
+        failure = self.proof["failure"]
+        codes = dict(_commands.CODES)
+        self.assertEqual(list(failure["problems"]), list(codes) + ["made_up_code"])
+        for code, (alert, underscore) in failure["problems"].items():
+            with self.subTest(code=code):
+                # A code the options do not have says the last one's words.
+                self.assertEqual(alert, "\u26a0 Example Tv " + codes.get(code, list(codes.values())[-1]))
+                self.assertFalse(underscore, "a code, or an Item's name, on the screen")
+        self.assertEqual(failure["cleared"], [], "UNDEF ends it")
+        label, alert, underscore = failure["speaker"]
+        self.assertIn("\u26a0 " + label + " " + codes["no_answer"], alert.split(" | "))
+        self.assertFalse(underscore)
+
+    def test_a_source_chosen_and_never_read_back_is_marked_on_its_bubble_until_the_room_reads_again(self):
+        failure = self.proof["failure"]
+        chosen, shown, label, alert, light = failure["unconfirmed"]
+        self.assertEqual(chosen, " 2 " + UNCONFIRMED + " Computer ")
+        self.assertEqual(shown, " 1 \u25cf Player ", "the room still shows the source it last read")
+        self.assertEqual(light[0], "\u25cf")
+        self.assertIn("not confirmed", label)
+        self.assertEqual(alert, "\u26a0 Computer was not confirmed: Example West did not report it. Check the room before choosing again")
+        self.assertEqual(failure["confirmed"], [" 2 \u25cb Computer ", []])
+
+    def test_while_the_house_is_not_heard_every_light_is_the_stale_one_and_claims_nothing(self):
+        failure = self.proof["failure"]
+        self.assertEqual(failure["heard"], [["\u25cf", "led.ok"], ["\u25cb", "led.off"], " 1 \u25cf Player ", "led.ok", []])
+        west, east, player, off, header, alert, switching = failure["lost"]
+        # On, off, switching and a problem are claims about now: each light is the one glyph, in no state's colour.
+        self.assertEqual((west[0], east), (STALE, [STALE, "led.stale"]))
+        self.assertEqual((player, off), (" 1 " + STALE + " Player ", " 0 " + STALE + " Off "))
+        self.assertEqual(header, "led.bad", "the connection's own light says it is lost")
+        self.assertEqual(alert, [NOT_CONNECTED])
+        self.assertFalse(switching)
+        self.assertEqual(failure["still"], [west, player], "a stale light does not blink")
+        self.assertEqual(failure["again"], [["\u25cf", "row.focus"], ["\u25cb", "led.off"], " 2 \u25cf Computer ", "led.ok", []],
+                         "heard again, the lights say what the house reads now")
+
+    def test_not_heard_home_shows_no_source_and_listen_no_speaker_as_playing(self):
+        failure = self.proof["failure"]
+        said, unknown, source = failure["home"]
+        self.assertTrue(said, "Home's line above its rooms")
+        self.assertTrue(unknown, "a room's source is Unknown")
+        self.assertFalse(source, "the source read before the house was lost")
+        speakers, alert, lights = failure["listen"]
+        self.assertTrue(speakers)
+        for speaker in speakers:
+            self.assertIn(" " + STALE + " ", speaker)
+        self.assertIn(NOT_CONNECTED, alert)
+        self.assertEqual({light[0] for light in lights}, {STALE})
+
+    def test_a_snapshot_that_names_a_build_changes_nothing_in_a_terminal(self):
+        # A page reloads itself for another build (access.js); a terminal has no page and says nothing.
+        self.assertEqual(self.proof["failure"]["build"], [None, None, True])
 
     def test_a_key_a_click_or_a_frame_that_fails_does_not_end_the_terminal(self):
         terminal = self.proof["terminal"]

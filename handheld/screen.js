@@ -4,7 +4,10 @@
  * the terminal remote places them (tui/remote/view.js layout() and lower()).
  * screen() returns the model's fields without its id and the id is the first
  * 16 hex digits of the SHA-256 of their JSON, so a restarted bridge computes
- * the id a remote already shows. Nothing here does I/O.
+ * the id a remote already shows. What has failed is the session's to say:
+ * its problem line, and, while the house is not heard (connected()), every
+ * light and bubble "stale" in place of what was read before. Nothing here
+ * does I/O.
  */
 "use strict";
 
@@ -58,6 +61,8 @@ function besideOf(remote) {
 
 /* The screen's fields but its id, for the session's current room. */
 function screen(session, layouts) {
+  // Not heard: on, off, switching and a problem are claims about now that nothing backs.
+  const heard = session.connected();
   const current = session.current();
   const list = session.controls();
   const state = session.state(current.id);
@@ -82,9 +87,9 @@ function screen(session, layouts) {
     label: current.label,
     rooms: session.rooms().map((room) => {
       const view = session.view(room, session.state(room.id));
-      return { id: room.id, label: room.label, led: view.led, short: view.short };
+      return { id: room.id, label: room.label, led: heard ? view.led : "stale", short: view.short };
     }),
-    led: shown.led,
+    led: heard ? shown.led : "stale",
     short: shown.short,
     problem: shown.problem || "",
     notice: session.lockNotice() || "",
@@ -92,7 +97,11 @@ function screen(session, layouts) {
     bubbles: session.bubbles(list).map((item) => {
       const bubbleState = session.bubbleState(item, state);
       const lock = session.bubbleLock(item, bubbleState);
-      return { id: item.id, label: item.label, state: bubbleState, lock: lock.locked === true, inert: lock.inert === true };
+      // The choice that was sent and never read back is marked on its own
+      // bubble. view().unconfirmed is its label; the bubble is found by the
+      // id in the room's state (asked of lane web: the id in view() too).
+      const shownState = !item.choose ? bubbleState : !heard ? "stale" : state.unconfirmed === item.id ? "unconfirmed" : bubbleState;
+      return { id: item.id, label: item.label, state: shownState, lock: lock.locked === true, inert: lock.inert === true };
     }),
     selected: session.selectedBubble(list) || null,
     hidden: hidden,

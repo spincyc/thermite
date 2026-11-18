@@ -71,6 +71,12 @@ rollback. The unified deployment workflow uses a separate committed private site
     control unavailable" for every one.
   - The terminal and the handheld remote show the same sentences in
     their alert line.
+  - In the terminal and on a handheld remote, while the house is not
+    heard every light is one mark of its own (◌ in the terminal) in no
+    state's colour: none says on, off or switching from a reading that
+    is no longer current. The terminal's Home shows "Unknown" for each
+    room. A source that was chosen and never confirmed has a "?" on
+    its own bubble.
 - A page left open across an upgrade now replaces itself. `thermite
   generate` gives the pages' files one build and writes it into every
   page; the gateway repeats the build of the pages it serves on each

@@ -102,6 +102,18 @@ class Bridge(unittest.TestCase):
                 if message.get("audio"):
                     self.assertEqual(sorted(message["audio"]), sorted(sony["audioFields"]), path.name)
 
+    def test_a_screen_says_what_has_failed_for_as_long_as_it_lasts(self):
+        """On the gateway's backend: a choice never read back is marked on its
+        bubble and named in the problem line, and while the house is not heard
+        no light or bubble says what was read before."""
+        result = self.case("what_has_failed_reaches_the_screen")
+        self.assertEqual(result["heard"], ["ok", "current", ""])
+        led, player, problem = result["unconfirmed"]
+        self.assertEqual((led, player), ("ok", "current"), "the room still shows what it last read")
+        self.assertIn("Computer was not confirmed", problem)
+        self.assertEqual(result["lost"], ["stale", "stale", "Not connected to thermite. Reconnecting\u2026", "Player"])
+        self.assertEqual(result["again"], ["current", "idle", ""])
+
     def test_audio_alone_sends_audio(self):
         result = self.case("audio_change_sends_audio_not_screen")
         self.assertEqual(result["after"], result["before"] + 1)
@@ -121,7 +133,7 @@ class Bridge(unittest.TestCase):
         self.assertEqual(self.case("reconnects_with_backoff_and_probes")["attempts"], 3)
 
     def test_every_case_ran(self):
-        self.assertEqual(len(self.cases), 19)
+        self.assertEqual(len(self.cases), 20)
         failed = {name: result["error"] for name, result in self.cases.items() if not result["ok"]}
         self.assertEqual(failed, {})
 

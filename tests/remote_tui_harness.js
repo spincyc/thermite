@@ -6,9 +6,9 @@
 // EAST, which watches and listens) and two rooms of speakers alone (DEN,
 // LOUNGE). On the mock, and through stand-ins on openHAB itself (--native)
 // and on the gateway, whose backends read as the installed remote's do
-// (the signal, a room's schedule). Prints what the screen drew and
-// sent; nothing leaves the process. It waits for what it expects to draw,
-// never for a fixed time.
+// (the signal, a room's schedule), and whose stream the tests lose and
+// bring back (failure). Prints what the screen drew and sent; nothing leaves
+// the process. It waits for what it expects to draw, never for a fixed time.
 const assert = require("node:assert/strict"), { EventEmitter } = require("node:events"), fs = require("node:fs"), path = require("node:path");
 const Main = require("../tui/remote/main"), Shared = require("../tui/remote/shared"), App = require("../tui/remote/app");
 const Cameras = require("../tui/remote/cameras");
@@ -69,7 +69,9 @@ function openhab(house) {
 // The gateway as an administrator's terminal reads it: authentication on,
 // every routed room unlocked with a policy, no other room known, the remote
 // view's stream a snapshot of each room's Source; every request recorded.
-function gateway(house) {
+// options.activity is the activity manifest it serves (none: 404, as a
+// gateway without one) and options.build the build its snapshots name.
+function gateway(house, options) {
   const site = { calls: [] };
   const routed = (id) => house.rooms.some((room) => room.id === id);
   const policy = (room) => ({ room, revision: 0, config: null, manual_lock: null, can_edit: true, can_lock: true, enforcement: { state: "unknown" },
@@ -87,10 +89,31 @@ function gateway(house) {
     if (route === "/api/v1/locks") return json({ rooms: Object.fromEntries(house.rooms.map((room) => [room.id, { locked: false, manual: false, until: null, reason: "unlocked" }])) });
     const match = /^\/api\/v1\/rooms\/([a-z0-9_]+)\/(policy|commands)$/.exec(route);
     if (match && routed(match[1])) return match[2] === "policy" ? json(policy(match[1])) : json({ accepted: true }, 202);
+    if (route === "/static/remote/activity.json" && options.activity) return json(options.activity);
     return json({ error: "not_found" }, 404);
   };
-  site.EventSource = stream((url) => (url.endsWith("/api/v1/events/remote") ? { type: "snapshot", view: "remote",
-    states: Object.fromEntries(house.rooms.map((room) => ["loc_" + room.id + "_source", "off"])) } : null));
+  // What the house reads, as each snapshot gives it; the remote view's
+  // streams kept, for an event sent while the remote runs (send), the stream
+  // lost as a browser's is while it reconnects (lose) and heard again with
+  // its snapshot (restore).
+  site.states = Object.fromEntries(house.rooms.map((room) => ["loc_" + room.id + "_source", "off"]));
+  const snapshot = () => Object.assign({ type: "snapshot", view: "remote", states: Object.assign({}, site.states) }, options.build ? { build: options.build } : {});
+  const remote = (url) => url.endsWith("/api/v1/events/remote");
+  const Source = stream((url) => (remote(url) ? snapshot() : null));
+  site.sources = [];
+  site.EventSource = class extends Source { constructor(url) { super(url); if (remote(url)) site.sources.push(this); } };
+  const each = (state, tell) => site.sources.filter((source) => source.readyState === state).forEach(tell);
+  site.send = (item, value) => {
+    site.states[item] = value;
+    each(1, (source) => source.onmessage && source.onmessage({ data: JSON.stringify({ topic: "openhab/items/" + item + "/stateupdated",
+      type: "ItemStateUpdatedEvent", payload: JSON.stringify({ type: "String", value }) }) }));
+  };
+  site.lose = () => each(1, (source) => { source.readyState = 0; if (source.onerror) source.onerror({}); });
+  site.restore = () => each(0, (source) => {
+    source.readyState = 1;
+    if (source.onopen) source.onopen({});
+    if (source.onmessage) source.onmessage({ data: JSON.stringify(snapshot()) });
+  });
   return site;
 }
 
@@ -99,7 +122,7 @@ function gateway(house) {
 function assemble(options = {}) {
   const shared = Shared.load();
   if (options.remote) shared.house.devices[TV].remote = options.remote;
-  const site = options.native ? openhab(shared.house) : options.gateway ? gateway(shared.house) : null;
+  const site = options.native ? openhab(shared.house) : options.gateway ? gateway(shared.house, options) : null;
   const args = !site ? ["--mock", "--still", "--latency", "0"] : ["--url", options.native ? ORIGIN : GATEWAY, "--still"].concat(options.native ? ["--native"] : []);
   const opened = [];
   const parts = Main.assemble(Main.parse(args), { shared, setInterval: () => 0, clearInterval() {}, environ: {}, ...(options.store ? { store: options.store } : {}),
@@ -680,6 +703,99 @@ async function admin(proof) {
   controller.stop();
 }
 
+// ---- what has failed ---------------------------------------------------------
+
+// On the gateway, with the real backend and session: a device's problem is
+// the words its Item's options give its code (the committed sample's, which
+// oh_integrations wrote), never the code; a source chosen, sent and never
+// read back is marked on its bubble until the room reads something else;
+// and while the stream is lost every light is the stale one, in Watch, in
+// Listen and on Home, until the house is read again. A snapshot's build is
+// nothing to a terminal.
+async function failure(proof) {
+  size = [200, 50];
+  const sample = JSON.parse(fs.readFileSync(path.join(Shared.WEB, "activity.json"), "utf8")).items;
+  const options = Object.values(sample).find((item) => item.kind === "problem").options;
+  const house = Shared.load().house;
+  const problems = Object.keys(house.devices).filter((id) => house.devices[id].problem);
+  const parts = await open({ gateway: true, build: "0".repeat(16), activity: { version: 1, items: Object.fromEntries(problems.map((id) =>
+    [house.devices[id].problem, { label: "Problem", device: house.devices[id].label, kind: "problem", states: true, commands: false, options }])) } }, WEST);
+  const { controller, session, site } = parts;
+  const ui = controller.ui;
+  // The cells of a hit's rectangles on its row, left to right: what they say, and the styles they are drawn in.
+  const cells = (hitKey) => {
+    const frame = draw(parts), entries = frame.grid.hits.filter((hit) => hit.hit.key === hitKey).sort((a, b) => a.x - b.x);
+    return entries.flatMap((entry) => frame.grid.rows[entry.y].slice(entry.x, entry.x + entry.w));
+  };
+  const said = (hitKey) => cells(hitKey).map((cell) => cell.ch).join("");
+  // A room's light in the rooms' panel, the last cell of its row but one: its glyph and its style's last name.
+  const light = (id) => { const cell = cells("room:" + id).slice(-2)[0]; return cell ? [cell.ch, String(cell.style).split("+").pop()] : null; };
+  const alert = () => text(parts).split("\n").filter((line) => line.includes("\u26a0")).map((line) => line.slice(line.indexOf("\u26a0")).replace(/\s*\u2502.*$/, "").trim());
+  const header = () => { const cell = draw(parts).grid.rows[0].find((entry) => String(entry.style).includes("led.")); return cell ? String(cell.style).split("+").pop() : null; };
+  // The focus off the rooms, whose focused row is drawn in the focus's own style.
+  key(parts, null, { name: "tab" });
+  site.send("loc_" + WEST + "_source", "example_player");
+  await until(parts, () => session.state(WEST).value === "example_player", "the player read");
+  proof.failure = { build: [ui.toast, ui.error, session.connected()], heard: [light(WEST), light(EAST), said("bubble:example_player"), header(), alert()] };
+  // Every code of the options, and one they do not have, on the west room's TV; then none.
+  await until(parts, () => parts.backend.problemOptions, "the activity manifest");
+  proof.failure.problems = {};
+  const label = house.devices[TV].label;
+  for (const code of Object.keys(options).concat(["made_up_code"])) {
+    site.send(house.devices[TV].problem, code);
+    await until(parts, () => parts.backend.problems[TV] === code, "the problem " + code);
+    const screen = text(parts);
+    proof.failure.problems[code] = [alert().join(" | "), screen.includes("_")];
+  }
+  site.send(house.devices[TV].problem, "UNDEF");
+  await until(parts, () => !parts.backend.problems[TV], "the problem gone");
+  proof.failure.cleared = alert();
+  // Listen says a speaker's problem in the same words.
+  const arc = problems.find((id) => house.devices[id].problem && session.rooms().some((room) => room.listenOnly && room.speakers.includes(id)));
+  session.selectRoom(LOUNGE, true);
+  site.send(house.devices[arc].problem, "no_answer");
+  await until(parts, () => parts.backend.problems[arc] === "no_answer" && alert().length, "the speaker's problem");
+  proof.failure.speaker = [house.devices[arc].label, alert().join(" | "), text(parts).includes("_")];
+  site.send(house.devices[arc].problem, "UNDEF");
+  session.selectRoom(WEST, true);
+  await until(parts, () => !alert().length && room(parts)[0] === WEST, "the west room, nothing wrong");
+  // A source chosen and accepted, and never read back.
+  parts.backend.timeout = 20;
+  key(parts, "2");
+  await until(parts, () => session.state(WEST).unconfirmed === "example_computer", "the choice not confirmed");
+  const mark = draw(parts).grid.hits.find((hit) => hit.hit.key === "bubble:example_computer");
+  proof.failure.unconfirmed = [said("bubble:example_computer"), said("bubble:example_player"), mark.hit.label, alert().join(" | "), light(WEST)];
+  site.send("loc_" + WEST + "_source", "off");
+  await until(parts, () => session.state(WEST).value === "off", "the room read off");
+  proof.failure.confirmed = [said("bubble:example_computer"), alert()];
+  site.send("loc_" + WEST + "_source", "example_player");
+  await until(parts, () => session.state(WEST).value === "example_player", "the player again");
+  // The stream lost: nothing the house said before is said of now.
+  site.lose();
+  await until(parts, () => !session.connected(), "the house not heard");
+  proof.failure.lost = [light(WEST), light(EAST), said("bubble:example_player"), said("bubble:off"), header(), alert(),
+    cells("bubble:example_player").some((cell) => String(cell.style).includes("switching"))];
+  ui.blink = !ui.blink;
+  proof.failure.still = [light(WEST), said("bubble:example_player")];
+  // Home: the line above its rooms, and no source in a row.
+  key(parts, null, { name: "f1" });
+  const home = text(parts);
+  proof.failure.home = [home.includes(parts.shared.Session.NOT_CONNECTED), /Example West\s+Unknown/.test(home), home.includes("Player")];
+  key(parts, null, { name: "f2" });
+  // Listen: the speakers' lights, and the same line.
+  session.selectRoom(DEN, true);
+  await until(parts, () => room(parts)[0] === DEN && draw(parts).grid.hits.some((hit) => hit.hit.kind === "listen-speaker"), "the den's speakers");
+  const speakers = draw(parts).grid.hits.filter((hit) => hit.hit.kind === "listen-speaker").map((hit) => said(hit.hit.key));
+  proof.failure.listen = [speakers, alert(), session.listed().map((entry) => light(entry.id))];
+  session.selectRoom(WEST, true);
+  // Heard again, with what the house reads now.
+  site.states["loc_" + WEST + "_source"] = "example_computer";
+  site.restore();
+  await until(parts, () => session.connected() && session.state(WEST).value === "example_computer", "the house heard again");
+  proof.failure.again = [light(WEST), light(EAST), said("bubble:example_computer"), header(), alert()];
+  controller.stop();
+}
+
 // ---- the signal, and rooms of speakers alone -------------------------------
 
 // Wide, Watch's signal panel shows and reads; its ↓ walks the rooms with a
@@ -821,6 +937,7 @@ async function terminal(proof) {
   await pages(proof);
   await startup(proof);
   await admin(proof);
+  await failure(proof);
   await terminal(proof);
   await signal(proof, true);
   await settings(proof);

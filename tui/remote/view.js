@@ -4,7 +4,10 @@
  * RemoteListen, drawn by listen.js) into a Grid: the header, the rooms,
  * the remote of the device the buttons control or the speaker listened
  * to, the info panel, the log, the status line, the shortcuts and any
- * sheet over them.
+ * sheet over them. What has failed is the session's to say (view() and
+ * connected()): while the house is not heard every light is the stale one,
+ * which claims nothing, and a source chosen and never read back is marked
+ * on its bubble.
  * render() only reads; it returns the frame with every place a click or the
  * focus can reach, and the scroll offsets it settled on, for controller.js
  * to keep.
@@ -28,6 +31,10 @@ const GLYPHS = {
 };
 const LIT = "\u25cf";
 const UNLIT = "\u25cb";
+// A light read before the house was lost: neither on nor off.
+const STALE = "\u25cc";
+// A source chosen, sent and never read back: on its bubble, in its light's place.
+const UNCONFIRMED = "?";
 const ARROW = { left: "\u2039", right: "\u203a" };
 // A block's left eighths, one to eight.
 const EIGHTHS = ["\u258f", "\u258e", "\u258d", "\u258c", "\u258b", "\u258a", "\u2589", "\u2588"];
@@ -201,8 +208,24 @@ function ledStyle(led) {
 }
 
 function ledChar(led, blink) {
+  if (led === "stale") return STALE;
+  if (led === "unconfirmed") return UNCONFIRMED;
   if (led === "busy") return blink ? UNLIT : LIT;
   return led === "off" || led === "muted" || !led ? UNLIT : LIT;
+}
+
+// Whether the house is heard (session.js connected()). While it is not,
+// what the session shows was read before.
+function heard(ctx) {
+  return !ctx.session || ctx.session.connected();
+}
+
+// What a light may say: the state it was given while the house is heard.
+// While it is not, on, off, switching and a problem are all claims about
+// now that nothing backs, so every light is the stale one: one glyph, no
+// colour, no blink.
+function lightOf(ctx, led) {
+  return heard(ctx) ? led : "stale";
 }
 
 // ---- the header, the status line and the shortcuts -----------------------
@@ -248,7 +271,8 @@ function header(frame, ctx, width) {
     });
   }
   const current = ctx.session && ctx.ui.ready ? ctx.session.current() : null;
-  const connected = ctx.ui.target.mock ? "mock" : ctx.ui.connected === true ? "ok" : ctx.ui.connected === false ? "bad" : "busy";
+  // The connection's own light: reading until the session can be drawn, then whether the house is heard.
+  const connected = ctx.ui.target.mock ? "mock" : !ctx.ui.ready ? "busy" : heard(ctx) ? "ok" : "bad";
   const room = ctx.ui.screen === "remote" && current ? [current.label + "  ", "header.title"] : null;
   const led = remotes ? [ctx.ui.target.mock ? UNLIT : LIT, connected === "mock" ? "header.dim" : "header+" + ledStyle(connected)] : null;
   const target = remotes ? [" " + ctx.ui.target.label + " ", "header.dim"] : null;
@@ -551,7 +575,8 @@ function roomsContent(g, w, ctx) {
     if (lock.locked) g.put(lockAt, y, LOCK, style);
     const short = fit(shown.short, sourceWidth).trimEnd();
     g.put(ledAt - 1 - length(short), y, short, style === "row" ? "dim" : style);
-    g.put(ledAt, y, ledChar(shown.led, ctx.ui.blink), style === "row.focus" ? style : style + "+" + ledStyle(shown.led));
+    const led = lightOf(ctx, shown.led);
+    g.put(ledAt, y, ledChar(led, ctx.ui.blink), style === "row.focus" ? style : style + "+" + ledStyle(led));
     g.hit(0, y, w, 1, { kind: "room", room: room.id, key: key, focus: true,
       label: room.label + ", " + shown.spoken + (lock.locked ? ". " + lock.text : "") });
     y += 1;
@@ -777,10 +802,14 @@ function bubbleRow(frame, g, w, ctx, list, state) {
     }
     const shown = session.bubbleState(item, state);
     const lock = session.bubbleLock(item, shown);
-    const led = shown === "current" ? "ok" : shown === "switching" ? "busy" : "off";
+    // The choice that was never read back is marked on its own bubble.
+    // view().unconfirmed is its label, for the alert; the bubble is found by
+    // the id in the room's state (asked of lane web: the id in view() too).
+    const unconfirmed = item.choose && state.unconfirmed === item.id;
+    const led = lightOf(ctx, unconfirmed ? "unconfirmed" : shown === "current" ? "ok" : shown === "switching" ? "busy" : "off");
     const mark = lock.locked ? LOCK : item.choose ? ledChar(led, ctx.ui.blink) : "";
     const text = " " + (item.digit ? item.digit + " " : "") + (mark ? mark + " " : "") + item.label + " ";
-    parts.push({ item: item, shown: shown, lock: lock, led: led, text: text, width: length(text) });
+    parts.push({ item: item, shown: shown, lock: lock, led: led, unconfirmed: unconfirmed, text: text, width: length(text) });
   });
   const selectedId = session.selectedBubble(list);
   const total = parts.reduce((sum, part) => sum + part.width, 0) + parts.length - 1;
@@ -798,14 +827,16 @@ function bubbleRow(frame, g, w, ctx, list, state) {
     }
     const item = part.item;
     const key = "bubble:" + item.id;
+    // Not heard, a bubble that was switching keeps its place without the colour that says it is switching now.
     let style = part.lock.inert ? "bubble.inert" : part.shown === "current" ? "bubble.current"
-      : part.shown === "switching" ? "bubble.switching" : item.id === selectedId ? "bubble.selected" : "bubble";
+      : part.shown === "switching" ? (heard(ctx) ? "bubble.switching" : "bubble.current") : item.id === selectedId ? "bubble.selected" : "bubble";
     const cursor = !ctx.ui.overlay && ctx.ui.pane !== "remote" && ctx.ui.sourceCursor[session.current().id] === item.id;
     if (focused(ctx, key) || cursor) style = "bubble.focus";
     const remote = item.remote ? ctx.layouts.remotes[item.remote] : null;
     const hit = {
       kind: "bubble", item: item, key: key, focus: true, disabled: part.lock.inert,
-      label: session.bubbleLabel(item, part.shown) + (remote ? " \u00b7 " + remote.label : "") + (item.digit ? "  (" + item.digit + ")" : "")
+      label: session.bubbleLabel(item, part.shown) + (part.unconfirmed ? ", not confirmed" : "") + (remote ? " \u00b7 " + remote.label : "")
+        + (item.digit ? "  (" + item.digit + ")" : "")
     };
     let at = x;
     if (item.digit) {
@@ -1427,6 +1458,6 @@ function pairCardContent(g, w, ctx, narrow) {
 }
 
 // What listen.js draws with, so its keys, meters and rows look as the rest.
-const KIT = { focused, heading, paragraph, chip, button, rounded, meter, ledChar, ledStyle, slice, GLYPHS, LIT, UNLIT, ARROW };
+const KIT = { focused, heading, paragraph, chip, button, rounded, meter, ledChar, ledStyle, lightOf, heard, slice, GLYPHS, LIT, UNLIT, ARROW };
 
 module.exports = { render, GLYPHS, TUI_SHORTCUTS, PAIR_SHORTCUTS, WIDE, MEDIUM, pairDevices, pairColumns, PAIR_FIELDS, signalInline };

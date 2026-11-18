@@ -165,10 +165,12 @@ function content(g, width, ctx) {
   const room = manifest.rooms.find(entry => entry.id === state.room) || manifest.rooms[0];
   if (!room) { line("No rooms are configured."); return y; }
   const reading = ctx.session.state(room.id) || {}, routes = manifest.routes[room.id] || {};
-  const rows = orderedRows(routeRows(manifest, room.id, reading, ctx.ui && ctx.ui.connected), state.sortField, state.sortDescending);
+  // Whether the house is heard is the session's to say.
+  const connected = ctx.session.connected();
+  const rows = orderedRows(routeRows(manifest, room.id, reading, connected), state.sortField, state.sortDescending);
   const preview = rows.find(row => row.id === state.source) || rows[0];
   const source = own(routes, reading.value) ? plain(routes[reading.value].label) : reading.value === "off" ? "Room off" : "Unknown";
-  const report = ctx.ui && ctx.ui.connected === false ? "Live unavailable · last report: " + source : source;
+  const report = connected ? source : "Live unavailable · last report: " + source;
   line(room.label + " · " + manifest.nodes.length + " devices", "strong");
   line(!rows.length ? "No room source selector" : "Room source: " + report + (own(routes, reading.pending) ? " · Switching to " + plain(routes[reading.pending].label) : ""));
   line("Source reports only; device power and link health are unknown.");

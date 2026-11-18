@@ -87,6 +87,9 @@ function styles(c) {
     "led.busy": { fg: busy },
     "led.bad": { fg: bad },
     "led.off": { fg: faint },
+    // Read before the house was lost: no colour, as a light that is off has none.
+    "led.stale": { fg: faint },
+    "led.unconfirmed": { fg: bad },
     "led.muted": { fg: muted },
     row: {},
     "row.current": on(selected, c.text, true),
