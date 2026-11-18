@@ -271,9 +271,8 @@ on the host from the pinned upstream file and classes Thermite carries, and
 the installation commits only after the started runtime has installed it. An
 installation that would run the unrepaired binding rolls back and says so.
 The first installation of a repair on a runtime that ran the unrepaired
-binding clears openHAB's bundle cache, so that start takes longer, as the
-first start after an openHAB update does; Things, pairings and credentials
-stay. Nothing is installed by hand: `lib/oh_androidtv_patch/README.md` and
+binding empties openHAB's bundle cache, so that start installs every bundle
+anew and takes longer; Things, pairings and credentials stay. Nothing is installed by hand: `lib/oh_androidtv_patch/README.md` and
 `lib/oh_heos_patch/README.md` describe each repair.
 
 Before starting

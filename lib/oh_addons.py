@@ -629,7 +629,7 @@ def provision(userdata: Path, files: dict[str, dict], store: Path, *, wanted=(),
     """Make userdata's repository hold exactly `files`, each copied from the
     cache `store` and refused unless it is what its pin says, and the
     rebuilt bundle of each repair in `wanted`; point Karaf's resolver at the
-    repository alone and its overrides at those bundles; and clear an OSGi
+    repository alone and its overrides at those bundles; and empty an OSGi
     cache that holds another build of a repaired binding. `mounted` is
     where the runtime sees userdata when that is not `userdata` itself (a
     container). With `owner` (root, in production) what is written becomes
@@ -694,8 +694,18 @@ def provision(userdata: Path, files: dict[str, dict], store: Path, *, wanted=(),
             os.close(etc)
         stale = _stale(_installed(top, {repair.bundle for repair in wanted}), list(wanted))
         if stale:
-            # Karaf applies an override only when it provisions a feature.
+            # Karaf applies an override only when it provisions a feature. The
+            # emptied cache keeps its directory: where that is missing the
+            # distribution's start script first builds it with a server of
+            # its own, on the house's conf, and stops that server while it
+            # installs the add-ons. On 5.2.3 that left add-ons installed and
+            # never started in half of ten starts, and no restart recovers it.
             shutil.rmtree(BUNDLES[0], dir_fd=top)
+            cache = _child(top, BUNDLES[0], owner)
+            try:
+                os.close(_child(cache, BUNDLES[1], owner))
+            finally:
+                os.close(cache)
             changed.append(f"cache (cleared, so that the next start installs every bundle anew: {stale})")
     finally:
         os.close(top)

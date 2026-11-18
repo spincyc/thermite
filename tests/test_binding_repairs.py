@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tempfile
 import types
@@ -239,13 +240,26 @@ class Overrides(unittest.TestCase):
 class OsgiCache(Fixture):
     """Karaf applies an override only when it provisions a feature."""
 
+    def assertEmptied(self):
+        """Nothing of the old cache, and the directory whose absence makes
+        the distribution's start script run its own priming server."""
+        cache = self.userdata / "cache"
+        self.assertEqual([path.name for path in cache.iterdir()], ["org.eclipse.osgi"])
+        holder = cache / "org.eclipse.osgi"
+        self.assertTrue(holder.is_dir() and not holder.is_symlink())
+        self.assertEqual(list(holder.iterdir()), [])
+        for directory in (cache, holder):
+            self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+
     def test_a_cache_that_holds_the_upstream_binding_is_cleared(self):
         self.cache(self.upstream)
+        (self.userdata / "cache/org.eclipse.osgi/framework.info.7").write_bytes(b"the framework's bundle database")
+        (self.userdata / "cache/other").mkdir()
         (self.userdata / "tmp").mkdir()
         changed = self.provision()
         self.assertIn("cache (cleared, so that the next start installs every bundle anew: it holds "
                       "org.openhab.binding.heos 5.2.3, not the HEOS reconnect repair (5.2.3.thermite1))", changed)
-        self.assertFalse((self.userdata / "cache").exists())
+        self.assertEmptied()
         self.assertTrue((self.userdata / "jsondb/things.json").is_file())
         self.assertTrue((self.userdata / "tmp").is_dir())
 
@@ -263,7 +277,7 @@ class OsgiCache(Fixture):
         self.assertTrue((self.userdata / "cache").is_dir())
         self.cache(self.upstream, generation=10)
         self.provision()
-        self.assertFalse((self.userdata / "cache").exists())
+        self.assertEmptied()
 
     def test_a_repaired_binding_of_other_content_or_one_no_longer_wanted_is_cleared(self):
         with zipfile.ZipFile(io.BytesIO(self.repaired)) as source:
@@ -275,7 +289,7 @@ class OsgiCache(Fixture):
         changed = self.provision(wanted=[])
         self.assertIn("it holds a repaired org.openhab.binding.heos 5.2.3.thermite1 that this version does not "
                       "install", " ".join(changed))
-        self.assertFalse((self.userdata / "cache").exists())
+        self.assertEmptied()
 
     def test_nothing_planted_in_the_cache_is_followed_or_read_as_a_bundle(self):
         outside = self.root / "outside"
@@ -294,7 +308,7 @@ class OsgiCache(Fixture):
         self.assertNotIn("cache", " ".join(self.provision()))
         self.cache(self.upstream)
         self.provision()
-        self.assertFalse((self.userdata / "cache").exists())
+        self.assertEmptied()
         self.assertEqual((outside / "kept").read_bytes(), self.upstream)
 
 

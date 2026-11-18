@@ -135,11 +135,15 @@ it, and nobody installs it by hand. It is part of the install transaction
 3. Karaf applies an override only when it provisions a feature: a restart
    with the override in place keeps a bundle it has already installed. So
    when the runtime's OSGi cache (`userdata/cache`) holds any other build of
-   this binding, the step removes the cache, and the next start installs
-   every bundle anew from local files, as it does after openHAB's own
-   update. Nothing else under userdata is touched: Things, pairings,
-   keystores and the JSON database stay. A cache that already holds this
-   bundle stays as it is.
+   this binding, the step empties the cache, and the next start installs
+   every bundle anew from local files. The emptied cache keeps its directory
+   (`userdata/cache/org.eclipse.osgi`): where that is missing, openHAB's
+   start script first builds the cache with a second server of its own, on
+   the house's conf, and stops it while it installs the add-ons, which on
+   5.2.3 can leave add-ons installed and never started, whatever is
+   restarted afterwards. Nothing else under userdata is touched: Things,
+   pairings, keystores and the JSON database stay. A cache that already
+   holds this bundle stays as it is.
 4. **After the start**, once the add-ons are installed, the transaction reads
    the cache again and commits only when the binding it holds is this bundle
    with this content. Otherwise it says which bundle runs and rolls back.
@@ -165,6 +169,21 @@ OSGi cache instead, which is the fresh-userdata case of that proof. Pax adds
 a `Bundle-UpdateLocation` header to the manifest of the copy the framework
 caches, which is why the check after the start compares content and reads
 the manifest's headers, never the file's own digest.
+
+The installation itself was then run offline on the pinned runtime, on a
+house that lists both repaired bindings and has no device of theirs. In
+fresh userdata, and in userdata that had run the unrepaired 5.2.3 bindings
+and whose cache this step then emptied, the start installed both
+`5.2.3.thermite1` bundles from userdata's repository, Karaf listed them
+Active, and the check after the start passed on their content. With the
+unrepaired cache kept, with or without the override, the runtime went on
+running 5.2.3 and the check named it. With the cache removed outright the
+start script's own cache server ran: of ten such starts, three ended with
+every add-on bundle installed and never started (two with the repairs, one
+without any), and the one restart tried did not start them; two more showed
+one bundle not Active 45 seconds after its add-on was reported installed.
+All ten starts on the emptied cache came up whole. That is why the cache's
+directory stays.
 
 These are synthetic local-runtime proofs. On production, existing paired
 Things must recover without a new pairing and shared dispatch must stay

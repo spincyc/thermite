@@ -144,6 +144,9 @@ production acceptance. They were made when the repair was installed by hand,
 with a feature refresh in place of the cleared cache the installation now
 uses. What they establish about Karaf is why the installation clears the
 cache: a restart alone neither installs nor removes the repaired bundle.
+The installation as it now runs was proven afterwards, offline, on the
+pinned runtime: `lib/oh_androidtv_patch/README.md` ("What was proven, and
+how") says what was run and seen for both bindings.
 
 - **Activation on an existing install:** a restart with the override, the
   repository entry and the JAR in place kept 5.2.3 and logged no
@@ -205,11 +208,15 @@ it, and nobody installs it by hand. It is part of the install transaction
 3. Karaf applies an override only when it provisions a feature: a restart
    with the override in place keeps a bundle it has already installed. So
    when the runtime's OSGi cache (`userdata/cache`) holds any other build of
-   this binding, the step removes the cache, and the next start installs
-   every bundle anew from local files, as it does after openHAB's own
-   update. Nothing else under userdata is touched: Things, pairings,
-   keystores and the JSON database stay. A cache that already holds this
-   bundle stays as it is.
+   this binding, the step empties the cache, and the next start installs
+   every bundle anew from local files. The emptied cache keeps its directory
+   (`userdata/cache/org.eclipse.osgi`): where that is missing, openHAB's
+   start script first builds the cache with a second server of its own, on
+   the house's conf, and stops it while it installs the add-ons, which on
+   5.2.3 can leave add-ons installed and never started, whatever is
+   restarted afterwards. Nothing else under userdata is touched: Things,
+   pairings, keystores and the JSON database stay. A cache that already
+   holds this bundle stays as it is.
 4. **After the start**, once the add-ons are installed, the transaction reads
    the cache again and commits only when the binding it holds is this bundle
    with this content. Otherwise it says which bundle runs and rolls back.
