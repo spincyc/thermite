@@ -7,6 +7,13 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `instance/host.yaml` is read as the house file is: unquoted text
+  that the versions of YAML read differently (`no`, a port written
+  with a leading zero, a date), a tag, and a key written twice are
+  refused with the line and what to write. Nothing is read
+  differently than before; `thermite generate` writes nothing from
+  a host file it refuses, and `thermite upgrade` stops before it
+  changes the site or the host.
 - The Android TV and HEOS binding repairs are installed by `thermite
   install`, `upgrade` and `rollback` for every house that uses the
   binding, checked after the start, and recorded in the installed

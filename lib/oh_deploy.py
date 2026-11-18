@@ -234,19 +234,25 @@ def validate_host(host: object, where: str = "instance/host.yaml") -> dict:
 
 
 def load_host(source: Path | bytes, where: str | None = None) -> dict:
-    """Parse and validate host facts from a file or committed bytes."""
+    """Parse and validate host facts from a file or committed bytes. The
+    file is read as the house file is (oh_inventory.StrictLoader): what
+    the versions of YAML read differently, and a key written twice, are
+    refused with the line and what to write."""
     # Here, not at the top: the install imports this module before it has
     # installed PyYAML.
     import yaml
+    import oh_inventory
 
     if isinstance(source, bytes):
         where, data = where or "instance/host.yaml", source
     else:
         where, data = where or str(source), Path(source).read_bytes()
     try:
-        host = yaml.safe_load(data)
+        host, refused = oh_inventory.read(data)
     except yaml.YAMLError as exc:
         raise HostError(f"{where}: not valid YAML ({str(exc).splitlines()[0]})") from None
+    if refused:
+        raise HostError(f"{where}: " + "; ".join(f"line {line}: {sentence}" for line, _, _, sentence in refused))
     return validate_host(host, where)
 
 

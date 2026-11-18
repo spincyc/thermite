@@ -119,20 +119,22 @@ class Packaging(unittest.TestCase):
         self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
         self.assertIn("defines no Things or Items", completed.stderr)
 
-    def test_upgrade_preparation_refuses_a_house_key_written_twice_before_it_commits_the_pin(self):
-        """Every earlier release took the second of the two names below and
-        said nothing. This one's check, which upgrade runs before it commits
-        the site's pin and so before any install transaction, refuses the file."""
+    def refused_in_upgrade_preparation(self, name, file, key):
+        """What this release's check says of a site (named `name`) whose
+        `file` writes the line with `key` twice, when upgrade prepares it:
+        (the file, the first of the two lines, the output). Upgrade runs
+        that check before it commits the site's pin, and so before any
+        install transaction; nothing in the site may have changed."""
         import contextlib
         import io
         import oh_source_upgrade
-        site = self.root / "site an earlier release read"
+        site = self.root / name
         oh_init.initialize(site, program=self.program)
-        house = site / "instance/devices.yaml"
-        lines = house.read_text().splitlines()
-        first = next(number for number, line in enumerate(lines) if '"name": ' in line)
+        path = site / file
+        lines = path.read_text().splitlines()
+        first = next(number for number, line in enumerate(lines) if f'"{key}": ' in line)
         lines.insert(first + 1, lines[first].replace("Example", "Another"))
-        house.write_text("\n".join(lines) + "\n")
+        path.write_text("\n".join(lines) + "\n")
         for args in (("init", "--initial-branch=fixture"), ("config", "user.name", "Fixture"),
                      ("config", "user.email", "fixture@example.invalid"), ("config", "commit.gpgsign", "false"),
                      ("add", "."), ("commit", "-m", "private site")):
@@ -147,10 +149,21 @@ class Packaging(unittest.TestCase):
                 contextlib.redirect_stderr(said), self.assertRaises(subprocess.CalledProcessError) as refused:
             oh_source_upgrade.site_update(command, site, expected_head=head)
         self.assertEqual((refused.exception.returncode, refused.exception.cmd[1:]), (2, ["check", "--config", str(site)]))
-        self.assertIn(f"{house}: line {first + 2}: key 'name' is written twice in this mapping (first on line "
-                      f"{first + 1}): keep one", said.getvalue())
         self.assertEqual(oh_source_upgrade.git(site, "rev-parse", "HEAD"), head)
         self.assertEqual(oh_source_upgrade.git(site, "status", "--porcelain", "--untracked-files=all"), "")
+        return path, first + 1, said.getvalue()
+
+    def test_upgrade_preparation_refuses_a_house_key_written_twice_before_it_commits_the_pin(self):
+        """Every earlier release took the second of the two names and said nothing."""
+        house, first, said = self.refused_in_upgrade_preparation("site an earlier release read", "instance/devices.yaml", "name")
+        self.assertIn(f"{house}: line {first + 1}: key 'name' is written twice in this mapping (first on line {first}): "
+                      "keep one", said)
+
+    def test_upgrade_preparation_refuses_a_host_key_written_twice_before_it_commits_the_pin(self):
+        host, first, said = self.refused_in_upgrade_preparation("site with a host file an earlier release read",
+                                                                "instance/host.yaml", "uid")
+        self.assertIn(f"thermite generate: {host}: line {first + 1}: key 'uid' is written twice in this mapping (first "
+                      f"on line {first}): keep one; nothing generated", said)
 
     def test_fresh_clone_renders_with_exact_installed_release_without_creating_var(self):
         source = self.root / "fresh-clone-source"

@@ -108,8 +108,9 @@ def unclear(value: str, read: str) -> tuple[str, str] | None:
                            f"decimal number, or {quoted} in quotes for text")
 
 
-class HouseLoader(yaml.SafeLoader):
-    """PyYAML's safe loader, which reads YAML 1.1, kept to what means one
+class StrictLoader(yaml.SafeLoader):
+    """How a site's own files, the house file and the host file, are read:
+    PyYAML's safe loader, which reads YAML 1.1, kept to what means one
     thing. A plain scalar loads when YAML 1.1 and the YAML 1.2 core schema
     read it the same (text, null, true and false, a decimal number); one
     they read differently (on, 010, 1_000, 12:30, 2026-11-18)
@@ -134,7 +135,7 @@ class HouseLoader(yaml.SafeLoader):
             return node  # checked where its anchor is
         if event.tag is not None:
             tag = event.tag.replace("tag:yaml.org,2002:", "!!")
-            self.refuse(event.start_mark, "tag", f"{tag} is a tag, which the house file does not use: remove it, "
+            self.refuse(event.start_mark, "tag", f"{tag} is a tag, which this file does not use: remove it, "
                                                  "and put text in quotes")
         elif isinstance(event, yaml.ScalarEvent):
             # Only a plain scalar is resolved: a quoted one is text.
@@ -163,12 +164,13 @@ class HouseLoader(yaml.SafeLoader):
         return super().construct_mapping(node, deep=deep)
 
 
-def read(text: str) -> tuple[object, list[tuple[int, int, str, str]]]:
-    """A house file's text as (content, refusals). Each refusal is the
-    (line, column, kind, sentence) of something HouseLoader does not take,
+def read(text: str | bytes) -> tuple[object, list[tuple[int, int, str, str]]]:
+    """The text of a house file or a host file as (content, refusals). Each
+    refusal is the (line, column, kind, sentence) of something StrictLoader
+    does not take,
     in file order; with any, the content is not what the file says and is
     not to be used. Raises yaml.YAMLError for text that is not YAML."""
-    loader = HouseLoader(text)
+    loader = StrictLoader(text)
     try:
         content = loader.get_single_data()
     except yaml.YAMLError:
@@ -183,7 +185,7 @@ def read(text: str) -> tuple[object, list[tuple[int, int, str, str]]]:
 
 def load(path: Path) -> object:
     """A house file's content; ConfigError when it cannot be read, is not
-    YAML, or holds what HouseLoader refuses, each named with its line and
+    YAML, or holds what StrictLoader refuses, each named with its line and
     what to write. Its shape is not checked: oh_conf.House.load is the
     reader of a house file (tests/test_house_loader.py)."""
     try:

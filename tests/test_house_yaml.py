@@ -1,4 +1,4 @@
-"""A house file is read as what it says (oh_inventory.HouseLoader).
+"""A house file is read as what it says (oh_inventory.StrictLoader).
 
 The rule: a scalar in a house file means what a person reading it sees, or
 the file is refused naming the line and what to write; and a key written
@@ -9,6 +9,8 @@ is 750 and a date is a date; YAML 1.2 reads each of those as it looks. A
 house file is read by whichever release its site pins, so the loader takes
 only what both read the same: whatever it loads is what yaml.safe_load made
 of it in every earlier release, which the tests below hold it to.
+
+The host file (instance/host.yaml) is read by the same loader (HostFile).
 """
 import contextlib
 import io
@@ -26,9 +28,11 @@ AREA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(AREA))
 sys.path.insert(0, str(AREA / "lib"))
 import oh_cli  # noqa: E402
+import oh_deploy as deploy  # noqa: E402
 import oh_inventory as inventory  # noqa: E402
 import oh_paths  # noqa: E402
 import yaml  # noqa: E402
+from oh_cli import generate  # noqa: E402
 from tests import test_generated_output  # noqa: E402
 
 EXAMPLE = json.loads((AREA / "instance/devices.yaml").read_text(encoding="utf-8"))
@@ -273,6 +277,66 @@ class Verbs(Scratch):
         lines[at] = lines[at].replace(ADDRESS, f'"{ADDRESS}"')
         self.house.write_text("\n".join(lines) + "\n")
         self.assertEqual(run("dhcp-reservations", "--house", str(self.house))[0], 0)
+
+
+class HostFile(Scratch):
+    """oh_deploy.load_host, the one reader of a host file, refuses what the
+    house file's reader refuses, in the same words."""
+
+    HOST = json.loads((AREA / "instance/host.yaml").read_text(encoding="utf-8"))
+
+    def test_what_a_house_file_is_refused_for_a_host_file_is_refused_for_in_the_same_words(self):
+        written = "".join(f"{key}: {json.dumps(value)}\n" for key, value in self.HOST.items())
+        self.assertEqual(deploy.load_host(written.encode()), self.HOST)
+        for scalar in REFUSED:
+            with self.subTest(scalar=scalar):
+                text = f"{written}root: {scalar}\n"
+                with self.assertRaises(deploy.HostError) as caught:
+                    deploy.load_host(text.encode())
+                self.assertEqual(str(caught.exception), "instance/host.yaml: " + self.refusal(text)[0][0])
+                self.assertIn(f"line {len(self.HOST) + 1}: {scalar} ", str(caught.exception))
+
+    def test_every_refusal_is_in_the_one_message_that_names_the_file_or_the_commit(self):
+        text = '{"timezone": "Etc/UTC", "http_port": 013602,\n "https_port": 13603, "uid": 9001, "gid": 9001,\n "uid": !!int "9002"}\n'
+        problems, kinds = self.refusal(text)
+        self.assertEqual(kinds, ["leading zero", "duplicate key", "tag"])
+        self.house.write_text(text)
+        for source, where in ((self.house, str(self.house)), (text.encode(), "instance/host.yaml at 0123456789ab")):
+            with self.subTest(source=type(source).__name__), self.assertRaises(deploy.HostError) as caught:
+                deploy.load_host(source, None if isinstance(source, Path) else where)
+            self.assertEqual(str(caught.exception), f"{where}: " + "; ".join(problems))
+            self.assertNotIn("\n", str(caught.exception))
+
+    def test_a_host_file_that_loads_is_what_yaml_safe_load_made_of_it(self):
+        fenced = re.compile(r"^```ya?ml\n(.*?)^```", re.MULTILINE | re.DOTALL)
+        documents = [AREA / "README.md", AREA / "FAQ.md", *sorted((AREA / "docs").glob("*.md")),
+                     *sorted((AREA / "site/pages").glob("*.md"))]
+        texts = [block for document in documents for block in fenced.findall(document.read_text(encoding="utf-8"))
+                 if not re.search(r"^(devices|rooms):", block, re.MULTILINE)]
+        texts += [(AREA / "instance/host.yaml").read_text(encoding="utf-8"), yaml.safe_dump(self.HOST)]
+        self.assertGreater(len(texts), 3)
+        for text in texts:
+            with self.subTest(text=text[:40]):
+                content, problems = inventory.read(text.encode())
+                self.assertEqual(problems, [])
+                self.assertTrue(same(content, yaml.safe_load(text)))
+        self.assertEqual(deploy.load_host(yaml.safe_dump(self.HOST).encode("utf-16")), self.HOST)
+
+    def test_generate_writes_nothing_from_a_host_file_that_is_refused(self):
+        site = self.house.parent
+        (site / "instance").mkdir()
+        (site / "versions.json").write_bytes((AREA / "versions.json").read_bytes())
+        written = yaml.safe_dump({**self.HOST, "root": "/srv/thermite"})
+        (site / "instance/host.yaml").write_text(written + "music: no\n")
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(generate, "AREA", site), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = generate.main(["--house", str(AREA / "instance/devices.yaml"), "--conf", str(site / "conf"),
+                                  "--root", str(site)])
+        self.assertEqual(code, 2)
+        self.assertEqual(err.getvalue(), f"thermite generate: {site / 'instance/host.yaml'}: line "
+                                         f"{written.count(chr(10)) + 1}: no is true or false in YAML 1.1 and a word in YAML 1.2: "
+                                         'write true or false, or "no" in quotes for the word; nothing generated\n')
+        self.assertEqual(sorted(path.name for path in site.iterdir()), ["instance", "versions.json"])
 
 
 if __name__ == "__main__":
