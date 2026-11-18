@@ -256,6 +256,16 @@ integration.
                   metrics never probes its devices: it has no fixed port,
                   or a connection costs the device a session or a TLS
                   handshake
+    transport(device) -> Thing UID or None
+                  the Thing its rule sends the device's commands through,
+                  where that Thing is named after another device (a
+                  source's CEC goes through the matrix): its status is the
+                  device's own signal (oh_metrics.signals()), and a check
+    THING_FOLLOWS_DEVICE = False
+                  its Things' status says nothing of the device (a ping
+                  Thing is ONLINE while nothing answers): metrics leave
+                  them out of thermite_thing_online, and no check reads
+                  them
     READS = True
                   its rule reads its devices itself and says what each read
                   met (_device.js health and problem.read): metrics keep

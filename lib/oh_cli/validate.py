@@ -7,15 +7,23 @@ integrations, routing and theme). Every Thing in conf/ must belong to a
 device in the house file (the last segment of its UID is the device id)
 and use only that device's address; every Item must be a room location
 (loc_<room>) or be named after a device.
+
+A device that nothing watches is named in a note, which is no problem and
+changes no exit status: one an integration commands with no reading of
+whether it answers (no Thing, probed port or read of the rule's own), so
+that no check or alert could say it stopped, and one that has an address
+and no reading at all.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 
 import oh_cli
 import oh_inventory as inventory
+import oh_metrics as metrics
 from oh_conf import House
 
 EXAMPLES = (
@@ -43,8 +51,8 @@ def main(argv: list[str] | None = None) -> int:
     except inventory.ConfigError as error:
         if not arguments.json:
             raise
-        oh_cli.emit({"devices": 0, "items": 0, "problems": error.problems or [str(error)], "status": "invalid",
-                     "things": 0})
+        oh_cli.emit({"devices": 0, "items": 0, "notes": [], "problems": error.problems or [str(error)],
+                     "status": "invalid", "things": 0})
         return 2
     devices = len(data.get("devices") or [])
     things, items, problems = inventory.conf_objects(arguments.conf)
@@ -55,12 +63,17 @@ def main(argv: list[str] | None = None) -> int:
         problems.append(f"{arguments.conf} defines no Things or Items; run thermite generate")
     else:
         problems += inventory.cross_check(data, things, items)
+    # From the house file alone, as generate would render it: conf/ may be stale.
+    notes = [metrics.unobserved_text(*found) for found in metrics.unobserved(copy.deepcopy(data))]
     if arguments.json:
-        oh_cli.emit({"devices": devices, "items": len(items), "problems": problems,
+        oh_cli.emit({"devices": devices, "items": len(items), "notes": notes, "problems": problems,
                      "status": "ok" if not problems else "problems", "things": len(things)})
     else:
         for problem in problems:
             print(f"thermite validate: {problem}", file=sys.stderr)
+        for note in notes:
+            print(f"thermite validate: note: {note}", file=sys.stderr)
         print(f"house file: {devices} devices, conf: {len(things)} Things, "
-              f"{len(items)} Items, {len(problems)} problems")
+              f"{len(items)} Items, {len(problems)} problems"
+              + (f", {len(notes)} note{'s' if len(notes) > 1 else ''}" if notes else ""))
     return 1 if problems else 0

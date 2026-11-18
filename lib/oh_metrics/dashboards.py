@@ -138,6 +138,9 @@ ON_OFF = value_map({0: ("Off", OFF), 1: ("On", IN_USE)})
 ONLINE = value_map({0: ("Offline", FAIL), 1: ("Online", OK)})
 OPEN = value_map({0: ("Closed", FAIL), 1: ("Open", OK)})
 PROBLEM = value_map({0: ("None", OK), 1: ("Reported", WARN)})
+#: A device's `<id>_online` (point online). No response is not a failure by
+#: itself: a device that sleeps answers no ping.
+REACHABLE = value_map({0: ("No response", OFF), 1: ("Reachable", OK)})
 NEEDED = value_map({0: ("No", OFF), 1: ("Yes", IN_USE)})
 #: A speaker's playing state (exporter_map() `playing` points).
 PLAYBACK = value_map({0: ("Idle", OFF), 1: ("TV or line-in", IN_USE), 2: ("Playing", IN_USE)})
@@ -1305,17 +1308,21 @@ def devices(mapping: dict, probes: list[dict]) -> dict:
         last_online,
         f"max by (device) (thermite_device_problem{{{ROOMS}}})",
         needed,
-        trouble], [
+        trouble,
+        f'min by (device) (thermite_item_value{{point="online",{ROOMS}}})'], [
         Column("label", "Device", least=130, wrap=True),
         Column("Value #B", "Thing", states=ONLINE, **state), Column("Value #C", "Port", states=OPEN, **state),
         Column("Value #G", "Needed", states=NEEDED, **state),
         Column("Value #F", "Problem", states=PROBLEM, width=92),
+        Column("Value #I", "Ping", states=REACHABLE, width=104),
         Column("Value #D", "Probe", unit="ms", decimals=1, width=86),
         Column("Value #E", "Offline since", _words({"0": "Over a week ago"}), unit="dateTimeFromNow", width=150),
         _room_column(mapping, last=True)],
         "One row per device, those in trouble first, then those needed now. Thing: the runtime's connection to "
         "it (Things not online says in what status). Port: its control port accepts a TCP connection; Probe: "
-        "how long that took. Needed: a room's selected source uses it (the source the room last reported, "
+        "how long that took. Ping: it answers a ping, or its controller reports it connected; a device that "
+        "sleeps answers none, so this alone is no trouble and no alert. "
+        "Needed: a room's selected source uses it (the source the room last reported, "
         f"for {alerts.HELD} at most, while it reports none), it is routing infrastructure, or it is "
         f"a speaker in use: it played in the last {alerts.IN_USE}, or was playing when it stopped answering. "
         "An offline device no room needs is usually asleep. Offline since: when the Thing that has been offline "

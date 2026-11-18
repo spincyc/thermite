@@ -7,6 +7,19 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Health: which readings say whether a device answers is derived in one
+  place, and a device none covers is named instead of passed over.
+  - `thermite validate` prints a note (no problem, same exit status;
+    `notes` in `--json`) for a device an interface commands with nothing
+    reading whether it answers, and for a device with an address and no
+    reading at all. The header of `prometheus.yml` lists the same.
+  - A source commanded over the matrix's CEC had no check. It has a
+    `thing` check on the Thing its keys go through, which is the Thing
+    that must be ONLINE for its rule to send a key.
+  - `<id>_online` is exported as `thermite_item_value{point="online"}`
+    and shown as Ping on Devices. A `network_ping` Thing is no longer in
+    `thermite_thing_online`: it is ONLINE while nothing answers its
+    address. A ping is a reading and never a check.
 - The house file is read as what it says. Unquoted text that the
   versions of YAML read differently is refused with its line and what
   to write, which is usually the same text in quotes: `on`, `off`,

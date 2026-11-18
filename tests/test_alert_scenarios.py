@@ -41,12 +41,16 @@ TEXTFILES = "/host/srv/thermite/runtime/textfile"
 
 
 @functools.lru_cache(maxsize=None)
-def house(speaker: bool = False) -> tuple[str, dict]:
+def house(variant: str = "") -> tuple[str, dict]:
     """The example house's alerts.yml and exporter map.
-    With `speaker`, the house has a Sonos in a room of its own as well: a
-    device whose rule only sends, and reads nothing of it."""
+    As "speaker", the house has a Sonos in a room of its own as well: a
+    device whose rule only sends, and reads nothing of it. As "ping", its
+    West TV is pinged too."""
     inventory = copy.deepcopy(oh_inventory.load(AREA / "instance/devices.yaml"))
-    if speaker:
+    if variant == "ping":
+        next(device for device in inventory["devices"] if device["id"] == TV)["controls"]["observe"].append("network_ping")
+        assert oh_inventory.validate(inventory) == []
+    if variant == "speaker":
         from tests import test_playing
         assert test_playing.SPEAKER["id"] == SPEAKER
         inventory["rooms"][PATIO] = {"label": "Example Patio", "tag": "Room"}
@@ -103,14 +107,14 @@ def readback(zone: str, *spans: tuple[int, str | None]) -> dict[str, str]:
     return out
 
 
-def check_series(device: str, check: str, speaker: bool = False) -> str:
+def check_series(device: str, check: str, variant: str = "") -> str:
     """The one series a device's check reads, from the exporter map."""
-    found = [each for each in house(speaker)[1]["health_checks"] if (each["device"], each["check"]) == (device, check)]
+    found = [each for each in house(variant)[1]["health_checks"] if (each["device"], each["check"]) == (device, check)]
     assert len(found) == 1, (device, check, found)
     return series(found[0]["metric"], **found[0]["labels"])
 
 
-def healthy(samples: int, speaker: bool = False) -> dict[str, str]:
+def healthy(samples: int, variant: str = "") -> dict[str, str]:
     """Every series the house-wide and device checks read, all well."""
     out = {series("thermite_openhab_up", job="thermite"): f"1x{samples}",
            series("node_scrape_collector_success", job="node", collector="systemd"): f"1x{samples}"}
@@ -118,7 +122,7 @@ def healthy(samples: int, speaker: bool = False) -> dict[str, str]:
         out[series("up", job=job)] = f"1x{samples}"
     for service in alerts.SERVICES:
         out[series("probe_success", job="service_http", service=service)] = f"1x{samples}"
-    for each in house(speaker)[1]["health_checks"]:
+    for each in house(variant)[1]["health_checks"]:
         out[series(each["metric"], **each["labels"])] = f"{1 - each['bad']}x{samples}"
     return out
 
@@ -138,8 +142,8 @@ class Scenarios(unittest.TestCase):
         cls.podman, cls.image = shutil.which("podman"), image()
 
     def run_rules(self, inputs: dict[str, str], *, firing=(), values=(), interval: str = "1m",
-                  speaker: bool = False) -> None:
-        """Evaluate the example house's rules (house(speaker)) over `inputs`,
+                  variant: str = "") -> None:
+        """Evaluate the example house's rules (house(variant)) over `inputs`,
         a sample each `interval`. firing: (time, alert, [labels of each one
         firing then]), exactly; severity and the catalogue's words are added
         here. values: (time, expression, [(series, value)]), exactly."""
@@ -160,7 +164,7 @@ class Scenarios(unittest.TestCase):
         # The checks before the alerts that read them, as written: promtool
         # otherwise takes the groups in either order, and an alert that
         # reads the last evaluation's checks fires an interval later.
-        rules = house(speaker)[0]
+        rules = house(variant)[0]
         order = [group["name"] for group in yaml.safe_load(rules)["groups"]]
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, "alerts.yml").write_text(rules)
@@ -337,12 +341,12 @@ class Scenarios(unittest.TestCase):
         day = 24 * 6
         playing = series("thermite_item_value", item=f"{SPEAKER}_state", point="playing")
         problem = series("thermite_device_problem", device=SPEAKER)
-        self.assertEqual({each["check"] for each in house(True)[1]["health_checks"] if each["device"] == SPEAKER},
+        self.assertEqual({each["check"] for each in house("speaker")[1]["health_checks"] if each["device"] == SPEAKER},
                          {"thing", "port"})
-        inputs = {**healthy(4 * day, True), **readback(WEST, (4 * day + 1, routing.OFF)),
+        inputs = {**healthy(4 * day, "speaker"), **readback(WEST, (4 * day + 1, routing.OFF)),
                   **readback(EAST, (4 * day + 1, routing.OFF)), playing: f"2x{4 * day}",
                   problem: through((6, 0), (4 * day - 5, 1))}
-        self.run_rules(inputs, interval="10m", speaker=True, firing=[
+        self.run_rules(inputs, interval="10m", variant="speaker", firing=[
             (when, name, []) for when in ("70m", "1d", "3d", "4d")
             for name in ("ThermiteCheckFailing", "ThermiteControlUnknown")
         ], values=[
@@ -352,17 +356,41 @@ class Scenarios(unittest.TestCase):
         ])
         # What says that it stopped answering is its Thing: offline from 10
         # minutes, with the playing state it can no longer report.
-        thing = check_series(SPEAKER, "thing", True)
-        gone = {**healthy(40, True), **readback(WEST, (41, routing.OFF)), **readback(EAST, (41, routing.OFF)),
+        thing = check_series(SPEAKER, "thing", "speaker")
+        gone = {**healthy(40, "speaker"), **readback(WEST, (41, routing.OFF)), **readback(EAST, (41, routing.OFF)),
                 playing: through((10, 2), (20, None), (11, 2)), thing: through((10, 1), (20, 0), (11, 1)),
                 problem: "0x40"}
         failing = check(PATIO, "thing", SPEAKER)
-        self.run_rules(gone, speaker=True, firing=[
+        self.run_rules(gone, variant="speaker", firing=[
             ("14m", "ThermiteCheckFailing", []),
             ("15m", "ThermiteCheckFailing", [failing]),
             ("29m", "ThermiteCheckFailing", [failing]),
             ("30m", "ThermiteCheckFailing", []),
             ("40m", "ThermiteControlUnknown", []),
+        ])
+
+    def test_a_ping_is_a_reading_and_what_alerts_is_the_control_that_stopped(self):
+        # The West watches the player on a TV that is pinged too. For half
+        # an hour the TV answers no ping (some sleep through one, and a
+        # switch may drop it) while its control port and its reads answer:
+        # nothing about controlling the room is wrong.
+        ping = series("thermite_item_value", item=f"{TV}_online", point="online")
+        self.assertEqual(house("ping")[1]["items"][f"{TV}_online"]["point"], "online")
+        quiet = {**healthy(45, "ping"), **readback(WEST, (46, PLAYER)), **readback(EAST, (46, routing.OFF)),
+                 ping: through((10, 1), (30, 0), (6, 1))}
+        self.run_rules(quiet, variant="ping", firing=[
+            (when, name, []) for when in ("15m", "30m", "45m") for name in ("ThermiteCheckFailing", "ThermiteControlUnknown")
+        ], values=[("30m", "thermite:control_health", [("thermite:control_health", 0)])])
+        # The case a ping cannot see: it answers every ping, and from 10
+        # minutes its control port is closed. That check is what alerts.
+        closed = {**healthy(45, "ping"), **readback(WEST, (46, PLAYER)), **readback(EAST, (46, routing.OFF)),
+                  ping: "1x45", check_series(TV, "port", "ping"): through((10, 1), (36, 0))}
+        port = check(WEST, "port", TV, WEST)
+        self.run_rules(closed, variant="ping", firing=[
+            ("14m", "ThermiteCheckFailing", []),
+            ("15m", "ThermiteCheckFailing", [port]),
+            ("45m", "ThermiteCheckFailing", [port]),
+            ("45m", "ThermiteControlUnknown", []),
         ])
 
     def test_a_tv_in_standby_is_asked_nothing_so_its_reads_are_unknown_and_never_well(self):

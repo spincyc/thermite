@@ -163,6 +163,23 @@ class Validate(Scratch):
         self.assertEqual((code, json.loads(out)["status"]), (2, "invalid"))
         self.assertTrue(json.loads(out)["problems"][0].startswith("theme:"))
 
+    def test_a_device_nothing_watches_is_named_in_a_note_that_is_no_problem(self):
+        house = self.house(EXAMPLE)
+        code, out, err = run("validate", "--house", str(house))
+        note = ("example_computer: it has an address and nothing reads whether it answers; list network_ping under "
+                "its controls.observe to have it pinged")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(err, f"thermite validate: note: {note}\n")
+        self.assertTrue(out.endswith(" 0 problems, 1 note\n"), out)
+        code, out, _ = run("validate", "--house", str(house), "--json")
+        self.assertEqual((code, json.loads(out)["status"], json.loads(out)["notes"]), (0, "ok", [note]))
+        pinged = copy.deepcopy(EXAMPLE)
+        next(device for device in pinged["devices"]
+             if device["id"] == "example_computer")["controls"] = {"observe": ["network_ping"]}
+        code, out, _ = run("validate", "--house", str(self.house(pinged, "pinged.yaml")), "--json")
+        # conf/ is the example's, without the ping Thing: a problem of its own, and no note.
+        self.assertEqual(json.loads(out)["notes"], [])
+
 
 class Generate(Scratch):
     def test_prune_removes_only_stray_files_with_the_generated_header(self):

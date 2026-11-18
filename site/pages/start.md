@@ -74,7 +74,7 @@ thermite validate
 thermite test boot
 ```
 
-`thermite validate` runs every check `thermite generate` runs. `thermite generate --prune` removes files an earlier generate wrote that nothing generates now. The boot check loads the generated configuration in an isolated openHAB runtime and reports what loads. Follow the [server installation guide](installation.html) to prepare the host, commit your private site and deploy it. `thermite install --dry-run` shows the planned installation steps. `thermite status` reports the running services and their addresses.
+`thermite validate` runs every check `thermite generate` runs. It also names, in a note that is no problem, a device nothing watches: one an interface commands with no reading of whether it answers, so no alert could say it stopped, or one that has an address and no reading at all, which `network_ping` under its `observe` gives it. `thermite generate --prune` removes files an earlier generate wrote that nothing generates now. The boot check loads the generated configuration in an isolated openHAB runtime and reports what loads. Follow the [server installation guide](installation.html) to prepare the host, commit your private site and deploy it. `thermite install --dry-run` shows the planned installation steps. `thermite status` reports the running services and their addresses.
 
 ## Connect and use it
 

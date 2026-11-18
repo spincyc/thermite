@@ -75,6 +75,13 @@ def thing_uid(device: dict) -> str:
     return f"http:url:{device['id']}_cec:{device['cec']['matrix']}"
 
 
+def transport(device: dict) -> str | None:
+    """The Thing the rule sends this device's CEC through. It is named after
+    the matrix, so its status would count as nobody's; it is what says
+    whether a key can reach this device (oh_metrics.signals())."""
+    return thing_uid(device) if enabled(device) else None
+
+
 def request(device: dict, button: str) -> str:
     if button not in KEYS or validate(device):
         raise ValueError("CEC request needs a configured source and known player key")

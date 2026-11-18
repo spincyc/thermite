@@ -16,6 +16,9 @@ ADDONS = (Addon("binding", "network"),)
 ASSETS: dict[str, str] = {}
 #: ICMP has no port to probe.
 PROBED = False
+#: The binding's Thing is ONLINE while it has an address to ping, whether or
+#: not anything answers there: `<id>_online` is the reading.
+THING_FOLLOWS_DEVICE = False
 
 
 def validate(device: dict) -> list[str]:

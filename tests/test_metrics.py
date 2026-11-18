@@ -715,6 +715,43 @@ class Checks(unittest.TestCase):
         self.assertEqual({spec["device"] for spec in mapping["items"].values() if spec["point"] == "problem"},
                          {"example_player", "example_tv", "example_display", "example_avpro"})
 
+    def test_a_ping_is_a_reading_of_its_own_never_a_things_status_and_never_a_check(self):
+        """A ping Thing is ONLINE while nothing answers its address: counted
+        as the device's Thing it made a dead device read online, and for a
+        device with no other Thing its row could never read offline."""
+        inventory = copy.deepcopy(INVENTORY)
+        for device in inventory["devices"]:
+            if device["id"] in ("example_tv", "example_computer"):
+                device["controls"].setdefault("observe", []).append("network_ping")
+        self.assertEqual(oh_inventory.validate(inventory), [])
+        files = rendered(inventory)
+        mapping = json.loads(files[oh_metrics.EXPORTER_MAP])
+        self.assertEqual(mapping["devices"]["example_computer"]["things"], [])
+        self.assertEqual(mapping["devices"]["example_tv"]["things"], ["http:url:example_tv"])
+        online = {name: (spec["device"], spec["point"], spec["convert"]) for name, spec in mapping["items"].items()
+                  if spec["point"] == "online"}
+        self.assertEqual(online, {"example_computer_online": ("example_computer", "online", "switch"),
+                                  "example_tv_online": ("example_tv", "online", "switch")})
+        self.assertNotIn("online", {spec["point"] for spec in MAP["items"].values()})
+        # A TV's other readings have no value while it is off; its ping has.
+        self.assertEqual(mapping["items"]["example_tv_input"].get("power"), "example_tv_power")
+        self.assertNotIn("power", mapping["items"]["example_tv_online"])
+        # The runtime reports the ping Thing online, and the exporter says nothing of it.
+        things = [{"UID": uid, "statusInfo": {"status": "ONLINE"}}
+                  for uid in ("network:pingdevice:example_computer", "network:pingdevice:example_tv", "http:url:example_tv")]
+        self.assertEqual({labels["thing"] for name, labels, _ in exporter._things(mapping, things)},
+                         {"http:url:example_tv"})
+        labels = {"device": "example_computer", "room": "example_east", "kind": "computer",
+                  "item": "example_computer_online", "point": "online"}
+        for state, sample in (("ON", ("thermite_item_value", labels, 1.0)), ("OFF", ("thermite_item_value", labels, 0.0)),
+                              ("UNDEF", ("thermite_item_unknown", labels, 1.0))):
+            self.assertIn(sample, exporter._items(mapping, items(example_computer_online=state)), state)
+        # It answers a ping or it sleeps: no check, so no alert, reads it.
+        self.assertFalse([check for check in mapping["health_checks"] if "online" in json.dumps(check)
+                          and "thermite_thing_online" not in check["metric"]])
+        self.assertNotIn('point="online"', files["prometheus/alerts.yml"])
+        self.assertNotIn("pingdevice", files["prometheus/alerts.yml"])
+
     def test_optional_devices_are_never_required(self):
         inventory = copy.deepcopy(INVENTORY)
         for device in inventory["devices"]:
@@ -813,6 +850,98 @@ class Checks(unittest.TestCase):
         self.assertTrue(expr.startswith('clamp_max(count(thermite:check{required="true",scope="control"} == 1), 1)'))
         self.assertIn(f">= {required})", expr)
         self.assertTrue(expr.endswith("or vector(-1)"))
+
+
+class Signals(unittest.TestCase):
+    """oh_metrics.signals() is the one place that says which readings tell
+    whether a device answers. The checks are built from it and the finding
+    names what it leaves unread, so no device is commanded and unwatched in
+    silence."""
+
+    @staticmethod
+    def one_device_houses():
+        from tests import test_read_only
+        for name, phase in sorted(test_read_only.HOUSES):
+            yield name, phase, test_read_only.house(name, phase)
+
+    def test_every_integration_that_commands_a_device_reads_whether_it_answers_or_is_named(self):
+        """The rule a new integration meets: listed under control, it gives
+        its device a signal of its own, or generation names the device.
+        Here no match used to mean no check and no word."""
+        named = {}
+        for name, phase, inventory in self.one_device_houses():
+            conf = oh_metrics._build(copy.deepcopy(inventory))
+            found, _ = oh_metrics.probes(inventory, conf)
+            unread = oh_metrics.unobserved(inventory, conf)
+            for device in inventory["devices"]:
+                read = oh_metrics.signals(device, conf, found)
+                self.assertLessEqual({signal.kind for signal in read}, {"thing", "port", "reads", "online"})
+                for control in (device.get("controls") or {}).get("control") or []:
+                    through = [signal for signal in read if control in signal.integrations]
+                    self.assertEqual(not through, (device["id"], control) in unread, (name, phase, control))
+                    if not through:
+                        named[f"{name}.{phase}"] = control
+        # An IR emitter that is not commissioned renders nothing: nothing
+        # commands the device either, and the note says what is missing.
+        self.assertEqual(named, {"ir.control": "ir"})
+
+    def test_the_availability_checks_are_the_control_signals_and_no_other_reading(self):
+        from tests import test_generated_output, test_read_only
+        houses = [INVENTORY, with_speakers(), test_generated_output.ROUTED, test_read_only.house("heos", "control"),
+                  test_read_only.house("bk808_cec", "control")]
+        kinds = set()
+        for inventory in houses:
+            conf = oh_metrics._build(copy.deepcopy(inventory))
+            found, _ = oh_metrics.probes(inventory, conf)
+            mapping = oh_metrics.exporter_map(copy.deepcopy(inventory), conf)
+            checked = {(check["device"], check["check"], check["metric"], tuple(check["labels"].items()))
+                       for check in mapping["health_checks"] if check["check"] != "power"}
+            control = {(device["id"], signal.kind, signal.metric, signal.labels)
+                       for device in inventory["devices"] for signal in oh_metrics.signals(device, conf, found)
+                       if signal.control}
+            self.assertLessEqual(checked, control)
+            # Every control signal of a device on a room's path, a speaker
+            # or infrastructure is a check; a device on no path has none.
+            on_path = {device for device, *_ in checked} | {check["device"] for check in mapping["health_checks"]}
+            self.assertEqual({signal for signal in control if signal[0] in on_path}, checked)
+            kinds |= {kind for _, kind, *_ in checked}
+            for device in inventory["devices"]:
+                for signal in oh_metrics.signals(device, conf, found):
+                    if signal.kind == "online" or "heos" in signal.integrations or "network_ping" in signal.integrations:
+                        self.assertFalse(signal.control, signal)
+        self.assertEqual(kinds, {"thing", "port", "reads"})
+
+    def test_a_source_commanded_over_cec_is_checked_by_the_thing_its_keys_go_through(self):
+        """That Thing is named after the matrix, so by its name it was the
+        matrix's and the source had no check at all."""
+        from tests import test_read_only
+        inventory = test_read_only.house("bk808_cec", "control")
+        mapping = oh_metrics.exporter_map(copy.deepcopy(inventory))
+        checks = [check for check in mapping["health_checks"] if check["device"] == "den_device"]
+        self.assertEqual([(check["check"], check["metric"], check["labels"], check["always"]) for check in checks],
+                         [("thing", "thermite_thing_online", {"thing": "http:url:den_device_cec:den_matrix"}, False)])
+        self.assertEqual(checks[0]["required"], [{"item": "loc_den_source", "source": "den_device"}])
+        self.assertEqual(oh_metrics.unobserved(inventory), [])
+        # Without the integration's word for it the source is named, not passed over.
+        from oh_integrations import bk808_cec
+        with mock.patch.object(bk808_cec, "transport", lambda device: None):
+            self.assertEqual(oh_metrics.unobserved(inventory), [("den_device", "bk808_cec")])
+            self.assertFalse([check for check in oh_metrics.exporter_map(copy.deepcopy(inventory))["health_checks"]
+                              if check["device"] == "den_device"])
+
+    def test_generation_names_what_nothing_watches(self):
+        self.assertEqual(oh_metrics.unobserved(copy.deepcopy(INVENTORY)), [("example_computer", "")])
+        header = FILES[oh_metrics.PROMETHEUS_YML].split("global:", 1)[0]
+        self.assertIn("#   example_computer: no reading at all\n", header)
+        self.assertNotIn("ping them", header)
+        # A ping is a reading: with one, nothing is left to name.
+        inventory = copy.deepcopy(INVENTORY)
+        next(device for device in inventory["devices"]
+             if device["id"] == "example_computer")["controls"]["observe"] = ["network_ping"]
+        self.assertEqual(oh_metrics.unobserved(copy.deepcopy(inventory)), [])
+        self.assertNotIn("No reading says", rendered(inventory)[oh_metrics.PROMETHEUS_YML])
+        self.assertIn("nothing reads whether it answers bk808_cec", oh_metrics.unobserved_text("den_device", "bk808_cec"))
+        self.assertIn("list network_ping under", oh_metrics.unobserved_text("example_computer", ""))
 
 
 class Alerting(unittest.TestCase):
@@ -1103,13 +1232,24 @@ class Dashboards(unittest.TestCase):
         self.assertFalse([title for title in titles if "Routing selections" in title])
         table = next(panel for panel in panels(board) if panel["title"] == "Devices")
         self.assertEqual(table["transformations"][0]["id"], "merge")
-        self.assertEqual(len(table["targets"]), 8)
+        self.assertEqual(len(table["targets"]), 9)
         # Trouble first. Each sort keeps the order of the one before among equals, so the last is the
         # first key: how many of a device's signals say trouble, then needed now, then the room.
         self.assertEqual([step["options"]["sort"] for step in table["transformations"][1:4]], [
             [{"field": "room", "desc": False}], [{"field": "Value #G", "desc": True}],
             [{"field": "Value #H", "desc": True}]])
         self.assertNotIn("Value #H", table["transformations"][-1]["options"]["includeByName"])
+        # Ping is a column of its own, in no colour of failure, and no part
+        # of the order: a device that sleeps answers none.
+        self.assertEqual(table["targets"][8]["expr"],
+                         'min by (device) (thermite_item_value{point="online",room=~"$room"})')
+        self.assertEqual(table["transformations"][-1]["options"]["renameByName"]["Value #I"], "Ping")
+        self.assertNotIn("online", table["targets"][7]["expr"].replace("thermite_thing_online", ""))
+        ping = next(override for override in table["fieldConfig"]["overrides"]
+                    if override["matcher"]["options"] == "Value #I")
+        shown = {option["text"]: option["color"] for prop in ping["properties"] if prop["id"] == "mappings"
+                 for mapping in prop["value"] for option in mapping["options"].values()}
+        self.assertEqual(shown, {"No response": dashboards.OFF, "Reachable": dashboards.OK})
 
     def test_a_shared_receivers_power_shows_in_the_room_each_zone_plays_in(self):
         from tests import test_zone_sync as zones

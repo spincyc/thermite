@@ -15,7 +15,10 @@ What the house file decides is found from the conf/ it generates
 control ports (from its Things' URLs and port settings, and from its
 integration modules' PORT and PROBE_PORTS) and the Items worth keeping
 (select_point()). Device names and
-addresses appear only in the output.
+addresses appear only in the output. Which of those readings say whether a
+device answers is said once, in signals(): the availability checks are built
+from it (health_paths()), and what it leaves unread is named (unobserved()),
+never passed over.
 
 Everything a unit needs that is not a file (listen addresses, retention,
 mounts, arguments) is data here (services()), for the unit renderer in
@@ -383,6 +386,109 @@ def probes(inventory: dict, conf=None) -> tuple[list[Probe], list[tuple[str, tup
     return found, unknown
 
 
+@dataclasses.dataclass(frozen=True)
+class Signal:
+    """One reading that says whether a device answers."""
+
+    #: What it reads (signals()): thing, port, reads or online.
+    kind: str
+    #: The integrations it reads the device through.
+    integrations: tuple[str, ...]
+    metric: str
+    labels: tuple[tuple[str, str], ...]
+    #: The value that says the device does not answer.
+    bad: int
+    #: A control check is built on it (health_paths()): it is of an
+    #: integration the device lists under control, no ROUTE_OPTIONAL one,
+    #: and no ping.
+    control: bool
+
+
+def signals(device: dict, conf, found: list[Probe]) -> list[Signal]:
+    """Every reading that says whether `device` answers, from the generated
+    configuration `conf` and its probes `found` (probes()).
+
+    The one derivation: health_paths() builds a device's availability checks
+    from these, and unobserved() names what these leave unread, so that a
+    device cannot be commanded and unwatched without generation saying so.
+
+    thing   the status of a Thing of an integration the device lists: one
+            whose UID ends in the device's id, or the one the integration
+            sends the device's commands through (its transport() hook: a
+            source's CEC goes through a Thing named after the matrix). Not
+            of an integration whose Things do not follow the device
+            (THING_FOLLOWS_DEVICE: a ping Thing is ONLINE while nothing
+            answers)
+    port    a control port probed over TCP
+    reads   what an integration's own rule meets reading the device (READS),
+            where the rule keeps a tally for it
+    online  the device's `<id>_online`: whether it answers a ping, or its
+            controller's word. A reading and never a check: a device that
+            sleeps answers no ping, and one that answers a ping and not its
+            control port fails the check of that port, Thing or read
+    """
+    import oh_integrations
+    from oh_integrations import _commands
+
+    ident = device["id"]
+    listed = _integrations(device)
+    needed = set((device.get("controls") or {}).get("control") or []) - {
+        module.NAME for module in oh_integrations.REGISTRY if getattr(module, "ROUTE_OPTIONAL", False)}
+    present = {name for file in conf.yaml.values() for name in file.items}
+    out: list[Signal] = []
+    for module in oh_integrations.REGISTRY:
+        if module.NAME not in listed:
+            continue
+        file = conf.yaml.get(module.FILE)
+        things = [uid for uid in (file.things if file else {}) if uid.split(":")[-1] == ident]
+        through = module.transport(device) if hasattr(module, "transport") else None
+        if through and file and through in file.things and through not in things:
+            things.append(through)
+        control = module.NAME in needed
+        if getattr(module, "THING_FOLLOWS_DEVICE", True):
+            out += [Signal("thing", (module.NAME,), "thermite_thing_online", (("thing", uid),), 0, control)
+                    for uid in things]
+        if getattr(module, "READS", False) and _commands.tally_item(ident, module.NAME) in present:
+            out.append(Signal("reads", (module.NAME,), "thermite_device_read_ok",
+                              (("device", ident), ("integration", module.NAME)), 0, control))
+        if file and f"{ident}_online" in file.items:
+            out.append(Signal("online", (module.NAME,), "thermite_item_value",
+                              (("item", f"{ident}_online"), ("point", "online")), 0, False))
+    out += [Signal("port", probe.integrations, "probe_success",
+                   (("job", DEVICE_JOB), ("device", ident), ("port", str(probe.port))), 0,
+                   bool(needed.intersection(probe.integrations)))
+            for probe in found if probe.device == ident]
+    return out
+
+
+def unobserved(inventory: dict, conf=None) -> list[tuple[str, str]]:
+    """What generation must name, since no reading would ever say that it
+    stopped answering: (device, integration) for an integration a device
+    lists under control with no signal of its own (signals()), and
+    (device, "") for a device with an address and no signal at all.
+    `thermite validate` prints each, and prometheus.yml's header lists them."""
+    conf = conf if conf is not None else _build(inventory)
+    found, _ = probes(inventory, conf)
+    out: list[tuple[str, str]] = []
+    for device in inventory.get("devices") or []:
+        read = signals(device, conf, found)
+        through = {name for signal in read for name in signal.integrations}
+        missing = [name for name in (device.get("controls") or {}).get("control") or [] if name not in through]
+        out += [(device["id"], name) for name in dict.fromkeys(missing)]
+        if not read and not missing and device.get("ip"):
+            out.append((device["id"], ""))
+    return out
+
+
+def unobserved_text(device: str, integration: str) -> str:
+    """One finding of unobserved(), as a person reads it."""
+    if integration:
+        return (f"{device}: nothing reads whether it answers {integration}: no Thing, probed port or read of the "
+                "rule's own says so, and no check or alert can")
+    return (f"{device}: it has an address and nothing reads whether it answers; list network_ping under its "
+            "controls.observe to have it pinged")
+
+
 def _options(item: dict) -> list[str] | None:
     """The values a String Item's state or command description offers."""
     import oh_conf
@@ -407,12 +513,14 @@ def select_point(name: str, item: dict) -> tuple[str, str] | None:
     Kept: the device's problem text (`<id>_problem`, as 0/1), and every
     Item tagged with the property Power, SoundVolume or Channel (power,
     power state, volume, mute, input), plus the Number Items a matrix or
-    switch is commanded with (routing) and a Number measuring a device's
-    temperature or a battery's charge (MEASURED). A speaker's playing state
+    switch is commanded with (routing), a Number measuring a device's
+    temperature or a battery's charge (MEASURED), and `<id>_online` (point
+    online): whether the device answers a ping, or its controller reports
+    it connected. A ping Thing's status does not say that: it is ONLINE
+    while nothing answers (THING_FOLLOWS_DEVICE). A speaker's playing state
     is kept too, from its audio page (exporter_map() `playing` points).
-    Not kept: `<id>_online` (its Thing's
-    status says the same), EDID selections (fixed settings), titles,
-    artists and apps (what a device plays is kept once, joined, as
+    Not kept: EDID selections (fixed settings), titles, artists and apps
+    (what a device plays is kept once, joined, as
     thermite_playing_timestamp_seconds: exporter_map() `playing`), and keys
     and pairing Items (no state worth a history).
     """
@@ -420,6 +528,8 @@ def select_point(name: str, item: dict) -> tuple[str, str] | None:
     tags = set(item.get("tags") or [])
     if kind == "String" and name.endswith("_problem"):
         return "problem", "problem"
+    if kind == "Switch" and name.endswith("_online"):
+        return "online", "switch"
     if "Power" in tags:
         return {"Switch": ("power", "switch"), "String": ("power_state", "enum")}.get(kind)
     if "SoundVolume" in tags:
@@ -435,7 +545,8 @@ def select_point(name: str, item: dict) -> tuple[str, str] | None:
 
 
 def exporter_map(inventory: dict, conf=None) -> dict:
-    """The exporter's map: every device with its Things, and every Item kept
+    """The exporter's map: every device with its Things (those whose status
+    follows the device: not a ping Thing), and every Item kept
     (select_point()) with how its state becomes a number, plus each room's
     Source selector and each speaker's playing state: the state Item of its
     audio page (oh_integrations audio(), as the remotes' Listen reads it),
@@ -449,9 +560,12 @@ def exporter_map(inventory: dict, conf=None) -> dict:
 
     conf = conf if conf is not None else _build(inventory)
     house = oh_conf.House(inventory)
+    # A ping Thing is ONLINE while nothing answers its address: as a
+    # device's Thing it made a dead device read online.
+    mute = {module.FILE for module in oh_integrations.REGISTRY if not getattr(module, "THING_FOLLOWS_DEVICE", True)}
     things: dict[str, list[str]] = {}
-    for file in conf.yaml.values():
-        for uid in file.things:
+    for path, file in conf.yaml.items():
+        for uid in ([] if path in mute else file.things):
             things.setdefault(uid.split(":")[-1], []).append(uid)
     devices: dict[str, dict] = {}
     items: dict[str, dict] = {}
@@ -477,8 +591,9 @@ def exporter_map(inventory: dict, conf=None) -> dict:
             items[name] = kept[name] = entry
         # The power Item each reading needs on, so that a reading with no
         # value while it reads OFF is the device being off, not unknown.
+        # Whether it answers a ping needs nothing on.
         for name, power in oh_integrations.powered(device, dict(conf.points(ident))).items():
-            if name in kept and power in kept:
+            if name in kept and power in kept and kept[name]["point"] != "online":
                 kept[name]["power"] = power
         page = remote_model.audio_page(device) or {}
         state, title = page.get("state") or {}, (page.get("track") or {}).get("title")
@@ -563,11 +678,12 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
     receiver and matrices, and a room's `audio` device (the one its Volume
     and Mute drive) joins every source. Only control integrations supply
     availability checks; an optional Cast observer cannot invalidate working
-    Sony control. A check reads what holds now: a Thing's status, a probed
-    port, what a rule's own reads of the device meet (an integration with
-    READS). The device's problem Item is none: it keeps the problem of a
-    command until the device takes one (oh_integrations._commands), so it
-    would fail a check for as long as nobody commands the device again.
+    Sony control. A check reads what holds now, and which readings those
+    are is signals()'s to say: a Thing's status, a probed port, what a
+    rule's own reads of the device meet. The device's problem Item is none:
+    it keeps the problem of a command until the device takes one
+    (oh_integrations._commands), so it would fail a check for as long as
+    nobody commands the device again.
     Infrastructure serving routing is monitored even when every zone is Off.
     A speaker (a `playing` point, exporter_map()) is in use while it plays,
     or did within alerts.IN_USE: its demand is {"item": its playing Item,
@@ -577,14 +693,11 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
     exporter ignores these map fields: alerts.rules() records them as
     thermite:check.
     """
-    import oh_integrations
     from oh_conf import House
     from oh_features import remote_diagnostics, routing
-    from oh_integrations import _commands
 
     house = House(inventory)
     devices = {d["id"]: d for d in house.devices}
-    present = {name for file in conf.yaml.values() for name in file.items}
     physical = remote_diagnostics.manifest(house, conf)["rooms"]
     found, _ = probes(inventory, conf)
     checks: dict[tuple, dict] = {}
@@ -601,28 +714,15 @@ def health_paths(inventory: dict, conf, items: dict) -> tuple[dict, list[dict]]:
 
     def device_checks(ident: str, demand: dict | None, node: dict | None = None) -> None:
         device = devices[ident]
-        # An optional transport (ROUTE_OPTIONAL) remains observable without
-        # invalidating a source's working power/input path when it is down.
-        controls = set((device.get("controls") or {}).get("control") or []) - {
-            module.NAME for module in oh_integrations.REGISTRY if getattr(module, "ROUTE_OPTIONAL", False)}
-        for module in oh_integrations.REGISTRY:
-            if module.NAME not in controls:
-                continue
-            file = conf.yaml.get(module.FILE)
-            for uid in (file.things if file else {}):
-                if uid.split(":")[-1] == ident:
-                    add("thing", ident, "thermite_thing_online", {"thing": uid}, 0, demand)
-            # What the module's own rule meets reading the device, while it
-            # reads it. The problem Item is no check: a command's problem
-            # stays there until the device takes a command, long after its
-            # cause went.
-            if getattr(module, "READS", False) and _commands.tally_item(ident, module.NAME) in present:
-                add("reads", ident, "thermite_device_read_ok", {"device": ident, "integration": module.NAME}, 0,
-                    demand)
-        for probe in found:
-            if probe.device == ident and set(controls).intersection(probe.integrations):
-                add("port", ident, "probe_success", {"job": DEVICE_JOB, "device": ident, "port": str(probe.port)}, 0,
-                    demand)
+        # The readings of the integrations that command it. An optional
+        # transport (ROUTE_OPTIONAL) remains observable without invalidating
+        # a source's working power/input path when it is down, and a ping
+        # is a reading only (signals()). The problem Item is none of them: a
+        # command's problem stays there until the device takes a command,
+        # long after its cause went.
+        for signal in signals(device, conf, found):
+            if signal.control:
+                add(signal.kind, ident, signal.metric, dict(signal.labels), signal.bad, demand)
         if demand is None:
             return
         power = []
@@ -693,7 +793,8 @@ def _blackbox_job(name: str, targets: list[dict], port: int, interval: str | Non
 def prometheus_yml(inventory: dict, host: dict, conf=None) -> str:
     port = ports(host)
     yoke_job = yoke_scrape_job(host)
-    found, unknown = probes(inventory, conf)
+    found, _ = probes(inventory, conf)
+    unread = unobserved(inventory, conf)
     device_targets = [{"targets": [probe.target],
                        "labels": {"__param_module": TCP, "device": probe.device, "room": probe.room,
                                   "kind": probe.kind, "integration": ",".join(probe.integrations),
@@ -732,10 +833,11 @@ def prometheus_yml(inventory: dict, host: dict, conf=None) -> str:
     header = [RENDERED, "",
               "Scrapes and exact active-path alert rules.",
               "The openHAB token is read from a file in the secrets mount, never written here."]
-    if unknown:
-        header += ["", "Devices with an address but no control port to probe (openHAB's network",
-                   "Things ping them):"]
-        header += [f"  {ident}: {', '.join(names) or 'no integration'}" for ident, names in unknown]
+    if unread:
+        header += ["", "No reading says whether these answer, so no check or alert can (thermite",
+                   "validate names them too): a device and the integration that commands it, or",
+                   "a device that has an address and nothing reading it."]
+        header += [f"  {ident}: {name or 'no reading at all'}" for ident, name in unread]
     return _yaml(header, document)
 
 
