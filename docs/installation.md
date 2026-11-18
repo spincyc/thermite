@@ -981,6 +981,11 @@ back. Once the revert commits, `~/.local/bin/thermite` selects the previous
 application again, even when its rollback or the next run finishes the
 commit. A revert writes no deploy-history entry.
 
+A transaction's record does not depend on where the site directory was. If
+the site was moved since, with its `var/` and its Git repository, a revert
+or the rollback of an unfinished transaction puts those files back in the
+site its `--config` names and writes nothing at the old path.
+
 A revert is refused with exit status 2 after an uninstall, a clean install
 or another revert, when the site is not at the commit that transaction
 installed or its Git repository has uncommitted changes, when the previous

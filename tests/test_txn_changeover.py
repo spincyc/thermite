@@ -338,6 +338,109 @@ class RolledBack(Fixture):
         self.assertEqual(self.unpinned, [txn_fakes.ID])
 
 
+class Moved(Fixture):
+    """A record does not depend on where the site was when it was written:
+    it is read for the site the command was given."""
+
+    def setUp(self):
+        super().setUp()
+        self.token = self.site / self.context.token_file
+        self.token.parent.mkdir(parents=True)
+        self.token.write_text("old token\n")
+        self.profile = self.site / "var/gateway/current.json"
+
+    def rewrite(self):
+        self.token.write_text("new token\n")
+        self.profile.parent.mkdir(parents=True, exist_ok=True)
+        self.profile.write_text("{}")
+
+    def interrupted(self, system):
+        """A switch that rewrites the operator's files, then is interrupted."""
+        self.rewrite()
+        raise KeyboardInterrupt
+
+    def test_an_open_transaction_rolls_back_into_the_site_where_it_is_now(self):
+        switch = Fake("switch", self.log)
+        switch.perform = self.interrupted
+        self.host = Host(self)
+        self.assertEqual(self.transact(self.work([], [switch], [])), changeover.INTERRUPTED)
+        written = self.record()
+        # As every release reads it, an earlier one too: the launcher's
+        # release resolves a transaction the new one left open.
+        self.assertEqual((written["site"], written["asides"]),
+                         (str(self.site), {str(path): "0" if path == self.token else None
+                                           for path in changeover.operator_files(self.context)}))
+        self.scope.close()
+        old, self.site = self.site, self.site.parent / "elsewhere/house"
+        self.site.parent.mkdir()
+        old.rename(self.site)
+        txn_fakes.in_scope(self, self.site)
+
+        self.host = Host(self)
+        self.assertEqual(changeover.resolve(self.site, self.host.system), changeover.ROLLED_BACK)
+        self.assertEqual((self.site / self.context.token_file).read_text(), "old token\n")
+        self.assertFalse((self.site / "var/gateway/current.json").exists())
+        self.assertFalse(old.exists(), "nothing is written where the site used to be")
+        self.assertEqual({str(call.args[1]) for call in self.host.system.run.call_args_list}, {str(self.site)},
+                         "every command runs in the site as it is now")
+        history = next(call.args[0] for call in self.host.system.run.call_args_list
+                       if "--_record-rollback" in call.args[0])
+        self.assertIn(str(self.site), history)
+        self.assertNotIn(str(old), history)
+        self.assertEqual((self.record()["site"], self.record()["phase"]), (str(self.site), "rolled-back"))
+        self.assertIsNone(self.is_open())
+
+    def recorded(self, asides):
+        directory = self.site / "var/transaction" / txn_fakes.OLD
+        (directory / "operator").mkdir(parents=True)
+        (directory / "operator/0").write_text("as it was\n")
+        (directory / "record.json").write_text(json.dumps({
+            "id": txn_fakes.OLD, "site": str(self.site), "verb": "upgrade", "asides": asides}))
+        return changeover.Transaction.load(self.site / "var", txn_fakes.OLD)
+
+    def test_a_file_outside_the_site_is_refused_by_name_and_none_is_written(self):
+        outside = self.site.parent / "outside/secret"
+        for foreign in (str(outside), "var/relative", str(self.site / "var/../../outside/secret")):
+            with self.subTest(foreign=foreign):
+                transaction = self.recorded({str(self.token): "0", foreign: "0"})
+                with self.assertRaises(ValueError) as refused:
+                    transaction.put_back()
+                self.assertIn(f"{foreign} is not in the site {self.site}", str(refused.exception))
+                self.assertEqual(self.token.read_text(), "old token\n", "not the one in the site either")
+                self.assertFalse(outside.parent.exists())
+                self.assertFalse(Path("var/relative").exists())
+                shutil.rmtree(transaction.directory)
+        with self.assertRaisesRegex(ValueError, "is not in the site"):
+            self.recorded({}).set_aside([self.token, outside])
+
+    def test_a_site_named_through_a_parent_directory_is_the_site_it_names(self):
+        # thermite --config ../site: the path is made absolute, not normalized.
+        (self.site.parent / "elsewhere").mkdir()
+        named = self.site.parent / "elsewhere" / ".." / "site"
+        self.assertIn("..", named.parts)
+        self.recorded({}).save(site=str(named))
+        transaction = changeover.Transaction.load(named / "var", txn_fakes.OLD)
+        transaction.set_aside([named / self.context.token_file, named / "var/gateway/current.json"])
+        self.assertEqual(transaction.record["site"], str(named), "as written: the site did not move")
+        self.rewrite()
+        changeover.Transaction.load(named / "var", txn_fakes.OLD).put_back()
+        self.assertEqual(self.token.read_text(), "old token\n")
+        self.assertFalse(self.profile.exists())
+
+    def test_a_file_that_was_outside_the_site_before_it_moved_is_still_refused_by_its_name(self):
+        outside = self.site.parent / "outside/secret"
+        self.recorded({str(self.token): "0", str(outside): "0"})
+        self.scope.close()
+        old, self.site = self.site, self.site.parent / "house"
+        old.rename(self.site)
+        transaction = changeover.Transaction.load(self.site / "var", txn_fakes.OLD)
+        self.assertEqual(transaction.record["asides"], {str(self.site / self.context.token_file): "0",
+                                                        str(outside): "0"})
+        with self.assertRaisesRegex(ValueError, f"{outside} is not in the site {self.site}"):
+            transaction.put_back()
+        self.assertFalse(old.exists() or outside.parent.exists())
+
+
 class Gate(Fixture):
     """The new version's health decides between the commit and the rollback:
     changeover.verification's own steps, none replaced, and the exit status

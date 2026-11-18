@@ -207,7 +207,7 @@ class Transacted(unittest.TestCase):
             "192.0.2.10", application={"version": "1.0", "digest": NEW_APP})
         kept = self.site / "var/transaction" / txn_fakes.OLD
         kept.mkdir(parents=True)
-        txn_fakes.in_scope(self, self.site, "revert")
+        self.scope = txn_fakes.in_scope(self, self.site, "revert")
         (kept / "record.json").write_text(json.dumps({
             "version": 1, "id": txn_fakes.OLD, "kind": "upgrade", "verb": "upgrade", "phase": "committed",
             "site": str(self.site), "root": "/srv/thermite-fixture", "installed": True, "bridged": False,
@@ -337,6 +337,43 @@ class Transacted(unittest.TestCase):
         self.assertEqual(self.selected, [self.command], "the previous owner command, once")
         self.assertEqual(self.record()["phase"], "committed")
         self.assertLess(self.log.index("reinstate"), self.log.index("previous health"))
+
+    def test_after_the_site_directory_moved_the_operator_s_files_go_back_where_the_site_is_now(self):
+        token, password, credentials, profile = (path.relative_to(self.site)
+                                                 for path in changeover.operator_files(self.context))
+        (self.site / token).parent.mkdir(parents=True)
+        for name in (token, password, credentials):
+            (self.site / name).write_text(f"{name.name} before the upgrade\n")
+        # The upgrade: what its begin set aside (changeover.Begin.opened),
+        # then what it wrote.
+        upgrade = changeover.Transaction.load(self.site / "var", txn_fakes.OLD)
+        upgrade.set_aside(changeover.operator_files(self.context))
+        for name in (token, password, credentials, profile):
+            (self.site / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.site / name).write_text(f"{name.name} the upgrade wrote\n")
+        written = json.loads((self.site / "var/transaction" / txn_fakes.OLD / "record.json").read_text())
+        self.assertEqual((written["site"], sorted(written["asides"])),
+                         (str(self.site), sorted(str(self.site / name) for name in (token, password, credentials,
+                                                                                   profile))),
+                         "the record as every release reads it, earlier ones too")
+
+        # The owner moves the site, and runs thermite revert there.
+        self.scope.close()
+        old, self.site = self.site, self.temporary / "elsewhere/house"
+        self.site.parent.mkdir()
+        old.rename(self.site)
+        self.context = steps.Context(**{**self.context.__dict__, "area": self.site})
+        self.cached = self.site / oh_paths.RELEASES / NEW_APP
+        self.enterContext(patch.object(revert_cli, "AREA", self.site))
+        self.enterContext(patch.object(steps, "committed_context", Mock(return_value=self.context)))
+        txn_fakes.in_scope(self, self.site, "revert")
+
+        self.assertEqual(self.revert(), changeover.COMMITTED, self.said())
+        for name in (token, password, credentials):
+            self.assertEqual((self.site / name).read_text(), f"{name.name} before the upgrade\n")
+        self.assertFalse((self.site / profile).exists(), "there was none before the upgrade")
+        self.assertFalse(old.exists(), "nothing is written where the site used to be")
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.before)
 
     def test_the_site_pinning_the_new_release_would_have_re_executed_it(self):
         # What the health command found before the site went back inside

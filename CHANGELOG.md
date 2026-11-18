@@ -7,6 +7,11 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite revert` and the rollback of an unfinished transaction put
+  the runtime token, Grafana password, runtime credentials and gateway
+  profile back in the site the command names. After the site directory
+  had been moved they recreated the old directory, wrote copies of
+  those files there and left the site's own as the upgrade wrote them.
 - The recovery printed for a missing or damaged
   `/etc/thermite/installed.json` now works. Its last step, `thermite
   install`, had refused for ever while `/srv/thermite` held state, and

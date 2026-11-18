@@ -155,6 +155,27 @@ def _json(path: Path, value) -> None:
     _write(path, (json.dumps(value, indent=2, sort_keys=True) + "\n").encode())
 
 
+def _here(record: dict, site: Path) -> dict:
+    """`record` as it reads where the site is now.
+
+    A record names its site, and the operator's files it set aside, by the
+    absolute paths they had when it was written. Every release reads them
+    so, and an earlier one reads this one's: the launcher's release resolves
+    a transaction the new one left open. Read after the site directory was
+    moved, they are the same files below the site the command was given, so
+    nothing is put back where the site used to be. A path that was not below
+    the site stays as recorded, for put_back to refuse."""
+    written = record.get("site")
+    if not isinstance(written, str) or Path(written) == site:
+        return record
+    asides = record.get("asides")
+    if isinstance(asides, dict):
+        record["asides"] = {(str(site / Path(path).relative_to(written)) if Path(path).is_relative_to(written)
+                             else path): aside for path, aside in asides.items()}
+    record["site"] = str(site)
+    return record
+
+
 def _allocated(path: Path) -> int:
     """Bytes allocated below `path`: what a copy of it may need."""
     total = 0
@@ -260,7 +281,9 @@ class Transaction:
         record = json.loads((transactions(var) / id / "record.json").read_text())
         if not isinstance(record, dict) or record.get("id") != id:
             raise ValueError(f"{transactions(var) / id / 'record.json'} is not transaction {id}'s record")
-        return cls(Path(var), id, record)
+        # The site as the command names it (oh_paths.select_args): made
+        # absolute, never normalized, as the record was written.
+        return cls(Path(var), id, _here(record, Path(var).parent.absolute()))
 
     # The open pointer ----------------------------------------------------
 
@@ -280,7 +303,7 @@ class Transaction:
         profile. A rollback puts them back as they were, or removes them."""
         asides = {}
         for number, path in enumerate(paths):
-            path = Path(path)
+            path = self._own(path)
             if path.is_file() and not path.is_symlink():
                 aside = self.file("operator") / str(number)
                 _write(aside, path.read_bytes())
@@ -295,9 +318,20 @@ class Transaction:
         among it) goes now rather than at the next commit."""
         shutil.rmtree(self.directory / "gateway", ignore_errors=True)
 
+    def _own(self, path) -> Path:
+        """A file of the operator's that a record may name: one in the site.
+        Nothing else is ever copied aside, written or removed for a record."""
+        path = Path(path)
+        if self.site not in path.parents or ".." in path.relative_to(self.site).parts:
+            raise ValueError(f"{path} is not in the site {self.site}, and transaction {self.id} sets aside and "
+                             "puts back only the operator's files there: none of them was touched. If "
+                             f"{self.file('record.json')} names it, remove that entry from its asides, then run "
+                             f"{self.rerun} again")
+        return path
+
     def put_back(self) -> None:
-        for path, aside in self.record.get("asides", {}).items():
-            path = Path(path)
+        asides = [(self._own(path), aside) for path, aside in self.record.get("asides", {}).items()]
+        for path, aside in asides:
             if aside is None:
                 path.unlink(missing_ok=True)
             else:
