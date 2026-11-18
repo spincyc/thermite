@@ -1131,7 +1131,9 @@ class Alerting(unittest.TestCase):
 
     def test_node_exporter_reads_the_textfiles(self):
         node = next(service for service in oh_metrics.services(HOST) if service.unit == oh_units.NODE_EXPORTER)
-        self.assertIn(f"--collector.textfile.directory=/host{oh_deploy.state(HOST).textfile}", node.args)
+        # Mounted for it by name: below /host its own account does not enter the runtime state.
+        self.assertIn("--collector.textfile.directory=/textfile", node.args)
+        self.assertIn(oh_metrics.Volume(str(oh_deploy.state(HOST).textfile), "/textfile", "ro"), node.volumes)
 
 
 class Dashboards(unittest.TestCase):
@@ -1537,10 +1539,10 @@ class Deploy(unittest.TestCase):
         self.assertTrue(oh_deploy.deploy_metrics(layout, "rollback", clock=lambda: 1234.5))
         written = layout.textfile / oh_deploy.DEPLOY_TEXTFILE
         self.assertIn('thermite_deploy_timestamp_seconds{how="rollback"} 1234.500\n', written.read_text())
-        self.assertEqual(stat.S_IMODE(written.stat().st_mode), oh_deploy.FILE_MODE)
+        self.assertEqual(stat.S_IMODE(written.stat().st_mode), 0o644)
         self.assertEqual([p.name for p in layout.textfile.iterdir()], [oh_deploy.DEPLOY_TEXTFILE])
-        self.assertIn((oh_deploy.DIR_MODE, [layout.metrics, layout.exporter_app, layout.textfile]),
-                      layout.metrics_directories())
+        self.assertIn((oh_deploy.DIR_MODE, [layout.metrics, layout.exporter_app]), layout.metrics_directories())
+        self.assertIn((0o2775, [layout.textfile]), layout.metrics_directories())
 
 
 class Textfiles(unittest.TestCase):
@@ -1558,7 +1560,8 @@ class Textfiles(unittest.TestCase):
         textfile = self.metrics.Textfile(self.metrics.CALLBACKS, "example", self.directory, every=60)
         self.assertTrue(textfile.write())
         written = self.directory / "example.prom"
-        self.assertEqual(stat.S_IMODE(written.stat().st_mode), 0o640)
+        # Whatever the unit's UMask=0077: node_exporter reads it as an account of its own.
+        self.assertEqual(stat.S_IMODE(written.stat().st_mode), oh_deploy.TEXTFILE_FILE_MODE)
         self.assertIn("# TYPE thermite_callbacks_total counter", written.read_text())
         self.assertEqual([p.name for p in self.directory.iterdir()], ["example.prom"])
 

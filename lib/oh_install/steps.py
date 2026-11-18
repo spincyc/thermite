@@ -40,6 +40,8 @@ PODMAN = (4, 5)
 #: The Apple TV helper's pins have no wheels for anything else.
 MACHINE = "x86_64"
 NAME = oh_service.ACCOUNT
+#: node_exporter's own account.
+NODE = metrics.NODE_EXPORTER_ACCOUNT
 #: The unit each quadlet in deploy/ runs.
 RESTARTS = {
     deploy.QUADLET: "thermite-openhab.service",
@@ -607,13 +609,23 @@ class Account(Step):
             if found is not None and found.name != NAME:
                 return Check(False, "", f"{key} {self.context.host[key]} belongs to {found.name}; "
                              "refusing to rename or adopt another service account")
-        missing = self.missing(system)
+        own = metrics.node_exporter_id(self.context.host)
+        for key, found in (("uid", system.user(own)), ("gid", system.group(own))):
+            if found is not None and found.name != NODE:
+                return Check(False, "", f"{key} {own}, for node_exporter's own account {NODE}, belongs to "
+                             f"{found.name}; set metrics: node_exporter_uid in instance/host.yaml to a free number")
+        user, group = system.user(NODE), system.group(NODE)
+        if {*((user.uid, user.gid) if user else ()), *((group.gid,) if group else ())} - {own}:
+            return Check(False, "", f"{NODE} exists with another uid or gid than {own}; set metrics: "
+                         "node_exporter_uid in instance/host.yaml to its number, or remove that account")
+        missing = [*self.missing(system), *self.node_missing(system)]
         host, login = self.context.host, system.login()
         words = {"group": f"group {NAME} ({host['gid']})", "user": f"user {NAME} ({host['uid']})",
-                 "member": f"{login} in group {NAME}", "settings": "service home and nologin shell"}
+                 "member": f"{login} in group {NAME}", "settings": "service home and nologin shell",
+                 "node group": f"group {NODE} ({own})", "node user": f"user {NODE} ({own})"}
         if missing:
             return Check(False, "to configure: " + ", ".join(words[m] for m in missing))
-        return Check(True, f"{NAME} {host['uid']}:{host['gid']}, {login} a member")
+        return Check(True, f"{NAME} {host['uid']}:{host['gid']}, {login} a member; {NODE} {own}:{own}")
 
     def actions(self, system: System) -> list[Action]:
         host, missing = self.context.host, self.missing(system)
@@ -629,7 +641,22 @@ class Account(Step):
             actions.append(Command(("usermod", "-d", str(self.context.layout.root), "-s", shell, NAME), root=True))
         if "member" in missing:
             actions.append(Command(("usermod", "-aG", NAME, system.login()), root=True))
+        own, absent = str(metrics.node_exporter_id(host)), self.node_missing(system)
+        if "node group" in absent:
+            actions.append(Command(("groupadd", "-g", own, NODE), root=True))
+        if "node user" in absent:
+            shell = system.which("nologin") or "/usr/bin/nologin"
+            actions.append(Command(("useradd", "-r", "-u", own, "-g", own, "-d", "/nonexistent", "-s", shell, NODE),
+                                   root=True))
         return actions
+
+    def node_missing(self, system: System) -> list[str]:
+        """What of node_exporter's own account is to make. It has a real
+        account, not a bare number: the number stays reserved, and a system
+        bus that looks its callers up (dbus-daemon) finds it. It owns no
+        file, has no home, and nobody is made a member of its group."""
+        return [*(["node group"] if system.group(NODE) is None else []),
+                *(["node user"] if system.user(NODE) is None else [])]
 
 
 class InstallationRoot(Step):
@@ -769,6 +796,32 @@ class MetricsDirectories(StateDirectories):
 
     def found(self) -> str:
         return f"{', '.join(str(p.relative_to(self.top)) for _, paths in self.directories() for p in paths)}, owned by {NAME}"
+
+    def unreadable(self, system: System) -> list[Path]:
+        """Textfiles a release before node_exporter's own account left for the
+        state's user and group alone. A running service writes its own again
+        at once; one that no longer runs here, and the deploy's until the
+        next deploy, would stay unreadable and fail every scrape."""
+        directory = self.context.layout.textfile
+        found = []
+        for name in system.directory_entries(directory) or []:
+            info = system.stat(directory / name)
+            if name.endswith(".prom") and info is not None and not info.is_dir and not info.mode & 0o004:
+                found.append(directory / name)
+        return found
+
+    def check(self, system: System) -> Check:
+        check, stale = super().check(system), self.unreadable(system)
+        if check.done and stale:
+            return Check(False, "to remove, unreadable to node_exporter: "
+                         + ", ".join(str(path.relative_to(self.top)) for path in stale))
+        return check
+
+    def actions(self, system: System) -> list[Action]:
+        # Removed, not made readable: root changes no mode through a name the
+        # service account could have replaced. Their writers write them again.
+        stale = self.unreadable(system)
+        return [*self.fix(system), *([Command(("rm", "-f", "--", *map(str, stale)), root=True)] if stale else [])]
 
     def desired(self, system: System) -> list[manifest.Item]:
         # Prometheus' samples are copied aside only when its image changes:

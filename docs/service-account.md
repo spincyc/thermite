@@ -4,6 +4,8 @@ Thermite's application services run as `thermite:thermite`, with numeric
 UID and GID 9001. This includes the native runtime, Apple TV helper,
 monitoring services, HTTPS gateway, policy worker and optional callback
 relay. The account has a `nologin` shell and is reserved for services.
+One monitoring service has an account of its own, `thermite-node`: see
+[the node_exporter account](#the-node-exporter-account).
 
 Continue to use your own account for the CLI, terminal remote, builds and
 private Git repository. The installer adds the installing owner to the
@@ -34,6 +36,7 @@ preserves the runtime's permissions:
 | Backup archives | `0750` | `0600` |
 | Native userdata, credentials, pairings and access-service identity state | `0700` | `0600` |
 | openHAB's logs, `runtime/logs` | `2750` | `0640`; anything else `0600` |
+| Metrics for node_exporter, `runtime/textfile` | `2775` | `0644` |
 
 The leading `2` on shared directories makes new files inherit group
 `thermite`. Service credentials are private to the service account; an
@@ -105,9 +108,40 @@ declare. The access services are host services that run as the state's
 user and need nothing of the runtime state but the directory their metrics
 go to: their units put an empty read-only directory in its place
 (`TemporaryFileSystem=`) and bind that one directory inside. The records
-also show what is still wide: every unit is on the host's network, and
-node_exporter has all of `/` read-only as the state's user, so it can read
-every secret store of the runtime state.
+also show what is still wide: every unit is on the host's network.
+
+### The node_exporter account
+
+node_exporter measures the host, so it has all of `/` mounted read-only and
+shares the host's process namespace. As the service account it could read
+every secret store of the runtime state and signal every Thermite process.
+It runs as `thermite-node:thermite-node` instead: a system account with a
+`nologin` shell and no home, which owns no file and whose group has no
+members. `runtime/` is mode 0750 for `thermite:thermite`, so below `/host`
+node_exporter reads nothing of the runtime state, and of other accounts'
+processes it sees what any unprivileged user of the host sees. The one
+directory it needs, `runtime/textfile`, where the access services and each
+deploy write their metrics, is mounted for it by name at `/textfile`. That
+directory is `2775` and its files `0644`; nobody else gains by it, since
+only a member of `thermite` gets past `runtime/`. Its record says so (user
+of its own, no secret store), and `tests/test_unit_invariants.py` fails
+when the record or the unit goes back to the service account.
+
+Its UID and GID are one below the service account's: 9000. `useradd` gives
+the next ordinary user the number above the highest in use, which the
+service account's usually is, and hands out nothing below it. The installer
+creates the group and the user before it changes anything else, so the
+number stays reserved, and stops when the number or the name belongs to
+another account. Choose another free number in `instance/host.yaml`:
+
+```yaml
+metrics:
+  node_exporter_uid: 61000
+```
+
+Like the service account, `thermite-node` stays after an uninstall, a
+rollback or a revert to a release that ran node_exporter as the service
+account. It owns nothing, so `userdel thermite-node` removes all of it.
 
 Each unit states `MemoryHigh=` and `MemoryMax=` for its cgroup, page cache
 included. From the first the kernel reclaims the unit's cache and slows its
@@ -135,8 +169,8 @@ its record is where to raise it.
 
 The host's systemd manager and Podman backend remain root-managed.
 Application container entrypoints and processes start as UID/GID 9001,
-including the native runtime; they do not start as root to repair mounted
-files. Native access units use `User=thermite` and `Group=thermite`.
+including the native runtime, and node_exporter as 9000; they do not start
+as root to repair mounted files. Native access units use `User=thermite` and `Group=thermite`.
 Privileged host service management remains the administrator's responsibility.
 
 ## Upgrade an existing installation
@@ -200,7 +234,8 @@ thermite status
 thermite health --production
 ```
 
-The account and group entries should show 9001, your new login should include
+The account and group entries should show 9001 (`getent passwd thermite-node`
+shows node_exporter's 9000), your new login should include
 group `thermite`, and status should show the expected services. The unified
 installer adopts recognized gateway units, preserving their existing private
 state, TLS and callback settings. Unknown ownership or unsafe overrides stop

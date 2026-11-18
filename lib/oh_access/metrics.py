@@ -408,10 +408,11 @@ class Textfile:
             if self.refresh:
                 self.refresh()
             data = prometheus_client.generate_latest(self.registry)
-            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o640)
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
             try:
-                # node_exporter reads it as the service account or its group.
-                os.fchmod(descriptor, 0o640)
+                # node_exporter reads it as an account of its own, through the
+                # one mount of this directory (oh_deploy.TEXTFILE_FILE_MODE).
+                os.fchmod(descriptor, 0o644)
                 os.write(descriptor, data)
             finally:
                 os.close(descriptor)

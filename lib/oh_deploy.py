@@ -129,6 +129,11 @@ SECRETS_MODE = oh_service.PRIVATE_DIR
 #: the services as thermite; credentials remain private to the service.
 MONITORING_MODE = oh_service.RUNTIME_DIR
 SECRET_FILE_MODE = oh_service.PRIVATE_FILE
+#: node_exporter's textfile directory and its files: written by the state's
+#: user and group, read by node_exporter's own account. Others reach them
+#: only through a mount: the runtime state above them is 0750.
+TEXTFILE_DIR_MODE = 0o2775
+TEXTFILE_FILE_MODE = 0o644
 #: Where the openHAB container sees the secrets directory, as $OPENHAB_SECRETS.
 SECRETS_MOUNT = "/secrets"
 #: openHAB's log directory: the group-readable State.logs, its $OPENHAB_LOGDIR.
@@ -159,7 +164,7 @@ ACCESS = "access"
 ROOT_MODE = 0o755
 HOST_REQUIRED = ("timezone", "http_port", "https_port", "uid", "gid")
 HOST_KEYS = frozenset((*HOST_REQUIRED, "root", "gateway", "metrics", "guest_http", "music", "shares"))
-METRICS_KEYS = frozenset(("units", "retention", "retention_size", "yoke_targets",
+METRICS_KEYS = frozenset(("units", "retention", "retention_size", "yoke_targets", "node_exporter_uid",
                           *(name + "_port" for name in oh_ports.METRICS)))
 #: Host values are pasted into unit files, container arguments and shell
 #: words: no whitespace, quotes, systemd specifiers or volume separators.
@@ -217,6 +222,10 @@ def validate_host(host: object, where: str = "instance/host.yaml") -> dict:
             if share.where == root or share.where.startswith(root + "/") or root.startswith(share.where + "/"):
                 raise ValueError(f"shares.{name}.where and the installation root ({root}) overlap")
         oh_service.validate_identity(host["uid"], host["gid"])
+        own = metrics.node_exporter_id(host)
+        if type(own) is not int or own <= 0 or own in (host["uid"], host["gid"]):
+            raise ValueError("metrics.node_exporter_uid must be a positive number that is neither uid nor gid "
+                             "(by default one below uid): node_exporter runs as an account of its own")
         oh_ports.effective(host)
         metrics.yoke_targets(host)
     except ValueError as exc:
@@ -369,7 +378,8 @@ class State:
 
     @property
     def textfile(self) -> Path:
-        """node_exporter's textfile directory: each access service (running as
+        """node_exporter's textfile directory (TEXTFILE_DIR_MODE, its files
+        TEXTFILE_FILE_MODE): each access service (running as
         thermite) rewrites its own <unit>.prom here (oh_access.metrics), and
         a deploy, through the group, its DEPLOY_TEXTFILE."""
         return self.root / metrics.STATE_TEXTFILE
@@ -394,11 +404,13 @@ class State:
 
     def metrics_directories(self) -> list[tuple[int, list[Path]]]:
         """(mode, directories) the metrics services need, owned by thermite:
-        the deploying user writes the 2770 ones through the group; the stores
-        and the secrets are the services' own, which the group only reads."""
+        the deploying user writes the 2770 ones and the textfile directory
+        through the group; the stores and the secrets are the services' own,
+        which the group only reads."""
         return [
             (MONITORING_MODE, [self.monitoring, self.exporter]),
-            (DIR_MODE, [self.metrics, self.exporter_app, self.textfile]),
+            (DIR_MODE, [self.metrics, self.exporter_app]),
+            (TEXTFILE_DIR_MODE, [self.textfile]),
             (MONITORING_MODE, [self.prometheus_data, self.grafana_data]),
             (SECRETS_MODE, [self.monitoring_secrets]),
         ]
@@ -817,9 +829,15 @@ def bounds(host: dict) -> dict[str, oh_units.Bounds]:
 def _contained(host: dict, unit: str) -> list[str]:
     """A container's network and identity, as its record states them."""
     record = bounds(host)[unit]
-    if (record.user, record.network) != (oh_units.STATE_USER, oh_units.HOST_NETWORK):
-        raise ValueError(f"{unit}: no unit is rendered for user {record.user!r} on network {record.network!r}")
-    return [f"Network={record.network}", f"User={host['uid']}", f"Group={host['gid']}"]
+    if record.user == oh_units.OWN_USER and unit == oh_units.NODE_EXPORTER:
+        uid = gid = metrics.node_exporter_id(host)
+    elif record.user == oh_units.STATE_USER:
+        uid, gid = host["uid"], host["gid"]
+    else:
+        raise ValueError(f"{unit}: no unit is rendered for user {record.user!r}")
+    if record.network != oh_units.HOST_NETWORK:
+        raise ValueError(f"{unit}: no unit is rendered for network {record.network!r}")
+    return [f"Network={record.network}", f"User={uid}", f"Group={gid}"]
 
 
 def _ceiling(host: dict, unit: str) -> list[str]:
@@ -1841,9 +1859,9 @@ def deploy_metrics(layout: State, how: str, clock=time.time) -> bool:
     try:
         if not directory.is_dir() or directory.is_symlink():
             return False
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, FILE_MODE)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, TEXTFILE_FILE_MODE)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-            os.fchmod(output.fileno(), FILE_MODE)
+            os.fchmod(output.fileno(), TEXTFILE_FILE_MODE)
             output.write(text)
         os.replace(temporary, directory / DEPLOY_TEXTFILE)
         return True

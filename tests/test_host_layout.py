@@ -223,10 +223,86 @@ class Account(unittest.TestCase):
         elsewhere = User("thermite", 9001, 9001, "/srv/elsewhere", "/usr/bin/nologin")
         host = Host(users={"thermite": elsewhere, 9001: elsewhere})
         self.assertEqual(steps.Account(context()).missing(host), ["settings"])
-        self.assertEqual([action.argv for action in steps.Account(context()).actions(host)],
+        self.assertEqual([action.argv for action in steps.Account(context()).actions(host)][:1],
                          [("usermod", "-d", str(RUNTIME), "-s", "/usr/bin/nologin", "thermite")])
         home = User("thermite", 9001, 9001, str(RUNTIME), "/usr/bin/nologin")
         self.assertEqual(steps.Account(context()).missing(Host(users={"thermite": home, 9001: home})), [])
+
+
+class NodeExporterAccount(unittest.TestCase):
+    NODE = User("thermite-node", 9000, 9000, "/nonexistent", "/usr/bin/nologin")
+    SERVICE = User("thermite", 9001, 9001, str(RUNTIME), "/usr/bin/nologin")
+
+    def host(self, users, groups=()):
+        host = Host(users={**{key: self.SERVICE for key in ("thermite", 9001)}, **users})
+        known = {**{key: Group("thermite", 9001, ("operator",)) for key in ("thermite", 9001)},
+                 **{key: group for group in groups for key in (group.name, group.gid)}}
+        host.group = known.get
+        return host
+
+    def test_it_is_made_one_below_the_service_account_owning_nothing(self):
+        step = steps.Account(context())
+        host = self.host({})
+        self.assertEqual(step.missing(host), [], "the service account's own custody does not depend on it")
+        self.assertFalse(step.check(host).done)
+        self.assertIn("group thermite-node (9000), user thermite-node (9000)", step.check(host).detail)
+        self.assertEqual([action.argv for action in step.actions(host)],
+                         [("groupadd", "-g", "9000", "thermite-node"),
+                          ("useradd", "-r", "-u", "9000", "-g", "9000", "-d", "/nonexistent", "-s", "/usr/bin/nologin",
+                           "thermite-node")])
+        made = self.host({"thermite-node": self.NODE, 9000: self.NODE}, [Group("thermite-node", 9000)])
+        self.assertEqual(step.actions(made), [])
+        self.assertEqual(step.check(made), steps.Check(True, "thermite 9001:9001, operator a member; thermite-node 9000:9000"))
+
+    def test_host_yaml_may_choose_its_number(self):
+        step = steps.Account(context(metrics={"node_exporter_uid": 61000}))
+        self.assertEqual([action.argv[:3] for action in step.actions(self.host({}))],
+                         [("groupadd", "-g", "61000"), ("useradd", "-r", "-u")])
+        self.assertIn("61000", step.actions(self.host({}))[1].argv)
+
+    def test_a_number_or_a_name_that_is_taken_stops_before_anything_is_made(self):
+        step = steps.Account(context())
+        other = User("alice", 9000, 1000, "/home/alice", "/bin/sh")
+        for host, said in ((self.host({9000: other}),
+                            "uid 9000, for node_exporter's own account thermite-node, belongs to alice"),
+                           (self.host({}, [Group("staff", 9000)]),
+                            "gid 9000, for node_exporter's own account thermite-node, belongs to staff"),
+                           (self.host({"thermite-node": User("thermite-node", 990, 9000)}),
+                            "thermite-node exists with another uid or gid than 9000"),
+                           (self.host({"thermite-node": User("thermite-node", 9000, 100), 9000: User("thermite-node", 9000, 100)}),
+                            "thermite-node exists with another uid or gid than 9000")):
+            with self.subTest(said=said):
+                check = step.check(host)
+                self.assertFalse(check.done)
+                self.assertIn(said, check.problem)
+                self.assertIn("metrics: node_exporter_uid in instance/host.yaml", check.problem)
+
+
+class TextfileDirectory(unittest.TestCase):
+    def test_textfiles_an_older_release_left_unreadable_are_removed_never_changed(self):
+        ctx = context()
+        layout, step = ctx.layout, steps.MetricsDirectories(ctx)
+        stats = {path: Stat(9001, 9001, mode, True, 0.0) for mode, paths in layout.metrics_directories() for path in paths}
+        self.assertEqual(stats[layout.textfile].mode, 0o2775)
+        files = {"thermite-access.prom": 0o644, "thermite-deploy.prom": 0o660, "thermite-access-callbacks.prom": 0o640,
+                 ".thermite-access.prom.7.tmp": 0o600}
+        stats.update({layout.textfile / name: Stat(9001, 9001, mode, False, 0.0) for name, mode in files.items()})
+        host = Host(stats, entries={layout.textfile: sorted(files)})
+        check = step.check(host)
+        self.assertFalse(check.done)
+        self.assertEqual(check.detail, "to remove, unreadable to node_exporter: textfile/thermite-access-callbacks.prom, "
+                                       "textfile/thermite-deploy.prom")
+        self.assertEqual([action.argv for action in step.actions(host)],
+                         [("rm", "-f", "--", str(layout.textfile / "thermite-access-callbacks.prom"),
+                           str(layout.textfile / "thermite-deploy.prom"))])
+        for name in ("thermite-deploy.prom", "thermite-access-callbacks.prom"):
+            del host.stats[layout.textfile / name]
+        self.assertTrue(step.check(host).done)
+        self.assertEqual(step.actions(host), [])
+        # The directory as the release before made it is made again with its new mode.
+        host.stats[layout.textfile] = Stat(9001, 9001, 0o2770, True, 0.0)
+        self.assertEqual([action.argv for action in step.actions(host)],
+                         [("install", "-d", "-o", "9001", "-g", "9001", "-m", "02775", str(layout.textfile))])
 
 
 class GatewayRoot(unittest.TestCase):

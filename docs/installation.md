@@ -175,7 +175,9 @@ the next run installs; `thermite status --json` names such a transaction as
 ### Service ownership
 
 Application services run as the non-login user and group `thermite`, UID/GID
-9001, and deployed files belong to that account. Your login keeps ownership
+9001, and deployed files belong to that account. node_exporter alone runs as
+`thermite-node`, UID/GID 9000, which owns nothing
+([why](service-account.md#the-node-exporter-account)). Your login keeps ownership
 of the private configuration and Git repository. The host's systemd manager
 and Podman backend remain root-managed. The installer requires runc and selects
 it explicitly for container payloads. This preserves AppArmor confinement on
@@ -1149,8 +1151,8 @@ policy. The state stays where it is, `runtime/` and `access/` (accounts,
 pairings, the gateway's identity and TLS key, history, monitoring data,
 Music Assistant's settings and library), recorded in
 `/etc/thermite/installed.json` as not installed, so a later
-`thermite install` finds it again. The images, the `thermite` account and
-the packages stay too. What was set aside stays in
+`thermite install` finds it again. The images, the `thermite` and
+`thermite-node` accounts and the packages stay too. What was set aside stays in
 `/srv/thermite/.transaction/<id>/` until the next transaction commits.
 
 `thermite uninstall --purge` asks you to type the installation root, then

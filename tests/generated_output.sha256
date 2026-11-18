@@ -108,7 +108,7 @@ b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/therm
 
 b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-metrics-exporter.service.d/50-container-lifecycle.conf
 
-0a0333af8d5022532be37a4b6154e2e9363eb744fb06b5a6e8c44f845b76223c  */deploy/thermite-node-exporter.container
+b5dd9331ab4e2a2f828572acf800a2bab0370f40bef13d834bbc0f32a5272524  */deploy/thermite-node-exporter.container
 
 b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-node-exporter.service.d/50-container-lifecycle.conf
 

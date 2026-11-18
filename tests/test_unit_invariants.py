@@ -154,7 +154,7 @@ def bound_problems(text: str, record: oh_units.Bounds, host: dict) -> list[str]:
     found = directives(text)
     problems = [f"{field.name} is not stated" for field in dataclasses.fields(record)
                 if getattr(record, field.name) in (None, "")]
-    if record.user != oh_units.STATE_USER:
+    if record.user not in (oh_units.STATE_USER, oh_units.OWN_USER):
         problems.append(f"user {record.user!r} is none a unit is rendered for")
     if record.network != oh_units.HOST_NETWORK:
         problems.append(f"network {record.network!r} is none a unit is rendered for")
@@ -166,13 +166,18 @@ def bound_problems(text: str, record: oh_units.Bounds, host: dict) -> list[str]:
             problems.append(f"{key} is {found.get(('Service', key))}, not {value}")
     if ("Container", "Image") in found:
         said = {key: found.get(("Container", key)) for key in ("Network", "User", "Group")}
-        if said != {"Network": [record.network], "User": [str(host["uid"])], "Group": [str(host["gid"])]}:
+        uid, gid = host["uid"], host["gid"]
+        if record.user == oh_units.OWN_USER:
+            uid = gid = oh_metrics.node_exporter_id(host)
+            if uid in (host["uid"], host["gid"]):
+                problems.append(f"its own user {uid} is the state's")
+        if said != {"Network": [record.network], "User": [str(uid)], "Group": [str(gid)]}:
             problems.append(f"runs as {said}")
         reached = [value.split(":")[0] for value in found.get(("Container", "Volume"), [])]
         hidden = []
     else:
         said = {key: found.get(("Service", key)) for key in ("User", "Group")}
-        if said != {"User": [oh_service.ACCOUNT], "Group": [oh_service.GROUP]}:
+        if record.user != oh_units.STATE_USER or said != {"User": [oh_service.ACCOUNT], "Group": [oh_service.GROUP]}:
             problems.append(f"runs as {said}")
         # A host service sees the host's files, as far as its user reads them,
         # but for what its unit hides and what it binds back in.
@@ -184,8 +189,12 @@ def bound_problems(text: str, record: oh_units.Bounds, host: dict) -> list[str]:
     root = str(deploy.state(host).root)
     given = [f"{root}/{name}" for name in record.secrets if name not in oh_units.ACCESS_SECRETS]
     def sources(path):
-        """What of `reached` leads to `path`: not / where the unit hides it."""
-        return [source for source in reached if source != "/" or not any(within(path, cover) for cover in hidden)]
+        """What of `reached` leads to `path`: not / where the unit hides it,
+        and for a user of the unit's own nothing from above the runtime
+        state, which only the state's user and group enter (0750)."""
+        return [source for source in reached
+                if not (source == "/" and any(within(path, cover) for cover in hidden))
+                and not (record.user == oh_units.OWN_USER and within(root, source))]
 
     for store in (f"{root}/{name}" for name in oh_service.PRIVATE):
         for source in sources(store):
@@ -279,10 +288,55 @@ class Bounds(unittest.TestCase):
                                 for name in oh_service.PRIVATE])
         self.assertEqual(strayed(gateway, "[Install]", f"BindReadOnlyPaths=\"{root}/userdata\"\n[Install]"),
                          [f"mounts {root}/userdata, which its record does not declare"])
+        # A user of its own keeps nothing of the state's: not a store mounted for it by name.
+        node = oh_units.NODE_EXPORTER
+        self.assertEqual(strayed(node, "[Service]", f"Volume={root}/secrets:/s:ro\n[Service]"),
+                         [f"mounts {root}/secrets, which its record does not declare"])
         # A record that bounds nothing, and a service without one.
         loose = dataclasses.replace(records[grafana], memory_high="2G", memory_max="1G")
         self.assertIn("MemoryHigh 2G is not below MemoryMax 1G", strayed(grafana, "[Service]", "[Service]", loose))
         self.assertEqual(bound_problems(units[grafana], None, host), ["no record"])
+
+    def test_node_exporter_is_never_the_states_user(self):
+        """It has all of / and the host's processes: as the state's user it
+        would read every secret store and could signal every service."""
+        host, units = fixture_houses()["a host with every service"]
+        node, state = oh_units.NODE_EXPORTER, deploy.state(host)
+        record, root = deploy.bounds(host)[node], state.root
+        self.assertEqual((record.user, record.secrets), (oh_units.OWN_USER, ()))
+        found = directives(units[node])
+        own = oh_metrics.node_exporter_id(host)
+        self.assertEqual((own, host["uid"], host["gid"]), (9000, 9001, 9001))
+        self.assertEqual((found[("Container", "User")], found[("Container", "Group")]), ([str(own)], [str(own)]))
+        self.assertIn("/:/host:ro,rslave", found[("Container", "Volume")])
+        self.assertIn("--pid=host", found[("Container", "PodmanArgs")])
+        # What keeps / from leading into the state: its mode, and no group but its own.
+        self.assertEqual([mode for mode, paths in state.directories() if root in paths], [0o750])
+        self.assertNotIn(("Container", "GroupAdd"), found)
+        # The one directory of the state mounted for it, and what makes it readable there.
+        self.assertEqual([value for value in found[("Container", "Volume")] if within(value.split(":")[0], str(root))],
+                         [f"{root}/textfile:/textfile:ro"])
+        self.assertIn("--collector.textfile.directory=/textfile", found[("Container", "Exec")][0].split())
+        self.assertEqual([mode for mode, paths in state.metrics_directories() if state.textfile in paths], [0o2775])
+        self.assertEqual(deploy.TEXTFILE_FILE_MODE, 0o644)
+        # Going back to the state's user, in the record, the unit or both, is found.
+        back = dataclasses.replace(record, user=oh_units.STATE_USER)
+        as_state = units[node].replace(f"User={own}\nGroup={own}\n", "User=9001\nGroup=9001\n")
+        self.assertNotEqual(as_state, units[node])
+        reaches = [f"reaches {root}/{name} through /, which its record does not declare" for name in oh_service.PRIVATE]
+        self.assertEqual(bound_problems(as_state, back, host), reaches)
+        self.assertEqual(bound_problems(units[node], back, host)[1:], reaches)
+        self.assertIn("runs as", bound_problems(units[node], back, host)[0])
+        self.assertEqual(len(bound_problems(as_state, record, host)), 1)
+        self.assertIn("runs as", bound_problems(as_state, record, host)[0])
+        # The number: one below the state's uid, or the host's own choice, never the state's.
+        chosen = {**host, "metrics": {"node_exporter_uid": 61000}}
+        self.assertIn("User=61000\nGroup=61000\n", deploy.render_units(VERSIONS, chosen)[deploy.METRICS_QUADLETS[node]])
+        for wrong in (9001, 0, -5, True, "9000", None):
+            with self.subTest(node_exporter_uid=wrong), self.assertRaisesRegex(deploy.HostError, "node_exporter_uid"):
+                deploy.validate_host({**host, "metrics": {"node_exporter_uid": wrong}})
+        with self.assertRaisesRegex(deploy.HostError, "node_exporter_uid"):
+            deploy.validate_host({**host, "uid": 9001, "gid": 9000})
 
     def test_a_record_cannot_leave_a_field_out(self):
         self.assertTrue(all(field.default is dataclasses.MISSING and field.default_factory is dataclasses.MISSING

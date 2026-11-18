@@ -40,6 +40,7 @@ def host_system(files=None, stats=None):
     found.lexists.side_effect = lambda path: Path(path) in files or Path(path) in stats
     found.unit.return_value = Unit("active", "enabled", since=10.0)
     found.process_groups.return_value = {9001}
+    found.directory_entries.return_value = None
     return found
 
 

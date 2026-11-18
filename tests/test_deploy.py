@@ -101,7 +101,9 @@ class Units(unittest.TestCase):
         for name, text in deploy.render_units(VERSIONS, host).items():
             if name.endswith(".container"):
                 with self.subTest(name=name):
-                    self.assertIn("User=1234\nGroup=2345\n", text)
+                    # node_exporter has an account of its own, one below the service account's.
+                    own = name == deploy.METRICS_QUADLETS[oh_units.NODE_EXPORTER]
+                    self.assertIn("User=1233\nGroup=1233\n" if own else "User=1234\nGroup=2345\n", text)
                     self.assertIn("NoNewPrivileges=true\nDropCapability=all\n", text)
                     self.assertIn("UMask=00", text)
                     self.assertIn("PodmanArgs=--umask=00", text)
@@ -160,7 +162,8 @@ class Units(unittest.TestCase):
         commands = [line for line in generated.stdout.splitlines() if line.startswith("ExecStart=")]
         self.assertEqual(len(commands), 3 + len(deploy.METRICS_QUADLETS))
         for command in commands:
-            self.assertRegex(command, r"--user(?:=| )9001:9001(?: |$)")
+            identity = "9000:9000" if " --name thermite-node-exporter " in command else "9001:9001"
+            self.assertRegex(command, rf"--user(?:=| ){identity}(?: |$)")
             self.assertIn("--runtime=runc", command)
             self.assertIn("--umask=00", command)
             # Podman's boolean flag parser keeps the final value. Parse the
@@ -525,7 +528,8 @@ class MetricsUnits(unittest.TestCase):
                 repository = VERSIONS[pin]["image"]["ref"].rsplit(":", 1)[0]
                 self.assertIn(f"Image={repository}@sha256:{c * 64}", text)
                 self.assertNotIn(":v1.0.0", text)
-                for line in ("Network=host", "User=9001", "Group=9001", "NoNewPrivileges=true", "DropCapability=all",
+                identity = ("User=9000", "Group=9000") if name == "node-exporter" else ("User=9001", "Group=9001")
+                for line in ("Network=host", *identity, "NoNewPrivileges=true", "DropCapability=all",
                              "Restart=always", "WantedBy=thermite.target"):
                     self.assertIn(f"\n{line}\n", text)
 

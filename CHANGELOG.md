@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- node_exporter runs as its own account, `thermite-node` (UID/GID 9000,
+  one below the service account; `metrics: node_exporter_uid` in
+  `instance/host.yaml` chooses another), no longer as `thermite`: with
+  all of `/` mounted it could read every secret store of the runtime
+  state. The access services' metrics directory `runtime/textfile` is
+  now `2775` with `0644` files and is the only part of the runtime
+  state mounted for it. The upgrade creates the account and stops
+  before changing anything if 9000 belongs to another account. The
+  account stays after uninstall, rollback and revert; `userdel
+  thermite-node` removes it.
 - Dashboards on a phone: the marks of service starts and deploys are
   always drawn and have no switches, which took a row above the first
   panel; Usage's opening note is short enough to read in full, where a

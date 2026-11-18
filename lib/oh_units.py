@@ -2,8 +2,6 @@
 
 import dataclasses
 
-import oh_service
-
 RUNTIME = "thermite-openhab.service"
 ATV = "thermite-atv.service"
 PROMETHEUS = "thermite-prometheus.service"
@@ -36,12 +34,14 @@ CONTAINERS = {unit: unit.removesuffix(".service") for unit in CONTAINED}
 #: Bounds.user: the state's uid and gid (host.yaml's uid: and gid:), which own
 #: the runtime state and so read every secret store a unit can reach.
 STATE_USER = "state"
+#: Bounds.user: a uid and gid of the unit's own, an account that owns no file
+#: and is in no other group. Of the runtime state (0750, the state's) it
+#: reads only what is mounted for it by name. node_exporter's is the only
+#: one (oh_metrics.node_exporter_id()).
+OWN_USER = "own"
 #: Bounds.network: the host's network namespace, and so whatever the host
 #: reaches. Nothing narrower exists yet; a unit given one says so here.
 HOST_NETWORK = "host"
-#: Bounds.secrets: every secret store of the runtime state, for a unit that
-#: can reach all of it.
-EVERY_SECRET = tuple(sorted(oh_service.PRIVATE))
 #: Bounds.secrets of the access services, below the installation root: the
 #: gateway's state (accounts, sessions, keys) and its release (the runtime
 #: token and the TLS key), which each of them reads as the state's user.
@@ -57,7 +57,7 @@ class Bounds:
     rendered unit of every fixture house to its record.
     """
 
-    #: STATE_USER.
+    #: STATE_USER or OWN_USER.
     user: str
     #: systemd's MemoryHigh= and MemoryMax= for the unit's cgroup, page cache
     #: included: reclaimed and slowed from the first, killed at the second.

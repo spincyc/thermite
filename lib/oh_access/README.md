@@ -255,8 +255,9 @@ No access service opens a metrics port, and the gateway never serves
 `/metrics` on its LAN-facing TLS listener. Each service keeps its own
 `prometheus_client` registry (`oh_access.metrics`, hash-pinned with the
 release) and, every 10 seconds, writes it to
-`/srv/thermite/runtime/textfile/<unit>.prom`: a new mode-0640 file renamed over
-the old, so a scrape never reads half a file. The staged units name that
+`/srv/thermite/runtime/textfile/<unit>.prom`: a new mode-0644 file renamed over
+the old, so a scrape never reads half a file, readable to node_exporter's own
+account. The staged units name that
 directory in `THERMITE_TEXTFILE_DIR` and may write only there; node_exporter's
 textfile collector serves the files, and `node_textfile_mtime_seconds` shows a
 writer that stopped. Without the variable nothing is written.

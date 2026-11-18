@@ -78,6 +78,11 @@ STATE_SECRETS = f"{STATE_DATA}/secrets"
 #: The access services' metrics (oh_access.metrics), which node_exporter's
 #: textfile collector serves; the services write it as the state's owner.
 STATE_TEXTFILE = "textfile"
+#: Where node_exporter sees STATE_TEXTFILE, the one directory of the runtime
+#: state mounted for it (oh_deploy.TEXTFILE_DIR_MODE).
+TEXTFILE_MOUNT = "/textfile"
+#: node_exporter's own account: it owns no file and is in no other group.
+NODE_EXPORTER_ACCOUNT = "thermite-node"
 #: The exporter's code, as the last deploy installed it (EXPORTER_APP).
 STATE_EXPORTER_APP = "exporter/app"
 #: The area's files the exporter's container runs, below STATE_EXPORTER_APP.
@@ -152,6 +157,16 @@ def systemd_units(host: dict) -> str:
     overrides = host.get("metrics") if isinstance(host.get("metrics"), dict) else {}
     names = (*SYSTEMD_UNITS, *(re.escape(str(unit)) for unit in overrides.get("units") or ()))
     return rf"({'|'.join(names)})\.(service|path)"
+
+
+def node_exporter_id(host: dict) -> int:
+    """The uid and gid of NODE_EXPORTER_ACCOUNT: host.yaml's metrics:
+    node_exporter_uid, or one below the state's uid. Below, because useradd
+    gives the next ordinary user the number above the highest in use, which
+    the state's uid usually is; nothing hands out the one below it. The
+    install makes the account, so the number stays taken, and refuses one
+    that another account has."""
+    return (host.get("metrics") or {}).get("node_exporter_uid", host["uid"] - 1)
 
 
 def textfile_directory(host: dict) -> str:
@@ -245,25 +260,30 @@ def services(host: dict) -> list[Service]:
             f"{LOOPBACK}:{port['node_exporter']}",
             ("--path.rootfs=/host",
              f"--web.listen-address={LOOPBACK}:{port['node_exporter']}",
-             f"--collector.textfile.directory=/host{textfile_directory(host)}",
+             f"--collector.textfile.directory={TEXTFILE_MOUNT}",
              "--collector.systemd",
              f"--collector.systemd.unit-include={systemd_units(host)}",
              "--collector.systemd.enable-restarts-metrics",
              "--collector.systemd.enable-start-time-metrics"),
             # No relabelling option on / : relabelling the whole host would be ruinous.
+            # Nor on the textfile directory, an absolute source: host services write it.
             (Volume("/", "/host", "ro,rslave"),
-             Volume(DBUS_SOCKET, DBUS_SOCKET, "ro")),
+             Volume(DBUS_SOCKET, DBUS_SOCKET, "ro"),
+             Volume(textfile_directory(host), TEXTFILE_MOUNT, "ro")),
             environment=(("DBUS_SYSTEM_BUS_ADDRESS", f"unix:path={DBUS_SOCKET}"),),
             podman_args=("--pid=host",),
-            # The state's user with all of / mounted: every secret store.
-            bounds=oh_units.Bounds(oh_units.STATE_USER, "128M", "256M", oh_units.HOST_NETWORK, oh_units.EVERY_SECRET),
+            # All of / and the host's processes, so never the state's user: no secret store.
+            bounds=oh_units.Bounds(oh_units.OWN_USER, "128M", "256M", oh_units.HOST_NETWORK, ()),
             notes=("The host's processes (--pid=host), its file systems read-only below",
                    "/host, and systemd over the D-Bus system socket for the units' states.",
                    "Neither host mount is relabelled: that would relabel the host. The bus",
                    "address is explicit: D-Bus' default is below /var/run, which the image",
-                   "need not link to /run. The textfile collector reads the access services'",
-                   f"metrics from {textfile_directory(host)} (mode 0750, the state's",
-                   "owner), as the same uid; its AppArmor profile allows file reads."),
+                   "need not link to /run. It runs as an account of its own, which owns no",
+                   "file and is in no other group: below /host it reads what any user of the",
+                   "host may, so nothing of the runtime state (0750, the state's owner and",
+                   "group), and it can neither signal nor inspect another service's",
+                   f"processes. The access services' metrics are mounted for it at {TEXTFILE_MOUNT},",
+                   "files anyone may read whom the runtime state or a mount lets reach them."),
         ),
         Service(
             oh_units.BLACKBOX, oh_units.CONTAINERS[oh_units.BLACKBOX], "blackbox_exporter", "Device probes for openHAB",
