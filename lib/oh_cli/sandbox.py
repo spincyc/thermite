@@ -133,8 +133,8 @@ def describe(mode: str) -> str:
 def refuse_beside_production() -> None:
     found = deploy.running_here(deploy.load(AREA)[1])
     if found:
-        lib.die(f"{found}; a live sandbox beside it would drive the same devices. Test with thermite test "
-                "(make openhab-test), then make openhab-deploy (docs/deploy.md)")
+        lib.die(f"{found}; a live sandbox beside it would drive the same devices. Test with thermite test, "
+                "then install the commit with thermite install (docs/installation.md)")
 
 
 def cmd_start(args) -> int:

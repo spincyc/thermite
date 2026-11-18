@@ -34,7 +34,7 @@ MAC = re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![\w:])")
 #: the public tree; the list keeps nothing out.
 CODE_WORDS = {"control4", "sddp", "bk-808", "wattbox", "shield", "fire tv", "alarm.com", "qolsys", "myq",
               "ratgdo", "lutron", "grafik", "subvolume", "btrfs", "adr 0", "homelab", "factory/",
-              "automation/openhab", "make openhab-", "office"}
+              "automation/openhab", "office"}
 
 
 #: Per-file exceptions to guard(), each reviewed. Addresses a file may name

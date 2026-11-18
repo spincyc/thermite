@@ -813,9 +813,7 @@ class BootTest(Step):
                             "about 180 MB, and warms its test cache. Allow a few minutes; unchanged configuration skips this check next time")
 
     def actions(self, system: System) -> list[Action]:
-        from oh_paths import SITE_FILE
-        argv = (application(self.context, "test", "boot") if (self.context.area / SITE_FILE).is_file()
-                else ("make", "openhab-test", "TEST=boot"))
+        argv = application(self.context, "test", "boot")
         if self.context.prepared is not None:
             argv += ("--conf", str(self.context.configuration / "conf"),
                      "--versions", str(self.context.configuration / "versions.json"))
@@ -1055,8 +1053,8 @@ class Services(Step):
                       else "its unit or confinement changed since it started")
             parts.append("to restart, " + reason + ": " + ", ".join(restart))
         if "thermite-openhab.service" in start:
-            parts.append("stop any live test instance first (make openhab-sandbox-stop where it runs): "
-                         "two live openHABs would fight over the devices")
+            parts.append("stop any live test instance first (thermite sandbox stop where it runs): "
+                         "two live runtimes would fight over the devices")
         return Check(False, "; ".join(parts))
 
     def actions(self, system: System) -> list[Action]:

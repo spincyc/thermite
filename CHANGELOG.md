@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Messages that told you to run `make openhab-test`,
+  `make openhab-deploy` or `make openhab-sandbox-stop` now name the
+  thermite command: `thermite test`, `thermite test boot`,
+  `thermite install`, `thermite sandbox stop`.
 - `thermite-atv-restart.path`, `thermite-metrics-restart.path` and
   their services are removed. They restarted the Apple TV helper, the
   exporter and Grafana after a deploy changed them, and every deploy

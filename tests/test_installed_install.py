@@ -169,8 +169,7 @@ class InstalledInstall(unittest.TestCase):
             installed = steps.Deploy(self.context).actions(self.host)
         installed_checks = [action.argv[len(self.command()):] for action in installed[:-1]]
         (self.site / oh_paths.SITE_FILE).unlink()
-        self.assertEqual(steps.BootTest(self.context).actions(self.host)[0].argv,
-                         ("make", "openhab-test", "TEST=boot"))
+        self.assertEqual(steps.BootTest(self.context).actions(self.host)[0].argv, ("bin/thermite", "test", "boot"))
         *checks, action = steps.Deploy(self.context).actions(self.host)
         self.assertEqual([check.argv for check in checks], [("bin/thermite", "generate", "--check"),
                                                           ("bin/thermite", "validate"), ("bin/thermite", "lint")])

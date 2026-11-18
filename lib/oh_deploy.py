@@ -1863,9 +1863,8 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
     digest = tree_digest(conf)
     if not force and not boot_checked(var, digest):
         raise DeployError(f"`thermite test boot` has not passed on {commit[:12]}'s conf/ (digest {digest[:12]}) on "
-                          "this host: run make openhab-test TEST=boot on that commit first, or pass --force to "
-                          "install a commit known to be good (thermite install and thermite rollback run the "
-                          "boot test first)")
+                          "this host: run thermite test boot on that commit first (thermite install and "
+                          "thermite rollback run it before they deploy)")
     preflight(layout)
     with ownership_handoff(layout, host, dry_run, bool(oh_logging.pairing_conf(conf)), approved=ownership_approved):
         previous = read_record(layout)
