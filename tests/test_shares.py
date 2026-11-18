@@ -5,7 +5,6 @@ Fictional site, servers and logins; nothing on this host is read or changed.
 """
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 import shutil
@@ -259,10 +258,10 @@ class Install(unittest.TestCase):
                     and command[4] == str(UNITS))
         self.assertIn(str(self.ctx.configuration / deploy.SHARE_GATE), bulk)
         self.assertFalse([word for word in bulk if word.endswith(".mount")])
-        recorded = json.loads(ownership.manifest_bytes(self.ctx))["units"]
-        self.assertIn(str(UNITS / MUSIC_UNIT), recorded)
-        self.assertIn(str(GATE), recorded)
-        self.assertNotIn(str(UNITS / MUSIC_UNIT), json.loads(ownership.manifest_bytes(context()))["units"])
+        declared = [item.path for item in step.desired(found)]
+        self.assertIn(UNITS / MUSIC_UNIT, declared)
+        self.assertIn(GATE, declared)
+        self.assertNotIn(UNITS / MUSIC_UNIT, [item.path for item in steps.Units(context()).desired(found)])
 
     def test_a_mount_point_another_unit_mounts_is_refused(self):
         fstab = UnitOrigin(source="/etc/fstab", fragment=f"/run/systemd/generator/{MUSIC_UNIT}")
@@ -285,8 +284,7 @@ class Install(unittest.TestCase):
         owned = ownership.inspect(self.ctx, mock_system(files={GATE: gate}))
         self.assertEqual(owned.problems, ())
         self.assertIn(oh_units.SHARE_GATE, owned.units())
-        with patch.object(ownership, "previous_builds", return_value={}):
-            problems = ownership.inspect(self.ctx, mock_system(files={GATE: b"[Service]\n"})).problems
+        problems = ownership.inspect(self.ctx, mock_system(files={GATE: b"[Service]\n"})).problems
         self.assertIn(f"cannot prove Thermite ownership of {GATE}", "; ".join(problems))
 
     def test_a_mount_unit_recorded_as_thermites_is_its_own(self):
@@ -297,9 +295,8 @@ class Install(unittest.TestCase):
         self.assertIn(MUSIC_UNIT, owned.units())
 
     def test_halt_unmounts_the_shares_installed_and_those_installed_before(self):
-        record = json.dumps({"version": 1, "release": None,
-                             "units": {str(UNITS / "mnt-old.mount"): "a" * 64}}).encode()
-        found = mock_system(files={ownership.MANIFEST: record},
+        record = fakes.manifest({UNITS / "mnt-old.mount": b"[Mount]\n"}, root=self.ctx.installation.root)
+        found = mock_system(files={ownership.INSTALLED: record},
                             origins={"mnt-old.mount": UnitOrigin(active="active")})
         running = steps.Halt(self.ctx).running(found)
         self.assertEqual(running, ["mnt-old.mount (active)"])

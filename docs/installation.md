@@ -190,11 +190,11 @@ a readable, nonempty administrator credential as the service user, including
 after an interrupted installation and reboot. Existing administrator databases
 and passwords are preserved.
 
-The installer records the unit files it installs, with their digests, in the
-root-owned `/etc/thermite/units.json`. A later run recognizes its own units from
-that record, so time zone edits and template changes do not block an upgrade.
-An unknown modification or an unowned drop-in stops for review; see
-[service ownership](service-account.md).
+Each committed install records the unit files it installed, with their
+digests, in the root-owned installed manifest, `/etc/thermite/installed.json`.
+A later run recognizes its own units from that record, so time zone edits and
+template changes do not block an upgrade. An unknown modification or an
+unowned drop-in stops for review; see [service ownership](service-account.md).
 
 ### Host layout
 

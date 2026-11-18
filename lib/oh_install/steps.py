@@ -987,14 +987,7 @@ class Units(Step):
         stale = self.stale(system)
         if stale:
             return Check(False, "to install: " + ", ".join(stale))
-        if not owned.recorded or system.read_bytes(ownership.MANIFEST) != ownership.manifest_bytes(self.context):
-            return Check(False, f"to record the installed units in {ownership.MANIFEST}")
-        return Check(True, f"the {len(deploy.host_units(self.context.host))} installed unit files match deploy/ and "
-                           f"{ownership.MANIFEST}")
-
-    @property
-    def manifest(self) -> Path:
-        return self.context.var / "units-manifest.json"
+        return Check(True, f"the {len(deploy.host_units(self.context.host))} installed unit files match deploy/")
 
     def actions(self, system: System) -> list[Action]:
         by_directory: dict[Path, list[str]] = {}
@@ -1016,30 +1009,16 @@ class Units(Step):
                 *(Command(("install", "-m", "0644", "-t", str(directory), *map(source, names)), root=True)
                   for directory, names in by_directory.items()),
                 *(Command(("install", "-m", "0644", "-T", source(name), str(units[name])), root=True) for name in renamed),
-                *([Command(("systemctl", "daemon-reload"), root=True)] if stale else []),
-                # Ownership is later proved by these recorded hashes, so a
-                # changed template or host setting never strands the units.
-                Task(f"prepare the unit manifest for {ownership.MANIFEST}", self.prepare_manifest),
-                Command(("install", "-D", "-o", "0", "-g", "0", "-m", "0644", str(self.manifest), str(ownership.MANIFEST)), root=True)]
+                *([Command(("systemctl", "daemon-reload"), root=True)] if stale else [])]
 
     def desired(self, system: System) -> list[manifest.Item]:
-        # units.json stays while install and uninstall prove ownership by it.
-        items = [manifest.Item(ownership.MANIFEST, "file")]
+        items = []
         for source, target in sorted(deploy.host_units(self.context.host).items()):
             items.append(manifest.unit(target))
             # Quadlets are enabled by their generator, and drop-ins not at all.
             if target.parent == manifest.UNITS:
                 items += manifest.wants_links(self.context.unit(source).decode(), target.name)
         return items
-
-    def prepare_manifest(self, system: System) -> int:
-        try:
-            system.private_directory(self.manifest.parent)
-            system.write_private(self.manifest, ownership.manifest_bytes(self.context).decode())
-        except (OSError, ValueError):
-            system.say(f"   could not write {self.manifest}; check the site's var/ custody, then rerun")
-            return 1
-        return 0
 
 
 class Services(Step):
@@ -2259,10 +2238,11 @@ class Halt(Step):
 
     def running(self, system: System) -> list[str]:
         """What of Thermite runs, or cannot be shown not to: its network
-        shares too, this host's and those it installed before (units.json),
-        which the target's stop unmounts."""
+        shares too, this host's and those it installed before (the installed
+        manifest), which the target's stop unmounts."""
         mounts = [*(share.unit for _, share in sorted(shares.settings(self.context.host).items())),
-                  *(Path(path).name for path in sorted(ownership.recorded(system) or {}) if path.endswith(".mount"))]
+                  *(Path(path).name for path in sorted(ownership.recorded(self.context, system))
+                    if path.endswith(".mount"))]
         return [f"{name} ({origin.active})"
                 for name, origin in system.unit_origins(list(dict.fromkeys([*self.UNITS, *mounts]))).items()
                 if not origin.known or origin.active in ACTIVE]

@@ -637,6 +637,18 @@ def empty(disk, *, apparmor=True):
     disk.settle()
 
 
+def manifest(units, *, root=ROOT) -> bytes:
+    """The installed manifest of an installation at `root` that records the
+    unit files `units` (path -> bytes) and nothing else."""
+    items = [{"path": str(path), "class": "unit", "sha256": digest(data), "mode": 0o644, "uid": 0, "gid": 0,
+              "unit": Path(str(path)).name} for path, data in sorted(units.items())]
+    return engine.render_manifest(engine.validate_manifest({
+        "format": 2, "installation": str(root), "transaction": OLD, "kept": OLD,
+        "committed_at": "2026-10-20T08:10:00Z", "installed": True, "release": {"label": "fixture"}, "pins": {},
+        "tools": TOOLS, "items": items, "images": {"current": [], "previous": []},
+        "application": {"current": None, "previous": None}}, root=str(root)))
+
+
 def install(disk, host, old: Version, *, release=OLD, apparmor=True):
     """A host running `old`, installed by an earlier transaction, all durable."""
     empty(disk, apparmor=apparmor)

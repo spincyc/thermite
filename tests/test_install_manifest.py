@@ -16,7 +16,7 @@ sys.path.insert(0, str(AREA / "lib"))
 import oh_apparmor  # noqa: E402
 import oh_deploy as deploy  # noqa: E402
 import oh_units  # noqa: E402
-from oh_install import changeover, engine, ingress, manifest, ownership, steps  # noqa: E402
+from oh_install import changeover, engine, ingress, manifest, steps  # noqa: E402
 from oh_install.model import Step  # noqa: E402
 from oh_install.system import Stat, System  # noqa: E402
 from tests.test_deploy import HOST, MUSIC_HOST, VERSIONS  # noqa: E402
@@ -64,8 +64,12 @@ class Inventory(unittest.TestCase):
             UNITS / "multi-user.target.wants" / ingress.UNIT: ingress.UNIT_FILE,
         }, "the boot target's own link is the guard's, never an item")
 
-    def test_the_version_1_unit_record_stays_an_installed_file(self):
-        self.assertEqual(declared()[ownership.MANIFEST].cls, "file")
+    def test_no_step_declares_the_unit_record_earlier_releases_wrote(self):
+        # The upgrade from one of them sets it aside with what it no longer
+        # declares; a rollback or a revert puts it back.
+        self.assertNotIn(manifest.UNIT_RECORD, declared())
+        self.assertFalse([path for path, item in declared().items() if path.parent == manifest.UNIT_RECORD.parent
+                          and path.suffix == ".json"])
 
     def test_boundary_firewall_and_confinement_carry_their_live_classes(self):
         items = declared()

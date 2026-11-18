@@ -5,7 +5,6 @@ Fictional site and host; nothing on this host is read or changed.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 import sys
 import unittest
@@ -21,6 +20,7 @@ from oh_access import native_boundary  # noqa: E402
 from oh_cli import status, uninstall  # noqa: E402
 from oh_install import changeover, ingress, manifest, ownership, steps  # noqa: E402
 from oh_install.system import Stat, System, Unit, UnitFile, UnitOrigin  # noqa: E402
+from tests import txn_fakes  # noqa: E402
 from tests.test_deploy import HOST, MUSIC_HOST, VERSIONS  # noqa: E402
 from tests.test_install_manifest import ROOT, context  # noqa: E402
 
@@ -197,8 +197,8 @@ class Units(unittest.TestCase):
         installed = [word for action in steps.Units(ctx).actions(found)
                      for word in getattr(action, "argv", ())[5:] if getattr(action, "argv", ())[:2] == ("install", "-m")]
         self.assertIn(str(ctx.configuration / deploy.MUSIC_QUADLET), installed)
-        self.assertIn(str(QUADLET), json.loads(ownership.manifest_bytes(ctx))["units"])
-        self.assertNotIn(str(QUADLET), json.loads(ownership.manifest_bytes(context()))["units"])
+        self.assertIn(QUADLET, [item.path for item in steps.Units(ctx).desired(found)])
+        self.assertNotIn(QUADLET, [item.path for item in steps.Units(context()).desired(found)])
 
     def test_a_unit_this_host_no_longer_renders_is_proven_by_the_record(self):
         ctx = context()
@@ -208,19 +208,17 @@ class Units(unittest.TestCase):
             found = Mock(spec=System)
             found.safe_unit_parent.return_value = True
             found.lexists.side_effect = lambda path: Path(path) == QUADLET
-            found.unit_file.side_effect = lambda path: (UnitFile(record, 0, 0o644) if Path(path) == ownership.MANIFEST
+            found.unit_file.side_effect = lambda path: (UnitFile(record, 0, 0o644) if Path(path) == ownership.INSTALLED
                                                         else UnitFile(music, 0, 0o644) if Path(path) == QUADLET else None)
             found.unit_origins.side_effect = lambda names: {
                 name: UnitOrigin(source=str(QUADLET)) if name == oh_units.MUSIC else UnitOrigin(load_state="not-found")
                 for name in names}
             return found
 
-        record = json.dumps({"version": 1, "release": None, "units": {str(QUADLET): ownership.sha256(music)}})
-        owned = ownership.inspect(ctx, host(record.encode()))
+        owned = ownership.inspect(ctx, host(txn_fakes.manifest({QUADLET: music}, root=ctx.installation.root)))
         self.assertEqual(owned.problems, ())
         self.assertIn(oh_units.MUSIC, owned.units())
-        with patch.object(ownership, "previous_builds", return_value={}):
-            problems = ownership.inspect(ctx, host(b"{}")).problems
+        problems = ownership.inspect(ctx, host(txn_fakes.manifest({}, root=ctx.installation.root))).problems
         self.assertIn(f"cannot prove Thermite ownership of {QUADLET}", "; ".join(problems))
 
 

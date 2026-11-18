@@ -108,16 +108,16 @@ from before the install engine has no `installed.json` and takes the same
 recovery.
 
 Before changing or removing a unit, the installer proves it is Thermite's.
-It records each unit file it installs, with its digest and the application
-release that rendered it, in the root-owned `/etc/thermite/units.json`. A
-root-owned unit file is recognized when its exact bytes match that record, the
-unit the current committed inputs render, or a unit an earlier verified build
-of this site rendered; units installed before the record existed are taken
-over once that way. Time zone edits and template changes therefore do not
-block an upgrade. The effective unit must also resolve to that file without
-unowned drop-ins. An unknown modification or other ownership stops the run for
-review; independently installed `openhab`, `prometheus` and `grafana`
-services are left alone.
+A committed install records each unit file it installed, with its digest, in
+the root-owned installed manifest, `/etc/thermite/installed.json`. A
+root-owned unit file is recognized when its exact bytes match that record, or
+are the unit the current committed inputs render. Time zone edits and
+template changes therefore do not block an upgrade. The effective unit must
+also resolve to that file without unowned drop-ins. An unknown modification
+or other ownership stops the run for review; independently installed
+`openhab`, `prometheus` and `grafana` services are left alone. Releases
+before this one kept a second record, `/etc/thermite/units.json`; the upgrade
+from one of them removes it, and a revert puts it back.
 
 If the configured service UID or GID already belongs to another account, such
 as an independent `openhab` account, the installer stops: it does not rename

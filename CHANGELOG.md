@@ -7,6 +7,11 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `/etc/thermite/units.json` is gone: the installer recognizes its
+  unit files by the digests in `/etc/thermite/installed.json`. The
+  upgrade removes the file, and `thermite revert` puts it back with the
+  version that wrote it. A unit file that matches neither the manifest
+  nor what the site renders stops the run, as before.
 - An installation from before the install engine (one that has
   `/etc/thermite/units.json` and no `/etc/thermite/installed.json`) is
   no longer upgraded in place: `thermite install`, `upgrade`,

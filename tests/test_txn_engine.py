@@ -808,6 +808,33 @@ class Verbs(unittest.TestCase):
         self.assertEqual(self.engine.ids(), [journal.id], "the reverted transaction and the state since are gone")
         self.assertEqual([argv for argv in self.host.log if argv[:2] == ("podman", "image")], [])
 
+    def test_a_file_the_new_version_no_longer_declares_goes_and_a_rollback_or_a_revert_puts_it_back(self):
+        # The unit record releases before this one wrote beside the manifest.
+        record, data = "/etc/thermite/units.json", b'{"version": 1, "release": null, "units": {}}\n'
+        self.disk = fakes.MemoryDisk()
+        self.host = fakes.FakeHost(self.disk)
+        self.old = fakes.version("old")
+        self.old.files[record] = ("file", data, {})
+        fakes.install(self.disk, self.host, self.old)
+        self.engine = self.make()
+        first = "20261105T091500Z-0a0b0c"
+        entry = next(entry for entry in self.begin(id=first).entries if entry.path == record)
+        self.assertEqual((entry.action, entry.removed), ("move", True))
+        self.engine.guard(first)
+        self.host.run(("systemctl", "stop", engine.TARGET, engine.SLICE))
+        self.engine.collect(first)
+        self.assertNotIn(record, self.disk.nodes, "set aside with the rest of the installed version")
+        self.assertEqual(self.engine.rollback(first).phase, "rolled-back")
+        self.assertEqual(self.disk.nodes[record].data, data)
+        self.through_switch()
+        listed = [item["path"] for item in self.engine.commit(ID).manifest["items"]]
+        self.assertNotIn(record, listed)
+        self.assertNotIn(record, self.disk.nodes)
+        self.revert()
+        self.assertEqual(self.disk.nodes[record].data, data)
+        installed = engine.parse_manifest(self.disk.nodes["/etc/thermite/installed.json"].data, root=ROOT)
+        self.assertIn(record, [item["path"] for item in installed["items"]])
+
     def test_a_failed_revert_rolls_back_to_the_version_it_would_have_replaced(self):
         self.through_switch()
         self.engine.commit(ID)

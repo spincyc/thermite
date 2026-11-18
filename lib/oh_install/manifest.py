@@ -31,6 +31,9 @@ if TYPE_CHECKING:
 
 #: The installed manifest.
 INSTALLED = Path("/") / engine.MANIFEST
+#: Where releases before this one also recorded their unit files. No release
+#: writes or reads it any more; an installation of one of them still holds it.
+UNIT_RECORD = Path("/etc/thermite/units.json")
 #: Where systemd keeps what `systemctl enable` links into thermite.target.
 UNITS = Path("/etc/systemd/system")
 WANTS = UNITS / f"{oh_units.TARGET}.wants"
@@ -134,9 +137,9 @@ def thermite_present(context: Context, system: System) -> list[Path]:
     The installation root stands for the state under it. Alone it refuses
     an upgrade, rollback or uninstall, which need the manifest, but not an
     install (oh_cli.install): that is how missing_recovery ends."""
-    from oh_install import ingress, ownership, steps
+    from oh_install import ingress, steps
     paths = [*deploy.INSTALLED.values(), ingress.UNIT_FILE, ingress.RULE_FILE, oh_apparmor.CONFIG,
-             oh_apparmor.POLICY, *(UNITS / name for name in oh_units.ACCESS_UNITS), ownership.MANIFEST]
+             oh_apparmor.POLICY, *(UNITS / name for name in oh_units.ACCESS_UNITS), UNIT_RECORD]
     found = [path for path in paths if system.lexists(path)]
     root = context.installation.root
     if set(system.directory_entries(root) or ()) - {steps.TRANSACTIONS}:
@@ -148,8 +151,9 @@ def missing_recovery(context: Context) -> str:
     """What to do when Thermite's files are here but its manifest is not.
     It names every path outside the installation root that an install
     writes: the install engine refuses to plan over one left in place, and
-    what is left of either manifest would be read again."""
-    from oh_install import ingress, ownership
+    a damaged manifest would be read again. An earlier release's unit record
+    goes with them."""
+    from oh_install import ingress
     root = context.installation.root
     site = shlex.quote(str(context.area))
     return (f"Thermite's files are installed here, but {INSTALLED} is missing or damaged, so nothing can "
@@ -158,7 +162,7 @@ def missing_recovery(context: Context) -> str:
             f"({UNITS}/thermite*, /etc/containers/systemd/thermite*, {UNITS}/multi-user.target.wants/thermite*, "
             f"and the network shares' {UNITS}/*.mount whose Description starts Thermite share, with "
             f"/etc/thermite/share-*.credentials), {ingress.RULE_FILE}, {oh_apparmor.CONFIG}, {oh_apparmor.POLICY}, "
-            f"{oh_apparmor.LICENSE} and what is left of the manifests ({INSTALLED}, {ownership.MANIFEST}) aside, "
+            f"{oh_apparmor.LICENSE} and what is left of the manifests ({INSTALLED}, {UNIT_RECORD}) aside, "
             f"out of those directories; run systemctl daemon-reload; then run thermite install --config {site}. "
             f"The state under {root} stays where it is, and that install takes it up; see "
             "docs/installation.md#a-missing-manifest.")

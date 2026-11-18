@@ -30,7 +30,7 @@ import oh_apparmor  # noqa: E402
 import oh_deploy as deploy  # noqa: E402
 import oh_service  # noqa: E402
 from oh_cli import install as install_cli  # noqa: E402
-from oh_install import changeover, engine, manifest, ownership, steps  # noqa: E402
+from oh_install import changeover, engine, manifest, steps  # noqa: E402
 from oh_install.model import Check, Step, Task  # noqa: E402
 from oh_install.system import Stat, System, UnitFile, UnitOrigin  # noqa: E402
 from tests import txn_fakes  # noqa: E402
@@ -345,17 +345,17 @@ class MissingManifest(Fixture):
         self.assertIn(str(self.receipt), self.recorded())
         self.assertTrue(self.host.enabled())
 
-    def test_with_neither_manifest_the_printed_recovery_ends_in_an_install_on_the_state_that_stayed(self):
+    def test_with_no_manifest_the_printed_recovery_ends_in_an_install_on_the_state_that_stayed(self):
         self.disk.drop(manifest.INSTALLED)
-        self.disk.drop(ownership.MANIFEST)
         self.recovered()
 
     def test_an_installation_from_before_the_manifest_takes_the_same_way(self):
         # /etc/thermite/units.json and no installed manifest: what a release
         # before the install engine left. Nothing describes it any more.
         self.disk.drop(manifest.INSTALLED)
-        self.assertIsNotNone(self.read(ownership.MANIFEST))
+        self.disk.put(manifest.UNIT_RECORD, data=b'{"version": 1, "release": null, "units": {}}\n')
         self.recovered()
+        self.assertIsNone(self.read(manifest.UNIT_RECORD), "moved aside with the rest, and not written again")
 
     def test_with_a_damaged_manifest_it_does_too(self):
         self.disk.put(manifest.INSTALLED, data=b"{damaged")
@@ -363,7 +363,6 @@ class MissingManifest(Fixture):
 
     def test_a_file_of_thermite_s_left_in_place_refuses_that_install_by_name(self):
         self.disk.drop(manifest.INSTALLED)
-        self.disk.drop(ownership.MANIFEST)
         self.assertEqual(self.install(health=0), 2)
         printed = self.said()
         licence = self.disk.nodes[str(oh_apparmor.LICENSE)]
