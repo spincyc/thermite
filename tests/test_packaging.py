@@ -459,8 +459,10 @@ class Packaging(unittest.TestCase):
         hooks = self.root / "hooks"; hooks.mkdir()
         (hooks / "sitecustomize.py").write_text("import socket\ndef refuse(*a,**k): raise RuntimeError('offline proof forbids network')\nsocket.socket.connect=refuse\nsocket.socket.connect_ex=refuse\nsocket.socket.sendto=refuse\nsocket.create_connection=refuse\n")
         clean["PYTHONPATH"] = str(hooks)
+        # The timeouts below bound a hang, not a speed: docs export with
+        # the code took over 30 s on a host at load 12.
         def command(*args, expected=0):
-            run = subprocess.run([str(entry), *map(str, args)], cwd=cwd, env=clean, capture_output=True, text=True, timeout=30)
+            run = subprocess.run([str(entry), *map(str, args)], cwd=cwd, env=clean, capture_output=True, text=True, timeout=180)
             self.assertEqual(run.returncode, expected, run.stdout + run.stderr)
             return run.stdout
         command("--help"); command("--version"); command("theme", "check", "thermite")
