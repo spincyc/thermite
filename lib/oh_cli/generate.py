@@ -26,6 +26,7 @@ from pathlib import Path
 
 import oh_cli
 import oh_deploy as deploy
+import oh_integrations as integrations
 import oh_metrics as metrics
 import oh_render as render
 from oh_cli import AREA
@@ -40,7 +41,9 @@ generated: change the house file, the host file, versions.json or lib/,
 then run this; never edit conf/, metrics/ or deploy/ by hand.
 
 It validates the house file first and writes nothing while it has a
-problem. Writing never deletes: a file under conf/ or metrics/, or a unit
+problem. A name a device lists for an integration thermite does not have
+yet is no problem and generates nothing: a note names each one. Writing
+never deletes: a file under conf/ or metrics/, or a unit
 in deploy/ (Music Assistant's, once the host file has no music:), that
 nothing generates is reported and makes the exit status 1; --prune removes
 such a file when it carries the generated header (an earlier generate
@@ -182,6 +185,11 @@ def main(argv: list[str] | None = None) -> int:
             stray.append((name, "move the file out of deploy/ or delete it"))
     for path, why in stray:
         print(f"thermite generate: {path}: nothing generates it now; {why}", file=sys.stderr)
+    # Valid, and rendered as nothing: said here, or a device would look set up.
+    notes = [integrations.planned_text(device["id"], phase, name)
+             for device in data.get("devices") or [] for phase, name in integrations.planned(device)]
+    for note in notes:
+        print(f"thermite generate: note: {note}", file=sys.stderr)
     count = len(files) + len(trees[1][2])
     summary = f"generate: {devices} devices, {count} files, {len(units)} unit files"
     if arguments.check:
@@ -190,5 +198,5 @@ def main(argv: list[str] | None = None) -> int:
     else:
         summary += (f", {len(written)} written, {len(stray)} stray, {len(written_units)} unit files written"
                     + (f", {len(pruned)} removed" if arguments.prune else ""))
-    print(summary)
+    print(summary + (f", {len(notes)} note{'s' if len(notes) > 1 else ''}" if notes else ""))
     return 1 if stale or missing or stray or stale_unit_names else 0

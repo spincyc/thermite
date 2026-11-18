@@ -550,6 +550,10 @@ def unobserved(inventory: dict, conf=None) -> list[tuple[str, str]]:
 
 def unobserved_text(device: str, integration: str) -> str:
     """One finding of unobserved(), as a person reads it."""
+    import oh_integrations
+    if integration in oh_integrations.PLANNED["control"]:
+        # Not a reading that is missing: nothing was rendered to read.
+        return oh_integrations.planned_text(device, "control", integration)
     if integration:
         return (f"{device}: nothing reads whether it answers {integration}: no Thing, probed port or read of the "
                 "rule's own says so, and no check or alert can")

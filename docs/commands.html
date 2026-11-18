@@ -199,7 +199,9 @@ generated: change the house file, the host file, versions.json or lib/,
 then run this; never edit conf/, metrics/ or deploy/ by hand.
 
 It validates the house file first and writes nothing while it has a
-problem. Writing never deletes: a file under conf/ or metrics/, or a unit
+problem. A name a device lists for an integration thermite does not have
+yet is no problem and generates nothing: a note names each one. Writing
+never deletes: a file under conf/ or metrics/, or a unit
 in deploy/ (Music Assistant&#x27;s, once the host file has no music:), that
 nothing generates is reported and makes the exit status 1; --prune removes
 such a file when it carries the generated header (an earlier generate

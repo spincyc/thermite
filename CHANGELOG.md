@@ -7,6 +7,11 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite validate` and `thermite generate` say plainly when a device
+  lists an interface thermite does not have yet (`adb`, `relay`,
+  `telnet`, `androidtv_shieldtv`): the name is accepted and nothing is
+  generated for it, so nothing commands the device through it. The note
+  changes no exit status.
 - An install no longer carries the runtime's own page entry, and
   `thermite health --installation` no longer requires it: an install's
   pages always go through the gateway. The upgrade removes

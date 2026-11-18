@@ -183,6 +183,58 @@ class Validate(Scratch):
         self.assertEqual((json.loads(out)["status"], json.loads(out)["notes"]), ("problems", []))
 
 
+class Planned(Scratch):
+    """An integration name thermite holds for later is valid and renders
+    nothing: validate and generate both say so of each one a device lists."""
+
+    def planned(self):
+        data = copy.deepcopy(EXAMPLE)
+        next(device for device in data["devices"]
+             if device["id"] == "example_computer")["controls"] = {"control": ["adb", "relay", "adb"]}
+        return data
+
+    def notes(self, verb):
+        return "".join(f"thermite {verb}: note: example_computer: {name} under controls.control is an integration "
+                       "thermite does not have yet: the name is accepted and renders nothing (no Thing, Item, rule, "
+                       "check or alert), so nothing commands the device through it\n" for name in ("adb", "relay"))
+
+    def test_every_planned_name_is_one_the_house_file_may_use_and_no_integration(self):
+        import oh_integrations
+        self.assertEqual(set(oh_integrations.PLANNED), set(oh_integrations.PHASES))
+        built = {module.NAME for module in oh_integrations.REGISTRY}
+        for phase, names in oh_integrations.PLANNED.items():
+            self.assertFalse(names & built, phase)
+            self.assertLessEqual(names, oh_integrations.allowed()[phase])
+        device = {"id": "den_device", "controls": {"observe": ["network_ping"], "control": ["relay", "sonos", "adb"]}}
+        self.assertEqual(oh_integrations.planned(device), [("control", "relay"), ("control", "adb")])
+        self.assertEqual(oh_integrations.planned({"id": "den_device"}), [])
+
+    def test_generate_names_each_one_and_renders_nothing_for_it(self):
+        house, conf = self.house(self.planned()), self.root / "conf"
+        argv = ["generate", "--house", str(house), "--conf", str(conf), "--root", str(self.root)]
+        code, out, err = run(*argv)
+        self.assertEqual((code, err), (0, self.notes("generate")))
+        self.assertTrue(out.endswith(", 2 notes\n"), out)
+        # Said again by each later run, and by the check that changes nothing.
+        code, out, err = run(*argv, "--check")
+        self.assertEqual((code, err), (0, self.notes("generate")))
+        self.assertTrue(out.endswith(", 2 notes\n"), out)
+        # A house that lists none is told nothing, and has every Thing and Item this one has.
+        plain = self.root / "plain"
+        code, out, err = run("generate", "--house", str(self.house(EXAMPLE, "plain.yaml")),
+                             "--conf", str(plain / "conf"), "--root", str(plain))
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn("note", out.splitlines()[-1])
+        self.assertEqual(oh_inventory.conf_objects(conf)[:2], oh_inventory.conf_objects(plain / "conf")[:2])
+
+    def test_validate_names_each_one_in_a_note_that_is_no_problem(self):
+        house, conf = self.house(self.planned()), self.root / "conf"
+        self.assertEqual(run("generate", "--house", str(house), "--conf", str(conf), "--root", str(self.root))[0], 0)
+        code, out, err = run("validate", "--house", str(house), "--conf", str(conf))
+        self.assertEqual((code, err), (0, self.notes("validate")))
+        self.assertTrue(out.endswith(" 0 problems, 2 notes\n"), out)
+
+
 class Generate(Scratch):
     def test_prune_removes_only_stray_files_with_the_generated_header(self):
         house, conf = self.house(EXAMPLE), self.root / "conf"

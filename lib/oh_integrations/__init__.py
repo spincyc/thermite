@@ -35,8 +35,9 @@ for _module in REGISTRY:
 PHASES = ("observe", "control")
 
 #: Names devices.yaml may already use for integrations not implemented yet,
-#: by phase. They validate but render nothing. A name moves from here to
-#: REGISTRY when its module exists.
+#: by phase. They validate but render nothing, which thermite validate and
+#: thermite generate say of each one a device lists (planned()). A name
+#: moves from here to REGISTRY when its module exists.
 PLANNED = {
     "observe": frozenset(),
     "control": frozenset({
@@ -47,6 +48,21 @@ PLANNED = {
         "relay",
     }),
 }
+
+
+def planned(device: dict) -> list[tuple[str, str]]:
+    """(phase, name) of each name the device lists that is PLANNED."""
+    controls = device.get("controls") or {}
+    return [(phase, name) for phase in PHASES for name in dict.fromkeys(controls.get(phase) or [])
+            if name in PLANNED[phase]]
+
+
+def planned_text(device: str, phase: str, name: str) -> str:
+    """What a person is told of a planned name a device lists."""
+    does = {"observe": "reads", "control": "commands"}[phase]
+    return (f"{device}: {name} under controls.{phase} is an integration thermite does not have yet: the name is "
+            f"accepted and renders nothing (no Thing, Item, rule, check or alert), so nothing {does} the device "
+            "through it")
 
 
 def allowed() -> dict[str, set[str]]:

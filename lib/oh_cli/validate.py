@@ -12,7 +12,9 @@ A device that nothing watches is named in a note, which is no problem and
 changes no exit status: one an integration commands with no reading of
 whether it answers (no Thing, probed port or read of the rule's own), so
 that no check or alert could say it stopped, and one that has an address
-and no reading at all.
+and no reading at all. A name a device lists for an integration thermite
+does not have yet (oh_integrations.PLANNED) is named the same way: it is
+accepted and renders nothing.
 """
 
 from __future__ import annotations
