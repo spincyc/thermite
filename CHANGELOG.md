@@ -7,6 +7,27 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Authentication is no longer a mode. Accounts exist or they do not,
+  and what a guest (a client with no account) may do is settings of
+  their own, each an administrator's on the Security page and none
+  moving another: "Guests see the cameras" (new, off), "Guests see
+  titles, artists and apps", and each room's lock.
+  - Camera snapshots and live video now need an account unless "Guests
+    see the cameras" is on. After this upgrade no guest sees the
+    cameras, also on a site where authentication was off and so showed
+    them to everyone: create the first administrator on Security
+    (`thermite access setup`), then sign in or turn the setting on.
+  - Nothing else changes on upgrade. Where authentication was off,
+    guests keep titles, stored schedules are kept but disabled and
+    manual holds released, since none applied, and existing accounts
+    can sign in again; where it was on, settings and locks stand.
+  - Nothing turns accounts off, and the gateway starts without an
+    administrator.
+  - `GET /api/v1/security` answers `bootstrap_required`,
+    `setup_available`, `guest_text` and `guest_cameras`; `POST` only
+    creates the first administrator; `/api/v1/me` has no
+    `auth_enabled`. A `thermite tui` of an earlier release on another
+    computer must be upgraded to reach this gateway.
 - The gateway, its worker and the callback relay no longer see the
   runtime state (openHAB's userdata, tokens, pairings); only the
   directory their metrics are written to.

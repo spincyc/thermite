@@ -11,7 +11,7 @@ from django.test import Client, TestCase
 from oh_identity.models import Audit, BoundaryReceipt, PersonalToken, RoomPolicy, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter, project
 from oh_identity.policy_store import Store, rebase_timezone
-from oh_identity.security import get_state, transition
+from oh_identity.models import SecurityState
 from oh_identity.services import Problem
 from oh_identity.services import bootstrap, issue_token
 from oh_identity.tests.test_core import FakeRuntime, PASSPHRASE, Policy
@@ -120,8 +120,11 @@ class Features(TestCase):
         self.assertEqual(self.call("post", "/unifi/media/play/camera:high", offer.replace("recvonly", "sendrecv"), content_type="application/sdp").status_code, 400)
         self.assertEqual(self.call("post", "/unifi/media/play/camera:high", "v=0\r\na=recvonly\r\n", content_type="application/sdp").status_code, 400)
 
-    def test_guest_camera_media_is_available_only_while_authentication_is_off(self):
-        transition(get_state(), False, self.owner)
+    def test_guest_camera_media_needs_the_setting_that_guests_see_cameras(self):
+        refused = Client().get("/unifi/media/image/camera", secure=True)
+        self.assertEqual((refused.status_code, refused.json()), (401, {"error": "login_required"}))
+        self.assertEqual(self.adapter.transport.media_calls, [])
+        SecurityState.objects.filter(pk=1).update(guest_cameras=True)
         response = Client().get("/unifi/media/image/camera", secure=True)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.adapter.transport.media_calls, [("/unifi/media/image/camera", "GET")])

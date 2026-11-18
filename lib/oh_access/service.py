@@ -214,9 +214,8 @@ def bootstrap(config_path, username, secret):
     config = load_config(config_path, tls=False)
     os.environ["THERMITE_TIME_ZONE"] = config["timezone"]
     from oh_identity import composition
-    adapter, _ = setup(config)
-    with adapter.command_lock(tuple(sorted(adapter.contract.rooms)), (), deadline=None):
-        user = composition.initialize(config["state"], username, secret, config["allowed_hosts"])
+    setup(config)
+    user = composition.initialize(config["state"], username, secret, config["allowed_hosts"])
     return {"initialized": True, "username": user.username, "state": config["state"]}
 
 
@@ -574,10 +573,6 @@ def serve(config_path):
 
     try:
         check_schema()
-        from oh_identity.models import User
-        from oh_identity.security import get_state
-        if get_state().enabled and not User.objects.filter(is_active=True, admin=True).exists():
-            raise AccessError("An authenticated site requires an active administrator")
         rebase_timezone(adapter, config["timezone"])
         from oh_identity.asgi import application
         from . import metrics

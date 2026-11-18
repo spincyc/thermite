@@ -471,11 +471,11 @@ async function probe(name, run, options) {
     const origin = "https://site.example", calls = [], opened = [];
     const json = (value, status = 200) => ({ ok: status < 300, status, json: async () => value, text: async () => JSON.stringify(value),
       clone() { return json(value, status); }, headers: { get: () => "application/json", getSetCookie: () => [] } });
-    const principal = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, auth_enabled: true,
+    const principal = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false,
       permissions: ["site.read", "room.control", "pairing.manage"] };
     const fetch = async (url, init = {}) => {
       const route = new URL(url).pathname; calls.push((init.method || "GET") + " " + route);
-      if (route === "/api/v1/security") return json({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf: "C".repeat(32) });
+      if (route === "/api/v1/security") return json({ bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false, csrf: "C".repeat(32) });
       if (route === "/api/v1/session") return json({ csrf: "C".repeat(32) });
       if (route === "/api/v1/me") return json(principal);
       if (route === "/api/v1/locks") return json({ rooms: {} });

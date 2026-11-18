@@ -19,7 +19,7 @@ from .files import json_private, private_directory, read_private
 
 TOKEN = re.compile(r"thm_[A-Za-z0-9_-]{32,200}\Z")
 # The /api/v1/me members a terminal reports.
-PRINCIPAL = ("id", "username", "active", "admin", "is_guest", "auth_enabled", "can_edit", "site", "permissions")
+PRINCIPAL = ("id", "username", "active", "admin", "is_guest", "can_edit", "site", "permissions")
 
 
 class Refused(AccessError):

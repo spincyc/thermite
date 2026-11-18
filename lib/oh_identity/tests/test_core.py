@@ -88,7 +88,7 @@ class Core(TestCase):
 
     def test_three_principals_have_canonical_shapes_and_permissions(self):
         me = self.request("get", "/api/v1/me").json()
-        self.assertEqual(set(me), {"id", "username", "active", "admin", "is_guest", "auth_enabled", "can_edit", "site", "permissions"})
+        self.assertEqual(set(me), {"id", "username", "active", "admin", "is_guest", "can_edit", "site", "permissions"})
         self.assertEqual((me["id"], me["username"], me["admin"], me["is_guest"], me["can_edit"]), (0, "Guest", False, True, False))
         self.assertEqual(me["permissions"], ["room.control", "site.read"])
         self.signin("operator")

@@ -4,12 +4,12 @@ from datetime import timedelta
 
 from django.contrib.sessions.models import Session
 from django.db import transaction
-from django.db.models import Exists, Max, Q
+from django.db.models import Max, Q
 from django.utils import timezone
 
 from oh_room_policy import PolicyRecord
 
-from .models import BoundaryReceipt, LoginThrottle, PersonalToken, ReconcileState, RoomPolicy, SecurityState
+from .models import BoundaryReceipt, LoginThrottle, PersonalToken, ReconcileState, RoomPolicy
 
 # Every reason the worker reports; anything else is stored as "unavailable".
 REASONS = {"", "unavailable", "missed", "leave", "dispatched", "dispatch_unconfirmed", "already_current", "stale_revision",
@@ -19,12 +19,6 @@ REASONS = {"", "unavailable", "missed", "leave", "dispatched", "dispatch_unconfi
 RECEIPT_RETENTION = timedelta(days=3)
 # Expired tokens stay listed briefly so their owner can see what ended.
 TOKEN_RETENTION = timedelta(days=7)
-
-
-def active_policies():
-    # Keep the worker's single-query revision snapshot while fencing all policy
-    # effects on the durable switch, including a missing/damaged singleton.
-    return RoomPolicy.objects.filter(Exists(SecurityState.objects.filter(pk=1, enabled=True)))
 
 
 def next_revision(room, current):
@@ -39,7 +33,7 @@ def next_revision(room, current):
 
 @transaction.atomic
 def claim_boundary(key, room, revision):
-    if not active_policies().filter(room_id=room, revision=revision).exists():
+    if not RoomPolicy.objects.filter(room_id=room, revision=revision).exists():
         return False
     _, created = BoundaryReceipt.objects.get_or_create(key=key, defaults={"room_id": room, "revision": revision})
     return created
@@ -55,7 +49,7 @@ def finish_boundary(key, outcome, room, revision):
 
 @transaction.atomic
 def save_reconcile(room, revision, state):
-    if not active_policies().filter(room_id=room, revision=revision).exists():
+    if not RoomPolicy.objects.filter(room_id=room, revision=revision).exists():
         return False
     # Caller supplies canonical worker status, never raw device replies.
     from .runtime import get_adapter
@@ -137,16 +131,16 @@ class Store:
     """The pure worker's persistent-store protocol."""
 
     def policies(self):
-        return [PolicyRecord(row.config, row.updated_at) for row in active_policies()]
+        return [PolicyRecord(row.config, row.updated_at) for row in RoomPolicy.objects.all()]
 
     def current_revision(self, room):
-        return active_policies().filter(room_id=room).values_list("revision", flat=True).first()
+        return RoomPolicy.objects.filter(room_id=room).values_list("revision", flat=True).first()
 
     def current_revisions(self, rooms):
         # Include missing rows: creation of a neighboring policy must invalidate
         # the same conflict snapshot as changing an existing revision.
         revisions = dict.fromkeys(rooms)
-        revisions.update(active_policies().filter(room_id__in=revisions).values_list("room_id", "revision"))
+        revisions.update(RoomPolicy.objects.filter(room_id__in=revisions).values_list("room_id", "revision"))
         return revisions
 
     def claim_boundary(self, room, revision, key, at):

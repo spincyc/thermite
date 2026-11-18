@@ -19,7 +19,6 @@ from oh_routes import ALIASES, PAGES
 from oh_identity.models import PersonalToken, User
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter
 from oh_identity.services import Problem, bootstrap, issue_token, save_user
-from oh_identity.security import get_state
 from oh_identity import hub as hubs
 from oh_identity.streams import stream
 from oh_identity.tests.test_core import PASSPHRASE, adapter
@@ -259,7 +258,7 @@ class Boundary(TransactionTestCase):
     @patch("oh_identity.streams.REVALIDATE", 0)
     def test_stream_revocation_and_disconnect_cleanup(self):
         token, _ = issue_token(self.admin, "stream")
-        snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token.pk), "security_revision": get_state().revision}
+        snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token.pk)}
         contract = self.adapter.contract
 
         async def check():
@@ -295,7 +294,7 @@ class Boundary(TransactionTestCase):
     @patch("oh_identity.hub.LINGER", 0)
     def test_one_real_wildcard_upstream_is_read_once_and_closed_with_its_last_stream(self):
         token, _ = issue_token(self.admin, "multi-stream")
-        snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token.pk), "security_revision": get_state().revision}
+        snapshot = {"user": self.admin.pk, "revision": self.admin.auth_revision, "token": str(token.pk)}
         contract = RuntimeContract({"den": {"source_item": "loc_den_source", "sources": ["player"]}},
                                    states={"public_volume": {"kind": "number", "max": 100, "commands": True}})
         reads = []

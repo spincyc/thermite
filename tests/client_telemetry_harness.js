@@ -6,7 +6,7 @@ const SOURCE = fs.readFileSync(path.join(__dirname, "../web/remote/access.js"), 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const origin = "https://site.example:13601", csrf = "C".repeat(32), TELEMETRY = "/api/v1/telemetry";
-const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, auth_enabled: true, permissions: ["site.read", "room.control"] };
+const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, permissions: ["site.read", "room.control"] };
 const answer = (value, status = 200, headers = {}) => ({ ok: status >= 200 && status < 300, status, json: async () => value,
   clone() { return answer(value, status, headers); }, headers: { get: name => headers[name] ?? null, getSetCookie: () => [] } });
 const never = () => new Promise(() => {});
@@ -23,7 +23,7 @@ function gateway() {
       return site.telemetry();
     }
     if (site.hang.has(route)) { site.clock += 8250; return never(); }
-    if (route === "/api/v1/security") return answer({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf });
+    if (route === "/api/v1/security") return answer({ bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false, csrf });
     if (route === "/api/v1/session") return answer({ csrf });
     if (route === "/api/v1/me") return answer(guest);
     if (route === "/api/v1/locks") return answer({ rooms: {} });
@@ -47,7 +47,7 @@ function page(options = {}) {
     addEventListener() {},
     fetch: async (url, init = {}) => {
       fetches.push({ route: new URL(url).pathname, init });
-      if (new URL(url).pathname === "/api/v1/security") return answer({ enabled: false, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf });
+      if (new URL(url).pathname === "/api/v1/security") return answer({ bootstrap_required: true, setup_available: false, guest_text: true, guest_cameras: false, csrf });
       if (new URL(url).pathname === TELEMETRY) return reports(init);
       return answer(null, 204);
     } };

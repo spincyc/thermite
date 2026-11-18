@@ -59,7 +59,7 @@ class CommandDeadline(Requests, TransactionTestCase):
         self.addCleanup(directory.cleanup)
         self.directory = Path(directory.name) / "locks"
         # Authentication off: every principal is a Guest, who may command.
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": False})
+        SecurityState.objects.update_or_create(pk=1)
         self.adapter = adapter()
         self.adapter.transport = SlowRuntime()
         self.adapter.command_lock = service.command_lock(FileLocks(self.directory), DEADLINE)

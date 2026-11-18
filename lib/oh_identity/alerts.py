@@ -40,8 +40,8 @@ Who is given what. Everyone who reads the site (a Guest, a Member, an
 Admin) is given the alerts that name a room, zone or device of the house,
 as they are given the rooms' sources and locks. An alert about the house
 as a whole (a service, the host, monitoring itself) is given only to
-whoever may read the System page: an Admin, while authentication is on
-(views.alerts). `firing` counts every firing alert whoever asks, so a
+whoever may read the System page: an Admin, so to nobody on a site with no
+account (views.alerts). `firing` counts every firing alert whoever asks, so a
 client shown fewer knows there are more.
 """
 

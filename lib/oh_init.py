@@ -18,7 +18,7 @@ README = ("# Private thermite configuration\n\n{house} Run `thermite check --con
           "--config /path/to/this/site`. The application is installed separately; this directory needs no launcher or "
           "Makefile. conf/, metrics/ and deploy/ are ignored build output. Never publish site facts upstream. init "
           "starts no service. `thermite install` deploys the native services and the HTTPS gateway, with its private "
-          "certificate authority, in one approved run; household authentication starts off until you enable it on the "
+          "certificate authority, in one approved run; the household has no account until you create the first on the "
           "gateway's Security page.\n")
 
 

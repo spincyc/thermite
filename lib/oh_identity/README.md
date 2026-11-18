@@ -5,64 +5,80 @@ runtime listener is sealed. It contains no production account or credential.
 Python 3.11 or newer is required. Install `lib/requirements-site.txt` with
 `pip --require-hashes` in the service's isolated environment.
 
-The Security page controls a persistent authentication property. New identity
-databases start with authentication off; existing databases with accounts
-migrate with authentication on. The gateway stays in place in both modes.
+Access has no mode (`security.py` states the model): three principals and
+three settings, none of which moves another. New identity databases start
+with no account. The gateway stays in place whether or not one exists.
 
-There are three principals. A **Guest** (no credential) reads the site and
-uses ordinary controls in unlocked rooms in either authentication mode, and
-sees camera media (`/unifi/media/…` snapshots and live video) only while
-authentication is off. A **Member** is any signed-in non-admin account and
-adds camera media. An **Admin** account (`admin: true`) adds account
-administration, pairing, room locks and schedules. Their canonical
-permissions, as `/api/v1/me` reports them:
+A **Guest** (no credential) reads the site and uses ordinary controls in
+unlocked rooms. A **Member** is any signed-in non-admin account and adds
+camera media (`/unifi/media/…` snapshots and live video). An **Admin**
+account (`admin: true`) adds account administration, pairing, the settings
+below, room locks and schedules. Their canonical permissions, as
+`/api/v1/me` reports them:
 
 | Principal | Permissions |
 |---|---|
-| Guest | `site.read`, `room.control`, plus `camera.view` while authentication is off |
+| Guest | `site.read`, `room.control`, plus `camera.view` while `guest_cameras` is on |
 | Member | `site.read`, `room.control`, `camera.view` |
 | Admin | Member plus `settings.manage`, `users.manage`, `pairing.manage` |
 
+The settings, each an Admin's:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `guest_cameras` | off | On, Guests see camera media as Members do. Off, camera media needs an account in every configuration. |
+| `guest_text` | on | Off, Guests do not see free text (below). |
+| each room's lock | none | A locked room refuses every principal's commands. |
+
 There are no roles or per-account room grants: Guests already control every
-unlocked room, so neither could restrict anything. Account administration,
-pairing, room locks and schedules are disabled by the backend when the switch
-is off, and the worker cannot enforce saved policies. Saved accounts and
-policies remain in private storage. Native testing mode is a separate
-direct-runtime path, not this property or an authentication fallback.
+unlocked room, so neither could restrict anything. Accounts exist or they do
+not, and nothing turns them off: with none, every client is a Guest and
+nothing is administered until the owner creates the first Admin. An account
+feature asked of a Guest answers 401 `login_required` either way. Native
+testing mode is a separate direct-runtime path, not an authentication
+fallback.
 
 For first activation, the owner runs `thermite access setup --descriptor …` on
 the service host. It prints a one-use code to an interactive terminal only.
 The database stores its digest and 15-minute expiry. Enter the code and a new
-administrator username/password on the HTTPS Security page. Account creation,
-code consumption and enabling authentication commit atomically. An unarmed,
+administrator username/password on the HTTPS Security page. Account creation
+and code consumption commit atomically, and change no setting or lock. An unarmed,
 expired, repeated or competing bootstrap cannot claim ownership. Alternatively,
 the local CLI calls `composition.initialize(state_directory, username,
 password, allowed_hosts)`, supplying the password from a hidden terminal
-prompt, to create the first Admin and enable authentication immediately.
+prompt, to create the first Admin.
 Further starts call
 `composition.setup(...)`, install a `runtime.RuntimeAdapter` through
 `install_adapter()`, then run `oh_identity.asgi:application` with a production
 ASGI server. No default state path, account, password or upstream token exists.
 
-GET `/api/v1/security` exposes only mode, revision, setup availability,
-`guest_text` and CSRF data. POST uses `{enabled,revision,password}`; first activation additionally
-requires `username` and `setup_code`. Re-enabling an existing site requires
-an active Admin's `username` and current password. Disabling requires the
-current Admin's password. Both browser writes and terminal bearer writes retain
-their existing CSRF/channel protections. Mode changes revoke prior sessions
-and tokens, fence queued commands and streams, and revise retained schedules
-so old worker receipts cannot execute after a transition. Clients can continue
-as Guests after enabling; privileged use requires a new browser sign-in or
-`thermite access login` in the terminal. An explicitly supplied expired or
-invalid session/token is rejected rather than downgraded to Guest; sign out
-to return to anonymous controls.
+GET `/api/v1/security` exposes only whether an account exists yet
+(`bootstrap_required`), setup availability, `guest_text`, `guest_cameras` and
+CSRF data. POST creates the first Admin from `{username,password,setup_code}`
+and answers 409 `already_initialized` once an account exists; it takes no
+other field. Browser writes and terminal bearer writes keep their CSRF and
+channel protections. Creating the first account changes nothing a Guest is
+given; privileged use requires a browser sign-in or `thermite access login`
+in the terminal. An explicitly supplied expired or invalid session/token is
+rejected rather than downgraded to Guest; sign out to return to anonymous
+controls.
+
+Migration `0005_independent_settings` turns the earlier release's
+authentication switch into these settings so that an upgrade changes one
+thing: `guest_cameras` starts off everywhere, also where the switch being off
+had shown the cameras to every client. Where the switch was on, the stored
+`guest_text` and every lock stand. Where it was off, Guests saw free text and
+no lock applied whatever was stored, so `guest_text` becomes on, each stored
+schedule is kept but disabled, each manual hold is released, and accounts
+that had been set aside sign in again with their passwords.
 
 `guest_text` says whether Guests see free-text Items: the activity feed's
 titles, artists, apps, playback and the like (contract states marked
 `free_text`). It is on until an Admin turns it off with PUT
 `/api/v1/security/guests` `{"guest_text": bool}` (the Security page; a Guest
-gets 401, a Member 403; audited as `security.guest_text_on`/`_off`), and binds
-only while authentication is on, since with it off every client is a Guest.
+gets 401, a Member 403; audited as `security.guest_text_on`/`_off`). The same
+request takes `{"guest_cameras": bool}`, alone or beside it
+(`security.guest_cameras_on`/`_off`).
 While it is off, a Guest's stream joins its view's `:without_text` variant,
 which carries neither those Items' values nor their events, and a Guest's GET
 of one's state is 404. A Guest stream opened under the other choice ends at
@@ -157,7 +173,7 @@ are bounded per peer and expire. A malformed body (missing field, wrong type,
 over-length password) is 400 `invalid_login`, not a failed guess.
 
 GET `/api/v1/me` returns `{id, username, active, admin, is_guest,
-auth_enabled, can_edit, site, permissions}`; a Guest is id 0, username
+can_edit, site, permissions}`; a Guest is id 0, username
 `Guest`. The token-login and session-login `user` members use the same shape.
 Admins use GET/POST `/api/v1/users` (`{users:[{id, username, active,
 admin}]}`; POST `{username, password, admin?}` answers 201) and PATCH/DELETE
@@ -236,17 +252,14 @@ throttle rows.
 Commands and admin mutations revalidate the originating session/PAT after lock
 or transaction waits, so a queued request cannot outlive credential revocation.
 
-The cold review for optional authentication identified the old client-only mode,
-unfenced worker effects, first-visitor ownership and stale credential elevation
-as the transition risks addressed above. It also found that password creation
-accepted lengths the login endpoint rejected; both now enforce the same
-1024-character maximum. Native-listener isolation remains a deployment
-requirement, not something a database toggle can establish.
+Password creation and login enforce the same 1024-character maximum.
+Native-listener isolation remains a deployment requirement, not something a
+database setting can establish.
 
 GET/PUT `/api/v1/rooms/<id>/policy` uses `{revision,config}`. Room IDs are
 inventory snake_case (`[a-z][a-z0-9_]{0,99}`), enforced by the URL converter,
-the runtime contract and the terminal client. Guests may read policy status
-while authentication is enabled; `can_edit` and `can_lock` are true for an
+the runtime contract and the terminal client. Guests may read policy status;
+`can_edit` and `can_lock` are true for an
 Admin. PUT is Admin-only (a Guest gets 401 `login_required`, a Member 403),
 CAS protected and delegates validation to the policy engine; a refusal is
 `{"error":"invalid_policy","reason":code,"field":path}` with the engine's fixed
@@ -276,14 +289,13 @@ persisted `manual_lock` contains `desired` and
 `started_at`; status exposes it with `can_lock`, and an active manual hold has
 `effective.reason=manual_lock` and no end time. It survives restarts, overrides
 scheduled actions, and remains active when the schedule's `enabled` flag is
-false. Schedule edits preserve the manual lock. Disabling authentication
-suspends both manual and scheduled enforcement without deleting them.
+false. Schedule edits preserve the manual lock.
 Unlocking always succeeds and releases only the manual hold: a remaining
 schedule that no longer validates (for example, it names a retired source) is
 kept but disabled for review. Unlocking leaves the current source in place
 unless a current schedule applies, and does not replay past daily-off actions.
 A lock window already active when a revision takes effect (unlocking into it,
-re-enabling authentication, any edit mid-window, a timezone rebase) gets one
+any edit mid-window, a timezone rebase) gets one
 catch-up start; the worker sends nothing when the room's Source Item already
 equals the target, so a current source's lifecycle actions are not replayed.
 Manual locks use the same configured route enforcement and physical-device
@@ -296,8 +308,7 @@ compiled house. `until` is a scheduled lock's end, else null; `reason` is
 `unlocked`, `room_locked`, `manual_lock` or `policy_unavailable`. One query
 reads every room's policy, and each is evaluated as policy status evaluates
 `effective`, so a saved active policy that cannot be evaluated is locked with
-`policy_unavailable`. Guests, Members and Admins read the same answer; while
-authentication is off every room is unlocked. Clients read it only while a
+`policy_unavailable`. Guests, Members and Admins read the same answer. Clients read it only while a
 room list is on show, at the policy status interval.
 
 GET `/api/v1/history/rooms` returns each room's confirmed source over the
@@ -356,7 +367,8 @@ alert's presence shows that rules are still evaluated.
 A Guest, a Member and an Admin are all given the alerts that name a room,
 zone or device of the house, as they are given the rooms' sources. An alert
 about the house as a whole (a service, the host, monitoring) is given only
-to whoever may read the System page: an Admin, while authentication is on.
+to whoever may read the System page: an Admin, so to nobody on a site with
+no account.
 Everyone else sees them only in `firing`. The plain-HTTP Guest listener
 serves a Guest's answer. Gateway request metrics count it as route `alerts`.
 

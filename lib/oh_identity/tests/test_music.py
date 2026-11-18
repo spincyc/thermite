@@ -28,7 +28,7 @@ from oh_identity import music, music_hub, streams, topics
 from oh_identity.auth import Guest
 from oh_identity.models import RoomPolicy, SecurityState
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter, plain
-from oh_identity.security import get_state, set_guest_text
+from oh_identity.security import set_guests
 from oh_identity.services import Problem, bootstrap
 from oh_identity.tests.test_core import PASSPHRASE
 from oh_identity.tests.test_trail import Requests, lines
@@ -768,8 +768,8 @@ class Gateway(Stand_in, Requests, TestCase):
 
     def test_a_guest_who_may_not_see_text_sees_speakers_but_no_titles(self):
         self.post(f"/api/v1/music/{AMP}/play", {"ref": ALBUM})
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
-        set_guest_text(self.owner, False)
+        SecurityState.objects.update_or_create(pk=1)
+        set_guests(self.owner, {"guest_text": False})
         now = self.speakers()[AMP]["now_playing"]
         self.assertEqual(set(now), {"duration", "elapsed", "at"})
         art = self.music.read()["speakers"][2]["now_playing"]["art"]
@@ -872,8 +872,8 @@ class Gateway(Stand_in, Requests, TestCase):
             response = self.get("/api/v1/events/music")
             self.assertEqual((response.status_code, response["Content-Type"], response["Cache-Control"]),
                              (200, "text/event-stream", "no-store"))
-            SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
-            set_guest_text(self.owner, False)
+            SecurityState.objects.update_or_create(pk=1)
+            set_guests(self.owner, {"guest_text": False})
             self.get("/api/v1/events/music")
             self.signin("owner")
             self.get("/api/v1/events/music")
@@ -1039,9 +1039,8 @@ class Events(Stand_in, TransactionTestCase):
     """The music event stream's hub on a running loop."""
 
     def setUp(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
-        self.revision = get_state().revision
-        self.guest = Guest(self.revision, True)
+        SecurityState.objects.update_or_create(pk=1)
+        self.guest = Guest(False)
         self.start_music()
 
     def check(self, body):
@@ -1099,7 +1098,7 @@ class Events(Stand_in, TransactionTestCase):
 
     def test_a_client_stream_of_the_music_view_reads_the_music_hub(self):
         async def body(hub):
-            frames = streams.stream(self.adapter, music_hub.VIEW, {"guest": True, "security_revision": self.revision},
+            frames = streams.stream(self.adapter, music_hub.VIEW, {"guest": True},
                                     hub=lambda: hub)
             first = json.loads((await asyncio.wait_for(anext(frames), 5)).decode()[len("data: "):])
             self.assertEqual((first["type"], first["view"], len(first["music"]["speakers"])), ("snapshot", "music", 3))

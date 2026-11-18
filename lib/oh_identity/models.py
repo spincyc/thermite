@@ -5,24 +5,16 @@ import uuid
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
-# Three principals. A Guest (no credential) reads the site and controls
-# unlocked rooms in either mode, and sees cameras only while authentication
-# is off. A signed-in Member adds cameras; an Admin adds administration.
-GUEST = ("site.read", "room.control")
-MEMBER = (*GUEST, "camera.view")
-ADMIN = (*MEMBER, "settings.manage", "users.manage", "pairing.manage")
-
-
 class SecurityState(models.Model):
-    """One durable site switch; setup capabilities are never stored in plaintext."""
+    """The site's one row of settings (oh_identity.security states the access
+    model) and the owner's setup capability, never stored in plaintext."""
     id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
-    enabled = models.BooleanField(default=False)
-    revision = models.PositiveIntegerField(default=1)
     setup_digest = models.CharField(max_length=64, blank=True)
     setup_expires_at = models.DateTimeField(null=True, blank=True)
-    # Whether a Guest sees free-text Items (titles, artists, apps) while
-    # authentication is on; an Admin's choice (security.guests_see_text).
+    # Whether a Guest sees free-text Items (titles, artists, apps).
     guest_text = models.BooleanField(default=True)
+    # Whether a Guest sees the cameras, as an account does.
+    guest_cameras = models.BooleanField(default=False)
 
     class Meta:
         constraints = [models.CheckConstraint(condition=models.Q(id=1), name="security_singleton")]
@@ -69,9 +61,9 @@ class ReconcileState(models.Model):
 
 
 class Audit(models.Model):
-    """Security events. principal is guest/session/token/password/local/
-    anonymous; peer is a keyed digest of the peer's address bucket, never
-    the address itself."""
+    """Security events. principal is guest/session/token/password/setup/
+    local/anonymous; peer is a keyed digest of the peer's address bucket,
+    never the address itself."""
     at = models.DateTimeField(auto_now_add=True)
     actor_id = models.PositiveBigIntegerField(null=True)
     action = models.CharField(max_length=40)

@@ -19,7 +19,8 @@ from oh_access import metrics
 
 from .addresses import peer_bucket
 from .models import LoginThrottle, PersonalToken, RoomPolicy, User
-from .services import Problem, audit, is_admin, peer_digest, permissions
+from .security import get_state, permissions
+from .services import Problem, audit, is_admin, peer_digest
 
 # Password attempts. A (username, peer) pair locks hard after a few failures;
 # a username across all peers is slowed exponentially but never locked, so
@@ -38,8 +39,8 @@ HASH_WAIT = 10
 class Guest:
     """The anonymous principal: in memory only, never a stored account.
 
-    auth_enabled is the switch it was admitted under; any later transition
-    changes the security revision, which every effect path rechecks.
+    cameras is the guest_cameras setting it was admitted under, for the one
+    request it is the principal of.
     """
     pk = 0
     username = "Guest"
@@ -48,16 +49,16 @@ class Guest:
     is_guest = True
     auth_revision = 0
 
-    def __init__(self, revision, auth_enabled, peer=""):
-        self.auth_enabled = auth_enabled
-        self._identity_context = {"guest": True, "security_revision": revision, "peer": peer}
+    def __init__(self, cameras, peer=""):
+        self.cameras = cameras
+        self._identity_context = {"guest": True, "peer": peer}
 
 
 #: Every problem code the gateway answers with (tests hold every Problem and
 #: failure() to it). thermite_gateway_problems_total counts each by code;
 #: anything outside it counts as other.
 PROBLEMS = frozenset({
-    "already_initialized", "authentication_disabled", "authorization_changed", "credential_expired",
+    "already_initialized", "authorization_changed", "credential_expired",
     "csrf_failed", "device_locked", "forbidden", "history_unavailable", "invalid_active", "invalid_admin", "invalid_command",
     "invalid_contract", "invalid_host", "invalid_json", "invalid_lock", "invalid_login", "invalid_origin",
     "invalid_pairing_command", "invalid_password", "invalid_policy", "invalid_sdp", "invalid_security",
@@ -142,49 +143,39 @@ class IdentityCSRF(CsrfViewMiddleware):
 
 
 def principal(request):
-    from .security import get_state
-    state = get_state()
-    # The authentication prologue reuses this read; revalidate() and effect
-    # paths always read the switch again after any lock or transaction wait.
-    request.identity_state = state
+    """The request's principal: its token's or session's account, else the
+    Guest. A credential that no longer holds is refused, never a Guest."""
+    # The settings as this request was admitted; what a Guest sees reuses the read.
+    state = request.identity_state = get_state()
     peer = peer_digest(request)
     token = getattr(request, "identity_token", None)
     if token:
         # bearer() has just checked the token, account and revision.
-        if not state.enabled:
-            raise Problem("authentication_disabled", 403)
-        token.user._identity_context = {"token": token.pk, "security_revision": state.revision, "peer": peer}
+        token.user._identity_context = {"token": token.pk, "peer": peer}
         return token.user
     if not request.user.is_authenticated:
         if request.headers.get("Authorization") or request.COOKIES.get(settings.SESSION_COOKIE_NAME):
             raise Problem("session_expired", 401)
-        return Guest(state.revision, state.enabled, peer)
-    if not state.enabled:
-        request.session.flush()
-        raise Problem("authentication_disabled", 403)
+        return Guest(state.guest_cameras, peer)
     user = User.objects.filter(pk=request.user.pk, is_active=True).first()
     if not user or request.session.get("identity_revision") != user.auth_revision:
         # Like a deleted session, the rejection happens once: the flushed
         # session's cookie is cleared, and the next request is a Guest.
         request.session.flush()
         raise Problem("session_expired", 401)
-    user._identity_context = {"session": request.session.session_key, "security_revision": state.revision, "peer": peer}
+    user._identity_context = {"session": request.session.session_key, "peer": peer}
     return user
 
 
 def revalidate(user):
-    """Recheck a queued HTTP credential after lock/DB waits, just before effects."""
+    """Recheck a queued HTTP credential after lock/DB waits, just before
+    effects. A Guest has none to lose: what it may command is each room's
+    lock, read under that room's lock."""
     context = getattr(user, "_identity_context", None)
     if context is None:
         return  # Explicit trusted-local service calls have no HTTP credential.
-    from .security import get_state
-    state = get_state()
-    if context.get("security_revision") != state.revision:
-        raise Problem("authorization_changed", 401)
     if context.get("guest"):
         return
-    if not state.enabled:
-        raise Problem("authentication_disabled", 403)
     if not User.objects.filter(pk=user.pk, is_active=True, auth_revision=user.auth_revision).exists():
         raise Problem("authorization_changed", 401)
     if context.get("token"):
@@ -196,16 +187,14 @@ def revalidate(user):
         raise Problem("credential_expired", 401)
 
 
-def require_account(request, user):
-    """Account-only features: authentication must be on and a Guest must sign in."""
-    if not request.identity_state.enabled:
-        raise Problem("authentication_disabled", 403)
+def require_account(user):
+    """Account-only features: a Guest must sign in."""
     if getattr(user, "is_guest", False):
         raise Problem("login_required", 401)
 
 
-def require_admin(request, user):
-    require_account(request, user)
+def require_admin(user):
+    require_account(user)
     if not is_admin(user):
         raise Problem("forbidden", 403)
 
@@ -223,9 +212,9 @@ def api(permission=None, methods=("GET",), *, account=False, admin=False, item_m
                     raise Problem("method_not_allowed", 405, allow=allowed)
                 user = principal(request)
                 if admin:
-                    require_admin(request, user)
+                    require_admin(user)
                 elif account:
-                    require_account(request, user)
+                    require_account(user)
                 if permission and permission not in permissions(user):
                     raise Problem("login_required", 401) if getattr(user, "is_guest", False) else Problem("forbidden", 403)
                 request.identity_user = user
@@ -279,9 +268,6 @@ def login_user(request, data, create_session=True):
     username, secret = data.get("username"), data.get("password")
     if not isinstance(username, str) or not isinstance(secret, str) or len(username) > 150 or len(secret) > 1024:
         raise Problem("invalid_login", 400)
-    if create_session:
-        from .security import require_enabled
-        security_revision = require_enabled().revision
     peer = peer_bucket(request.META.get("REMOTE_ADDR"))
     name = username.casefold()
     # Forwarded headers are ignored; the direct peer is the only address.
@@ -311,13 +297,10 @@ def login_user(request, data, create_session=True):
         audit(None, "login", account or "", outcome="denied", request=request)
         raise Problem("invalid_login", 401)
     if create_session:
-        # Password verification runs outside the write transaction. The switch
-        # and account revisions must still match before minting a session; an
-        # off/on cycle cannot grant a login that began under an earlier switch.
+        # Password verification runs outside the write transaction. The account
+        # must still be as it was verified before a session is minted.
         with transaction.atomic():
-            state = require_enabled()
-            if state.revision != security_revision or not User.objects.filter(
-                    pk=user.pk, is_active=True, auth_revision=user.auth_revision).exists():
+            if not User.objects.filter(pk=user.pk, is_active=True, auth_revision=user.auth_revision).exists():
                 raise Problem("authorization_changed", 401)
             login(request, user)
             request.session["identity_revision"] = user.auth_revision

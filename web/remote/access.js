@@ -20,8 +20,7 @@
     invalid_password: "Choose a stronger password.", invalid_policy: "Check the schedule times, days and sources.",
     invalid_user: "Check the username and password.",
     csrf_failed: "The sign-in form expired. Reload and try again.", access_unavailable: "Access service unavailable.",
-    auth_disabled: "Enable authentication in Security to use accounts, pairing, locks and schedules.",
-    authentication_disabled: "Enable authentication in Security to use accounts, pairing, locks and schedules.",
+    auth_disabled: "Create the first administrator in Security to use accounts, pairing, locks and schedules.",
     security_unavailable: "Authentication settings are unavailable. Try again when the access service is ready.",
     authorization_changed: "Your account permissions changed. Sign in again.",
     invalid_security: "Check the authentication settings and try again.",
@@ -100,7 +99,7 @@
     if (!value || !Number.isInteger(value.id) || typeof value.username !== "string" || value.username.length > 150
         || /[\x00-\x1f\x7f-\x9f]/.test(value.username) || !Array.isArray(value.permissions)) throw problem("invalid_response");
     return { id: value.id, username: value.username, admin: value.admin === true,
-      can_edit: value.can_edit === true, is_guest: value.is_guest === true, auth_enabled: value.auth_enabled !== false, site: typeof value.site === "string" ? value.site : null,
+      can_edit: value.can_edit === true, is_guest: value.is_guest === true, site: typeof value.site === "string" ? value.site : null,
       permissions: value.permissions.filter((permission) => PERMISSIONS.includes(permission)) };
   }
   // This client's label for the gateway's command trail (X-Thermite-Client):
@@ -363,30 +362,30 @@
         new Promise((_, reject) => { timer = setTimeout(() => { controller?.abort(); reject(problem("client_timeout")); }, config.readTimeout || 8000); })
       ]).finally(() => clearTimeout(timer));
     }
+    // The gateway has no authentication mode: an account exists or none does
+    // yet (bootstrap_required), and what Guests see is two settings of their
+    // own. enabled, which authEnabled() answers, is "an account exists":
+    // only then is there anyone to sign in, hold a lock or administer.
     function securityStatus(value) {
-      if (!value || typeof value.enabled !== "boolean" || !Number.isInteger(value.revision) || value.revision < 0
-          || typeof value.bootstrap_required !== "boolean" || typeof value.setup_available !== "boolean"
-          || value.guest_text !== undefined && typeof value.guest_text !== "boolean") throw problem("invalid_response");
-      // A gateway that predates guest_text shows Guests everything.
-      return { enabled: value.enabled, revision: value.revision, bootstrap_required: value.bootstrap_required,
-        setup_available: value.setup_available, guest_text: value.guest_text !== false };
+      if (!value || typeof value.bootstrap_required !== "boolean" || typeof value.setup_available !== "boolean"
+          || typeof value.guest_text !== "boolean" || typeof value.guest_cameras !== "boolean") throw problem("invalid_response");
+      return { enabled: !value.bootstrap_required, bootstrap_required: value.bootstrap_required,
+        setup_available: value.setup_available, guest_text: value.guest_text, guest_cameras: value.guest_cameras };
     }
     async function loadSecurity() {
       if (legacy) return null;
-      if (mock) return security || (security = { enabled: true, revision: 0, bootstrap_required: false, setup_available: false, guest_text: true });
+      if (mock) return security || (security = { enabled: true, bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false });
       if (!discovering) discovering = (async () => {
         const revision = authRevision, answer = await firstRead("/api/v1/security", false, true); stale(revision);
-        const next = securityStatus(answer), changed = security && security.revision !== next.revision;
-        security = next;
-        if (changed) lost("session_expired");
-        if (!next.enabled) ended = false;
+        security = securityStatus(answer);
+        if (!security.enabled) ended = false;
         csrf = answer.csrf || null; notify("security"); return security;
       })().finally(() => { discovering = null; });
       return discovering;
     }
     async function ready() {
       if (legacy) return null;
-      if (mock) { await loadSecurity(); user = { id: 1, username: "Demo", admin: true, can_edit: true, is_guest: false, auth_enabled: true, permissions: PERMISSIONS.slice() }; return user; }
+      if (mock) { await loadSecurity(); user = { id: 1, username: "Demo", admin: true, can_edit: true, is_guest: false, permissions: PERMISSIONS.slice() }; return user; }
       if (ended) throw problem("login_required", 401);
       if (user) return user;
       if (!loading) loading = (async () => {
@@ -396,7 +395,6 @@
           const answer = await firstRead("/api/v1/session"); csrf = answer.csrf;
         }
         const answer = principal(await firstRead("/api/v1/me", true)); stale(revision);
-        if (answer.auth_enabled !== mode.enabled) { lost("session_expired"); throw problem("session_expired", 401); }
         user = answer; notify("change"); return user;
       })().catch((error) => { if (error.status === 401 && !ended && !error.stale) lost(error.code); throw error; })
         .finally(() => { loading = null; });
@@ -625,6 +623,12 @@
       async setGuestText(value) {
         if (legacy || mock) throw problem("access_not_configured", 404);
         security = securityStatus(await json("/api/v1/security/guests", "PUT", { guest_text: value }));
+        notify("security"); return security;
+      },
+      // An Admin's choice of whether Guests see the cameras, as accounts do.
+      async setGuestCameras(value) {
+        if (legacy || mock) throw problem("access_not_configured", 404);
+        security = securityStatus(await json("/api/v1/security/guests", "PUT", { guest_cameras: value }));
         notify("security"); return security;
       },
       clear: lost,

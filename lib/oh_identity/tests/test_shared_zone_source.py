@@ -12,7 +12,6 @@ import oh_room_policy
 from oh_identity.auth import Guest
 from oh_identity.models import RoomPolicy
 from oh_identity.runtime import install_adapter
-from oh_identity.security import get_state
 from oh_identity.services import Problem, bootstrap
 from oh_identity.tests.test_core import PASSPHRASE
 
@@ -62,7 +61,7 @@ class SharedZoneSource(TestCase):
 
     def outcome(self, room, action, value):
         try:
-            self.adapter.dispatch(Guest(get_state().revision, True), room, action, value)
+            self.adapter.dispatch(Guest(False), room, action, value)
             return "sent"
         except Problem as refused:
             return refused.code

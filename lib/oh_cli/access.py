@@ -12,9 +12,9 @@ import oh_ports
 from oh_access import AccessError
 
 DESCRIPTION = """Run a site's HTTPS boundary and room-policy worker, or log
-this terminal into a site. The Security page controls authentication. Local
+this terminal into a site. The Security page holds what guests see. Local
 setup issues a one-use code to create the first admin there; bootstrap instead
-prompts privately and enables authentication immediately. Staging prepares
+prompts privately and creates it at once. Staging prepares
 persistent code, private authority, a pinned
 environment, and owner-installable units; it starts no service.
 
@@ -97,7 +97,7 @@ def main(argv=None):
         sub.add_argument("--descriptor", required=True, type=Path, metavar="FILE", help=SERVICE_DESCRIPTOR)
         if name == "bootstrap":
             sub.add_argument("--user", required=True, help="first admin's username")
-    sub = oh_cli.action(commands, "audit", "read the security audit (logins, tokens, accounts, locks, the security switch)",
+    sub = oh_cli.action(commands, "audit", "read the security audit (logins, tokens, accounts, locks, what guests see)",
                         examples=[example for example in EXAMPLES if " audit " in example[0]])
     sub.add_argument("--descriptor", required=True, type=Path, metavar="FILE", help=SERVICE_DESCRIPTOR)
     sub.add_argument("--since", metavar="WHEN", help="only rows since 30m, 12h, 7d, or an ISO date or time (site timezone)")
@@ -172,7 +172,7 @@ def main(argv=None):
                 raise AccessError("Setup codes require an interactive terminal; do not redirect them to logs")
             from oh_access.service import prepare_setup
             code = prepare_setup(args.descriptor)
-            print("Open the site's HTTPS Security page and enable authentication.")
+            print("Open the site's HTTPS Security page and create the first administrator.")
             print("One-use setup code (expires in 15 minutes): " + code)
             return 0
         elif args.command == "migrate":

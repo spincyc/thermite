@@ -101,7 +101,7 @@ async def _discard(message):
 
 class Listening(TestCase):
     def setUp(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": False, "revision": 1})
+        SecurityState.objects.update_or_create(pk=1)
         temporary = tempfile.TemporaryDirectory(dir=settings.STATE)
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -187,12 +187,10 @@ class Listening(TestCase):
             self.assertEqual((response.status_code, response["Content-Type"]), (200, "text/event-stream"))
         self.assertEqual(call("get", "/api/v1/events/pair").status_code, 404)
         self.assertEqual(call("get", "/rest/events", {"topics": "openhab/items/loc_den_source/stateupdated"}).status_code, 404)
-        SecurityState.objects.filter(pk=1).update(enabled=True)
         policy = body(call("get", "/api/v1/rooms/den/policy"))
         self.assertEqual((policy["room"], policy["can_lock"], policy["effective"]["allowed"]), ("den", False, True))
 
     def test_room_lists_read_every_rooms_lock_as_on_https(self):
-        SecurityState.objects.filter(pk=1).update(enabled=True)
         RoomPolicy.objects.create(room_id="den", config={"locked": True})
         locks = call("get", "/api/v1/locks")
         self.assertEqual((locks.status_code, locks["Cache-Control"]), (200, "no-store"))
@@ -201,17 +199,19 @@ class Listening(TestCase):
         self.assertEqual(call("head", "/api/v1/locks").status_code, 405)
         self.assertEqual(call("post", "/api/v1/locks", {}).status_code, 405)
 
-    def test_every_answer_is_a_guest_in_both_modes_and_cameras_stay_closed(self):
-        for enabled in (False, True):
-            SecurityState.objects.filter(pk=1).update(enabled=enabled)
-            with self.subTest(enabled=enabled):
+    def test_every_answer_is_a_guest_and_cameras_stay_closed_whatever_guests_may_see(self):
+        # The cameras are the HTTPS site's alone: this listener serves none
+        # of their pages or media even to a Guest who may see them there.
+        for cameras in (False, True):
+            SecurityState.objects.filter(pk=1).update(guest_cameras=cameras)
+            with self.subTest(guest_cameras=cameras):
                 me = body(call("get", "/api/v1/me"))
-                self.assertEqual((me["id"], me["is_guest"], me["auth_enabled"], me["can_edit"]), (0, True, enabled, False))
-                self.assertEqual("camera.view" in me["permissions"], not enabled)
+                self.assertEqual((me["id"], me["is_guest"], me["can_edit"]), (0, True, False))
+                self.assertEqual("camera.view" in me["permissions"], cameras)
                 for path in ("/unifi/media/camera/snapshot", "/cameras/", "/static/remote/cameras.json"):
                     self.assertEqual(call("get", path).status_code, 404)
                 status = body(call("get", "/api/v1/security"))
-                self.assertEqual(status["enabled"], enabled)
+                self.assertEqual(status["guest_cameras"], cameras)
                 self.assertNotIn("csrf", status)
 
     def test_access_config_makes_the_page_guest_only_with_the_secure_site(self):
@@ -221,7 +221,6 @@ class Listening(TestCase):
         self.assertIn(b'"mode":"authenticated"', self.https().get("/static/remote/access-config.js", secure=True).content)
 
     def test_credentials_are_refused_and_never_used(self):
-        SecurityState.objects.filter(pk=1).update(enabled=True)
         owner = bootstrap("owner", PASSPHRASE)
         _, token = issue_token(owner, "guest listener fixture")
         browser = self.https()
@@ -305,7 +304,6 @@ class Listening(TestCase):
         self.assertEqual(guests._value.get(), requests + 1)
 
     def test_room_locks_refuse_guest_commands_as_on_https(self):
-        SecurityState.objects.filter(pk=1).update(enabled=True)
         RoomPolicy.objects.create(room_id="den", config={"locked": True})
         command = {"action": "source", "value": "off"}
         locked = call("post", "/api/v1/rooms/den/commands", command)
@@ -354,7 +352,7 @@ class AllOff(TransactionTestCase):
     def setUp(self):
         commands.shutdown()
         self.addCleanup(commands.shutdown)
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True, "revision": 1})
+        SecurityState.objects.update_or_create(pk=1)
         rooms = {name: {"source_item": "loc_" + name + "_source", "sources": ["player"]} for name in ("den", "desk")}
         self.adapter = RuntimeAdapter(RuntimeContract(rooms), FakeRuntime(), Policy())
         install_adapter(self.adapter)
@@ -606,7 +604,7 @@ class GuestHttp11Gateway(TransactionTestCase):
     holding one for as long as its page is shown."""
 
     def setUp(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
+        SecurityState.objects.update_or_create(pk=1)
         self.runtime = EventRuntime()
         install_adapter(RuntimeAdapter(adapter().contract, self.runtime, Policy()))
 

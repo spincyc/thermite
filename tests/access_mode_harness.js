@@ -6,9 +6,11 @@ const Administration = require("../tui/remote/administration"), { Grid } = requi
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const origin = "https://site.example:13601", csrfValue = "C".repeat(32), csrfName = "thermite_0123456789abcdef_csrf";
 const confirmation = "F".repeat(16);
-const mode = (enabled, revision = 1) => ({ enabled, revision, bootstrap_required: !enabled, setup_available: false, guest_text: true, csrf: csrfValue });
-const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, auth_enabled: false, permissions: ["site.read", "room.control", "camera.view"] };
-const admin = { ...guest, id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, auth_enabled: true, permissions: [...guest.permissions, "settings.manage", "users.manage", "pairing.manage"] };
+// What /api/v1/security answers: accounts exist (true) or none does yet. enabled is the client's own
+// reading of it (access.js securityStatus), for the stand-in clients that hand a page this object.
+const mode = (accounts) => ({ enabled: accounts, bootstrap_required: !accounts, setup_available: false, guest_text: true, guest_cameras: false, csrf: csrfValue });
+const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, permissions: ["site.read", "room.control"] };
+const admin = { ...guest, id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, permissions: [...guest.permissions, "camera.view", "settings.manage", "users.manage", "pairing.manage"] };
 const response = (value, status = 200, cookies = []) => ({ ok: status >= 200 && status < 300, status, json: async () => value, headers: { getSetCookie: () => cookies } });
 const house = { rooms: [{ id: "den", label: "Den", sources: [] }], sources: {} };
 function textOf(node) { return [node.textContent || "", ...(node.children || []).map(textOf)].join(" "); }
@@ -74,7 +76,7 @@ async function browser(page, client) {
     assert.equal(init.headers.get("Authorization"), null);
     if (route === "/api/v1/security") return response(mode(true));
     if (route === "/api/v1/session") return response({ csrf: csrfValue });
-    if (route === "/api/v1/me") return response({ ...guest, auth_enabled: true, permissions: ["site.read", "room.control"] });
+    if (route === "/api/v1/me") return response(guest);
     if (route.endsWith("/policy")) return response({ room: "den", revision: 0, manual_lock: null, can_lock: false,
       effective: { allowed: true, locked: false } });
     if (route.endsWith("/commands")) { assert.equal(init.headers.get("X-CSRFToken"), csrfValue); return response({ ok: true }); }
@@ -118,33 +120,31 @@ async function browser(page, client) {
   } });
   await assert.rejects(invalid.ready(), error => error.code === "invalid_token"); assert.equal(invalid.current(), null);
 
-  let enabled = true, revision = 1, release; const events = [];
+  let accounts = false, release; const events = [];
   const changing = Access.create({ base: origin, allowSession: true, fetch: async (url, init) => {
     const route = new URL(url).pathname;
-    if (route === "/api/v1/security" && init.method === "POST") { enabled = false; revision++; return response(mode(enabled, revision)); }
-    if (route === "/api/v1/security") return response(mode(enabled, revision));
-    if (route === "/api/v1/session") return response({ csrf: csrfValue });
-    if (route === "/api/v1/me") return response(enabled ? admin : guest);
-    if (route.endsWith("/policy")) return response({ room: "den", revision: 1, effective: { allowed: false, locked: true }, can_edit: true });
+    if (route === "/api/v1/security" && init.method === "POST") { accounts = true; return response(mode(accounts)); }
+    if (route === "/api/v1/security") return response(mode(accounts));
+    if (route === "/api/v1/me") return response(guest);
     if (route.endsWith("/pending")) return new Promise(resolve => { release = resolve; });
     throw Error("Unexpected route: " + route);
   } });
-  changing.subscribe(event => events.push(event.type)); await changing.ready(); await changing.loadPolicy("den");
-  // A known lock is refused here; nothing reaches the gateway (an unexpected route would fail as connection_failed).
-  assert(!changing.canControl("den")); await assert.rejects(changing.command("den", "source", "off"), error => error.code === "room_locked");
+  changing.subscribe(event => events.push(event.type)); await changing.ready();
+  // With no account there is nobody to hold a lock: none is read and nothing is held back.
+  assert.equal(changing.authEnabled(), false); assert(changing.canControl("den")); assert.equal(changing.policy("den"), null);
   const pending = changing.fetch(origin + "/pending"); await tick();
-  const transition = await changing.setSecurity({ enabled: false, revision: 1, password: confirmation });
-  assert.equal(transition.enabled, false); assert.equal(changing.current(), null); assert.equal(changing.policy("den"), null);
+  // The first administrator: what the client knew is dropped, and an answer still in flight is refused.
+  const created = await changing.setSecurity({ username: "owner", password: confirmation, setup_code: "S".repeat(43) });
+  assert.equal(created.enabled, true); assert.equal(created.guest_cameras, false); assert.equal(changing.current(), null);
   release(response({ obsolete: true })); await assert.rejects(pending, error => error.stale === true);
-  assert(events.includes("unauthorized")); await changing.ready(); assert(changing.canControl("den"));
-  enabled = true; revision++; await changing.loadSecurity(); assert.equal(changing.current(), null); assert.equal(changing.authEnabled(), true);
+  assert(events.includes("unauthorized")); assert.equal(changing.authEnabled(), true);
 
   let principalReply; const late = Access.create({ base: origin, allowSession: true, fetch: async (url, init) => {
-    if (new URL(url).pathname === "/api/v1/security") return response(mode(init.method !== "POST", init.method === "POST" ? 2 : 1));
+    if (new URL(url).pathname === "/api/v1/security") return response(mode(init.method === "POST"));
     if (new URL(url).pathname === "/api/v1/session") return response({ csrf: csrfValue });
     return new Promise(resolve => { principalReply = resolve; });
   } });
-  const reading = late.ready(); await tick(); await late.setSecurity({ enabled: false, revision: 1, password: confirmation });
+  const reading = late.ready(); await tick(); await late.setSecurity({ username: "owner", password: confirmation, setup_code: "S".repeat(43) });
   principalReply(response(admin)); await assert.rejects(reading, error => error.stale === true); assert.equal(late.current(), null);
 
   const recoveryCalls = [];
@@ -160,7 +160,7 @@ async function browser(page, client) {
 
   let submitted = null;
   const bootstrap = await browser("security", { native: false, loadSecurity: async () => mode(false),
-    ready: () => { throw Error("public setup must not require a session"); }, setSecurity: async value => { submitted = value; return mode(true, 2); } });
+    ready: () => { throw Error("public setup must not require a session"); }, canEdit: () => false, setSecurity: async value => { submitted = value; return mode(true); } });
   const form = bootstrap.host.children.find(child => child.tag === "form"); assert(form);
   assert.equal(form.elements.password.minLength, 12); assert.equal(form.elements.password.autocomplete, "new-password");
   assert(form.elements.setup_code.required); assert.equal(form.elements.confirm_password.type, "password");
@@ -168,26 +168,30 @@ async function browser(page, client) {
   form.elements.username.value = "owner"; form.elements.password.value = "Q".repeat(16); form.elements.setup_code.value = "S".repeat(43);
   form.elements.confirm_password.value = "different"; await form.handlers.submit({ preventDefault() {} }); assert.equal(submitted, null);
   form.elements.confirm_password.value = form.elements.password.value; await form.handlers.submit({ preventDefault() {} });
-  assert.equal(submitted.enabled, true); assert.equal(submitted.revision, 1); assert.equal(submitted.username, "owner"); assert.equal(submitted.setup_code.length, 43);
+  assert.equal(Object.keys(submitted).sort().join(), "password,setup_code,username"); assert.equal(submitted.username, "owner"); assert.equal(submitted.setup_code.length, 43);
   assert.equal(form.elements.password.value, ""); assert.equal(form.elements.confirm_password.value, ""); assert.equal(form.elements.setup_code.value, "");
   assert.deepEqual(bootstrap.redirects, ["/account/?next=%2Fsecurity%2F"]);
-  const reenable = await browser("security", { native: false, loadSecurity: async () => ({ ...mode(false, 3), bootstrap_required: false }) });
-  const reenableForm = reenable.host.children.find(child => child.tag === "form");
-  assert(reenableForm.elements.username); assert(!reenableForm.elements.setup_code); assert(!reenableForm.elements.confirm_password);
-  assert.equal(reenableForm.elements.password.autocomplete, "current-password");
+  // Before any account the page says what guests see, cameras included, and offers no switch for it.
+  assert(textOf(bootstrap.guests).includes("Guests do not see the cameras.")); assert(!bootstrap.guests.children.some(child => child.tag === "form"));
   const member = await browser("security", { native: false, loadSecurity: async () => mode(true), ready: async () => ({ ...admin, admin: false, can_edit: false }), canEdit: () => false, current: () => ({ username: "Member", is_guest: false }) });
   assert(!member.host.children.some(child => child.tag === "form")); assert(textOf(member.host).includes("Switch to an administrator account"));
-  // What guests see: an Admin's checkbox, a Member's sentence, nothing while authentication is off.
-  assert(textOf(member.guests).includes("Guests see it.")); assert(!member.guests.children.some(child => child.tag === "form"));
-  let guestText = null;
+  // What guests see: an Admin's checkboxes, anyone else's sentences. No account page turns accounts off.
+  assert(textOf(member.guests).includes("Guests see it.")); assert(textOf(member.guests).includes("Guests do not see the cameras."));
+  assert(!member.guests.children.some(child => child.tag === "form"));
+  let guestText = null, guestCameras = null;
   const owner = await browser("security", { native: false, loadSecurity: async () => mode(true), ready: async () => admin, canEdit: () => true,
-    current: () => admin, setGuestText: async value => { guestText = value; return { ...mode(true), guest_text: value }; } });
+    current: () => admin, setGuestText: async value => { guestText = value; return { ...mode(true), guest_text: value }; },
+    setGuestCameras: async value => { guestCameras = value; return { ...mode(true), guest_cameras: value }; } });
+  assert(!owner.host.children.some(child => child.tag === "form"), "nothing disables accounts");
+  const cameraBox = owner.guests.children.find(child => child.tag === "form").elements.guest_cameras;
+  assert.equal(cameraBox.type, "checkbox"); assert.equal(cameraBox.checked, false);
+  cameraBox.checked = true; await cameraBox.handlers.change();
+  assert.equal(guestCameras, true); assert.equal(cameraBox.checked, true); assert.equal(guestText, null);
   const guestBox = owner.guests.children.find(child => child.tag === "form").elements.guest_text;
   assert.equal(guestBox.type, "checkbox"); assert.equal(guestBox.checked, true);
   guestBox.checked = false; await guestBox.handlers.change();
   assert.equal(guestText, false); assert.equal(guestBox.checked, false); assert.equal(guestBox.disabled, false);
-  assert.deepEqual(reenable.guests.children, []);
-  const settings = await browser("settings", off); assert(settings.status.textContent.includes("Enable authentication")); assert(settings.hidden.hidden);
+  const settings = await browser("settings", off); assert(settings.status.textContent.includes("Create the first administrator in Security")); assert(settings.hidden.hidden);
   const native = await browser("security", { native: true }); assert(native.status.textContent.includes("Configure and open the thermite gateway"));
   const guestAccount = await browser("access", unsigned);
   assert(guestAccount.login.handlers.submit, "guest gets sign-in form for elevation");
@@ -198,12 +202,12 @@ async function browser(page, client) {
 
   const terminal = Administration.create(off, house, () => {}); await terminal.open("security");
   let grid = new Grid(100, null, "base"); terminal.content(grid, 100, { ui: {} });
-  assert(grid.text().includes("Authentication is off")); assert(grid.text().includes(origin + "/security/")); assert(grid.text().includes("thermite access setup"));
+  assert(grid.text().includes("No accounts yet")); assert(grid.text().includes("Guests do not see the cameras")); assert(grid.text().includes(origin + "/security/")); assert(grid.text().includes("thermite access setup"));
   await terminal.open("settings", "den"); grid = new Grid(100, null, "base"); terminal.content(grid, 100, { ui: {} });
-  assert(grid.text().includes("Enable authentication in Security")); assert.equal(terminal.state.form, null);
+  assert(grid.text().includes("Create the first administrator in Security")); assert.equal(terminal.state.form, null);
   const offlineTerminal = Administration.create(unavailable, house, () => {}); await offlineTerminal.open("account");
   grid = new Grid(100, null, "base"); offlineTerminal.content(grid, 100, { ui: {} });
-  assert(grid.text().includes("Authentication status unavailable")); assert(!grid.text().includes("Authentication is off"));
+  assert(grid.text().includes("Authentication status unavailable")); assert(!grid.text().includes("No accounts yet"));
   const guestTerminal = Administration.create(unsigned, house, () => {}); await guestTerminal.open("account");
   grid = new Grid(100, null, "base"); guestTerminal.content(grid, 100, { ui: {} });
   assert(grid.text().includes("Guest · no sign-in required"));
@@ -214,7 +218,7 @@ async function browser(page, client) {
   const listener = Access.create({ base: plain, guest: true, secure, fetch: async (url, init) => {
     const route = new URL(url).pathname; plainCalls.push(route);
     if (route === "/api/v1/security") { const { csrf, ...status } = mode(true); return response(status); }
-    if (route === "/api/v1/me") return response({ ...guest, auth_enabled: true, permissions: ["site.read", "room.control"] });
+    if (route === "/api/v1/me") return response(guest);
     if (route === "/api/v1/rooms/den/policy") return response({ room: "den", revision: 0, can_lock: false, effective: { allowed: true, locked: false } });
     if (route === "/api/v1/rooms/den/commands") {
       assert.equal(init.headers.get("Content-Type"), "application/json");

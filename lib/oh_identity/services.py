@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from .models import ADMIN, GUEST, MEMBER, Audit, PersonalToken, User
+from .models import Audit, PersonalToken, User
 
 
 class Problem(Exception):
@@ -60,23 +60,12 @@ def audit(actor, action, target="", outcome="ok", *, request=None, kind=None):
         rows.filter(id__lt=value).delete()
 
 
-def permissions(user):
-    """The canonical permission list for /api/v1/me and every check."""
-    if getattr(user, "is_guest", False):
-        return set(GUEST) if user.auth_enabled else {*GUEST, "camera.view"}
-    if not user.is_active:
-        return set()
-    return set(ADMIN if user.admin else MEMBER)
-
-
 def is_admin(user):
     return bool(not getattr(user, "is_guest", False) and user.is_active and user.admin)
 
 
 def admin_actor(actor):
-    from .security import require_enabled
     from .auth import revalidate
-    require_enabled()
     revalidate(actor)
     fresh = User.objects.filter(pk=actor.pk).first()
     if not fresh or fresh.auth_revision != actor.auth_revision or not is_admin(fresh):
@@ -99,8 +88,10 @@ def password(user, value):
 
 
 @transaction.atomic
-def bootstrap(username, secret):
-    """First admin after local ownership or a validated owner-issued setup code."""
+def bootstrap(username, secret, *, request=None):
+    """First admin after local ownership or a validated owner-issued setup
+    code (request, whose peer the audit row then names). It spends any
+    setup code that is armed."""
     if User.objects.exists():
         raise Problem("already_initialized", 409)
     if not isinstance(username, str) or not username or len(username) > 150:
@@ -112,12 +103,9 @@ def bootstrap(username, secret):
         raise Problem("invalid_user") from None
     password(user, secret)
     user.save()
-    # Trusted local bootstrap retains its explicit enable-authentication meaning.
-    from .security import transition
     from .models import SecurityState
-    state, _ = SecurityState.objects.get_or_create(pk=1)
-    transition(state, True, user)
-    audit(user, "bootstrap", user.pk)
+    SecurityState.objects.update_or_create(pk=1, defaults={"setup_digest": "", "setup_expires_at": None})
+    audit(user, "bootstrap", user.pk, request=request, kind="setup" if request is not None else None)
     return user
 
 
@@ -159,9 +147,7 @@ def save_user(actor, data, ident=None):
 def issue_token(user, name, days=30, *, request=None, kind=None):
     """request and kind attribute the audit row when user carries no request
     credential: token login authenticates by password, not a session."""
-    from .security import require_enabled
     from .auth import revalidate
-    require_enabled()
     revalidate(user)
     if not isinstance(name, str) or not name.strip() or len(name) > 80 or any(ord(c) < 32 or 127 <= ord(c) < 160 for c in name) or isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 90:
         raise Problem("invalid_token")

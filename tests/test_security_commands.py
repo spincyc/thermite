@@ -88,7 +88,7 @@ class TerminalCredentials(unittest.TestCase):
         self.assertTrue(self.path.exists())
 
     def test_status_reports_the_principal_shape_and_checks_room_ids(self):
-        me = {"id": 2, "username": "operator", "active": True, "admin": False, "is_guest": False, "auth_enabled": True,
+        me = {"id": 2, "username": "operator", "active": True, "admin": False, "is_guest": False,
               "can_edit": False, "site": "site", "permissions": ["camera.view", "room.control", "site.read"], "extra": "x"}
         result = self.client.status(self.url, config_home=self.home, http=lambda *args, **kwargs: me)
         self.assertEqual(result["user"], {key: value for key, value in me.items() if key != "extra"})

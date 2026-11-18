@@ -552,7 +552,7 @@ class Gateway(Step):
                 raise AccessError("gateway HTTPS security response exceeds its bound")
             value = json.loads(body)
             if (response.status != 200 or not isinstance(value, dict)
-                    or type(value.get("enabled")) is not bool or type(value.get("revision")) is not int):
+                    or type(value.get("bootstrap_required")) is not bool or type(value.get("guest_cameras")) is not bool):
                 raise AccessError("gateway HTTPS security endpoint returned an unexpected response")
         finally:
             connection.close()

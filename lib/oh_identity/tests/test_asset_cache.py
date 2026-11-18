@@ -37,7 +37,7 @@ UNSHARED = ("index.html", "house.js", "cameras.json", "system.json")
 
 class AssetCache(TransactionTestCase):
     def setUp(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": False})
+        SecurityState.objects.update_or_create(pk=1)
         temporary = tempfile.TemporaryDirectory(dir=settings.STATE)
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)

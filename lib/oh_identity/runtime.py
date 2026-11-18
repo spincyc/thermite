@@ -352,9 +352,6 @@ class RuntimeAdapter:
         from django.utils import timezone
         from oh_room_policy import active
         from .models import RoomPolicy
-        from .security import get_state
-        if not get_state().enabled:
-            return
         saved = RoomPolicy.objects.filter(room_id=room_id).first()
         if not saved or not active(saved.config):
             return
@@ -479,8 +476,8 @@ class RuntimeAdapter:
             raise Problem("invalid_pairing_command")
 
     def pair(self, user, item, value, *, origin=None):
-        # Pairing has effects outside ordinary room commands. Share the switch's
-        # room locks so a queued pairing request cannot cross a disable.
+        # Pairing has effects outside ordinary room commands, so it holds
+        # every room's lock while it runs.
         # Callers validate first; nothing unauthorized waits on every room lock.
         self.pairing_command(item, value)
         # The trail never names the value: it may be a pairing code.
@@ -489,11 +486,9 @@ class RuntimeAdapter:
                 return self._pair(user, item, value, record)
 
     def _pair(self, user, item, value, record):
-        from .security import require_enabled
         from .models import User
         from .services import is_admin
         from .auth import revalidate
-        require_enabled()
         revalidate(user)
         fresh = User.objects.filter(pk=user.pk).first()
         if fresh is None or fresh.auth_revision != user.auth_revision or not is_admin(fresh):

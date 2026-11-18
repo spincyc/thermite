@@ -320,7 +320,7 @@ function create(options) {
 
   function openPairing() {
     if (options.access && !options.access.native && !options.access.authEnabled()) {
-      pairing.alert = "Enable authentication in Security (F3) to pair devices."; pairing.loaded = true; changed(); return;
+      pairing.alert = "Create the first administrator in Security (F3) to pair devices."; pairing.loaded = true; changed(); return;
     }
     if (options.access && !options.access.native && options.access.current() && !options.access.has("pairing.manage")) {
       pairing.alert = "Sign in as an administrator with thermite access login to pair devices."; pairing.loaded = true; changed(); return;
@@ -1070,7 +1070,7 @@ function create(options) {
 
   // Why K and o cannot manage this room's lock: an administrator waits for it to be known.
   function manageRefusal(lock) {
-    return lock.reason || (lock.enabled ? "Sign in as an administrator to lock rooms" : "Enable authentication in Security to lock rooms");
+    return lock.reason || (lock.enabled ? "Sign in as an administrator to lock rooms" : "Create the first administrator in Security to lock rooms");
   }
 
   // A bubble's lock menu as a small sheet; false when it offers nothing.

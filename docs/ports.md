@@ -23,7 +23,7 @@ fails before starting them starts `thermite.target`, and so every service.
 | Port | Listener | Binding / use |
 | --- | --- | --- |
 | 13600 | Optional plain-HTTP Guest controls | Listed `guest_http.listen` addresses, admitting only `guest_http.clients`; no listener without `guest_http` |
-| 13601 | Application HTTPS with toggleable authentication; `gateway: port` moves it | Configured address; TLS required |
+| 13601 | Application HTTPS, for guests and accounts; `gateway: port` moves it | Configured address; TLS required |
 | 13602 | Native runtime HTTP | 127.0.0.1 only; verified device callbacks use the relay |
 | 13603 | Native runtime HTTPS | 127.0.0.1 only |
 | 13604 | Native Karaf console | 127.0.0.1 only; its account has [this installation's own password](service-account.md#files-and-permissions) |
@@ -50,7 +50,7 @@ fails before starting them starts `thermite.target`, and so every service.
 | 13627 | Music Assistant API (`music:` hosts only) | 127.0.0.1 only; the gateway is its one client; non-loopback access blocked by the managed native firewall |
 | 13628 | Music Assistant audio streams (`music:` hosts only) | Every address: the speakers fetch what they play from it |
 
-HTTPS is the application entry point whether authentication is on or off.
+HTTPS is the application entry point whether or not an account exists.
 [Moving the HTTPS application](#moving-the-https-application) explains its
 override.
 The Guest port is the one application listener without TLS, and it serves

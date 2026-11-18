@@ -213,7 +213,7 @@ class GuestListener(TestCase):
     listener's scope mark, principal guest, a peer digest and no address."""
 
     def setUp(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True, "revision": 1})
+        SecurityState.objects.update_or_create(pk=1)
         self.adapter = adapter()
         install_adapter(self.adapter)
 
@@ -328,20 +328,21 @@ class Auditing(Requests, TestCase):
         PersonalToken.objects.all().delete()
         self.assertEqual(Audit.objects.get(action="token.revoke").target, ident[:8] + " laptop")
 
-    def test_the_security_switch_names_the_credential_and_peer_that_changed_it(self):
-        from oh_identity.security import get_state
+    def test_a_change_to_what_guests_see_names_the_credential_and_peer_that_made_it(self):
         self.signin("owner")
         with self.captureOnCommitCallbacks(execute=True):
-            off = self.request("post", "/api/v1/security", {"enabled": False, "revision": get_state().revision,
-                                                             "password": PASSPHRASE}, REMOTE_ADDR="192.0.2.70")
+            on = self.request("put", "/api/v1/security/guests", {"guest_cameras": True}, REMOTE_ADDR="192.0.2.70")
+            self.assertEqual((on.status_code, on.json()["guest_cameras"]), (200, True))
+            # Saying the same again changes nothing and records nothing.
+            self.request("put", "/api/v1/security/guests", {"guest_cameras": True}, REMOTE_ADDR="192.0.2.70")
+            off = self.request("put", "/api/v1/security/guests", {"guest_cameras": False, "guest_text": False},
+                               REMOTE_ADDR="192.0.2.71")
             self.assertEqual(off.status_code, 200)
-            self.request("get", "/api/v1/session")
-            on = self.request("post", "/api/v1/security", {"enabled": True, "revision": get_state().revision,
-                                                            "username": "owner", "password": PASSPHRASE}, REMOTE_ADDR="192.0.2.71")
-            self.assertEqual(on.status_code, 200)
-        rows = list(Audit.objects.filter(action__in=("security.disable", "security.enable")).order_by("id")
+        rows = list(Audit.objects.filter(action__startswith="security.guest").order_by("id")
                     .values_list("action", "principal", "peer", "actor_id"))
-        self.assertEqual([row[:2] for row in rows[-2:]], [("security.disable", "session"), ("security.enable", "password")])
+        self.assertEqual([row[:2] for row in rows], [("security.guest_cameras_on", "session"),
+                                                     ("security.guest_cameras_off", "session"),
+                                                     ("security.guest_text_off", "session")])
         self.assertEqual(rows[-1][2], trail.peer_digest("192.0.2.71"))
         self.assertTrue(rows[-2][2] and rows[-1][3] == self.owner.pk)
 
@@ -351,9 +352,9 @@ class Auditing(Requests, TestCase):
         self.request("delete", f"/api/v1/tokens/{token.pk}")
         guess = "wrong-guess"
         self.request("post", "/api/v1/session", {"username": "operator", "password": guess})
-        Audit.objects.filter(action__in=("bootstrap", "security.enable")).update(at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        Audit.objects.filter(action="bootstrap").update(at=datetime(2026, 1, 1, tzinfo=timezone.utc))
         actions = [entry["action"] for entry in audit_reader.select()]
-        self.assertEqual(actions[:2], ["security.enable", "bootstrap"])
+        self.assertEqual(actions[:1], ["bootstrap"])
         self.assertEqual([entry["action"] for entry in audit_reader.select(actions=["token"])], ["token.create", "token.revoke"])
         recent = [entry["action"] for entry in audit_reader.select(after="1d")]
         self.assertEqual(recent[0], "login")

@@ -12,7 +12,7 @@ from oh_identity.tests.test_core import FakeRuntime
 
 class SecurityHeaders(TransactionTestCase):
     def setUp(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
+        SecurityState.objects.update_or_create(pk=1)
 
     def test_guest_remote_pages_work_but_invalid_credentials_require_explicit_recovery(self):
         with tempfile.TemporaryDirectory(dir=settings.STATE) as temporary:

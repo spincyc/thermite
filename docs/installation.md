@@ -72,9 +72,8 @@ Edit `instance/devices.yaml` and `instance/host.yaml` for your own equipment
 and time zone; see [host layout](#host-layout) before adding a `root`.
 Init's inventory is fictional: use it only
 for the mock example, then replace its devices before commissioning real
-equipment. Keep the default gateway access mode. The gateway's persistent
-Security switch controls household authentication separately; a new site
-starts with that switch off.
+equipment. Keep the default gateway access mode. Household accounts are separate, on
+the gateway's Security page; a new site starts with none.
 Port assignments are listed in [ports](ports.md).
 
 ```sh
@@ -301,7 +300,7 @@ reports the underlying command's error; the validation does not apply rules or
 change existing firewall tables.
 
 The gateway uses the same verified application and generated client assets as
-the native deployment. Existing household identities, authentication settings,
+the native deployment. Existing household identities, Security settings,
 TLS material and callback routes are preserved across redeployment; the names
 it answers to, its listening address and its timezone come from this host and
 `instance/host.yaml` on every run. Internal runtime credentials remain separate
@@ -314,7 +313,7 @@ also lead there. The web and terminal interfaces share navigation, room and
 device controls, pairing, diagnostics, camera status, topology, accounts and
 room schedules. Camera media and specialist administration open in a browser
 from an explicit terminal choice. Ordinary controls are available without a
-login in either authentication mode. Guests can control unlocked rooms. A room
+login. Guests can control unlocked rooms. A room
 that is Off shows no remote until a device is chosen for its buttons. In a
 locked room the bubble for what it shows, Off included, carries a padlock and
 the others are greyed out; selecting the padlocked bubble explains the lock.
@@ -324,11 +323,12 @@ and Remotes alike, chooses whether they list the rooms with a screen or those
 with speakers.
 If a room's lock cannot be read, its remote says the status is unknown and
 keeps working; the server still refuses commands to a locked room.
-The Security page enables accounts. Each account is either an administrator
-or an ordinary account, with no other roles or per-account room access.
-Guests control unlocked rooms; ordinary accounts add camera snapshots and live
-video while authentication is on; administrators also manage locks,
-schedules, users, pairing and the system. Guests still see camera status.
+The Security page creates the first account. Each account is either an
+administrator or an ordinary account, with no other roles or per-account room
+access. Guests control unlocked rooms; ordinary accounts add camera snapshots
+and live video; administrators also manage locks, schedules, users, pairing
+and the system. Guests still see camera status, and see camera video only if
+an administrator turns on "Guests see the cameras" on the Security page.
 
 Administrators can use **Lock room**, under Info on Remotes, to hold the current reported
 source or Off until **Unlock room** is selected. The server captures the source;
@@ -452,16 +452,18 @@ client. Back up `var/gateway/authority/` with the site's other private state:
 if it is lost, the next run creates a new authority and every client must trust
 it again.
 
-A new identity starts with authentication **off**. Ordinary house controls
-remain available through HTTPS without a household login when authentication
-is enabled; ordinary accounts can also view camera snapshots and live video,
-and administrators manage locks, schedules, users, pairing and the system. Open **Security** to
-enable accounts when ready. The first enable requires owner-authorized
-setup and creation of the first administrator; visiting the page does not
-claim ownership. Once an administrator exists, changing the switch requires
-administrator authentication. Disabling it suspends locks and schedules while
-preserving accounts, locks and schedules for later use; existing sessions and
-personal tokens are revoked. See the
+A new identity starts with no account. Ordinary house controls work through
+HTTPS without a household login, before and after accounts exist; ordinary
+accounts can also view camera snapshots and live video, and administrators
+manage locks, schedules, users, pairing and the system. Open **Security** to
+create the first administrator when ready: it requires owner-authorized
+setup, and visiting the page does not claim ownership. There is no
+authentication switch. What guests see is two settings of their own on that
+page, each an administrator's: titles, artists and apps (on unless turned
+off) and the cameras (off unless turned on). Room locks hold whoever asks,
+whatever those settings say. An upgrade from a release that had the switch
+leaves the cameras closed to guests, also where the switch being off had
+shown them to everyone. See the
 [identity reference](https://github.com/spincyc/thermite/blob/main/lib/oh_identity/README.md)
 for owner setup and the account model.
 

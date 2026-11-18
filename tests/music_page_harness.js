@@ -885,7 +885,7 @@ async function gateway(out) {
 // access.js's music calls on a fake fetch: the paths, the CSRF of a command, the problems.
 async function client(out) {
   const origin = 'https://site.example:13601', csrf = 'C'.repeat(32), csrfName = 'thermite_0123456789abcdef_csrf';
-  const guest = {id: 0, username: 'Guest', admin: false, can_edit: false, is_guest: true, auth_enabled: true, permissions: ['site.read']};
+  const guest = {id: 0, username: 'Guest', admin: false, can_edit: false, is_guest: true, permissions: ['site.read']};
   const response = (value, status = 200, cookies = []) => ({ok: status >= 200 && status < 300, status, json: async () => value,
     clone() { return this; }, headers: {getSetCookie: () => cookies}});
   const calls = [];
@@ -894,7 +894,7 @@ async function client(out) {
     calls.push([init && init.method || 'GET', address.pathname + address.search, init && init.body ? JSON.parse(init.body) : null,
                 init && init.headers && typeof init.headers.get === 'function' ? init.headers.get('X-CSRFToken') : null]);
     if (address.pathname === '/api/v1/security') {
-      return response({enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: false, csrf},
+      return response({bootstrap_required: false, setup_available: false, guest_text: false, guest_cameras: false, csrf},
                       200, [csrfName + '=' + csrf + '; Path=/; Secure']);
     }
     if (address.pathname === '/api/v1/session') return response({authenticated: false, csrf});

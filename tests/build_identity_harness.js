@@ -12,7 +12,7 @@ const origin = "https://site.example:13601";
 const OWN = "aaaaaaaaaaaaaaaa", NEXT = "bbbbbbbbbbbbbbbb", LATER = "cccccccccccccccc";
 const answer = value => ({ ok: true, status: 200, json: async () => value, text: async () => JSON.stringify(value),
   clone() { return answer(value); }, headers: { get: () => null, getSetCookie: () => [] } });
-const user = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, auth_enabled: true, permissions: ["site.read"] };
+const user = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, permissions: ["site.read"] };
 
 // The tab's sessionStorage, which outlives each of its pages.
 function storage() {
@@ -38,7 +38,7 @@ async function load({ build = OWN, search = "", session = storage() } = {}) {
   const context = vm.createContext({ URL, URLSearchParams, Headers, AbortController, console, performance, setTimeout, clearTimeout, document,
     location: { search, href: origin + "/" + search, origin, protocol: "https:", reload() { page.reloads++; }, replace() {} },
     EventSource: Source, addEventListener() {},
-    fetch: async url => answer({ "/api/v1/security": { enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true },
+    fetch: async url => answer({ "/api/v1/security": { bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false },
       "/api/v1/me": user }[new URL(url, origin).pathname] || {}) });
   Object.defineProperty(context, "sessionStorage", { get() { if (!session) throw new Error("storage is refused"); return session; } });
   vm.runInContext(fs.readFileSync(path.join(web, "access.js"), "utf8"), context, { filename: "access.js" });

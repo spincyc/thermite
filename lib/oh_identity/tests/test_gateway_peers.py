@@ -96,7 +96,7 @@ class HeldRequests(TransactionTestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.cert, self.key = certificate(directory.name)
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
+        SecurityState.objects.update_or_create(pk=1)
         install_adapter(RuntimeAdapter(adapter().contract, EventRuntime(), Policy()))
         # A fresh limiter: an earlier test's refusal must not suppress this one.
         warnings = patch.object(trail, "warnings", trail.Limited())

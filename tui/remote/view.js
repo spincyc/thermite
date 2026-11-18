@@ -1171,7 +1171,7 @@ function sheet(frame, ctx, width, height) {
       inner.put(1, 0, "Remotes", "strong");
       button(inner, ctx, 1, 2, "Rooms & remotes", "menu:remote", { kind: "screen", screen: "remote", key: "menu:remote", focus: true, label: "Rooms and remotes" });
       if (Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) button(inner, ctx, 1, 6, "Pair devices · F6", "menu:pairing", { kind: "screen", screen: "pairing", key: "menu:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
-      else paragraph(inner, 1, 6, iw - 2, ctx.access.authEnabled() ? "Sign in as an administrator to pair devices." : "Enable authentication in Security (F3) to pair devices.", "dim");
+      else paragraph(inner, 1, 6, iw - 2, ctx.access.authEnabled() ? "Sign in as an administrator to pair devices." : "Create the first administrator in Security (F3) to pair devices.", "dim");
     },
     "audio-choice": (inner, iw) => Listen.choiceSheet(inner, iw, ctx, KIT),
     "audio-inputs": (inner, iw) => Listen.inputSheet(inner, iw, ctx, KIT),

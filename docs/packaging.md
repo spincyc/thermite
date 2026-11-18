@@ -161,7 +161,7 @@ installed one back in the same run; see
 Existing identity, security settings, certificates and callback routes are
 adopted. The gateway's hosts, listening address and timezone come from the
 host on every run, and a certificate whose names no longer match is reissued
-by the same authority. A fresh gateway has authentication off until owner-authorized first
+by the same authority. A fresh gateway has no account until owner-authorized first
 administrator setup on Security; it prints its HTTPS URL and the path of its
 private certificate authority's certificate, which each client trusts once.
 The authority lives in the site's `var/gateway/authority/`; see

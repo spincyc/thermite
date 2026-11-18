@@ -14,7 +14,6 @@ from oh_identity import auth, streams, telemetry
 from oh_identity import hub as hubs
 from oh_identity.models import SecurityState
 from oh_identity.runtime import RuntimeAdapter, install_adapter
-from oh_identity.security import get_state
 from oh_identity.tests.test_core import adapter
 from oh_identity.tests.test_event_hub import Upstream, contract, frame
 
@@ -87,7 +86,7 @@ class Limits(SimpleTestCase):
 
 class Endpoint(TestCase):
     def setUp(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True, "revision": 1})
+        SecurityState.objects.update_or_create(pk=1)
         install_adapter(adapter())
         self.addCleanup(setattr, telemetry, "limits", telemetry.limits)
         telemetry.limits = telemetry.Limits(per_peer=2, total=100)
@@ -185,7 +184,7 @@ class StreamMetering(TransactionTestCase):
     EventHub.status(), never from hooks of their own."""
 
     def setUp(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
+        SecurityState.objects.update_or_create(pk=1)
         observing = patch.object(hubs, "observers", [])
         observing.start()
         self.addCleanup(observing.stop)
@@ -196,7 +195,7 @@ class StreamMetering(TransactionTestCase):
         self.assertEqual(hubs.observers, [metrics.observe])
         open_streams = metrics.SSE_STREAMS.labels("home", "2")
         ended = metrics.SSE_SECONDS.labels("client")
-        guest = {"guest": True, "security_revision": get_state().revision}
+        guest = {"guest": True}
         meta = {"view": "home", "origin": "https", "principal": "guest", "http_version": "2", "peer": "digest"}
 
         async def body():

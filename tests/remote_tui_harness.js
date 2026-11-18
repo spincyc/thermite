@@ -81,9 +81,9 @@ function gateway(house, options) {
     site.calls.push(method + " " + route);
     // A sign-in ended (site.expired): every request refused.
     if (site.expired) return json({ error: "unauthorized" }, 401);
-    if (route === "/api/v1/security") return json({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf: "C".repeat(32) });
+    if (route === "/api/v1/security") return json({ bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false, csrf: "C".repeat(32) });
     if (route === "/api/v1/session") return json({ csrf: "C".repeat(32) });
-    if (route === "/api/v1/me") return json({ id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, auth_enabled: true,
+    if (route === "/api/v1/me") return json({ id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false,
       permissions: ["site.read", "room.control", "camera.view", "settings.manage", "users.manage", "pairing.manage"] });
     if (route === "/api/v1/users") return json({ users: [{ id: 1, username: "Admin", admin: true, active: true }, { id: 2, username: "example", admin: false, active: true }] });
     if (route === "/api/v1/locks") return json({ rooms: Object.fromEntries(house.rooms.map((room) => [room.id, { locked: false, manual: false, until: null, reason: "unlocked" }])) });

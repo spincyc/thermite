@@ -99,22 +99,20 @@ the bootstrap command with:
 sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access setup --descriptor "$RELEASE/config.json"
 ```
 
-This initializes a fresh schema with authentication off and prints a one-use
+This initializes a fresh schema with no account and prints a one-use
 code to the interactive terminal. After completing the activation boundary
-checks below and starting the gateway, open `/security/`, enable authentication,
-and enter the code plus the first administrator's username and password. The
+checks below and starting the gateway, open `/security/` and enter the code
+plus the first administrator's username and password. The
 code expires after 15 minutes; run setup again for a replacement. It cannot
 replace existing accounts. Keep the code out of logs, URLs and shared messages.
 
-The Security toggle changes private identity state; it does not regenerate
-inventory, restart services, or switch clients to native REST. Guests can use
-ordinary controls in unlocked rooms through the gateway in either mode; camera
-media needs an account while authentication is on.
-Account management, pairing, lock changes and schedules require authentication.
-With authentication off, locks and schedules are suspended. Accounts and
-policies survive toggles, but every prior
-browser session and terminal token is revoked. Subsequent toggles require an
-active administrator's current password. Use the Account page to switch to an
+The Security page's settings change private identity state; they do not
+regenerate inventory, restart services, or switch clients to native REST.
+Guests can use ordinary controls in unlocked rooms through the gateway; camera
+media needs an account unless an Admin turns on "Guests see the cameras".
+Account management, pairing, lock changes and schedules need an Admin, and
+room locks hold whoever asks. Nothing turns accounts off once one exists. Use
+the Account page to switch to an
 Admin, or have an Admin change your role in Users and sign in again. Terminal
 elevation uses `thermite access login --url https://… --user …` and reopening
 the remote. No application role grants host sudo privileges.
@@ -134,8 +132,9 @@ sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/the
 Copy the state after stopping services and before the migration command.
 Then activate the new release using its reviewed plan. `serve` and `worker`
 refuse pending migrations; they never silently upgrade existing authority.
-The security-state migration preserves existing accounts as authentication
-enabled. The principals migration replaces roles and room grants with one
+The independent-settings migration replaces the authentication switch
+(`oh_identity/README.md` says what each stored state becomes): after it no
+Guest sees the cameras until an Admin turns that on. The principals migration replaces roles and room grants with one
 `admin` flag: accounts holding the reserved Admin role become admins and all
 others become Members; custom roles, Viewer and room grants are dropped.
 For rollback across a schema change, stop both services and restore the whole
@@ -225,7 +224,7 @@ records once a day.
 Terminal clients need no login for ordinary Guest controls. To elevate, use
 `access login --url https://… --user …`. `access status` reports the
 `/api/v1/me` principal (`id`, `username`, `active`, `admin`, `is_guest`,
-`auth_enabled`, `can_edit`, `site`, `permissions`). The personal
+`can_edit`, `site`, `permissions`). The personal
 token is stored atomically in an owned mode-0600 regular file under
 `${XDG_CONFIG_HOME:-~/.config}/thermite/sites/<sha256-origin>.json`. Its five
 fields are `version`, `origin`, `token`, `id`, and `expires_at`. A private CA

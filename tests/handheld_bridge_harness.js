@@ -81,9 +81,9 @@ function gateway(house) {
   const site = { sources: [], states: Object.fromEntries(house.rooms.map((room) => ["loc_" + room.id + "_source", "off"])) };
   site.fetch = async (url, init) => {
     const route = new URL(url).pathname;
-    if (route === "/api/v1/security") return reply({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf: "C".repeat(32) }, 200);
+    if (route === "/api/v1/security") return reply({ bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false, csrf: "C".repeat(32) }, 200);
     if (route === "/api/v1/session") return reply({ csrf: "C".repeat(32) }, 200);
-    if (route === "/api/v1/me") return reply({ id: 1, username: "example", admin: false, can_edit: true, is_guest: false, auth_enabled: true, permissions: ["site.read", "room.control"] }, 200);
+    if (route === "/api/v1/me") return reply({ id: 1, username: "example", admin: false, can_edit: true, is_guest: false, permissions: ["site.read", "room.control"] }, 200);
     if (/^\/api\/v1\/rooms\/[a-z0-9_]+\/commands$/.test(route) && init && init.method === "POST") return reply({ accepted: true }, 202);
     return reply({ error: "not_found" }, 404);
   };

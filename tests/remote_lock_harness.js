@@ -12,9 +12,9 @@ const origin = "https://site.example:13601", csrf = "C".repeat(32);
 const json = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value, text: async () => JSON.stringify(value),
   clone() { return json(value, status); }, headers: { get: () => "application/json", getSetCookie: () => [] } });
 const text = value => ({ ok: true, status: 200, text: async () => value, json: async () => { throw new SyntaxError("text"); }, headers: { get: () => "text/plain", getSetCookie: () => [] } });
-const admin = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, auth_enabled: true,
+const admin = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false,
   permissions: ["site.read", "room.control", "camera.view", "settings.manage", "users.manage", "pairing.manage"] };
-const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, auth_enabled: true, permissions: ["site.read", "room.control"] };
+const guest = { id: 0, username: "Guest", admin: false, can_edit: false, is_guest: true, permissions: ["site.read", "room.control"] };
 const ROOMS = Shared.load().house.rooms.map(({ id }) => id);
 
 function gateway(options) {
@@ -29,7 +29,7 @@ function gateway(options) {
   site.fetch = async (url, init = {}) => {
     const target = new URL(url), route = target.pathname, method = (init.method || "GET").toUpperCase();
     site.calls.push(method + " " + route);
-    if (route === "/api/v1/security") return json({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf });
+    if (route === "/api/v1/security") return json({ bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false, csrf });
     if (route === "/api/v1/session") return json({ csrf });
     if (route === "/api/v1/me") return json(site.principal);
     if (route === "/api/v1/locks") {

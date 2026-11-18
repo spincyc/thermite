@@ -111,7 +111,7 @@ class RoomHistory(TestCase):
         self.assertEqual(later["end"], END + 60)
 
     def test_authentication_on_still_lets_guests_read(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
+        SecurityState.objects.update_or_create(pk=1)
         self.read(Prometheus([]))
 
     def test_prometheus_failures_are_unavailable_and_not_cached(self):
@@ -132,7 +132,7 @@ class RoomHistory(TestCase):
         self.assertEqual(response.status_code, 405)
 
     def test_the_guest_listener_does_not_serve_it(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": False, "revision": 1})
+        SecurityState.objects.update_or_create(pk=1)
         prometheus = Prometheus([])
         with patch.object(history, "query", prometheus):
             response = async_to_sync(GuestClient().get)("/api/v1/history/rooms")

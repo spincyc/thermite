@@ -16,7 +16,6 @@ from oh_identity.auth import Guest
 from oh_identity.models import Audit, PersonalToken, RoomPolicy, User
 from oh_identity.policy_store import Store
 from oh_identity.runtime import install_adapter
-from oh_identity.security import get_state, transition
 from oh_identity.services import Problem, bootstrap, issue_token
 from oh_identity.streams import valid
 from oh_identity.tests.test_core import PASSPHRASE, adapter
@@ -74,7 +73,7 @@ class ManualLocks(Requests, TestCase):
         replacement = adapter()
         replacement.policy = oh_room_policy
         with self.assertRaises(Problem) as denied:
-            replacement.dispatch(Guest(get_state().revision, True), "den", "source", "off")
+            replacement.dispatch(Guest(False), "den", "source", "off")
         self.assertEqual(denied.exception.code, "room_locked")
         self.assertEqual(self.adapter.transport.commands, [])
         self.assertEqual(Audit.objects.filter(action="room.lock").count(), 2)
@@ -94,7 +93,6 @@ class ManualLocks(Requests, TestCase):
     def test_guest_remote_controls_and_status_work_with_authentication_enabled(self):
         me = self.request("get", "/api/v1/me", token=False).json()
         self.assertTrue(me["is_guest"])
-        self.assertTrue(me["auth_enabled"])
         self.assertFalse(me["can_edit"])
         self.assertEqual(self.command(token=False).status_code, 202)
         self.adapter.transport.commands.clear()
@@ -107,7 +105,7 @@ class ManualLocks(Requests, TestCase):
             for action, value in (("source", "off"), ("volume", 45)):
                 self.assertEqual(self.command(action=action, value=value, token=token).status_code, 423)
         self.assertEqual(self.adapter.transport.commands, [])
-        self.assertTrue(valid({"guest": True, "security_revision": get_state().revision}))
+        self.assertTrue(valid({"guest": True}))
 
     def test_shared_controls_obey_neighbor_manual_hold_for_guests(self):
         self.assertEqual(self.lock(room="desk").status_code, 200)
@@ -206,21 +204,6 @@ class ManualLocks(Requests, TestCase):
         self.assertTrue(final["config"]["enabled"])
         self.assertNotIn("manual_lock", final["config"])
 
-    def test_authentication_off_suspends_hold_and_on_resumes_it_for_new_guests(self):
-        first = self.lock().json()["manual_lock"]
-        old_guest = Guest(get_state().revision, True)
-        transition(get_state(), False, self.owner)
-        with self.assertRaises(Problem):
-            self.adapter.dispatch(old_guest, "den", "source", "off")
-        self.assertEqual(self.command(token=False).status_code, 202)
-        self.assertEqual(Store().policies(), [])
-        self.assertEqual(self.lock(token=False).status_code, 403)
-        self.assertEqual(RoomPolicy.objects.get().config["manual_lock"], first)
-        transition(get_state(), True, self.owner)
-        self.assertEqual(self.command(token=False).status_code, 423)
-        self.assertEqual(len(Store().policies()), 1)
-        self.assertEqual(RoomPolicy.objects.get().config["manual_lock"], first)
-
     def test_revision_and_credential_are_rechecked_after_native_read(self):
         original = self.adapter.transport.read
         def revoke(item):
@@ -299,7 +282,7 @@ class SharedDevices(TestCase):
 
     def outcome(self, room, action, value):
         try:
-            self.adapter.dispatch(Guest(get_state().revision, True), room, action, value)
+            self.adapter.dispatch(Guest(False), room, action, value)
             return "sent"
         except Problem as refused:
             return refused.code

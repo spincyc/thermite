@@ -36,9 +36,9 @@
     const mode = await client.loadSecurity();
     const signOut = () => client.logout().then(() => location.reload()).catch((error) => status(error.message, true));
     if (!mode.enabled) {
-      $(".access-login h1").textContent = "Authentication is off"; form.replaceChildren();
-      form.append(node("p", "Basic remote controls are available without signing in. Enable authentication for accounts, device pairing, locks and room schedules."),
-        node("a", "Set up authentication in Security", { href: global.ThermiteNavigation.href("security", location.search) }));
+      $(".access-login h1").textContent = "No accounts yet"; form.replaceChildren();
+      form.append(node("p", "The remotes work without signing in. Accounts add the cameras; an administrator adds device pairing, locks and room schedules."),
+        node("a", "Create the first administrator in Security", { href: global.ThermiteNavigation.href("security", location.search) }));
       try { await client.ready(); status(""); }
       catch (error) { status(error.message, true); if (error.status === 401) form.appendChild(button("Clear expired sign-in", signOut)); }
       return;
@@ -65,29 +65,38 @@
     });
     status(client.current?.()?.is_guest ? "Unlocked rooms work without signing in. Sign in to view cameras or, as an administrator, to manage the site." : "");
   }
-  // Whether Guests see free text in the activity feed; an Admin's choice
-  // while authentication is on, when there is anyone else to see it.
+  // What Guests see, each an Admin's choice and neither moving the other:
+  // free text in the remotes and the activity feed, and the cameras.
   function guests(mode) {
     const host = $("[data-security-guests]");
     if (!host) return;
     host.replaceChildren();
-    if (!mode.enabled) return;
     host.append(node("h2", "What guests see"), node("p",
       "Guests, who use the remotes without signing in, see what each room is playing in the remotes and the activity feed: titles, artists, apps and playback. Accounts always see it. This does not cover the Grafana dashboards, which keep what played and which anyone on your network can open."));
+    const cameras = "Guests do not see the cameras unless this is on: camera video needs an account. A site upgraded from a release that had an authentication switch starts with it off, also where that switch, being off, had shown the cameras to everyone.";
     if (client.mock || !client.canEdit()) {
-      host.appendChild(node("p", mode.guest_text ? "Guests see it." : "Guests do not see it.")); return;
+      host.append(node("p", mode.guest_text ? "Guests see it." : "Guests do not see it."), node("p", cameras),
+        node("p", mode.guest_cameras ? "Guests see the cameras." : "Guests do not see the cameras."));
+      return;
     }
-    const form = node("form", null, { class: "access-form" }), box = input("Guests see titles, artists and apps", "guest_text", "checkbox", mode.guest_text);
-    const field = box.firstElementChild;
+    const form = node("form", null, { class: "access-form" });
     form.addEventListener("submit", (event) => event.preventDefault());
-    field.addEventListener("change", async () => {
-      field.disabled = true; status("Saving what guests see…");
-      try { field.checked = (await client.setGuestText(field.checked)).guest_text; status(""); }
-      catch (error) { field.checked = !field.checked; status(error.message, true); }
-      finally { field.disabled = false; }
-    });
-    form.appendChild(box); host.appendChild(form);
+    const choice = (label, name, save, note) => {
+      const box = input(label, name, "checkbox", mode[name]), field = box.firstElementChild;
+      field.addEventListener("change", async () => {
+        field.disabled = true; status("Saving what guests see…");
+        try { field.checked = (await save(field.checked))[name]; status(""); }
+        catch (error) { field.checked = !field.checked; status(error.message, true); }
+        finally { field.disabled = false; }
+      });
+      form.appendChild(box); if (note) form.appendChild(node("p", note, { class: "access-note" }));
+    };
+    choice("Guests see titles, artists and apps", "guest_text", client.setGuestText);
+    choice("Guests see the cameras", "guest_cameras", client.setGuestCameras, cameras);
+    host.appendChild(form);
   }
+  // Accounts exist or they do not: with none, the owner's setup code
+  // creates the first administrator here. Nothing turns accounts off.
   async function security() {
     const host = $("[data-security]");
     const mode = await client.loadSecurity();
@@ -95,57 +104,46 @@
     status("");
     host.replaceChildren();
     guests(mode);
-    host.append(node("h2", "Authentication is " + (mode.enabled ? "on" : "off")), node("p", mode.enabled
-      ? "Unlocked rooms work without signing in. Accounts can view camera media; administrators manage locks, schedules, users, pairing and the system."
-      : "Basic remote controls are available without signing in. Accounts, device pairing, locks and room schedules require authentication."));
-    host.appendChild(node("p", "Changing this setting signs out every browser and terminal. Existing credentials cannot be reused after a change.", { class: "access-note" }));
-    if (client.mock) { host.appendChild(node("p", "Demo authentication cannot be changed.")); return; }
-    if (mode.enabled && !client.canEdit()) {
+    host.append(node("h2", mode.bootstrap_required ? "No accounts yet" : "Accounts"),
+      node("p", "Unlocked rooms work without signing in. Accounts can view camera media; administrators manage locks, schedules, users, pairing and the system."));
+    if (client.mock) { host.appendChild(node("p", "Demo accounts cannot be changed.")); return; }
+    if (!mode.bootstrap_required) {
+      if (client.canEdit()) return;
       const account = global.ThermiteNavigation.href("access", location.search);
-      host.append(node("p", "Sign in as an administrator to change authentication. To elevate an existing account, ask an administrator to make it an administrator in Users, then sign in again."),
+      host.append(node("p", "Sign in as an administrator to change what guests see. To elevate an existing account, ask an administrator to make it an administrator in Users, then sign in again."),
         node("a", client.current() && !client.current().is_guest ? "Switch to an administrator account" : "Sign in as an administrator", { href: account + (account.includes("?") ? "&" : "?") + "next=%2Fsecurity%2F" }));
       return;
     }
-    if (mode.bootstrap_required) {
-      host.append(node("p", "Complete the HTTPS gateway setup and restrict direct runtime access before relying on accounts or room locks."),
-        node("p", "Create your first administrator here. On the thermite host, generate a short-lived setup code for this site:"),
-        node("code", "thermite access setup --descriptor /path/to/access/config.json"),
-        node("p", "Run the staged thermite release as the thermite service account, using its access configuration.", { class: "access-note" }),
-        node("p", mode.setup_available ? "A setup code is ready. Enter it below." : "No setup code is ready. Run the command, then enter the code below.", { class: "access-note" }));
-    }
+    host.append(node("p", "Complete the HTTPS gateway setup and restrict direct runtime access before relying on accounts or room locks."),
+      node("p", "Create your first administrator here. On the thermite host, generate a short-lived setup code for this site:"),
+      node("code", "thermite access setup --descriptor /path/to/access/config.json"),
+      node("p", "Run the staged thermite release as the thermite service account, using its access configuration.", { class: "access-note" }),
+      node("p", mode.setup_available ? "A setup code is ready. Enter it below." : "No setup code is ready. Run the command, then enter the code below.", { class: "access-note" }));
     const form = node("form", null, { class: "access-form" });
-    if (!mode.enabled) {
-      const username = input(mode.bootstrap_required ? "New administrator username" : "Administrator username", "username");
-      Object.assign(username.firstElementChild, { required: true, maxLength: 150, autocomplete: "username" }); form.appendChild(username);
-    }
-    const password = input(mode.bootstrap_required ? "New administrator password" : "Administrator password", "password", "password");  // lint: allow — credential field label and type
-    Object.assign(password.firstElementChild, { required: true, maxLength: 1024, autocomplete: mode.bootstrap_required ? "new-password" : "current-password" }); form.appendChild(password);
-    if (mode.bootstrap_required) {
-      password.firstElementChild.minLength = 12;
-      const confirm = input("Confirm new administrator password", "confirm_password", "password");
-      Object.assign(confirm.firstElementChild, { required: true, minLength: 12, maxLength: 1024, autocomplete: "new-password" }); form.appendChild(confirm);
-      const setup = input("Host setup code", "setup_code", "password");
-      Object.assign(setup.firstElementChild, { required: true, maxLength: 200, autocomplete: "off" }); form.appendChild(setup);
-    }
-    const save = node("button", mode.enabled ? "Disable authentication" : "Enable authentication", { type: "submit" });
+    const username = input("New administrator username", "username");
+    Object.assign(username.firstElementChild, { required: true, maxLength: 150, autocomplete: "username" }); form.appendChild(username);
+    const password = input("New administrator password", "password", "password");  // lint: allow — credential field label and type
+    Object.assign(password.firstElementChild, { required: true, minLength: 12, maxLength: 1024, autocomplete: "new-password" }); form.appendChild(password);
+    const confirm = input("Confirm new administrator password", "confirm_password", "password");
+    Object.assign(confirm.firstElementChild, { required: true, minLength: 12, maxLength: 1024, autocomplete: "new-password" }); form.appendChild(confirm);
+    const setup = input("Host setup code", "setup_code", "password");
+    Object.assign(setup.firstElementChild, { required: true, maxLength: 200, autocomplete: "off" }); form.appendChild(setup);
+    const save = node("button", "Create the first administrator", { type: "submit" });
     form.appendChild(save); host.appendChild(form);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (mode.bootstrap_required && form.elements.password.value !== form.elements.confirm_password.value) {
+      if (form.elements.password.value !== form.elements.confirm_password.value) {
         status("The new passwords do not match.", true); form.elements.confirm_password.focus(); return;
       }
       save.disabled = true;
-      const value = { enabled: !mode.enabled, revision: mode.revision, password: form.elements.password.value };  // lint: allow — entered password only
-      if (!mode.enabled) value.username = form.elements.username.value;
-      if (mode.bootstrap_required) value.setup_code = form.elements.setup_code.value;
-      form.querySelectorAll('input[type="password"]').forEach((field) => { field.value = ""; }); status("Changing authentication…");
+      const value = { username: form.elements.username.value, password: form.elements.password.value, setup_code: form.elements.setup_code.value };  // lint: allow — entered password only
+      form.querySelectorAll('input[type="password"]').forEach((field) => { field.value = ""; }); status("Creating the administrator…");
       try {
-        const saved = await client.setSecurity(value);
-        if (saved.enabled) location.replace("/account/?next=%2Fsecurity%2F");
-        else location.reload();
+        await client.setSecurity(value);
+        location.replace("/account/?next=%2Fsecurity%2F");
       } catch (error) {
-        if (error.code === "revision_conflict") await security();
-        status(error.code === "revision_conflict" ? "Authentication changed elsewhere. Review the current setting before trying again." : error.message, true);
+        if (error.code === "already_initialized") await security();
+        status(error.message, true);
       } finally { save.disabled = false; }
     });
   }
@@ -295,7 +293,7 @@
   else client.ready().then(() => {
     if (!client.authEnabled()) {
       document.querySelectorAll("form, .settings-room, .access-toolbar").forEach((item) => { item.hidden = true; });
-      status("Enable authentication in Security to use accounts, locks and room schedules."); return;
+      status("Create the first administrator in Security to use accounts, locks and room schedules."); return;
     }
     return page === "users" ? users() : policy();
   }).catch((error) => status(error.message, true));

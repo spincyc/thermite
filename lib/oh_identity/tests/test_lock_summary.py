@@ -97,15 +97,6 @@ class LockSummary(TestCase):
         self.adapter.policy = None
         self.assertEqual(self.read()["rooms"], {"den": unavailable, "desk": unavailable})
 
-    def test_authentication_off_unlocks_every_room_without_reading_policies(self):
-        self.schedule()
-        self.hold()
-        SecurityState.objects.filter(pk=1).update(enabled=False)
-        with CaptureQueriesContext(connection) as queries:
-            self.assertEqual(self.read()["rooms"], {"den": UNLOCKED, "desk": UNLOCKED})
-        self.assertFalse(any("oh_identity_roompolicy" in query["sql"] for query in queries.captured_queries))
-        self.assertEqual(self.read(self.admin, 403)["error"], "authentication_disabled")
-
     def test_only_get_is_allowed(self):
         response = Client().post("/api/v1/locks", secure=True)
         self.assertEqual((response.status_code, response["Allow"], response.json()["error"]), (405, "GET", "method_not_allowed"))

@@ -13,7 +13,6 @@ from oh_identity import hub as hubs
 from oh_identity import streams, topics
 from oh_identity.models import PersonalToken, SecurityState
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter
-from oh_identity.security import get_state
 from oh_identity.services import bootstrap, issue_token
 from oh_identity.tests.test_core import PASSPHRASE
 
@@ -123,8 +122,8 @@ async def settle():
 @override_settings(ALLOWED_HOSTS=["testserver"])
 class EventHub(TransactionTestCase):
     def setUp(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
-        self.guest = {"guest": True, "security_revision": get_state().revision}
+        SecurityState.objects.update_or_create(pk=1)
+        self.guest = {"guest": True}
 
     def check(self, body, **more):
         async def run():
@@ -238,7 +237,6 @@ class EventHub(TransactionTestCase):
         self.check(body)
 
     def test_a_guest_stream_ends_when_an_admin_changes_what_guests_see(self):
-        SecurityState.objects.filter(pk=1).update(enabled=True)
         snapshot = {**self.guest, "guest_text": True}
         self.assertTrue(streams.valid(snapshot))
         self.assertTrue(streams.valid(self.guest), "a snapshot from before the setting sees text")
@@ -246,9 +244,6 @@ class EventHub(TransactionTestCase):
         self.assertFalse(streams.valid(snapshot))
         self.assertFalse(streams.valid(self.guest))
         self.assertTrue(streams.valid({**snapshot, "guest_text": False}))
-        # With authentication off every client is a Guest, and sees it.
-        SecurityState.objects.filter(pk=1).update(enabled=False)
-        self.assertTrue(streams.valid(snapshot))
 
     def test_pairing_commands_and_private_items_never_reach_a_client(self):
         async def body(upstream, adapter):
@@ -278,8 +273,7 @@ class EventHub(TransactionTestCase):
     def test_revalidation_still_ends_a_revoked_stream(self):
         admin = bootstrap("owner", PASSPHRASE)
         token, _ = issue_token(admin, "stream")
-        snapshot = {"user": admin.pk, "revision": admin.auth_revision, "token": str(token.pk),
-                    "security_revision": get_state().revision}
+        snapshot = {"user": admin.pk, "revision": admin.auth_revision, "token": str(token.pk)}
 
         async def body(upstream, adapter):
             frames = streams.stream(adapter, "remote", snapshot)
@@ -384,7 +378,7 @@ class EventHub(TransactionTestCase):
 @override_settings(ALLOWED_HOSTS=["testserver"])
 class EventEndpoints(TransactionTestCase):
     def setUp(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
+        SecurityState.objects.update_or_create(pk=1)
         install_adapter(RuntimeAdapter(contract(), Upstream()))
         self.admin = bootstrap("owner", PASSPHRASE)
         _, self.token = issue_token(self.admin, "stream")

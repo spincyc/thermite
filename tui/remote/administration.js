@@ -41,24 +41,25 @@ function create(client, house, changed) {
     if (!client || client.native) { line("Authentication cannot be changed in native testing mode. Configure and open the thermite gateway, then use Security to enable accounts, pairing, locks and schedules."); return y; }
     if (state.kind === "security") {
       const mode = client.security();
-      line(mode ? "Authentication is " + (mode.enabled ? "on" : "off") : "Authentication status unavailable", "strong");
-      line("Change authentication in your browser:"); line(client.origin + "/security/", "link"); y++;
+      line(mode ? (mode.bootstrap_required ? "No accounts yet" : "Accounts exist") : "Authentication status unavailable", "strong");
+      if (mode) line("Guests " + (mode.guest_cameras ? "see" : "do not see") + " the cameras; they " + (mode.guest_text ? "see" : "do not see") + " titles, artists and apps.");
+      line("Accounts and what guests see are set in your browser:"); line(client.origin + "/security/", "link"); y++;
       if (mode?.bootstrap_required) {
         line("Complete the HTTPS gateway setup and restrict direct runtime access before relying on accounts or room locks.");
         line("For first setup, generate a short-lived code on the thermite host:");
         line("thermite access setup --descriptor /path/to/access/config.json");
         line("Run the staged release as the thermite service account, using its access configuration.");
         line("Enter that code and create an administrator on the Security page.");
-      } else line("Changing authentication requires an administrator's password. When enabled, sign in as that administrator in the browser first.");
-      line("Changing authentication signs out every browser and terminal."); y++;
+      } else line("Changing what guests see needs an administrator: sign in as one in the browser first.");
+      y++;
       line("To elevate terminal access, quit and run thermite access login --url " + client.origin + " --user ADMIN, then reopen the remote.");
       line("An administrator can make an account an administrator in Users (F8); that user must sign in again.");
       return y;
     }
     if (!client.security()) { line("Authentication status unavailable. Reopen the remote after the access service is ready."); return y; }
     if (!client.authEnabled()) {
-      line("Authentication is off", "strong");
-      line("Basic remote controls are available without signing in. Enable authentication in Security (F3) for accounts, device pairing, locks and room schedules."); return y;
+      line("No accounts yet", "strong");
+      line("Basic remote controls are available without signing in. Create the first administrator in Security (F3) for cameras, accounts, device pairing, locks and room schedules."); return y;
     }
     if (state.kind === "account") {
       const user = client.current(); line(user?.is_guest ? "Guest · no sign-in required" : user ? "Signed in as " + user.username : "Not signed in", "strong");

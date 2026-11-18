@@ -15,7 +15,6 @@ import oh_room_policy
 from oh_identity.auth import Guest
 from oh_identity.models import RoomPolicy
 from oh_identity.runtime import RuntimeAdapter, RuntimeContract, install_adapter
-from oh_identity.security import get_state
 from oh_identity.services import Problem, bootstrap
 from oh_identity.tests.test_core import PASSPHRASE
 from oh_identity.tests.test_trail import Requests, lines
@@ -152,10 +151,9 @@ class Dispatch(TestCase):
                                          (f"{AMP}_key", "play_pause")])
 
     def test_a_guest_sends_as_an_account_does(self):
-        self.assertTrue(get_state().enabled)
-        self.assertEqual(self.outcome(AMP, "volume", 30, Guest(get_state().revision, True)), "sent")
+        self.assertEqual(self.outcome(AMP, "volume", 30, Guest(False)), "sent")
         self.hold(EAST, "off")
-        self.assertEqual(self.outcome(WIIM, "volume", 30, Guest(get_state().revision, True)), "device_locked")
+        self.assertEqual(self.outcome(WIIM, "volume", 30, Guest(False)), "device_locked")
         self.assertEqual(self.commands, [(f"{AMP}_volume", "30")])
 
     def test_a_room_locked_locks_what_it_owns_and_nothing_it_does_not(self):

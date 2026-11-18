@@ -3,8 +3,7 @@
 Run `thermite generate` from your private site after editing its house file.
 Home is served at `/`; Remotes at `/remotes/`.
 
-Guests can view remotes and control unlocked rooms without signing in, whether
-authentication is enabled or disabled. A room that is Off selects its Off
+Guests can view remotes and control unlocked rooms without signing in. A room that is Off selects its Off
 bubble and shows no remote until a device bubble is tapped for its buttons.
 Volume and Mute drive the room's `audio` device when the house file names
 one (`routing.rooms.<id>.audio`, such as the streaming amplifier beside a
@@ -22,7 +21,7 @@ read, the remote says “Room lock status unknown” and still sends commands: t
 server checks each one and refuses it in a locked room, and the remote then
 says why and reads the lock again.
 
-When authentication is enabled, administrators can use **Lock room**, under
+Administrators can use **Lock room**, under
 Info, to hold
 the current reported source or Off indefinitely. **Unlock room** releases that
 manual hold; an active schedule can still keep the room locked. Manual locks

@@ -2270,9 +2270,9 @@ examples:
 <section class="verb" id="access"><h3><code>thermite access</code></h3><p>Site login, local identity bootstrap, HTTPS service and room policies.</p><pre class="help">usage: thermite access [-h] [--config DIR] ACTION ...
 
 Run a site&#x27;s HTTPS boundary and room-policy worker, or log
-this terminal into a site. The Security page controls authentication. Local
+this terminal into a site. The Security page holds what guests see. Local
 setup issues a one-use code to create the first admin there; bootstrap instead
-prompts privately and enables authentication immediately. Staging prepares
+prompts privately and creates it at once. Staging prepares
 persistent code, private authority, a pinned
 environment, and owner-installable units; it starts no service.
 
@@ -2295,8 +2295,8 @@ actions:
     worker       run the single room-policy worker
     verify       verify service custody without initializing state
     prune        delete saved policies for rooms the compiled house no longer has
-    audit        read the security audit (logins, tokens, accounts, locks, the security
-                 switch)
+    audit        read the security audit (logins, tokens, accounts, locks, what guests
+                 see)
     music-tidal  sign the site&#x27;s Music Assistant into TIDAL: show a code to approve at
                  link.tidal.com and wait
     callbacks    run the explicitly configured plaintext UPnP NOTIFY listener
@@ -2455,7 +2455,7 @@ examples:
 <details id="access-audit"><summary><code>thermite access audit</code></summary><pre class="help">usage: thermite access audit [-h] --descriptor FILE [--since WHEN] [--action ACTION]
                              [--json]
 
-Read the security audit (logins, tokens, accounts, locks, the security switch).
+Read the security audit (logins, tokens, accounts, locks, what guests see).
 
 options:
   -h, --help         show this help message and exit

@@ -106,7 +106,7 @@ def due_boundaries(now_utc: datetime, policy: dict, receipts=(), *, not_before: 
     A currently active lock supersedes older unlock/daily-off actions.
 
     A lock that was already active when this revision took effect (an
-    unlock into a window, re-enabled authentication, any edit mid-window)
+    unlock into a window, any edit mid-window)
     gets one catch-up start at not_before. Its key carries the revision, so
     each revision catches up at most once. Older daily-off and unlock
     actions are never replayed.

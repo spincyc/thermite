@@ -171,7 +171,7 @@ class Logging(TestCase):
 class Streams(TransactionTestCase):
     def setUp(self):
         SecurityState = __import__("oh_identity.models", fromlist=["SecurityState"]).SecurityState
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
+        SecurityState.objects.update_or_create(pk=1)
         states = {f"item_{index:04d}": {"kind": "enum", "values": ["ON"], "commands": True} for index in range(400)}
         self.contract = RuntimeContract({"den": {"source_item": "loc_den_source", "sources": ["player"]}}, states=states)
 
@@ -377,7 +377,8 @@ class Housekeeping(TestCase):
 
 
 class FirstActivation(TestCase):
-    def test_a_wrong_setup_code_is_refused_before_any_room_lock(self):
+    def test_the_first_admin_needs_the_setup_code_and_takes_no_room_lock(self):
+        # Creating an account changes no lock and no setting, so it waits on no room.
         held = []
 
         @contextmanager
@@ -387,19 +388,18 @@ class FirstActivation(TestCase):
         runtime = adapter()
         runtime.command_lock = locks
         install_adapter(runtime)
-        __import__("oh_identity.models", fromlist=["SecurityState"]).SecurityState.objects.update_or_create(
-            pk=1, defaults={"enabled": False, "revision": 1})
+        __import__("oh_identity.models", fromlist=["SecurityState"]).SecurityState.objects.update_or_create(pk=1)
         code = arm_setup()
         client = Client(enforce_csrf_checks=True)
         csrf = client.get("/api/v1/security", secure=True).json()["csrf"]
         def enable(setup_code):
-            return client.post("/api/v1/security", json.dumps({"enabled": True, "revision": 1, "username": "owner",
+            return client.post("/api/v1/security", json.dumps({"username": "owner",
                                "password": PASSPHRASE, "setup_code": setup_code}), content_type="application/json",
                                secure=True, HTTP_ORIGIN="https://testserver", HTTP_X_CSRFTOKEN=csrf)
         self.assertEqual(enable("wrong").status_code, 403)
         self.assertEqual(held, [])
         self.assertEqual(enable(code).status_code, 200)
-        self.assertEqual(held, [("den", "desk")])
+        self.assertEqual(held, [])
         self.assertTrue(User.objects.get().admin)
 
 

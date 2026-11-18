@@ -58,7 +58,8 @@ def https_security(chain, key):
     class Security(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             requests.append((self.path, self.headers["Host"]))
-            body = json.dumps({"enabled": False, "revision": 1}).encode()
+            body = json.dumps({"bootstrap_required": True, "setup_available": False, "guest_text": True,
+                               "guest_cameras": False}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

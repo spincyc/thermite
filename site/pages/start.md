@@ -79,7 +79,7 @@ thermite test boot
 ## Connect and use it
 
 Installation prints your HTTPS address and the certificate authority file each
-browser or terminal trusts once. Ordinary controls work with Security off. Use the Security page to enable authentication and
+browser or terminal trusts once. Ordinary controls work before any account exists. Use the Security page to
 create the first administrator with owner proof. The local terminal uses the
 installed site's verified endpoint and certificate automatically:
 
@@ -87,7 +87,7 @@ installed site's verified endpoint and certificate automatically:
 thermite remote --config /path/to/private-site
 ```
 
-With authentication enabled, first run `thermite access login --config
+To sign the terminal in to an account, first run `thermite access login --config
 /path/to/private-site --user admin`. Any other computer with thermite
 installed runs `thermite tui`, which needs no private site and opens
 `https://thermite:13601` (`--url` names another server, and `HOST:PORT` a

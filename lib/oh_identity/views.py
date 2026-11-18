@@ -22,7 +22,8 @@ from .guest import access_config, listener
 from .models import PersonalToken, ReconcileState, RoomPolicy, User
 from .policy_store import TOKEN_RETENTION, next_revision
 from .runtime import get_adapter, policy_problem
-from .services import Problem, admin_actor, audit, issue_token, is_admin, permissions, save_user, token_label
+from .security import GUEST_SETTINGS, permissions
+from .services import Problem, admin_actor, audit, issue_token, is_admin, save_user, token_label
 
 
 def body(request):
@@ -41,22 +42,21 @@ def user_data(user):
     return {"id": user.pk, "username": user.username, "active": user.is_active, "admin": is_admin(user)}
 
 
-def me_data(user, state=None):
+def me_data(user):
     """The current principal: a Guest (id 0), a Member or an Admin."""
-    from .security import get_state
-    enabled = (state or get_state()).enabled
-    return {**user_data(user), "is_guest": bool(getattr(user, "is_guest", False)), "auth_enabled": enabled,
-            "can_edit": enabled and is_admin(user), "site": settings.SITE_ID, "permissions": sorted(permissions(user))}
+    return {**user_data(user), "is_guest": bool(getattr(user, "is_guest", False)), "can_edit": is_admin(user),
+            "site": settings.SITE_ID, "permissions": sorted(permissions(user))}
 
 
 def security(request):
-    from .security import change_security, status
+    """GET: whether an account exists yet and what Guests see
+    (security.status). POST: the first Admin, by the owner's setup code."""
+    from .security import first_admin, status
     try:
         if request.method == "GET":
             data = status()
         elif request.method == "POST":
-            data = change_security(request, body(request))
-            logout(request)
+            data = first_admin(request, body(request))
         else:
             raise Problem("method_not_allowed", 405, allow=("GET", "POST"))
         # The cookieless Guest listener has no CSRF token to hand out.
@@ -68,13 +68,14 @@ def security(request):
 
 
 @api(methods=("PUT",), admin=True)
-def guest_text(request):
-    """{"guest_text": bool}: whether Guests see free-text Items."""
-    from .security import set_guest_text
+def guests(request):
+    """What Guests see, each setting on its own: {"guest_text": bool} for
+    free-text Items, {"guest_cameras": bool} for the cameras, or both."""
+    from .security import set_guests
     data = body(request)
-    if set(data) != {"guest_text"} or type(data["guest_text"]) is not bool:
+    if not data or set(data) - set(GUEST_SETTINGS) or any(type(value) is not bool for value in data.values()):
         raise Problem("invalid_security")
-    return JsonResponse(set_guest_text(request.identity_user, data["guest_text"], request=request))
+    return JsonResponse(set_guests(request.identity_user, data, request=request))
 
 
 def enforcement_data(reconciled, state, now):
@@ -106,8 +107,6 @@ def session(request):
     if request.method != "POST":
         return not_allowed("GET", "POST")
     try:
-        from .security import require_enabled
-        require_enabled()
         data = body(request)
         if set(data) != {"username", "password"}:
             raise Problem("invalid_login", 400)
@@ -123,8 +122,6 @@ def token_login(request):
     if request.method != "POST":
         return not_allowed("POST")
     try:
-        from .security import require_enabled
-        require_enabled()
         data = body(request)
         if set(data) - {"username", "password", "name", "days"}:
             raise Problem("invalid_login", 400)
@@ -169,7 +166,7 @@ signout.idempotent_logout = True
 
 @api()
 def me(request):
-    return JsonResponse(me_data(request.identity_user, request.identity_state))
+    return JsonResponse(me_data(request.identity_user))
 
 
 @api(methods=("GET", "POST"), item_methods=("DELETE",), account=True)
@@ -254,15 +251,13 @@ def _hold_valid(adapter, room, revision, hold):
 
 @api(methods=("GET", "PUT"))
 def room_policy(request, room):
-    from .security import require_enabled
-    require_enabled()
     adapter = get_adapter()
     if room not in adapter.contract.rooms:
         raise Problem("unknown_room", 404)
     if request.method == "GET":
         return JsonResponse(policy_data(adapter, room, request.identity_user, RoomPolicy.objects.filter(room_id=room).first()))
     # Same answers as every other Admin mutation: a Guest signs in, a Member is refused.
-    require_admin(request, request.identity_user)
+    require_admin(request.identity_user)
     if not adapter.policy:
         raise Problem("policy_unavailable", 503)
     data = body(request)
@@ -299,11 +294,10 @@ def room_policy(request, room):
 @api()
 def locks(request):
     """Every room's effective lock in one read, for the room lists. Anyone who
-    reads the site sees it; while authentication is off no lock applies."""
+    reads the site sees it."""
     adapter, now = get_adapter(), timezone.now()
     rooms = list(adapter.contract.rooms)
-    saved = ({row.room_id: row for row in RoomPolicy.objects.filter(room_id__in=rooms)}
-             if request.identity_state.enabled else {})
+    saved = {row.room_id: row for row in RoomPolicy.objects.filter(room_id__in=rooms)}
     summary = {}
     for room in rooms:
         effective, _, manual = effective_lock(adapter, room, saved.get(room), now)
@@ -326,11 +320,11 @@ def alerts(request):
     """The house's firing alerts and whether monitoring is watching
     (oh_identity.alerts). Anyone who reads the site sees those of its rooms
     and devices; those about the house as a whole go to whoever may read
-    the System page (system.json, ADMIN_ASSETS): an Admin, while
-    authentication is on."""
+    the System page (system.json, ADMIN_ASSETS): an Admin, so to nobody on
+    a site with no account."""
     from . import alerts as feed
     try:
-        require_admin(request, request.identity_user)
+        require_admin(request.identity_user)
         house = True
     except Problem:
         house = False
@@ -474,7 +468,7 @@ def asset(request, name):
         try:
             user = principal(request)
             if admin_only:
-                require_admin(request, user)
+                require_admin(user)
         except Problem as exc:
             if exc.status == 401 and name.endswith(".html") and "access.html" in adapter.contract.assets:
                 next_path = ASSET_ROUTES.get(name, "/static/remote/" + name)
@@ -615,7 +609,7 @@ def item_resource(request, item):
         return JsonResponse(answer)
     # Authorize and validate before taking every room lock.
     user = request.identity_user
-    require_admin(request, user)
+    require_admin(user)
     adapter = get_adapter()
     if request.content_type != "text/plain" or len(request.body) > 64:
         raise Problem("invalid_pairing_command")
@@ -631,7 +625,7 @@ def item_resource(request, item):
 
 @api("camera.view", methods=("GET", "POST"))
 def media(request, resource):
-    # Guests see cameras only while authentication is off.
+    # An account's, and a Guest's only while guest_cameras is on (security.permissions).
     if request.GET:
         raise Problem("not_found", 404)
     if request.method == "POST" and request.content_type != "application/sdp":

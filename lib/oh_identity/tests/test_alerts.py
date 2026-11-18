@@ -245,7 +245,7 @@ class Feed(TestCase):
             self.assertNotEqual(each.get("check"), "runtime")
 
     def test_with_authentication_off_nobody_is_an_admin_as_on_the_system_page(self):
-        SecurityState.objects.update_or_create(pk=1, defaults={"enabled": False})
+        SecurityState.objects.update_or_create(pk=1)
         answer = self.read(rules(alert("ThermiteHostDiskLow"), alert("ThermiteControlUnknown", room="den", check="source")))
         self.assertEqual((answer["firing"], [each["name"] for each in answer["alerts"]]), (2, ["ThermiteControlUnknown"]))
 

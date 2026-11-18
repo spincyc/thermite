@@ -7,7 +7,7 @@ const area = path.resolve(__dirname, "..");
 const read = name => fs.readFileSync(path.join(area, name), "utf8");
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const origin = "https://site.example:13601", csrf = "C".repeat(32);
-const admin = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false, auth_enabled: true,
+const admin = { id: 1, username: "Admin", admin: true, can_edit: true, is_guest: false,
   permissions: ["site.read", "room.control", "settings.manage"] };
 const answer = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value, text: async () => JSON.stringify(value),
   clone() { return answer(value, status); }, headers: { get: () => null, getSetCookie: () => [] } });
@@ -57,7 +57,7 @@ function gateway() {
       site.held.push(entry);
     });
     if (site.refuse.has(route)) return site.refuse.get(route);
-    if (route === "/api/v1/security") return answer({ enabled: true, revision: 1, bootstrap_required: false, setup_available: false, guest_text: true, csrf });
+    if (route === "/api/v1/security") return answer({ bootstrap_required: false, setup_available: false, guest_text: true, guest_cameras: false, csrf });
     if (route === "/api/v1/session") return answer({ csrf });
     if (route === "/api/v1/me") return answer(admin);
     if (route === "/api/v1/locks") return answer({ rooms: {} });

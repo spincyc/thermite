@@ -105,14 +105,10 @@ class EventStream(StreamingHttpResponse):
 def valid(snapshot):
     from .security import get_state, guests_see_text
     state = get_state()
-    if snapshot.get("security_revision") != state.revision:
-        return False
     if snapshot.get("guest"):
         # A Guest's view was chosen for whether it sees free text; when an
         # Admin changes that, the stream ends and reopens under the new rule.
         return snapshot.get("guest_text", True) == guests_see_text(state)
-    if not state.enabled:
-        return False
     if not User.objects.filter(pk=snapshot["user"], is_active=True, auth_revision=snapshot["revision"]).exists():
         return False
     if snapshot.get("token"):
@@ -183,7 +179,7 @@ def events(request, view):
         user = principal(request)
         if view == "pair":
             # Pairing is an Admin's page, as its device list is (views.pairing_items).
-            require_admin(request, user)
+            require_admin(user)
         adapter = get_adapter()
         return respond(request, user, adapter, view, lambda joined: len(view_topics(adapter.contract)[joined]))
     except Problem as exc:
@@ -200,7 +196,6 @@ def respond(request, user, adapter, view, topics, hub=None):
     from .security import guests_see_text
     snapshot = {"user": user.pk, "revision": user.auth_revision, "token": str(token.pk) if token else None,
                 "session": request.session.session_key if not token else None,
-                "security_revision": user._identity_context["security_revision"],
                 "guest": getattr(user, "is_guest", False)}
     if snapshot["guest"]:
         snapshot["guest_text"] = guests_see_text(request.identity_state)

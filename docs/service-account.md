@@ -265,9 +265,9 @@ identity state aside first, and a rollback puts it back. It also seals
 native ports and preserves verified callback routes. No separate staging or
 activation script is needed. See [installation and recovery](installation.md#update-or-remove).
 
-On a new site, ordinary controls work with authentication off. The Security
-page enables it through an owner-issued setup code and first administrator
-account. The service account still has no interactive login.
+On a new site, ordinary controls work with no account. The Security
+page creates the first administrator account from an owner-issued setup
+code. The service account still has no interactive login.
 
 ### Move existing access state
 
