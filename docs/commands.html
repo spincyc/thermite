@@ -2312,199 +2312,201 @@ switches every verb takes:
 examples:
   thermite access login --url https://thermite.example:13601 --user operator
                                     save this site&#x27;s personal credential privately
-  thermite access setup --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access setup --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     arm first admin setup on the HTTPS Security page
-  thermite access migrate --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access migrate --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     upgrade identity schema after stopping services and backing up state
-  thermite access bootstrap --config /srv/thermite/access/releases/RELEASE/config.json --user admin
+  thermite access bootstrap --descriptor /srv/thermite/access/releases/RELEASE/config.json --user admin
                                     initialize one site&#x27;s first admin locally
-  thermite access verify --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access verify --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     check service ownership and configuration as thermite before activation
-  thermite access serve --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access serve --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     serve the compiled site over verified TLS
-  thermite access worker --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access worker --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     run the single supervised room-policy worker
-  thermite access prune --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access prune --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     delete saved policies for rooms the house no longer has
-  thermite access audit --config /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login
+  thermite access audit --descriptor /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login
                                     read the security audit as the service account
-  thermite access music-tidal --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access music-tidal --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     sign Music Assistant into TIDAL as the service account
 </pre>
-<details id="access-bootstrap"><summary><code>thermite access bootstrap</code></summary><pre class="help">usage: thermite access bootstrap [-h] --config CONFIG --user USER
+<details id="access-bootstrap"><summary><code>thermite access bootstrap</code></summary><pre class="help">usage: thermite access bootstrap [-h] --descriptor FILE --user USER
 
 Initialize the first admin locally.
 
 options:
-  -h, --help       show this help message and exit
-  --config CONFIG  private site service configuration
-  --user USER      first admin&#x27;s username
+  -h, --help         show this help message and exit
+  --descriptor FILE  the release&#x27;s private service descriptor (its config.json)
+  --user USER        first admin&#x27;s username
 
 switches every verb takes:
-  -q, --quiet      print only errors
-  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
-  --no-color       no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access bootstrap --config /srv/thermite/access/releases/RELEASE/config.json --user admin
+  thermite access bootstrap --descriptor /srv/thermite/access/releases/RELEASE/config.json --user admin
                                     initialize one site&#x27;s first admin locally
 </pre></details>
-<details id="access-setup"><summary><code>thermite access setup</code></summary><pre class="help">usage: thermite access setup [-h] --config CONFIG
+<details id="access-setup"><summary><code>thermite access setup</code></summary><pre class="help">usage: thermite access setup [-h] --descriptor FILE
 
 Issue a one-use code for first admin setup on the Security page.
 
 options:
-  -h, --help       show this help message and exit
-  --config CONFIG  private site service configuration
+  -h, --help         show this help message and exit
+  --descriptor FILE  the release&#x27;s private service descriptor (its config.json)
 
 switches every verb takes:
-  -q, --quiet      print only errors
-  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
-  --no-color       no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access setup --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access setup --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     arm first admin setup on the HTTPS Security page
 </pre></details>
-<details id="access-migrate"><summary><code>thermite access migrate</code></summary><pre class="help">usage: thermite access migrate [-h] --config CONFIG
+<details id="access-migrate"><summary><code>thermite access migrate</code></summary><pre class="help">usage: thermite access migrate [-h] --descriptor FILE
 
 Upgrade identity schema after backing up state and stopping access services.
 
 options:
-  -h, --help       show this help message and exit
-  --config CONFIG  private site service configuration
+  -h, --help         show this help message and exit
+  --descriptor FILE  the release&#x27;s private service descriptor (its config.json)
 
 switches every verb takes:
-  -q, --quiet      print only errors
-  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
-  --no-color       no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access migrate --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access migrate --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     upgrade identity schema after stopping services and backing up state
 </pre></details>
-<details id="access-serve"><summary><code>thermite access serve</code></summary><pre class="help">usage: thermite access serve [-h] --config CONFIG
+<details id="access-serve"><summary><code>thermite access serve</code></summary><pre class="help">usage: thermite access serve [-h] --descriptor FILE
 
 Serve one HTTPS site.
 
 options:
-  -h, --help       show this help message and exit
-  --config CONFIG  private site service configuration
+  -h, --help         show this help message and exit
+  --descriptor FILE  the release&#x27;s private service descriptor (its config.json)
 
 switches every verb takes:
-  -q, --quiet      print only errors
-  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
-  --no-color       no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access serve --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access serve --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     serve the compiled site over verified TLS
 </pre></details>
-<details id="access-worker"><summary><code>thermite access worker</code></summary><pre class="help">usage: thermite access worker [-h] --config CONFIG
+<details id="access-worker"><summary><code>thermite access worker</code></summary><pre class="help">usage: thermite access worker [-h] --descriptor FILE
 
 Run the single room-policy worker.
 
 options:
-  -h, --help       show this help message and exit
-  --config CONFIG  private site service configuration
+  -h, --help         show this help message and exit
+  --descriptor FILE  the release&#x27;s private service descriptor (its config.json)
 
 switches every verb takes:
-  -q, --quiet      print only errors
-  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
-  --no-color       no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access worker --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access worker --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     run the single supervised room-policy worker
 </pre></details>
-<details id="access-verify"><summary><code>thermite access verify</code></summary><pre class="help">usage: thermite access verify [-h] --config CONFIG
+<details id="access-verify"><summary><code>thermite access verify</code></summary><pre class="help">usage: thermite access verify [-h] --descriptor FILE
 
 Verify service custody without initializing state.
 
 options:
-  -h, --help       show this help message and exit
-  --config CONFIG  private site service configuration
+  -h, --help         show this help message and exit
+  --descriptor FILE  the release&#x27;s private service descriptor (its config.json)
 
 switches every verb takes:
-  -q, --quiet      print only errors
-  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
-  --no-color       no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access verify --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access verify --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     check service ownership and configuration as thermite before activation
 </pre></details>
-<details id="access-prune"><summary><code>thermite access prune</code></summary><pre class="help">usage: thermite access prune [-h] --config CONFIG
+<details id="access-prune"><summary><code>thermite access prune</code></summary><pre class="help">usage: thermite access prune [-h] --descriptor FILE
 
 Delete saved policies for rooms the compiled house no longer has.
 
 options:
-  -h, --help       show this help message and exit
-  --config CONFIG  private site service configuration
+  -h, --help         show this help message and exit
+  --descriptor FILE  the release&#x27;s private service descriptor (its config.json)
 
 switches every verb takes:
-  -q, --quiet      print only errors
-  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
-  --no-color       no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access prune --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access prune --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     delete saved policies for rooms the house no longer has
 </pre></details>
-<details id="access-audit"><summary><code>thermite access audit</code></summary><pre class="help">usage: thermite access audit [-h] --config CONFIG [--since WHEN] [--action ACTION]
+<details id="access-audit"><summary><code>thermite access audit</code></summary><pre class="help">usage: thermite access audit [-h] --descriptor FILE [--since WHEN] [--action ACTION]
                              [--json]
 
 Read the security audit (logins, tokens, accounts, locks, the security switch).
 
 options:
-  -h, --help       show this help message and exit
-  --config CONFIG  private site service configuration
-  --since WHEN     only rows since 30m, 12h, 7d, or an ISO date or time (site timezone)
-  --action ACTION  only this action or family, such as login, token or room.lock
-                   (repeatable)
-  --json           print the report as JSON
+  -h, --help         show this help message and exit
+  --descriptor FILE  the release&#x27;s private service descriptor (its config.json)
+  --since WHEN       only rows since 30m, 12h, 7d, or an ISO date or time (site
+                     timezone)
+  --action ACTION    only this action or family, such as login, token or room.lock
+                     (repeatable)
+  --json             print the report as JSON
 
 switches every verb takes:
-  -q, --quiet      print only errors
-  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
-  --no-color       no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access audit --config /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login
+  thermite access audit --descriptor /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login
                                     read the security audit as the service account
 </pre></details>
-<details id="access-music-tidal"><summary><code>thermite access music-tidal</code></summary><pre class="help">usage: thermite access music-tidal [-h] --config CONFIG
+<details id="access-music-tidal"><summary><code>thermite access music-tidal</code></summary><pre class="help">usage: thermite access music-tidal [-h] --descriptor FILE
 
 Sign the site&#x27;s Music Assistant into TIDAL: show a code to approve at link.tidal.com and wait.
 
 options:
-  -h, --help       show this help message and exit
-  --config CONFIG  private site service configuration
+  -h, --help         show this help message and exit
+  --descriptor FILE  the release&#x27;s private service descriptor (its config.json)
 
 switches every verb takes:
-  -q, --quiet      print only errors
-  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
-  --no-color       no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access music-tidal --config /srv/thermite/access/releases/RELEASE/config.json
+  thermite access music-tidal --descriptor /srv/thermite/access/releases/RELEASE/config.json
                                     sign Music Assistant into TIDAL as the service account
 </pre></details>
-<details id="access-callbacks"><summary><code>thermite access callbacks</code></summary><pre class="help">usage: thermite access callbacks [-h] --config CONFIG
+<details id="access-callbacks"><summary><code>thermite access callbacks</code></summary><pre class="help">usage: thermite access callbacks [-h] --descriptor FILE
 
 Run the explicitly configured plaintext UPnP NOTIFY listener.
 
 options:
-  -h, --help       show this help message and exit
-  --config CONFIG  private mode0600 callback-only configuration
+  -h, --help         show this help message and exit
+  --descriptor FILE  the release&#x27;s private mode0600 callback-only descriptor (its
+                     callbacks.json)
 
 switches every verb takes:
-  -q, --quiet      print only errors
-  -v, --verbose    also print, on stderr, the commands and HTTP requests it runs
-  --no-color       no color in what it prints (as NO_COLOR=1 does)
+  -q, --quiet        print only errors
+  -v, --verbose      also print, on stderr, the commands and HTTP requests it runs
+  --no-color         no color in what it prints (as NO_COLOR=1 does)
 
 examples:
-  thermite access callbacks --config /srv/thermite/access/releases/RELEASE/callbacks.json
+  thermite access callbacks --descriptor /srv/thermite/access/releases/RELEASE/callbacks.json
                                     run only verified callback paths and peers
 </pre></details>
 <details id="access-login"><summary><code>thermite access login</code></summary><pre class="help">usage: thermite access login [-h] [--url URL] --user USER [--ca-file CA_FILE] [--json]

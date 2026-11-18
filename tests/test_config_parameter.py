@@ -1,4 +1,5 @@
-"""Config selection happens before module imports and preserves service options."""
+"""Config selection happens before module imports, and means the site in every verb."""
+import argparse
 import os
 from pathlib import Path
 import sys
@@ -34,12 +35,29 @@ class ConfigParameter(unittest.TestCase):
                 oh_paths.select_args(args)
             self.assertNotIn("THERMITE_SITE", os.environ)
 
-    def test_service_config_files_survive_bootstrap_with_an_explicit_site(self):
-        for action in ("bootstrap", "serve", "worker", "verify", "callbacks"):
-            for flag in (["--config", "service.json"], ["--config=service.json"]):
-                args = ["-v", "access", action, *flag]
-                self.assertEqual(oh_paths.select_args(["--site", "house", *args]), args)
-                self.assertEqual(oh_paths.SITE, Path("house").absolute())
+    def test_a_selector_is_the_site_wherever_it_stands_and_whatever_the_verb(self):
+        # The scanner once kept --config for some access actions, found by
+        # a table of them and only behind switches it listed: -qv was not.
+        for leading in ([], ["-v"], ["-qv"], ["--no-color", "-q"]):
+            args = [*leading, "access", "audit", "--descriptor", "service.json", "--since", "7d"]
+            for selector in (["--config", "house"], ["--config=house"], ["--site", "house"]):
+                for place in range(len(args) + 1):
+                    # Not between a switch and its value.
+                    if place and args[place - 1] in ("--descriptor", "--since"):
+                        continue
+                    given = [*args[:place], *selector, *args[place:]]
+                    with self.subTest(given=given):
+                        os.environ.pop("THERMITE_SITE", None)
+                        self.assertEqual(oh_paths.select_args(given), args)
+                        self.assertEqual(oh_paths.SITE, Path("house").absolute())
+
+    def test_other_switches_pass_through_and_select_no_site(self):
+        for args in (["access", "serve", "--descriptor", "service.json"],
+                     ["-qv", "access", "callbacks", "--descriptor=callbacks.json"],
+                     ["sandbox", "start", "--conf", "conf"], ["status", "--configuration", "x", "--sites", "y"]):
+            with self.subTest(args=args):
+                self.assertEqual(oh_paths.select_args(args), args)
+                self.assertNotIn("THERMITE_SITE", os.environ)
 
     def test_option_separator_leaves_remaining_arguments_untouched(self):
         args = ["install", "--", "--config", "not-a-selector"]
@@ -56,3 +74,32 @@ class ConfigParameter(unittest.TestCase):
         generated.assert_called_once_with(["--prune"])
         validated.assert_called_once_with([])
         scanned.assert_not_called()
+
+
+def parsers(parser, path):
+    """(path, parser) for a verb's parser and every action's below it."""
+    yield path, parser
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for name, child in action.choices.items():
+                yield from parsers(child, (*path, name))
+
+
+class SelectorSpelling(unittest.TestCase):
+    def test_no_verb_or_action_spells_a_switch_of_its_own_like_the_site_selector(self):
+        # select_args takes --config and --site out of every command line
+        # before any parser sees it, so a parser that declared either for
+        # something else could never be given it. Each verb's parser shows
+        # the selector in its help (oh_cli.command); nothing below it may.
+        import oh_cli
+        selectors, walked = set(oh_paths.SELECTORS), 0
+        for verb in oh_cli.VERBS:
+            for path, parser in parsers(oh_cli.parser_of(verb), (verb,)):
+                walked += 1
+                declared = [action.option_strings for action in parser._actions
+                            if selectors & set(action.option_strings)]
+                with self.subTest(command=" ".join(path)):
+                    self.assertEqual(declared, [list(oh_paths.SELECTORS)] if len(path) == 1 else [],
+                                     f"thermite {' '.join(path)} declares a site selector for itself: the launcher "
+                                     "would take it as the site; give the switch another name")
+        self.assertGreater(walked, len(oh_cli.VERBS), "the walk reached no action's parser")

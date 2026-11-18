@@ -40,8 +40,8 @@ initialize or publish Git.
 
 Run `thermite install --config /path/to/private-site` from any directory.
 Use `--config DIR` to select a site; `--site DIR` remains an alias.
-Access service commands retain `--config FILE` for their service descriptor;
-use `--site DIR` when selecting a site for those commands.
+Access service commands name their release's service descriptor with
+`--descriptor FILE`, so `--config` means the site in every command.
 `THERMITE_SITE` or working inside the site also selects it. The application
 command comes from its installed environment, outside the private repository.
 New sites contain no launcher or Makefile. Keep the application environment

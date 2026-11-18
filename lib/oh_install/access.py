@@ -698,7 +698,7 @@ class Gateway(Step):
             self._upstream(system, record, receipt)
             self._stop(system)
             command = receipt["verification_command"]
-            migrate = [*command[:-3], "migrate", "--config", receipt["config"]]
+            migrate = [*command[:-3], "migrate", "--descriptor", receipt["config"]]
             self._run(system, *migrate)
             self._save(record, phase="migrated")
             for command in receipt["unit_install_commands"]:

@@ -132,7 +132,7 @@ class UnifiedInstall(unittest.TestCase):
     def test_setup_and_migration_keep_service_descriptor_option(self):
         for action in ("setup", "migrate", "serve", "worker", "verify", "callbacks", "bootstrap"):
             with self.subTest(action=action), patch.dict(os.environ, {}, clear=False), patch.object(oh_paths, "SITE"):
-                args = ["access", action, "--config", "/fictional/service/config.json"]
+                args = ["access", action, "--descriptor", "/fictional/service/config.json"]
                 self.assertEqual(oh_paths.select_args(args), args)
 
     def test_the_transaction_applies_ingress_before_native_and_gateway_before_completion(self):

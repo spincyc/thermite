@@ -19,6 +19,8 @@ RELEASES = "var/application-releases"
 REEXEC = "THERMITE_PINNED_RELEASE"
 #: The launcher's own arguments, when it handed select_args all of sys.argv.
 LAUNCHED: list[str] | None = None
+#: The switches that select the private site, in every verb (select_args).
+SELECTORS = ("--config", "--site")
 
 
 class SiteError(ValueError):
@@ -26,7 +28,13 @@ class SiteError(ValueError):
 
 
 def select_args(argv: list[str]) -> list[str]:
-    """Select the site before importing any verb or its module-level paths."""
+    """Select the site before importing any verb or its module-level paths.
+
+    A selector means the site wherever it stands before a lone --, whatever
+    the verb. Nothing here knows a verb's grammar, so no verb or action may
+    spell a switch of its own like one (tests/test_config_parameter.py walks
+    every parser).
+    """
     global SITE, LAUNCHED
     if list(argv) == sys.argv[1:] and Path(sys.argv[0]).name == "thermite":
         LAUNCHED = list(argv)
@@ -36,24 +44,12 @@ def select_args(argv: list[str]) -> list[str]:
         if word == "--":
             out.extend(argv[index:])
             break
-        # Access daemons already use --config FILE for their compiled service
-        # descriptor. Preserve that option; --site still selects their site.
-        leading = [value for value in out if value not in {"-q", "--quiet", "-v", "--verbose", "--no-color"}]
-        service_config = (len(leading) >= 2 and leading[0] == "access"
-                          and leading[1] in {"bootstrap", "setup", "migrate", "serve", "worker", "verify", "callbacks"})
-        if service_config and (word == "--config" or word.startswith("--config=")):
-            out.append(word)
-            index += 1
-            if word == "--config" and index < len(argv):
-                out.append(argv[index])
-                index += 1
-            continue
-        if word in {"--config", "--site"}:
+        if word in SELECTORS:
             index += 1
             if index == len(argv) or argv[index].startswith("-"):
                 raise SiteError(f"{word} needs a directory")
             value = argv[index]
-        elif word.startswith(("--config=", "--site=")):
+        elif word.startswith(tuple(selector + "=" for selector in SELECTORS)):
             value = word.split("=", 1)[1]
         else:
             out.append(word); index += 1; continue

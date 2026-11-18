@@ -68,7 +68,7 @@ def units(destination, user=ACCOUNT, *, state, callbacks=False, textfile=None):
             # env directly execs the staged interpreter; systemd restricts the
             # executable token itself from containing quotes/backslashes. ':'
             # disables its environment substitution so every '$' stays literal.
-            "\nExecStart=:/usr/bin/env -- " + " ".join(systemd(x) for x in [*command, name, "--config", root / config_name]) +
+            "\nExecStart=:/usr/bin/env -- " + " ".join(systemd(x) for x in [*command, name, "--descriptor", root / config_name]) +
             # Without it the journal would name every one of them env.
             "\nSyslogIdentifier=" + unit +
             "\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only" + writable + metrics +
@@ -553,8 +553,8 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
                    "service_user": ACCOUNT, "service_group": GROUP}
         command = ["sudo", "-u", ACCOUNT, "-g", GROUP, str(target / "env/bin/python"),
                    str(target / "program/bin/thermite"), "access"]
-        receipt["verification_command"] = [*command, "verify", "--config", str(target / "config.json")]
-        receipt["bootstrap_command"] = [*command, "bootstrap", "--config", str(target / "config.json"), "--user", "<admin-user>"]
+        receipt["verification_command"] = [*command, "verify", "--descriptor", str(target / "config.json")]
+        receipt["bootstrap_command"] = [*command, "bootstrap", "--descriptor", str(target / "config.json"), "--user", "<admin-user>"]
         receipt["unit_install_commands"] = [["sudo", "install", "-o", "root", "-g", "root", "-m", "0644", str(plan / "units" / name), "/etc/systemd/system/" + name] for name in generated_units]
         receipt["activation_commands"] = [["sh", str(plan / "activate.sh")]]
         json_private(target / "stage.json", {})

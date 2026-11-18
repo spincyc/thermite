@@ -24,7 +24,7 @@ class Commissioning(unittest.TestCase):
         output, error = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(error), \
                 patch.object(service, "prepare_setup") as prepare:
-            result = access.main(["setup", "--config", "/unused/config.json"])
+            result = access.main(["setup", "--descriptor", "/unused/config.json"])
         self.assertEqual(result, 2)
         prepare.assert_not_called()
         self.assertNotIn("setup code", output.getvalue())
@@ -161,7 +161,7 @@ class TerminalWithoutSite(unittest.TestCase):
 
     def test_the_servers_subcommands_still_need_a_compatible_site(self):
         with patch.object(service, "prune_policies") as prune:
-            status, check, error = self.run_access(["prune", "--config", "/unused/config.json"])
+            status, check, error = self.run_access(["prune", "--descriptor", "/unused/config.json"])
         self.assertEqual(status, 2)
         check.assert_called_once_with()
         prune.assert_not_called()
@@ -178,7 +178,7 @@ class Audit(unittest.TestCase):
         from oh_access import audit
         output = io.StringIO()
         with contextlib.redirect_stdout(output), patch.object(audit, "rows", return_value=self.ROWS) as rows:
-            self.assertEqual(access.main(["audit", "--config", "/srv/thermite/config.json", "--since", "7d",
+            self.assertEqual(access.main(["audit", "--descriptor", "/srv/thermite/config.json", "--since", "7d",
                                           "--action", "login", "--action", "token"]), 0)
         rows.assert_called_once_with(Path("/srv/thermite/config.json"), after="7d", actions=["login", "token"])
         self.assertEqual(output.getvalue().splitlines(), [
@@ -188,7 +188,7 @@ class Audit(unittest.TestCase):
             'target="1a2b3c4d laptop" peer=9c0d1e2f'])
         output = io.StringIO()
         with contextlib.redirect_stdout(output), patch.object(audit, "rows", return_value=self.ROWS):
-            self.assertEqual(access.main(["audit", "--config", "/srv/thermite/config.json", "--json"]), 0)
+            self.assertEqual(access.main(["audit", "--descriptor", "/srv/thermite/config.json", "--json"]), 0)
         self.assertEqual(json.loads(output.getvalue()), self.ROWS)
 
     def test_audit_refuses_another_account_before_opening_state(self):
@@ -197,7 +197,7 @@ class Audit(unittest.TestCase):
         with contextlib.redirect_stderr(error), patch.object(audit, "require_service_account",
                                                              side_effect=AccessError("Run as thermite")), \
                 patch.object(service, "configured") as configured:
-            self.assertEqual(access.main(["audit", "--config", "/srv/thermite/config.json"]), 2)
+            self.assertEqual(access.main(["audit", "--descriptor", "/srv/thermite/config.json"]), 2)
         configured.assert_not_called()
         self.assertIn("Run as thermite", error.getvalue())
 
@@ -224,7 +224,7 @@ class Prune(unittest.TestCase):
     def test_prune_runs_the_service_operation_and_prints_its_result(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output), patch.object(service, "prune_policies", return_value={"pruned": ["attic"]}) as prune:
-            self.assertEqual(access.main(["prune", "--config", "/srv/thermite/config.json"]), 0)
+            self.assertEqual(access.main(["prune", "--descriptor", "/srv/thermite/config.json"]), 0)
         prune.assert_called_once_with(Path("/srv/thermite/config.json"))
         self.assertEqual(json.loads(output.getvalue()), {"pruned": ["attic"]})
 

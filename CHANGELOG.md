@@ -7,6 +7,15 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Command line: `--config DIR` (or `--site DIR`) now means the private site
+  in every verb and action. The `access` service actions (`serve`, `worker`,
+  `callbacks`, `verify`, `migrate`, `setup`, `bootstrap`, `prune`, `audit`,
+  `music-tidal`) name their release's service descriptor with `--descriptor
+  FILE` instead of `--config FILE`. `access audit`, `access prune` and
+  `access music-tidal` could not run: the launcher took their descriptor for
+  the site, as it did for any service action after `-qv`. An upgrade writes
+  the gateway's units with the new switch; each unit runs its own release's
+  program, so a rollback or revert keeps the old pair.
 - A nightly workflow, Boot, generates the example house and runs `thermite
   test boot` on it, so generated configuration is loaded into the pinned
   openHAB every night, which the tests never do.

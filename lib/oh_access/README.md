@@ -80,8 +80,8 @@ For a new site, the owner runs verification and then the receipt's
 
 ```sh
 RELEASE="$ACCESS_ROOT/releases/first"
-sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access verify --config "$RELEASE/config.json"
-sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access bootstrap --config "$RELEASE/config.json" --user admin
+sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access verify --descriptor "$RELEASE/config.json"
+sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access bootstrap --descriptor "$RELEASE/config.json" --user admin
 ```
 
 Both password prompts are hidden and require a terminal;
@@ -96,7 +96,7 @@ To create the first administrator on the web Security page instead, replace
 the bootstrap command with:
 
 ```sh
-sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access setup --config "$RELEASE/config.json"
+sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access setup --descriptor "$RELEASE/config.json"
 ```
 
 This initializes a fresh schema with authentication off and prints a one-use
@@ -128,7 +128,7 @@ interpreter and program:
 
 ```sh
 sudo systemctl stop thermite-access.service thermite-access-worker.service
-sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access migrate --config "$RELEASE/config.json"
+sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" access migrate --descriptor "$RELEASE/config.json"
 ```
 
 Copy the state after stopping services and before the migration command.
@@ -142,7 +142,7 @@ For rollback across a schema change, stop both services and restore the whole
 matching copy before activating the prior release. Do not mix an older
 database with newer signing keys or a different site identity.
 
-`serve --config …` loads a private compiled contract and explicit host list,
+`serve --descriptor …` loads a private compiled contract and explicit host list,
 validates the TLS certificate/key, and runs one direct-TLS ASGI process on
 Hypercorn. TLS 1.2 or later offers HTTP/2 before HTTP/1.1, so one browser's
 pages share a connection. At most 100 requests run at once, each HTTP/2 stream
@@ -150,7 +150,7 @@ counting alone, and more are answered 503; WebSocket handshakes are refused.
 Shutdown gives requests 15 seconds, then cancels the rest. It
 does not trust proxy headers, environment HTTP proxies, redirects, cookies
 from the native runtime, or arbitrary caller-supplied upstream URLs. The
-separate `worker --config …` uses the same SQLite database and sorted
+separate `worker --descriptor …` uses the same SQLite database and sorted
 `room:<id>` / `device:<id>` file locks. One process lease prevents a second
 worker. No database transaction spans device I/O.
 
@@ -193,7 +193,7 @@ repairs since it last settled) and one `phase`
 line when a room's phase or policy revision changes. The 10-second heartbeat
 logs nothing.
 
-`thermite access audit --config FILE [--since 7d|2026-11-04T18:00]
+`thermite access audit --descriptor FILE [--since 7d|2026-11-04T18:00]
 [--action login] [--json]`, run as the service account like `prune`, prints
 the security audit oldest first: time, action, outcome, principal, actor,
 target and the first 8 characters of the peer digest, as the journal's
@@ -201,7 +201,7 @@ target and the first 8 characters of the peer digest, as the journal's
 It reads only.
 
 A policy row for a room absent from the compiled house is ignored; remove such
-rows with `thermite access prune --config …` as the service account. A
+rows with `thermite access prune --descriptor …` as the service account. A
 present room's policy that no longer validates (for example, a retired
 source) stops enforcement only in rooms that share a device with that room;
 unrelated rooms stay enforced. The worker also prunes expired identity
@@ -255,8 +255,8 @@ label.
 `stage --callbacks <private-file>` validates and copies an explicit callback
 configuration and stages a third unit. Without it, the release still has only
 the HTTPS service and policy worker. No unit is installed or started.
-`thermite access callbacks --config <private-file>` runs that separate legacy
-plaintext UPnP ingress; it has no credential or site-state input.
+`thermite access callbacks --descriptor <private-file>` runs that separate
+legacy plaintext UPnP ingress; it has no credential or site-state input.
 
 The mode-0600 JSON has exactly `version: 1`, `routes`, `upstream`, `hosts`,
 `bind_host` and `port`. `routes` maps each verified native callback path to

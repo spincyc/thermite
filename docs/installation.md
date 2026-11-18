@@ -338,8 +338,8 @@ always succeeds and releases the manual hold; an active scheduled lock can still
 keep the room locked. The lock blocks ordinary controls, including administrator
 commands and All Off, and uses the same configured-device enforcement as
 scheduled locks. Saved policies for rooms removed from the house remain stored
-until `thermite access prune --config FILE`, run as the `thermite` account with
-the gateway's service configuration file, deletes them.
+until `thermite access prune --descriptor FILE`, run as the `thermite` account
+with the gateway's service descriptor, deletes them.
 
 Use System (F10 in the terminal) for deliberate access to openHAB, Grafana,
 Prometheus, Alertmanager and ntfy. Local-only tools remain local and provide
@@ -715,7 +715,7 @@ journalctl -u thermite-access.service -u thermite-access-worker.service -p warni
 journalctl -u thermite-openhab.service -g '^\[(WARN|ERROR)'
 RELEASE=$(systemctl show -P WorkingDirectory thermite-access.service)
 sudo -u thermite -g thermite "$RELEASE/env/bin/python" "$RELEASE/program/bin/thermite" \
-  access audit --config "$RELEASE/config.json" --since 7d --action login
+  access audit --descriptor "$RELEASE/config.json" --since 7d --action login
 ```
 
 A denied sign-in names the account's ID in `target` when the name exists,

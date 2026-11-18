@@ -109,7 +109,7 @@
     if (mode.bootstrap_required) {
       host.append(node("p", "Complete the HTTPS gateway setup and restrict direct runtime access before relying on accounts or room locks."),
         node("p", "Create your first administrator here. On the thermite host, generate a short-lived setup code for this site:"),
-        node("code", "thermite access setup --config /path/to/access/config.json"),
+        node("code", "thermite access setup --descriptor /path/to/access/config.json"),
         node("p", "Run the staged thermite release as the thermite service account, using its access configuration.", { class: "access-note" }),
         node("p", mode.setup_available ? "A setup code is ready. Enter it below." : "No setup code is ready. Run the command, then enter the code below.", { class: "access-note" }));
     }

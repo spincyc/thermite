@@ -30,7 +30,7 @@ is off, and the worker cannot enforce saved policies. Saved accounts and
 policies remain in private storage. Native testing mode is a separate
 direct-runtime path, not this property or an authentication fallback.
 
-For first activation, the owner runs `thermite access setup --config …` on
+For first activation, the owner runs `thermite access setup --descriptor …` on
 the service host. It prints a one-use code to an interactive terminal only.
 The database stores its digest and 15-minute expiry. Enter the code and a new
 administrator username/password on the HTTPS Security page. Account creation,
@@ -227,7 +227,7 @@ security events and are not audited (their trail is the journal's `cmd`
 lines). A denied sign-in records the account's ID when the name exists and
 never the attempted name; a token's audit target is its ID's first 8
 characters and its name, and a terminal names its token after its host.
-`thermite access audit --config FILE [--since 7d] [--action login]`, run as
+`thermite access audit --descriptor FILE [--since 7d] [--action login]`, run as
 the service account, reads the table. Denied sign-ins keep their own
 1000-record cap so they cannot evict the 5000 other records. The worker prunes
 daily: boundary receipts older than three days (the worker looks back two),
@@ -258,7 +258,7 @@ when it is enabled or holds a manual lock (`oh_room_policy.active`); a
 disabled schedule without a hold is inert everywhere, even if it no longer
 validates. A stored hold naming a source the house no longer offers is
 released by a schedule edit. Policies for rooms no longer in the compiled
-house are ignored by the worker; `thermite access prune --config …` deletes
+house are ignored by the worker; `thermite access prune --descriptor …` deletes
 them. The separate worker uses `policy_store.Store`
 for revision-fenced durable boundary claims and canonical reconcile status.
 Claims happen before external effects; uncertain dispatch is not replayed as a
@@ -622,7 +622,7 @@ websocket per gateway process (`oh_identity.music_hub`) serves every music
 stream, on `oh_identity.hub`'s terms.
 
 TIDAL signs in with its device flow: POST `/api/v1/music/tidal/start` (or
-`thermite access music-tidal --config FILE`, run as the service account)
+`thermite access music-tidal --descriptor FILE`, run as the service account)
 answers `sign_in: {state: "waiting", code, url, expires_at}`; the owner
 approves the code at `https://link.tidal.com/` from any device, and GET
 `/api/v1/music/tidal` follows it (`waiting` with a fresh code once one

@@ -26,16 +26,20 @@ are service and recovery primitives, not a separate deployment sequence.
 
 #: The terminal's subcommands: like thermite tui, they need no private site.
 TERMINAL = ("login", "logout", "status")
+#: --descriptor's help in the actions that run as the service account. It is
+#: not spelled --config: that selects the private site in every verb, before
+#: any parser runs (oh_paths.select_args).
+SERVICE_DESCRIPTOR = "the release's private service descriptor (its config.json)"
 EXAMPLES = (("thermite access login --url https://thermite.example:13601 --user operator", "save this site's personal credential privately"),
-            ("thermite access setup --config /srv/thermite/access/releases/RELEASE/config.json", "arm first admin setup on the HTTPS Security page"),
-            ("thermite access migrate --config /srv/thermite/access/releases/RELEASE/config.json", "upgrade identity schema after stopping services and backing up state"),
-            ("thermite access bootstrap --config /srv/thermite/access/releases/RELEASE/config.json --user admin", "initialize one site's first admin locally"),
-            ("thermite access verify --config /srv/thermite/access/releases/RELEASE/config.json", "check service ownership and configuration as thermite before activation"),
-            ("thermite access serve --config /srv/thermite/access/releases/RELEASE/config.json", "serve the compiled site over verified TLS"),
-            ("thermite access worker --config /srv/thermite/access/releases/RELEASE/config.json", "run the single supervised room-policy worker"),
-            ("thermite access prune --config /srv/thermite/access/releases/RELEASE/config.json", "delete saved policies for rooms the house no longer has"),
-            ("thermite access audit --config /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login", "read the security audit as the service account"),
-            ("thermite access music-tidal --config /srv/thermite/access/releases/RELEASE/config.json", "sign Music Assistant into TIDAL as the service account"))
+            ("thermite access setup --descriptor /srv/thermite/access/releases/RELEASE/config.json", "arm first admin setup on the HTTPS Security page"),
+            ("thermite access migrate --descriptor /srv/thermite/access/releases/RELEASE/config.json", "upgrade identity schema after stopping services and backing up state"),
+            ("thermite access bootstrap --descriptor /srv/thermite/access/releases/RELEASE/config.json --user admin", "initialize one site's first admin locally"),
+            ("thermite access verify --descriptor /srv/thermite/access/releases/RELEASE/config.json", "check service ownership and configuration as thermite before activation"),
+            ("thermite access serve --descriptor /srv/thermite/access/releases/RELEASE/config.json", "serve the compiled site over verified TLS"),
+            ("thermite access worker --descriptor /srv/thermite/access/releases/RELEASE/config.json", "run the single supervised room-policy worker"),
+            ("thermite access prune --descriptor /srv/thermite/access/releases/RELEASE/config.json", "delete saved policies for rooms the house no longer has"),
+            ("thermite access audit --descriptor /srv/thermite/access/releases/RELEASE/config.json --since 7d --action login", "read the security audit as the service account"),
+            ("thermite access music-tidal --descriptor /srv/thermite/access/releases/RELEASE/config.json", "sign Music Assistant into TIDAL as the service account"))
 
 
 def hidden_password(prompt="Password: ", *, confirm=False):
@@ -90,20 +94,21 @@ def main(argv=None):
     commands = oh_cli.actions(parser)
     for name in ("bootstrap", "setup", "migrate", "serve", "worker", "verify", "prune"):
         sub = oh_cli.action(commands, name, {"bootstrap": "initialize the first admin locally", "setup": "issue a one-use code for first admin setup on the Security page", "migrate": "upgrade identity schema after backing up state and stopping access services", "serve": "serve one HTTPS site", "worker": "run the single room-policy worker", "verify": "verify service custody without initializing state", "prune": "delete saved policies for rooms the compiled house no longer has"}[name], examples=[example for example in EXAMPLES if " " + name + " " in example[0]])
-        sub.add_argument("--config", required=True, type=Path, help="private site service configuration")
+        sub.add_argument("--descriptor", required=True, type=Path, metavar="FILE", help=SERVICE_DESCRIPTOR)
         if name == "bootstrap":
             sub.add_argument("--user", required=True, help="first admin's username")
     sub = oh_cli.action(commands, "audit", "read the security audit (logins, tokens, accounts, locks, the security switch)",
                         examples=[example for example in EXAMPLES if " audit " in example[0]])
-    sub.add_argument("--config", required=True, type=Path, help="private site service configuration")
+    sub.add_argument("--descriptor", required=True, type=Path, metavar="FILE", help=SERVICE_DESCRIPTOR)
     sub.add_argument("--since", metavar="WHEN", help="only rows since 30m, 12h, 7d, or an ISO date or time (site timezone)")
     sub.add_argument("--action", action="append", default=[], help="only this action or family, such as login, token or room.lock (repeatable)")
     oh_cli.add_json(sub)
     sub = oh_cli.action(commands, "music-tidal", "sign the site's Music Assistant into TIDAL: show a code to approve at "
                         "link.tidal.com and wait", examples=[example for example in EXAMPLES if " music-tidal " in example[0]])
-    sub.add_argument("--config", required=True, type=Path, help="private site service configuration")
-    sub = oh_cli.action(commands, "callbacks", "run the explicitly configured plaintext UPnP NOTIFY listener", examples=[("thermite access callbacks --config /srv/thermite/access/releases/RELEASE/callbacks.json", "run only verified callback paths and peers")])
-    sub.add_argument("--config", required=True, type=Path, help="private mode0600 callback-only configuration")
+    sub.add_argument("--descriptor", required=True, type=Path, metavar="FILE", help=SERVICE_DESCRIPTOR)
+    sub = oh_cli.action(commands, "callbacks", "run the explicitly configured plaintext UPnP NOTIFY listener", examples=[("thermite access callbacks --descriptor /srv/thermite/access/releases/RELEASE/callbacks.json", "run only verified callback paths and peers")])
+    sub.add_argument("--descriptor", required=True, type=Path, metavar="FILE",
+                     help="the release's private mode0600 callback-only descriptor (its callbacks.json)")
     for name in TERMINAL:
         sub = oh_cli.action(commands, name, {"login": "log this terminal into a site", "logout": "revoke this terminal's site credential", "status": "read this terminal's current site identity and policies"}[name], examples=[("thermite access " + name + " --url https://thermite.example:13601" + (" --user operator" if name == "login" else ""), "use this site's private terminal credential")])
         sub.add_argument("--url", metavar="URL", help="the gateway as https://HOST:PORT, HOST:PORT or HOST, as thermite tui "
@@ -166,24 +171,24 @@ def main(argv=None):
             if not sys.stdout.isatty() or not sys.stdin.isatty():
                 raise AccessError("Setup codes require an interactive terminal; do not redirect them to logs")
             from oh_access.service import prepare_setup
-            code = prepare_setup(args.config)
+            code = prepare_setup(args.descriptor)
             print("Open the site's HTTPS Security page and enable authentication.")
             print("One-use setup code (expires in 15 minutes): " + code)
             return 0
         elif args.command == "migrate":
             from oh_access.service import migrate
-            result = migrate(args.config)
+            result = migrate(args.descriptor)
         elif args.command == "prune":
             from oh_access.service import prune_policies
-            result = prune_policies(args.config)
+            result = prune_policies(args.descriptor)
         elif args.command == "music-tidal":
             from oh_access.files import require_service_account
             require_service_account()
             from oh_music import tidal
-            return tidal.sign_in(*tidal.site(args.config))
+            return tidal.sign_in(*tidal.site(args.descriptor))
         elif args.command == "audit":
             from oh_access import audit
-            result = audit.rows(args.config, after=args.since, actions=args.action)
+            result = audit.rows(args.descriptor, after=args.since, actions=args.action)
             if not args.json:
                 for entry in result:
                     print(audit.text(entry))
@@ -192,21 +197,21 @@ def main(argv=None):
             from oh_access.files import require_service_account
             require_service_account()
             from oh_access.service import bootstrap
-            result = bootstrap(args.config, args.user, hidden_password("First admin password: ", confirm=True))
+            result = bootstrap(args.descriptor, args.user, hidden_password("First admin password: ", confirm=True))
         elif args.command == "verify":
             from oh_access.staging import verify
-            result = verify(args.config)
+            result = verify(args.descriptor)
         elif args.command == "serve":
             from oh_access.service import serve
-            serve(args.config)
+            serve(args.descriptor)
             return 0
         elif args.command == "worker":
             from oh_access.worker import run
-            run(args.config)
+            run(args.descriptor)
             return 0
         elif args.command == "callbacks":
             from oh_access.callback_service import serve
-            serve(args.config)
+            serve(args.descriptor)
             return 0
         else:
             from oh_access.staging import stage

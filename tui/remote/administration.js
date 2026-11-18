@@ -46,7 +46,7 @@ function create(client, house, changed) {
       if (mode?.bootstrap_required) {
         line("Complete the HTTPS gateway setup and restrict direct runtime access before relying on accounts or room locks.");
         line("For first setup, generate a short-lived code on the thermite host:");
-        line("thermite access setup --config /path/to/access/config.json");
+        line("thermite access setup --descriptor /path/to/access/config.json");
         line("Run the staged release as the thermite service account, using its access configuration.");
         line("Enter that code and create an administrator on the Security page.");
       } else line("Changing authentication requires an administrator's password. When enabled, sign in as that administrator in the browser first.");

@@ -85,7 +85,7 @@ class Configuration(unittest.TestCase):
     def test_explicit_cli_callbacks_does_not_dispatch_site_or_worker(self):
         from oh_cli.access import main
         with patch.object(service, "serve") as serve, patch("sys.stdout", new_callable=io.StringIO), patch("oh_access.service.serve", side_effect=AssertionError("wrong service")):
-            self.assertEqual(main(["callbacks", "--config", str(self.path)]), 0)
+            self.assertEqual(main(["callbacks", "--descriptor", str(self.path)]), 0)
         serve.assert_called_once_with(self.path)
 
     def test_server_has_actual_header_deadline_and_no_forwarded_trust_logging_or_credentials(self):
@@ -188,7 +188,14 @@ class Configuration(unittest.TestCase):
         self.assertEqual(service.load_config(config), CONFIG)
         self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o600)
         unit = (self.root / "release-opt-in/units/thermite-access-callbacks.service").read_text()
-        self.assertIn('"callbacks" "--config"', unit)
+        self.assertIn('"callbacks" "--descriptor"', unit)
+        # The commands the receipt hands the owner and the installer are ones
+        # this release's own access verb accepts.
+        import oh_cli
+        for field, action in (("verification_command", "verify"), ("bootstrap_command", "bootstrap")):
+            command = receipt[field]
+            parsed = oh_cli.parser_of("access").parse_args(command[command.index("access") + 1:])
+            self.assertEqual((parsed.command, parsed.descriptor), (action, self.root / "release-opt-in/config.json"))
         for field in ("User=thermite", "Group=thermite", "Slice=thermite.slice", "UMask=0077"):
             self.assertIn("\n" + field + "\n", unit)
         self.assertIn("callbacks.json", unit)

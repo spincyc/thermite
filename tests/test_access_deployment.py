@@ -360,7 +360,7 @@ class GatewayFixture(PrivateFixture):
         return {"destination": str(release), "persistent_state": kwargs["state"], "config": str(release / "config.json"),
                 "units": ["thermite-access.service", "thermite-access-worker.service"],
                 "ownership_commands": [["sudo", "/usr/bin/python3", "-I", "-S", str(self.root / "custody.py"), "custody.json"]],
-                "verification_command": [*command, "verify", "--config", str(release / "config.json")],
+                "verification_command": [*command, "verify", "--descriptor", str(release / "config.json")],
                 "unit_install_commands": self.unit_commands(self.current, release)}
 
     def gateway(self, *, inputs=True, transaction=TRANSACTION, context=None):

@@ -423,6 +423,7 @@
     "tests/test_access_boundary.py",
     "tests/test_access_callback_service.py",
     "tests/test_access_callbacks.py",
+    "tests/test_access_commands.py",
     "tests/test_access_custody.py",
     "tests/test_access_deployment.py",
     "tests/test_access_mode_ui.py",
