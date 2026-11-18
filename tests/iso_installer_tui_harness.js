@@ -3,15 +3,17 @@
 // (iso/installer.py serve) on a fake live system: every step from welcome to
 // done, the core's refusals shown under their fields, the taken host name,
 // Wi-Fi, the erase confirmation, progress, a failed run, the lock the
-// console and SSH share, and every frame at several sizes in both modes.
-// No blessed: frames are read as text, as tui/remote's tests read them.
+// console and SSH share, a key that fails, and every frame at several sizes
+// in both modes. No blessed: frames are read as text, as tui/remote's tests
+// read them, and the terminal (tui/remote/app.js) runs on a stand-in for it.
 //
 //   node iso_installer_tui_harness.js PYTHON CORE_SCRIPT ROOT
 //
 // CORE_SCRIPT core ROOT SCENARIO serves one session on stdin/stdout.
 const assert = require("node:assert/strict"), fs = require("node:fs"), { spawn } = require("node:child_process");
+const { EventEmitter } = require("node:events");
 const Core = require("../tui/installer/core"), Controller = require("../tui/installer/controller");
-const Theme = require("../tui/remote/theme");
+const Theme = require("../tui/remote/theme"), App = require("../tui/remote/app");
 
 const [python, script, root] = process.argv.slice(2);
 const SECRETS = ["owner-secret-1", "root-secret-1", "wifi-secret-1"];
@@ -287,11 +289,30 @@ async function locked() {
     && /^In use by tty1 since /.test(second.ui.message.text) && text.includes("In use by tty1");
 }
 
+// The terminal itself (tui/remote/app.js on a stand-in for blessed's
+// program) with a core whose pipe is gone, so that a request throws: the key
+// that failed is said in the status line and kept for the exit, and the next
+// key still goes.
+async function faults() {
+  const controller = Controller.create({ core: { request: () => { throw new Error("no core"); } }, look, label: "tty1", still: true });
+  const program = Object.assign(new EventEmitter(), { cols: 80, rows: 24, destroy() {} });
+  const kept = [];
+  const app = App.run({ blessed: { program: () => program }, controller, env: {}, output: { columns: 80, rows: 24, write: () => true },
+    onError: (error) => kept.push(error.message) });
+  program.emit("keypress", "\r", { name: "enter", full: "enter" });
+  const text = look_at(controller, "fault");
+  proof.faultSaid = kept.join() === "no core" && text.includes("That did not work: no core");
+  program.emit("keypress", null, { name: "t", full: "C-t", ctrl: true });
+  proof.faultGoesOn = controller.ui.theme === "light";
+  app.destroy();
+}
+
 (async () => {
   await installs();
   await fails();
   await wifi();
   await locked();
+  await faults();
   assert.ok(proof.frames > 100);
   fs.writeSync(1, JSON.stringify(proof));  // whole before exit, even to a pipe
   process.exit(0);

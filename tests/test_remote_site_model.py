@@ -183,5 +183,17 @@ backend.open().then(manifest => {
         self.assertFalse((runtime / "conf").exists())
 
 
+class Examples(unittest.TestCase):
+    def test_every_url_in_the_verbs_examples_is_one_the_launch_path_takes(self):
+        # launch_environment() asks oh_access for the URL's credential file, which refuses all but an HTTPS origin.
+        from oh_access import client
+        urls = [word for command, _ in remote.EXAMPLES
+                for flag, word in zip(command.split(), command.split()[1:]) if flag == "--url"]
+        self.assertTrue(urls, "thermite remote's examples show no --url")
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertEqual(client.origin(url), url)
+
+
 if __name__ == "__main__":
     unittest.main()

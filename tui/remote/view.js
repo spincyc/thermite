@@ -35,6 +35,9 @@ const EIGHTHS = ["\u258f", "\u258e", "\u258d", "\u258c", "\u258b", "\u258a", "\u
 // The terminal's own keys, after the page's (RemoteSession.SHORTCUTS).
 const TUI_SHORTCUTS = [
   [["Tab", "Shift-Tab"], "Next/previous pane"],
+  [["n", "N"], "Next/previous button of the remote"],
+  [["Space"], "Press that button"],
+  [["PgUp", "PgDn"], "Scroll the pane"],
   [["r"], "Rooms"],
   [["i"], "Info"],
   [["d"], "Signal & audio"],
@@ -127,6 +130,8 @@ function panel(frame, ctx, rect, options) {
   const inner = new Grid(w - 2, null, "base");
   options.content(inner, w - 2, h - 2);
   const active = ctx.ui.focusVisible && (!ctx.ui.overlay || options.solid) && ctx.ui.pane === options.key;
+  // Rows out of sight: how to reach them (options.hidden) goes first in the bottom edge.
+  const footer = options.hidden && inner.height > h - 2 ? options.hidden.concat(options.footer || []) : options.footer;
   const border = "border." + options.color + (active ? "+bold" : "");
   if (active) frame.activePane = options.key;
   if (options.solid) {
@@ -136,7 +141,7 @@ function panel(frame, ctx, rect, options) {
   box(g, rect, {
     border: border, title: options.title && (active ? "\u25b8 " : "") + options.title,
     titleStyle: "title." + options.color + (active ? "+bold" : ""), titleHit: options.titleHit,
-    right: options.right, footer: options.footer
+    right: options.right, footer: footer
   });
   // Keep the position of every focus stop, including rows below the viewport,
   // so keyboard navigation can reveal the next control in this pane.
@@ -278,7 +283,7 @@ function statusLine(frame, ctx, width, y) {
     g.put(1, y, fit(ctx.ui.error, width - 2), "alert");
     return;
   }
-  const help = paneHelp(ctx);
+  const help = paneHelp(ctx, frame);
   if (help) {
     const label = help[0] + ": " + help.slice(1).map((entry) => entry[0].join(" ") + " " + entry[1]).join(" \u00b7 ");
     g.line(1, y, [["\u25b8 ", "hotkey"], [fit(label, width - 4), "base"]]);
@@ -286,11 +291,11 @@ function statusLine(frame, ctx, width, y) {
   }
   const announce = ctx.ui.screen === "pairing" ? ctx.pairing.announce : ctx.ui.announce;
   if (announce && !logVisible) g.put(1, y, fit(announce, width - 2), "dim");
-  else if (frame.regions.some((region) => region.key === "remote" && region.overflow > 0))
-    g.put(1, y, fit("Mouse wheel scrolls controls \u00b7 Tab changes pane", width - 2), "dim");
 }
 
-function paneHelp(ctx) {
+// The keys of the pane with the focus, for the status line and the help
+// sheet; frame, where given, says whether the remote hides rows.
+function paneHelp(ctx, frame) {
   if (listening(ctx)) {
     const help = listenHelp(ctx);
     if (help) return help;
@@ -308,8 +313,7 @@ function paneHelp(ctx) {
     case "sheet:rooms": return ["Rooms", [["\u2191\u2193"], "select room"], [["Enter"], "remote"]];
     case "sources": return ["Sources", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "activate"]]
       .concat(ctx.session?.roomLock().canManage ? [[["o"], "lock menu"]] : []);
-    case "remote": return ["Remote", [["\u2190\u2191\u2192\u2193"], "D-pad"], [["Enter"], "OK"]]
-      .concat(ctx.session?.roomLock().canManage ? [[["k"], "lock/unlock room"]] : []);
+    case "remote": return remoteHelp(ctx, frame);
     case "info": return ["Info", [["\u2191\u2193"], "room"], [["\u2190\u2192"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"]];
     case "signal": return ["Signal & audio", [["↑↓"], "room"], [["←→"], "source"], [["Enter"], "apply source"], [["PgUp/PgDn"], "scroll"]];
     case "sheet:info": return ["Info", [["\u2191\u2193"], "choose"], [["Enter"], "press"], [["PgUp/PgDn"], "scroll"], [["Esc"], "close"]];
@@ -324,6 +328,18 @@ function paneHelp(ctx) {
     case "sheet:lock-menu": return ["Room lock", [["\u2191\u2193"], "choose"], [["Enter"], "select"], [["Esc"], "close"]];
     default: return null;
   }
+}
+
+// Watch's remote: the arrows are the D-pad's (a focused slider's while it
+// has the focus), n and N walk its buttons and Space presses the one
+// reached; PgUp and PgDn where it hides rows.
+function remoteHelp(ctx, frame) {
+  const slider = focused(ctx, "slider");
+  const hidden = Boolean(frame) && frame.regions.some((region) => region.key === "remote" && region.overflow > 0);
+  return (slider ? ["Volume", [["\u2190\u2192"], "step"], [["Home/End"], "least/most"], [["Enter"], "OK"], [["n/N"], "button"]]
+    : ["Remote", [["\u2190\u2191\u2192\u2193"], "D-pad"], [["Enter"], "OK"], [["n/N"], "button"], [["Space"], "press"]]
+      .concat(hidden ? [[["PgUp/PgDn"], "scroll"]] : []))
+    .concat(ctx.session?.roomLock().canManage ? [[["k"], "lock/unlock room"]] : []);
 }
 
 // Listen's panes and sheets.
@@ -458,8 +474,9 @@ function remoteScreen(frame, ctx, rect) {
     key: "remote", color: "remote", title: modes ? modes.title : current.label,
     right: !modes || area.x + area.w - 6 - length(right) > modes.end + 1 ? right : "",
     footer: listen ? [["1-9", "speaker"]].concat(musicKeys(ctx, "search", "group").map(([keys, label]) => [keys[0].toLowerCase(), label]))
-      : [["0-9", "source"], ["Enter", "OK"], ["v", "volume"]],
-    content: (inner, w) => listen ? Listen.face(inner, w, ctx, KIT) : remoteContent(frame, inner, w, ctx)
+      : [["0-9", "source"], ["Enter", "OK"], ["n/N", "button"], ["Space", "press"], ["v", "volume"]],
+    hidden: [["PgUp/Dn", "scroll"]],
+    content: (inner, w, h) => listen ? Listen.face(inner, w, ctx, KIT) : remoteContent(frame, inner, w, h, ctx)
   });
   if (modes) modes.draw(frame.grid);
   if (infoWidth) {
@@ -558,7 +575,8 @@ function keyLabel(ctx, id) {
 }
 
 function keyStyle(ctx, id, options) {
-  if (ctx.session.controlBlock()) return "dim";
+  // A key that is refused is dim; the focus still shows where n and N stand.
+  if (ctx.session.controlBlock()) return focused(ctx, "key:" + id) ? "dim key.focus" : "dim";
   if (ctx.session.canPress && !ctx.session.canPress(id)) return focused(ctx, "key:" + id) ? "dim key.focus" : "dim";
   const key = "key:" + id;
   if (ctx.ui.pressed[key]) return "key.pressed";
@@ -603,14 +621,35 @@ function rounded(g, x, y, text, width, style, hit) {
   return x + size;
 }
 
+// A key on one row, for a remote too tall for its panel: the caption
+// centered in width, its style the only edge it has.
+function flat(g, x, y, text, width, style, hit) {
+  const size = Math.max(3, width);
+  const label = fit(text, Math.min(length(text), size));
+  const pad = Math.floor((size - length(label)) / 2);
+  g.put(x, y, " ".repeat(pad) + label + " ".repeat(size - pad - length(label)), style.indexOf("focus") >= 0 ? "key.focus" : style, hit);
+  return x + size;
+}
+
+// The rows a remote's key takes, and from one row of keys to the next: a
+// rounded outline three rows high and a row apart, or, where the panel is
+// too short for the remote (ctx.flat, remoteContent), one row and none.
+function keyHeight(ctx) {
+  return ctx.flat ? 1 : 3;
+}
+
+function keyPitch(ctx) {
+  return ctx.flat ? 1 : 4;
+}
+
 // A key at (x, y), its caption centered in width; returns the column after it.
 function key(g, ctx, x, y, id, width, options) {
   const label = keyLabel(ctx, id);
-  return rounded(g, x, y, label, width || length(label) + 4, keyStyle(ctx, id, options), keyHit(ctx, id));
+  return (ctx.flat ? flat : rounded)(g, x, y, label, width || length(label) + 4, keyStyle(ctx, id, options), keyHit(ctx, id));
 }
 
-// Keys in rows centered in width, wrapped where they would not fit, a row
-// apart; returns the row after them.
+// Keys in rows centered in width, wrapped where they would not fit;
+// returns the row after them.
 function keyRows(g, ctx, y, width, ids, least) {
   if (!ids.length) return y;
   const rows = [[]];
@@ -638,13 +677,13 @@ function keyRows(g, ctx, y, width, ids, least) {
     const total = row.reduce((sum, entry) => sum + entry.size, 0) + (row.length - 1) * gap;
     let x = Math.max(0, Math.floor((width - total) / 2));
     row.forEach((entry) => {
-      x = key(g, ctx, x, y + index * 4, entry.id, entry.size) + gap;
+      x = key(g, ctx, x, y + index * keyPitch(ctx), entry.id, entry.size) + gap;
     });
   });
-  return y + rows.length * 4 - 1;
+  return y + (rows.length - 1) * keyPitch(ctx) + keyHeight(ctx);
 }
 
-function remoteContent(frame, g, w, ctx) {
+function remoteContent(frame, g, w, height, ctx) {
   const session = ctx.session;
   const current = session.current();
   const list = session.controls();
@@ -670,23 +709,32 @@ function remoteContent(frame, g, w, ctx) {
   const dense = w >= 104 && remote && remote.wide && groups && groups.some((group) => !group.primary);
   const width = dense ? 100 : Math.min(54, w);
   const primaryWidth = dense ? 48 : width;
-  const body = new Grid(width, null, "base"), primary = new Grid(primaryWidth, null, "base");
-  let row = 0;
-  if (!remote) row = note(primary, primaryWidth, row, "Nothing to control", "Choose a source above");
-  else if (remote.note) row = note(primary, primaryWidth, row, target.label, remote.note.replace("{device}", target.label));
-  else row = layout(primary, ctx, primaryWidth, row, remote, groups ? groups.filter((group) => group.primary) : null);
-  lower(primary, ctx, primaryWidth, row + 1, remote, target);
-  copyGrid(body, primary, 0, 0);
-  if (dense) {
-    const secondary = new Grid(48, null, "base");
-    groupRows(secondary, ctx, 48, 0, groups.filter((group) => !group.primary));
-    copyGrid(body, secondary, 52, 0);
-  } else if (groups) {
-    groupRows(body, ctx, width, primary.height + 1, groups.filter((group) => !group.primary));
-  }
+  // The remote's face, its keys three rows high or (flat) one row each.
+  const face = (drawn) => {
+    const body = new Grid(width, null, "base"), primary = new Grid(primaryWidth, null, "base");
+    let row = 0;
+    if (!remote) row = note(primary, primaryWidth, row, "Nothing to control", "Choose a source above");
+    else if (remote.note) row = note(primary, primaryWidth, row, target.label, remote.note.replace("{device}", target.label));
+    else row = layout(primary, drawn, primaryWidth, row, remote, groups ? groups.filter((group) => group.primary) : null);
+    lower(primary, drawn, primaryWidth, row + 1, remote, target);
+    copyGrid(body, primary, 0, 0);
+    if (dense) {
+      const secondary = new Grid(48, null, "base");
+      groupRows(secondary, drawn, 48, 0, groups.filter((group) => !group.primary));
+      copyGrid(body, secondary, 52, 0);
+    } else if (groups) {
+      groupRows(body, drawn, width, primary.height + 1, groups.filter((group) => !group.primary));
+    }
+    return body;
+  };
+  // A remote taller than its panel has its keys on one row each; what the
+  // panel still hides, PgUp and PgDn, the wheel and the focus (n, N) scroll to.
+  let body = face(ctx);
+  const short = y + body.height > height;
+  if (short) body = face(Object.assign({}, ctx, { flat: true }));
   const left = Math.floor((w - width) / 2);
   copyGrid(g, body, left, y);
-  frame.remoteBody = { left, width, primaryWidth, columns: dense ? 2 : 1, height: body.height };
+  frame.remoteBody = { left, width, primaryWidth, columns: dense ? 2 : 1, height: body.height, flat: short };
   return y + body.height;
 }
 
@@ -695,6 +743,8 @@ function copyGrid(into, from, x, y) {
   into.order.push.apply(into.order, from.order);
 }
 
+// Each group's heading and its keys in columns; returns the row after them
+// and a blank one.
 function groupRows(g, ctx, w, y, groups) {
   let row = y;
   (groups || []).forEach((group) => {
@@ -707,10 +757,11 @@ function groupRows(g, ctx, w, y, groups) {
       const ids = group.keys.slice(index, index + columns);
       let x = Math.max(0, Math.floor((w - (ids.length * cell + (ids.length - 1) * gap)) / 2));
       ids.forEach((id) => { x = key(g, ctx, x, row, id, cell) + gap; });
-      row += 4;
+      row += keyPitch(ctx);
     }
   });
-  return row;
+  // One-row keys have no row between them: the blank one comes after the last.
+  return ctx.flat && row > y ? row + 1 : row;
 }
 
 // The bubbles: Off and the room's sources, then set apart its display and
@@ -842,6 +893,7 @@ function layout(g, ctx, w, y, remote, groups) {
 
 // The D-pad on a pad of its own, OK at its heart, and the corner keys.
 function cluster(g, ctx, w, y, corners) {
+  const step = keyHeight(ctx);
   if (w < 34) {
     let row = y;
     if (corners.slice(0, 2).some(Boolean)) row = keyRows(g, ctx, row, w, corners.slice(0, 2).filter(Boolean), 8) + 1;
@@ -850,11 +902,11 @@ function cluster(g, ctx, w, y, corners) {
     const left = Math.floor((w - size * 3 - gap * 2) / 2);
     const center = left + size + gap;
     key(g, ctx, center, row, "up", size);
-    key(g, ctx, left, row + 3, "left", size);
-    key(g, ctx, center, row + 3, "ok", size, { ok: true });
-    key(g, ctx, center + size + gap, row + 3, "right", size);
-    key(g, ctx, center, row + 6, "down", size);
-    row += 9;
+    key(g, ctx, left, row + step, "left", size);
+    key(g, ctx, center, row + step, "ok", size, { ok: true });
+    key(g, ctx, center + size + gap, row + step, "right", size);
+    key(g, ctx, center, row + 2 * step, "down", size);
+    row += 3 * step;
     if (corners.slice(2).some(Boolean)) row = keyRows(g, ctx, row + 1, w, corners.slice(2).filter(Boolean), 8);
     return row;
   }
@@ -870,13 +922,13 @@ function cluster(g, ctx, w, y, corners) {
   corner(corners[0], y, false);
   corner(corners[1], y, true);
   key(g, ctx, ok, y, "up", 8);
-  key(g, ctx, ok - 9, y + 3, "left", 7);
-  key(g, ctx, ok, y + 3, "ok", 8, { ok: true });
-  key(g, ctx, ok + 10, y + 3, "right", 7);
-  key(g, ctx, ok, y + 6, "down", 8);
-  corner(corners[2], y + 6, false);
-  corner(corners[3], y + 6, true);
-  return y + 9;
+  key(g, ctx, ok - 9, y + step, "left", 7);
+  key(g, ctx, ok, y + step, "ok", 8, { ok: true });
+  key(g, ctx, ok + 10, y + step, "right", 7);
+  key(g, ctx, ok, y + 2 * step, "down", 8);
+  corner(corners[2], y + 2 * step, false);
+  corner(corners[3], y + 2 * step, true);
+  return y + 3 * step;
 }
 
 // Volume as the rocker or the slider, Mute, and the CH rocker, with their captions.
@@ -886,6 +938,9 @@ function lower(g, ctx, w, y, remote, target) {
   const idle = !session.current().audio;
   const width = Math.min(w, 44, Math.max(16, w - 4));
   const left = Math.floor((w - width) / 2);
+  // The track and VOL sit in the keys' middle row (a one-row key's only one);
+  // Mute's row comes a row after the caption, and the keys' own gap.
+  const tall = keyHeight(ctx), mid = (tall - 1) / 2, gap = keyPitch(ctx) - tall;
   if (view.slider && width >= 16) {
     key(g, ctx, left, y, "volume_down", 5, { idle: idle });
     key(g, ctx, left + width - 5, y, "volume_up", 5, { idle: idle });
@@ -895,28 +950,28 @@ function lower(g, ctx, w, y, remote, target) {
     const room = compact ? 0 : Math.max(6, length(value));
     const track = compact ? width - 12 : Math.max(4, width - 13 - room);
     const focus = focused(ctx, "slider");
-    meter(g, x, y + 1, track, view, focus);
-    g.hit(x, y + 1, track, 1, { kind: "slider", key: "slider", focus: true, max: view.max, min: view.min, step: view.step,
+    meter(g, x, y + mid, track, view, focus);
+    g.hit(x, y + mid, track, 1, { kind: "slider", key: "slider", focus: true, max: view.max, min: view.min, step: view.step,
       label: view.label + ": " + view.text + "  (\u2190 \u2192 Home End when focused)" });
-    if (!compact) g.put(x + track + 1, y + 1, value, view.muted ? "tone.busy+bold" : focus ? "meter.value.focus" : "meter.value");
+    if (!compact) g.put(x + track + 1, y + mid, value, view.muted ? "tone.busy+bold" : focus ? "meter.value.focus" : "meter.value");
   } else {
     const span = Math.min(19, w);
     const x = Math.floor((w - span) / 2);
     key(g, ctx, x, y, "volume_down", 5, { idle: idle });
-    if (span >= 15) g.put(Math.floor((w - 3) / 2), y + 1, "VOL", "meter.label");
+    if (span >= 15) g.put(Math.floor((w - 3) / 2), y + mid, "VOL", "meter.label");
     key(g, ctx, x + span - 5, y, "volume_up", 5, { idle: idle });
   }
   const caption = fit(view.slider && !view.disabled && w >= 30 ? view.short : view.caption, Math.min(w - 2, length(view.caption)));
   // Where it names the room's speaker, a click listens to it.
   const speaker = view.audio && session.modes().includes("listen") && session.current().speakers.includes(view.audio.id);
-  g.put(Math.max(1, Math.floor((w - length(caption)) / 2)), y + 3, caption, view.muted ? "tone.busy" : "dim",
+  g.put(Math.max(1, Math.floor((w - length(caption)) / 2)), y + tall, caption, view.muted ? "tone.busy" : "dim",
     speaker ? { kind: "mode", mode: "listen", device: view.audio.id, key: "listen-to", label: "Listen to " + view.audio.short + " (Y)" } : null);
   // Match the page's lower group: mute and short transport beneath volume,
   // with channel controls at its side. Keep labelled service keys above it.
   const playback = remote && remote.corners && (remote.playback || []).length <= 3 ? remote.playback || [] : [];
   const channel = Boolean(remote && !remote.note && remote.channel);
   const ids = ["mute"].concat(playback, channel ? ["channel_up", "channel_down"] : []);
-  const end = keyRows(g, ctx, y + 5, w, ids, 5);
+  const end = keyRows(g, ctx, y + tall + 1 + gap, w, ids, 5);
   if (channel) {
     const text = (target ? target.short : "") + " channels";
     g.put(Math.max(1, Math.floor((w - length(text)) / 2)), end, fit(text, w - 2), "dim");
@@ -1180,7 +1235,7 @@ function helpContent(g, w, ctx) {
   const manage = ctx.ui.screen === "remote" && ctx.session?.roomLock().canManage;
   if (listening(ctx)) rows("Listen", ctx.Session.LISTEN_SHORTCUTS.concat(Listen.SHORTCUTS, TUI_SHORTCUTS.filter(entry => ["r", "h", "F6"].includes(entry[0][0])))
     .concat(manage ? [[["K"], "Lock or unlock this room (administrators)"]] : []));
-  else if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["r", "i", "d", "h", "v", "F6"].includes(entry[0][0])))
+  else if (ctx.ui.screen === "remote") rows("Remote controls", ctx.Session.SHORTCUTS.concat(TUI_SHORTCUTS.filter(entry => ["n", "Space", "r", "i", "d", "h", "v", "F6"].includes(entry[0][0])))
     .concat(manage ? [[["K"], "Lock or unlock this room (administrators)"],
       [["o"], "Lock menu of the selected source or Off: lock on it, or unlock (administrators)"]] : []));
   else if (ctx.ui.screen === "pairing") rows("Pair devices", PAIR_SHORTCUTS.filter(entry => !["Tab", "L", "F1", "?", "q"].includes(entry[0][0])).concat([[["s/S"], "Sort/reverse"]]));
@@ -1189,7 +1244,7 @@ function helpContent(g, w, ctx) {
     if (help) rows(help[0], help.slice(1));
   }
   rows("Navigation", TUI_SHORTCUTS.filter(entry => /^F\d+$/.test(entry[0][0]) && entry[0][0] !== "F6"));
-  rows("Terminal", TUI_SHORTCUTS.filter(entry => ["Tab", "t", "a", "L", "?", "q"].includes(entry[0][0])));
+  rows("Terminal", TUI_SHORTCUTS.filter(entry => ["Tab", "PgUp", "t", "a", "L", "?", "q"].includes(entry[0][0])));
   y = heading(g, y + 1, "Mouse");
   return paragraph(g, 2, y, w - 4, MOUSE_HELP + (manage ? " Right-click a source or Off for its lock menu." : ""), "base");
 }

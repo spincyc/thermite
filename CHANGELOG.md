@@ -7,6 +7,23 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Terminal remote: every button of a remote can be pressed from the
+  keyboard. In Watch's remote pane `n` and `N` move the focus to the
+  next and previous button and Space presses it; the arrows stay the
+  D-pad and Enter OK. Before, 130 of the 249 buttons across the remote
+  layouts needed the mouse, and the help described a Tab and Space that
+  did something else.
+  - A remote taller than its pane draws its keys on one row each. Where
+    rows are still hidden the pane says **PgUp/Dn scroll**, and a button
+    the focus moves to is scrolled into view. In an 80 by 24 terminal
+    three of the fourteen layouts still scroll (eleven did, one hiding
+    51 rows, with no hint).
+  - A key the installer's terminal fails on is said in its status line
+    and the installer goes on; it ended the installer before. The
+    terminal refuses, at start and by name, a controller that lacks a
+    method it calls.
+  - `thermite remote --help` shows an HTTPS `--url` example; the plain
+    HTTP one it showed is refused.
 - Remotes: a device remote's labelled keys are laid out in their columns
   again. The gateway's Content-Security-Policy dropped the inline style
   that carried each group's column count, so every group was one column

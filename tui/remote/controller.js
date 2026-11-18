@@ -521,10 +521,14 @@ function create(options) {
     changed();
   }
 
-  function moveControl(delta) {
+  // The focus to the pane's next or previous control, which the panel then
+  // scrolls into sight; round: from the last on to the first, and back.
+  function moveControl(delta, round) {
     const list = frame.focusables.filter((hit) => hit.pane === ui.pane);
     const index = list.findIndex((hit) => hit.key === ui.focus);
-    if (list.length) ui.focus = list[Math.max(0, Math.min(list.length - 1, index + delta))].key;
+    const next = round && index >= 0 ? (index + delta + list.length) % list.length : Math.max(0, Math.min(list.length - 1, index + delta));
+    if (list.length) ui.focus = list[next].key;
+    ui.focusVisible = true;
     ui.revealFocus = true;
     changed();
   }
@@ -1411,10 +1415,17 @@ function create(options) {
       else applySourceCursor();
       return;
     }
+    // The remote's keys beyond the page's (Session.KEYS): n and N walk the
+    // focus over every button it draws, as Listen's arrows do there, and
+    // Space presses the one it stands on. The arrows stay the D-pad's and
+    // Enter OK; the focus starts on OK, so Space is OK until it is moved.
     if (name === "space") {
-      if (ui.pane === "remote") pressKey(["ok"]);
+      if (ui.pane !== "remote") return;
+      if (hit && hit.kind === "key") activate(hit);
+      else if (!hit) pressKey(["ok"]);
       return;
     }
+    if ((ch === "n" || ch === "N") && ui.pane === "remote") return moveControl(ch === "n" ? 1 : -1, true);
     const lower = ch ? ch.toLowerCase() : "";
     if (lower === "r") return openSheet("rooms");
     if (lower === "i") return openSheet("info");

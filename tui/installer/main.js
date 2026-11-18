@@ -47,9 +47,13 @@ function main(argv) {
   const child = spawn(args.python, ["-I", "-B", args.core, "serve"], { stdio: ["pipe", "pipe", errors] });
   const core = Core.create(child);
   let app = null;
+  // What a key or a frame threw (app.js's onError): written out once the
+  // terminal is given back, where it does not land on the screen.
+  const kept = [];
   const finish = (status) => {
     if (app) app.destroy();
     core.stop();
+    if (kept.length) process.stderr.write(kept.slice(-20).join("\n") + "\n");
     process.exit(status);
   };
   const controller = Controller.create({
@@ -62,7 +66,7 @@ function main(argv) {
     process.exit(1);
   });
   ["SIGTERM", "SIGHUP"].forEach((signal) => process.on(signal, () => finish(0)));
-  app = App.run({ blessed: blessed, controller: controller });
+  app = App.run({ blessed: blessed, controller: controller, onError: (error) => kept.push(String((error && error.stack) || error)) });
   controller.start();
   return null;
 }

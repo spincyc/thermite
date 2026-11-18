@@ -7,6 +7,11 @@
  * fails on does not end it: the error goes to options.onError (main.js
  * writes it out at the exit), the remote says that a key or a click did
  * not work (controller.fault), and it goes on.
+ *
+ * A controller is what CONTROLLER lists, and its state: ui.theme ("dark" or
+ * "light") and look (a theme.js theme, or null for the default). run()
+ * refuses one that lacks any of it before it touches the terminal, so a
+ * missing fault() is found at start and not at the first key that fails.
  */
 "use strict";
 
@@ -18,10 +23,29 @@ const LEAST_MS = 16;
 // How many styles' codes are kept: a drawing with a color per cell would
 // otherwise add codes without end.
 const CODES_KEPT = 4096;
+// What run() calls on a controller, and what each is for.
+const CONTROLLER = {
+  frame: "draws the screen: frame(width, height) returns {grid, animate}",
+  key: "takes a key: key(ch, key)",
+  mouse: "takes a click, a move or the wheel: mouse(data)",
+  fault: "says on the screen that a key or a click failed: fault(error)"
+};
+
+// Throws a TypeError that names what the controller lacks of CONTROLLER and its ui.
+function check(controller) {
+  const missing = Object.keys(CONTROLLER).filter((name) => typeof (controller && controller[name]) !== "function");
+  const lacks = missing.map((name) => name + "(), which " + CONTROLLER[name])
+    .concat(controller && typeof controller.ui === "object" && controller.ui ? [] : ["ui, whose theme is \"dark\" or \"light\""]);
+  if (lacks.length) {
+    throw new TypeError("The terminal's controller lacks " + lacks.join("; ") + ". Define " + (lacks.length > 1 ? "them" : "it")
+      + ": tui/remote/app.js lists what a controller needs.");
+  }
+}
 
 function run(options) {
   const blessed = options.blessed;
   const controller = options.controller;
+  check(controller);
   const input = options.input || process.stdin;
   const output = options.output || process.stdout;
   const later = options.setTimeout || ((callback, ms) => setTimeout(callback, ms));
@@ -124,4 +148,4 @@ function run(options) {
   };
 }
 
-module.exports = { run, LEAST_MS };
+module.exports = { run, check, CONTROLLER, LEAST_MS };

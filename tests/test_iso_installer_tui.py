@@ -82,6 +82,9 @@ class InstallerTerminal(unittest.TestCase):
     def test_console_and_ssh_share_one_installer(self):
         self.check("lockShared")
 
+    def test_a_key_the_installer_fails_on_is_said_and_the_installer_goes_on(self):
+        self.check("faultSaid", "faultGoesOn")
+
     def test_every_frame_fits_uses_the_themes_styles_and_shows_no_secret(self):
         self.assertGreater(self.proof["frames"], 100)
         self.assertEqual(self.proof["overflow"], [])

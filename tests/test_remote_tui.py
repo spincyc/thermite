@@ -64,6 +64,50 @@ class RemoteTUI(unittest.TestCase):
                                            "play_pause", "volume_up", "volume_down", "mute", "previous", "next"])
         self.assertEqual(watch["quiet"], [], "Esc and Backspace off the remote press nothing")
 
+    def test_n_and_shift_n_walk_the_remotes_buttons_and_space_presses_the_one_reached(self):
+        walk = self.proof["walk"]
+        self.assertEqual(walk["start"], "key:ok")
+        self.assertIn("←↑→↓ D-pad · Enter OK · n/N button · Space press", walk["status"])
+        # Space pressed the key walked to; with the focus still on it, Enter is OK and the arrows the D-pad.
+        self.assertEqual(walk["pressed"], ["key:netflix", [["example_player", "netflix"], ["example_player", "ok"], ["example_player", "up"]]])
+        self.assertEqual(walk["round"][:2], [True, True], "N from the first button is the last, and n the first again")
+        self.assertEqual(walk["elsewhere"], [True, True], "n moves nothing off the remote's pane")
+
+    def test_the_walk_reaches_the_volume_slider_whose_arrows_step_the_volume(self):
+        focus, sent, status = self.proof["walk"]["slider"]
+        self.assertEqual((focus, sent), ("slider", [["volume", 1]]))
+        self.assertIn("Volume: ←→ step · Home/End least/most", status)
+
+    def test_every_button_of_every_remote_is_reached_and_pressed_from_the_keyboard_in_80_by_24(self):
+        remotes = self.proof["remotes"]
+        self.assertGreaterEqual(len(remotes), 14)
+        self.assertEqual(sum(remote["buttons"] for remote in remotes.values()), 249)
+        for name, remote in remotes.items():
+            with self.subTest(remote=name):
+                self.assertEqual(remote["undrawn"], [], "buttons of the layout the terminal does not draw")
+                self.assertEqual(remote["unwalked"], [], "buttons n never brings the focus to")
+                self.assertEqual(remote["unpressed"], [], "buttons Space did not press with the focus on them")
+                self.assertEqual(remote["unseen"], [], "buttons the panel did not scroll into sight when focused")
+
+    def test_a_remote_too_tall_for_its_pane_has_one_row_keys_and_says_how_to_scroll_what_is_left(self):
+        remotes = self.proof["remotes"]
+        # In 80 by 24 the pane shows 16 rows. Three-row keys fit for these three; the others go to one row a key.
+        self.assertEqual(sorted(name for name, remote in remotes.items() if not remote["flat"]), ["pc", "ps5", "wiim"])
+        # Three remotes still hide rows (three-row keys hid up to 51 of eleven remotes).
+        self.assertEqual({name: remote["hidden"] for name, remote in remotes.items() if remote["hidden"]},
+                         {"sony_bluray": 5, "sony_bluray_cec": 7, "sony_tv": 11})
+        for name, remote in remotes.items():
+            with self.subTest(remote=name):
+                hidden = bool(remote["hidden"])
+                self.assertEqual(remote["hint"], hidden, "PgUp/Dn scroll in the pane's bottom edge, with the focus on the rooms")
+                self.assertEqual(remote["status"], hidden, "PgUp/PgDn scroll in the status line, with the focus on the remote")
+                self.assertEqual(remote["unpaged"], [], "buttons PgDn never brings on screen")
+
+    def test_a_remote_that_fits_its_pane_keeps_its_three_row_keys(self):
+        # In 110 by 60 the pane shows 42 rows: only the three Sony remotes, 50 rows and more, need one-row keys, and nothing is hidden.
+        self.assertEqual({name: remote["roomy"] for name, remote in self.proof["remotes"].items() if remote["roomy"] != [False, 0]},
+                         {name: [True, 0] for name in ("sony_bluray", "sony_bluray_cec", "sony_tv")})
+
     def test_each_sheet_opens_on_its_key_and_esc_gives_the_pane_back(self):
         sheets = self.proof["sheets"]
         self.assertEqual(sheets["r"], ["rooms", "sheet:rooms", "room:" + WEST, None, "rooms"])
@@ -190,6 +234,15 @@ class RemoteTUI(unittest.TestCase):
         self.assertEqual(terminal["click"], ["That did not work", "no room"])
         self.assertEqual(terminal["kept"], ["no step", "no room", "no frame"])
         self.assertEqual(terminal["draws"], 1)
+
+    def test_a_controller_without_fault_is_refused_by_name_before_the_terminal_is_touched(self):
+        message, touched = self.proof["terminal"]["refused"]
+        self.assertEqual(message, "The terminal's controller lacks fault(), which says on the screen that a key or a click failed: "
+                                  "fault(error). Define it: tui/remote/app.js lists what a controller needs.")
+        self.assertEqual(touched, 0, "blessed's program was made, or bytes written")
+
+    def test_every_controller_under_tui_is_one_the_terminal_takes(self):
+        self.assertEqual(self.proof["terminal"]["controllers"], {"installer": "ok", "remote": "ok"})
 
     def test_infos_buttons_and_switches_are_chosen_with_the_arrows(self):
         self.assertEqual(self.proof["sheets"]["info"], {"mode": ["buttons", "slider"], "sent": [[WEST, "screen", "down"]],

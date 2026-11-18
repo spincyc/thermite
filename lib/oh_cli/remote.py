@@ -77,9 +77,11 @@ NOTES = """\
 keys:
   as on the page: arrows D-pad, Enter OK, Backspace or Esc Back, + and -
   volume, M mute, P play/pause, 0 Off, 1-9 a source, [ and ] the room;
-  and Tab to move the focus, Space to press it, r rooms, i info,
-  v volume slider, t theme, a motion, L log pane,
-  F1 Home, F2 Remotes, F3 Security, F4 Cameras, F5 Site;
+  and Tab the next pane (Shift-Tab the one before); in the remote's pane
+  n and N move the focus to its next and previous button and Space
+  presses it, while Enter stays OK; PgUp and PgDn scroll a pane that
+  hides rows; r rooms, i info, v volume slider, t theme, a motion,
+  L log pane, F1 Home, F2 Remotes, F3 Security, F4 Cameras, F5 Site;
   within Remotes, F6 or Ctrl-P opens Pair devices;
   ? help, q quit.
 """
@@ -89,7 +91,7 @@ EXAMPLES = (
     ("thermite remote --mock", "the page's mock backend, which sends nothing"),
     ("thermite remote --sandbox --room ROOM", "the sandbox, starting in that room"),
     ("thermite remote --pair", "start on the Pairing screen"),
-    ("thermite remote --url http://thermite.example:13602 --light", "thermite on another host, light"),
+    ("thermite remote --url https://thermite.example:13601 --light", "thermite on another host, light"),
     ("thermite remote --mock --theme contrast", "in the high-contrast theme"),
     ("thermite remote --no-log", "give the log pane's rows to the controls; L shows it again"),
     ("thermite remote --setup", "only install the pinned blessed, then exit"),

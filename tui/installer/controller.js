@@ -60,7 +60,8 @@ function create(options) {
     message: null, facts: null, choices: null, network: null, wifi: { networks: [], cursor: 0, scanned: false },
     probe: null, accepted: null, filters: {}, cursors: {}, progress: null, result: null, failure: null
   };
-  const controller = { ui, look: options.look || null, key, mouse: () => {}, frame, start, step: () => STEPS[ui.step] };
+  // What tui/remote/app.js asks of a controller (its CONTROLLER), then the installer's own.
+  const controller = { ui, look: options.look || null, key, mouse: () => {}, frame, fault, start, step: () => STEPS[ui.step] };
 
   function changed() {
     if (options.onChange) options.onChange();
@@ -401,6 +402,12 @@ function create(options) {
       return go(STEPS.findIndex((entry) => entry.id === "review"));
     }
     go(ui.step - 1);
+  }
+
+  // What app.js caught from a key: said in the status line, and the installer goes on.
+  function fault(error) {
+    ui.message = { tone: "bad", text: "That did not work: " + String((error && error.message) || error) };
+    changed();
   }
 
   function quit() {

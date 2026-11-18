@@ -9,12 +9,14 @@
 // (the signal, a room's schedule). Prints what the screen drew and
 // sent; nothing leaves the process. It waits for what it expects to draw,
 // never for a fixed time.
-const assert = require("node:assert/strict"), { EventEmitter } = require("node:events");
+const assert = require("node:assert/strict"), { EventEmitter } = require("node:events"), fs = require("node:fs"), path = require("node:path");
 const Main = require("../tui/remote/main"), Shared = require("../tui/remote/shared"), App = require("../tui/remote/app");
 const Cameras = require("../tui/remote/cameras");
 console.log = console.info = () => {};
 const [WEST, EAST, DEN, LOUNGE] = process.argv.slice(2);
 const ORIGIN = "http://openhab.example:8080", GATEWAY = "https://thermite.example:13601";
+// The west room's display, whose remote remotes() makes each layout in turn.
+const TV = "example_tv";
 
 // Two cameras for the mock's catalogue, which has none.
 const camera = (id, label) => ({ id, label, thing: "unifi:camera:example:" + id, media: { snapshot: "/unifi/media/image/unifi:camera:example:" + id },
@@ -96,6 +98,7 @@ function gateway(house) {
 // rooms each signal read asked for recorded (diagnosed) and the read still made.
 function assemble(options = {}) {
   const shared = Shared.load();
+  if (options.remote) shared.house.devices[TV].remote = options.remote;
   const site = options.native ? openhab(shared.house) : options.gateway ? gateway(shared.house) : null;
   const args = !site ? ["--mock", "--still", "--latency", "0"] : ["--url", options.native ? ORIGIN : GATEWAY, "--still"].concat(options.native ? ["--native"] : []);
   const opened = [];
@@ -220,6 +223,113 @@ async function watch(proof) {
   size = [110, 50];
 }
 
+// ---- Watch: the remote's buttons from the keyboard ---------------------------
+
+// n and N walk the focus over the remote's buttons, round at its ends, and
+// Space presses the one reached while Enter stays OK; on the slider the
+// arrows are the volume's, not the D-pad's.
+async function walk(proof) {
+  size = [110, 50];
+  const parts = await open({}, WEST);
+  const { controller, session } = parts;
+  const ui = controller.ui;
+  key(parts, "1");
+  await until(parts, () => session.state(WEST).value === "example_player", "the player");
+  for (let i = 0; i < 6 && ui.pane !== "remote"; i++) key(parts, null, { name: "tab" });
+  const stops = () => draw(parts).focusables.filter((hit) => hit.pane === "remote").map((hit) => hit.key);
+  const status = () => text(parts).split("\n").slice(-2)[0];
+  proof.walk = { start: ui.focus, status: status() };
+  // Space on the button walked to; Enter, with the focus still there, is OK.
+  let from = parts.sent.length;
+  for (let i = 0; i < 40 && ui.focus !== "key:netflix"; i++) key(parts, "n");
+  key(parts, " ", { name: "space" });
+  key(parts, null, { name: "enter" });
+  key(parts, null, { name: "up" });
+  proof.walk.pressed = [ui.focus, sent(parts, from)];
+  // From the first N goes to the last, and n back to the first.
+  const list = stops();
+  for (let i = 0; i < 40 && ui.focus !== list[0]; i++) key(parts, "N", { name: "n", shift: true });
+  key(parts, "N", { name: "n", shift: true });
+  const last = ui.focus;
+  key(parts, "n");
+  proof.walk.round = [last === list[list.length - 1], ui.focus === list[0], list.length];
+  // Off the remote's pane n is not its key.
+  key(parts, null, { name: "tab" });
+  const pane = [ui.pane, ui.focus];
+  key(parts, "n");
+  proof.walk.elsewhere = [pane[0] !== "remote", ui.focus === pane[1]];
+  for (let i = 0; i < 6 && ui.pane !== "remote"; i++) key(parts, null, { name: "tab" });
+  // The slider, reached by the walk: → steps the volume, and the D-pad gets nothing.
+  key(parts, "v");
+  for (let i = 0; i < 40 && ui.focus !== "slider"; i++) key(parts, "n");
+  const before = session.audioView().value, says = status();
+  from = parts.sent.length;
+  key(parts, null, { name: "right" });
+  await until(parts, () => sent(parts, from).length, "the volume stepped");
+  proof.walk.slider = [ui.focus, sent(parts, from).map((entry) => [entry[1], entry[2] - before]), says];
+  key(parts, "v");
+  controller.stop();
+}
+
+// Every remote layout as the west room's TV's, in a terminal of 80 by 24:
+// each button it should have (the layout's, Volume and Mute) is drawn, n
+// brings the focus to it and the panel scrolls it into sight, and Space
+// presses it. A remote taller than the pane has one-row keys; where rows
+// are still hidden the pane's bottom edge says how to scroll, whichever
+// pane has the focus, and PgDn brings every button on. In a window with
+// room for them the keys are the three-row ones.
+async function remotes(proof) {
+  proof.remotes = {};
+  const onScreen = (parts) => draw(parts).grid.hits.filter((entry) => entry.hit.kind === "key").map((entry) => entry.hit.button);
+  const region = (parts) => draw(parts).regions.find((entry) => entry.key === "remote");
+  for (const id of Object.keys(Shared.load().layouts.remotes)) {
+    size = [80, 24];
+    const parts = await open({ remote: id }, WEST);
+    const { controller, session } = parts;
+    const ui = controller.ui;
+    click(parts, "bubble:" + TV);
+    const expected = parts.shared.Remote.buttonsOf(id).concat(["volume_down", "volume_up", "mute"]);
+    const placed = draw(parts).focusables.filter((hit) => hit.pane === "remote" && hit.kind === "key").map((hit) => hit.button);
+    const hidden = region(parts).overflow;
+    const out = proof.remotes[id] = { buttons: placed.length, undrawn: expected.filter((button) => !placed.includes(button)),
+      hidden, flat: draw(parts).remoteBody.flat, hint: text(parts).includes("PgUp/Dn scroll"), unseen: [], unpressed: [] };
+    for (let i = 0; i < 6 && ui.pane !== "remote"; i++) key(parts, null, { name: "tab" });
+    out.status = text(parts).split("\n").slice(-2)[0].includes("PgUp/PgDn scroll");
+    // What the walk presses: the session's press(), which the Input key's sheet and Power's second press come after.
+    const pressed = [], press = session.press;
+    session.press = (button) => { pressed.push(button); return press(button); };
+    const walked = new Set();
+    for (let i = 0; i < placed.length + 2 && walked.size < placed.length; i++) {
+      const button = String(ui.focus).startsWith("key:") ? ui.focus.slice(4) : null;
+      if (button && !walked.has(button)) {
+        walked.add(button);
+        if (!onScreen(parts).includes(button)) out.unseen.push(button);
+        const from = pressed.length;
+        key(parts, " ", { name: "space" });
+        if (pressed.slice(from).join() !== button) out.unpressed.push(button);
+        if (ui.overlay) key(parts, null, { name: "escape" });
+      }
+      key(parts, "n");
+    }
+    out.unwalked = placed.filter((button) => !walked.has(button));
+    // PgDn from the top, a page at a time, until the pane stops moving.
+    key(parts, null, { name: "pageup" });
+    key(parts, null, { name: "pageup" });
+    const paged = new Set(onScreen(parts));
+    for (let i = 0, at = -1; i < 20 && at !== ui.scroll.remote; i++) {
+      at = ui.scroll.remote;
+      key(parts, null, { name: "pagedown" });
+      onScreen(parts).forEach((button) => paged.add(button));
+    }
+    out.unpaged = placed.filter((button) => !paged.has(button));
+    // The same remote in a tall window.
+    size = [110, 60];
+    out.roomy = [draw(parts).remoteBody.flat, region(parts).overflow];
+    controller.stop();
+  }
+  size = [110, 50];
+}
+
 // ---- Watch: its sheets and the terminal's own keys --------------------------
 
 async function sheets(proof) {
@@ -259,8 +369,9 @@ async function sheets(proof) {
   // The help: Watch's keys, the pages', the terminal's.
   key(parts, "?");
   const help = text(parts);
-  proof.sheets.help = ["Remote controls", "Source", "Watch or listen", "Signal & audio", "Rooms through the day", "Volume slider",
-    "Navigation", "Pair devices", "Terminal", "Motion", "Log pane", "Mouse"].filter((words) => !help.includes(words));
+  proof.sheets.help = ["Remote controls", "Source", "Watch or listen", "Next/previous button of the remote", "Press that button",
+    "Signal & audio", "Rooms through the day", "Volume slider",
+    "Navigation", "Pair devices", "Terminal", "Scroll the pane", "Motion", "Log pane", "Mouse"].filter((words) => !help.includes(words));
   key(parts, null, { name: "escape" });
   // v, t, a and L: the volume slider, the theme, motion and the log, each kept.
   const before = [session.volumeMode(), ui.theme, ui.still, ui.logVisible];
@@ -670,12 +781,39 @@ async function terminal(proof) {
   proof.terminal.kept = kept;
   proof.terminal.draws = app.draws() - draws;
   app.destroy();
+  // A controller without part of what app.js calls is refused by name, before the terminal is touched.
+  const touched = [];
+  let refused = null;
+  try {
+    App.run({ blessed: { program: () => { touched.push("program"); return program; } }, controller: Object.assign({}, parts.controller, { fault: undefined }),
+      env: {}, output: { columns: 110, rows: 50, write: (bytes) => touched.push(bytes) } });
+  } catch (error) {
+    refused = error.message;
+  }
+  proof.terminal.refused = [refused, touched.length];
+  // Every controller under tui/ is one app.js takes: each directory's controller.js, made as its main.js makes it.
+  const tui = path.join(__dirname, "..", "tui");
+  const made = {
+    remote: () => parts.controller,
+    installer: () => require("../tui/installer/controller").create({ core: { request: () => new Promise(() => {}) } })
+  };
+  proof.terminal.controllers = Object.fromEntries(fs.readdirSync(tui).filter((name) => fs.existsSync(path.join(tui, name, "controller.js"))).map((name) => {
+    if (!made[name]) return [name, "tests/remote_tui_harness.js makes no tui/" + name + " controller: add it to terminal()"];
+    try {
+      App.check(made[name]());
+      return [name, "ok"];
+    } catch (error) {
+      return [name, error.message];
+    }
+  }));
   parts.controller.stop();
 }
 
 (async () => {
   const proof = {};
   await watch(proof);
+  await walk(proof);
+  await remotes(proof);
   await sheets(proof);
   await mouse(proof);
   await narrow(proof);
