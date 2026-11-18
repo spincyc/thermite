@@ -67,22 +67,141 @@ class ConfigError(ValueError):
         return [f"{self.path}: {problem}" if self.path else problem for problem in self.problems] + [str(self)]
 
 
+#: What the YAML 1.2 core schema reads a plain (unquoted) scalar as when it
+#: is not text: https://yaml.org/spec/1.2.2/#1032-tag-resolution
+CORE = tuple((f"tag:yaml.org,2002:{name}", re.compile(pattern)) for name, pattern in (
+    ("null", r"null|Null|NULL|~|"),
+    ("bool", r"true|True|TRUE|false|False|FALSE"),
+    ("int", r"[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+"),
+    ("float", r"[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN)"),
+))
+TEXT = "tag:yaml.org,2002:str"
+#: Digits after a zero: octal in YAML 1.1 (010 is 8, and 08 is text),
+#: decimal in YAML 1.2, and often a code that is text to whoever wrote it.
+LEADING_ZERO = re.compile(r"[-+]?0[0-9_]+")
+
+
+def unclear(value: str, read: str) -> tuple[str, str] | None:
+    """(kind, what it is and what to write) for a plain scalar that does not
+    mean one thing; None for one that does. `read` is the tag PyYAML, a YAML
+    1.1 reader, gives it: what every earlier thermite made of it. It means
+    one thing when the YAML 1.2 core schema reads it the same."""
+    core = next((tag for tag, pattern in CORE if pattern.fullmatch(value)), TEXT)
+    quoted = '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    if read.endswith(":merge"):
+        return "merge key", "<< merges another mapping into this one in YAML 1.1 only: write its keys out here"
+    if read.endswith(":value"):
+        return "value key", f"= is a special key in YAML 1.1 only: write {quoted} in quotes"
+    if LEADING_ZERO.fullmatch(value):
+        return "leading zero", (f"{value} starts with a zero, which makes it octal in YAML 1.1 and decimal in YAML "
+                                f"1.2: write the number without it, or {quoted} in quotes for text")
+    if read == core:
+        return None
+    if read.endswith(":bool"):
+        return "truth word", (f"{value} is true or false in YAML 1.1 and a word in YAML 1.2: write true or false, "
+                              f"or {quoted} in quotes for the word")
+    if read.endswith(":timestamp"):
+        return "date", f"{value} is a date in YAML 1.1 and text in YAML 1.2: write {quoted} in quotes"
+    if ":" in value:
+        return "base 60", f"{value} is a number in base 60 in YAML 1.1 and text in YAML 1.2: write {quoted} in quotes"
+    return "number form", (f"{value} is a number in one version of YAML and text in the other: write a plain "
+                           f"decimal number, or {quoted} in quotes for text")
+
+
+class HouseLoader(yaml.SafeLoader):
+    """PyYAML's safe loader, which reads YAML 1.1, kept to what means one
+    thing. A plain scalar loads when YAML 1.1 and the YAML 1.2 core schema
+    read it the same (text, null, true and false, a decimal number); one
+    they read differently (on, 010, 1_000, 12:30, 2026-11-18)
+    is noted in `refused` with what to write. So are a tag, half of a
+    character, and a key written twice in one mapping, of which a YAML
+    reader keeps the last. A file this loads therefore holds what
+    yaml.safe_load made of it in every earlier release, and what a person
+    reading it sees."""
+
+    def __init__(self, stream) -> None:
+        super().__init__(stream)
+        #: (line, column, kind, sentence) of each refusal.
+        self.refused: list[tuple[int, int, str, str]] = []
+
+    def refuse(self, mark: yaml.Mark, kind: str, sentence: str) -> None:
+        self.refused.append((mark.line + 1, mark.column + 1, kind, sentence))
+
+    def compose_node(self, parent, index):
+        event = self.peek_event()
+        node = super().compose_node(parent, index)
+        if isinstance(event, yaml.AliasEvent):
+            return node  # checked where its anchor is
+        if event.tag is not None:
+            tag = event.tag.replace("tag:yaml.org,2002:", "!!")
+            self.refuse(event.start_mark, "tag", f"{tag} is a tag, which the house file does not use: remove it, "
+                                                 "and put text in quotes")
+        elif isinstance(event, yaml.ScalarEvent):
+            # Only a plain scalar is resolved: a quoted one is text.
+            found = unclear(event.value, node.tag) if event.implicit[0] else None
+            if found:
+                self.refuse(event.start_mark, *found)
+            elif any("\ud800" <= character <= "\udfff" for character in event.value):
+                self.refuse(event.start_mark, "half character",
+                            "a pair of \\u escapes (\\uD83D\\uDCFA, say) is one character in JSON and two halves "
+                            "of one in YAML: write the character itself")
+        return node
+
+    def construct_mapping(self, node, deep=False):
+        first: dict[object, yaml.Node] = {}
+        for key_node, _ in node.value if isinstance(node, yaml.MappingNode) else ():
+            key = self.construct_object(key_node, deep=True)
+            try:
+                earlier = first.setdefault(key, key_node).start_mark
+            except TypeError:
+                continue  # a list or a mapping as a key: PyYAML refuses it below
+            if earlier is not key_node.start_mark:
+                where = (f"line {earlier.line + 1}" if earlier.line != key_node.start_mark.line
+                         else f"this line, column {earlier.column + 1}")
+                self.refuse(key_node.start_mark, "duplicate key",
+                            f"key {key!r} is written twice in this mapping (first on {where}): keep one")
+        return super().construct_mapping(node, deep=deep)
+
+
+def read(text: str) -> tuple[object, list[tuple[int, int, str, str]]]:
+    """A house file's text as (content, refusals). Each refusal is the
+    (line, column, kind, sentence) of something HouseLoader does not take,
+    in file order; with any, the content is not what the file says and is
+    not to be used. Raises yaml.YAMLError for text that is not YAML."""
+    loader = HouseLoader(text)
+    try:
+        content = loader.get_single_data()
+    except yaml.YAMLError:
+        if not loader.refused:
+            raise
+        # What followed from something refused: << given no mapping to merge, say.
+        content = None
+    finally:
+        loader.dispose()
+    return content, sorted(loader.refused)
+
+
 def load(path: Path) -> object:
-    """A YAML file's content; ConfigError when it cannot be read or parsed.
-    Nothing in it is checked: oh_conf.House.load is the reader of a house
-    file (tests/test_house_loader.py)."""
+    """A house file's content; ConfigError when it cannot be read, is not
+    YAML, or holds what HouseLoader refuses, each named with its line and
+    what to write. Its shape is not checked: oh_conf.House.load is the
+    reader of a house file (tests/test_house_loader.py)."""
     try:
         text = Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         raise ConfigError(path, f"cannot be read: {getattr(error, 'strerror', None) or error}") from None
     try:
-        return yaml.safe_load(text)
+        content, refused = read(text)
     except yaml.MarkedYAMLError as error:
         mark = error.problem_mark or error.context_mark
         raise ConfigError(path, f"is not YAML: {error.problem or error.context}",
                           mark.line + 1 if mark else None, mark.column + 1 if mark else None) from None
     except yaml.YAMLError as error:
         raise ConfigError(path, f"is not YAML: {error}") from None
+    if refused:
+        raise ConfigError(path, f"{len(refused)} problem{'s' if len(refused) != 1 else ''}; nothing done",
+                          problems=[f"line {line}: {sentence}" for line, _, _, sentence in refused])
+    return content
 
 
 def hint(word: object, choices) -> str:

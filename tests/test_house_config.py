@@ -21,7 +21,6 @@ import oh_docs
 import oh_inventory
 import oh_paths
 import oh_render
-import yaml
 from oh_cli import dhcp_reservations, discover, generate, ir_profile, status, validate
 
 EXAMPLE = json.loads((AREA / "instance/devices.yaml").read_text())
@@ -143,7 +142,8 @@ class Closed(unittest.TestCase):
         self.assertTrue(examples)
         for document, block in examples:
             with self.subTest(document=document.name):
-                data = yaml.safe_load(block)
+                data, refused = oh_inventory.read(block)
+                self.assertEqual(refused, [])
                 data.setdefault("version", 1)
                 self.assertEqual(oh_render.validate(data), [])
 

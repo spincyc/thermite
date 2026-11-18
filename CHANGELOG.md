@@ -7,6 +7,17 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The house file is read as what it says. Unquoted text that the
+  versions of YAML read differently is refused with its line and what
+  to write, which is usually the same text in quotes: `on`, `off`,
+  `yes` and `no` (true and false until now), a number with a leading
+  zero (`010` was 8), `12:30` or a hardware address made of digits
+  only (one number in base 60), a date, and number forms such as
+  `1_000` and `1e5`. A key written twice in one mapping, of which the
+  last was silently kept, is refused naming both lines. Nothing is
+  read differently than before: a file either loads as it always did
+  or is refused, and `thermite upgrade` refuses it before it changes
+  the site or the host.
 - More house files of the wrong shape are a message and exit status 2
   instead of a traceback: text or a null where routing lists its
   sources (with a BK808 matrix), `zones:` with nothing after it on a

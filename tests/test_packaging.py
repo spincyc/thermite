@@ -119,6 +119,39 @@ class Packaging(unittest.TestCase):
         self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
         self.assertIn("defines no Things or Items", completed.stderr)
 
+    def test_upgrade_preparation_refuses_a_house_key_written_twice_before_it_commits_the_pin(self):
+        """Every earlier release took the second of the two names below and
+        said nothing. This one's check, which upgrade runs before it commits
+        the site's pin and so before any install transaction, refuses the file."""
+        import contextlib
+        import io
+        import oh_source_upgrade
+        site = self.root / "site an earlier release read"
+        oh_init.initialize(site, program=self.program)
+        house = site / "instance/devices.yaml"
+        lines = house.read_text().splitlines()
+        first = next(number for number, line in enumerate(lines) if '"name": ' in line)
+        lines.insert(first + 1, lines[first].replace("Example", "Another"))
+        house.write_text("\n".join(lines) + "\n")
+        for args in (("init", "--initial-branch=fixture"), ("config", "user.name", "Fixture"),
+                     ("config", "user.email", "fixture@example.invalid"), ("config", "commit.gpgsign", "false"),
+                     ("add", "."), ("commit", "-m", "private site")):
+            subprocess.run(["git", "-C", str(site), *args], check=True, capture_output=True)
+        head = oh_source_upgrade.git(site, "rev-parse", "HEAD")
+        command = self.root / "thermite-of-the-new-release"
+        command.write_text(f"#!/bin/sh\nexec {sys.executable} {self.program / 'bin/thermite'} \"$@\"\n")
+        command.chmod(0o700)
+        environment = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "THERMITE_SITE"}}
+        said = io.StringIO()
+        with patch.dict(os.environ, {**environment, "PYTHONDONTWRITEBYTECODE": "1"}, clear=True), \
+                contextlib.redirect_stderr(said), self.assertRaises(subprocess.CalledProcessError) as refused:
+            oh_source_upgrade.site_update(command, site, expected_head=head)
+        self.assertEqual((refused.exception.returncode, refused.exception.cmd[1:]), (2, ["check", "--config", str(site)]))
+        self.assertIn(f"{house}: line {first + 2}: key 'name' is written twice in this mapping (first on line "
+                      f"{first + 1}): keep one", said.getvalue())
+        self.assertEqual(oh_source_upgrade.git(site, "rev-parse", "HEAD"), head)
+        self.assertEqual(oh_source_upgrade.git(site, "status", "--porcelain", "--untracked-files=all"), "")
+
     def test_fresh_clone_renders_with_exact_installed_release_without_creating_var(self):
         source = self.root / "fresh-clone-source"
         oh_init.initialize(source, program=self.program)
