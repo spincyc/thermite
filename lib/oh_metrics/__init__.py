@@ -198,6 +198,9 @@ class Service:
     listen: str
     args: tuple[str, ...]
     volumes: tuple[Volume, ...]
+    #: What it runs as, may use, reaches and is given: required, like the
+    #: records of the services outside monitoring (oh_units.BOUNDS).
+    bounds: oh_units.Bounds
     environment: tuple[tuple[str, str], ...] = ()
     podman_args: tuple[str, ...] = ()
     #: The program, when the image's own entrypoint is not it; args follow it.
@@ -233,6 +236,7 @@ def services(host: dict) -> list[Service]:
             (Volume(f"{STATE_CONFIG}/prometheus", PROMETHEUS_CONFIG_DIR, "ro"),
              Volume(STATE_PROMETHEUS, PROMETHEUS_DATA_DIR, "rw"),
              secrets),
+            bounds=oh_units.Bounds(oh_units.STATE_USER, "1536M", "2560M", oh_units.HOST_NETWORK, (STATE_SECRETS,)),
             notes=(f"Keeps {keep} of samples, at most {size}. bin/thermite deploy reloads",
                    "its configuration with POST /-/reload (--web.enable-lifecycle)."),
         ),
@@ -251,6 +255,8 @@ def services(host: dict) -> list[Service]:
              Volume(DBUS_SOCKET, DBUS_SOCKET, "ro")),
             environment=(("DBUS_SYSTEM_BUS_ADDRESS", f"unix:path={DBUS_SOCKET}"),),
             podman_args=("--pid=host",),
+            # The state's user with all of / mounted: every secret store.
+            bounds=oh_units.Bounds(oh_units.STATE_USER, "128M", "256M", oh_units.HOST_NETWORK, oh_units.EVERY_SECRET),
             notes=("The host's processes (--pid=host), its file systems read-only below",
                    "/host, and systemd over the D-Bus system socket for the units' states.",
                    "Neither host mount is relabelled: that would relabel the host. The bus",
@@ -265,6 +271,7 @@ def services(host: dict) -> list[Service]:
             (f"--config.file={BLACKBOX_CONFIG_DIR}/blackbox.yml",
              f"--web.listen-address={LOOPBACK}:{port['blackbox']}"),
             (Volume(f"{STATE_CONFIG}/blackbox", BLACKBOX_CONFIG_DIR, "ro"),),
+            bounds=oh_units.Bounds(oh_units.STATE_USER, "128M", "256M", oh_units.HOST_NETWORK, ()),
             notes=("bin/thermite deploy reloads its modules with POST /-/reload.",),
         ),
         Service(
@@ -278,6 +285,7 @@ def services(host: dict) -> list[Service]:
              Volume(f"{STATE_CONFIG}/exporter", EXPORTER_CONFIG_DIR, "ro"), secrets),
             environment=(("PYTHONDONTWRITEBYTECODE", "1"),),
             command=("python3", f"{EXPORTER_APP_DIR}/{EXPORTER_APP[0]}"),
+            bounds=oh_units.Bounds(oh_units.STATE_USER, "128M", "256M", oh_units.HOST_NETWORK, (STATE_SECRETS,)),
             notes=("Its code, as the last deploy installed it; it rereads the map when the",
                    "map's file changes, and a deploy that changes the code restarts it."),
         ),
@@ -292,6 +300,7 @@ def services(host: dict) -> list[Service]:
                          ("GF_PATHS_PROVISIONING", f"{GRAFANA_CONFIG_DIR}/provisioning"),
                          ("GF_PATHS_DATA", GRAFANA_DATA_DIR),
                          ("GF_SECURITY_ADMIN_PASSWORD__FILE", password)),
+            bounds=oh_units.Bounds(oh_units.STATE_USER, "1G", "1536M", oh_units.HOST_NETWORK, (f"{STATE_SECRETS}/{GRAFANA_ADMIN_PASSWORD}",)),
             notes=("The only one that listens beyond this host: anonymous visitors on the",
                    "LAN view the dashboards, and edits need the admin login. Grafana rereads",
                    f"the dashboards every {GRAFANA_RELOAD_SECONDS}s; a deploy that changes its settings or",

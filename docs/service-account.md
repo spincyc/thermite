@@ -92,6 +92,44 @@ exact ownership-handoff command. When it needs that privilege, a
 noninteractive run refuses before writing. A successful deploy hands its
 named paths to the service account.
 
+### What each service may use
+
+Every long-running service has a record of the user it runs as, its memory
+ceiling, its network and the secret stores it can read: `oh_units.BOUNDS`
+for openHAB, the Apple TV helper, Music Assistant and the three access
+services, and the row of each monitoring service in `oh_metrics.services()`.
+No field has a default, the units are written from the records, and
+`tests/test_unit_invariants.py` fails when a rendered unit lacks a field, says
+something else than its record, or mounts a secret its record does not
+declare. The records also show what is still wide: every unit is on the
+host's network, and node_exporter (all of `/`, read-only) and the access
+services (host services) run as the state's user, so they can read every
+secret store of the runtime state.
+
+Each unit states `MemoryHigh=` and `MemoryMax=` for its cgroup, page cache
+included. From the first the kernel reclaims the unit's cache and slows its
+allocations; at the second it kills a process of the unit and systemd
+restarts the service. The ceilings stop one runaway service from taking the
+host with it. They are not a budget: together they exceed a 4 GiB host, on
+which Thermite uses about 2.3 GiB.
+
+| Service | `MemoryHigh` | `MemoryMax` | Basis |
+|---|---|---|---|
+| openHAB | 2560M | 3G | The JVM's heap ends at 1536M (`-Xmx`, and the JVM exits on `OutOfMemoryError`); metaspace, the code cache, thread stacks and direct buffers come on top. Measured peak 1.6 GiB. A kill stops the house, so slowing starts a gigabyte above the heap and the kill half a gigabyte above that. |
+| Music Assistant | 1536M | 2560M | Measured peak 0.6 GiB; it grows with the library and with each stream it transcodes. |
+| Grafana | 1G | 1536M | Measured peak 0.7 GiB, while it starts. |
+| Prometheus | 1536M | 2560M | Measured peak 0.5 GiB, much of it page cache of its samples, which `MemoryHigh` reclaims. One query may hold up to 50 million samples, about 0.8 GiB, and the history it reads grows for as long as samples are kept. |
+| Gateway and policy worker | 256M | 512M | Measured peaks 84 and 100 MiB. |
+| Callback relay | 128M | 256M | Measured peak 52 MiB. |
+| Apple TV helper | 256M | 512M | Measured peak 119 MiB. |
+| node_exporter, blackbox and Item exporter | 128M | 256M | Measured peaks 47, 70 and 58 MiB. |
+
+The peaks are systemd's `MemoryPeak` of each unit on one installed house,
+eight hours after a start. Every `MemoryHigh` is at least one and a half
+times that peak. `systemctl show -p MemoryPeak 'thermite-*.service'` shows
+yours; a service that stays near its `MemoryHigh` is slowed, not killed, and
+its record is where to raise it.
+
 The host's systemd manager and Podman backend remain root-managed.
 Application container entrypoints and processes start as UID/GID 9001,
 including the native runtime; they do not start as root to repair mounted

@@ -701,9 +701,7 @@ def render_quadlet(versions: dict, host: dict) -> str:
         f"Image={image(versions)}",
         "# UPnP, mDNS and SDDP discovery and the Sonos event callbacks do not",
         "# traverse a container network.",
-        "Network=host",
-        f"User={host['uid']}",
-        f"Group={host['gid']}",
+        *_contained(host, oh_units.RUNTIME),
         "NoNewPrivileges=true",
         "DropCapability=all",
         # Avoid crun/AppArmor profile stacking under no-new-privileges.
@@ -741,6 +739,7 @@ def render_quadlet(versions: dict, host: dict) -> str:
         "# Reapply the native boundary before every runtime start, including after firewall reloads.",
         "ExecStartPre=/usr/bin/env nft -f /etc/thermite-native.nft",
         f"Slice={oh_units.SLICE}",
+        *_ceiling(host, oh_units.RUNTIME),
         "UMask=0077",
         "Restart=always",
         "# Not systemd's 100 ms: a crashing JVM must not thrash userdata.",
@@ -772,9 +771,7 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
         f"Image={image(versions, 'atv_helper')}",
         f"# openHAB reaches it on 127.0.0.1:{HELPER_PORT}; it has no login, so it",
         "# listens there only.",
-        "Network=host",
-        f"User={host['uid']}",
-        f"Group={host['gid']}",
+        *_contained(host, oh_units.ATV),
         "NoNewPrivileges=true",
         "DropCapability=all",
         # Avoid crun/AppArmor profile stacking under no-new-privileges.
@@ -797,6 +794,7 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
         "",
         "[Service]",
         f"Slice={oh_units.SLICE}",
+        *_ceiling(host, oh_units.ATV),
         "UMask=0077",
         "Restart=always",
         "# Unhurried, so a boot without PyPI does not exhaust systemd's start limit.",
@@ -808,6 +806,27 @@ def render_atv_quadlet(versions: dict, host: dict) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def bounds(host: dict) -> dict[str, oh_units.Bounds]:
+    """Each service's record of what it runs as, may use, reaches and is
+    given: oh_units.BOUNDS and the monitoring services' own."""
+    return {**oh_units.BOUNDS, **{service.unit: service.bounds for service in metrics.services(host)}}
+
+
+def _contained(host: dict, unit: str) -> list[str]:
+    """A container's network and identity, as its record states them."""
+    record = bounds(host)[unit]
+    if (record.user, record.network) != (oh_units.STATE_USER, oh_units.HOST_NETWORK):
+        raise ValueError(f"{unit}: no unit is rendered for user {record.user!r} on network {record.network!r}")
+    return [f"Network={record.network}", f"User={host['uid']}", f"Group={host['gid']}"]
+
+
+def _ceiling(host: dict, unit: str) -> list[str]:
+    """A unit's memory ceiling, as its record states it."""
+    record = bounds(host)[unit]
+    return ["# Reclaimed and slowed from the first, killed at the second (oh_units.Bounds).",
+            f"MemoryHigh={record.memory_high}", f"MemoryMax={record.memory_max}"]
 
 
 _PLAIN_WORD = re.compile(r"^[A-Za-z0-9_@+=:,./-]+$")
@@ -882,9 +901,7 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         f"ContainerName={service.container}",
         f"Image={image(versions, service.image)}",
         f"# Listens on {address}: {where}.",
-        "Network=host",
-        f"User={host['uid']}",
-        f"Group={host['gid']}",
+        *_contained(host, service.unit),
         "NoNewPrivileges=true",
         "DropCapability=all",
         # Avoid crun/AppArmor profile stacking under no-new-privileges.
@@ -906,6 +923,7 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
         "",
         "[Service]",
         f"Slice={oh_units.SLICE}",
+        *_ceiling(host, service.unit),
         *(["Environment=CONTAINERS_CONF_OVERRIDE=/etc/thermite/node-exporter-containers.conf"]
           if service.unit == oh_units.NODE_EXPORTER else []),
         "UMask=0027",
@@ -956,9 +974,7 @@ def render_music_quadlet(versions: dict, host: dict) -> str:
         "# Speakers are found by mDNS and SSDP and fetch their audio from it. Its",
         f"# API listens on 127.0.0.1:{ports['music']}, for the gateway alone, behind the",
         f"# native boundary too; the speakers fetch the streams from port {ports['music_stream']}.",
-        "Network=host",
-        f"User={host['uid']}",
-        f"Group={host['gid']}",
+        *_contained(host, oh_units.MUSIC),
         "# No capability: AirPlay's PTP timing (ports 319 and 320) falls back to NTP.",
         "NoNewPrivileges=true",
         "DropCapability=all",
@@ -988,6 +1004,7 @@ def render_music_quadlet(versions: dict, host: dict) -> str:
         "# Reapply the native boundary, which closes the API's port to the LAN, before every start.",
         "ExecStartPre=/usr/bin/env nft -f /etc/thermite-native.nft",
         f"Slice={oh_units.SLICE}",
+        *_ceiling(host, oh_units.MUSIC),
         "UMask=0077",
         "Restart=always",
         "RestartSec=10",

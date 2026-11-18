@@ -61,10 +61,13 @@ def units(destination, user=ACCOUNT, *, state, callbacks=False, textfile=None):
         config_name = "callbacks.json" if name == "callbacks" else "config.json"
         writable = "" if name == "callbacks" else "\nReadWritePaths=" + systemd(state)
         unit = "thermite-access" + suffix
+        # Its memory ceiling, as its record states it.
+        record = oh_units.BOUNDS[unit + ".service"]
         result[unit + ".service"] = (
             "[Unit]\nDescription=thermite " + {"worker": "room policy worker", "serve": "authenticated site", "callbacks": "verified UPnP callback ingress"}[name] +
             f"\nAfter=network-online.target\nWants=network-online.target\nPartOf={oh_units.TARGET}\n\n[Service]\nType=simple\nUser=" + user +
-            "\nGroup=" + GROUP + f"\nSlice={oh_units.SLICE}\nUMask=0077\nWorkingDirectory=" + _working_directory(root) +
+            "\nGroup=" + GROUP + f"\nSlice={oh_units.SLICE}\nMemoryHigh={record.memory_high}\nMemoryMax={record.memory_max}"
+            "\nUMask=0077\nWorkingDirectory=" + _working_directory(root) +
             # env directly execs the staged interpreter; systemd restricts the
             # executable token itself from containing quotes/backslashes. ':'
             # disables its environment substitution so every '$' stays literal.

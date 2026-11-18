@@ -7,6 +7,9 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Every service now has a memory ceiling (`MemoryHigh=` and
+  `MemoryMax=`); docs/service-account.md lists them with their basis.
+  A service near its `MemoryHigh` is slowed, not killed.
 - The production Karaf console no longer keeps openHAB's published
   password. The first install or upgrade makes a random one in
   `/etc/thermite/karaf-password` (root only); read it with `sudo cat`
