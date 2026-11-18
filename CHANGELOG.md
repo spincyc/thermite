@@ -7,6 +7,9 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Two tests no longer fail by chance: one took a pairing code's digits
+  in a log line's clock reading for a leak, and one gave a loaded host
+  0.07 seconds to answer.
 - Dashboards: every chart uses the six documented colours, and the
   panels that misled on real data are corrected.
   - A failure draws red, a warning amber and a plain measure tan on

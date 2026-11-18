@@ -235,13 +235,16 @@ class Readiness(unittest.TestCase):
                 self.assertFalse(oh_entry.ready(origin, timeout=1))
 
     def test_both_routes_share_one_budget_and_late_success_cannot_pass(self):
+        # Each answer takes .5 s of a budget of .8 s: the first route passes
+        # with .3 s to spare, which a loaded host needs (.07 s was too
+        # little), and the second cannot answer in what is left.
         def delayed(path, connection, stopping):
-            if not stopping.wait(.11):
+            if not stopping.wait(.5):
                 self.successful(path, connection)
         with self.server(delayed) as (origin, requests):
             started = time.monotonic()
-            self.assertFalse(oh_entry.ready(origin, timeout=.18))
-            self.assertLess(time.monotonic() - started, .8)
+            self.assertFalse(oh_entry.ready(origin, timeout=.8))
+            self.assertLess(time.monotonic() - started, 2)
             self.assertEqual([path for _, path, _ in requests], ["/", "/overview/"])
 
     def test_only_literal_loopback_origins_are_accepted_and_programmer_errors_are_visible(self):

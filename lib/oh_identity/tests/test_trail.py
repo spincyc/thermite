@@ -192,8 +192,11 @@ class Commands(Requests, TestCase):
                          [("pair", "tv_pairing", "<private>", "-", "accepted")] * 2)
         self.assertEqual(self.adapter.transport.sources, ["thermite.web:" + line["id"] for line in found])
         self.assertEqual([line["action"] for line in lines(logs, "audit")], ["pairing.command"] * 2)
-        self.assertNotIn(CODE, "\n".join(logs.output))
-        self.assertNotIn("REQUEST", "\n".join(logs.output))
+        # Without the fields a clock or a random source fills: the code's four
+        # digits turn up in those by chance (a microsecond count did).
+        said = re.sub(r" (?:id|token|peer|at|ms)=\S+", "", "\n".join(logs.output))
+        self.assertNotIn(CODE, said)
+        self.assertNotIn("REQUEST", said)
 
     def test_origin_reads_the_guest_mark_and_the_request_id_from_the_scope(self):
         guest = SimpleNamespace(scope={trail.GUEST_SCOPE: object(), trail.REQUEST_ID: "0a1b2c3d"},
