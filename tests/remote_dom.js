@@ -99,6 +99,14 @@ function allowed(tag, name) {
 
 // What an element and a text have alike: a place among their parent's children.
 class Node {
+  // The links from one node to the others are not enumerable, so that node
+  // prints a node without them. A failed assert.equal prints both values in
+  // full, whatever they say of their own printing, and compares the two
+  // texts line by line: one element, which reached the whole page through
+  // its parent, was nine megabytes of text, and comparing it took 11 GiB.
+  constructor() {
+    ['parentNode', 'ownerDocument', 'childNodes'].forEach((link) => Object.defineProperty(this, link, {value: null, writable: true}));
+  }
   get nextSibling() { const list = this.parentNode ? this.parentNode.childNodes : []; return list[list.indexOf(this) + 1] || null; }
   remove() {
     if (this.parentNode) this.parentNode.childNodes.splice(this.parentNode.childNodes.indexOf(this), 1);

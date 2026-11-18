@@ -25,7 +25,11 @@ CODE = "1234"
 HEARTBEAT = {"type": "heartbeat"}
 
 
-def contract():
+#: The build of the pages a gateway serves (oh_features.remote.build_id).
+BUILD = "0123456789abcdef"
+
+
+def contract(**more):
     return RuntimeContract({
         "den": {"source_item": "loc_den_source", "sources": ["player"]},
         "desk": {"source_item": "loc_desk_source", "sources": ["player"]}},
@@ -43,7 +47,7 @@ def contract():
                                            "tv_pairing_status", "tv_pairing", "amp_token", "unknown_item"],
                           "command": ["amp_volume", "loc_den_source", "tv_pairing", "tv_pairing_status"]},
                "home": {"statechanged": ["loc_den_source", "loc_desk_source"]},
-               "pair": {"stateupdated": ["tv_pairing_status", "tv_pairing_result"]}})
+               "pair": {"stateupdated": ["tv_pairing_status", "tv_pairing_result"]}}, **more)
 
 
 def event(item, value, verb="stateupdated", old=None, **extra):
@@ -122,10 +126,10 @@ class EventHub(TransactionTestCase):
         SecurityState.objects.update_or_create(pk=1, defaults={"enabled": True})
         self.guest = {"guest": True, "security_revision": get_state().revision}
 
-    def check(self, body):
+    def check(self, body, **more):
         async def run():
             upstream = Upstream()
-            adapter = RuntimeAdapter(contract(), upstream)
+            adapter = RuntimeAdapter(contract(**more), upstream)
             await body(upstream, adapter)
         async_to_sync(run)()
 
@@ -187,6 +191,30 @@ class EventHub(TransactionTestCase):
             self.assertEqual(hub.status()["streams"], {"remote": 0, "home": 0, "pair": 0})
             self.assertEqual(len(upstream.connections), 1)
         self.check(body)
+
+    def test_every_snapshot_names_the_build_of_the_pages_the_gateway_serves(self):
+        """A page compares it with its own and reloads when they differ
+        (web/remote/access.js), so each view's snapshot carries it, a
+        resync's as well; a contract without one says nothing."""
+        async def body(upstream, adapter):
+            for view in ("remote", "remote" + topics.WITHOUT_TEXT, "home", "pair"):
+                frames = streams.stream(adapter, view, self.guest)
+                self.assertEqual((await frame(frames))["build"], BUILD, view)
+                await frames.aclose()
+            hub = hubs.hub_for(adapter)
+            upstream.send(event("amp_volume", "41", "statechanged", old="40"))
+            await settle()
+            self.assertEqual(decode(hub.snapshot("remote"))["build"], BUILD)
+        self.check(body, build=BUILD)
+
+        async def without(upstream, adapter):
+            frames = streams.stream(adapter, "remote", self.guest)
+            self.assertNotIn("build", await frame(frames))
+            await frames.aclose()
+        self.check(without)
+        for wrong in ("", "0123", "0123456789ABCDEF", "0123456789abcdef0", 1):
+            with self.assertRaises(ValueError, msg=wrong):
+                contract(build=wrong)
 
     def test_a_guest_sees_free_text_unless_an_admin_turned_it_off(self):
         """Free text (a title) reaches every view that names it; the view's

@@ -13,6 +13,7 @@ from .addresses import ROOM_ID
 from .services import Problem
 
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+BUILD = re.compile(r"[0-9a-f]{16}")
 # One list of credential words. Item-name segments and text words also
 # refuse the short "auth" and "pin", which are only safe as whole words;
 # JSON keys match any listed word as a substring (accessToken, pincode).
@@ -153,6 +154,8 @@ class RuntimeContract:
     devices: an audio page's device id -> {actions: action -> typed Item
     spec, rooms: {routed room: "own" | "shared"}} (oh_site_contract).
     states: Item -> {kind, values/fields}; assets: basename -> {private}.
+    build: the build the served pages carry (oh_features.remote.build_id),
+    which each stream's snapshot repeats, or None for assets without one.
     views: client stream view -> {verb: [Item, ...]}; topics.views() keeps
     only public topics, and derives views for a contract without them.
     history: the room history's Prometheus port, zones, values and labels
@@ -165,7 +168,7 @@ class RuntimeContract:
     """
 
     def __init__(self, rooms, states=None, routing=None, house=None, assets=None, asset_root=None,
-                 pairings=None, groups=None, media=None, views=None, history=None, devices=None, music=None):
+                 pairings=None, groups=None, media=None, views=None, history=None, devices=None, music=None, build=None):
         data = copy.deepcopy(dict(rooms))
         reads = copy.deepcopy(states or {})
         for ident, room in data.items():
@@ -189,6 +192,9 @@ class RuntimeContract:
         self.house = frozen(copy.deepcopy(house or {}))
         self.assets = frozen(copy.deepcopy(assets or {}))
         self.asset_root = Path(asset_root).resolve() if asset_root else None
+        if build is not None and not (isinstance(build, str) and BUILD.fullmatch(build)):
+            raise ValueError("Invalid runtime build contract")
+        self.build = build
         self.pairings = frozen(copy.deepcopy(pairings or {}))
         self.groups = frozen(copy.deepcopy(groups or {}))
         self.media = frozen(copy.deepcopy(media or {}))

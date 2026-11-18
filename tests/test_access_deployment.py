@@ -652,23 +652,26 @@ class Lifecycle(GatewayFixture):
         self.assertFalse(any("Gateway verified" in message for message in system.messages))
 
     def test_legacy_native_assets_use_gateway_transport_with_current_hashes(self):
-        from oh_features.remote import FILES
+        from oh_features.remote import FILES, built
         gateway = self.gateway(inputs=False)
         assets = private_directory(self.root / "legacy-assets")
         for name in FILES:
             value = b"unchanged source"
             if name.endswith(".html"):
-                value = b'<script src="/static/remote/access-config.js?v=0123456789abcdef"></script>'
+                value = (b'<html data-thermite-hosted="true" data-thermite-build="fedcba9876543210" lang="en">'
+                         b'<script src="/static/remote/access-config.js?v=0123456789abcdef"></script>')
             elif name == "access-config.js":
                 value = b'globalThis.THERMITE_ACCESS_CONFIG = {"mode":"native"};'
             elif name == "system.json":
                 value = b'{"version":1,"tools":[{"id":"openhab","localOnly":false}]}'
             atomic_private(assets / name, value)
-        built = Gateway._assets(gateway, assets)
-        script = (built / "access-config.js").read_bytes()
+        staged = Gateway._assets(gateway, assets)
+        script = (staged / "access-config.js").read_bytes()
         self.assertIn(b'"mode":"authenticated"', script)
-        self.assertIn(hashlib.sha256(script).hexdigest()[:16], (built / "index.html").read_text())
-        self.assertTrue(json.loads((built / "system.json").read_bytes())["tools"][0]["localOnly"])
+        self.assertIn(hashlib.sha256(script).hexdigest()[:16], (staged / "index.html").read_text())
+        self.assertTrue(json.loads((staged / "system.json").read_bytes())["tools"][0]["localOnly"])
+        # The pages keep the build generate gave them, which the gateway's contract reads from them.
+        self.assertEqual({built((staged / name).read_bytes()) for name in FILES if name.endswith(".html")}, {"fedcba9876543210"})
         self.assertIn('"mode":"native"', (assets / "access-config.js").read_text())
 
     def test_each_activation_is_offered_to_the_deploy_history(self):

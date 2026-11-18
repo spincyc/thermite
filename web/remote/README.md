@@ -121,6 +121,16 @@ Each reconnection reads the house afresh: anything the gateway does not know
 shows as unknown, not as it was. A command unanswered after 15 s (All off: 30
 s) stops waiting and says it may still take effect.
 
+A page that stays open across an upgrade replaces itself. `thermite generate`
+gives the files of `conf/html/remote` one build, a hash of them all, and
+writes it into every page; the gateway repeats the build of the pages it
+serves in each stream's snapshot. A page that hears another build than its
+own reloads, once for each build, so the iPhone app needs no reload button.
+If the reload brings the same page again, the page says once that it could
+not load the new version, and asks to be closed and opened again. Pages
+without a stream (Cameras, System and the account pages) are current
+whenever they are opened; previews and native mode have no build to compare.
+
 When a page gives up waiting on the gateway (a lock read, a room command, an
 event stream or its first snapshot), it counts that while it is shown and
 reports the counts, never their content, to the gateway after its next

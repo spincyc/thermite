@@ -6,6 +6,12 @@ absolute asset URLs and clean navigation links; the manifest starts at Home.
 Other assets are copied byte for byte. Home and System are always
 available, including sites with no configured rooms or cameras.
 
+Every served page also carries the build: one hash of all the files written
+here (build_id). The gateway reads it from the pages it serves (built) into
+its contract and repeats it in each stream's snapshot, where a running page
+compares the two (web/remote/access.js) and reloads itself when the files
+have changed under it.
+
 THEMED, the page's colors and icons, are not copied but drawn by oh_brand
 from the house's theme: `theme` in devices.yaml, a built-in theme's name or
 a theme file relative to instance/, and thermite's own without one. The
@@ -15,6 +21,7 @@ tests/test_remote_samples.py keeps them so.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 
@@ -44,12 +51,15 @@ FILES = ("index.html", "theme.css", "remote.css", "house.js", "remotes.js", "act
 THEMED = {"theme.css": "css", "icon.svg": "icon", "mark.svg": "mark", "mark-light.svg": "mark --light", "apple-touch-icon.png": "png"}
 ASSET_URL = "/static/remote/"
 URL = "/remotes/"
+HOSTED = '<html data-thermite-hosted="true" '
+#: Where a served page carries the build, and how it is read back.
+BUILD = re.compile(r' data-thermite-build="([0-9a-f]{16})"')
 
 
 def served_page(content: str, versions: dict[str, str] | None = None) -> str:
     """Give generated pages stable URLs while source previews stay portable."""
     routes = {**oh_routes.ASSET_ROUTES, "./": URL}
-    content = content.replace('<html ', '<html data-thermite-hosted="true" ', 1)
+    content = content.replace('<html ', HOSTED, 1)
     def address(match):
         before, name, after = match.groups()
         target = routes.get(name, "/static/remote/" + name if name in FILES else name)
@@ -73,6 +83,27 @@ def asset_versions(files: dict) -> dict[str, str]:
     return {name: oh_routes.asset_version(value.encode() if isinstance(value, str) else value)
             for name in FILES if not name.endswith(".html")
             for value in [files[f"{TARGET}/{name}"]]}
+
+
+def build_id(files: dict) -> str:
+    """One identity for all of FILES as rendered: each name and its bytes, a
+    page's without the build it carries. A page names its scripts and styles
+    by ?v=, but not the catalogues it fetches (activity.json, system.json),
+    so the pages alone would not do."""
+    digest = hashlib.sha256()
+    for name in sorted(FILES):
+        value = files[f"{TARGET}/{name}"]
+        data = value.encode() if isinstance(value, str) else value
+        if name.endswith(".html"):
+            data = BUILD.sub("", data.decode(), count=1).encode()
+        digest.update(name.encode() + b"\0" + hashlib.sha256(data).digest())
+    return digest.hexdigest()[:16]
+
+
+def built(page: str | bytes) -> str | None:
+    """The build a served page carries, or None for one that carries none."""
+    found = BUILD.search(page.decode() if isinstance(page, bytes) else page)
+    return found[1] if found else None
 
 
 def palette(data: dict) -> brand.Palette:
@@ -138,6 +169,8 @@ def render(house: House, conf: Conf) -> None:
     versions = asset_versions(conf.files)
     conf.files[f"{TARGET}/manifest.webmanifest"] = served_manifest((SOURCE / "manifest.webmanifest").read_text(), versions).encode()
     versions = asset_versions(conf.files)
-    for name in FILES:
-        if name.endswith(".html"):
-            conf.files[f"{TARGET}/{name}"] = served_page((SOURCE / name).read_text(), versions).encode()
+    pages = {name: served_page((SOURCE / name).read_text(), versions) for name in FILES if name.endswith(".html")}
+    conf.files.update({f"{TARGET}/{name}": page.encode() for name, page in pages.items()})
+    # The build is of every file as it now stands, so the pages take it last.
+    stamp = HOSTED[:-1] + f' data-thermite-build="{build_id(conf.files)}" '
+    conf.files.update({f"{TARGET}/{name}": page.replace(HOSTED, stamp, 1).encode() for name, page in pages.items()})

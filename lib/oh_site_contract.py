@@ -323,11 +323,19 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
             states[name]["free_text"] = True
         if description.get("commands") and "_pairing" not in name:
             states[name]["commands"] = True
+    # The build of the pages the gateway serves is the one they carry. An
+    # install rewrites some of the assets it stages (oh_install.access), so
+    # rendering them again here would not name the same bytes.
+    if asset_root:
+        page = Path(asset_root) / "index.html"
+        build = remote.built(page.read_bytes()) if page.is_file() else None
+    else:
+        build = remote.built(conf.files[f"{remote.TARGET}/index.html"])
     assets = {name: {"private": name == "house.js" or name.endswith(".json")
                     or name.endswith(".html") and name != "access.html",
                     **({"admin": True} if name in remote_system.ADMIN_ASSETS else {})} for name in remote.FILES}
     return {"rooms": rooms, "devices": audio_devices, "states": states, "routing": table,
-            "house": copy.deepcopy(house.data), "assets": assets,
+            "house": copy.deepcopy(house.data), "assets": assets, "build": build,
             "asset_root": str(Path(asset_root).resolve()) if asset_root else None, "pairings": pairings, "groups": groups, "media": media,
             "views": views(house, rooms, activity, pairings), "history": history(house, conf, rooms, metrics_port),
             **({"music": music(house, guards, music_host)} if music_host is not None else {})}

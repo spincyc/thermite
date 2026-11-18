@@ -1310,57 +1310,10 @@
       }
     });
 
-    document.addEventListener("visibilitychange", () => {
-      act(backend.setActive(document.visibilityState !== "hidden"));
-      if (document.visibilityState === "visible") {
-        checkForUpdate();
-      }
-    });
+    document.addEventListener("visibilitychange", () => { act(backend.setActive(document.visibilityState !== "hidden")); });
     window.addEventListener("pagehide", () => { act(backend.setActive(false)); });
     window.addEventListener("pageshow", () => { act(backend.setActive(document.visibilityState !== "hidden")); });
     act(backend.start());
-    checkForUpdate();
-  }
-
-  // The same check as the remote's (README "Updates"): openHAB serves
-  // /static/ with a year's max-age, so compare each file with the server's
-  // copy and reload once when one differs.
-  const UPDATE_EVERY = 60000;
-  let checkedAt = 0;
-
-  function checkForUpdate() {
-    if (!/^https?:$/.test(location.protocol) || typeof fetch !== "function") return;
-    if (Date.now() - checkedAt < UPDATE_EVERY) return;
-    checkedAt = Date.now();
-    const urls = [location.href.split("#")[0]].concat(Array.from(
-      document.querySelectorAll("script[src], link[rel=stylesheet][href]"), (node) => node.src || node.href));
-    Promise.all(urls.map(changedOnServer))
-      .then((changed) => {
-        if (!changed.some(Boolean)) return;
-        // A reload that did not bring the new files must not become a loop.
-        if (Date.now() - Number(stored("pair.updated") || 0) < UPDATE_EVERY) return;
-        stored("pair.updated", String(Date.now()));
-        location.reload();
-      })
-      .catch(() => { /* offline or thermite restarting: the next check tries again */ });
-  }
-
-  function changedOnServer(url) {
-    return fetch(url, { cache: "force-cache" })
-      .then((cached) => cached.text())
-      .then((running) => fetch(url, { cache: "no-cache" })
-        .then((latest) => (latest.ok ? latest.text() : running))
-        .then((text) => text !== running));
-  }
-
-  function stored(key, value) {
-    try {
-      if (value === undefined) return localStorage.getItem(key);
-      localStorage.setItem(key, value);
-    } catch (error) {
-      return null;
-    }
-    return value;
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startPage);

@@ -46,7 +46,6 @@
   const KIND_ICON = { off: "i-off", computer: "i-pc", streamer: "i-streamer", disc_player: "i-disc", game_console: "i-game" };
   const PLAY = { play_pause: true, play: true };
   const CORNERS = ["tl", "tr", "bl", "br"];
-  const UPDATE_EVERY = 60000;
   const RANGE_KEYS = { ArrowUp: true, ArrowDown: true, ArrowLeft: true, ArrowRight: true, Home: true, End: true, PageUp: true, PageDown: true };
   // A touch held this long on a bubble, moving no further, opens its lock menu.
   const LONG_PRESS_MS = 500;
@@ -58,7 +57,6 @@
   let lastInput = "pointer";
   let repeat = null;
   let toastTimer = 0;
-  let checkedAt = 0;
   let infoView = "devices";
   let signalRunning = false;
   let signalFocus = false;
@@ -91,7 +89,6 @@
       // link must never send the house a command.
       const chosen = mock && params.get("choose");
       if (chosen) session.choose(chosen);
-      checkForUpdate();
     })
     .catch(fail);
 
@@ -841,10 +838,7 @@
     });
     // iOS Safari only applies :active styles once a touch listener exists.
     document.addEventListener("touchstart", () => {}, { passive: true });
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") checkForUpdate();
-      syncSignal();
-    });
+    document.addEventListener("visibilitychange", syncSignal);
 
     $("#room-switch").addEventListener("click", () => openSheet("room-sheet"));
     const range = $("[data-fader-input]");
@@ -1218,36 +1212,6 @@
     const chrome = getComputedStyle(root).getPropertyValue("--chrome").trim();
     const meta = $('meta[name="theme-color"]');
     if (meta && chrome) meta.setAttribute("content", chrome);
-  }
-
-  // openHAB serves /static/ with a year's max-age, and no openHAB setting
-  // changes that, so a phone would keep running these files long after an
-  // update. Whenever the page starts or comes back into view, compare each
-  // file with the server's copy: the "no-cache" fetch also stores the new
-  // copy, so one reload runs it.
-  function checkForUpdate() {
-    if (!/^https?:$/.test(window.location.protocol) || typeof fetch !== "function") return;
-    if (Date.now() - checkedAt < UPDATE_EVERY) return;
-    checkedAt = Date.now();
-    const urls = [window.location.href.split("#")[0]]
-      .concat(all("script[src], link[rel=stylesheet][href]").map((element) => element.src || element.href));
-    Promise.all(urls.map(changedOnServer))
-      .then((changed) => {
-        if (!changed.some(Boolean)) return;
-        // A reload that did not bring the new files must not become a loop.
-        if (Date.now() - Number(store.get("remote.updated") || 0) < UPDATE_EVERY) return;
-        store.set("remote.updated", String(Date.now()));
-        window.location.reload();
-      })
-      .catch(() => { /* offline or openHAB restarting: the next check tries again */ });
-  }
-
-  function changedOnServer(url) {
-    return fetch(url, { cache: "force-cache" })
-      .then((cached) => cached.text())
-      .then((running) => fetch(url, { cache: "no-cache" })
-        .then((latest) => (latest.ok ? latest.text() : running))
-        .then((text) => text !== running));
   }
 
   function openSheet(id) {

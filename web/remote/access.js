@@ -37,6 +37,25 @@
   // {"type":"heartbeat"}, while it has nothing else (oh_identity.streams.HEARTBEAT).
   const STREAM_HEARTBEAT_MS = 5000;
   const HEARTBEAT_FRAME = '{"type":"heartbeat"}';
+  // How a stream's snapshot begins (oh_identity.hub): the one frame that
+  // names the build of the pages the gateway serves.
+  const SNAPSHOT_FRAME = '{"type":"snapshot"';
+  // What a page whose files were replaced on the gateway does about it.
+  // An installed phone app has no reload button, so the page reloads itself:
+  // once for each build, remembered in the tab's storage, so that a reload
+  // which brings the same page again (a cache in between) cannot become a
+  // loop. "reload" the first time a build is heard; "say" when the reload
+  // did not help or cannot be remembered; nothing after it has been said.
+  const BUILD_KEY = "thermite.build", SAID = " said";
+  const REPLACED = "thermite was updated, but this page could not load the new version by itself. Close thermite and open it again.";
+  function replaced(build, storage) {
+    let last = null, kept = false;
+    try { last = storage.getItem(BUILD_KEY); } catch (_) { /* no storage */ }
+    if (last === build + SAID) return null;
+    const next = last === build ? build + SAID : build;
+    try { storage.setItem(BUILD_KEY, next); kept = storage.getItem(BUILD_KEY) === next; } catch (_) { /* no storage */ }
+    return kept && next === build ? "reload" : "say";
+  }
   // How long a command (a room command, a lock switch) may go unanswered
   // before it is aborted and reported as unconfirmed. The gateway answers one
   // in well under a second, and its own call to openHAB gives up after 5 s
@@ -113,6 +132,19 @@
     // When the page was last shown: a wait that began before it spanned a
     // hidden (perhaps suspended) page, and is not counted.
     let visibleSince = active ? -Infinity : Infinity;
+    // The build of the pages this client runs in (a page's
+    // data-thermite-build; a terminal has none) beside the gateway's, which
+    // every snapshot names. A page that was replaced on the gateway hears so
+    // on its next stream, without a request of its own; config.onReplaced is
+    // told once for each build the gateway names that is not the page's.
+    const built = typeof config.build === "string" && config.build ? config.build : null; let heardBuild = null;
+    function compareBuild(data) {
+      if (!built || typeof data !== "string" || !data.startsWith(SNAPSHOT_FRAME)) return;
+      let build; try { build = JSON.parse(data).build; } catch (_) { return; }
+      if (typeof build !== "string" || build === built || build === heardBuild) return;
+      heardBuild = build;
+      if (config.onReplaced) config.onReplaced(build);
+    }
     // The open event streams, each with its liveness watchdog (eventSource).
     const streams = new Set(), streamLiveness = config.streamLiveness || 3 * STREAM_HEARTBEAT_MS;
     // The watchdog times silence by the monotonic clock (performance.now,
@@ -588,7 +620,8 @@
       },
       clear: lost,
       // The gateway's event streams, each behind the client's credential and
-      // a liveness watchdog. The gateway sends a frame at least every
+      // a liveness watchdog, and each snapshot's build compared with the
+      // page's (compareBuild). The gateway sends a frame at least every
       // STREAM_HEARTBEAT_MS, so a stream that shows none for streamLiveness
       // (three heartbeats) while the page is shown is dead, even when the
       // EventSource has not noticed (a phone back from the background, a
@@ -622,6 +655,7 @@
             source.onmessage = (event) => {
               if (!current()) return;
               this.heard = stamp();
+              compareBuild(event?.data);
               if (event?.data !== HEARTBEAT_FRAME && this.onmessage) this.onmessage(event);
             };
             source.onerror = (event) => {
@@ -670,7 +704,7 @@
     };
     return client;
   }
-  const exported = { create, problem, returnTo, secureOrigin, MESSAGES, STREAM_HEARTBEAT_MS, COMMAND_DEADLINE_MS, client: null };
+  const exported = { create, problem, returnTo, secureOrigin, replaced, MESSAGES, STREAM_HEARTBEAT_MS, COMMAND_DEADLINE_MS, client: null };
   global.ThermiteAccess = exported;
   if (typeof module !== "undefined" && module.exports) module.exports = exported;
   if (typeof document === "undefined") return;
@@ -680,6 +714,16 @@
   const siteGuest = site && site.version === 1 && site.mode === "guest";
   const client = exported.client = create({ fetch: nativeFetch, native: params.get("backend") !== "mock" && (params.get("backend") === "native" || siteNative), mock: params.get("backend") === "mock",
     guest: siteGuest, secure: siteGuest ? site.secure : null,
+    build: document.documentElement?.dataset?.thermiteBuild,
+    onReplaced(build) {
+      let storage = null; try { storage = global.sessionStorage; } catch (_) { /* refused: said, not reloaded */ }
+      const next = replaced(build, storage);
+      if (next === "reload") { location.reload(); return; }
+      const main = next && document.querySelector("main,.app");
+      if (!main) return;
+      const notice = document.createElement("p"); notice.className = "thermite-notice"; notice.setAttribute("role", "status");
+      notice.textContent = REPLACED; main.before(notice);
+    },
     onUnauthorized() {
       if (document.body && ["access", "security"].includes(document.body.dataset.thermitePage)) return;
       // A Guest listener page has no Account page to go to; a reload admits the Guest again.

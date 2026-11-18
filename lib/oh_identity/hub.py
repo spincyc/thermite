@@ -10,8 +10,11 @@ public topics before its payload is parsed; the rest are projected once
 out in process to the client streams (streams.stream) whose view has them.
 
 A client stream joins a view. Its first frame is a snapshot of the view's
-Items from the cache, `{"type":"snapshot","view":...,"states":{item: value}}`;
-the view's events follow through a queue of at most QUEUE frames. A client
+Items from the cache, `{"type":"snapshot","view":...,"build":...,"states":
+{item: value}}`, where build is the build of the pages this gateway serves
+(the contract's): a page that carries another is running files that have
+since been replaced, and reloads itself (web/remote/access.js). The view's
+events follow through a queue of at most QUEUE frames. A client
 that falls further behind loses what it has not read and is sent one fresh
 snapshot in its place, so no client grows the gateway's memory.
 
@@ -229,7 +232,8 @@ class EventHub(Fanout):
         if cached and cached[0] == self.version:
             return cached[1]
         states = {item: self.values[item] for item in sorted(self.items[view]) if item in self.values}
-        data = encode({"type": "snapshot", "view": view.removesuffix(topics.WITHOUT_TEXT), "states": states})
+        build = {"build": self.contract.build} if self.contract.build else {}
+        data = encode({"type": "snapshot", "view": view.removesuffix(topics.WITHOUT_TEXT), **build, "states": states})
         self._snapshots[view] = (self.version, data)
         return data
 

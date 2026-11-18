@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A page left open across an upgrade now replaces itself. `thermite
+  generate` gives the pages' files one build and writes it into every
+  page; the gateway repeats the build of the pages it serves on each
+  event stream, and a page that hears another build than its own
+  reloads, once for each build, so the installed phone app needs no
+  reload button. If the reload brings the same page again, the page
+  says once that it could not load the new version and asks to be
+  closed and opened again. Remotes and Pairing no longer read their
+  own files again every minute, a check that could not see an upgrade
+  behind the gateway.
 - Alertmanager is removed; the gateway's alert feed was its only
   reader. Port 13612 stays unused. `metrics: alertmanager_port` in
   `instance/host.yaml` is no longer accepted.

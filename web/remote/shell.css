@@ -149,6 +149,8 @@ body.thermite-app::before { content: ""; position: fixed; inset: 0 0 auto; z-ind
 .thermite-system a { display: inline-block; color: var(--th-accent); text-underline-offset: 3px; padding-block: 5px; }
 .thermite-system code { font-size: 12px; }
 @media(max-width:600px) { .thermite-system [data-system-tools] { grid-template-columns: minmax(0,1fr); } }
+/* A page says here, above itself, that it could not load a new version (access.js). */
+.thermite-notice { margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--th-line); background: var(--th-raised); color: var(--th-text); font-size: 14px; line-height: 1.35; }
 .thermite-not-connected { display: flex; align-items: center; gap: 10px; padding: 18px 0; font-size: 17px; }
 .thermite-not-connected::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--th-muted); }
 @media(max-width:600px) { .thermite-home::before { width: 96px; height: 77px; margin-left: 16px; } .thermite-modules { grid-template-columns: minmax(0,1fr); } }
