@@ -22,9 +22,10 @@ from . import AccessError, guest
 from .files import json_private, private_directory, read_private, require_service_account
 
 CONFIG_FIELDS = {"version", "state", "contract_file", "runtime_url", "runtime_token_file", "allowed_hosts",
-                 "bind_host", "port", "tls_cert", "tls_key", "timezone", "guest_http"}
+                 "listen", "port", "tls_cert", "tls_key", "timezone", "guest_http"}
 #: Version 2 added guest_http: the optional plain-HTTP Guest listener, or null.
-CONFIG_VERSION = 2
+#: Version 3 replaced bind_host with listen: the HTTPS listener's addresses.
+CONFIG_VERSION = 3
 # Uvicorn's exit status for a server that never started; systemd sees a failure.
 STARTUP_FAILURE = 3
 # Seconds a command waits for its rooms' and devices' locks before it is
@@ -95,7 +96,12 @@ def load_config(path, *, tls=True):
         hosts = data["allowed_hosts"]
         if not isinstance(hosts, list) or not hosts or any(not isinstance(x, str) or not re.fullmatch(r"[A-Za-z0-9.:[\]-]+", x) or x.startswith(".") or "*" in x for x in hosts):
             raise ValueError()
-        ipaddress.ip_address(data["bind_host"])
+        listen = data["listen"]
+        if not isinstance(listen, list) or not listen or any(not isinstance(address, str) for address in listen) \
+                or len(set(listen)) != len(listen):
+            raise ValueError()
+        for address in listen:
+            ipaddress.ip_address(address)
         guest_http = data["guest_http"]
         if guest_http is not None and guest.settings(guest_http) != guest_http:
             raise ValueError()
@@ -572,6 +578,12 @@ async def _serve(bound, *, on_shutdown=None, stop=None):
             raise result
 
 
+def https_listeners(config, admission, tls):
+    """(application, listener) pairs for the HTTPS application, one per
+    address of the configuration's listen."""
+    return [(admission, listener(address, config["port"], tls)) for address in config["listen"]]
+
+
 def guest_listeners(config, admission):
     """(application, listener) pairs for the opt-in Guest listener, one per
     address. They share admission, so its request budget, with HTTPS; each
@@ -617,8 +629,8 @@ def serve(config_path):
         admission = metrics.Metered(Admission(application))
         metrics.watch_streams()
         textfile = metrics.start(metrics.GATEWAY, metrics.GATEWAY_FILE, refresh=metrics.refresh_streams)
-        _run_server([(admission, listener(config["bind_host"], config["port"], tls)),
-                     *guest_listeners(config, admission)], on_shutdown=cleanup)
+        _run_server([*https_listeners(config, admission, tls), *guest_listeners(config, admission)],
+                    on_shutdown=cleanup)
     finally:
         cleanup()
         if textfile:

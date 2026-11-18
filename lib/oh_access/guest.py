@@ -30,15 +30,7 @@ log = logging.getLogger("oh_access")
 
 
 def _address(value):
-    try:
-        address = ipaddress.ip_address(value) if isinstance(value, str) and "%" not in value else None
-    except ValueError:
-        address = None
-    if (address is None or address.is_unspecified or address.is_multicast or address.version == 6
-            and (address.ipv4_mapped is not None or address.is_link_local)):
-        raise ValueError(f"guest_http.listen: {value!r} is not one of this host's own IP addresses "
-                         "(never a wildcard, multicast, link-local IPv6 or IPv4-mapped address)")
-    return str(address)
+    return oh_ports.own_address("guest_http.listen", value)
 
 
 def _network(value):

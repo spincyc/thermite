@@ -877,8 +877,8 @@ class Tidal(Site):
             os.chmod(path, 0o600)
         config = self.state / "config.json"
         config.write_text(json.dumps({
-            "version": 2, "state": str(self.state), "contract_file": str(contract), "runtime_url": "http://127.0.0.1:13602",
-            "runtime_token_file": str(bearer), "allowed_hosts": ["example.test"], "bind_host": "127.0.0.1",
+            "version": 3, "state": str(self.state), "contract_file": str(contract), "runtime_url": "http://127.0.0.1:13602",
+            "runtime_token_file": str(bearer), "allowed_hosts": ["example.test"], "listen": ["127.0.0.1"],
             "port": 13600, "tls_cert": str(self.state / "cert.pem"), "tls_key": str(self.state / "key.pem"),
             "timezone": "UTC", "guest_http": None}))
         os.chmod(config, 0o600)

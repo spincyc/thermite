@@ -142,7 +142,7 @@ as user.reset_admin by a local principal.""",
     sub.add_argument("--tls-cert", required=True, type=Path, help="owner-managed TLS certificate chain")
     sub.add_argument("--tls-key", required=True, type=Path, help="operator-owned mode0600 TLS private key input; copied for service handoff")
     sub.add_argument("--allowed-host", required=True, action="append", dest="allowed_hosts", help="exact HTTP Host name (repeatable; no wildcard)")
-    sub.add_argument("--bind-host", default="0.0.0.0", help="HTTPS listener address (default: all IPv4 interfaces)")
+    sub.add_argument("--listen", action="append", metavar="ADDRESS", help="HTTPS listener address (repeatable; default: all IPv4 interfaces)")
     sub.add_argument("--port", type=int, help=f"unprivileged HTTPS port (default: the selected site's gateway.port, else {oh_ports.ACCESS_PORT})")
     sub.add_argument("--timezone", default="UTC", help="site's IANA timezone (default: UTC)")
     sub.add_argument("--service-user", dest="user", choices=("thermite",), default="thermite", help="fixed service account (thermite); ownership handoff is reported explicitly")
@@ -236,6 +236,7 @@ as user.reset_admin by a local principal.""",
             values.pop("command")
             values.pop("json")
             values["host_ports"], values["music"] = _site_host()
+            values["listen"] = values["listen"] or list(oh_ports.GATEWAY_LISTEN)
             if values["port"] is None:
                 values["port"] = (values["host_ports"] or oh_ports.DEFAULTS)["access"]
             result = stage(**values)

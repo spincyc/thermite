@@ -186,7 +186,7 @@ class GatewayConfiguration(unittest.TestCase):
             path.chmod(0o600)
         self.config = {"version": CONFIG_VERSION, "state": str(self.root), "contract_file": str(self.root / "contract"),
                        "runtime_url": oh_ports.NATIVE_URL, "runtime_token_file": str(self.root / "token"),
-                       "allowed_hosts": ["house.example.test", "192.0.2.10"], "bind_host": "0.0.0.0",
+                       "allowed_hosts": ["house.example.test", "192.0.2.10"], "listen": ["0.0.0.0"],
                        "port": oh_ports.ACCESS_PORT, "tls_cert": str(self.root / "cert"), "tls_key": str(self.root / "key"),
                        "timezone": "UTC", "guest_http": None}
 
@@ -215,6 +215,31 @@ class GatewayConfiguration(unittest.TestCase):
         self.assertEqual((loaded["port"], loaded["guest_http"]["port"]), (16301, 13601))
         with self.assertRaises(AccessError):
             self.load(port=13601, guest_http=settings)
+
+    def test_version_three_names_the_https_listeners_addresses(self):
+        self.assertEqual(self.load()["listen"], ["0.0.0.0"])
+        self.assertEqual(self.load(listen=["127.0.0.1", "192.0.2.10"])["listen"], ["127.0.0.1", "192.0.2.10"])
+        for value in ("0.0.0.0", [], ["house.example.test"], ["192.0.2.10", "192.0.2.10"], [13601], None):
+            with self.subTest(listen=value), self.assertRaises(AccessError):
+                self.load(listen=value)
+        with self.assertRaises(AccessError):
+            self.load(version=2)
+        # A release before this one wrote one bind_host.
+        configuration = {**self.config, "version": 2, "bind_host": "0.0.0.0"}
+        del configuration["listen"]
+        json_private(self.root / "config.json", configuration)
+        with self.assertRaises(AccessError):
+            load_config(self.root / "config.json", tls=False)
+
+    def test_the_gateway_serves_https_on_each_listed_address(self):
+        from oh_access import service
+        config = self.load(listen=["127.0.0.1", "192.0.2.10", "2001:db8::10"], guest_http=guest.settings(SINGLE))
+        pairs = service.https_listeners(config, "admission", "tls")
+        self.assertEqual([application for application, _ in pairs], ["admission"] * 3)
+        self.assertEqual([listener.bind for _, listener in pairs],
+                         [[f"127.0.0.1:{oh_ports.ACCESS_PORT}"], [f"192.0.2.10:{oh_ports.ACCESS_PORT}"],
+                          [f"[2001:db8::10]:{oh_ports.ACCESS_PORT}"]])
+        self.assertEqual({listener.create_ssl_context() for _, listener in pairs}, {"tls"})
 
 
 class Answer(http.server.BaseHTTPRequestHandler):

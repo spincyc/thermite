@@ -93,6 +93,26 @@ class Allocation(unittest.TestCase):
             with self.subTest(reason=reason), self.assertRaisesRegex(oh_deploy.HostError, reason):
                 oh_deploy.validate_host({**host, "gateway": value})
 
+    def test_gateway_listen_chooses_the_https_addresses_and_always_keeps_loopback(self):
+        host = oh_deploy.load_host(AREA / "instance/host.yaml")
+        # Unset, every IPv4 interface, as before the setting existed.
+        self.assertEqual(oh_ports.gateway_listen(), ["0.0.0.0"])
+        self.assertEqual(oh_ports.gateway_listen({**host, "gateway": {"port": 16301}}), ["0.0.0.0"])
+        chosen = {**host, "gateway": {"listen": ["192.0.2.10", "2001:DB8::10", "192.0.2.10"]}}
+        self.assertEqual(oh_deploy.validate_host(chosen)["gateway"], chosen["gateway"])
+        # Loopback first: the installer's readiness check and the monitoring probe use it.
+        self.assertEqual(oh_ports.gateway_listen(chosen), ["127.0.0.1", "192.0.2.10", "2001:db8::10"])
+        self.assertEqual(oh_ports.gateway_listen({"gateway": {"listen": ["192.0.2.10", "127.0.0.1"]}}),
+                         ["127.0.0.1", "192.0.2.10"])
+        self.assertEqual(oh_ports.gateway_port(chosen), oh_ports.ACCESS_PORT)
+        for value in ("192.0.2.10", [], None, {"192.0.2.10": True}):
+            with self.subTest(listen=value), self.assertRaisesRegex(oh_deploy.HostError, "gateway.listen must be a non-empty list"):
+                oh_deploy.validate_host({**host, "gateway": {"listen": value}})
+        for value in ("0.0.0.0", "::", "house.example.test", "192.0.2.0/24", "fe80::1%eth0",
+                      "::ffff:192.0.2.10", 13601, None):
+            with self.subTest(address=value), self.assertRaisesRegex(oh_deploy.HostError, "gateway.listen: .* is not one of this host's own IP addresses"):
+                oh_deploy.validate_host({**host, "gateway": {"listen": ["192.0.2.10", value]}})
+
     def test_gateway_port_cannot_take_another_listener(self):
         host = {"timezone": "Etc/UTC", "http_port": 13602, "https_port": 13603, "uid": 9001, "gid": 9001}
         taken = {"native HTTP": 13602, "native HTTPS": 13603, "sandbox HTTP": 13616, "boot check": 13620,
@@ -521,7 +541,7 @@ class Consumers(unittest.TestCase):
                 path.chmod(0o600)
             config = {"version": CONFIG_VERSION, "state": str(root), "contract_file": str(root / "contract"),
                       "runtime_url": oh_ports.NATIVE_URL, "runtime_token_file": str(root / "token"),
-                      "allowed_hosts": ["example.test"], "bind_host": "127.0.0.1", "port": oh_ports.HTTP_PORT,
+                      "allowed_hosts": ["example.test"], "listen": ["127.0.0.1"], "port": oh_ports.HTTP_PORT,
                       "tls_cert": str(root / "cert"), "tls_key": str(root / "key"), "timezone": "UTC", "guest_http": None}
             path = root / "config.json"
             path.write_text(json.dumps(config)); path.chmod(0o600)

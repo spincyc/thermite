@@ -448,11 +448,12 @@ def _export_plan(descriptor, receipt, custody, unit_sources=None):
 
 
 def stage(destination, *, state, house, assets, runtime_url, runtime_token_file, tls_cert, tls_key,
-          allowed_hosts, bind_host, port, timezone, user=None, wheelhouse=None, area=None,
+          allowed_hosts, listen, port, timezone, user=None, wheelhouse=None, area=None,
           install_environment=True, callbacks=None, plan_directory=None, host_ports=None, guest_http=None,
           textfile=None, music=None, runtime=None):
     """A new release with explicit reusable site state. No database is migrated.
 
+    listen is the HTTPS listener's addresses (oh_ports.gateway_listen).
     guest_http is host.yaml's optional Guest listener mapping (oh_access.guest).
     music is host.yaml's checked music (oh_music.settings): the gateway then
     serves its libraries through Music Assistant on host_ports' music port.
@@ -536,7 +537,7 @@ def stage(destination, *, state, house, assets, runtime_url, runtime_token_file,
                          {"port": (host_ports or oh_ports.DEFAULTS)["music"], "libraries": sorted(music["libraries"])})
         config = {"version": CONFIG_VERSION, "state": str(state), "contract_file": str(target / "contract.json"),
                   "runtime_url": runtime_url, "runtime_token_file": str(target / "secrets/runtime-bearer"),
-                  "allowed_hosts": allowed_hosts, "bind_host": bind_host, "port": port, "timezone": timezone,
+                  "allowed_hosts": allowed_hosts, "listen": list(listen), "port": port, "timezone": timezone,
                   "guest_http": guest_http,
                   "tls_cert": str(target / "secrets/tls-cert.pem"), "tls_key": str(target / "secrets/tls-key.pem")}
         json_private(target / "config.json", config)

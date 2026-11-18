@@ -10,6 +10,7 @@ from contextlib import contextmanager
 import errno
 import fcntl
 import hashlib
+import ipaddress
 import os
 from pathlib import Path
 import re
@@ -80,7 +81,40 @@ def unique(ports: dict[str, int]) -> dict[str, int]:
 
 #: host.yaml's `gateway:` mapping. Its port is the HTTPS application,
 #: allocated as "access"; top-level http_port/https_port are native runtime's.
-GATEWAY_FIELDS = ("port",)
+GATEWAY_FIELDS = ("port", "listen")
+#: What the HTTPS application binds unless gateway.listen chooses: every IPv4
+#: interface, so also a guest network this host has an address on.
+GATEWAY_LISTEN = ("0.0.0.0",)
+#: Always bound: the installer's readiness check and the monitoring probe
+#: reach the gateway here.
+LOOPBACK = "127.0.0.1"
+
+
+def own_address(setting: str, value) -> str:
+    """One of a host's own IP addresses as a listener may bind it, in its
+    canonical spelling. Whether this host has it is known only when it binds."""
+    try:
+        address = ipaddress.ip_address(value) if isinstance(value, str) and "%" not in value else None
+    except ValueError:
+        address = None
+    if (address is None or address.is_unspecified or address.is_multicast or address.version == 6
+            and (address.ipv4_mapped is not None or address.is_link_local)):
+        raise ValueError(f"{setting}: {value!r} is not one of this host's own IP addresses "
+                         "(never a wildcard, multicast, link-local IPv6 or IPv4-mapped address)")
+    return str(address)
+
+
+def gateway_listen(host: dict | None = None) -> list[str]:
+    """The addresses the HTTPS application binds: GATEWAY_LISTEN, or
+    host.yaml's gateway.listen with LOOPBACK first."""
+    gateway = (host or {}).get("gateway") or {}
+    if not isinstance(gateway, dict) or "listen" not in gateway:
+        return list(GATEWAY_LISTEN)
+    chosen = gateway["listen"]
+    if not isinstance(chosen, list) or not chosen:
+        raise ValueError("gateway.listen must be a non-empty list of this host's own IP addresses; leave it out to "
+                         "listen on every IPv4 interface")
+    return list(dict.fromkeys([LOOPBACK, *(own_address("gateway.listen", value) for value in chosen)]))
 
 
 def effective(host: dict | None = None) -> dict[str, int]:
@@ -99,6 +133,7 @@ def effective(host: dict | None = None) -> dict[str, int]:
     if unknown:
         raise ValueError("unknown gateway setting " + ", ".join(unknown) + " (allowed: " + ", ".join(GATEWAY_FIELDS) + ")")
     result["access"] = checked("gateway.port", gateway.get("port", result["access"]))
+    gateway_listen(host)
     for name in ("http", "https"):
         result[name] = host.get(name + "_port", result[name])
     metrics = host.get("metrics") or {}

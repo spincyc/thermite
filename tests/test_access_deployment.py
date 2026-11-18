@@ -419,10 +419,12 @@ class Lifecycle(GatewayFixture):
         served = key.read_bytes()
         system.installed, system.active = old, True
         with https_security(cert, key) as (port, requests):
-            gateway.context.host = {"timezone": "UTC", "gateway": {"port": port}}
+            gateway.context.host = {"timezone": "UTC", "gateway": {"port": port, "listen": ["192.0.2.10"]}}
             self.assertEqual(gateway.perform(system), 0, system.messages)
         [staged] = self.staged
         self.assertEqual((staged["port"], staged["host_ports"]["access"]), (port, port))
+        # host.yaml's chosen addresses, and loopback, where readiness was just checked.
+        self.assertEqual(staged["listen"], ["127.0.0.1", "192.0.2.10"])
         self.assertEqual((staged["tls_cert"], staged["tls_key"]),
                          (str(gateway.inputs / "tls-cert.pem"), str(gateway.inputs / "tls-key.pem")))
         self.assertEqual(key.read_bytes(), served, "the served key is kept")
@@ -449,8 +451,8 @@ class Lifecycle(GatewayFixture):
         metadata = gateway._metadata(system)
         self.assertEqual(gateway._metadata(system)["callback_file"], metadata["callback_file"])
         self.assertEqual((metadata["port"], metadata["callbacks"]), (oh_ports.ACCESS_PORT, True))
-        self.assertEqual((metadata["allowed_hosts"], metadata["bind_host"], metadata["timezone"]),
-                         (HOSTS, "0.0.0.0", "UTC"), "derived from this host")
+        self.assertEqual((metadata["allowed_hosts"], metadata["listen"], metadata["timezone"]),
+                         (HOSTS, ["0.0.0.0"], "UTC"), "derived from this host")
         self.assertEqual(metadata["state"], str(gateway.root / "state"))
         self.assertEqual(metadata["callback_file"], str(gateway.inputs / "callbacks.json"))
         self.assertEqual(json.loads(Path(metadata["callback_file"]).read_bytes()), {

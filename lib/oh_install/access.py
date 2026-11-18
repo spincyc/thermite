@@ -257,7 +257,7 @@ class Gateway(Step):
     def _derived(self):
         """Settings derived from this host each run, as the ports are, never
         taken from the release an upgrade replaces."""
-        return {"allowed_hosts": self._hosts(), "bind_host": "0.0.0.0",
+        return {"allowed_hosts": self._hosts(), "listen": oh_ports.gateway_listen(self.context.host),
                 "port": oh_ports.gateway_port(self.context.host), "timezone": self.context.host["timezone"]}
 
     def prove(self, system):
@@ -411,7 +411,7 @@ class Gateway(Step):
             receipt = staging.stage(self.release, state=metadata["state"], house=house, assets=assets,
                                     runtime_url=self.context.url, runtime_token_file=record["runtime_token_file"],
                                     tls_cert=metadata["tls_cert"], tls_key=metadata["tls_key"],
-                                    allowed_hosts=metadata["allowed_hosts"], bind_host=metadata["bind_host"],
+                                    allowed_hosts=metadata["allowed_hosts"], listen=metadata["listen"],
                                     port=metadata["port"], timezone=metadata["timezone"],
                                     area=self.context.area, plan_directory=plan, callbacks=callback,
                                     wheelhouse=self.options.get("wheelhouse"), host_ports=oh_ports.effective(self.context.host),
@@ -539,7 +539,8 @@ class Gateway(Step):
         shown_host = "[" + host + "]" if ":" in host else host
         url = "https://" + shown_host + ":" + str(metadata["port"])
         context = ssl.create_default_context(cafile=metadata["tls_ca"])
-        address = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(metadata["bind_host"], metadata["bind_host"])
+        # A chosen list starts with loopback (oh_ports.gateway_listen).
+        address = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(metadata["listen"][0], metadata["listen"][0])
         connection = http.client.HTTPSConnection(host, metadata["port"], context=context, timeout=5)
         try:
             # Connect locally while retaining certificate name and HTTP Host

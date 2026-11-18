@@ -150,7 +150,7 @@ class Configuration(unittest.TestCase):
         inputs = dict(state=self.root / "site-state", plan_directory=self.root / (name + "-plan"), house="synthetic.yaml", assets=assets,
                       runtime_url=CONFIG["upstream"], runtime_token_file=self.root / "bearer",
                       tls_key=self.root / "key", tls_cert=self.root / "cert", allowed_hosts=["site.example"],
-                      bind_host="127.0.0.1", port=9443, timezone="UTC", area=source, install_environment=False)
+                      listen=["127.0.0.1"], port=9443, timezone="UTC", area=source, install_environment=False)
         # Isolate permanent-location policy for disposable temporary fixtures;
         # real private file custody and callback validation remain unpatched.
         with patch.object(staging, "_disposable", return_value=False), patch.object(staging, "_state_location"), patch.object(staging, "_service_parents"), patch("oh_access.service.compile_contract", side_effect=compile_fixture), patch("oh_access.service.ssl.SSLContext.load_cert_chain"):

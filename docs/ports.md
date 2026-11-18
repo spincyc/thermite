@@ -132,6 +132,26 @@ not ports, so client trust is unchanged. Origins include the port, though:
 `thermite status` shows the HTTPS address on the configured port, and reports
 a problem while the installed gateway still serves another.
 
+## Choosing the HTTPS application's addresses
+
+The HTTPS application listens on every IPv4 interface unless
+`gateway: {listen: [...]}` in `instance/host.yaml` names the addresses it may
+bind. A host that also has an address on a guest network otherwise serves
+sign-in, and whatever an account may see, there too:
+
+```yaml
+gateway:
+  listen: [203.0.113.10]   # this host's address on the home network
+```
+
+`listen` names this host's own IP addresses, never a wildcard or a name.
+Loopback (127.0.0.1) is always bound as well: the installer's readiness check
+and the monitoring probe reach the gateway there. Include every address a
+client uses, among them the one this host's own name resolves to. Commit the
+change and run `thermite upgrade --config DIR`; a gateway that cannot bind a
+listed address does not start, and the upgrade rolls back. The opt-in Guest
+listener has its own `guest_http: listen`.
+
 ## Why this range
 
 Checked on 2026-11-02: the
