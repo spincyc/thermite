@@ -7,6 +7,16 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- An install transaction now commits only after `thermite health
+  --production --installation` passed. A failing check had been reported
+  and the new version committed all the same, with exit status 0; it now
+  rolls back in the same run, as documented (exit status 3 or 4). Device
+  warnings still never fail the check. Because the check runs just after
+  the start, `--installation` now gives add-ons, monitoring, Music
+  Assistant and the web entry the `--settle` window (120 seconds by
+  default) that Things still initializing had: it polls while any of them
+  fails and reports what still fails when the window ends. A Thing
+  configuration error fails at once, and `--settle 0` takes one snapshot.
 - The gateway no longer lets one address hold all of its requests. One
   peer (an IPv4 address or an IPv6 /64) has at most 40 requests in
   flight, its 8 event streams among them; its next is answered 429 while

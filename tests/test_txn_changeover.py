@@ -41,7 +41,6 @@ class Fake(Step):
     what `outcome(system)` returns."""
 
     always = True
-    stop_on_failure = True
 
     def __init__(self, name, log, outcome=0):
         self.title = name
@@ -63,13 +62,16 @@ class Fake(Step):
 class Host:
     """The operator's view: commands, sudo, and the engine as a script."""
 
-    def __init__(self, test, *, plan=0, begin=0, rollback=3, commit=0, phase="switching", health=0, sudo=()):
+    def __init__(self, test, *, plan=0, begin=0, rollback=3, commit=0, phase="switching", health=0, gate=0,
+                 sudo=()):
         self.test = test
         self.log = test.log
         #: Each sudo -v's exit status, in turn; then 0.
         self.sudo = iter(sudo)
         self.answers = {"begin": begin, "guard": 0, "collect": 0, "commit": commit, "rollback": rollback}
-        self.plan, self.phase, self.health = plan, phase, health
+        #: `health`: the reinstated version's; `gate`: the exit status of the
+        #: new version's own health command (steps.Health).
+        self.plan, self.phase, self.health, self.gate = plan, phase, health, gate
         self.system = Mock(spec=System)
         self.system.interactive.return_value = True
         self.system.process_groups.return_value = {9001}
@@ -100,6 +102,9 @@ class Host:
         if "--_record-rollback" in argv:
             self.log.append("history " + json.loads(argv[-1])["transaction"])
             return 0
+        if argv[-5:] == ("health", "--production", "--installation", "--settle", "120"):
+            self.log.append("health")
+            return self.gate
         self.log.append(" ".join(argv))
         return 0
 
@@ -329,6 +334,47 @@ class RolledBack(Fixture):
         self.assertEqual(self.run_upgrade(prepare=[("packages", KeyboardInterrupt())]), changeover.INTERRUPTED)
         self.assertIsNone(self.is_open())
         self.assertEqual(self.unpinned, [txn_fakes.ID])
+
+
+class Gate(Fixture):
+    """The new version's health decides between the commit and the rollback:
+    changeover.verification's own steps, none replaced, and the exit status
+    of the health command."""
+
+    def verified(self, gate, **answers):
+        self.host = Host(self, gate=gate, **answers)
+        self.host.system.metrics_health.return_value = deploy.MetricsHealth(
+            "http://prometheus.example.test", 200, 2, 2, (), "http://grafana.example.test/", 200, True)
+        verification = changeover.verification(self.context)
+        self.assertIs(type(verification[-1]), steps.Health)
+        return self.transact(self.work([], [Fake("switch", self.log)], verification))
+
+    def test_a_health_command_that_fails_rolls_back_and_nothing_commits(self):
+        self.assertEqual(self.verified(1), changeover.ROLLED_BACK)
+        self.assertNotIn("commit", self.log)
+        self.assertEqual(self.log[-5:], ["health", "sudo -v", "rollback", f"history {txn_fakes.ID}", "old health"])
+        # images 3, room 4, begin 5, guard 6, stop 7, collect 8, switch 9,
+        # authorize 10, monitoring 11.
+        self.assertIn("[ FAIL ] 12. Health of the new version", self.said())
+        self.assertIn("[ OK ] 13. Authorize the rollback", self.said())
+        self.assertNotIn("Commit", self.said())
+        self.assertEqual(self.record()["phase"], "rolled-back")
+        self.assertEqual(self.unpinned, [txn_fakes.ID])
+        self.assertIsNone(self.is_open())
+
+    def test_a_health_command_that_cannot_ask_the_runtime_rolls_back_too(self):
+        # Exit status 2: the runtime did not answer, or refused the token.
+        self.assertEqual(self.verified(2, health=1), changeover.UNHEALTHY)
+        self.assertNotIn("commit", self.log)
+        self.assertEqual(self.log[-3:], ["rollback", f"history {txn_fakes.ID}", "old health"])
+
+    def test_a_health_command_that_passes_commits_once_after_it(self):
+        self.assertEqual(self.verified(0), changeover.COMMITTED)
+        self.assertEqual(self.log[-4:], ["switch", "sudo -v", "health", "commit"])
+        self.assertEqual(self.log.count("commit"), 1)
+        self.assertIn("[ OK ] 13. Commit", self.said())
+        self.assertEqual(self.record()["phase"], "committed")
+        self.assertEqual(self.unpinned, [])
 
 
 class Rerun(Fixture):
@@ -1061,6 +1107,23 @@ class Runner(unittest.TestCase):
                                     root_confirmed=True), 1)
         self.assertEqual([call.args[0] for call in system.run.call_args_list],
                          [("sudo", "systemctl", "stop", oh_units.TARGET)])
+
+    def test_no_step_goes_on_past_its_own_failed_action(self):
+        # Not even one that asks to: whatever a caller does after a zero
+        # return (the commit) follows only steps that all passed.
+        system = Mock(spec=System)
+        system.interactive.return_value = True
+
+        class Lenient(Fake):
+            stop_on_failure = False
+
+            def actions(self, system):
+                return [*super().actions(system), Task("more of it", lambda system: self.log.append("more") or 0)]
+
+        log = []
+        self.assertEqual(runner.run([Lenient("first", log, 7), Fake("second", log)], system,
+                                    Path("/home/owner/fixture-site"), root_confirmed=True), 7)
+        self.assertEqual(log, ["first"])
 
 
 if __name__ == "__main__":

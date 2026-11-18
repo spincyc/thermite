@@ -151,15 +151,13 @@ class UnifiedInstall(unittest.TestCase):
         self.assertLess(types.index(steps.StartTarget), types.index(steps.NativeReady))
         self.assertEqual(types.count(steps.NativeReady), 1, "one authoritative wait owns the deadline and recovery budget")
         self.assertLess(types.index(steps.NativeReady), types.index(steps.MetricsAnswer))
-        self.assertIsInstance(sequence[-1], steps.Verify)
-        self.assertTrue(sequence[types.index(Gateway)].stop_on_failure)
+        self.assertIs(type(sequence[-1]), steps.Health, "the gate is last: only the commit follows it")
         # Everything that needs no stop comes first, while Thermite runs;
         # the firewall probe fails before anything disruptive.
         types = [type(step) for step in changeover.preparation(context)]
         probe = types.index(NativeIngressPrerequisites)
         self.assertLess(types.index(steps.Packages), probe)
         self.assertLess(probe, types.index(steps.BootTest))
-        self.assertTrue(changeover.preparation(context)[probe].stop_on_failure)
         for changing in (steps.StateDirectories, steps.Units, steps.NativePreparation, NativeIngress, steps.Deploy,
                          steps.Services, steps.Halt):
             self.assertNotIn(changing, types)

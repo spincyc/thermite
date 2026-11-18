@@ -44,7 +44,6 @@ class Fake(Step):
     """A preparation step: records what a run would have it do."""
 
     always = True
-    stop_on_failure = True
 
     def __init__(self, log, problem=None):
         self.title = "Prepare the fixture"

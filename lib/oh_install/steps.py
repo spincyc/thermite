@@ -526,7 +526,6 @@ class Packages(Step):
 class NodeConfinement(Step):
     title = "Node exporter confinement"
     always = True
-    stop_on_failure = True
 
     def __init__(self, context: Context):
         self.context = context
@@ -2147,14 +2146,14 @@ def gateway_steps(context: Context, native: NativeDeadline, transaction: str | N
 class Verify(Step):
     title = "Read-only check"
     always = True
-    #: Seconds final health polls Things that a late handler reload left
-    #: initializing; any still pending then are warnings, not failures.
+    #: Seconds final health gives a start to finish. Things that a late
+    #: handler reload left initializing are warnings then, not failures;
+    #: monitoring or the web entry still not answering then fails it.
     settle = 120
 
     def __init__(self, context: Context, *, materialized: bool = True):
         self.context = context
         self.materialized = materialized
-        self.stop_on_failure = not materialized
 
     def check(self, system: System) -> Check:
         return Check(False, "installation readiness, device warnings, and what is deployed against this checkout")
@@ -2302,7 +2301,10 @@ class StartTarget(Step):
 class Health(Verify):
     """The gate an install transaction commits on: health --production
     --installation, whose exit status counts configuration errors, missing
-    add-ons and failed monitoring or entry points, never device warnings."""
+    add-ons and failed monitoring or entry points, never device warnings.
+    Any exit status but 0 stops the run, as in every step, so the
+    transaction rolls back: changeover.run commits only after a run in
+    which all steps passed."""
 
     title = "Health of the new version"
 

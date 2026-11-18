@@ -110,6 +110,11 @@ def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = Fa
     `rerun` tells the owner how to go on after a stop. `root_confirmed` is
     only for a caller that already obtained approval for this run.
 
+    The first action that fails stops the run with its exit status, in
+    every step alike: no step can ask to go on past its own failure, so
+    whatever a caller runs after a zero return (a transaction's commit)
+    follows only steps that all passed.
+
     Nothing is started again after a failure: every step that stops
     Thermite runs inside an install transaction, whose rollback puts the
     previous version back and starts it."""
@@ -139,7 +144,6 @@ def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = Fa
                 display.passed(found.detail)
                 continue
             display.working(found.detail)
-            failed = 0
             for action in step.actions(system):
                 code = perform(action, system, area, rerun, root_confirmed=root_confirmed)
                 if code is None:
@@ -147,17 +151,12 @@ def run(steps: Sequence[Step], system: System, area: Path, *, dry_run: bool = Fa
                     return 1
                 if code:
                     display.message(f"   failed, exit status {code}: {action.shown()}", error=True)
-                    if not step.always or getattr(step, "stop_on_failure", False):
-                        display.finish("FAIL")
-                        display.message(f"Stopped. {rerun}", error=True)
-                        return code
-                    failed = code
-            if step.always:
-                if failed:
                     display.finish("FAIL")
-                else:
-                    display.passed(found.detail)
-                status = status or failed
+                    display.message(f"Stopped. {rerun}", error=True)
+                    return code
+            if step.always:
+                # It has no done state to read back: its actions passing is all.
+                display.passed(found.detail)
                 continue
             after = step.after_actions(system)
             if after.problem or not after.done:

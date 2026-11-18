@@ -41,11 +41,14 @@ are not installed yet.
 Thing policy as the installer's native readiness wait. Offline devices
 waiting for pairing or connectivity are visible warnings. Thing configuration
 errors, required add-ons and monitoring failures still fail, and Thermite's
-web entry must redirect correctly. Things still initializing (missing or
-reloading handlers, UNINITIALIZED, INITIALIZING, UNKNOWN) are polled for up
-to --settle seconds (default 120 with --installation), as are transient REST
-outages; any still initializing then are reported as warnings. Normal health
-checks remain strict and take one snapshot.
+web entry must redirect correctly. A runtime that has just started gets
+--settle seconds (default 120 with --installation) to finish: Things still
+initializing (missing or reloading handlers, UNINITIALIZED, INITIALIZING,
+UNKNOWN), transient REST outages, and add-ons, monitoring, music or the web
+entry not ready yet are polled that long. Things still initializing then are
+reported as warnings; anything else still failing then fails. A Thing
+configuration error fails at once. --settle 0 takes one snapshot, as normal
+health checks do; they remain strict.
 """
 
 EXAMPLES = (
@@ -75,7 +78,7 @@ Compact output omits individual undefined Item states.
 """
 
 
-#: How long --installation polls Things still initializing, by default.
+#: How long --installation polls what a start has not finished, by default.
 SETTLE = 120
 POLL = 5
 
@@ -90,12 +93,17 @@ def unavailable(code) -> type[lib.SandboxError]:
 
 
 def settled(args, *, clock=time.monotonic, sleep=time.sleep) -> dict:
-    """One report; with --installation, poll pending Things within --settle seconds.
+    """One report; with --installation, poll within --settle seconds while
+    Things are pending or a readiness check still fails.
 
-    Configuration errors and authentication or data-shape problems end the
-    wait at once. Things still pending at the end stay in the report as
-    warnings: the installer's own readiness wait has already required complete
-    initialization, so a later handler reload must not fail a deployed run.
+    An install transaction commits or rolls back on this report, taken just
+    after a start: a scrape target not up yet, or the web entry not
+    registered yet, gets the window before it counts, as a pending Thing
+    does. Configuration errors and authentication or data-shape problems
+    end the wait at once: no wait clears them. Things still pending at the
+    end stay in the report as warnings: the installer's own readiness wait
+    has already required complete initialization, so a later handler reload
+    must not fail a deployed run. A check still failing at the end fails it.
     """
     window = getattr(args, "settle", None)
     if not getattr(args, "installation", False):
@@ -109,7 +117,8 @@ def settled(args, *, clock=time.monotonic, sleep=time.sleep) -> dict:
                 raise
             sleep(max(0, min(POLL, deadline - clock())))
             continue
-        if not report["things"].get("pending") or report["things"]["failed"] or clock() >= deadline:
+        unfinished = report["things"].get("pending") or report["failures"]
+        if not unfinished or report["things"]["failed"] or clock() >= deadline:
             return report
         sleep(max(0, min(POLL, deadline - clock())))
 
@@ -330,7 +339,7 @@ def main(argv=None) -> int:
     parser.add_argument("--addons", type=Path, metavar="FILE",
                         help="fail if an add-on listed in this addons.cfg is missing")
     parser.add_argument("--settle", type=int, metavar="SECONDS",
-                        help=f"with --installation, poll Things still initializing this long (default {SETTLE})")
+                        help=f"with --installation, poll what a start has not finished this long (default {SETTLE})")
     oh_cli.add_timeout(parser, 15, "each answer")
     oh_cli.add_json(parser)
     args = parser.parse_args(argv)

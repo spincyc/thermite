@@ -329,7 +329,6 @@ class Prefetch(Step):
 
     title = "Container images"
     always = True
-    stop_on_failure = True
 
     def __init__(self, context: steps.Context):
         self.context = context
@@ -365,7 +364,6 @@ class Room(Step):
 
     title = "Room to set the installed version aside"
     always = True
-    stop_on_failure = True
 
     def __init__(self, transaction: Transaction, inputs):
         self.transaction = transaction
@@ -404,7 +402,6 @@ class Begin(Step):
 
     title = "Begin the install transaction"
     always = True
-    stop_on_failure = True
 
     def __init__(self, transaction: Transaction, paths):
         self.transaction = transaction
@@ -433,7 +430,6 @@ class Engine(Step):
     """One engine verb, as root, with the engine root pinned at begin."""
 
     always = True
-    stop_on_failure = True
 
     def __init__(self, transaction: Transaction, verb: str, title: str, detail: str, *args):
         self.transaction = transaction
@@ -455,7 +451,6 @@ class Authorize(Step):
 
     title = "Authorize the commit or rollback"
     always = True
-    stop_on_failure = True
 
     def check(self, system: System) -> Check:
         return Check(False, "sudo credentials fresh")
@@ -469,7 +464,6 @@ class Confirm(Step):
     it: nothing has stopped yet, and declining refuses it."""
 
     always = True
-    stop_on_failure = True
 
     def __init__(self, title: str, path: Path, warning: str | Callable[[System], str]):
         self.title = title
@@ -500,7 +494,6 @@ class ClearState(Step):
 
     title = "Clear the state the clean install replaces"
     always = True
-    stop_on_failure = True
 
     def __init__(self, context: steps.Context, files):
         self.context = context
@@ -760,18 +753,23 @@ def run(context: steps.Context, system: System, build: Callable[[str], Work], *,
     rest = [Engine(transaction, "guard", "Guard the boot", f"{oh_units.TARGET} stays disabled until the commit"),
             steps.Halt(context),
             Engine(transaction, "collect", "Set the installed version aside", "copies and moves, as the plan says"),
-            *reinstate, *work.switching, *work.verification,
-            Engine(transaction, "commit", "Commit", "record what is installed now")]
+            *reinstate, *work.switching, *work.verification]
     failed = f"The {transaction.verb} rolls back transaction {transaction.id} now."
     try:
         code = runner.run(rest, system, context.area, first=first + len(opening), rerun=failed,
                           root_confirmed=True)
+        if code == 0:
+            # The commit is this function's own, never one of the steps: it
+            # is issued only once every step, the health check last, has
+            # passed, whatever the lists above hold.
+            code = runner.run([Engine(transaction, "commit", "Commit", "record what is installed now")], system,
+                              context.area, first=runner.upcoming(), rerun=failed, root_confirmed=True)
     except KeyboardInterrupt:
         return _interrupted(system, transaction)
     except Exception as exc:  # Every failure rolls back; none leaves a half-installed version.
         system.say(f"   {type(exc).__name__}: {exc}")
         code = REFUSED
-    code = roll_back(system, transaction, "a step failed") if code else committed(system, transaction)
+    code = committed(system, transaction) if code == 0 else roll_back(system, transaction, "a step failed")
     if code == COMMITTED and work.gateway is not None and getattr(work.gateway, "deferred", False):
         return relay(context, system, transaction, first=runner.upcoming())
     return code

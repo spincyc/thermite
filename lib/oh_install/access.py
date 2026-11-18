@@ -161,7 +161,6 @@ class Gateway(Step):
 
     title = "HTTPS gateway and identity state"
     always = True
-    stop_on_failure = True
 
     def __init__(self, context, *, boundary=None, callbacks=None, options=None, record=None, transaction=None):
         self.context = context
@@ -746,7 +745,6 @@ class GatewayInputs(Step):
 
     title = "Gateway identity state and callbacks"
     always = True
-    stop_on_failure = True
 
     def __init__(self, gateway: Gateway):
         self.gateway = gateway

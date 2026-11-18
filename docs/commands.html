@@ -1260,11 +1260,14 @@ are not installed yet.
 Thing policy as the installer&#x27;s native readiness wait. Offline devices
 waiting for pairing or connectivity are visible warnings. Thing configuration
 errors, required add-ons and monitoring failures still fail, and Thermite&#x27;s
-web entry must redirect correctly. Things still initializing (missing or
-reloading handlers, UNINITIALIZED, INITIALIZING, UNKNOWN) are polled for up
-to --settle seconds (default 120 with --installation), as are transient REST
-outages; any still initializing then are reported as warnings. Normal health
-checks remain strict and take one snapshot.
+web entry must redirect correctly. A runtime that has just started gets
+--settle seconds (default 120 with --installation) to finish: Things still
+initializing (missing or reloading handlers, UNINITIALIZED, INITIALIZING,
+UNKNOWN), transient REST outages, and add-ons, monitoring, music or the web
+entry not ready yet are polled that long. Things still initializing then are
+reported as warnings; anything else still failing then fails. A Thing
+configuration error fails at once. --settle 0 takes one snapshot, as normal
+health checks do; they remain strict.
 
 options:
   -h, --help                   show this help message and exit
@@ -1277,8 +1280,8 @@ options:
   --installation               with --production, verify installation and report offline
                                devices as warnings
   --addons FILE                fail if an add-on listed in this addons.cfg is missing
-  --settle SECONDS             with --installation, poll Things still initializing this
-                               long (default 120)
+  --settle SECONDS             with --installation, poll what a start has not finished
+                               this long (default 120)
   --timeout SECONDS            seconds to wait for each answer (default: 15)
   --json                       print the report as JSON
 

@@ -106,7 +106,6 @@ def recognized_unit(content: bytes) -> bool:
 class NativeIngress(Step):
     title = "Native network boundary"
     always = True
-    stop_on_failure = True
 
     def __init__(self, context):
         self.context = context

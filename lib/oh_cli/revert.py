@@ -67,7 +67,6 @@ class PutBack(Step):
 
     title = "Put the operator's files back"
     always = True
-    stop_on_failure = True
 
     def __init__(self, transaction: changeover.Transaction):
         self.transaction = transaction
@@ -92,7 +91,6 @@ class SitePin(Step):
 
     title = "Pin the previous version"
     always = True
-    stop_on_failure = True
 
     def __init__(self, site: Path, before: str, after: str):
         self.site, self.before, self.after = Path(site), before, after
@@ -120,7 +118,6 @@ class Healthy(Step):
 
     title = "Health of the previous version"
     always = True
-    stop_on_failure = True
 
     def __init__(self, argv: tuple[str, ...]):
         self.argv = argv

@@ -147,9 +147,12 @@ crash-looping `thermite-openhab.service` ends the wait early with a
 `journalctl` hint.
 
 The run ends with a read-only check, `thermite health --production
---installation --settle 120`. It polls Things still initializing for up to two
-minutes and reports any that remain as warnings, not failures; configuration
-errors, missing add-ons, monitoring and web-entry failures still fail.
+--installation --settle 120`, and commits only when it passes: a failing
+check rolls the install back. The check gives what the start has not finished
+up to two minutes. Things still initializing then are reported as warnings,
+not failures, as offline devices always are; missing add-ons, monitoring or
+the web entry still failing then fail it. A Thing configuration error fails
+at once.
 
 Keep `~/.local/bin` on your shell's PATH. If you activated the bootstrap
 environment above, leave it with `deactivate` after this first deployment and
@@ -804,7 +807,8 @@ engine runs as root from the copy pinned at begin,
    release, `access/releases/<id>`) and monitoring; then `thermite.target`
    starts.
 6. **Verify**: monitoring answers and `thermite health --production
-   --installation` passes.
+   --installation` passes. Device warnings are reported and never fail it;
+   when it fails, nothing is committed and the upgrade rolls back.
 7. **Commit**: the engine records the new version in
    `/etc/thermite/installed.json` and enables `thermite.target`. The version
    before it stays set aside in `/srv/thermite/.transaction/<id>/` until the

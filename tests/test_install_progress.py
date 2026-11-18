@@ -256,14 +256,16 @@ class Presentation(unittest.TestCase):
         self.assertIn("service did not start", out)
         self.assertNotIn("[ OK ]", out)
 
-    def test_always_step_failure_stays_failed_after_later_success(self):
+    def test_always_step_stops_at_its_first_failed_action(self):
         ran = []
         stage = Stage([Check(False, "verify")], [Task("health", lambda system: 7),
                       Task("status", lambda system: ran.append("status") or 0)], always=True)
         result, out = self.run_stage(stage)
         self.assertEqual(result, 7)
-        self.assertEqual(ran, ["status"])
+        self.assertEqual(ran, [], "nothing of the step runs after the failure")
+        self.assertIn("failed, exit status 7: health", out)
         self.assertIn("[ FAIL ]", out)
+        self.assertIn("Stopped.", out)
         self.assertNotIn("[ OK ]", out)
 
     def test_verbose_shows_details_and_disables_animation(self):

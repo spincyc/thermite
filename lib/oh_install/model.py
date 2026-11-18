@@ -65,8 +65,9 @@ class Check:
 
 class Step:
     """One part of the install. check() only reads the host; actions() lists
-    what makes check() report done. An `always` step (the final check) runs
-    its actions on every run and has no done state."""
+    what makes check() report done. An `always` step (an engine verb, the
+    final check) runs its actions on every run and has no done state; a
+    failing action stops the run there, as in any other step."""
 
     title = ""
     always = False
