@@ -7,6 +7,9 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The gateway, its worker and the callback relay no longer see the
+  runtime state (openHAB's userdata, tokens, pairings); only the
+  directory their metrics are written to.
 - Every service now has a memory ceiling (`MemoryHigh=` and
   `MemoryMax=`); docs/service-account.md lists them with their basis.
   A service near its `MemoryHigh` is slowed, not killed.

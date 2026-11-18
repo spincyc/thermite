@@ -73,13 +73,14 @@ class Bounds:
 
 
 #: The services outside monitoring; oh_metrics.services() carries the others'.
-#: The access services are host services that run as the state's user, so
-#: they read the whole runtime state, which none of them needs.
+#: The access services are host services that run as the state's user: their
+#: units put an empty directory in place of the runtime state, which none of
+#: them needs, with the metrics textfile directory alone inside.
 BOUNDS = {
     RUNTIME: Bounds(STATE_USER, "2560M", "3G", HOST_NETWORK, ("secrets", "userdata")),
     ATV: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, ("atv/secrets",)),
     MUSIC: Bounds(STATE_USER, "1536M", "2560M", HOST_NETWORK, ("music",)),
-    ACCESS: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, (*ACCESS_SECRETS, *EVERY_SECRET)),
-    ACCESS_WORKER: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, (*ACCESS_SECRETS, *EVERY_SECRET)),
-    ACCESS_CALLBACKS: Bounds(STATE_USER, "128M", "256M", HOST_NETWORK, (*ACCESS_SECRETS, *EVERY_SECRET)),
+    ACCESS: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, ACCESS_SECRETS),
+    ACCESS_WORKER: Bounds(STATE_USER, "256M", "512M", HOST_NETWORK, ACCESS_SECRETS),
+    ACCESS_CALLBACKS: Bounds(STATE_USER, "128M", "256M", HOST_NETWORK, ACCESS_SECRETS),
 }

@@ -339,7 +339,8 @@ class GatewayFixture(PrivateFixture):
                                       application={"version": "1.2.3", "digest": "b" * 64},
                                       installation=SimpleNamespace(
                                           access=self.root / "production" / "access",
-                                          state=SimpleNamespace(textfile=self.root / "production" / "runtime" / "textfile")),
+                                          state=SimpleNamespace(root=self.root / "production" / "runtime",
+                                                                textfile=self.root / "production" / "runtime" / "textfile")),
                                       hostname="house.example.test",
                                       address="192.0.2.10", host={"timezone": "UTC"}, configuration=area,
                                       url="http://127.0.0.1:13602", token_file=Path("var/token"))

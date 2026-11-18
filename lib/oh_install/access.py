@@ -417,6 +417,7 @@ class Gateway(Step):
                                     wheelhouse=self.options.get("wheelhouse"), host_ports=oh_ports.effective(self.context.host),
                                     guest_http=self.context.host.get("guest_http"),
                                     textfile=self.context.installation.state.textfile,
+                                    runtime=self.context.installation.state.root,
                                     music=oh_music.settings(self.context.host))
         self._save(record, stage=receipt, phase="staged")
         return receipt

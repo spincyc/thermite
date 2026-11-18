@@ -101,10 +101,13 @@ services, and the row of each monitoring service in `oh_metrics.services()`.
 No field has a default, the units are written from the records, and
 `tests/test_unit_invariants.py` fails when a rendered unit lacks a field, says
 something else than its record, or mounts a secret its record does not
-declare. The records also show what is still wide: every unit is on the
-host's network, and node_exporter (all of `/`, read-only) and the access
-services (host services) run as the state's user, so they can read every
-secret store of the runtime state.
+declare. The access services are host services that run as the state's
+user and need nothing of the runtime state but the directory their metrics
+go to: their units put an empty read-only directory in its place
+(`TemporaryFileSystem=`) and bind that one directory inside. The records
+also show what is still wide: every unit is on the host's network, and
+node_exporter has all of `/` read-only as the state's user, so it can read
+every secret store of the runtime state.
 
 Each unit states `MemoryHigh=` and `MemoryMax=` for its cgroup, page cache
 included. From the first the kernel reclaims the unit's cache and slows its

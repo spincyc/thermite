@@ -169,24 +169,32 @@ def bound_problems(text: str, record: oh_units.Bounds, host: dict) -> list[str]:
         if said != {"Network": [record.network], "User": [str(host["uid"])], "Group": [str(host["gid"])]}:
             problems.append(f"runs as {said}")
         reached = [value.split(":")[0] for value in found.get(("Container", "Volume"), [])]
+        hidden = []
     else:
         said = {key: found.get(("Service", key)) for key in ("User", "Group")}
         if said != {"User": [oh_service.ACCOUNT], "Group": [oh_service.GROUP]}:
             problems.append(f"runs as {said}")
-        # A host service sees the host's files, as far as its user reads them.
-        reached = ["/"]
+        # A host service sees the host's files, as far as its user reads them,
+        # but for what its unit hides and what it binds back in.
+        reached = ["/", *(value.strip('"').lstrip("-") for key in ("BindPaths", "BindReadOnlyPaths")
+                          for value in found.get(("Service", key), []))]
+        hidden = [value.strip('"').removesuffix(":ro") for value in found.get(("Service", "TemporaryFileSystem"), [])]
         if not set(oh_units.ACCESS_SECRETS) <= set(record.secrets):
             problems.append("a host service reads the access secrets its record does not declare")
     root = str(deploy.state(host).root)
     given = [f"{root}/{name}" for name in record.secrets if name not in oh_units.ACCESS_SECRETS]
+    def sources(path):
+        """What of `reached` leads to `path`: not / where the unit hides it."""
+        return [source for source in reached if source != "/" or not any(within(path, cover) for cover in hidden)]
+
     for store in (f"{root}/{name}" for name in oh_service.PRIVATE):
-        for source in reached:
+        for source in sources(store):
             if within(source, store) and not any(within(source, path) for path in given):
                 problems.append(f"mounts {source}, which its record does not declare")
             elif within(store, source) and not any(within(store, path) for path in given):
                 problems.append(f"reaches {store} through {source}, which its record does not declare")
     for path in given:
-        if not any(within(path, source) or within(source, path) for source in reached):
+        if not any(within(path, source) or within(source, path) for source in sources(path)):
             problems.append(f"declares {path}, which it does not reach")
     return problems
 
@@ -199,14 +207,16 @@ def fixture_houses() -> dict[str, tuple[dict, dict[str, str]]]:
     with tempfile.TemporaryDirectory() as out:
         trees = test_generated_output.generated(Path(out))
     _, host = deploy.load(AREA)
-    access = staging.units(ACCESS_UNITS["release"], state=ACCESS_UNITS["state"], callbacks=True,
-                           textfile=deploy.state(host).textfile)
+    def access(host):
+        return staging.units(ACCESS_UNITS["release"], state=ACCESS_UNITS["state"], callbacks=True,
+                             textfile=deploy.state(host).textfile, runtime=deploy.state(host).root)
+
     houses = {name: (host, {**{Path(path).name.removesuffix(".container") + ".service": data.decode("utf-8")
                                for path, data in files.items()
                                if path.startswith("deploy/") and path.endswith((".container", ".service"))},
-                            **access})
+                            **access(host)})
               for name, files in trees.items()}
-    houses["a host with every service"] = (MUSIC_HOST, rendered())
+    houses["a host with every service"] = (MUSIC_HOST, {**rendered(), **access(MUSIC_HOST)})
     return houses
 
 
@@ -259,6 +269,16 @@ class Bounds(unittest.TestCase):
         self.assertEqual(strayed(oh_units.BLACKBOX, "[Service]", "[Service]",
                                  dataclasses.replace(records[oh_units.BLACKBOX], secrets=("music",))),
                          [f"declares {root}/music, which it does not reach"])
+        # A host service that sees the runtime state, or binds a store of it back in.
+        gateway = oh_units.ACCESS
+        self.assertIn(f"TemporaryFileSystem=\"{root}:ro\"\n", units[gateway])
+        self.assertIn(f"BindPaths=\"-{root}/textfile\"\n", units[gateway])
+        self.assertNotIn(f"ReadWritePaths=\"-{root}/textfile\"", units[gateway])
+        seen = strayed(gateway, f"TemporaryFileSystem=\"{root}:ro\"\n", "")
+        self.assertEqual(seen, [f"reaches {root}/{name} through /, which its record does not declare"
+                                for name in oh_service.PRIVATE])
+        self.assertEqual(strayed(gateway, "[Install]", f"BindReadOnlyPaths=\"{root}/userdata\"\n[Install]"),
+                         [f"mounts {root}/userdata, which its record does not declare"])
         # A record that bounds nothing, and a service without one.
         loose = dataclasses.replace(records[grafana], memory_high="2G", memory_max="1G")
         self.assertIn("MemoryHigh 2G is not below MemoryMax 1G", strayed(grafana, "[Service]", "[Service]", loose))
