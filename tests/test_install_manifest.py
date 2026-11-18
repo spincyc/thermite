@@ -85,7 +85,7 @@ class Inventory(unittest.TestCase):
                                                    "atv/venv", "atv/secrets", "secrets", "monitoring/grafana",
                                                    "monitoring/alertmanager", "monitoring/ntfy", "monitoring/secrets")},
             **{runtime / "deploy" / name: "file" for name in ("deployed.json", "deployed.pending.json", "atv-restart",
-                                                               "metrics-restart")},
+                                                               "metrics-restart", "service-account.json")},
             **{runtime / name: "shared" for name in ("logs", "backups", "deploy/history", "textfile")},
             runtime / "monitoring/prometheus": "shared-pinned",
             access / "releases": "versioned", access / "state": "tree", access / "inputs": "tree",
@@ -175,6 +175,13 @@ class Installed(unittest.TestCase):
         self.assertTrue(all(path.is_absolute() and "*" not in str(path) for path in probed))
         found.directory_entries.assert_called_once_with(ROOT)
         found.listdir.assert_not_called()
+
+    def test_presence_is_state_in_the_root_never_the_engines_transactions(self):
+        found = system()
+        for entries, present in ((None, []), ([".transaction"], []), ([".transaction", "runtime"], [ROOT]),
+                                 (["access"], [ROOT])):
+            found.directory_entries.return_value = entries
+            self.assertEqual(manifest.thermite_present(context(), found), present, entries)
 
     def test_recovery_names_the_stop_the_moves_and_the_install(self):
         text = manifest.missing_recovery(context())

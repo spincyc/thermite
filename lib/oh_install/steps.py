@@ -1263,7 +1263,13 @@ class NativePreparation(Step):
 
     def desired(self, system: System) -> list[manifest.Item]:
         # The update tool migrates userdata in place: a copy is set aside.
-        return [manifest.Item(self.context.layout.userdata, "tree"), manifest.Item(self.context.layout.addons, "tree")]
+        # The receipt records a full ownership repair of the state trees as
+        # they are, so it goes where they go: a rollback puts back the one
+        # that went with the trees it reinstates, and takes away a first
+        # install's, which would otherwise be all that is left of it under
+        # runtime/ and stop the next install.
+        return [manifest.Item(self.context.layout.userdata, "tree"), manifest.Item(self.context.layout.addons, "tree"),
+                manifest.Item(self.context.layout.root / oh_service.RECEIPT, "file")]
 
 
 def _secret_wrong(system: System, context: Context, path: Path) -> str | None:

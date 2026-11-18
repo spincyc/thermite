@@ -125,13 +125,17 @@ def installed(system: System, root: Path) -> dict | None:
 
 def thermite_present(context: Context, system: System) -> list[Path]:
     """The fixed paths an installation of Thermite leaves, found here. Only
-    these are probed: nothing is scanned or guessed."""
-    from oh_install import ingress, ownership
+    these are probed: nothing is scanned or guessed.
+
+    The install engine's own transactions are no installation. A first
+    install that rolled back leaves only them under the installation root
+    (what it had written, until a commit prunes it), and runs again."""
+    from oh_install import ingress, ownership, steps
     paths = [*deploy.INSTALLED.values(), ingress.UNIT_FILE, ingress.RULE_FILE, oh_apparmor.CONFIG,
              oh_apparmor.POLICY, *(UNITS / name for name in oh_units.ACCESS_UNITS), ownership.MANIFEST]
     found = [path for path in paths if system.lexists(path)]
     root = context.installation.root
-    if system.directory_entries(root):
+    if set(system.directory_entries(root) or ()) - {steps.TRANSACTIONS}:
         found.append(root)
     return found
 

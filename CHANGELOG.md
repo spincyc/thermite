@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A first `thermite install` that rolled back can be run again. It had
+  refused with "Thermite's files are installed here, but
+  /etc/thermite/installed.json is missing or damaged": the rollback left
+  the install engine's own `/srv/thermite/.transaction/` and, once native
+  preparation had run, `runtime/deploy/service-account.json`. The receipt
+  is now part of what a transaction sets aside and puts back, so the
+  rollback of a first install leaves only `.transaction/`, which no
+  longer counts as an installation.
 - An install transaction now commits only after `thermite health
   --production --installation` passed. A failing check had been reported
   and the new version committed all the same, with exit status 0; it now
