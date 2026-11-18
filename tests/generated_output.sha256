@@ -270,7 +270,7 @@ d6e1e97b9e14c66d8c0583f2d7621b646c7c16aa8b1f5a57c9faa3d5994e5f7d  avpro_telnet.c
 
 de7cd8904353720fbe5d6d68bd16a944afd09844186fe9b9b0a58df779cee23a  bk808_cec.control/conf/automation/js/all_off.js
 
-911fd8aa33f247620f76de2075a50bae7903a355e78010d704e9ceaee1d40a45  bk808_cec.control/conf/automation/js/bk808_cec.js
+92bff9d913cd889236fc7b2d1434c6a159295a8cfb541df20d9b17c123df31df  bk808_cec.control/conf/automation/js/bk808_cec.js
 
 31371b2c37b3e3183460e2ce41566bd7057ee58d28432d99b20f50fb717c8f89  bk808_cec.control/conf/automation/js/routing.js
 
@@ -720,7 +720,7 @@ ad1de50ecb06ffbb4dfa23a75de4bb8505d375ca37732de3496b601b826cdd32  example/metric
 
 b22f53f01bed8c3f0628f7bbb15a97fe13ffe9534fc06127611028558957e407  heos.control/conf/automation/js/denonmarantz_http_den_device.js
 
-5a22305d0865d6638e50560886b3b3f4ba30f2daa5e221ca7368b9908cd18be8  heos.control/conf/automation/js/heos.js
+8aeb7abcdb691fadb9e257e90a712c626d99a452a76461df911cc1b312b7d831  heos.control/conf/automation/js/heos.js
 
 442273c483dc9d4845852f2150e8aadbde3a5b433f2d93789971d7ed8f653a7f  heos.control/conf/automation/js/reboots.js
 
@@ -1086,7 +1086,7 @@ af04186428a2ea58ddc18628f692c5e1e3891f356eac153ffdfd66c66a84c357  routed/metrics
 
 c117cf2ad02b7699ab385db1f7a4c3b3d8313d9cbd3b112e25f57ffd4ea30053  sonos.control/conf/automation/js/playing.js
 
-8e1fe05ff28053cab5eac33fe5b5c816d211af926d852b587c77ed130680ea11  sonos.control/conf/automation/js/sonos_control.js
+000c7c00ba77548038b0aebe737ea937db5546a1e3da23d366d48a6457b8c76f  sonos.control/conf/automation/js/sonos_control.js
 
 e65eaeac916a5bcf6732c6db2f7b683beb931cd4666de2e74c29c41392b014fd  sonos.control/conf/html/remote/access.html
 

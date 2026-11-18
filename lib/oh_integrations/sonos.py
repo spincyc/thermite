@@ -216,8 +216,7 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
                   if uses(d, "control", NAME)]
     if not controlled:
         return {}
-    return {RULE: _script.rule(SOURCE, NAME, {"DEVICES": controlled}, connects=False,
-                               encode=lambda value: json.dumps(value, indent=2), header=False)}
+    return {RULE: _script.rule(SOURCE, NAME, {"DEVICES": controlled}, connects=False)}
 
 
 def playing(device: dict) -> dict:

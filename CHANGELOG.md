@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite generate --prune` now removes a stale CEC, IR, HEOS or Sonos
+  rule: these four generated rules were written without the generated
+  header, so prune took them for your own files. The next
+  `thermite generate` rewrites each of them once.
 - `thermite validate` and `thermite generate` say plainly when a device
   lists an interface thermite does not have yet (`adb`, `relay`,
   `telnet`, `androidtv_shieldtv`): the name is accepted and nothing is

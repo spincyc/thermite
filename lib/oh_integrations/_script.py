@@ -9,23 +9,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from oh_conf import RULE_SENDS, compact, constant, fill
+from oh_conf import RULE_SENDS, constant, fill
 from . import _io
 
 #: How a rendered script's device table starts (fill()).
 DEVICES = "const DEVICES = "
 
 
-def rule(source: Path, integration: str, constants: dict[str, object], *, connects: bool = True,
-         encode=compact, header: bool = True) -> str:
+def rule(source: Path, integration: str, constants: dict[str, object], *, connects: bool = True) -> str:
     """An integration's rule: its source with what the script integrations
     share embedded (_io), the bounded I/O too in a rule that opens
-    connections of its own (`connects`), and its constants filled in
-    (oh_conf.fill, which takes `encode` and `header`). The source holds
-    RULE_SENDS, which a read-only copy turns off (oh_render.read_only)."""
+    connections of its own (`connects`), and its constants filled in under
+    the generated header (oh_conf.fill). The source holds RULE_SENDS, which
+    a read-only copy turns off (oh_render.read_only)."""
     text = source.read_text(encoding="utf-8")
     text = _io.embed(text, integration) if connects else _io.shared(text, integration)
-    return fill(text, constants, source, keep=(RULE_SENDS,), encode=encode, header=header)
+    return fill(text, constants, source, keep=(RULE_SENDS,))
 
 
 def per_device(rule_file: str, rule):

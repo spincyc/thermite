@@ -119,7 +119,7 @@ def files(devices: list[dict], house: House) -> dict[str, str]:
     if validate_house(house.data):
         raise ValueError("CEC wiring must validate before rendering command rules")
     table = [{"id": d["id"], "thing": thing_uid(d), "requests": {button: request(d, button) for button in KEYS}} for d in devices]
-    return {RULE: _script.rule(SOURCE, NAME, {"DEVICES": table}, connects=False, encode=json.dumps, header=False)}
+    return {RULE: _script.rule(SOURCE, NAME, {"DEVICES": table}, connects=False)}
 
 
 def remote(device: dict) -> dict | None:

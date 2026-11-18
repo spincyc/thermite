@@ -259,9 +259,8 @@ def fill(source: str, constants: dict[str, object], origin: Path | str, *, part:
 
     `origin` is the source's path, which the header names beside the house
     file, or beside `part` of it. `encode` writes each value: compact JSON,
-    unless the rule was first rendered otherwise, which keeps its generated
-    file as it is. header False adds none: to a part embedded in another
-    script, a script filled in a second time, or one never marked.
+    or indented() for a table a person reads. header False adds none: to a
+    part embedded in another script, or a script filled in a second time.
     """
     marks = {unfilled(name): constant(name, value, encode) for name, value in constants.items()}
     lines = source.split("\n")

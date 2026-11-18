@@ -1,4 +1,5 @@
 """Per-device contexts plus native fault tests for the production I/O helper."""
+import copy
 import json
 import os
 import re
@@ -114,6 +115,22 @@ class Filling(unittest.TestCase):
             if path.endswith(".js") and isinstance(text, str):
                 # A device the routing gives no actor keeps this one: its rule runs without.
                 self.assertLessEqual(set(unfilled_line.findall(text)), {lifecycle_io.CUSTOM}, path)
+
+    def test_every_rule_an_integration_renders_carries_the_generated_header(self):
+        # Without it thermite generate --prune takes a stale rule for the owner's file.
+        import oh_integrations
+        from tests import test_generated_output
+        rules = {module.RULE.removesuffix(".js") for module in oh_integrations.REGISTRY if module.RULE}
+        seen = set()
+        for name, house in test_generated_output.houses().items():
+            data = json.loads(house.read_text(encoding="utf-8")) if isinstance(house, Path) else copy.deepcopy(house)
+            for path, text in oh_render.build(data).render().items():
+                rule = next((rule for rule in rules if path.startswith(rule) and path.endswith(".js")), None)
+                if rule:
+                    seen.add(rule)
+                    self.assertIn(generate.MARK, text.encode()[:512], f"{name}: {path}")
+        # An IR rule needs a commissioned profile, which none of these houses has.
+        self.assertEqual(rules - seen, {"automation/js/globalcache_ir"})
 
     def test_only_fill_writes_a_script_constant(self):
         by_hand = re.compile(r"""["']const [A-Z_]+ = null;["']|const [A-Z_]+ = (["']\s*\+|\{)""")
