@@ -50,8 +50,8 @@ CODES = {
     "refused": "refused the command",
     "busy": "is busy",
     "not_ready": "is not ready for that command",
-    "auth": "is not paired or refuses openHAB",
-    "protocol": "answered in a way openHAB does not understand",
+    "auth": "is not paired or refuses thermite",
+    "protocol": "answered in a way thermite does not understand",
     "other": "has a problem",
 }
 #: The codes of a device that answered: it declined, or cannot do that now.

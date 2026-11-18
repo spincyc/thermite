@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Two of a device's problem messages named openHAB; they say thermite:
+  "is not paired or refuses thermite" and "answered in a way thermite
+  does not understand", on the remotes, in `thermite device` and on
+  the Devices dashboard.
 - On a phone, the rows of a source's lock menu and a room control's
   buttons on Remotes are 44 px tall, as the other controls are. The
   last messages that spoke of "authentication" say "access settings"

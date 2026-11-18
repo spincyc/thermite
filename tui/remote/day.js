@@ -104,7 +104,7 @@ function create(options = {}) {
       schedule(); changed(); return;
     }
     if (!options.request) {
-      state.error = "Room history comes from the thermite gateway; this terminal talks to openHAB directly.";
+      state.error = "Room history comes from the thermite gateway, which this terminal is not using.";
       changed(); return;
     }
     controller = typeof AbortController === "function" ? new AbortController() : null;

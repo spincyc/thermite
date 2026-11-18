@@ -21,8 +21,8 @@
     // tests/test_listen_page.py holds to oh_integrations._commands.CODES.
     const PROBLEMS = {
       unreachable: "cannot be reached", no_answer: "does not answer", refused: "refused the command", busy: "is busy",
-      not_ready: "is not ready for that command", auth: "is not paired or refuses openHAB",
-      protocol: "answered in a way openHAB does not understand", other: "has a problem"
+      not_ready: "is not ready for that command", auth: "is not paired or refuses thermite",
+      protocol: "answered in a way thermite does not understand", other: "has a problem"
     };
 
     // The sample house's activity feed: the Items a generated house's
