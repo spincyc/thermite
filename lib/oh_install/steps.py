@@ -2270,7 +2270,7 @@ class Commissioning:
         self.gateway = None
 
     def __call__(self, system: System, metadata: dict, callback: Path | None) -> Path | None:
-        import oh_inventory
+        from oh_conf import House
         from oh_access import AccessError
         from oh_access.files import json_private
         from oh_access.native_boundary import MAX_DEADLINE, configure
@@ -2281,7 +2281,7 @@ class Commissioning:
                                   "commissioning; rerun the deployment, with --native-timeout SECONDS for a slower host")
             house = Path(self.gateway.options.get("house", self.context.configuration / "instance/devices.yaml"))
             result = configure(self.context.url, self.context.area / self.context.token_file,
-                               oh_inventory.load(house), self.context.address, existing_callbacks=callback,
+                               House.load(house).data, self.context.address, existing_callbacks=callback,
                                timeout=min(remaining, MAX_DEADLINE), clock=system.clock, sleep=system.sleep)
         finally:
             self.native.stop(system)

@@ -459,11 +459,11 @@ class Gateway(Step):
         if self.boundary:
             selected = self.boundary(system, metadata, Path(callback) if callback else None)
         else:
-            import oh_inventory
             from oh_access.native_boundary import configure
+            from oh_conf import House
             house = Path(self.options.get("house", self.context.configuration / "instance/devices.yaml"))
             result = configure(self.context.url, self.context.area / self.context.token_file,
-                               oh_inventory.load(house), self.context.address,
+                               House.load(house).data, self.context.address,
                                existing_callbacks=Path(callback) if callback else None)
             selected = None
             if result["callbacks"] is not None:

@@ -251,7 +251,7 @@ class NativeDeadlinePolicy(unittest.TestCase):
             return {"native_security": True, "callbacks": callbacks if len(calls) > 1 else None}
 
         with mock.patch.object(boundary, "configure", side_effect=configure), \
-                mock.patch("oh_inventory.load", return_value={"devices": []}):
+                mock.patch("oh_inventory.load", return_value={"version": 1, "rooms": {}, "devices": []}):
             self.assertIsNone(hook(system, {}, None))
             self.assertNotIn("record", calls[0], "userdata, set aside by the transaction, keeps the originals")
             self.assertEqual(calls[0]["timeout"], 150)
@@ -265,6 +265,24 @@ class NativeDeadlinePolicy(unittest.TestCase):
             hook(system, {}, None)
         never.assert_not_called()
         self.assertIn("--native-timeout", str(error.exception))
+
+    def test_commissioning_refuses_a_house_file_with_problems_before_it_asks_the_runtime_anything(self):
+        import oh_inventory
+        temporary = tempfile.TemporaryDirectory(dir=scratch())
+        self.addCleanup(temporary.cleanup)
+        house = Path(temporary.name) / "devices.yaml"
+        house.write_text(json.dumps({"version": 1, "rooms": {}, "devices": [{"id": "den_tv", "room": "attic"}]}))
+        system = mock.Mock(spec=System)
+        clocked(system)
+        native = steps.NativeDeadline(600)
+        native.start(system)
+        hook = steps.Commissioning(context(), native)
+        hook.gateway = SimpleNamespace(inputs=Path(temporary.name), options={"house": str(house)})
+        with mock.patch.object(boundary, "configure") as never, self.assertRaises(oh_inventory.ConfigError) as refused:
+            hook(system, {}, None)
+        never.assert_not_called()
+        self.assertTrue(refused.exception.problems)
+        self.assertEqual(native.deadline, None, "the allowance stops running, as after any commissioning")
 
 
 class ThingReadiness(unittest.TestCase):

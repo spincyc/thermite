@@ -7,6 +7,9 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Install and upgrade validate the house file before commissioning
+  the gateway's callbacks, as every other reader of it does; a house
+  file with problems no longer reaches the runtime's settings first.
 - `instance/host.yaml` is read as the house file is: unquoted text
   that the versions of YAML read differently (`no`, a port written
   with a leading zero, a date), a tag, and a key written twice are

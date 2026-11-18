@@ -254,11 +254,6 @@ class Loader(unittest.TestCase):
 
 
 class OneReader(unittest.TestCase):
-    #: Parsers of the house file that validate nothing, each to become
-    #: House.load: the installer's two, which hand the gateway's callback
-    #: commissioning (oh_access.native_boundary.configure) the raw mapping.
-    UNCHECKED = {"lib/oh_install/access.py": 1, "lib/oh_install/steps.py": 1}
-
     def test_only_the_loader_parses_a_house_file(self):
         call = re.compile(r"(?<![.\w])(?:oh_)?inventory\.load\(|\bfrom oh_inventory import [^\n]*\bload\b")
         found = {}
@@ -266,7 +261,7 @@ class OneReader(unittest.TestCase):
             count = len(call.findall(path.read_text(encoding="utf-8")))
             if count:
                 found[path.relative_to(AREA).as_posix()] = count
-        self.assertEqual(found, {"lib/oh_conf.py": 1, **self.UNCHECKED},
+        self.assertEqual(found, {"lib/oh_conf.py": 1},
                          "read a house file with oh_conf.House.load(path), which validates it; "
                          "oh_inventory.load checks nothing")
 
