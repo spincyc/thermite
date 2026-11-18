@@ -33,7 +33,12 @@ class Allocation(unittest.TestCase):
         # Plain-HTTP Guest controls on 13600, HTTPS on 13601, the rest increasing from there.
         self.assertEqual(tuple(oh_ports.DEFAULTS)[:2], ("guest_http", "access"))
         self.assertEqual((oh_ports.GUEST_HTTP_PORT, oh_ports.ACCESS_PORT), (13600, 13601))
-        self.assertEqual(list(oh_ports.DEFAULTS.values()), list(range(13600, 13629)))
+        # One run but for the ports of removed listeners, which nothing takes:
+        # the listeners after them stay where every installed host has them.
+        removed = [13613, 13614]
+        self.assertEqual(list(oh_ports.DEFAULTS.values()), [port for port in range(13600, 13629) if port not in removed])
+        self.assertEqual([13600 + offset for offset, name in enumerate(oh_ports.NAMES) if name is None], removed)
+        self.assertEqual((oh_ports.DEFAULTS["alertmanager"], oh_ports.CALLBACK_PORT), (13612, 13615))
         self.assertEqual(len(set(oh_ports.DEFAULTS.values())), len(oh_ports.DEFAULTS))
         self.assertEqual([oh_ports.DEFAULTS[name] for name in ("native_shutdown", "sandbox_shutdown", "boot_shutdown")],
                          [13624, 13625, 13626])
@@ -387,7 +392,7 @@ class Consumers(unittest.TestCase):
     def test_generated_services_use_the_allocation_and_preserve_addresses(self):
         host = oh_public.demo_host()
         services = oh_metrics.services(host)
-        for service, name in zip(services, ("ntfy", "notifications", "alertmanager", "prometheus", "node_exporter", "blackbox", "exporter", "grafana")):
+        for service, name in zip(services, ("alertmanager", "prometheus", "node_exporter", "blackbox", "exporter", "grafana")):
             expected_host = "0.0.0.0" if name == "grafana" else "127.0.0.1"
             self.assertEqual(service.listen, f"{expected_host}:{oh_ports.DEFAULTS[name]}")
         alertmanager = next(service for service in services if service.image == "alertmanager")

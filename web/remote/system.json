@@ -34,18 +34,9 @@
     {
       "id": "alertmanager",
       "label": "Alertmanager",
-      "description": "Alert routing and silences.",
+      "description": "Alerts firing, as Prometheus sends them.",
       "scheme": "http",
       "port": 13612,
-      "path": "/",
-      "localOnly": true
-    },
-    {
-      "id": "ntfy",
-      "label": "ntfy",
-      "description": "Local notification history.",
-      "scheme": "http",
-      "port": 13613,
       "path": "/",
       "localOnly": true
     }

@@ -74,7 +74,7 @@ SHARE_GATE = f"deploy/{oh_units.SHARE_GATE}"
 OPTIONAL_UNITS = (*MUSIC_UNITS, SHARE_GATE)
 #: What thermite-metrics-restart.service restarts: the services a deploy
 #: cannot reload over HTTP.
-METRICS_RESTARTED = (oh_units.EXPORTER, oh_units.GRAFANA, oh_units.NOTIFICATIONS, oh_units.NTFY)
+METRICS_RESTARTED = (oh_units.EXPORTER, oh_units.GRAFANA)
 #: Where the owner installs each generated unit on the host.
 INSTALLED = {
     QUADLET: Path("/etc/containers/systemd") / Path(QUADLET).name,
@@ -421,8 +421,7 @@ class State:
         return [
             (MONITORING_MODE, [self.monitoring, self.exporter]),
             (DIR_MODE, [self.metrics, self.exporter_app, self.textfile]),
-            (MONITORING_MODE, [self.prometheus_data, self.grafana_data, self.root / metrics.STATE_ALERTMANAGER,
-                               self.root / metrics.STATE_NTFY]),
+            (MONITORING_MODE, [self.prometheus_data, self.grafana_data, self.root / metrics.STATE_ALERTMANAGER]),
             (SECRETS_MODE, [self.monitoring_secrets]),
         ]
 
@@ -986,8 +985,8 @@ def render_metrics_quadlet(versions: dict, host: dict, service: metrics.Service)
 def render_metrics_restart_path(host: dict) -> str:
     lines = [
         "# Restarts the metrics applications when a deploy changes their",
-        "# programs, Grafana settings, adapter catalog or ntfy settings (deploy writes",
-        "# the watched file). Prometheus, Alertmanager and blackbox reload over HTTP.",
+        "# programs or Grafana settings (deploy writes the watched file).",
+        "# Prometheus, Alertmanager and blackbox reload over HTTP.",
         *HEADER,
         "[Unit]",
         "Description=Restart the metrics applications after a deploy changes them",
@@ -1985,12 +1984,7 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
         with_metrics = layout.with_metrics()
         # A commit from before the metrics (rolling back past them) has neither: syncing its nothing would delete
         # what the running services read, so they keep what the last deploy installed.
-        # Installed notification units must retain their program/config on a
-        # rollback to an older revision that has no notification stack.
-        notifications_installed = (layout.metrics / "notifications/catalog.json").is_file()
-        notifications_present = ("notifications/catalog.json" in tree and "alertmanager/alertmanager.yml" in tree
-                                 and "ntfy/server.yml" in tree and metrics.EXPORTER_APP[1] in exporter)
-        kept = with_metrics and (not (tree and metrics.EXPORTER_APP[0] in exporter) or (notifications_installed and not notifications_present))
+        kept = with_metrics and not (tree and metrics.EXPORTER_APP[0] in exporter)
         synced = with_metrics and not kept
         wanted = {"conf": conf, "atv_app": app, **({"metrics": tree, "exporter_app": exporter} if synced else {})}
         # What an earlier deploy recorded, or an interrupted one may have
@@ -2061,7 +2055,7 @@ def metrics_restart_needed(metrics_changes: Changes, exporter_changes: Changes) 
     the exporter's code, or Grafana's settings and provisioning (it rereads
     its dashboards and the exporter its map by themselves)."""
     return bool(exporter_changes) or any(
-        path.startswith(("notifications/", "ntfy/")) or (path.startswith("grafana/") and not path.startswith(f"{metrics.GRAFANA_DASHBOARDS}/"))
+        path.startswith("grafana/") and not path.startswith(f"{metrics.GRAFANA_DASHBOARDS}/")
         for path in _touched(metrics_changes))
 
 

@@ -9,7 +9,7 @@ is an alternative for an existing server and the optional Ubuntu ISO.
 
 These are **Thermite planning estimates**, not benchmarked capacity limits
 or upstream minimums. They cover the operating system, openHAB, the access
-services, device helpers, Prometheus, Grafana, exporters and notifications
+services, device helpers, Prometheus, Grafana, Alertmanager and exporters
 for light household use. They do not establish a supported device count.
 
 | Resource | Minimum planning profile | Recommended starting profile |

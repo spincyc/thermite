@@ -29,12 +29,12 @@ things an empty list means:
                  evaluation is older than that, or a rule fails
     unreachable  Prometheus did not answer
 
-The reading is the rule groups' own evaluation times, not whether
-ThermiteWatchdog fires. Prometheus lists an alert from the state its last
-evaluation left, so a watchdog that fired once stays listed when nothing
-is evaluated any more: its absence shows only rules that never loaded,
-while an old evaluation time shows both. While stalled, the alerts are
-those the last evaluation left.
+The reading is the rule groups' own evaluation times, not an alert that
+always fires. Prometheus lists an alert from the state its last evaluation
+left, so one that fired once stays listed when nothing is evaluated any
+more: its absence would show only rules that never loaded, while an old
+evaluation time shows both. While stalled, the alerts are those the last
+evaluation left.
 
 Who is given what. Everyone who reads the site (a Guest, a Member, an
 Admin) is given the alerts that name a room, zone or device of the house,
@@ -193,8 +193,7 @@ def feed(contract, fetch=None):
         except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
             answer = {"monitoring": UNREACHABLE, "evaluated": None, "firing": None, "records": ()}
         else:
-            # The heartbeat is no alert; it goes with the watchdog's rule.
-            firing = uninhibited([alert for alert in firing if catalogue.severity(alert[0]) != "heartbeat"])
+            firing = uninhibited(firing)
             records = []
             for name, labels, since in firing:
                 if name in catalogue.CATALOG:

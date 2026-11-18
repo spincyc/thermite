@@ -18,14 +18,16 @@ from types import MappingProxyType
 
 BASE = 13600
 #: In port order: the plain-HTTP Guest listener, the HTTPS application, then
-#: every other listener.
+#: every other listener. None is a port whose listener was removed (13613
+#: and 13614 were ntfy's and the notification adapter's): it stays unused, so
+#: that no listener after it moves.
 NAMES = (
     "guest_http", "access", "http", "https", "karaf", "lsp", "helper", "prometheus", "node_exporter",
-    "blackbox", "exporter", "grafana", "alertmanager", "ntfy", "notifications", "callbacks",
+    "blackbox", "exporter", "grafana", "alertmanager", None, None, "callbacks",
     "sandbox_http", "sandbox_https", "sandbox_karaf", "boot_http", "boot_https", "boot_karaf", "docs", "preview",
     "native_shutdown", "sandbox_shutdown", "boot_shutdown", "music", "music_stream",
 )
-DEFAULTS = MappingProxyType({name: BASE + offset for offset, name in enumerate(NAMES)})
+DEFAULTS = MappingProxyType({name: BASE + offset for offset, name in enumerate(NAMES) if name})
 ACCESS_PORT = DEFAULTS["access"]
 HTTP_PORT = DEFAULTS["http"]
 HTTPS_PORT = DEFAULTS["https"]
@@ -38,7 +40,7 @@ DOCS_PORT = DEFAULTS["docs"]
 GUEST_HTTP_PORT = DEFAULTS["guest_http"]
 SANDBOX_URL = f"http://127.0.0.1:{DEFAULTS['sandbox_http']}"
 NATIVE_URL = f"http://127.0.0.1:{HTTP_PORT}"
-METRICS = ("prometheus", "node_exporter", "blackbox", "exporter", "grafana", "alertmanager", "ntfy", "notifications")
+METRICS = ("prometheus", "node_exporter", "blackbox", "exporter", "grafana", "alertmanager")
 #: Music Assistant's listeners (oh_music), by host.yaml's music: key that moves each.
 MUSIC = {"music": "port", "music_stream": "stream_port"}
 SHELL_CFG = Path("etc/org.apache.karaf.shell.cfg")

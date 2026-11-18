@@ -140,10 +140,6 @@ class Feed(TestCase):
                                  alert("ThermiteControlUnknown", room="den", zone="den", check="source")))
         self.assertEqual((answer["firing"], [each["name"] for each in answer["alerts"]]), (1, ["ThermiteControlUnknown"]))
 
-    def test_the_heartbeat_is_not_an_alert(self):
-        answer = self.read(rules(alert("ThermiteWatchdog")), self.admin)
-        self.assertEqual((answer["firing"], answer["alerts"]), (0, []))
-
     def test_every_pair_of_both_inhibition_tables_is_applied(self):
         def names(*raised):
             return sorted(each["name"] for each in self.fresh(rules(*raised), self.admin)["alerts"])
@@ -275,10 +271,10 @@ class Feed(TestCase):
         self.assertEqual(self.read(prometheus)["monitoring"], "unreachable")
         self.assertEqual(prometheus.asked, 0)
 
-    def test_rules_no_longer_evaluated_are_stalled_though_the_watchdog_is_still_listed(self):
+    def test_rules_no_longer_evaluated_are_stalled_though_their_alerts_are_still_listed(self):
         # Prometheus lists what its last evaluation left: ten minutes ago.
-        left = (alert("ThermiteWatchdog"), alert("ThermiteControlUnknown", room="den", check="source"))
-        answer = self.read(rules(*left, evaluated=NOW - 600))
+        left = alert("ThermiteControlUnknown", room="den", check="source")
+        answer = self.read(rules(left, evaluated=NOW - 600))
         self.assertEqual((answer["monitoring"], answer["evaluated"], answer["firing"]), ("stalled", NOW - 600, 1))
         self.assertEqual([each["name"] for each in answer["alerts"]], ["ThermiteControlUnknown"])
         for name, stalled in (
@@ -350,5 +346,5 @@ class Vocabulary(TestCase):
                 self.assertIn(rule["labels"]["check"], catalogue.CHECK_WORDS)
 
     def test_severity_is_the_catalogues(self):
-        self.assertEqual({catalogue.severity(name) for name in catalogue.CATALOG}, {"critical", "warning", "heartbeat"})
-        self.assertEqual([name for name in catalogue.CATALOG if catalogue.severity(name) == "heartbeat"], ["ThermiteWatchdog"])
+        self.assertEqual({catalogue.severity(name) for name in catalogue.CATALOG}, {"critical", "warning"})
+        self.assertEqual({name for name in catalogue.CATALOG if catalogue.severity(name) == "critical"}, catalogue.CRITICAL)

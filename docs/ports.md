@@ -35,8 +35,7 @@ fails before starting them starts `thermite.target`, and so every service.
 | 13610 | Thermite metrics exporter HTTP | 127.0.0.1 only |
 | 13611 | Grafana HTTP | Existing LAN dashboard access |
 | 13612 | Alertmanager HTTP | 127.0.0.1 only; cluster listener disabled |
-| 13613 | ntfy HTTP | 127.0.0.1 only |
-| 13614 | Notification adapter HTTP | 127.0.0.1 only |
+| 13613–13614 | Unused | No listener: ntfy and the notification adapter had them until alerts moved to the thermite app's Home, and the listeners after them keep their ports |
 | 13615 | Optional verified UPnP callback ingress HTTP | Explicit LAN IPv4 address; no listener starts without a private verified map |
 | 13616 | Sandbox HTTP | 127.0.0.1 by default; explicit live mode allows LAN access |
 | 13617 | Sandbox HTTPS | Same sandbox address policy |
@@ -93,10 +92,9 @@ and [stop command](https://github.com/apache/karaf/blob/karaf-4.4.11/main/src/ma
 The default migration moves native HTTP/HTTPS from 8080/8443, Karaf from
 8101, LSP from 5007, the helper from 8099, Prometheus from 9090,
 node_exporter from 9100, blackbox_exporter from 9115, the exporter from 9480,
-Grafana from 3000, Alertmanager from 9093, ntfy from 2586, notifications from
-9481, authenticated access from 9443, sandbox HTTP/HTTPS/console from
-18080/18443/18101, boot-check HTTP/HTTPS/console from 18081/18444/18102,
-and the docs preview from 8000. Regenerate the private site, review generated
+Grafana from 3000, Alertmanager from 9093, authenticated access from 9443,
+sandbox HTTP/HTTPS/console from 18080/18443/18101, boot-check
+HTTP/HTTPS/console from 18081/18444/18102, and the docs preview from 8000. Regenerate the private site, review generated
 units, run the unified install/upgrade, and update bookmarks as needed. Existing runtime state is not rewritten by
 `generate` alone.
 

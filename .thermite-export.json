@@ -319,7 +319,6 @@
     "lib/oh_metrics/alerts.py",
     "lib/oh_metrics/dashboards.py",
     "lib/oh_metrics/exporter.py",
-    "lib/oh_metrics/notifications.py",
     "lib/oh_metrics/yoke.py",
     "lib/oh_music/__init__.py",
     "lib/oh_music/client.py",

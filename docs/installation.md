@@ -345,7 +345,7 @@ until `thermite access prune --descriptor FILE`, run as the `thermite` account
 with the gateway's service descriptor, deletes them.
 
 Use System (F10 in the terminal) for deliberate access to openHAB, Grafana,
-Prometheus, Alertmanager and ntfy. Local-only tools remain local and provide
+Prometheus and Alertmanager. Local-only tools remain local and provide
 SSH forwarding instructions. System's configured version is not a health
 check; the following commands report live deployment and device health.
 

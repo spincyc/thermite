@@ -1,4 +1,4 @@
-"""Actionable alerts and a local-only notification route; no sleeping-device alarms.
+"""Actionable alerts, which the thermite app's Home shows; no sleeping-device alarms.
 
 Control health is recorded per check: thermite:check{room, zone, device,
 check, required, scope} is 1 failing, 0 OK or -1 unknown, for
@@ -46,10 +46,11 @@ thermite:control_health, which folds the required control checks into the
 House board's one number: 1 when one fails, else -1 when one is unknown (or
 the series that always exist are incomplete), else 0.
 
-Severity says how an alert should reach a person once phone delivery is
-commissioned: critical ones push, warning ones wait for a digest (and repeat
-every 12 hours instead of 4). Delivery itself is unchanged: every alert
-goes to the local ntfy adapter.
+Severity says how much an alert matters: a critical one means a room cannot
+be controlled as asked, or soon will not be; a warning can wait. Nothing is
+sent anywhere. The gateway reads the firing alerts from Prometheus and the
+thermite app's Home shows them, critical ones first (oh_identity.alerts);
+Alertmanager only lists them on this host.
 """
 from __future__ import annotations
 
@@ -64,8 +65,8 @@ CORE_JOBS = ("openhab", "thermite", "node", "prometheus", "blackbox")
 SERVICES = ("openhab", "apple_tv_helper", "grafana")
 #: The services that only watch the house: control works without them.
 MONITORING_SERVICES = ("grafana",)
-#: The jobs of the notification path: ThermiteScrapeFailed watches them too.
-ALERTING_JOBS = ("alertmanager", "notifications", "ntfy")
+#: Alertmanager's job: ThermiteScrapeFailed watches it too.
+ALERTING_JOBS = ("alertmanager",)
 #: A check's scope (the module docstring).
 CONTROL, MONITORING = "control", "monitoring"
 GATEWAY_JOB = "gateway_https"
@@ -119,7 +120,8 @@ STARTING = ("UNINITIALIZED", "INITIALIZING", "UNKNOWN")
 #: Unallocated btrfs space below which a new metadata chunk may not fit.
 BTRFS_UNALLOCATED = 5 * 2**30
 
-# Notification text is finite, so runtime error bodies/labels can never reach ntfy.
+# An alert's words are finite: a client is given these (oh_identity.alerts),
+# never a label or an annotation of Prometheus', so no runtime error body can reach one.
 CATALOG = {
     "ThermiteCheckFailing": ("A room's control path needs attention", "A device a room is using (or was using when the room last reported its source), a speaker in use (it played in the last half hour, or was playing when it stopped answering), or routing infrastructure, has failed a control check for five minutes. House health lists the room, device and check under Needs attention now."),
     "ThermiteControlUnknown": ("A room in use cannot be read", "For ten minutes a control check that a room in use, a speaker in use or routing infrastructure needs has had no reading: most often the room's source, when one of its devices stopped reporting. A room counts as in use for three days after it last reported a source; one that reports Off does not. House health lists the room, device and check under Needs attention now."),
@@ -143,11 +145,8 @@ CATALOG = {
     "ThermiteHandlerTelemetryUnavailable": ("Device dispatch telemetry is unavailable", "The native scheduler observation is missing, incomplete or stale. Check the runtime telemetry rule."),
     "ThermiteMonitoringBroken": ("Monitoring is not working fully", "Prometheus failed to evaluate a rule or to hand alerts over, Alertmanager failed a delivery, node_exporter could not read a metrics textfile or systemd's unit states, or Grafana does not answer. Rooms can still be controlled. Check their journals."),
     "ThermiteServiceMetricsStale": ("A service's metrics have stopped", "The gateway, the policy worker or the callback relay is running but has not rewritten its metrics file for five minutes, so the dashboards and the alerts that read it show its last values. Its journal says why; restarting the service starts a new writer. Host shows each file's age under Metrics textfiles age."),
-    "ThermiteNotificationUnavailable": ("Notification service is unavailable", "Check Alertmanager, the local notification adapter and ntfy. Remote phone delivery is a separate commissioning step."),
-    "ThermiteHeartbeatMissing": ("Local notification heartbeat is late", "The local Prometheus to ntfy heartbeat has not completed for fifteen minutes. Inspect the notification services."),
-    "ThermiteWatchdog": ("Local monitoring heartbeat", "The local alert evaluation and delivery path completed. This does not prove phone delivery."),
 }
-#: Alerts that should push to a phone once delivery is commissioned.
+#: The alerts of severity critical; every other is a warning.
 CRITICAL = frozenset({"ThermiteCheckFailing", "ThermiteRuntimeUnavailable", "ThermiteGatewayDown", "ThermiteGatewayFeedDown",
                       "ThermiteRemoteStarved", "ThermiteServiceDown", "ThermiteRoutingQuarantined",
                       "ThermitePolicyWorkerStalled", "ThermitePolicyUnenforced", "ThermiteHandlerPoolSaturated",
@@ -180,7 +179,7 @@ ROOM_INHIBITS = (
 
 def severity(name: str) -> str:
     """An alert's severity label, and what the gateway's feed says of it."""
-    return "heartbeat" if name == "ThermiteWatchdog" else "critical" if name in CRITICAL else "warning"
+    return "critical" if name in CRITICAL else "warning"
 
 
 def _q(value: str) -> str:
@@ -389,30 +388,17 @@ def rules(mapping):
             alert("ThermiteMonitoringBroken", '(increase(prometheus_rule_evaluation_failures_total[10m]) > 0) or (increase(prometheus_notifications_dropped_total[10m]) > 0) or (increase(alertmanager_notifications_failed_total[10m]) > 0) or (node_textfile_scrape_error == 1)'
                   f' or ({CHECK}{{scope="{MONITORING}",check!="scrape"}} == 1)', "5m"),
             alert("ThermiteServiceMetricsStale", stale_textfiles(), "5m"),
-            alert("ThermiteNotificationUnavailable", 'probe_success{job="alerting_http"} == 0', "3m"),
-            alert("ThermiteHeartbeatMissing", "thermite_notification_heartbeat_age_seconds > 900", "5m"),
-            alert("ThermiteWatchdog", "vector(1)", "0s"),
         ]},
     ]}
 
 
-def alertmanager(port):
+def alertmanager():
+    """Alertmanager's configuration: it holds back what the tables say and
+    sends nothing, since its one receiver has nowhere to send."""
     inhibit = [{"source_matchers": [f'alertname="{source}"'],
                 "target_matchers": [f'alertname=~"{"|".join(targets)}"'], **equal}
                for pairs, equal in ((INHIBITS, {}), (ROOM_INHIBITS, {"equal": ["room"]})) for source, targets in pairs]
     return {"global": {"resolve_timeout": "5m"},
-            "route": {"receiver": "incidents", "group_by": ["alertname", "room"], "group_wait": "30s", "group_interval": "5m", "repeat_interval": "4h",
-                      "routes": [{"matchers": ['alertname="ThermiteWatchdog"'], "receiver": "heartbeat", "group_wait": "0s", "group_interval": "1m", "repeat_interval": "5m"},
-                                 # Digest-class alerts: the same delivery, repeated less often.
-                                 {"matchers": ['severity="warning"'], "receiver": "incidents", "repeat_interval": "12h"}]},
+            "route": {"receiver": "none"},
             "inhibit_rules": inhibit,
-            "receivers": [{"name": name, "webhook_configs": [{"url": f"http://127.0.0.1:{port}/{path}", "send_resolved": True, "max_alerts": 64,
-                            "http_config": {"follow_redirects": False, "proxy_from_environment": False}}]}
-                          for name, path in (("incidents", "alerts"), ("heartbeat", "heartbeat"))]}
-
-
-def ntfy(port):
-    # Explicitly no Firebase/APNs/upstream. This listener never opens to the LAN.
-    return {"base-url": f"http://127.0.0.1:{port}", "listen-http": f"127.0.0.1:{port}",
-            "cache-file": "/var/lib/ntfy/cache.db", "cache-duration": "48h", "enable-metrics": True,
-            "upstream-base-url": "", "behind-proxy": False, "log-level": "warn"}
+            "receivers": [{"name": "none"}]}

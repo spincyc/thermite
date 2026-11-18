@@ -181,11 +181,6 @@ function. That replaces these, all found in the cold review:
   a resync follows every connect; Switching & remotes shows the feed's
   failures. Stop exporting both, then drop them from `UNREAD` in
   `tests/test_metrics.py`.
-- The notification adapter's `thermite_notification_delivered_total`,
-  `_errors_total` and `_last_heartbeat_timestamp_seconds` are read nowhere.
-  Alertmanager already counts a failed delivery to the adapter
-  (ThermiteMonitoringBroken), and the heartbeat's age is its own series.
-  `test_every_exporter_family_is_read` does not cover them yet.
 
 ## To verify on hardware
 

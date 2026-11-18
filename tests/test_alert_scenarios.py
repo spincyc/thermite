@@ -344,6 +344,21 @@ class Scenarios(unittest.TestCase):
             ("10m", "ThermitePolicyUnenforced", [lock]),
         ])
 
+    def test_a_healthy_house_fires_nothing_and_no_alert_watches_a_delivery(self):
+        # No watchdog fires for somebody to receive, and what the removed
+        # delivery chain reported raises nothing: the gateway's feed reads
+        # whether the rules are evaluated (oh_identity.alerts).
+        inputs = {**healthy(30), **readback(WEST, (31, PLAYER)), **readback(EAST, (31, routing.OFF)),
+                  series("probe_success", job="alerting_http", service="ntfy"): "0x30",
+                  series("up", job="ntfy"): "0x30", series("up", job="notifications"): "0x30",
+                  "thermite_notification_heartbeat_age_seconds": "3600x30"}
+        names = [rule["alert"] for group in yaml.safe_load(house()[0])["groups"] for rule in group["rules"]
+                 if "alert" in rule]
+        self.assertGreater(len(names), 15)
+        self.assertEqual(set(names) & {"ThermiteWatchdog", "ThermiteHeartbeatMissing",
+                                       "ThermiteNotificationUnavailable"}, set())
+        self.run_rules(inputs, firing=[("30m", name, []) for name in names])
+
     def test_a_running_service_that_stops_rewriting_its_metrics_alerts(self):
         # mtime as node_exporter gives it: a file rewritten keeps up with
         # the clock. The gateway's stops at 5 minutes while the gateway

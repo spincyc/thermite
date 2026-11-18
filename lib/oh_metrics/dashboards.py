@@ -5,8 +5,8 @@ uid, all querying the one provisioned datasource by its fixed uid:
 
     house      House health, the home page: is the house OK? Control,
                rooms, speakers and remotes at a glance and what needs
-               attention now in plain words; then alerts, phone delivery
-               and the host, the alerts firing, and switching since
+               attention now in plain words; then alerts and the
+               host, the alerts firing, and switching since
                yesterday evening. No usage: that is the Usage board's
     switching  Switching & remotes: how long source changes take, the
                routing executor, the gateway's latency, event streams and
@@ -144,11 +144,6 @@ PLAYBACK = value_map({0: ("Idle", OFF), 1: ("TV or line-in", IN_USE), 2: ("Playi
 CHECK_STATE = value_map({-1: ("Unknown", UNKNOWN), 0: ("OK", OK), 1: ("Failing", FAIL)})
 CONTROL = value_map({-1: ("Unknown", UNKNOWN), 0: ("Ready", OK), 1: ("Needs attention", FAIL)})
 REMOTES = value_map({0: ("OK", OK), 1: ("Timing out", WARN), 2: ("Not live", FAIL), 3: ("Gateway down", FAIL)})
-#: Whether an alert would reach anyone: ntfy takes them, and somebody listens.
-PHONE = value_map({0: ("OK", OK), 1: ("No subscribers", WARN), 2: ("Not delivering", FAIL)})
-#: Seconds without a delivery to ntfy (the heartbeat goes every 5 minutes)
-#: after which Phone delivery reads Not delivering.
-DELIVERY_SECONDS = 1800
 #: NaN, as _known() gives for a count it cannot know, shown as Unknown.
 NAN_UNKNOWN = [{"type": "special", "options": {"match": "nan", "result": {"text": "Unknown", "color": UNKNOWN,
                                                                           "index": 0}}}]
@@ -944,15 +939,15 @@ def _attention(mapping: dict) -> Panel:
 
 def _firing(mapping: dict) -> Panel:
     # The alert and its severity first: the rest says where, and a narrow panel scrolls to it.
-    return table("Alerts firing", 'ALERTS{alertstate="firing",alertname!="ThermiteWatchdog"}', [
+    return table("Alerts firing", 'ALERTS{alertstate="firing"}', [
         Column("alertname", "Alert", _words({name: title for name, (title, _) in alerts.CATALOG.items()}), least=180),
         Column("severity", "Severity", states=SEVERITY, width=90),
         _room_column(mapping),
         Column("zone", "Zone", _words(_zone_words(mapping)), width=130),
         Column("device", "Device", _words(_device_words(mapping))),
         Column("check", "Check", _words(CHECK_WORDS))],
-        "Alerts firing now. Critical ones will push to a phone once phone delivery is set up; warnings will "
-        "wait for a digest.", none="No alerts")
+        "Alerts firing now, every one. The thermite app's Home shows them too, critical ones first, without "
+        "those another firing alert already explains.", none="No alerts")
 
 
 def _known(expr: str, valid: str) -> str:
@@ -1005,19 +1000,10 @@ def house(mapping: dict, probes: list[dict]) -> dict:
                                "the last 15 minutes. Unknown: this host has no gateway, or nothing has checked it "
                                "yet. A click opens Switching & remotes.", to=link(SWITCHING)), wide, TILE)
     board.add(_attention(mapping), 24, 6)
-    board.add(stat("Alerts firing", 'count(ALERTS{alertstate="firing",alertname!="ThermiteWatchdog"}) or vector(0)',
-                   steps=((OK, None), (WARN, 1)), description="Alerts firing now, without the monitoring heartbeat."),
-              8, TILE)
-    # 0 OK, 1 nobody listens, 2 nothing delivered: delivered alone is not OK, nobody would be told.
-    delivering = ("(((time() - max(thermite_notification_last_success_timestamp_seconds > 0)) "
-                  f"< bool {DELIVERY_SECONDS}) or vector(0))")
-    subscribed = "(max(ntfy_subscribers_total) > bool 0)"
-    board.add(stat("Phone delivery", f"2 * (1 - {delivering}) + {delivering} * (1 - {subscribed})", mappings=PHONE,
-                   description="Whether an alert would reach anyone. Alerts go to a local ntfy that listens on "
-                               "this host only. No subscribers: ntfy takes them and no client is subscribed to "
-                               "it, so nobody is told; phone delivery is set up separately. Not delivering: ntfy "
-                               f"accepted no alert and no heartbeat in the last {DELIVERY_SECONDS // 60} minutes. "
-                               "Unknown: ntfy does not report."), 8, TILE)
+    board.add(stat("Alerts firing", 'count(ALERTS{alertstate="firing"}) or vector(0)',
+                   steps=((OK, None), (WARN, 1)),
+                   description="Alerts firing now. The thermite app's Home shows them; nothing is sent to a phone."),
+              12, TILE)
     problems = ('(count(up == 0) or vector(0)) + (count(node_systemd_unit_state{job="node",name=~"thermite-.*",'
                 'state="failed"} == 1) or vector(0)) + (count((node_filesystem_avail_bytes{job="node",'
                 'fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes < 0.10) and '
@@ -1025,7 +1011,7 @@ def house(mapping: dict, probes: list[dict]) -> dict:
     board.add(stat("Host", problems, "suffix: problems", steps=((OK, None), (FAIL, 1)),
                    mappings=value_map({0: ("OK", OK)}),
                    description="Scrape targets down, failed Thermite units and file systems under 10% free. "
-                               "A click opens Host, which says which.", to=link(HOST)), 8, TILE)
+                               "A click opens Host, which says which.", to=link(HOST)), 12, TILE)
     board.add(_firing(mapping), 14, 7)
     # Routing's counts read 0 only while its telemetry is valid, else
     # Unknown; device failures only where an executor counts them, while its
@@ -1067,7 +1053,7 @@ def house(mapping: dict, probes: list[dict]) -> dict:
         "counts as slow or missed instead.",
         none="No source changes", sort=("95th", True), since=True), 24, 6)  # the slowest room first
     # No panel here has a time axis to mark service starts and deploys on.
-    return dashboard(HOUSE, board, "Is the house OK? Control, rooms, speakers, remotes, alerts, phone delivery and "
+    return dashboard(HOUSE, board, "Is the house OK? Control, rooms, speakers, remotes, alerts and "
                      "the host; what needs attention now; the alerts firing; switching since yesterday evening.",
                      annotations=False)
 
@@ -1538,7 +1524,7 @@ def host(targets: int = 0, mapping: dict | None = None) -> dict:
         "Restarts systemd made in the selected range; units without any are left out.", none="No restarts"),
         8, max(8, len(UNITS) + 2))
     board.add(state_timeline("Service probes", [
-        ('probe_success{job=~"service_http|alerting_http"}', "{{service}}"),
+        ('probe_success{job="service_http"}', "{{service}}"),
         (f'probe_success{{job="{alerts.GATEWAY_JOB}"}} and on() ({alerts.GATEWAY_INSTALLED})', "{{service}}")],
         UP_DOWN, "Local services answering their checks; the gateway only where it is installed."), 12, 7)
     # The three files the services rewrite, by name: a deploy's own file is written once per deploy, and

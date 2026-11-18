@@ -43,7 +43,7 @@ def print_metrics(result: deploy.Deployed, layout: deploy.State) -> None:
               "services, then a deploy fills it")
         return
     if result.metrics_kept:
-        print(f"metrics kept as deployed: {result.commit[:12]} predates the installed metrics/notification stack, so "
+        print(f"metrics kept as deployed: {result.commit[:12]} predates the installed metrics, so "
               f"{layout.metrics} and {layout.exporter_app} keep what the last deploy installed")
         return
     print_changes("metrics", result.metrics)

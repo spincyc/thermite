@@ -38,7 +38,7 @@ VERSIONS = {
     "atv_helper": {"image": {
         "ref": "docker.io/library/python:3.14.10-slim-trixie", "digest": "sha256:" + "b" * 64}},
     **{name: {"version": "1.0.0", "image": {"ref": f"docker.io/example/{name}:v1.0.0", "digest": "sha256:" + c * 64}}
-       for name, c in (("prometheus", "c"), ("node_exporter", "d"), ("blackbox_exporter", "e"), ("grafana", "f"), ("alertmanager", "1"), ("ntfy", "2"))},
+       for name, c in (("prometheus", "c"), ("node_exporter", "d"), ("blackbox_exporter", "e"), ("grafana", "f"), ("alertmanager", "1"))},
     "music_assistant": {"version": "2.10.12", "image": {
         "ref": "ghcr.io/music-assistant/server:2.10.12", "digest": "sha256:" + "3" * 64}},
 }
@@ -209,15 +209,15 @@ class Units(unittest.TestCase):
                     for line in merged.stdout.splitlines() if "Command Line: " in line]
         expected = {f"/run/{unit.removesuffix('.service')}.cid" for unit in oh_units.CONTAINED}
         starts = [argv for argv in commands if argv[:2] == ["/usr/bin/podman", "run"]]
-        self.assertEqual(len(starts), 11)
+        self.assertEqual(len(starts), 9)
         self.assertEqual({word.removeprefix("--cidfile=") for argv in starts for word in argv
                           if word.startswith("--cidfile=")}, expected)
         prestarts = [argv for argv in commands if argv[:3] == ["/usr/bin/rm", "-f", "--"]]
-        self.assertEqual(len(prestarts), 11)
+        self.assertEqual(len(prestarts), 9)
         self.assertEqual({argv[3] for argv in prestarts}, expected)
         self.assertTrue(all(len(argv) == 4 for argv in prestarts))
         cleanup = [argv for argv in commands if argv[:2] == ["/usr/bin/podman", "rm"]]
-        self.assertEqual(len(cleanup), 22)  # ExecStop and ExecStopPost for each container.
+        self.assertEqual(len(cleanup), 18)  # ExecStop and ExecStopPost for each container.
         for argv in cleanup:
             self.assertEqual(argv[:5], ["/usr/bin/podman", "rm", "-v", "-f", "-i"])
             self.assertEqual(len(argv), 6)
@@ -251,8 +251,8 @@ class Units(unittest.TestCase):
 
     def test_target_groups_only_thermite_members_and_services_share_the_slice(self):
         rendered = deploy.render_units(VERSIONS, MUSIC_HOST)
-        self.assertEqual(len(rendered), 28)
-        self.assertEqual(sum(not name.endswith(".conf") for name in rendered), 17)
+        self.assertEqual(len(rendered), 24)
+        self.assertEqual(sum(not name.endswith(".conf") for name in rendered), 15)
         self.assertEqual({path.name for path in deploy.host_units(MUSIC_HOST).values()},
                          {Path(name).name for name in rendered})
         containers = set()
@@ -524,8 +524,7 @@ class MetricsUnits(unittest.TestCase):
     def test_each_pins_its_image_and_runs_as_thermite_without_privileges(self):
         for name, pin, c in (("prometheus", "prometheus", "c"), ("node-exporter", "node_exporter", "d"),
                              ("blackbox", "blackbox_exporter", "e"), ("grafana", "grafana", "f"),
-                             ("metrics-exporter", "atv_helper", "b"), ("notifications", "atv_helper", "b"),
-                             ("alertmanager", "alertmanager", "1"), ("ntfy", "ntfy", "2")):
+                             ("metrics-exporter", "atv_helper", "b"), ("alertmanager", "alertmanager", "1")):
             with self.subTest(name=name):
                 text = self.unit(name)
                 repository = VERSIONS[pin]["image"]["ref"].rsplit(":", 1)[0]
@@ -536,7 +535,7 @@ class MetricsUnits(unittest.TestCase):
                     self.assertIn(f"\n{line}\n", text)
 
     def test_only_grafana_listens_beyond_this_host(self):
-        for name in ("prometheus", "node-exporter", "blackbox", "metrics-exporter", "alertmanager", "ntfy", "notifications"):
+        for name in ("prometheus", "node-exporter", "blackbox", "metrics-exporter", "alertmanager"):
             with self.subTest(name=name):
                 self.assertIn(": only this host reaches it.", self.unit(name))
                 self.assertNotIn("0.0.0.0", self.unit(name))
@@ -559,17 +558,17 @@ class MetricsUnits(unittest.TestCase):
 
     def test_the_exporter_runs_its_deployed_code(self):
         text = self.unit("metrics-exporter")
-        self.assertIn("Volume=/srv/thermite/runtime/exporter/app:/app:ro,z\n", text)
+        # Its own: no other container mounts it.
+        self.assertIn("Volume=/srv/thermite/runtime/exporter/app:/app:ro,Z\n", text)
         self.assertIn("Exec=python3 /app/lib/oh_metrics/exporter.py --listen=127.0.0.1:13610 ", text)
         self.assertIn("--openhab=http://127.0.0.1:8080 --token-file=/secrets/openhab-token\n", text)
 
     def test_python_services_run_under_an_init_and_stop_cleanly(self):
-        for name in ("metrics-exporter", "notifications", "prometheus", "node-exporter", "blackbox", "grafana",
-                     "alertmanager", "ntfy"):
+        for name in ("metrics-exporter", "prometheus", "node-exporter", "blackbox", "grafana", "alertmanager"):
             with self.subTest(name=name):
                 text = self.unit(name)
                 python = "\nExec=python3 " in text
-                self.assertEqual(name in ("metrics-exporter", "notifications"), python)
+                self.assertEqual(name == "metrics-exporter", python)
                 self.assertEqual("\nPodmanArgs=--init\n" in text, python)
                 self.assertEqual("\nSuccessExitStatus=143\n" in text, python or name == "node-exporter")
                 parsed = configparser.ConfigParser(interpolation=None, strict=False)
@@ -577,7 +576,7 @@ class MetricsUnits(unittest.TestCase):
                 if python:
                     self.assertEqual(parsed["Service"]["SuccessExitStatus"], "143")
 
-    def test_grafana_and_ntfy_log_warnings_and_grafana_loads_only_prometheus(self):
+    def test_grafana_logs_warnings_and_loads_only_prometheus(self):
         parsed = configparser.ConfigParser(interpolation=None)
         parsed.read_string(deploy.metrics.grafana_ini(HOST))
         self.assertEqual(dict(parsed["log"]), {"mode": "console", "level": "warn",
@@ -586,7 +585,6 @@ class MetricsUnits(unittest.TestCase):
         self.assertEqual(len(disabled), 13)
         self.assertIn("loki", disabled)
         self.assertNotIn("prometheus", disabled)
-        self.assertEqual(deploy.metrics.alerts.ntfy(13613)["log-level"], "warn")
 
     def test_grafana_reads_its_password_from_a_file(self):
         text = self.unit("grafana")
@@ -604,7 +602,7 @@ class MetricsUnits(unittest.TestCase):
         units = deploy.render_units(VERSIONS, HOST)
         self.assertIn("PathChanged=/srv/thermite/runtime/deploy/metrics-restart\n", units[deploy.METRICS_RESTART_PATH])
         self.assertIn("ExecStart=/usr/bin/systemctl try-restart thermite-metrics-exporter.service "
-                      "thermite-grafana.service thermite-notifications.service thermite-ntfy.service\n", units[deploy.METRICS_RESTART_SERVICE])
+                      "thermite-grafana.service\n", units[deploy.METRICS_RESTART_SERVICE])
 
     def test_installed_means_any_metrics_quadlet_is_there(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1454,26 +1452,35 @@ class MetricsDeploy(Install):
         self.assertEqual(deploy.read_tree(self.layout.metrics)["blackbox/gateway-ca.pem"].data, pem)
         self.assertIn("http://127.0.0.1:13609/-/reload", self.posted)
 
-    def test_rollback_before_notifications_preserves_installed_stack(self):
-        additions = {"metrics/notifications/catalog.json": "{}\n", "metrics/ntfy/server.yml": "listen-http: 127.0.0.1:13613\n",
-                     "metrics/alertmanager/alertmanager.yml": "route: {}\n", "lib/oh_metrics/notifications.py": "print()\n"}
-        self.deploy(**additions)
-        installed = (deploy.read_tree(self.layout.metrics), deploy.read_tree(self.layout.exporter_app))
-        self.posted.clear()
-        result = self.install({**self.FILES, **self.METRICS})
-        self.assertTrue(result.metrics_kept)
-        self.assertEqual(self.posted, [])
-        self.assertEqual((deploy.read_tree(self.layout.metrics), deploy.read_tree(self.layout.exporter_app)), installed)
+    def test_the_first_deploy_without_ntfy_and_the_adapter_removes_what_they_read(self):
+        # What a release that ran them deployed: their settings in the
+        # metrics tree, and the adapter's program beside the exporter's.
+        adapter = "lib/oh_metrics/notifications.py"
+        theirs = {"metrics/notifications/catalog.json": "{}\n", "metrics/ntfy/server.yml": "listen-http: 127.0.0.1:13613\n",
+                  adapter: "print()\n"}
+        with mock.patch.object(deploy.metrics, "EXPORTER_APP", (*deploy.metrics.EXPORTER_APP, adapter)):
+            self.deploy(**theirs)
+        self.assertLessEqual({"notifications/catalog.json", "ntfy/server.yml"}, set(deploy.read_tree(self.layout.metrics)))
+        self.assertIn(adapter, deploy.read_tree(self.layout.exporter_app))
+        self.layout.metrics_restart.unlink()
+        result = self.deploy()
+        # Synced, never kept as deployed: the new rules must reach Prometheus.
+        self.assertFalse(result.metrics_kept)
+        self.assertEqual((sorted(result.metrics.removed), result.exporter_app.removed),
+                         (["notifications/catalog.json", "ntfy/server.yml"], [adapter]))
+        self.assertEqual(sorted(deploy.read_tree(self.layout.metrics)),
+                         ["blackbox/blackbox.yml", "exporter/map.json", "grafana/dashboards/house.json",
+                          "grafana/grafana.ini", "prometheus/prometheus.yml"])
+        self.assertEqual(sorted(deploy.read_tree(self.layout.exporter_app)), ["lib/oh_metrics/exporter.py", "lib/oh_ports.py"])
+        self.assertEqual(sorted(deploy.read_record(self.layout)["exporter_app"]), ["lib/oh_metrics/exporter.py", "lib/oh_ports.py"])
 
-    def test_alertmanager_reload_and_adapter_restart_are_distinct(self):
+    def test_alertmanager_reloads_over_http_and_restarts_nothing(self):
         self.deploy()
         self.layout.metrics_restart.unlink(missing_ok=True)
         result = self.deploy(**{"metrics/alertmanager/alertmanager.yml": "route: {}\n"})
         self.assertEqual(self.posted, ["http://127.0.0.1:13612/-/reload"])
         self.assertIn("Alertmanager reloaded its configuration", result.reloads)
         self.assertFalse(self.layout.metrics_restart.exists())
-        self.deploy(**{"metrics/notifications/catalog.json": "{}\n"})
-        self.assertTrue(self.layout.metrics_restart.exists())
 
     def test_an_unchanged_deploy_reloads_and_restarts_nothing(self):
         self.deploy()
@@ -2149,7 +2156,7 @@ class CliSummary(unittest.TestCase):
         self.assertNotIn("exporter", printed)
         self.result.with_metrics, self.result.metrics_kept = True, True
         printed = "\n".join(self.apply(dry_run=True))
-        self.assertIn(f"metrics kept as deployed: {'d' * 12} predates the installed metrics/notification stack, "
+        self.assertIn(f"metrics kept as deployed: {'d' * 12} predates the installed metrics, "
                       f"so {self.layout.metrics} and {self.layout.exporter_app} keep", printed)
         self.assertNotIn("reloaded", printed)
 

@@ -86,11 +86,11 @@ f4ec52aaccac05b8cd6d2aaae06dd39469debe401c978ed2be3cb7f63b74bfaf  */conf/html/re
 
 2a33fcdbe631965e5774afe66d3a382a7f5071b0fa24d3eda23634305535f789  */conf/html/remote/shell.js
 
-2459a4dfeb890d88f056e322ec64fb2a65ec2e472dd41b991e7e53f895cc2488  */conf/html/remote/system.html
+e8c4164d64d96555cc2fcfe73f94a977b6b7cd06ee408fa2e9fa7950954ec6bc  */conf/html/remote/system.html
 
-30c0ee81d23e19836ac1548ac6ef37d2b412348fd1e0ffc36b583372940fc161  */conf/html/remote/system.js
+902a6d20e46b46d1ca104a04c0b79b1f41e886d1664879c155d22d24d291bd04  */conf/html/remote/system.js
 
-df9f49be0bd652058b8ebf6a354746654c2cd154c6da223fd5c5070849a6e6ee  */conf/html/remote/system.json
+49855e4b8e82f13b7d3ef45711fca6b4ac6cc64427961b147b5bbcd7d34c070c  */conf/html/remote/system.json
 
 fbf9f17b2f7be6719f261bb62a1cc9af20e7b6fd73582330775772551845e5a8  */conf/html/remote/theme.css
 
@@ -102,7 +102,7 @@ adac5c7ff2aed3b732811fbe994d09f5a291a6def51ff8a417b3c779378efb07  */conf/html/re
 
 88f4cc5f633e1066be9db9bcf5dd87a5ec45a3f2c5af4aaf63e7c3fbc49a77a7  */conf/services/runtime.cfg
 
-2f456363003857ca7c28e3d73d1d9c2055a96d0acc5aa1d9ca15e9e6c037b40f  */deploy/thermite-alertmanager.container
+ed441de1cfa518baeee282ed4566489277b47b3e32b91a6af13873fff7a6bba7  */deploy/thermite-alertmanager.container
 
 b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-alertmanager.service.d/50-container-lifecycle.conf
 
@@ -122,25 +122,17 @@ a6ec2798e8a8af28915a2ee22c05cabf5bdc123558bb53a503ebee1b1000be2a  */deploy/therm
 
 b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-grafana.service.d/50-container-lifecycle.conf
 
-e4074939dfdfb9964a1b3f1099763922437b7b20be7447dfac60da146d2947d9  */deploy/thermite-metrics-exporter.container
+c420d18a875d55cf035b1b39b02ae2753567d15272f17bd3be90adf0b73dc591  */deploy/thermite-metrics-exporter.container
 
 b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-metrics-exporter.service.d/50-container-lifecycle.conf
 
-ff31a2e3799f69b329c9a8922095aec5f8ef24a5234526c4828297f0bb5d3821  */deploy/thermite-metrics-restart.path
+3db3a62255f6c144d6b9ea8d7602666258562422fb292ef31a28982caca6c106  */deploy/thermite-metrics-restart.path
 
-4acf151d78f1257afd781e576316c4bea53b5d5aebcb1943d08dc548f2a46035  */deploy/thermite-metrics-restart.service
+a11a7f814cce174eef2dd4a0196085423b33906086cd480c665b7af3e3d6adc8  */deploy/thermite-metrics-restart.service
 
 40741fc11914795ddb8cc4c9fd4374cb58c4a231071db139c3db5f654424edb9  */deploy/thermite-node-exporter.container
 
 b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-node-exporter.service.d/50-container-lifecycle.conf
-
-8a1129c513a4c6882f6068931c6ad8b4f4daf097868d71d2ca014b3bfa639ee3  */deploy/thermite-notifications.container
-
-b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-notifications.service.d/50-container-lifecycle.conf
-
-8c550d52e111c71f5934ddc4c864de05c7672218d25f8425d57c855b6f45a91f  */deploy/thermite-ntfy.container
-
-b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/thermite-ntfy.service.d/50-container-lifecycle.conf
 
 122535ce64df263d27a918da2cb41d33ce03de9a7f82555a72c398a540ed8a42  */deploy/thermite-openhab.container
 
@@ -154,7 +146,7 @@ b4b2cdb509596266093210dd701e043ad3f4cb981fcc9f9382ab2e94b83846f4  */deploy/therm
 
 dfb380c8ec4fcb2e7aab525e35633e9efbf8915075d1a6887198cd809a91f2c1  */deploy/thermite.target
 
-56f9e7c5e764b3be26fb703eb418a4658851a36aa0fa42a0a827fd36783da86a  */metrics/alertmanager/alertmanager.yml
+f7c63b6dbde5cbb6b11fb46cba184c7f8e9e7a05bd43e54b7507788ec1e9e0a7  */metrics/alertmanager/alertmanager.yml
 
 874f4bbe19c06f6ae46386b2869eb60d2ad5e529e218ca95de7584533fcf47b6  */metrics/blackbox/blackbox.yml
 
@@ -163,10 +155,6 @@ ecb85552f40db3b75f0a434d7b33375dda6d7a2501f0dffffa611a5a7a5475fe  */metrics/graf
 3381735f1250c15f411d81122aa4d3452859bc2f3829fd4040a27c4b24841175  */metrics/grafana/provisioning/dashboards/thermite.yaml
 
 9e8a47563ae3870657862debe3759acd4c8eec50a7e1c3ff1a8b8e130d2a07b6  */metrics/grafana/provisioning/datasources/prometheus.yaml
-
-9641753a861abecc2bd9f625f67d868f0d4d0e4cf77b91478eecd14268b68304  */metrics/notifications/catalog.json
-
-57f5d8c3f3582a58a85f350ae5fb52cb5bc9c37c081b7365ad61a166e45acd9f  */metrics/ntfy/server.yml
 
 632ce30df905d519beeac409fd57a172ce1f8e3c944d7d52329190a7aa556eb1  androidtv_googletv.control/conf/automation/js/all_off.js
 
@@ -214,9 +202,9 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  androidtv_goog
 
 762901c9698e25fe4582d0c59d7812cabfb12112d5303d46d0e6ac24e9ad6bc6  androidtv_googletv.control/metrics/grafana/dashboards/devices.json
 
-b3abe00b444b0447c3922d9987f9b42f8e3a1a6b2b1ffa4ec16660c17acbc34b  androidtv_googletv.control/metrics/grafana/dashboards/host.json
+39a35d379ca8738ad2c090d6bfb54fa4f28befed1d6f06eee06cc56255f44ff2  androidtv_googletv.control/metrics/grafana/dashboards/host.json
 
-6550d29c56f8ac4942ffe1c62c34394d82b79259cb56e849d903f308dd2958e4  androidtv_googletv.control/metrics/grafana/dashboards/house.json
+3b956c2a5abd687e1ba78288f4c557c4e3402cbad6222fd7eda59558c4746041  androidtv_googletv.control/metrics/grafana/dashboards/house.json
 
 5332e0455c88609d734da3cbb3f68d30945e64e462236856b27525107127a70e  androidtv_googletv.control/metrics/grafana/dashboards/openhab.json
 
@@ -224,9 +212,9 @@ b3abe00b444b0447c3922d9987f9b42f8e3a1a6b2b1ffa4ec16660c17acbc34b  androidtv_goog
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  androidtv_googletv.control/metrics/grafana/dashboards/usage.json
 
-86163970543bd59df46d54282727bb03e4b89e1b578655cd3e02b301cd133ad2  androidtv_googletv.control/metrics/prometheus/alerts.yml
+aab2db72725052617b8987636c293ab205b8baf925f54db7042b9773489a6a8e  androidtv_googletv.control/metrics/prometheus/alerts.yml
 
-9d92a5fd4f140af0a1989c01a8414aadd05023fda50db41c5b7f4fc74aecf923  androidtv_googletv.control/metrics/prometheus/prometheus.yml
+45f3878c898b652776bc38f5071ca3b2a609b04d9672475f7df8725335387928  androidtv_googletv.control/metrics/prometheus/prometheus.yml
 
 13b6271360aa403301135eedd02daf4f183f27ab4f56f5a83d2982a86b791872  avpro_telnet.control/conf/automation/js/avpro_telnet_den_device.js
 
@@ -260,9 +248,9 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  avpro_telnet.c
 
 ba45f783dca89122050368f08b5c2d1693ee67dd5d99d96c2e7daac1eaefd743  avpro_telnet.control/metrics/grafana/dashboards/devices.json
 
-19649fef971a0faca82fec65a09208f338b69a4e61181023e49445eb9d9e3efe  avpro_telnet.control/metrics/grafana/dashboards/host.json
+d4bdac753216585151fb7f3473d8345eb02827a4f8fb8c5c4a54a6abc09df2b9  avpro_telnet.control/metrics/grafana/dashboards/host.json
 
-46d10c683e9a34de91fe44def3b4a2839496b5adbb5848e32af5747f8d3b5f82  avpro_telnet.control/metrics/grafana/dashboards/house.json
+efe0d4208022498794e27ef39e1ffb59b762bf7a6ce12e3c43a85e16777a011a  avpro_telnet.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  avpro_telnet.control/metrics/grafana/dashboards/openhab.json
 
@@ -270,9 +258,9 @@ ba45f783dca89122050368f08b5c2d1693ee67dd5d99d96c2e7daac1eaefd743  avpro_telnet.c
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  avpro_telnet.control/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  avpro_telnet.control/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  avpro_telnet.control/metrics/prometheus/alerts.yml
 
-e0d47df7bd62d25f31702056b81790c987f68f55ec4b7cd4bee910db3282ded5  avpro_telnet.control/metrics/prometheus/prometheus.yml
+e218918d4c5355517bc93c9479ffb34460d8890eb6c54241cabe72d8c99d873e  avpro_telnet.control/metrics/prometheus/prometheus.yml
 
 de7cd8904353720fbe5d6d68bd16a944afd09844186fe9b9b0a58df779cee23a  bk808_cec.control/conf/automation/js/all_off.js
 
@@ -320,9 +308,9 @@ c23894c44f5b3a8837eaa43f5d92031ecdcfd569625cf2b36d5eeaa475a96eb7  bk808_cec.cont
 
 0316a12474b88cde6ae61966c8bd2cef41c542a4b8c7b89f42cc2c3305eaf2c3  bk808_cec.control/metrics/grafana/dashboards/devices.json
 
-c4d80f329fa36b5604a1d3a0d367a6795a56e651fde67b13b2f779ea20daffe4  bk808_cec.control/metrics/grafana/dashboards/host.json
+9b824d1086f488d253360f981af130e668f7b8505162b8895911047fa13b8d83  bk808_cec.control/metrics/grafana/dashboards/host.json
 
-afa58b6f70e3a557c166074080fd9c4b8e651ca09a93d69dbcc5a1932d0cc58f  bk808_cec.control/metrics/grafana/dashboards/house.json
+2fd2b7818830e9ceb98b8d5ed228168833683400b1e93a6009cd69d42a422a6f  bk808_cec.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  bk808_cec.control/metrics/grafana/dashboards/openhab.json
 
@@ -330,9 +318,9 @@ afa58b6f70e3a557c166074080fd9c4b8e651ca09a93d69dbcc5a1932d0cc58f  bk808_cec.cont
 
 da5734cea423d0595561cf70a742d25e4c5cd999411cd7a712aba603eca2e03e  bk808_cec.control/metrics/grafana/dashboards/usage.json
 
-9d0be5d22500e0c095cf98abe658b568d71aae8fa1546751e80dc140ce8c46b5  bk808_cec.control/metrics/prometheus/alerts.yml
+5d698fe3dc4d1590311bd81023493f69822d8e61643b8a7b76781ee4f7dc0269  bk808_cec.control/metrics/prometheus/alerts.yml
 
-27d623f76f828bd6d67ae6ffd2f5244a0b15a5e4b3014de7c2547f79fa7c5673  bk808_cec.control/metrics/prometheus/prometheus.yml
+fea571fc6daa608e96d96c274078360f35375a5e90dcfae08226d8856a9f0ff3  bk808_cec.control/metrics/prometheus/prometheus.yml
 
 8ea5a504a853efa8c0134e4bc0825de043e7479e11c2b6c53eeec5a5956d9bd5  bk808_http.control/conf/html/remote/activity.json
 
@@ -368,9 +356,9 @@ d2b36fafd1032e8d8cdeae6df88eea2fe7ccbf16432d7232e0da32e7170a26ca  bk808_http.con
 
 794392abeb5b58922fd9f2b2795d94dcd3336e9b2dc0354b9d47e6e4043b7a72  bk808_http.control/metrics/grafana/dashboards/devices.json
 
-6654c9c099d74734348b7358ed26303aaf2f2df0c0c4dbf394ab6380b4701e09  bk808_http.control/metrics/grafana/dashboards/host.json
+5cdfe65e234683d80ab24fce6821ad0599e0b78602c0de78338af4e36462c08b  bk808_http.control/metrics/grafana/dashboards/host.json
 
-795f9a1580c5988b5a3cc9a8520f2ff82567fdf1c303b556f332687a17700028  bk808_http.control/metrics/grafana/dashboards/house.json
+4d0035ef0495e988458d4a696591b5d755ed9dbe9a2c71dcaed4a022843eecfe  bk808_http.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  bk808_http.control/metrics/grafana/dashboards/openhab.json
 
@@ -378,9 +366,9 @@ d2b36fafd1032e8d8cdeae6df88eea2fe7ccbf16432d7232e0da32e7170a26ca  bk808_http.con
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  bk808_http.control/metrics/grafana/dashboards/usage.json
 
-3ab23ba82d0e9509f6e803cbdab9f3ab207864ad15b878cc33a67a7ff810bd65  bk808_http.control/metrics/prometheus/alerts.yml
+4bc8edecc88ea31ff7aa4c032c89e64c268a0c98254d41eb1e75feea7d179812  bk808_http.control/metrics/prometheus/alerts.yml
 
-313b81992f1738b4849c60389c5b34b0f4c75316721701ebcae172953a9f49de  bk808_http.control/metrics/prometheus/prometheus.yml
+0c70fa2a7b1f505c0b35b56a75b96f0570cbaa690ed493291c7677689876fa78  bk808_http.control/metrics/prometheus/prometheus.yml
 
 93d82a972bb065bf5eaef2a5071e05bbf943f971e66fe481efebb75e79ea49ce  cast.observe/conf/automation/js/playing.js
 
@@ -416,9 +404,9 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  cast.observe/c
 
 d331a1b2d120ed7588bc65726b66821ef901f25d8623fd3a4d11913d7db23abe  cast.observe/metrics/grafana/dashboards/devices.json
 
-41e1faf517e64a444f5d801967aeca3a43993c62084bdca84843984897930772  cast.observe/metrics/grafana/dashboards/host.json
+217d718ff82098ac846d22c330ea2646bc6686be3fe1f0c7751fcc5b0ca4d999  cast.observe/metrics/grafana/dashboards/host.json
 
-48ddcfb584c29cc92d588561c6d21e99fd7ae3140cf532a0c9083d132a3fd21c  cast.observe/metrics/grafana/dashboards/house.json
+f3b18eb1cf54487f4a279bc6d7da75134d9a40d0b4035481f29239431ab445b7  cast.observe/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  cast.observe/metrics/grafana/dashboards/openhab.json
 
@@ -426,9 +414,9 @@ d331a1b2d120ed7588bc65726b66821ef901f25d8623fd3a4d11913d7db23abe  cast.observe/m
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  cast.observe/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  cast.observe/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  cast.observe/metrics/prometheus/alerts.yml
 
-ce2bd61333392bfeb18e85f4e50debae54eb1701c8ba356009e8ee70b9102913  cast.observe/metrics/prometheus/prometheus.yml
+1a7ea92f67532020a8fbede8e845006c822c6d77adb744f6175e19ec2a9a3ddc  cast.observe/metrics/prometheus/prometheus.yml
 
 77f4462607c2da410ff5ab830cb649c50da7ac99093328c5cc3acd772dece317  denonmarantz_http.control/conf/automation/js/all_off.js
 
@@ -466,9 +454,9 @@ ee48768cbf32d68fc769e7f37ee26285d51b0e6c99b9b6478287cce8f7488246  denonmarantz_h
 
 d28ac564a0aa2cdf433160b6c1d5ec632d84b7cd1826e9aae7bdc7c0d2def9ac  denonmarantz_http.control/metrics/grafana/dashboards/devices.json
 
-dbd3d7f9cfc3bc405a0229a25b9e42973c8c2ad1358225bb9cbc1f331170b64f  denonmarantz_http.control/metrics/grafana/dashboards/host.json
+2cd849e801fe986873ab24a300c82a62dea7b6ff9566b2fb6a8f132bfcb370a4  denonmarantz_http.control/metrics/grafana/dashboards/host.json
 
-4d04c68c3604898b33aae2f7e7f089f365ce7e24a4f6866782cde8692b997e9f  denonmarantz_http.control/metrics/grafana/dashboards/house.json
+642ff1a62c01c70f2c2a91422becb5f6ce5b35b4c1d1261cdf23d9927d07494b  denonmarantz_http.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  denonmarantz_http.control/metrics/grafana/dashboards/openhab.json
 
@@ -476,9 +464,9 @@ dbd3d7f9cfc3bc405a0229a25b9e42973c8c2ad1358225bb9cbc1f331170b64f  denonmarantz_h
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  denonmarantz_http.control/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  denonmarantz_http.control/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  denonmarantz_http.control/metrics/prometheus/alerts.yml
 
-20969a5b960c1b39e606dfd661e3e7cc9c8822731e0f8b574cef685476de5e2f  denonmarantz_http.control/metrics/prometheus/prometheus.yml
+343e8ac7de6d39333888e0998112e1b37847d232a2644fd722e28e67d85aae49  denonmarantz_http.control/metrics/prometheus/prometheus.yml
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  denonmarantz_http.observe/conf/html/remote/activity.json
 
@@ -510,9 +498,9 @@ de2ab1da36af31a4a2002ed69789434db963d5694d6fb09fc23fc88a226f75e7  denonmarantz_h
 
 d28ac564a0aa2cdf433160b6c1d5ec632d84b7cd1826e9aae7bdc7c0d2def9ac  denonmarantz_http.observe/metrics/grafana/dashboards/devices.json
 
-dbd3d7f9cfc3bc405a0229a25b9e42973c8c2ad1358225bb9cbc1f331170b64f  denonmarantz_http.observe/metrics/grafana/dashboards/host.json
+2cd849e801fe986873ab24a300c82a62dea7b6ff9566b2fb6a8f132bfcb370a4  denonmarantz_http.observe/metrics/grafana/dashboards/host.json
 
-4d04c68c3604898b33aae2f7e7f089f365ce7e24a4f6866782cde8692b997e9f  denonmarantz_http.observe/metrics/grafana/dashboards/house.json
+642ff1a62c01c70f2c2a91422becb5f6ce5b35b4c1d1261cdf23d9927d07494b  denonmarantz_http.observe/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  denonmarantz_http.observe/metrics/grafana/dashboards/openhab.json
 
@@ -520,9 +508,9 @@ dbd3d7f9cfc3bc405a0229a25b9e42973c8c2ad1358225bb9cbc1f331170b64f  denonmarantz_h
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  denonmarantz_http.observe/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  denonmarantz_http.observe/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  denonmarantz_http.observe/metrics/prometheus/alerts.yml
 
-20969a5b960c1b39e606dfd661e3e7cc9c8822731e0f8b574cef685476de5e2f  denonmarantz_http.observe/metrics/prometheus/prometheus.yml
+343e8ac7de6d39333888e0998112e1b37847d232a2644fd722e28e67d85aae49  denonmarantz_http.observe/metrics/prometheus/prometheus.yml
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  drhdmi_http.observe/conf/html/remote/activity.json
 
@@ -556,9 +544,9 @@ d2c7a8f114b620af6997f9a60261acc5bd2807619d4840f872079511db032a8e  drhdmi_http.ob
 
 529cdb4eb9db14afb4ae4633feb1dbaf65dea1d4b10b9ca511fe0c670caba523  drhdmi_http.observe/metrics/grafana/dashboards/devices.json
 
-31c09375b18af4cb21dce8d47bd3e2ab1e487bdae33efa4ced0648b1a4b714a4  drhdmi_http.observe/metrics/grafana/dashboards/host.json
+a6e1b9927b2cc95a6ec09a8d4edd6a247022c79b49e375bb329083470da5a816  drhdmi_http.observe/metrics/grafana/dashboards/host.json
 
-26db790ebcff04a9e1e48d2659454a7dfebeac3482c1084ff73e124239a1abc4  drhdmi_http.observe/metrics/grafana/dashboards/house.json
+e5ee73698abcdeba0b55d5f7c62a59e97a9864305ded09cc15184a1c5302e93f  drhdmi_http.observe/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  drhdmi_http.observe/metrics/grafana/dashboards/openhab.json
 
@@ -566,9 +554,9 @@ a1f238e7b90330bf3d85df4f650671a6624f04c102769aa1bbc94ef112630498  drhdmi_http.ob
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  drhdmi_http.observe/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  drhdmi_http.observe/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  drhdmi_http.observe/metrics/prometheus/alerts.yml
 
-870013b7d58124c1b719093fb61e55d3895d80647493300a1e3dd41e3c157036  drhdmi_http.observe/metrics/prometheus/prometheus.yml
+b2605a2c9a8d786e17bd6294da8d99e57b7599ed429ee1cc27cc06995473cace  drhdmi_http.observe/metrics/prometheus/prometheus.yml
 
 9e5e27adc22fb2ce8890640f2d2dfbc8a586c78999555d506a8c0f9b3c8d205c  example/conf/automation/js/all_off.js
 
@@ -624,9 +612,9 @@ f1b01e6239dd3d99a50cce6c6d719d84ec1cdbd54b1e09804689e4be76922f85  example/conf/y
 
 eb909b9183da011074a7dbcd364924e56893a3c9b2a3a0030d732e5dd6c39537  example/metrics/grafana/dashboards/devices.json
 
-7893e8f1b602dbddfedffa91cc4219862fa3b92e3a8bfe453f7cfd6e091a1d63  example/metrics/grafana/dashboards/host.json
+7009d8876cda2d04595af67c47447d7f67c7a9f178da29d47d64bad5b3ecec7e  example/metrics/grafana/dashboards/host.json
 
-1bcede560293858484fbf3b9263b13b2c5e1fd72cddb249643de3d0679c824e6  example/metrics/grafana/dashboards/house.json
+5d287eedfc3c4b453f4dbd963a9d0a5bafb13b6abf570bc65a2fecc788445999  example/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  example/metrics/grafana/dashboards/openhab.json
 
@@ -634,9 +622,9 @@ e12e1427505cdc962820f9ea336236abc3a90b3e7ed5eea9dc892e004b7c7d10  example/metric
 
 aa06cbd1a4bdf60f9e48978629c3ae5e987035c59dfa75cd1db81d0623720365  example/metrics/grafana/dashboards/usage.json
 
-dd7f83c312760a095729f196044017616c8148d5688231bdb40437d1a2be1328  example/metrics/prometheus/alerts.yml
+145afc728fedf65a4f31a0aad700cf21ae2ba76b20ba02e86f45a6dc8af1a8cf  example/metrics/prometheus/alerts.yml
 
-c4e9a8351135f8f9ef928f8fbcea317a27cad6b82392234ee7216a5cde2aa3a5  example/metrics/prometheus/prometheus.yml
+59275e0185bdf1a9d1683e753fc4821c054208d8b1754bd383bddcaab4c0742e  example/metrics/prometheus/prometheus.yml
 
 77f4462607c2da410ff5ab830cb649c50da7ac99093328c5cc3acd772dece317  heos.control/conf/automation/js/all_off.js
 
@@ -682,9 +670,9 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  heos.control/c
 
 d28ac564a0aa2cdf433160b6c1d5ec632d84b7cd1826e9aae7bdc7c0d2def9ac  heos.control/metrics/grafana/dashboards/devices.json
 
-dbd3d7f9cfc3bc405a0229a25b9e42973c8c2ad1358225bb9cbc1f331170b64f  heos.control/metrics/grafana/dashboards/host.json
+2cd849e801fe986873ab24a300c82a62dea7b6ff9566b2fb6a8f132bfcb370a4  heos.control/metrics/grafana/dashboards/host.json
 
-4d04c68c3604898b33aae2f7e7f089f365ce7e24a4f6866782cde8692b997e9f  heos.control/metrics/grafana/dashboards/house.json
+642ff1a62c01c70f2c2a91422becb5f6ce5b35b4c1d1261cdf23d9927d07494b  heos.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  heos.control/metrics/grafana/dashboards/openhab.json
 
@@ -692,9 +680,9 @@ dbd3d7f9cfc3bc405a0229a25b9e42973c8c2ad1358225bb9cbc1f331170b64f  heos.control/m
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  heos.control/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  heos.control/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  heos.control/metrics/prometheus/alerts.yml
 
-20969a5b960c1b39e606dfd661e3e7cc9c8822731e0f8b574cef685476de5e2f  heos.control/metrics/prometheus/prometheus.yml
+343e8ac7de6d39333888e0998112e1b37847d232a2644fd722e28e67d85aae49  heos.control/metrics/prometheus/prometheus.yml
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  ir.control/conf/html/remote/activity.json
 
@@ -726,9 +714,9 @@ a73d17dafbb887c0afcc44d37a3118bfa249965e325b08a732b244cabae27629  ir.control/met
 
 96c93ef419389dd4b5273768e7bcdfb3ebb96d9b2c2e965115f8c432e32d0c08  ir.control/metrics/grafana/dashboards/devices.json
 
-e300936f3b0599a18c483a338accec213f0c51dd859c2ca74a4d1585cd9fb526  ir.control/metrics/grafana/dashboards/host.json
+ef57f989d5a3ea3bb46ddd57bbce485f5e76f39d9f2792c4e5d1a6855a0310e7  ir.control/metrics/grafana/dashboards/host.json
 
-b72ec26d427f4f8cea5964da2ead1fc2acc85407281599d723c36e3875cc454d  ir.control/metrics/grafana/dashboards/house.json
+2b0f64913a8e330c1043b16de4bd724d43776715570495cc49abab717409c7b0  ir.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  ir.control/metrics/grafana/dashboards/openhab.json
 
@@ -736,9 +724,9 @@ b72ec26d427f4f8cea5964da2ead1fc2acc85407281599d723c36e3875cc454d  ir.control/met
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  ir.control/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  ir.control/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  ir.control/metrics/prometheus/alerts.yml
 
-f7a8d9c109bcf1988aaf8b73ca6b1216a150d2795c3372516aafb0bb29dc4f65  ir.control/metrics/prometheus/prometheus.yml
+ffe6855ff6403f6f914907a56ccbdcea4926e362c99711f33b68ff100839676c  ir.control/metrics/prometheus/prometheus.yml
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  network_ping.observe/conf/html/remote/activity.json
 
@@ -770,9 +758,9 @@ ea857ba0590ce8602bf6967724d0b651fefa1b37e56ebf6e8cfa66ca35ad251c  network_ping.o
 
 e9233b667197a669c6130d91972be8ef99132808465a555bbe10c9e2675dd31a  network_ping.observe/metrics/grafana/dashboards/devices.json
 
-8355a2135bfd0b89f9fd29aa5d7c3662c58192b0b51863673927255eb099c0b7  network_ping.observe/metrics/grafana/dashboards/host.json
+7dfb60bb5702d7a21ba149365b175081bbed4152af4475a7098d06d1f0da3365  network_ping.observe/metrics/grafana/dashboards/host.json
 
-d8b527bcb7e2add5d18922fea67c98b5aece02b2e9fd64fcf3ce564e0e5b141c  network_ping.observe/metrics/grafana/dashboards/house.json
+93e0a540673af648576dd7be83c32d56b0885153114bf39756df082cc1d341c1  network_ping.observe/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  network_ping.observe/metrics/grafana/dashboards/openhab.json
 
@@ -780,9 +768,9 @@ d8b527bcb7e2add5d18922fea67c98b5aece02b2e9fd64fcf3ce564e0e5b141c  network_ping.o
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  network_ping.observe/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  network_ping.observe/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  network_ping.observe/metrics/prometheus/alerts.yml
 
-7ffdb25ff9106bd3eeba93afcef3e25077d2ff7cc51cda3dcbd5091ffd9684c1  network_ping.observe/metrics/prometheus/prometheus.yml
+ade605d94ed4ac6ce8b6a04414dbca3aa2fcc5e20c2008f608218937bfc21eb8  network_ping.observe/metrics/prometheus/prometheus.yml
 
 513fcf6cabbe6afe94c1a827c4fa53ca4af3c8db6ba0fa21557df76264400f58  pyatv_http.control/conf/automation/js/all_off.js
 
@@ -820,9 +808,9 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  pyatv_http.con
 
 ba98443fc85ed40e594c8b893a5c43245e3f0fd6605e7f29f4a2cba6cf391265  pyatv_http.control/metrics/grafana/dashboards/devices.json
 
-69c3f92ad7e7547908be6d6303a773fc019442388ed5c1220ee9c460e62b6210  pyatv_http.control/metrics/grafana/dashboards/host.json
+0c03529ff7e7c050d0f5e2c3b29dcd2775a2ec6a835b98eb2295ef103929a5d7  pyatv_http.control/metrics/grafana/dashboards/host.json
 
-e120e9b53cd4ace933db1bd001ae6f4bbff40889e02da53e6715558bd4248688  pyatv_http.control/metrics/grafana/dashboards/house.json
+02f06efcf1370b699ec591a8b7cc30b2b870bfb16fffae10cf2c87f44e4052e9  pyatv_http.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  pyatv_http.control/metrics/grafana/dashboards/openhab.json
 
@@ -830,9 +818,9 @@ e120e9b53cd4ace933db1bd001ae6f4bbff40889e02da53e6715558bd4248688  pyatv_http.con
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  pyatv_http.control/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  pyatv_http.control/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  pyatv_http.control/metrics/prometheus/alerts.yml
 
-7e101b5e92b8de016d74966d2e09451c43f942949dbd2871b9b5ac740fb25f95  pyatv_http.control/metrics/prometheus/prometheus.yml
+e7fe08206e83ebc30dc8e8c2070624cb08b9e801f095f93ecdbda4f0fb76e68f  pyatv_http.control/metrics/prometheus/prometheus.yml
 
 684c99239c28c803ffca3e95afa03ab780bb9b9f6d903a85d80baf6f8b55df54  routed/conf/automation/js/all_off.js
 
@@ -932,9 +920,9 @@ b25ef5184af5ebd74483cc0c68395b9edb0e3a4505af431636c0a85686b1bf76  routed/metrics
 
 216a178c758293867731ffecf4b595a5ead51bbd5ac521c62c90b930bc16de72  routed/metrics/grafana/dashboards/devices.json
 
-6119ac807c289bd1593baf72d1a0b442e7181808330ad43f2cffd02fa509ee89  routed/metrics/grafana/dashboards/host.json
+1b64cea95e57c8180480dee3408765ce0459a80e8b7a6113a3af9d88dc80f702  routed/metrics/grafana/dashboards/host.json
 
-25f99a0b746e48317ef376568461ec81eaf082a462625790f529b36d67bda67d  routed/metrics/grafana/dashboards/house.json
+ce0b2d4261db3d51d716946c37ae239dbfdb67ddf7f02322cf14cf81d5ff2c7e  routed/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  routed/metrics/grafana/dashboards/openhab.json
 
@@ -942,9 +930,9 @@ b25ef5184af5ebd74483cc0c68395b9edb0e3a4505af431636c0a85686b1bf76  routed/metrics
 
 32299030b913a8f214beede89054dcec1610bc35c871c465453206f722068c43  routed/metrics/grafana/dashboards/usage.json
 
-25c4a5c408cfa6ef6e31f69f4af7830d408550563ed2a86ca8bc3e994a7c8667  routed/metrics/prometheus/alerts.yml
+b5384665d81ba765a54533da79b53232b8dca76f44b4918477b78df7a15f4867  routed/metrics/prometheus/alerts.yml
 
-41a9983ac6cabc045c30e0e0da4a4ba4eb05bb80dc81073afb2e171fa6dec67f  routed/metrics/prometheus/prometheus.yml
+7f67373fee13186ac2407c6ddadf0605b89ad761d496154a2e74639d22ded6d2  routed/metrics/prometheus/prometheus.yml
 
 c117cf2ad02b7699ab385db1f7a4c3b3d8313d9cbd3b112e25f57ffd4ea30053  sonos.control/conf/automation/js/playing.js
 
@@ -984,9 +972,9 @@ ba70a14cf5f2d4637c75d688ca919cd7f5fdce636c47b7343bc57d5ad0fe7ce2  sonos.control/
 
 30bb0561319729d449263f88cf56fb9cb7d1ed6734cdd81eebf022186aed9ec7  sonos.control/metrics/grafana/dashboards/devices.json
 
-de4b2e80a778d311e83180a8e358b498c019acaf615776435ba2d2865eaed514  sonos.control/metrics/grafana/dashboards/host.json
+6d7c5fb0eef5f8b8a005c6335a3abf6fd774b777392663e831d0bfdf97a7c0cd  sonos.control/metrics/grafana/dashboards/host.json
 
-d79ad69870e1fad68763c6ecdf492d60f7f893401685455f2f7961e9c7244832  sonos.control/metrics/grafana/dashboards/house.json
+327af282bc0b601d32b47997a81cd58641a4ee5543ce0548c4005b9b20038a81  sonos.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  sonos.control/metrics/grafana/dashboards/openhab.json
 
@@ -994,9 +982,9 @@ d79ad69870e1fad68763c6ecdf492d60f7f893401685455f2f7961e9c7244832  sonos.control/
 
 f692d6b10633e684137797b2cafe8d7873a18852179f01454f6b3665f631c434  sonos.control/metrics/grafana/dashboards/usage.json
 
-46becf79e5d2ce1bed25503d2e46f545438d1d8456f81e4b88a1149383f9700f  sonos.control/metrics/prometheus/alerts.yml
+649f0941e5080fdf73fa8378d4bebfee9b1cfb5202fcef17d8054c7dbd276f5b  sonos.control/metrics/prometheus/alerts.yml
 
-2384f2ee8c231cdb510f2b462554f4c1336d0a95efd93b251ff980d7c455598d  sonos.control/metrics/prometheus/prometheus.yml
+e832bf52a08bfdba18deca6139cd607ba539e95f9ba31355f6e13f404ee33c9a  sonos.control/metrics/prometheus/prometheus.yml
 
 c117cf2ad02b7699ab385db1f7a4c3b3d8313d9cbd3b112e25f57ffd4ea30053  sonos.observe/conf/automation/js/playing.js
 
@@ -1034,9 +1022,9 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  sonos.observe/
 
 68a74affc21f9924574b40dd1ce809b6620aef00caed2c6aae53dae573e3b5b3  sonos.observe/metrics/grafana/dashboards/devices.json
 
-de4b2e80a778d311e83180a8e358b498c019acaf615776435ba2d2865eaed514  sonos.observe/metrics/grafana/dashboards/host.json
+6d7c5fb0eef5f8b8a005c6335a3abf6fd774b777392663e831d0bfdf97a7c0cd  sonos.observe/metrics/grafana/dashboards/host.json
 
-eb1a212c3109e01e4152ab6c57350ca0cbfb8d9354d11e2a5d202528add02f51  sonos.observe/metrics/grafana/dashboards/house.json
+467c20479ee94aba1233baa860c537f376e098f362c9792262c9355f41fd8bb0  sonos.observe/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  sonos.observe/metrics/grafana/dashboards/openhab.json
 
@@ -1044,9 +1032,9 @@ eb1a212c3109e01e4152ab6c57350ca0cbfb8d9354d11e2a5d202528add02f51  sonos.observe/
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  sonos.observe/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  sonos.observe/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  sonos.observe/metrics/prometheus/alerts.yml
 
-2384f2ee8c231cdb510f2b462554f4c1336d0a95efd93b251ff980d7c455598d  sonos.observe/metrics/prometheus/prometheus.yml
+e832bf52a08bfdba18deca6139cd607ba539e95f9ba31355f6e13f404ee33c9a  sonos.observe/metrics/prometheus/prometheus.yml
 
 513fcf6cabbe6afe94c1a827c4fa53ca4af3c8db6ba0fa21557df76264400f58  sony_adcp.control/conf/automation/js/all_off.js
 
@@ -1084,9 +1072,9 @@ f82b06e16d3c0a0f33ded7c48d89cb57ac40a10f764219b770e86b940b52c809  sony_adcp.cont
 
 3da58fdc64346a85149ea5e0adb6f4e87d68f765a348ee599ad637303cfd1dd9  sony_adcp.control/metrics/grafana/dashboards/devices.json
 
-f74f64437859d6b1d0a1632c5a20701b6ab8dc13db0bba38c2a146f9ccd0b12f  sony_adcp.control/metrics/grafana/dashboards/host.json
+b862fd8606cf1c963d219b8edfa3836f3638d0ea4e57534ad6bb12925ca93c09  sony_adcp.control/metrics/grafana/dashboards/host.json
 
-2a2676af1d173947e3589f876990ff974a842599a0e11889fb03c88aa81aa10e  sony_adcp.control/metrics/grafana/dashboards/house.json
+bacf7df20a1db0f56ee8048518ee1d448fce4768e9d745b682bbf95ca47634b4  sony_adcp.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  sony_adcp.control/metrics/grafana/dashboards/openhab.json
 
@@ -1094,9 +1082,9 @@ f74f64437859d6b1d0a1632c5a20701b6ab8dc13db0bba38c2a146f9ccd0b12f  sony_adcp.cont
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  sony_adcp.control/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  sony_adcp.control/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  sony_adcp.control/metrics/prometheus/alerts.yml
 
-46774083c00e450065e8406b14b5bd9da647681741298585f23d9fb720f5a817  sony_adcp.control/metrics/prometheus/prometheus.yml
+e65fc79219e84c3a1ea25f682cad407b5e34fc1c9012709d169620820a35feea  sony_adcp.control/metrics/prometheus/prometheus.yml
 
 93ca095e7da11c78e74db19fd8baf1a4a55c68fec89d4d3ac7d6f01548606f43  sony_adcp.observe/conf/automation/js/sony_adcp_den_device.js
 
@@ -1130,9 +1118,9 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sony_adcp.obse
 
 3da58fdc64346a85149ea5e0adb6f4e87d68f765a348ee599ad637303cfd1dd9  sony_adcp.observe/metrics/grafana/dashboards/devices.json
 
-f74f64437859d6b1d0a1632c5a20701b6ab8dc13db0bba38c2a146f9ccd0b12f  sony_adcp.observe/metrics/grafana/dashboards/host.json
+b862fd8606cf1c963d219b8edfa3836f3638d0ea4e57534ad6bb12925ca93c09  sony_adcp.observe/metrics/grafana/dashboards/host.json
 
-2a2676af1d173947e3589f876990ff974a842599a0e11889fb03c88aa81aa10e  sony_adcp.observe/metrics/grafana/dashboards/house.json
+bacf7df20a1db0f56ee8048518ee1d448fce4768e9d745b682bbf95ca47634b4  sony_adcp.observe/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  sony_adcp.observe/metrics/grafana/dashboards/openhab.json
 
@@ -1140,9 +1128,9 @@ f74f64437859d6b1d0a1632c5a20701b6ab8dc13db0bba38c2a146f9ccd0b12f  sony_adcp.obse
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  sony_adcp.observe/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  sony_adcp.observe/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  sony_adcp.observe/metrics/prometheus/alerts.yml
 
-46774083c00e450065e8406b14b5bd9da647681741298585f23d9fb720f5a817  sony_adcp.observe/metrics/prometheus/prometheus.yml
+e65fc79219e84c3a1ea25f682cad407b5e34fc1c9012709d169620820a35feea  sony_adcp.observe/metrics/prometheus/prometheus.yml
 
 513fcf6cabbe6afe94c1a827c4fa53ca4af3c8db6ba0fa21557df76264400f58  sony_ip_control.control/conf/automation/js/all_off.js
 
@@ -1182,9 +1170,9 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sony_ip_contro
 
 aab9d5a6e47316538d9a4e762efa9e9ad25bb3f6d09bf435b3eab6370c4a2ba2  sony_ip_control.control/metrics/grafana/dashboards/devices.json
 
-4e47d8a76fc82b333f0a894ca147b1e71d83e2bf814e8321aa749f1800d871e9  sony_ip_control.control/metrics/grafana/dashboards/host.json
+2a700e8d60db0cbb49bfa3e0b53aebd728eea95d6c4f4dc69ef1c2d7a89754f9  sony_ip_control.control/metrics/grafana/dashboards/host.json
 
-6550d29c56f8ac4942ffe1c62c34394d82b79259cb56e849d903f308dd2958e4  sony_ip_control.control/metrics/grafana/dashboards/house.json
+3b956c2a5abd687e1ba78288f4c557c4e3402cbad6222fd7eda59558c4746041  sony_ip_control.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  sony_ip_control.control/metrics/grafana/dashboards/openhab.json
 
@@ -1192,9 +1180,9 @@ aab9d5a6e47316538d9a4e762efa9e9ad25bb3f6d09bf435b3eab6370c4a2ba2  sony_ip_contro
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  sony_ip_control.control/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  sony_ip_control.control/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  sony_ip_control.control/metrics/prometheus/alerts.yml
 
-630d66f56c07773faf7d4a463f0a4d548b208d02894a1ea6dc26152b72257167  sony_ip_control.control/metrics/prometheus/prometheus.yml
+c0359429c8432beb43ee5f3578d5cb75ae50448600e5b17b35ef0e770e8fc0f8  sony_ip_control.control/metrics/prometheus/prometheus.yml
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  sony_rest.observe/conf/html/remote/activity.json
 
@@ -1226,9 +1214,9 @@ bc9df2df992f4457a30cebc83eb130fab6ea47f030324451f712bcf6d1bd9c91  sony_rest.obse
 
 aab9d5a6e47316538d9a4e762efa9e9ad25bb3f6d09bf435b3eab6370c4a2ba2  sony_rest.observe/metrics/grafana/dashboards/devices.json
 
-4e47d8a76fc82b333f0a894ca147b1e71d83e2bf814e8321aa749f1800d871e9  sony_rest.observe/metrics/grafana/dashboards/host.json
+2a700e8d60db0cbb49bfa3e0b53aebd728eea95d6c4f4dc69ef1c2d7a89754f9  sony_rest.observe/metrics/grafana/dashboards/host.json
 
-6550d29c56f8ac4942ffe1c62c34394d82b79259cb56e849d903f308dd2958e4  sony_rest.observe/metrics/grafana/dashboards/house.json
+3b956c2a5abd687e1ba78288f4c557c4e3402cbad6222fd7eda59558c4746041  sony_rest.observe/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  sony_rest.observe/metrics/grafana/dashboards/openhab.json
 
@@ -1236,9 +1224,9 @@ aab9d5a6e47316538d9a4e762efa9e9ad25bb3f6d09bf435b3eab6370c4a2ba2  sony_rest.obse
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  sony_rest.observe/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  sony_rest.observe/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  sony_rest.observe/metrics/prometheus/alerts.yml
 
-538bbca63cbb1cf767f27d3c7f798a7e737b2063f9783d884954c5cdae1a41aa  sony_rest.observe/metrics/prometheus/prometheus.yml
+0c78f0b0f68955858344c61541fc360dba76aeb3ea44fc345e4f7175dee154bb  sony_rest.observe/metrics/prometheus/prometheus.yml
 
 e4aa04cb68fae831817043458f64dd6531bd6e70e36aaf1867001bcc563d7afa  ukm404_http.control/conf/automation/js/reboots.js
 
@@ -1274,9 +1262,9 @@ b2a501a26ab8b19f1bdb1ab79911387b2d3402c343e0479d745ee7400f1ae2da  ukm404_http.co
 
 6494a04388dc309b8e190fd13d28c839974d0625f575fbff387c452a4275b406  ukm404_http.control/metrics/grafana/dashboards/devices.json
 
-f9918aeae999d92fe56a96ca9690f5204c73466e519ae347ffe73ab53dfc93c6  ukm404_http.control/metrics/grafana/dashboards/host.json
+72ef5a93521ab200f4b8ba6ee371607f5264e8ee41624f705ee8d79ec2a01b84  ukm404_http.control/metrics/grafana/dashboards/host.json
 
-d908b2438c5757d0f3a12711e725a938829ecc7a084831c8576a88609f2346eb  ukm404_http.control/metrics/grafana/dashboards/house.json
+671802d1cb971775c3d6e004ac84cc46a6777af35e36d4178e9c11496460be08  ukm404_http.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  ukm404_http.control/metrics/grafana/dashboards/openhab.json
 
@@ -1284,9 +1272,9 @@ de0fa2b6d0ea0f65390663d67e58cef4f6ec8ee88db40e86e7430f641625b936  ukm404_http.co
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  ukm404_http.control/metrics/grafana/dashboards/usage.json
 
-3ab23ba82d0e9509f6e803cbdab9f3ab207864ad15b878cc33a67a7ff810bd65  ukm404_http.control/metrics/prometheus/alerts.yml
+4bc8edecc88ea31ff7aa4c032c89e64c268a0c98254d41eb1e75feea7d179812  ukm404_http.control/metrics/prometheus/alerts.yml
 
-226e7c9216d66436812d143b3af0ad300b8f82b29f8ded9e74b1aa989fdb8b74  ukm404_http.control/metrics/prometheus/prometheus.yml
+7e1f679c076184c2b256bc3e3edcb0328f5ef39bc460cdf09dcd997ca56b0335  ukm404_http.control/metrics/prometheus/prometheus.yml
 
 c1ea311c23e2621426805b1ad0799bb35239ce87c3a299f5cbcbec7d580bb5cd  unifi_protect.control/conf/automation/js/unifi_protect.js
 
@@ -1322,9 +1310,9 @@ b9e68a50e10bd7b203ea8f2738268b56c4a250650e0b7be15e9c4b07b02c7dd0  unifi_protect.
 
 40338129cf8c8eeab2e82a16fae71735d6b86e5e26c845283e9eaddd9489a255  unifi_protect.control/metrics/grafana/dashboards/devices.json
 
-567aa7be181b928ac301fc3cc37e86b23da18db5def55d81c5e05101aa6c3d71  unifi_protect.control/metrics/grafana/dashboards/host.json
+743d658a50250e2557d15686471e8bd351305962e1bbfb672f9537f071d4d7d9  unifi_protect.control/metrics/grafana/dashboards/host.json
 
-2d7c7faa532550de740fce8db61886037935e3586d1dd2ea044c462042284144  unifi_protect.control/metrics/grafana/dashboards/house.json
+31f6b5ec24d54ace3f8f7b0a8a080314212e6ddc28a677cfc5447c12765074e0  unifi_protect.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  unifi_protect.control/metrics/grafana/dashboards/openhab.json
 
@@ -1332,9 +1320,9 @@ b9e68a50e10bd7b203ea8f2738268b56c4a250650e0b7be15e9c4b07b02c7dd0  unifi_protect.
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  unifi_protect.control/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  unifi_protect.control/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  unifi_protect.control/metrics/prometheus/alerts.yml
 
-0d96eeb837d3fc897b375cad86f66a43a781ece8ecd80acecf2b6ad0a9240bd7  unifi_protect.control/metrics/prometheus/prometheus.yml
+f40386353cca861b923a57d81ad5443f0e7105bc4f7a955d5d0a68ba39738d85  unifi_protect.control/metrics/prometheus/prometheus.yml
 
 c66835325ad6fc2653a6df47767074316888f1abb8cfcb8240e33c193ccbe045  vrroom_http.observe/conf/html/remote/activity.json
 
@@ -1368,9 +1356,9 @@ f9c85a103d7896e17c3cc3789b44d3df0d687bfcd1b50e8af8bee980a8a2ebf5  vrroom_http.ob
 
 7d49e08feccd03f71d55a20c747dda93136a17919491c954854fb4654d9aed84  vrroom_http.observe/metrics/grafana/dashboards/devices.json
 
-f32358b016ccb915a83e4e442fd0dd1e0be93523fc84e610d87ff376b788b186  vrroom_http.observe/metrics/grafana/dashboards/host.json
+1a6d41b365e2653ad0e3a38d9d4bb5900ccd31afa913e1fefca55a14cb760515  vrroom_http.observe/metrics/grafana/dashboards/host.json
 
-d4e55fbb96c39cbf9a9cc0a8ad436d2cd5e5bc408d4c61cedfb1c8f845bd9b7b  vrroom_http.observe/metrics/grafana/dashboards/house.json
+239e38b218f4cdea2f4c49df3f3a19c3c8befa050f3bb9cf154c77654689a3d5  vrroom_http.observe/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  vrroom_http.observe/metrics/grafana/dashboards/openhab.json
 
@@ -1378,9 +1366,9 @@ d4e55fbb96c39cbf9a9cc0a8ad436d2cd5e5bc408d4c61cedfb1c8f845bd9b7b  vrroom_http.ob
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  vrroom_http.observe/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  vrroom_http.observe/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  vrroom_http.observe/metrics/prometheus/alerts.yml
 
-0d2630c35b67085ded16fea4c3358e301c690b3a01b5236f93f0b256679a25b0  vrroom_http.observe/metrics/prometheus/prometheus.yml
+1214a0dab1fa141286c4da548a242b313ee9e83dc88275abea0a83c9998644a2  vrroom_http.observe/metrics/prometheus/prometheus.yml
 
 7efed524d9c4c4b882bea1b1410fc66830a61485120e57c0631fa6ff6e724c42  vrroom_telnet.control/conf/automation/js/reboots.js
 
@@ -1418,9 +1406,9 @@ f24b32d68f74150db13aa178d49cf30eee5d216f396a59b820b002c076deb62e  vrroom_telnet.
 
 7d49e08feccd03f71d55a20c747dda93136a17919491c954854fb4654d9aed84  vrroom_telnet.control/metrics/grafana/dashboards/devices.json
 
-1413dda8da17f89868483ba128908f0d6041be03c596140644eda2888a101daf  vrroom_telnet.control/metrics/grafana/dashboards/host.json
+4bfb0bc9ae685d24c43ff987dae69b96297b184a4d1587546202dea002cc2483  vrroom_telnet.control/metrics/grafana/dashboards/host.json
 
-d4e55fbb96c39cbf9a9cc0a8ad436d2cd5e5bc408d4c61cedfb1c8f845bd9b7b  vrroom_telnet.control/metrics/grafana/dashboards/house.json
+239e38b218f4cdea2f4c49df3f3a19c3c8befa050f3bb9cf154c77654689a3d5  vrroom_telnet.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  vrroom_telnet.control/metrics/grafana/dashboards/openhab.json
 
@@ -1428,9 +1416,9 @@ d4e55fbb96c39cbf9a9cc0a8ad436d2cd5e5bc408d4c61cedfb1c8f845bd9b7b  vrroom_telnet.
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  vrroom_telnet.control/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  vrroom_telnet.control/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  vrroom_telnet.control/metrics/prometheus/alerts.yml
 
-34b0f8170903f80f94de299369e1484079d5a1e9a8ff9dc3c65d62f62a11b33f  vrroom_telnet.control/metrics/prometheus/prometheus.yml
+bf6175b142a1f0ce98a297fcd3942de1a03e301df5c281671d87c855628ae364  vrroom_telnet.control/metrics/prometheus/prometheus.yml
 
 ed79536cf8e82a99da1a6bae02b188b9d0bbc812caf991f717f7514583331aef  wiim_http.control/conf/automation/js/playing.js
 
@@ -1468,9 +1456,9 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  wiim_http.cont
 
 6c4e31f0d788c20167b33978b7c6b2059e4b4d345921db25e300982d0124fb65  wiim_http.control/metrics/grafana/dashboards/devices.json
 
-86c68f705e47f1741300358074acf337c9b53186e2eb200a2f2b20f864ca8706  wiim_http.control/metrics/grafana/dashboards/host.json
+1079bff939543281bd277821d2249143501acbf5245776cc3c03f87951a24d3f  wiim_http.control/metrics/grafana/dashboards/host.json
 
-e132ab0a8c08e2e5dee5675e5ea3f9c2b583f56902d12516279aed97ae166edb  wiim_http.control/metrics/grafana/dashboards/house.json
+3dc2398654b0a852a4cb7a2bf33de72c2c8624c5589233744bf24ee30135e80a  wiim_http.control/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  wiim_http.control/metrics/grafana/dashboards/openhab.json
 
@@ -1478,9 +1466,9 @@ face026d8edca714ea7e6a2dffe9e78cf516b51feaa3e034585759b45587997f  wiim_http.cont
 
 711f9e797cca6290676b5c85fe9a46aebe9eb4c2390b84506d37319cc3a57ecb  wiim_http.control/metrics/grafana/dashboards/usage.json
 
-8cef56275cdf2f3950b54d630d6eeb43b499d340029c5535bc92f9285c3a71a9  wiim_http.control/metrics/prometheus/alerts.yml
+7fab993e076f0759240e9c9b75bed5ff47909ef0cfbbb0c3cebdf92dd3deec54  wiim_http.control/metrics/prometheus/alerts.yml
 
-8667dbfd74c678736891093fe2c3f457c4b98761c87d21eb3b70f4812b51913c  wiim_http.control/metrics/prometheus/prometheus.yml
+d12b9147ca57ffa5ebbf6bc8ecc9ba1d9c5e7f7b9cf029520700994ea0829232  wiim_http.control/metrics/prometheus/prometheus.yml
 
 ed79536cf8e82a99da1a6bae02b188b9d0bbc812caf991f717f7514583331aef  wiim_http.observe/conf/automation/js/playing.js
 
@@ -1518,9 +1506,9 @@ c96748e8823194a97e345fc3aa31e227c488def16732e758ab1293b22903d5ef  wiim_http.obse
 
 0b8ba91ccf35ae73d86cfabf87cf1a4463141376ddb22fba52cee5d4c9cdb3ee  wiim_http.observe/metrics/grafana/dashboards/devices.json
 
-86c68f705e47f1741300358074acf337c9b53186e2eb200a2f2b20f864ca8706  wiim_http.observe/metrics/grafana/dashboards/host.json
+1079bff939543281bd277821d2249143501acbf5245776cc3c03f87951a24d3f  wiim_http.observe/metrics/grafana/dashboards/host.json
 
-8b111edc3a0448485a1457958028514135fbebd064763816c3f4f6213315107c  wiim_http.observe/metrics/grafana/dashboards/house.json
+2e5be55a7f8700ef87e209b0e02d7294c701b0fcec09683e92ba0c1ebfb37b82  wiim_http.observe/metrics/grafana/dashboards/house.json
 
 050eafb369726d3507bd61510de53d89263013d32ccf9f7a498a7c1a21bcbd72  wiim_http.observe/metrics/grafana/dashboards/openhab.json
 
@@ -1528,6 +1516,6 @@ face026d8edca714ea7e6a2dffe9e78cf516b51feaa3e034585759b45587997f  wiim_http.obse
 
 7ababb1bd61784e31fc3abb5a9a7a1d6d228b60a1c3e99fe7f0ba251326fcd0f  wiim_http.observe/metrics/grafana/dashboards/usage.json
 
-9c6c9f5fa041a154cff100c7b835fd27f4119c5d55c094875e53530ecb78dddb  wiim_http.observe/metrics/prometheus/alerts.yml
+00b4f417ada9a0c0265754db1b4ae4fc5202766863df1724f2a7b8592b3dbd87  wiim_http.observe/metrics/prometheus/alerts.yml
 
-8667dbfd74c678736891093fe2c3f457c4b98761c87d21eb3b70f4812b51913c  wiim_http.observe/metrics/prometheus/prometheus.yml
+d12b9147ca57ffa5ebbf6bc8ecc9ba1d9c5e7f7b9cf029520700994ea0829232  wiim_http.observe/metrics/prometheus/prometheus.yml

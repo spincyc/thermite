@@ -1,7 +1,7 @@
 """Offline checks of the metrics stack: the exporter's routing series, the
 per-check health rules and alerts, the dashboards' JSON and colours, the
-notification adapter's exposition, the access services' textfiles, and
-what a deploy adds for the gateway check and deploy annotations."""
+access services' textfiles, and what a deploy adds for the gateway check
+and deploy annotations."""
 
 import copy
 import json
@@ -28,7 +28,7 @@ import oh_metrics  # noqa: E402
 import oh_ports  # noqa: E402
 import oh_render  # noqa: E402
 import oh_units  # noqa: E402
-from oh_metrics import alerts, dashboards, exporter, notifications  # noqa: E402
+from oh_metrics import alerts, dashboards, exporter  # noqa: E402
 
 INVENTORY = oh_inventory.load(AREA / "instance/devices.yaml")
 HOST = yaml.safe_load((AREA / "instance/host.yaml").read_text())
@@ -465,11 +465,11 @@ class Speakers(unittest.TestCase):
     def test_boards_show_speakers_beside_rooms(self):
         house = self.BOARDS[dashboards.HOUSE]
         titles = [panel["title"] for panel in panels(house)]
-        self.assertEqual(titles[:8], ["Control", "Rooms ready", "Speakers ready", "Remotes", "Needs attention now",
-                                      "Alerts firing", "Phone delivery", "Host"])
+        self.assertEqual(titles[:7], ["Control", "Rooms ready", "Speakers ready", "Remotes", "Needs attention now",
+                                      "Alerts firing", "Host"])
         # The house's tiles fill one row and monitoring's the next.
         widths = [panel["gridPos"]["w"] for panel in panels(house)]
-        self.assertEqual((sum(widths[:4]), sum(widths[5:8])), (24, 24))
+        self.assertEqual((sum(widths[:4]), sum(widths[5:7])), (24, 24))
         ready = next(panel for panel in panels(house) if panel["title"] == "Speakers ready")
         self.assertIn('device=~"example_amp|example_speaker"', ready["targets"][0]["expr"])
         # How the house is used is on Usage, not between the tiles and the alerts.
@@ -791,7 +791,7 @@ class Alerting(unittest.TestCase):
         for group in RULES["groups"]:
             for rule in group["rules"]:
                 if "alert" in rule:
-                    self.assertIn(rule["labels"]["severity"], ("critical", "warning", "heartbeat"))
+                    self.assertIn(rule["labels"]["severity"], ("critical", "warning"))
                     self.assertEqual(rule["annotations"]["summary"], alerts.CATALOG[rule["alert"]][0])
         for title, detail in alerts.CATALOG.values():
             self.assertLessEqual(len(detail), 500)
@@ -799,16 +799,22 @@ class Alerting(unittest.TestCase):
         check = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteCheckFailing")
         self.assertEqual((check["expr"], check["for"]), ('thermite:check{required="true",scope="control"} == 1', "5m"))
 
-    def test_routing_groups_by_room_and_inhibits_repeats(self):
+    def test_nothing_is_delivered_anywhere_and_no_rule_watches_a_delivery(self):
+        self.assertNotIn("ntfy/server.yml", FILES)
+        self.assertNotIn("notifications/catalog.json", FILES)
+        for name in ("ThermiteWatchdog", "ThermiteHeartbeatMissing", "ThermiteNotificationUnavailable"):
+            self.assertNotIn(name, alerts.CATALOG)
+            self.assertNotIn(name, FILES["prometheus/alerts.yml"])
+        boards = [text for path, text in FILES.items() if path.startswith(oh_metrics.GRAFANA_DASHBOARDS)]
+        for text in (FILES["prometheus/alerts.yml"], FILES[oh_metrics.PROMETHEUS_YML], *boards):
+            for series in ("ntfy", "thermite_notification", "alerting_http"):
+                self.assertNotIn(series, text)
+        self.assertEqual([service.unit for service in oh_metrics.services(HOST)
+                          if "ntfy" in service.unit or "notification" in service.unit], [])
+
+    def test_alertmanager_sends_nothing_and_inhibits_repeats(self):
         config = yaml.safe_load(FILES["alertmanager/alertmanager.yml"])
-        route = config["route"]
-        self.assertEqual(route["group_by"], ["alertname", "room"])
-        self.assertEqual(route["routes"][0]["receiver"], "heartbeat")
-        warning = route["routes"][1]
-        self.assertEqual((warning["matchers"], warning["receiver"], warning["repeat_interval"]),
-                         (['severity="warning"'], "incidents", "12h"))
-        self.assertEqual([r["webhook_configs"][0]["url"].rsplit("/", 1)[1] for r in config["receivers"]],
-                         ["alerts", "heartbeat"])
+        self.assertEqual((config["route"], config["receivers"]), ({"receiver": "none"}, [{"name": "none"}]))
         for source, targets in (*alerts.INHIBITS, *alerts.ROOM_INHIBITS):
             self.assertIn(source, alerts.CATALOG)
             self.assertLessEqual(set(targets), set(alerts.CATALOG))
@@ -948,8 +954,8 @@ class Dashboards(unittest.TestCase):
         house = boards()[dashboards.HOUSE]
         titles = [panel["title"] for panel in panels(house)]
         # The house's tiles, what they point at, then monitoring's: a phone stacks them in this order.
-        self.assertEqual(titles[:7], ["Control", "Rooms ready", "Remotes", "Needs attention now", "Alerts firing",
-                                      "Phone delivery", "Host"])
+        self.assertEqual(titles[:6], ["Control", "Rooms ready", "Remotes", "Needs attention now", "Alerts firing",
+                                      "Host"])
         control = next(panel for panel in panels(house) if panel["title"] == "Control")
         self.assertEqual(control["targets"][0]["expr"], alerts.HEALTH)
         attention = next(panel for panel in panels(house) if panel["title"] == "Needs attention now")
@@ -1237,14 +1243,6 @@ class Units(unittest.TestCase):
             self.assertIn('\nReadWritePaths="-/srv/example/runtime/textfile"\n', text, name)
         for text in staging.units("/opt/example/release", state="/srv/example/access").values():
             self.assertNotIn("THERMITE_TEXTFILE_DIR", text)
-
-
-class Notifications(unittest.TestCase):
-    def test_metrics_are_typed(self):
-        text = notifications.Relay("http://127.0.0.1:1", {}, now=lambda: 100).metrics()
-        for name, kind, _ in notifications.METRICS:
-            self.assertIn(f"# TYPE {name} {kind}\n", text)
-        self.assertIn("thermite_notification_delivered_total 0\n", text)
 
 
 class Deploy(unittest.TestCase):

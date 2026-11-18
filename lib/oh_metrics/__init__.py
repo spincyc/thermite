@@ -19,8 +19,10 @@ addresses appear only in the output.
 
 Everything a unit needs that is not a file (listen addresses, retention,
 mounts, arguments) is data here (services()), for the unit renderer in
-lib/oh_deploy.py. Alert rules reuse exact active-path health semantics. Alertmanager, a finite
-notification adapter and ntfy listen only on loopback; phone push is separate.
+lib/oh_deploy.py. Alert rules reuse exact active-path health semantics.
+Alertmanager listens only on loopback and sends nothing: the gateway reads
+the firing alerts from Prometheus for the thermite app's Home
+(oh_identity.alerts).
 """
 
 from __future__ import annotations
@@ -71,7 +73,6 @@ STATE_DATA = "monitoring"
 STATE_PROMETHEUS = f"{STATE_DATA}/prometheus"
 STATE_GRAFANA = f"{STATE_DATA}/grafana"
 STATE_ALERTMANAGER = f"{STATE_DATA}/alertmanager"
-STATE_NTFY = f"{STATE_DATA}/ntfy"
 STATE_SECRETS = f"{STATE_DATA}/secrets"
 #: The access services' metrics (oh_access.metrics), which node_exporter's
 #: textfile collector serves; the services write it as the state's owner.
@@ -79,7 +80,7 @@ STATE_TEXTFILE = "textfile"
 #: The exporter's code, as the last deploy installed it (EXPORTER_APP).
 STATE_EXPORTER_APP = "exporter/app"
 #: The area's files the exporter's container runs, below STATE_EXPORTER_APP.
-EXPORTER_APP = ("lib/oh_metrics/exporter.py", "lib/oh_metrics/notifications.py", "lib/oh_ports.py")
+EXPORTER_APP = ("lib/oh_metrics/exporter.py", "lib/oh_ports.py")
 
 #: Inside the containers. Directories, never single files: a deploy renames a
 #: new file over the old one, and a bind-mounted file would keep the old inode.
@@ -213,18 +214,7 @@ def services(host: dict) -> list[Service]:
     secrets = Volume(STATE_SECRETS, SECRETS_MOUNT, "ro")
     return [
         Service(
-            oh_units.NTFY, oh_units.CONTAINERS[oh_units.NTFY], "ntfy", "Local notification cache",
-            f"{LOOPBACK}:{port['ntfy']}", ("serve", "--config=/etc/ntfy/server.yml"),
-            (Volume(f"{STATE_CONFIG}/ntfy", "/etc/ntfy", "ro"), Volume(STATE_NTFY, "/var/lib/ntfy", "rw")),
-            notes=("Loopback only; no upstream/APNs relay or phone delivery is enabled.",)),
-        Service(
-            oh_units.NOTIFICATIONS, oh_units.CONTAINERS[oh_units.NOTIFICATIONS], "atv_helper", "Local alert delivery adapter",
-            f"{LOOPBACK}:{port['notifications']}",
-            (f"--listen={LOOPBACK}:{port['notifications']}", f"--ntfy=http://{LOOPBACK}:{port['ntfy']}", "--catalog=/etc/thermite-notifications/catalog.json"),
-            (Volume(STATE_EXPORTER_APP, EXPORTER_APP_DIR, "ro"), Volume(f"{STATE_CONFIG}/notifications", "/etc/thermite-notifications", "ro")),
-            command=("python3", f"{EXPORTER_APP_DIR}/{EXPORTER_APP[1]}"), environment=(("PYTHONDONTWRITEBYTECODE", "1"),)),
-        Service(
-            oh_units.ALERTMANAGER, oh_units.CONTAINERS[oh_units.ALERTMANAGER], "alertmanager", "Local alert routing",
+            oh_units.ALERTMANAGER, oh_units.CONTAINERS[oh_units.ALERTMANAGER], "alertmanager", "Local alert list",
             f"{LOOPBACK}:{port['alertmanager']}",
             ("--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager", f"--web.listen-address={LOOPBACK}:{port['alertmanager']}", "--cluster.listen-address="),
             (Volume(f"{STATE_CONFIG}/alertmanager", "/etc/alertmanager", "ro"), Volume(STATE_ALERTMANAGER, "/alertmanager", "rw"))),
@@ -719,10 +709,8 @@ def prometheus_yml(inventory: dict, host: dict, conf=None) -> str:
         "rule_files": ["/etc/prometheus/alerts.yml"],
         "alerting": {"alertmanagers": [{"static_configs": [{"targets": [f"{LOOPBACK}:{port['alertmanager']}"]}]}]},
         "scrape_configs": [
-            *[{"job_name": name, "static_configs": [{"targets": [f"{LOOPBACK}:{port[name]}"]}],
-               **({"metric_relabel_configs": SELF_BUCKETS} if name == "alertmanager" else {})}
-              for name in ("alertmanager", "ntfy", "notifications")],
-            _blackbox_job("alerting_http", [{"targets": [url], "labels": {"__param_module": HTTP_2XX, "service": name}} for name, url in (("alertmanager", f"http://{LOOPBACK}:{port['alertmanager']}/-/ready"), ("ntfy", f"http://{LOOPBACK}:{port['ntfy']}/v1/health"), ("notifications", f"http://{LOOPBACK}:{port['notifications']}/health"))], port["blackbox"]),
+            {"job_name": "alertmanager", "static_configs": [{"targets": [f"{LOOPBACK}:{port['alertmanager']}"]}],
+             "metric_relabel_configs": SELF_BUCKETS},
             {"job_name": "prometheus", "static_configs": [{"targets": [f"{LOOPBACK}:{port['prometheus']}"]}],
              "metric_relabel_configs": SELF_BUCKETS},
             {"job_name": "node", "static_configs": [{"targets": [f"{LOOPBACK}:{port['node_exporter']}"]}]},
@@ -741,7 +729,7 @@ def prometheus_yml(inventory: dict, host: dict, conf=None) -> str:
         ],
     }
     header = [RENDERED, "",
-              "Scrapes, exact active-path alert rules and local-only notification routing.",
+              "Scrapes and exact active-path alert rules.",
               "The openHAB token is read from a file in the secrets mount, never written here."]
     if unknown:
         header += ["", "Devices with an address but no control port to probe (openHAB's network",
@@ -867,9 +855,7 @@ def render(inventory: dict, host: dict, versions: dict | None = None, *, conf=No
         PROMETHEUS_YML: prometheus,
         BLACKBOX_YML: blackbox_yml(),
         "prometheus/alerts.yml": _yaml([RENDERED], alerts.rules(mapping)),
-        "alertmanager/alertmanager.yml": _yaml([RENDERED], alerts.alertmanager(ports(host)["notifications"])),
-        "ntfy/server.yml": _yaml([RENDERED], alerts.ntfy(ports(host)["ntfy"])),
-        "notifications/catalog.json": _json(alerts.CATALOG),
+        "alertmanager/alertmanager.yml": _yaml([RENDERED], alerts.alertmanager()),
         GRAFANA_INI: grafana_ini(host),
         GRAFANA_DATASOURCE: grafana_datasource(host, versions),
         GRAFANA_PROVIDER: grafana_provider(),

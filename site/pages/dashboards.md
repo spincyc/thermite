@@ -13,9 +13,7 @@ See device availability, room history and host health in Grafana, from a phone o
 | blackbox_exporter | 13609, this machine only | whether each device answers on the port thermite controls it through (except where a connection would cost the device a session or a TLS handshake: Android TV, Cast, WiiM, AVPro and Sony projector ports, which their Things' status covers), and whether the remote gateway answers over HTTPS |
 | thermite's exporter | 13610, this machine only | each device's status, power, input and volume, by room |
 | Grafana | 13611, your network | the dashboards |
-| Alertmanager | 13612, this machine only | routes monitoring alerts |
-| ntfy | 13613, this machine only | keeps local notifications |
-| Notification adapter | 13614, this machine only | delivers known alert messages to ntfy |
+| Alertmanager | 13612, this machine only | lists the alerts Prometheus sends it; delivers them nowhere |
 
 Prometheus also reads runtime memory, threads, events and rule runs through the Metrics add-on. `thermite test boot` checks that it answers. See [storage requirements](requirements.html#storage-and-metrics) for the retention budget.
 
@@ -23,7 +21,7 @@ Prometheus also reads runtime memory, threads, events and rule runs through the 
 
 Open `http://<thermite's address>:13611/`. Anyone on your network can look without logging in. Six dashboards come with it:
 
-- **House health**, the home page: is the house OK? Tiles answer it at a glance. First the house's: control, rooms ready, speakers ready where the house has speakers, and remotes; **Needs attention now**, right below them, names each room, problem and device in plain words. Then monitoring's: alerts firing, phone delivery and the host, with the alerts that are firing and switching since yesterday evening. Phone delivery reads "No subscribers" until [phone push](#alerts) is set up: alerts are kept, and nobody is told.
+- **House health**, the home page: is the house OK? Tiles answer it at a glance. First the house's: control, rooms ready, speakers ready where the house has speakers, and remotes; **Needs attention now**, right below them, names each room, problem and device in plain words. Then monitoring's: alerts firing and the host, with the alerts that are firing and switching since yesterday evening.
 - **Switching and remotes**: how long source changes take and how they end, the routing executor and any quarantined device, the remote gateway's latency, answers, requests in flight and event streams (how many, how long they last, what fails them, and the live updates they carry), what remote pages gave up waiting for, and the room policy worker.
 - **Devices**: one row per device, those in trouble first, with its Thing, control port, problem and whether a room needs it now; the Things that aren't online, and in what status; then every room's sources, power and speakers through the day, and listening levels. **Room**, at the top, keeps the dashboard to the rooms you choose.
 - **openHAB runtime**: memory, thread pools, the thingHandler pool, how long its REST API takes to answer, events, the busiest topics and rules, and the Things that were away longest.
@@ -107,11 +105,13 @@ thermite status              # Grafana's address and whether Prometheus reaches 
 
 Prometheus evaluates a fixed set of alerts. Each names a room or service in plain words, and waits a few minutes so a blip doesn't alert:
 
-- **Critical**: a required control check failing for five minutes (one alert per check, with its room and device; a room's alerts arrive together), the runtime unavailable, the remote gateway down, remotes starved of connections, routing commands quarantined, the policy worker stalled, a service down, or the thingHandler pool saturated.
-- **Warnings**: a required control check with no reading for ten minutes (most often a room in use whose source can't be read), remotes timing out, a service restarting repeatedly, a running service whose metrics file has stopped updating, monitoring itself broken, low disk space, and the rest. A warning repeats every 12 hours at most.
+- **Critical**: a required control check failing for five minutes (one alert per check, with its room and device), the runtime unavailable, the remote gateway down, remotes starved of connections, routing commands quarantined, the policy worker stalled, a service down, or the thingHandler pool saturated.
+- **Warnings**: a required control check with no reading for ten minutes (most often a room in use whose source can't be read), remotes timing out, a service restarting repeatedly, a running service whose metrics file has stopped updating, monitoring itself broken, low disk space, and the rest.
 
 The checks of monitoring itself (Prometheus reaching each of its targets, node_exporter reading the services' states, Grafana answering) are not part of control health, and a failing one is a warning: rooms can still be controlled.
 
-When the runtime is down, alerts that follow from it are held back, and so are remote time-outs while the gateway is down, and a room's unread checks while one of its checks is failing. Alertmanager routes alerts through a local notification adapter to ntfy. These services listen only on this machine; phone push requires separate setup. A local heartbeat checks that alert evaluation and delivery are working.
+When the runtime is down, alerts that follow from it are held back, and so are remote time-outs while the gateway is down, and a room's unread checks while one of its checks is failing.
+
+Alerts appear in the thermite app: Home shows the ones firing now, critical ones first, each with its room, device and check where it has them. The gateway reads them from Prometheus on this machine, and nothing is sent to a phone or to any other service. Everyone who can open the app sees the alerts about a room or a device; alerts about the house as a whole (a service, the host, monitoring itself) are shown to an administrator. Home also says when monitoring itself isn't answering or has stopped evaluating its alerts, so an empty list is never mistaken for a healthy house. House health and Host list the alerts firing too, every one of them.
 
 The [ports guide](ports.html) lists every listener and its network exposure.
