@@ -27,7 +27,7 @@ Open `http://<thermite's address>:13611/`. Anyone on your network can look witho
 - **Host**: how many scrape targets are up and which are down, thermite's services and their restarts, alerts firing, CPU, memory, disk space and I/O.
 - **Usage**: each room's source through the day, which sources the house used and for how long, what each device played, when and in which rooms, and where speakers played. It is not a health signal.
 
-Colour means one thing on every dashboard, in tiles, tables and charts alike: green is OK, amber a warning, red a failure, grey unknown, slate Off, and tan use: a source selected, a device on, or how much of something a chart measures. A chart's lines of one kind are shades of tan, some dashed; point at the chart to read which is which. A red band across a chart is a limit. Dashed vertical lines mark service starts and deploys on the dashboards with charts; switch them off at the top.
+Colour means one thing on every dashboard, in tiles, tables and charts alike: green is OK, amber a warning, red a failure, grey unknown, slate Off, and tan use: a source selected, a device on, or how much of something a chart measures. A chart's lines of one kind are shades of tan, some dashed; point at the chart to read which is which. A red band across a chart is a limit. Dashed vertical lines mark service starts and deploys on the dashboards with charts.
 
 A tile, or a room in a table, is a link where another dashboard says more: a room opens Devices for that room. **Dashboards**, at the top, lists them all.
 

@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Dashboards on a phone: the marks of service starts and deploys are
+  always drawn and have no switches, which took a row above the first
+  panel; Usage's opening note is short enough to read in full, where a
+  phone showed its first line.
 - Dashboards: Devices shows how the commands devices took ended, and
   whether a device's problem is one that holds now.
   - **Commands by outcome** counts the commands thermite's scripts took

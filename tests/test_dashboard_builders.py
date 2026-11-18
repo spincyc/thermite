@@ -312,6 +312,27 @@ class Words(unittest.TestCase):
                     self.assertNotIn("_", config["displayName"], panel["title"])
 
 
+class Phone(unittest.TestCase):
+    """The owner's first screen is 390 px wide."""
+
+    def test_the_usage_note_is_as_long_as_its_panel_shows_on_a_phone(self):
+        """A note three grid rows tall shows two lines of some 44
+        characters at 390 px, and cut the rest of a longer one."""
+        note, = [panel for panel in test_metrics.panels(BOARDS["example usage.json"])
+                 if panel["type"] == "text" and panel["title"] == "How the house is used"]
+        self.assertEqual(note["gridPos"]["h"], 3)
+        self.assertLessEqual(len(note["options"]["content"].replace("*", "")), 2 * 44)
+
+    def test_the_devices_table_starts_with_what_a_phone_can_show(self):
+        """A phone shows the device and two or three states before the
+        table scrolls sideways: what says trouble now comes first."""
+        table, = [panel for panel in test_metrics.panels(BOARDS["example devices.json"]) if panel["title"] == "Devices"]
+        order = table["transformations"][-1]["options"]["indexByName"]
+        names = {"label": "Device", **table["transformations"][-1]["options"]["renameByName"]}
+        self.assertEqual([names[field] for field in sorted(order, key=order.get)][:5],
+                         ["Device", "Thing", "Port", "Reads", "Needed"])
+
+
 class Rooms(unittest.TestCase):
     """Devices is one board for every room, kept to the rooms chosen in
     its Room variable."""

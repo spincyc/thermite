@@ -1174,6 +1174,10 @@ class Dashboards(unittest.TestCase):
                   for name, board in boards().items()}
         self.assertLessEqual({"Service starts", "Deploys"}, marked[dashboards.SWITCHING])
         self.assertFalse({"Service starts", "Deploys"} & marked[dashboards.HOUSE])
+        # Marked always, with no switch at the top: two switches took a row of a phone's screen.
+        for board in boards().values():
+            for annotation in board["annotations"]["list"]:
+                self.assertEqual((annotation["enable"], annotation["hide"]), (True, True), annotation["name"])
         self.assertNotIn("hour()", json.dumps(boards()), "hour() is UTC only")
 
     def test_routing_counts_read_unknown_not_zero_while_telemetry_is_unreadable(self):

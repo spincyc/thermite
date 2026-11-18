@@ -723,15 +723,17 @@ class Board:
         self._y += 1
 
 
-#: Service starts and deploys, marked on the time axes of the boards that use them.
+#: Service starts and deploys, marked on the time axes of the boards that use
+#: them. Always on, with no switch at the top (`hide`): two switches nobody
+#: turns took a row of a phone's screen above the first panel.
 ANNOTATIONS = [
     {"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": True, "hide": True,
      "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"},
-    {"datasource": DATASOURCE, "enable": True, "iconColor": UNKNOWN, "name": "Service starts",
+    {"datasource": DATASOURCE, "enable": True, "hide": True, "iconColor": UNKNOWN, "name": "Service starts",
      "expr": 'changes(node_systemd_unit_start_time_seconds{job="node",name=~"thermite-.*\\\\.service"}[2m]) > 0',
      "step": "1m", "titleFormat": "{{name}} started", "textFormat": "", "tagKeys": "name",
      "useValueForTime": False},
-    {"datasource": DATASOURCE, "enable": True, "iconColor": IN_USE, "name": "Deploys",
+    {"datasource": DATASOURCE, "enable": True, "hide": True, "iconColor": IN_USE, "name": "Deploys",
      "expr": "changes(thermite_deploy_timestamp_seconds[2m]) > 0", "step": "1m", "titleFormat": "Deploy",
      "textFormat": "", "tagKeys": "", "useValueForTime": False},
 ]
@@ -1689,9 +1691,10 @@ def usage(mapping: dict) -> dict:
     # A known zero is valid only while the exporter can read the runtime.
     active_count = f"(sum({active}) or vector(0)) and on() ({available})"
     unknown_count = f"({len(zones)} - (count({observed}) or vector(0))) and on() ({available})"
-    board.add(note("How the house is used", "Selected sources and what speakers play through the day, **not** a "
-                   "health signal: House health is. Off and idle are normal; gaps mean unknown. History builds "
-                   "from installation, with no backfill."), 24, 2)
+    # Two lines at a phone's width, which is what the panel holds there: a longer note was cut after its
+    # first line. The rest is in the board's description.
+    board.add(note("How the house is used", "**Not** a health signal. Off and idle are normal; a gap means "
+                   "unknown."), 24, 3)
     if not zones:
         if _speakers(mapping):
             if mapping.get("playing"):
@@ -1700,7 +1703,8 @@ def usage(mapping: dict) -> dict:
         else:
             board.add(note("No source observations configured", "This house has no routed source Items or "
                            "speakers; no use is inferred from power or reachability."), 24, 3)
-        return dashboard(USAGE, board, "Observed room/source use and listening; Off is not a failure.",
+        return dashboard(USAGE, board, "Observed room/source use and listening; Off is not a failure. House "
+                         "health is the health signal. History starts at installation, with no backfill.",
                          annotations=False)
     board.add(timeseries("The house through the day", [
         Series(active_count, "In use", IN_USE),
@@ -1738,7 +1742,8 @@ def usage(mapping: dict) -> dict:
         _listened(board, mapping)
     return dashboard(USAGE, board, "How the house is used: zones in use, each room's source through the day, "
                      "where time went, the source mix, what played and where speakers played. Off is normal; "
-                     "missing observations stay unknown.", annotations=False)
+                     "missing observations stay unknown. House health is the health signal. History starts at "
+                     "installation, with no backfill.", annotations=False)
 
 
 def _listened(board: Board, mapping: dict) -> None:
