@@ -7,7 +7,7 @@
       detail: "Watch and listen in every room", note: "Pair devices from the Remotes menu", compact: "Rooms, devices & pairing" },
     { id: "pairing", screen: "pairing", key: "F6", label: "Pair devices", href: "pair.html", parent: "remotes", auth: true },
     { id: "security", screen: "security", key: "F3", label: "Security", href: "security.html", top: true, module: true,
-      detail: "Authentication and access", note: "Accounts, locks and schedules", compact: "Authentication & access" },
+      detail: "Accounts and access", note: "Accounts, locks and schedules", compact: "Accounts & access" },
     { id: "cameras", screen: "cameras", key: "F4", label: "Cameras", href: "cameras.html", top: true, module: true,
       detail: "Camera status and viewing", note: "Open a camera when you need it", compact: "Status & viewing" },
     { id: "site", screen: "topology", key: "F5", label: "Site", href: "topology.html", top: true, module: true,
@@ -36,7 +36,7 @@
   function allowed(entry, access) {
     // The plain-HTTP Guest listener serves Home and Remotes only (oh_identity/guest.py).
     if (access?.guestOnly) return entry.guest === true;
-    if (entry.auth && access?.authEnabled && !access.authEnabled()) return false;
+    if (entry.auth && access?.accountsExist && !access.accountsExist()) return false;
     if (entry.id === "pairing" && access?.has && !access.has("pairing.manage")) return false;
     if (entry.system) return Boolean(access && (access.native || access.canEdit()));
     if (entry.account && access?.native) return false;

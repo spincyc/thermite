@@ -25,6 +25,9 @@ class AccessModeUI(unittest.TestCase):
     def test_guest_remote_controls_stay_available_once_accounts_exist(self):
         self.assertTrue(self.proof["enabledGuest"])
 
+    def test_cameras_point_to_security_where_there_is_no_account_to_sign_in_to(self):
+        self.assertTrue(self.proof["camerasNote"])
+
     def test_the_first_administrator_clears_authority_and_rejects_inflight_old_responses(self):
         self.assertTrue(self.proof["transitionFence"])
 

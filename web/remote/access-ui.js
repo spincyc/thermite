@@ -294,7 +294,7 @@
   if (page === "access") login().catch((error) => status(error.message, true));
   else if (page === "security") security().catch((error) => status(error.message, true));
   else client.ready().then(() => {
-    if (!client.authEnabled()) {
+    if (!client.accountsExist()) {
       document.querySelectorAll("form, .settings-room, .access-toolbar").forEach((item) => { item.hidden = true; });
       status("Create the first administrator in Security to use accounts, locks and room schedules."); return;
     }

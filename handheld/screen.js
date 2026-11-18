@@ -98,9 +98,8 @@ function screen(session, layouts) {
       const bubbleState = session.bubbleState(item, state);
       const lock = session.bubbleLock(item, bubbleState);
       // The choice that was sent and never read back is marked on its own
-      // bubble. view().unconfirmed is its label; the bubble is found by the
-      // id in the room's state (asked of lane web: the id in view() too).
-      const shownState = !item.choose ? bubbleState : !heard ? "stale" : state.unconfirmed === item.id ? "unconfirmed" : bubbleState;
+      // bubble: view().unconfirmedId names it, and unconfirmed is its label.
+      const shownState = !item.choose ? bubbleState : !heard ? "stale" : shown.unconfirmedId === item.id ? "unconfirmed" : bubbleState;
       return { id: item.id, label: item.label, state: shownState, lock: lock.locked === true, inert: lock.inert === true };
     }),
     selected: session.selectedBubble(list) || null,

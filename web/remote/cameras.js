@@ -337,6 +337,14 @@
     return { snapshot, live, stop };
   }
 
+  // What a visitor who may not see camera video is told to do. With no
+  // account yet there is nobody to sign in as: Security is where the first
+  // one is made.
+  function accountNote(access) {
+    return access.accountsExist() ? "Sign in to view snapshots and live video."
+      : "Create the first administrator in Security to view snapshots and live video.";
+  }
+
   function mount(document, options = {}) {
     const root = document.querySelector("[data-camera-app]");
     if (!root) return null;
@@ -345,7 +353,8 @@
     const model = create({ ...options, mock, manifestURL: global.ThermiteNavigation?.asset("cameras.json") || "cameras.json" });
     const find = (selector) => root.querySelector(selector);
     const access = global.ThermiteAccess?.client;
-    // Everyone sees camera status; media follows the camera.view permission.
+    // Everyone sees camera status; media follows the camera.view permission,
+    // which an account has, and a Guest where an Admin said so.
     const mediaNeedsAccount = () => !mock && Boolean(access && !access.native && access.current() && !access.has("camera.view"));
     const cards = new Map();
     let selected = global.location.hash.slice(1), filter = "all", stopped = false, mediaKind = "idle";
@@ -436,7 +445,7 @@
       const signIn = mediaNeedsAccount();
       find("[data-camera-snapshot]").disabled = signIn || camera.online === false;
       find("[data-camera-live]").disabled = signIn || camera.online === false || !quality.value;
-      if (signIn && mediaKind === "idle") find("[data-media-message]").textContent = "Sign in to view snapshots and live video.";
+      if (signIn && mediaKind === "idle") find("[data-media-message]").textContent = accountNote(access);
     }
 
     const current = () => model.camera(selected);
@@ -467,7 +476,7 @@
     return { model, viewer, select: choose, stop() { stopped = true; model.close(); viewer.stop(); } };
   }
 
-  const api = { catalogue, create, media, mount, text };
+  const api = { catalogue, create, media, mount, text, accountNote };
   global.RemoteCameras = api;
   if (typeof module === "object" && module.exports) module.exports = api;
   if (global.document && global.document.querySelector("[data-camera-app]")) mount(global.document);

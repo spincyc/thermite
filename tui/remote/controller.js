@@ -319,7 +319,7 @@ function create(options) {
   }
 
   function openPairing() {
-    if (options.access && !options.access.native && !options.access.authEnabled()) {
+    if (options.access && !options.access.native && !options.access.accountsExist()) {
       pairing.alert = "Create the first administrator in Security (F3) to pair devices."; pairing.loaded = true; changed(); return;
     }
     if (options.access && !options.access.native && options.access.current() && !options.access.has("pairing.manage")) {

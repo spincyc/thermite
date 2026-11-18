@@ -7,6 +7,10 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The clients say "accounts" where they said "authentication":
+  Security is "Accounts and access" on Home and in the menu. Where
+  no account exists yet, Cameras points to Security to create the
+  first administrator instead of asking to sign in.
 - `make check-browser` opens every page of the example house in the
   system's Chromium, as a phone (390x844) and as a desktop
   (1440x900), behind the gateway's Content-Security-Policy header,

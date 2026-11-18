@@ -180,7 +180,7 @@
         start() {
           stop(); const own = generation;
           const live = () => own === generation && active && !ended && wanted();
-          if (legacy || mock || !client.authEnabled() || !live()) return Promise.resolve(null);
+          if (legacy || mock || !client.accountsExist() || !live()) return Promise.resolve(null);
           const refresh = () => live() ? read().catch(() => null).finally(() => {
             if (live()) { timer = setTimeout(refresh, POLICY_EVERY); if (timer.unref) timer.unref(); }
           }) : undefined;
@@ -364,7 +364,7 @@
     }
     // The gateway has no authentication mode: an account exists or none does
     // yet (bootstrap_required), and what Guests see is two settings of their
-    // own. enabled, which authEnabled() answers, is "an account exists":
+    // own. enabled, which accountsExist() answers, is "an account exists":
     // only then is there anyone to sign in, hold a lock or administer.
     function securityStatus(value) {
       if (!value || typeof value.bootstrap_required !== "boolean" || typeof value.setup_available !== "boolean"
@@ -420,7 +420,7 @@
     async function json(path, method, value, options) {
       await ready();
       if (legacy) throw problem("access_not_configured", 404);
-      if (!client.authEnabled() && (/^\/api\/v1\/(users|tokens)(\/|$)/.test(path) || /\/(policy|lock)$/.test(path))) throw problem("auth_disabled", 403);
+      if (!client.accountsExist() && (/^\/api\/v1\/(users|tokens)(\/|$)/.test(path) || /\/(policy|lock)$/.test(path))) throw problem("auth_disabled", 403);
       if (mock) return (config.mockRequest || demoRequest)(path, method || "GET", value);
       const init = { ...(options || {}), method: method || "GET", headers: { Accept: "application/json" } };
       if (value !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(value); }
@@ -451,22 +451,22 @@
       // The HTTPS site's origin, which the Guest listener names; else null.
       secureSite: () => secure,
       security: () => security,
-      authEnabled: () => mock || Boolean(security && security.enabled),
+      accountsExist: () => mock || Boolean(security && security.enabled),
       current: () => user,
       subscribe(fn) { listeners.push(fn); return () => { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); }; },
       has(permission) { return legacy || Boolean(user && user.permissions && user.permissions.includes(permission)); },
-      canEdit() { return client.authEnabled() && Boolean(user && user.can_edit); },
+      canEdit() { return client.accountsExist() && Boolean(user && user.can_edit); },
       // Only a known lock holds a command back. While a room's lock is unknown
       // (not read yet, or unreadable past the grace) commands are sent: the
       // server checks each one under the room lock and refuses it if locked.
       canControl(room) {
         if (legacy || mock) return true;
-        return !client.authEnabled() || policies[room]?.effective?.allowed !== false;
+        return !client.accountsExist() || policies[room]?.effective?.allowed !== false;
       },
-      policy(room) { return client.authEnabled() ? policies[room] || null : null; },
+      policy(room) { return client.accountsExist() ? policies[room] || null : null; },
       // "checking" until the first answer for a room; a failed read stays "unavailable" until one succeeds.
       // Neither is a lock: canControl holds nothing back for them.
-      policyStatus(room) { return !client.authEnabled() ? "off" : policies[room] ? "ready" : policyFailures.has(room) ? "unavailable" : "checking"; },
+      policyStatus(room) { return !client.accountsExist() ? "off" : policies[room] ? "ready" : policyFailures.has(room) ? "unavailable" : "checking"; },
       async loadPolicy(room) {
         const sequence = policyReads[room] = (policyReads[room] || 0) + 1, authority = authRevision;
         try {
@@ -523,7 +523,7 @@
           return { locked: policy.effective.locked === true, manual: Boolean(policy.manual_lock),
             until: policy.effective.until || null, reason: policy.effective.reason || "" };
         }
-        return client.authEnabled() && lockRooms?.[room] || null;
+        return client.accountsExist() && lockRooms?.[room] || null;
       },
       async savePolicy(room, revision, value) {
         const saved = await json("/api/v1/rooms/" + encodeURIComponent(room) + "/policy", "PUT", { revision, config: value });
@@ -534,7 +534,7 @@
       async setRoomLock(room, revision, locked, desired) {
         await ready();
         const authority = authRevision;
-        if (!client.authEnabled()) throw problem("auth_disabled", 403);
+        if (!client.accountsExist()) throw problem("auth_disabled", 403);
         if (!client.canEdit() || policies[room]?.can_lock !== true) throw problem("forbidden", 403);
         if (policyWrites.has(room)) return null;
         policyWrites.add(room); policyReads[room] = (policyReads[room] || 0) + 1;

@@ -949,7 +949,7 @@
       let message = "";
       try {
         await access.ready();
-        if (!access.authEnabled()) message = "Create the first administrator in Security to pair devices.";
+        if (!access.accountsExist()) message = "Create the first administrator in Security to pair devices.";
         else if (!access.has("pairing.manage")) message = "Sign in as an administrator from Account to pair devices.";
       } catch (error) { message = error.message; }
       if (message) {

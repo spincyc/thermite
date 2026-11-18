@@ -17,7 +17,7 @@ function create(client, house, changed) {
       if (!client || client.native) return;
       if (kind === "security") { await client.loadSecurity(); return; }
       await client.ready();
-      if (!client.authEnabled()) return;
+      if (!client.accountsExist()) return;
       if (kind === "settings") { const value = await client.loadPolicy(state.room); if (turn === generation) state.policy = value; }
       else if (kind === "users" && canEdit()) {
         const users = await client.json("/api/v1/users");
@@ -57,7 +57,7 @@ function create(client, house, changed) {
       return y;
     }
     if (!client.security()) { line("Authentication status unavailable. Reopen the remote after the access service is ready."); return y; }
-    if (!client.authEnabled()) {
+    if (!client.accountsExist()) {
       line("No accounts yet", "strong");
       line("Basic remote controls are available without signing in. Create the first administrator in Security (F3) for cameras, accounts, device pairing, locks and room schedules."); return y;
     }
@@ -197,6 +197,6 @@ function create(client, house, changed) {
     }
     return false;
   }
-  return { native: !client || client.native, authEnabled: () => Boolean(client?.authEnabled()), has: (permission) => Boolean(client?.has(permission)), state, open, content, formContent, activate, key, cancel: () => { generation++; state.loading = false; if (state.form?.data) state.form.data.password = ""; state.form = null; }, canEdit };
+  return { native: !client || client.native, accountsExist: () => Boolean(client?.accountsExist()), has: (permission) => Boolean(client?.has(permission)), state, open, content, formContent, activate, key, cancel: () => { generation++; state.loading = false; if (state.form?.data) state.form.data.password = ""; state.form = null; }, canEdit };
 }
 module.exports = { create };

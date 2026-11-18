@@ -160,7 +160,10 @@ class ListenPage(unittest.TestCase):
         self.assertEqual(out["unconfirmed"], [[True, said, False, None], "Player", "off",
                                               ["off", "Off", "Example West, Off. Player was not confirmed"],
                                               ["Example West: Off. Player was not confirmed"]])
-        self.assertEqual(out["read"], [[False, "", False, None], None])
+        self.assertEqual(out["unconfirmedId"], "example_player")
+        self.assertEqual(out["read"], [[False, "", False, None], None, None])
+        # A listening room's view has the same fields: whether the house is heard, and no choice.
+        self.assertEqual(out["listening"], [[True, None, None], [False, None, None]])
 
     def test_every_problem_code_is_said_in_its_options_words_and_never_as_a_code(self):
         """The codes and their words are the options the page was given:

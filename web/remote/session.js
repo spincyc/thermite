@@ -209,7 +209,7 @@
     // room's saved policy, so it refuses every command there.
     function roomLock() {
       const access = backend.access, room = current;
-      const enabled = Boolean(room && !room.listenOnly && access && !access.native && access.authEnabled());
+      const enabled = Boolean(room && !room.listenOnly && access && !access.native && access.accountsExist());
       const policy = enabled ? access.policy(room.id) : null, status = enabled ? access.policyStatus(room.id) : "off";
       const manual = Boolean(policy?.manual_lock), locked = policy?.effective?.locked === true;
       const state = room && states[room.id];
@@ -531,15 +531,18 @@
     // as it lasts: connected is false while the house is not heard, when led
     // and short are what was last read and the alert says only that;
     // unconfirmed is the label of a source chosen, sent and never read back
-    // (backend getState), or null.
+    // (backend getState), and unconfirmedId its id, by which a client finds
+    // its bubble; both null otherwise, and in Listen, where nothing is chosen.
     function view(room, state) {
       if (room.listenOnly || (listen && room.speakers.length && mode() === "listen")) {
-        return listen ? Object.assign({}, listen.status(room.id)) : { led: "off", short: "\u2026", spoken: "reading", playing: null };
+        return Object.assign({}, listen ? listen.status(room.id) : { led: "off", short: "\u2026", spoken: "reading", playing: null },
+          { connected: connected(), unconfirmed: null, unconfirmedId: null });
       }
       const shown = sourceView(room, state);
       shown.connected = connected();
       const unread = state.unconfirmed ? option(room, state.unconfirmed) : null;
       shown.unconfirmed = state.unconfirmed ? (unread ? unread.label : state.unconfirmed) : null;
+      shown.unconfirmedId = state.unconfirmed || null;
       shown.playing = state.status === "current" && option(room, state.value) ? playing(room, state.value) : null;
       // Nothing on the screen that says what plays: what its speakers play.
       if (!shown.playing && listen && room.speakers.length) shown.playing = listen.status(room.id).playing;

@@ -97,8 +97,10 @@ class Listen(unittest.TestCase):
 
     def test_a_room_of_speakers_says_what_they_play_as_a_routed_room_says_its_source(self):
         listed = dict(self.out["listed"])
+        # With the fields a routed room's view has: the house is heard, and no choice waits to be read back.
         self.assertEqual(listed["fixture_den"], {"led": "ok", "short": "Playing", "spoken": "playing Harbour Lights · The Lanterns",
-                                                 "playing": "♪ Harbour Lights · The Lanterns"})
+                                                 "playing": "♪ Harbour Lights · The Lanterns",
+                                                 "connected": True, "unconfirmed": None, "unconfirmedId": None})
         self.assertEqual(listed[ROOM]["short"], "Off")
 
     def test_the_mode_is_every_rooms_and_a_room_of_one_mode_brings_it(self):
@@ -119,7 +121,8 @@ class Listen(unittest.TestCase):
         self.assertEqual(self.out["staleRoom"], {"mode": "listen", "room": ROOM, "kept": "listen"})
 
     def test_a_speaker_music_cannot_reach_that_reports_nothing_is_not_answering(self):
-        self.assertEqual(self.out["notAnswering"], {"led": "bad", "short": "Not answering", "spoken": "not answering", "playing": None})
+        self.assertEqual(self.out["notAnswering"], {"led": "bad", "short": "Not answering", "spoken": "not answering", "playing": None,
+                                                    "connected": True, "unconfirmed": None, "unconfirmedId": None})
         # One Music Assistant does not have is still being read.
         self.assertEqual(self.out["reading"], "…")
 

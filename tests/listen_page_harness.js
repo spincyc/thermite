@@ -805,9 +805,20 @@ async function failure(out) {
   backend.emit({type: 'state', room: WATCH, state: Object.assign({}, state, {unconfirmed: 'example_player'})});
   await time.tick(60000);
   out.unconfirmed = [drawn(), view().unconfirmed, view().led, row(), heard.splice(0)];
+  // Its id too, by which a client finds the bubble to mark.
+  out.unconfirmedId = view().unconfirmedId;
   backend.emit({type: 'state', room: WATCH, state: state});
   await time.tick(50);
-  out.read = [drawn(), view().unconfirmed];
+  out.read = [drawn(), view().unconfirmed, view().unconfirmedId];
+  // A room in Listen says the same of the house, and has no choice to confirm.
+  const mixed = session.rooms().find((room) => room.id === MIXED);
+  session.setMode('listen');
+  const listening = () => { const shown = session.view(mixed, session.state(MIXED)); return [shown.connected, shown.unconfirmed, shown.unconfirmedId]; };
+  out.listening = [listening()];
+  backend.connected = false;
+  backend.emit({type: 'connection', connected: false});
+  await time.tick(50);
+  out.listening.push(listening());
 }
 
 // Home's alerts: the panel above the rooms as alerts.js gives it, on each
@@ -882,7 +893,7 @@ async function problems(out) {
   out.lines = logged().length;
 
   // A gateway without authentication: no lock to read, and every room the viewer's to control.
-  const access = Object.assign(locking(null), {authEnabled: () => false, canControl: () => true, policy: () => null, policyStatus: () => 'off', watchRoom() {}, stop() {}});
+  const access = Object.assign(locking(null), {accountsExist: () => false, canControl: () => true, policy: () => null, policyStatus: () => 'off', watchRoom() {}, stop() {}});
   const real = page(WATCH, {real: true, search: '&backend=openhab', access});
   await real.time.tick(1500);
   const manifest = JSON.parse(fs.readFileSync(path.join(WEB, 'activity.json'), 'utf8'));

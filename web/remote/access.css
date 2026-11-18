@@ -59,6 +59,7 @@
 @media(pointer:coarse){
 :is(.access-page,.access-dialog) :is(button,select,input:not([type=checkbox],[type=radio])){box-sizing:border-box;min-height:44px}
 :is(.access-page,.access-dialog) label{min-height:44px}
+.access-page :is(section,form)>a{display:flex;align-items:center;min-height:44px}
 .policy-times{margin-right:44px}
 .policy-remove{top:2px;right:2px;width:44px;height:44px}
 .access-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}

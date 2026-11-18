@@ -127,7 +127,7 @@ function main(argv) {
   // The shared access client follows one room's lock; the others a remote shows are read too.
   const access = parts.access;
   const policies = setInterval(() => {
-    if (!access || access.native || access.mock || !access.authEnabled()) return;
+    if (!access || access.native || access.mock || !access.accountsExist()) return;
     const rooms = new Set(bridge.remotes().filter((remote) => remote.ready && remote.awake)
       .map((remote) => remote.session.current().id));
     rooms.forEach((room) => access.loadPolicy(room).catch(() => {}));

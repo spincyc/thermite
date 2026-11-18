@@ -91,6 +91,10 @@ async function browser(page, client) {
   await unsigned.command("den", "source", "off");
   await assert.rejects(unsigned.setRoomLock("den", 0, true), error => error.code === "forbidden");
   assert(!guestCalls.some(route => route.endsWith("/lock")), "guest cannot send a lock mutation");
+  // The Cameras page to a visitor who may not see camera video: sign in where accounts exist, and where none does yet, where the first is made.
+  const Cameras = require("../web/remote/cameras");
+  assert.equal(Cameras.accountNote(unsigned), "Sign in to view snapshots and live video.");
+  assert.equal(Cameras.accountNote(off), "Create the first administrator in Security to view snapshots and live video.");
 
   const personal = "thm_" + "T".repeat(32);
   // Every request names its client for the gateway's command trail: a
@@ -131,13 +135,13 @@ async function browser(page, client) {
   } });
   changing.subscribe(event => events.push(event.type)); await changing.ready();
   // With no account there is nobody to hold a lock: none is read and nothing is held back.
-  assert.equal(changing.authEnabled(), false); assert(changing.canControl("den")); assert.equal(changing.policy("den"), null);
+  assert.equal(changing.accountsExist(), false); assert(changing.canControl("den")); assert.equal(changing.policy("den"), null);
   const pending = changing.fetch(origin + "/pending"); await tick();
   // The first administrator: what the client knew is dropped, and an answer still in flight is refused.
   const created = await changing.setSecurity({ username: "owner", password: confirmation, setup_code: "S".repeat(43) });
   assert.equal(created.enabled, true); assert.equal(created.guest_cameras, false); assert.equal(changing.current(), null);
   release(response({ obsolete: true })); await assert.rejects(pending, error => error.stale === true);
-  assert(events.includes("unauthorized")); assert.equal(changing.authEnabled(), true);
+  assert(events.includes("unauthorized")); assert.equal(changing.accountsExist(), true);
 
   let principalReply; const late = Access.create({ base: origin, allowSession: true, fetch: async (url, init) => {
     if (new URL(url).pathname === "/api/v1/security") return response(mode(init.method === "POST"));
@@ -239,5 +243,5 @@ async function browser(page, client) {
     assert.equal(Access.secureOrigin(value), null, String(value));
   assert.equal(Access.secureOrigin(secure + "/"), secure);
   assert.equal(Access.create({ base: origin, guest: true, mock: true, fetch: async () => response(guest) }).guestOnly, false);
-  process.stdout.write(JSON.stringify({ enabledGuest: true, guestGateway: true, terminalCsrf: true, noFallback: true, transitionFence: true, bootstrapForms: true, staleRecovery: true, terminalSecurity: true, guestListener: true }));
+  process.stdout.write(JSON.stringify({ camerasNote: true, enabledGuest: true, guestGateway: true, terminalCsrf: true, noFallback: true, transitionFence: true, bootstrapForms: true, staleRecovery: true, terminalSecurity: true, guestListener: true }));
 })().catch(error => { process.stderr.write(error.stack + "\n"); process.exitCode = 1; });

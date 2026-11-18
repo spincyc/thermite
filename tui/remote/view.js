@@ -791,16 +791,15 @@ function bubbleRow(frame, g, w, ctx, list, state) {
   const items = session.bubbles(list);
   if (!items.length) return 0;
   const parts = [];
+  // The choice that was never read back, marked on its own bubble (the alert has its label).
+  const unread = session.view(session.current(), state).unconfirmedId;
   items.forEach((item, index) => {
     if (index && ctx.Session.DEVICE_ROLE[item.role] && !ctx.Session.DEVICE_ROLE[items[index - 1].role]) {
       parts.push({ gap: true, width: 3 });
     }
     const shown = session.bubbleState(item, state);
     const lock = session.bubbleLock(item, shown);
-    // The choice that was never read back is marked on its own bubble.
-    // view().unconfirmed is its label, for the alert; the bubble is found by
-    // the id in the room's state (asked of lane web: the id in view() too).
-    const unconfirmed = item.choose && state.unconfirmed === item.id;
+    const unconfirmed = item.choose && unread === item.id;
     const led = lightOf(ctx, unconfirmed ? "unconfirmed" : shown === "current" ? "ok" : shown === "switching" ? "busy" : "off");
     const mark = lock.locked ? LOCK : item.choose ? ledChar(led, ctx.ui.blink) : "";
     const text = " " + (item.digit ? item.digit + " " : "") + (mark ? mark + " " : "") + item.label + " ";
@@ -1171,7 +1170,7 @@ function sheet(frame, ctx, width, height) {
       inner.put(1, 0, "Remotes", "strong");
       button(inner, ctx, 1, 2, "Rooms & remotes", "menu:remote", { kind: "screen", screen: "remote", key: "menu:remote", focus: true, label: "Rooms and remotes" });
       if (Navigation.allowed(Navigation.pages.find(page => page.id === "pairing"), ctx.access)) button(inner, ctx, 1, 6, "Pair devices · F6", "menu:pairing", { kind: "screen", screen: "pairing", key: "menu:pairing", focus: true, label: "Remotes / Pair devices (F6)" });
-      else paragraph(inner, 1, 6, iw - 2, ctx.access.authEnabled() ? "Sign in as an administrator to pair devices." : "Create the first administrator in Security (F3) to pair devices.", "dim");
+      else paragraph(inner, 1, 6, iw - 2, ctx.access.accountsExist() ? "Sign in as an administrator to pair devices." : "Create the first administrator in Security (F3) to pair devices.", "dim");
     },
     "audio-choice": (inner, iw) => Listen.choiceSheet(inner, iw, ctx, KIT),
     "audio-inputs": (inner, iw) => Listen.inputSheet(inner, iw, ctx, KIT),
