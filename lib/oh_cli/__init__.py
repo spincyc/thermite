@@ -285,6 +285,13 @@ class Parser(argparse.ArgumentParser):
 
     capturing = False
 
+    def __init__(self, *args, **kwargs):
+        # A switch is its whole spelling. bin/thermite takes --config out of
+        # a command line by that rule before any parser runs, and each
+        # verb's parser declares it only for its help: one that took
+        # --confi for it would accept a site and select none.
+        super().__init__(*args, **{**kwargs, "allow_abbrev": False})
+
     def parse_args(self, args=None, namespace=None):
         global _site_check
         if Parser.capturing:

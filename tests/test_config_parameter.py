@@ -2,6 +2,7 @@
 import argparse
 import os
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 from unittest.mock import patch
@@ -103,3 +104,23 @@ class SelectorSpelling(unittest.TestCase):
                                      f"thermite {' '.join(path)} declares a site selector for itself: the launcher "
                                      "would take it as the site; give the switch another name")
         self.assertGreater(walked, len(oh_cli.VERBS), "the walk reached no action's parser")
+
+    def test_no_parser_takes_part_of_a_switch_for_the_whole(self):
+        # Each verb's parser declares the selector for its help and is never
+        # given it. With argparse's abbreviations on, --confi DIR passed the
+        # launcher, and the parser took it for --config and selected nothing.
+        import oh_cli
+        for verb in oh_cli.VERBS:
+            for path, parser in parsers(oh_cli.parser_of(verb), (verb,)):
+                with self.subTest(command=" ".join(path)):
+                    self.assertFalse(parser.allow_abbrev, f"thermite {' '.join(path)} accepts abbreviated switches")
+
+    def test_an_abbreviated_selector_is_refused_through_the_launcher(self):
+        for argv, refused in ((["lint", "--confi", "house"], "--confi house"),
+                              (["docs", "check", "--conf=house"], "--conf=house")):
+            with self.subTest(argv=argv):
+                result = subprocess.run([sys.executable, str(AREA / "bin/thermite"), *argv], capture_output=True,
+                                        text=True, timeout=120, env={name: value for name, value in os.environ.items()
+                                                                     if name != "THERMITE_SITE"})
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("unrecognized arguments: " + refused, result.stderr)
