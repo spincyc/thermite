@@ -282,7 +282,7 @@ class Now(Guarded):
                         r"  Problem\n    none \(10 s ago\)\n",
                         r"  Commands its rules took, since each rule last loaded\n    sony_ip_control  applied 7\n"):
             self.assertRegex(out, pattern)
-        self.assertIn("    http://192.0.2.50:%d/d/thermite-devices?var-room=example_west\n"
+        self.assertIn("    http://192.0.2.50:%d/d/thermite-devices?var-room=example_west&var-device=example_tv\n"
                       % oh_metrics.ports(HOST)["grafana"], out)
         self.assertIn("    http://192.0.2.50:%d/settings/things/http:url:example_tv\n" % HOST["http_port"], out)
         self.assertNotIn("routing ticket", out, "this house has no routing executor to log one")

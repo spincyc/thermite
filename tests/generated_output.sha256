@@ -188,7 +188,7 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  androidtv_goog
 
 1aca5ef10ec27f9eaab04e2a3e76ac7ddb5ac0dc15b0c2d1ab94427452efdbad  androidtv_googletv.control/metrics/exporter/map.json
 
-a1c5a9fc7e4a315ec591cb21c02177b5b391e31f0115021abf5d980d3fa7dfb5  androidtv_googletv.control/metrics/grafana/dashboards/devices.json
+bf769bcbfe36b7c12f6d26dee070896a998461607ce76f030ae5795035334581  androidtv_googletv.control/metrics/grafana/dashboards/devices.json
 
 b0b81f977167677aff9791ed90e53962c481111982b3b5226edbb37f9de28085  androidtv_googletv.control/metrics/grafana/dashboards/host.json
 
@@ -246,7 +246,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  avpro_telnet.c
 
 2038f38013f62c4438d7c60d7b844a06461dbb71b7b39dd2a940ba74f48a1954  avpro_telnet.control/metrics/exporter/map.json
 
-ac1c82f4cf7a9e60864ed69203511945911769bc2495d1c785d7210dc0687f89  avpro_telnet.control/metrics/grafana/dashboards/devices.json
+56facdb08d0e199a9219c87ba06b27e0645c83e67839f477eab181818689cd81  avpro_telnet.control/metrics/grafana/dashboards/devices.json
 
 d16f5b8b2856f10b6eafd1a6ee2a85b19f30371cd7c52ad6e631118544b0882a  avpro_telnet.control/metrics/grafana/dashboards/host.json
 
@@ -318,7 +318,7 @@ c23894c44f5b3a8837eaa43f5d92031ecdcfd569625cf2b36d5eeaa475a96eb7  bk808_cec.cont
 
 6fe6dcb36f745d5f3923bf65d451bfeb0dc4546c83768df036f77aa5fb27fd11  bk808_cec.control/metrics/exporter/map.json
 
-ff3ff74707d571e999883d0b4e3fa81911628e715657fd6ad90be6cdccfb3e17  bk808_cec.control/metrics/grafana/dashboards/devices.json
+3483c206f71186aecfcd1e3538a60b0630a04e651967234e8f3857d6c49ad08a  bk808_cec.control/metrics/grafana/dashboards/devices.json
 
 44856438965f9f9600fe324a99f01754cb0addcb2cb4d7a450b28c76d080b224  bk808_cec.control/metrics/grafana/dashboards/host.json
 
@@ -378,7 +378,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  bk808_http.con
 
 d2b36fafd1032e8d8cdeae6df88eea2fe7ccbf16432d7232e0da32e7170a26ca  bk808_http.control/metrics/exporter/map.json
 
-f9d75ceb5be1bf7fefbcfd5ff53271e51e4aae0a70075c37dcc4e92c7a205844  bk808_http.control/metrics/grafana/dashboards/devices.json
+88cc51727b3840c81ce0427cb296a39955d67f4d90194427b79d9fdc4f467e12  bk808_http.control/metrics/grafana/dashboards/devices.json
 
 b024c5da1a90ad1f562a52ebe8df7e1cd7137b80d29fbae8e081eb27870c9bc4  bk808_http.control/metrics/grafana/dashboards/host.json
 
@@ -438,7 +438,7 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  cast.observe/c
 
 9479ea8961d25cb56eaabd01f2dbe1fe76a662a077c9aa5dfb20115736d55286  cast.observe/metrics/exporter/map.json
 
-61893aee3ed3d2aee0fe71c86145e4458ce0ea26dda686135e9c7f6d135f2433  cast.observe/metrics/grafana/dashboards/devices.json
+fab13b4cb34cb5d57c106c48c1e3ee29c8621ba361bb1c69cf1e6aeb7c18b7d7  cast.observe/metrics/grafana/dashboards/devices.json
 
 f949616e606e3cfeade1028c6a33b8cc94bbd14dda78cd9d6756340320fd077b  cast.observe/metrics/grafana/dashboards/host.json
 
@@ -500,7 +500,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  denonmarantz_h
 
 ee48768cbf32d68fc769e7f37ee26285d51b0e6c99b9b6478287cce8f7488246  denonmarantz_http.control/metrics/exporter/map.json
 
-d5babf0d61077a4d1a7e2467709bdc33653722b4123f48786ee69359d10ed834  denonmarantz_http.control/metrics/grafana/dashboards/devices.json
+8dbddad883d7b2df6fb1ea9f83dac9ecd6436e0bcca83803d97ba6636868b7ea  denonmarantz_http.control/metrics/grafana/dashboards/devices.json
 
 da559394b7d8cdea577c945eeb67d9401c08353a58c8d3336cbe0c833860151f  denonmarantz_http.control/metrics/grafana/dashboards/host.json
 
@@ -556,7 +556,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  denonmarantz_h
 
 de2ab1da36af31a4a2002ed69789434db963d5694d6fb09fc23fc88a226f75e7  denonmarantz_http.observe/metrics/exporter/map.json
 
-d5babf0d61077a4d1a7e2467709bdc33653722b4123f48786ee69359d10ed834  denonmarantz_http.observe/metrics/grafana/dashboards/devices.json
+8dbddad883d7b2df6fb1ea9f83dac9ecd6436e0bcca83803d97ba6636868b7ea  denonmarantz_http.observe/metrics/grafana/dashboards/devices.json
 
 da559394b7d8cdea577c945eeb67d9401c08353a58c8d3336cbe0c833860151f  denonmarantz_http.observe/metrics/grafana/dashboards/host.json
 
@@ -614,7 +614,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  drhdmi_http.ob
 
 d2c7a8f114b620af6997f9a60261acc5bd2807619d4840f872079511db032a8e  drhdmi_http.observe/metrics/exporter/map.json
 
-f2c3bf233f44eb74e9bc628486636c3493c830ed41a87e5829307faaed8bbe0f  drhdmi_http.observe/metrics/grafana/dashboards/devices.json
+124b6ad5793cb11a5ba219b21ee04a1ce740e7d23a34247823036c8d5b9c349f  drhdmi_http.observe/metrics/grafana/dashboards/devices.json
 
 86b84ef109688d4daa6e197a35bc9e0add7362b75ecf4da250eac55fc8014bcf  drhdmi_http.observe/metrics/grafana/dashboards/host.json
 
@@ -694,7 +694,7 @@ f1b01e6239dd3d99a50cce6c6d719d84ec1cdbd54b1e09804689e4be76922f85  example/conf/y
 
 288cd5608b2200a88633f771b6a02943e18d73ba4bf452b58c4ae2e3d9e891b1  example/metrics/exporter/map.json
 
-d3c802274dbd70150908d9fd94737d6d258e58b6bd5d14cccf06fc2f90658af2  example/metrics/grafana/dashboards/devices.json
+237a6445e3201c50995a0af03861ff1ef931371c5bde9459d65d784c2885bbfc  example/metrics/grafana/dashboards/devices.json
 
 98517212ec825d426187680820f9175e801b5613117529fe79c81436fe28e10e  example/metrics/grafana/dashboards/host.json
 
@@ -764,7 +764,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  heos.control/c
 
 fb594757dfbb3304fcd1454c7764ee61460b23183ea9c1b3eb7f8867568a46b7  heos.control/metrics/exporter/map.json
 
-d5babf0d61077a4d1a7e2467709bdc33653722b4123f48786ee69359d10ed834  heos.control/metrics/grafana/dashboards/devices.json
+8dbddad883d7b2df6fb1ea9f83dac9ecd6436e0bcca83803d97ba6636868b7ea  heos.control/metrics/grafana/dashboards/devices.json
 
 da559394b7d8cdea577c945eeb67d9401c08353a58c8d3336cbe0c833860151f  heos.control/metrics/grafana/dashboards/host.json
 
@@ -820,7 +820,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  ir.control/con
 
 a73d17dafbb887c0afcc44d37a3118bfa249965e325b08a732b244cabae27629  ir.control/metrics/exporter/map.json
 
-c3b564266772c2de3b9f303f5a60b443701c63b833e1e49f76cbbaeb1685ce53  ir.control/metrics/grafana/dashboards/devices.json
+23fea2bd5f21c10f868cb42118a1144585b5aaf6ab7880ee44e342cac8c6850d  ir.control/metrics/grafana/dashboards/devices.json
 
 b54cf784dfbfe0bf460fcc481d500520e987e61e3a4f3720e1820a9229da5d4b  ir.control/metrics/grafana/dashboards/host.json
 
@@ -876,7 +876,7 @@ ea857ba0590ce8602bf6967724d0b651fefa1b37e56ebf6e8cfa66ca35ad251c  network_ping.o
 
 406ad668d699da862aca877ee6245366417446e43baf087b289896b6e23291e5  network_ping.observe/metrics/exporter/map.json
 
-e99bb6c896dd04a9206b0729628ede4276b89ea9108f7dd6e0a3b0b480a1f8f3  network_ping.observe/metrics/grafana/dashboards/devices.json
+feba34a45f373a0201904997b4dd51c95660f08745dbb55c810e6784017e99f5  network_ping.observe/metrics/grafana/dashboards/devices.json
 
 b180198329469f8990c3c7cd444ed6677407f1388bb63c3b7b310ad5ff6f27d7  network_ping.observe/metrics/grafana/dashboards/host.json
 
@@ -938,7 +938,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  pyatv_http.con
 
 ef25d4b8d53dd3ef5add009e4bfc7d356d0c31925811b2cab2f523b36ff38d2e  pyatv_http.control/metrics/exporter/map.json
 
-55f9559ade27a8bd656da053a072edcafa52db7913f75ebec81e5ef1baa3242c  pyatv_http.control/metrics/grafana/dashboards/devices.json
+3f7665f5de6a5c92b72a317cc653f9acccfe779495f514ac86b9cf0ca53d05c1  pyatv_http.control/metrics/grafana/dashboards/devices.json
 
 08f1459db8ce7e4938be11150a2c21ab96803e03414935b47c71802368aef562  pyatv_http.control/metrics/grafana/dashboards/host.json
 
@@ -1062,7 +1062,7 @@ d287996f91b026c89229d2c67a89ed3154ba1e1be97a95e38c741ce0da6b9199  routed/conf/ya
 
 231b00d23ca9ff9ca1b1d3f6d60b73042c0a8c6fe3e08899d4ab58757ecab55b  routed/metrics/exporter/map.json
 
-29a47a40268f20a062761482b82014dea87873e6ed4c5bf53a35ce57a47cce55  routed/metrics/grafana/dashboards/devices.json
+d3e5540ffc2cb7a3e66985240163c9938479e3caf659ec6b075ffd650bfa2558  routed/metrics/grafana/dashboards/devices.json
 
 fc664504ebc56367b49f26c69e4c85d40b5267622c3e2a92a0edd559f18e84db  routed/metrics/grafana/dashboards/host.json
 
@@ -1126,7 +1126,7 @@ ba70a14cf5f2d4637c75d688ca919cd7f5fdce636c47b7343bc57d5ad0fe7ce2  sonos.control/
 
 bbff57d16a1bb276c1294ea06a48c0bc8a7347f1b8d2a509f8a4ee7258f32a1b  sonos.control/metrics/exporter/map.json
 
-9bb49867b6e3ec819d7f51ef3885959d40d89d8655bec22ad8188c0eb4fc31a5  sonos.control/metrics/grafana/dashboards/devices.json
+6faf240967470a83312785cd094f61c3b1a6f79f8fa8298eab26208d8e4b519a  sonos.control/metrics/grafana/dashboards/devices.json
 
 66ae5f96f56ec802311641fca3207d04e5c3a01ba8b650e89b952f2d5a8399ad  sonos.control/metrics/grafana/dashboards/host.json
 
@@ -1188,7 +1188,7 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  sonos.observe/
 
 0002d2534061bb07125b048d9a371cbde060f547e8ec048f4e5c6ec20def9d48  sonos.observe/metrics/exporter/map.json
 
-aeda1ad06c676810cc9e83745c78a38b655e0075a78a992a67425837d4bc3782  sonos.observe/metrics/grafana/dashboards/devices.json
+68e02a574bf4d39c0bc92b751ecc0c8553c42b039f1fbfdc9dcbd4c9cfcc8030  sonos.observe/metrics/grafana/dashboards/devices.json
 
 66ae5f96f56ec802311641fca3207d04e5c3a01ba8b650e89b952f2d5a8399ad  sonos.observe/metrics/grafana/dashboards/host.json
 
@@ -1250,7 +1250,7 @@ f82b06e16d3c0a0f33ded7c48d89cb57ac40a10f764219b770e86b940b52c809  sony_adcp.cont
 
 602e6fa267c3ef7a631bc41115836aea928a67525af9269c1a964b4e7fc73638  sony_adcp.control/metrics/exporter/map.json
 
-b33f43243ee9f799024ad824859c0adea7f34534c37f620c63007b9d97caf0d4  sony_adcp.control/metrics/grafana/dashboards/devices.json
+b68d9ae46d1dd3242efe4e7d325fe60960d949f683b91238d42efda401a6ecee  sony_adcp.control/metrics/grafana/dashboards/devices.json
 
 39e5711e4fc725ff80d4e372dff5dfdfc1c89820de18687da03ee2a8176c1e16  sony_adcp.control/metrics/grafana/dashboards/host.json
 
@@ -1308,7 +1308,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sony_adcp.obse
 
 262f2b5bfec5f12d1d3f634ec7c18020027d5be05e9d5accc129e439064a7862  sony_adcp.observe/metrics/exporter/map.json
 
-b33f43243ee9f799024ad824859c0adea7f34534c37f620c63007b9d97caf0d4  sony_adcp.observe/metrics/grafana/dashboards/devices.json
+b68d9ae46d1dd3242efe4e7d325fe60960d949f683b91238d42efda401a6ecee  sony_adcp.observe/metrics/grafana/dashboards/devices.json
 
 39e5711e4fc725ff80d4e372dff5dfdfc1c89820de18687da03ee2a8176c1e16  sony_adcp.observe/metrics/grafana/dashboards/host.json
 
@@ -1372,7 +1372,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sony_ip_contro
 
 05abf68f05de09196efe4f52ba3d0ee6d18fbd610d6f0e0ed219611353bb0da2  sony_ip_control.control/metrics/exporter/map.json
 
-96fbeaba3d8085c30d6591f229062a621583d5521d68829f3460c5f7d1902779  sony_ip_control.control/metrics/grafana/dashboards/devices.json
+5e32f7fbc5e058f4fccced51eba9ffe6312cedbb39a4b5eca7838982031c87a7  sony_ip_control.control/metrics/grafana/dashboards/devices.json
 
 93725f8827917aff0389159afe4ddc8446f3cbfa18bddfd79019125bbdad0806  sony_ip_control.control/metrics/grafana/dashboards/host.json
 
@@ -1428,7 +1428,7 @@ bc9df2df992f4457a30cebc83eb130fab6ea47f030324451f712bcf6d1bd9c91  sony_rest.obse
 
 6c49bb2815ca1e5990e3a0bcb735093c718040f06af1e60f432d2ddd59393d09  sony_rest.observe/metrics/exporter/map.json
 
-96fbeaba3d8085c30d6591f229062a621583d5521d68829f3460c5f7d1902779  sony_rest.observe/metrics/grafana/dashboards/devices.json
+5e32f7fbc5e058f4fccced51eba9ffe6312cedbb39a4b5eca7838982031c87a7  sony_rest.observe/metrics/grafana/dashboards/devices.json
 
 93725f8827917aff0389159afe4ddc8446f3cbfa18bddfd79019125bbdad0806  sony_rest.observe/metrics/grafana/dashboards/host.json
 
@@ -1488,7 +1488,7 @@ e38e872bf28b1907660677c6689f18171afdbd9f4cb4f1e6976cbe2e28094f4d  ukm404_http.co
 
 b2a501a26ab8b19f1bdb1ab79911387b2d3402c343e0479d745ee7400f1ae2da  ukm404_http.control/metrics/exporter/map.json
 
-9c79051e77d2a4e31a90093030e35068c6fac60d914cf2e7e2230229fed17620  ukm404_http.control/metrics/grafana/dashboards/devices.json
+97cfab7066e68013a407ac89d4f07139a268d51990378d4d39879b95982985c3  ukm404_http.control/metrics/grafana/dashboards/devices.json
 
 60751cecba36ee5696587548d3c8e100926116a3cf59b402dc59d02532d72272  ukm404_http.control/metrics/grafana/dashboards/host.json
 
@@ -1548,7 +1548,7 @@ d60f058d97d6d1fd91023abd067c09839678ec8b34f995776a896c6c91bb85fc  unifi_protect.
 
 39f0bb03a02dbcaf7c70c929f1477e7cb05d3f6d6dcc5dac38412b376a9e08cf  unifi_protect.control/metrics/exporter/map.json
 
-af5a83314bedd630ee3c64b96b92aaee342f78b447273851c34129fe0dd5be32  unifi_protect.control/metrics/grafana/dashboards/devices.json
+a8e68f149eb878f2d5988bbdfdf1cf410269de0221435b953a51ad537aae2bc1  unifi_protect.control/metrics/grafana/dashboards/devices.json
 
 056980818d9e3471fae44eb13c43d8aa4db228c228f428c79014b15cf90eb258  unifi_protect.control/metrics/grafana/dashboards/host.json
 
@@ -1606,7 +1606,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  vrroom_http.ob
 
 f9c85a103d7896e17c3cc3789b44d3df0d687bfcd1b50e8af8bee980a8a2ebf5  vrroom_http.observe/metrics/exporter/map.json
 
-a1b8bae26aab39357f7f28c6f702b44e7c6a194f53b8b08493f1d9ddb2e36ef3  vrroom_http.observe/metrics/grafana/dashboards/devices.json
+6454a21e96c599bea9cb9e40fac805a7cbd0abe54d238634f30c62daf371ceb5  vrroom_http.observe/metrics/grafana/dashboards/devices.json
 
 9a3dbf25caff81e895685dfdebc1b2adf8e47fafcb3440ca6bd92fb9f512ec7e  vrroom_http.observe/metrics/grafana/dashboards/host.json
 
@@ -1668,7 +1668,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  vrroom_telnet.
 
 d24248c12d886c7301372df169b7215be8c55166b43a8c4265fa2ce2a83a214f  vrroom_telnet.control/metrics/exporter/map.json
 
-a1b8bae26aab39357f7f28c6f702b44e7c6a194f53b8b08493f1d9ddb2e36ef3  vrroom_telnet.control/metrics/grafana/dashboards/devices.json
+6454a21e96c599bea9cb9e40fac805a7cbd0abe54d238634f30c62daf371ceb5  vrroom_telnet.control/metrics/grafana/dashboards/devices.json
 
 7a467c12146bb31a44f314a863f73ddd4f95107a38392082ce0172d96b7861e4  vrroom_telnet.control/metrics/grafana/dashboards/host.json
 
@@ -1730,7 +1730,7 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  wiim_http.cont
 
 0d40b7a4e26b1e982dee484da16d34de0b8390abc54ffa19e9728e90269a9fee  wiim_http.control/metrics/exporter/map.json
 
-6f9ad82df1fefa8c64d588b9954f179fd9901012fa363f2109a504cc8ba2bd2f  wiim_http.control/metrics/grafana/dashboards/devices.json
+24fcf68086ab40e8b3725abba63fa86b879032b1a9cc1e69f3751c21ae9173de  wiim_http.control/metrics/grafana/dashboards/devices.json
 
 5d8c028c78603ec1ff0340b8598bbde29d92d5260b6daf525f45a6fb854b3393  wiim_http.control/metrics/grafana/dashboards/host.json
 
@@ -1792,7 +1792,7 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  wiim_http.obse
 
 c96748e8823194a97e345fc3aa31e227c488def16732e758ab1293b22903d5ef  wiim_http.observe/metrics/exporter/map.json
 
-456382a19871d69f0a29939c81ab74044958db4ad83a33931f74ffbaf400b512  wiim_http.observe/metrics/grafana/dashboards/devices.json
+c13491c35224f0848eccf98b85dd82b944fc85e9e13d489cdf3182db5eab18ff  wiim_http.observe/metrics/grafana/dashboards/devices.json
 
 5d8c028c78603ec1ff0340b8598bbde29d92d5260b6daf525f45a6fb854b3393  wiim_http.observe/metrics/grafana/dashboards/host.json
 

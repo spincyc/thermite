@@ -339,7 +339,7 @@ class Rooms(unittest.TestCase):
 
     def test_devices_has_a_room_variable_and_every_query_keeps_to_it(self):
         board = BOARDS["zones devices.json"]
-        (room,) = board["templating"]["list"]
+        room, _ = board["templating"]["list"]
         self.assertEqual((room["name"], room["multi"], room["includeAll"], room["allValue"]),
                          (dashboards.ROOM, True, True, ".*"))
         self.assertEqual([option["value"] for option in room["options"]][:3], ["$__all", "example_cinema",
@@ -352,6 +352,30 @@ class Rooms(unittest.TestCase):
             if not name.endswith("devices.json"):
                 self.assertEqual(other["templating"]["list"], [], name)
                 self.assertNotIn("$room", json.dumps(other), name)
+
+    def test_devices_has_a_device_variable_for_what_is_a_devices_own(self):
+        """`thermite device` opens the board on one device: its row, its
+        Things and its commands, with its room's sources, power and
+        speakers through the day."""
+        board = BOARDS["speakers devices.json"]
+        _, device = board["templating"]["list"]
+        self.assertEqual((device["name"], device["label"], device["multi"], device["includeAll"], device["allValue"]),
+                         (dashboards.DEVICE, "Device", True, True, ".*"))
+        self.assertEqual(device["current"], {"text": ["All"], "value": ["$__all"]})
+        known = {option["value"]: option["text"] for option in device["options"]}
+        self.assertEqual(known.pop("$__all"), "All")
+        self.assertLessEqual(set(test_metrics.MAP["devices"]), set(known))
+        self.assertIn(f"{known['example_tv']} : example_tv", [pair.strip() for pair in device["query"].split(",")])
+        kept = {panel["title"]: {'device=~"$device"' in query["expr"] for query in panel["targets"]}
+                for panel in test_metrics.panels(board) if panel.get("targets")}
+        own = {"Devices", "Things not online", "Commands by outcome", "Commands by device"}
+        self.assertLessEqual(own, set(kept))
+        for title, each in kept.items():
+            # Every query of a panel above the day's timelines, and none from there on: a room's history.
+            self.assertEqual(each, {title in own}, title)
+        for name, other in BOARDS.items():
+            if not name.endswith("devices.json"):
+                self.assertNotIn("$device", json.dumps(other), name)
 
     def test_tiles_and_rooms_lead_to_the_board_that_says_more(self):
         house = BOARDS["speakers house.json"]
@@ -369,14 +393,16 @@ class Rooms(unittest.TestCase):
         self.assertEqual(link["url"], "/d/thermite-devices?var-room=${__value.raw}&" + time)
 
 
-def query(board: str, title: str, index: int = 0, *, interval: str = "1h", span: str = "1h", end: int = 0) -> str:
+def query(board: str, title: str, index: int = 0, *, interval: str = "1h", span: str = "1h", end: int = 0,
+          device: str = ".*") -> str:
     """A panel's query on the example house's board, as Grafana sends it:
-    with the step, the selected range (and where it ends, in seconds) and
-    every room filled in."""
+    with the step, the selected range (and where it ends, in seconds),
+    every room and every device, or the one `device`, filled in."""
     found, = [panel for panel in test_metrics.panels(BOARDS[f"example {board}.json"]) if panel.get("title") == title]
     seconds = {"m": 60, "h": 3600, "d": 86400}[span[-1]] * int(span[:-1])
     return (found["targets"][index]["expr"].replace("$__interval", interval).replace("$__range_s", str(seconds))
-            .replace("$__range", span).replace(f"${dashboards.ROOM}", ".*").replace("@ end()", f"@ {end}"))
+            .replace("$__range", span).replace(f"${dashboards.ROOM}", ".*").replace(f"${dashboards.DEVICE}", device)
+            .replace("@ end()", f"@ {end}"))
 
 
 def counter(events: list[int], samples: int, *, begins_again: int | None = None) -> str:
@@ -502,6 +528,28 @@ class OnSeries(unittest.TestCase):
             ("1h", query("switching", "Waited before giving up", 1), [('{kind="policy_timeout"}', 8.2)])],
             last="1h")
 
+    def test_last_problem_names_the_code_held_and_only_says_one_is_where_none_is_named(self):
+        """A TV whose Item holds no_answer, a matrix whose Item holds text
+        the exporter calls other, a display that holds a problem on an
+        installation whose exporter names no code, and a player that holds
+        none. With the TV chosen at the top, its row alone."""
+        from oh_integrations import _commands
+        number = dict(zip(_commands.CODES, range(dashboards.FIRST_CODE, 99)))
+
+        def device(ident, held, code=""):
+            labels = f'device="{ident}",room="example_west",kind="tv"'
+            named = {f'thermite_device_problem_info{{{labels},code="{code}"}}': "1x10"} if code else {}
+            return {f"thermite_device_problem{{{labels}}}": f"{held}x10", **named}
+        inputs = {**device("example_tv", 1, "no_answer"), **device("example_matrix", 1, "other"),
+                  **device("example_display", 1), **device("example_player", 0)}
+        self.shows(inputs, [
+            ("5m", query("devices", "Devices", 5),
+             [('{device="example_tv"}', number["no_answer"]), ('{device="example_matrix"}', number["other"]),
+              ('{device="example_display"}', 1), ('{device="example_player"}', 0)]),
+            ("5m", query("devices", "Devices", 5, device="example_tv"),
+             [('{device="example_tv"}', number["no_answer"])])],
+            interval="1m", last="10m")
+
     def test_commands_by_device_counts_those_not_taken_and_the_mean_time(self):
         """An hour in which a TV took ten commands in 4 s and two more did
         not arrive after 16 s, a display dropped one itself, and a player
@@ -520,6 +568,7 @@ class OnSeries(unittest.TestCase):
             ("1h", query("devices", "Commands by device", 0), [(tv, 12), (display, 1)]),
             ("1h", query("devices", "Commands by device", 1), [(tv, 2), (display, 0)]),
             ("1h", query("devices", "Commands by device", 2), [(tv, 20 / 12), (display, 0)]),
+            ("1h", query("devices", "Commands by device", 0, device="example_display"), [(display, 1)]),
             ("0s", query("devices", "Commands by outcome"), [('{outcome="applied"}', 10), ('{outcome="dropped"}', 1),
                                                            ('{outcome="unsent"}', 2)])],
             last="1h")

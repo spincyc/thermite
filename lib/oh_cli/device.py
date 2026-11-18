@@ -532,7 +532,7 @@ def look_next(facts: Known, host: dict | None, here: bool) -> list[dict]:
         address = deploy.lan_address() or deploy.hostname()
         out.append({"what": "Its row on the Devices board, and its room's history",
                     "open": f"{deploy.grafana_url(host, address)}d/{dashboards.UIDS[dashboards.DEVICES]}"
-                            f"?var-{dashboards.ROOM}={facts.device['room']}"})
+                            f"?var-{dashboards.ROOM}={facts.device['room']}&var-{dashboards.DEVICE}={ident}"})
         # Its own Things, and one its commands go through under another's name.
         things = dict.fromkeys([*(uid for uid, _ in metrics.device_things(facts.conf, ident)),
                                 *(dict(signal.labels)["thing"] for signal in facts.signals if signal.kind == "thing")])

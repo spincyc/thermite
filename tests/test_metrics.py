@@ -72,11 +72,8 @@ def items(**states):
 #: The gateway's subscriptions opened and resyncs repeat its connects, which
 #: are routine (the first remote page opens it): its failures are what
 #: matters, and the gateway is to stop exporting both (handoff).
-#: The code a device's problem Item holds is what `thermite device` puts
-#: into words; the Devices board shows only that it holds one.
 UNREAD = {"thermite_zone_info", "thermite_item_device_off",
-          "thermite_gateway_upstream_connects_total", "thermite_gateway_upstream_resyncs_total",
-          "thermite_device_problem_info"}
+          "thermite_gateway_upstream_connects_total", "thermite_gateway_upstream_resyncs_total"}
 
 
 def read_families():
@@ -1287,7 +1284,7 @@ class Dashboards(unittest.TestCase):
         # Ping is a column of its own, in no colour of failure, and no part
         # of the order: a device that sleeps answers none.
         self.assertEqual(table["targets"][8]["expr"],
-                         'min by (device) (thermite_item_value{point="online",room=~"$room"})')
+                         'min by (device) (thermite_item_value{point="online",room=~"$room",device=~"$device"})')
         self.assertEqual(table["transformations"][-1]["options"]["renameByName"]["Value #I"], "Ping")
         self.assertNotIn("online", table["targets"][7]["expr"].replace("thermite_thing_online", ""))
         ping = next(override for override in table["fieldConfig"]["overrides"]
@@ -1304,15 +1301,36 @@ class Dashboards(unittest.TestCase):
         names = table["transformations"][-1]["options"]["renameByName"]
         self.assertEqual((names["Value #F"], names["Value #J"]), ("Last problem", "Reads"))
         self.assertNotIn("Problem", names.values())
-        self.assertEqual(table["targets"][5]["expr"], 'max by (device) (thermite_device_problem{room=~"$room"})')
-        self.assertEqual(table["targets"][9]["expr"], 'min by (device) (thermite_device_read_ok{room=~"$room"})')
+        self.assertEqual(table["targets"][9]["expr"],
+                         'min by (device) (thermite_device_read_ok{room=~"$room",device=~"$device"})')
 
         def shown(field):
             column = next(override for override in table["fieldConfig"]["overrides"]
                           if override["matcher"]["options"] == field)
             return {option["text"]: option["color"] for prop in column["properties"] if prop["id"] == "mappings"
                     for mapping in prop["value"] for option in mapping["options"].values()}
-        self.assertEqual(shown("Value #F"), {"None": dashboards.OK, "Still shown": dashboards.WARN})
+        # Which problem, in the words the remotes and `thermite device` give its code; "Still shown"
+        # where no series names the code, as on an installation from before the exporter did.
+        from oh_integrations import _commands
+        problem = shown("Value #F")
+        self.assertEqual(list(problem.items())[:2], [("None", dashboards.OK), ("Still shown", dashboards.WARN)])
+        self.assertEqual(list(problem)[2:], [words[0].upper() + words[1:] for words in _commands.CODES.values()])
+        self.assertEqual(set(list(problem.values())[2:]), {dashboards.WARN})
+        self.assertEqual(problem["Does not answer"], dashboards.WARN)
+        # Words, not a number: from the left, so that a narrow column cuts their end and not their start.
+        column = next(override for override in table["fieldConfig"]["overrides"]
+                      if override["matcher"]["options"] == "Value #F")
+        self.assertIn({"id": "custom.align", "value": "left"}, column["properties"])
+        chosen = 'room=~"$room",device=~"$device"'
+        expr = table["targets"][5]["expr"]
+        self.assertTrue(expr.startswith("max by (device) (thermite_device_problem{" + chosen + "} or "), expr)
+        for number, code in enumerate(_commands.CODES, dashboards.FIRST_CODE):
+            self.assertIn(f'thermite_device_problem_info{{code="{code}",{chosen}}} * {number}', expr)
+        # Every code the example house's problem Items can hold has its words.
+        held = {code for spec in MAP["items"].values() if spec.get("point") == "problem"
+                for code in spec.get("options") or []}
+        self.assertTrue(held)
+        self.assertLessEqual(held | {exporter.OTHER}, set(_commands.CODES))
         self.assertEqual(shown("Value #J"), {"Failing": dashboards.FAIL, "Answered": dashboards.OK})
         # Reads that fail are trouble, and so is what the remotes show: both are in the order of the rows.
         for signal in ("thermite_device_read_ok", "thermite_device_problem"):
@@ -1336,7 +1354,7 @@ class Dashboards(unittest.TestCase):
         self.assertLess(set(dashboards.NOT_TAKEN), set(exporter.COMMAND_OUTCOMES))
         self.assertFalse({"applied", "sent", "dropped"} & set(dashboards.NOT_TAKEN))
         for query in bars["targets"] + table["targets"]:
-            self.assertIn('room=~"$room"', query["expr"])
+            self.assertIn('room=~"$room",device=~"$device"', query["expr"])
         self.assertEqual(table["transformations"][-1]["options"]["renameByName"],
                          {"device": "Device", "Value #A": "Commands", "Value #B": "Not taken",
                           "Value #C": "Mean time"})
@@ -1379,7 +1397,7 @@ class Dashboards(unittest.TestCase):
             if alerts.CHECK in query["expr"]:
                 head, _, _ = query["expr"].partition(" or ")
                 self.assertIn(alerts.CHECK, head)
-                self.assertTrue(head.endswith('and on(device) thermite_device_info{room=~"$room"})'), query["expr"])
+                self.assertTrue(head.endswith('and on(device) thermite_device_info{room=~"$room",device=~"$device"})'), query["expr"])
 
     def test_items_the_runtime_lacks_and_refused_streams_are_shown(self):
         openhab = boards()[dashboards.OPENHAB]
@@ -1425,7 +1443,7 @@ class Dashboards(unittest.TestCase):
         self.assertEqual(samples, [("thermite_thing_online", labels, 0.0),
                                    ("thermite_thing_status_info", {**labels, "status": "OFFLINE"}, 1.0)])
         table = next(panel for panel in panels(boards()[dashboards.DEVICES]) if panel["title"] == "Things not online")
-        self.assertEqual(table["targets"][0]["expr"], 'thermite_thing_status_info{status!="ONLINE",room=~"$room"}')
+        self.assertEqual(table["targets"][0]["expr"], 'thermite_thing_status_info{status!="ONLINE",room=~"$room",device=~"$device"}')
         self.assertEqual(table["fieldConfig"]["defaults"]["noValue"], "Every Thing is online")
         words = {override["matcher"]["options"]: prop["value"][0]["options"]
                  for override in table["fieldConfig"]["overrides"] for prop in override["properties"]

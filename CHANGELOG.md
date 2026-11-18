@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Dashboards: on Devices, **Last problem** says which problem the
+  remotes still show, in their words ("Does not answer", "Is busy"),
+  where it read "Still shown" for any; it reads "Still shown" only on
+  an installation whose exporter does not name the problem yet. A
+  **Device** variable beside **Room** keeps the table, the Things not
+  online and the commands to the devices you choose, and the link
+  `thermite device ID` prints opens the board on that device and its
+  room (`?var-room=…&var-device=…`).
 - node_exporter runs as its own account, `thermite-node` (UID/GID 9000,
   one below the service account; `metrics: node_exporter_uid` in
   `instance/host.yaml` chooses another), no longer as `thermite`: with
