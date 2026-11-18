@@ -82,7 +82,7 @@ class Rendering(unittest.TestCase):
         data["devices"][1]["controls"] = {"control": ["vrroom_http"]}
         self.assertTrue(any("vrroom_http" in problem for problem in render.validate(data)))
         for name in ("input_item", "fields", "INPUTS", "COMHEADS", "url", "CONTROL"):
-            self.assertFalse(hasattr(vrroom_http, name), name)
+            self.assertNotIn(name, vars(vrroom_http))
         self.assertEqual(vrroom_http.PHASE, "observe")
 
     def test_the_web_api_is_a_read_only_snapshot_polled_about_once_a_minute(self):

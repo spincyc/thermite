@@ -97,8 +97,8 @@ def table(integration: str) -> str:
 def problem(device: dict) -> str | None:
     """The device's problem Item when a script integration commands it (its
     problem() hook), else None."""
-    from . import REGISTRY  # the registry imports the modules that import this
-    return next((name for module in REGISTRY if hasattr(module, "problem") and (name := module.problem(device))), None)
+    from . import defining  # the registry imports the modules that import this
+    return next((name for module in defining("problem") if (name := module.problem(device))), None)
 
 
 def items(device: dict, integration: str) -> dict[str, dict]:
@@ -118,9 +118,10 @@ def items(device: dict, integration: str) -> dict[str, dict]:
 
 def render(device: dict, out: YamlFile, integration: str) -> None:
     """Add them to the integration's file. Two script integrations of one
-    device share its problem Item, which the first to render defines."""
-    from . import REGISTRY
-    first = next((module.NAME for module in REGISTRY if hasattr(module, "problem") and module.problem(device)), None)
+    device share its problem Item, which the first of them defines (in
+    problem()'s order)."""
+    from . import defining
+    first = next((module.NAME for module in defining("problem") if module.problem(device)), None)
     for name, item in items(device, integration).items():
         if name != problem_item(device["id"]) or first == integration:
             out.items[name] = item

@@ -210,7 +210,7 @@ class Check:
         self.signal_since = time.time() * 1000
         self.signal_items = set()
         for ident, module in self.modules.items():
-            if hasattr(module, "diagnostics"):
+            if module.diagnostics:
                 self.signal_items.update((module.diagnostics(self.devices[ident]) or {}).get("items", []))
         self.sims = {i: sim.SIMS[m.NAME]() for i, m in self.modules.items()}
         self.servers = {i: sim.serve(s) for i, s in self.sims.items()}
@@ -262,7 +262,7 @@ class Check:
             # never leave an original full-house adapter beside the projection.
             house = oh_conf.House(self.data)
             for module in {m.NAME: m for m in self.modules.values()}.values():
-                if hasattr(module, "files"):
+                if module.files:
                     devices = [self.devices[ident] for ident, owner in self.modules.items() if owner is module]
                     built.files.update(module.files(devices, house))
             built.yaml[lifecycle_io.ITEMS].items.clear()
@@ -275,8 +275,8 @@ class Check:
                 *(f"{remote.TARGET}/{name}" for name in remote.FILES)}
         house = oh_conf.House(self.data)
         for module in {m.NAME: m for m in self.modules.values()}.values():
-            keep |= set(getattr(module, "ASSETS", {}))
-            if hasattr(module, "files"):
+            keep |= set(module.ASSETS)
+            if module.files:
                 devices = [device for device in self.data["devices"] if oh_conf.uses(device, module.PHASE, module.NAME)]
                 keep |= set(module.files(devices, house))
         if "lifecycle" in contract:
@@ -529,12 +529,12 @@ class Check:
     @staticmethod
     def ruled(module) -> bool:
         """Whether a rule of the integration's own talks to the matrix, not a Thing."""
-        return hasattr(module, "aim")
+        return module.aim is not None
 
     def switch_inputs(self, ident: str):
         """The input numbers of an HDMI switch, or of a matrix one is an output of."""
         module = self.modules[ident]
-        return range(1, module.ports(self.devices[ident])[0] + 1) if hasattr(module, "ports") else module.INPUTS
+        return range(1, module.ports(self.devices[ident])[0] + 1) if module.ports else module.INPUTS
 
     def answering(self, idents, answering: bool = True, timeout: float = 60) -> bool:
         """Wait until each matrix or switch answers, or does not: a Thing is
@@ -591,7 +591,7 @@ class Check:
 
     def _writes(self, ident: str) -> int:
         module = self.modules[ident]
-        reads = {c for c in module.COMHEADS if c.startswith("get")} | set(getattr(module, "SETUP_COMHEADS", ()))
+        reads = {c for c in module.COMHEADS if c.startswith("get")} | set(module.SETUP_COMHEADS)
         return sum(1 for c in self.sims[ident].comheads() if c not in reads)
 
     def expect_edid(self, what: str, number: int, code: int | None) -> bool:
@@ -879,7 +879,7 @@ class Check:
             # bound it: a connection asks it once, and a set that changes
             # nothing (getattr: a stand-in that records it) is a rule
             # re-sending what the device already holds.
-            for comhead in matrix.repeated(set(getattr(self.modules[ident], "SETUP_COMHEADS", ()))):
+            for comhead in matrix.repeated(set(self.modules[ident].SETUP_COMHEADS)):
                 self.failures.append(f"{ident} heard {comhead} more than once on one connection")
             redundant = list(getattr(matrix, "redundant", ()))
             if redundant:

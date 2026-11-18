@@ -44,8 +44,7 @@ PAUSE = 0.5
 
 
 def settings_module(device: dict) -> ModuleType | None:
-    return next((m for m in integrations.REGISTRY if hasattr(m, "plan") and uses(device, m.PHASE, m.NAME)),
-                None)
+    return next((m for m in integrations.defining("plan") if uses(device, m.PHASE, m.NAME)), None)
 
 
 def targets(data: dict, only: str | None = None) -> list[tuple[dict, ModuleType]]:

@@ -52,8 +52,8 @@ HEADER = (
 def declarations(device: dict) -> list[dict]:
     """What each of the device's integrations reads of what it plays."""
     found = []
-    for module in integrations.REGISTRY:
-        if callable(getattr(module, "playing", None)) and uses(device, module.PHASE, module.NAME):
+    for module in integrations.defining("playing"):
+        if uses(device, module.PHASE, module.NAME):
             spec = module.playing(device)
             if spec:
                 found.append(spec)

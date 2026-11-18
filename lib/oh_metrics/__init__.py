@@ -412,17 +412,17 @@ def probes(inventory: dict, conf=None) -> tuple[list[Probe], list[tuple[str, tup
         ident = device["id"]
         by_port: dict[int, list[str]] = {}
         for module in oh_integrations.REGISTRY:
-            phases = [module.PHASE] + (["control"] if getattr(module, "CONTROL", False) else [])
-            if not any(_uses(device, phase, module.NAME) for phase in phases) or not getattr(module, "PROBED", True):
+            phases = [module.PHASE] + (["control"] if module.CONTROL else [])
+            if not any(_uses(device, phase, module.NAME) for phase in phases) or not module.PROBED:
                 continue
             numbers: list[int] = []
-            if isinstance(getattr(module, "PORT", None), int):
+            if module.PORT is not None:
                 numbers.append(module.PORT)
             file = conf.yaml.get(module.FILE)
             for uid, thing in sorted((file.things if file else {}).items()):
                 if thing_device(uid) == ident:
                     numbers += thing_ports(thing)
-            numbers += getattr(module, "PROBE_PORTS", ())
+            numbers += module.PROBE_PORTS
             for number in numbers:
                 names = by_port.setdefault(number, [])
                 if module.NAME not in names:
@@ -483,7 +483,7 @@ def signals(device: dict, conf, found: list[Probe]) -> list[Signal]:
     ident = device["id"]
     listed = _integrations(device)
     needed = set((device.get("controls") or {}).get("control") or []) - {
-        module.NAME for module in oh_integrations.REGISTRY if getattr(module, "ROUTE_OPTIONAL", False)}
+        module.NAME for module in oh_integrations.REGISTRY if module.ROUTE_OPTIONAL}
     present = {name for file in conf.yaml.values() for name in file.items}
     out: list[Signal] = []
     for module in oh_integrations.REGISTRY:
@@ -491,14 +491,14 @@ def signals(device: dict, conf, found: list[Probe]) -> list[Signal]:
             continue
         file = conf.yaml.get(module.FILE)
         things = [uid for uid in (file.things if file else {}) if thing_device(uid) == ident]
-        through = module.transport(device) if hasattr(module, "transport") else None
+        through = module.transport(device) if module.transport else None
         if through and file and through in file.things and through not in things:
             things.append(through)
         control = module.NAME in needed
-        if getattr(module, "THING_FOLLOWS_DEVICE", True):
+        if module.THING_FOLLOWS_DEVICE:
             out += [Signal("thing", (module.NAME,), "thermite_thing_online", (("thing", uid),), 0, control)
                     for uid in things]
-        if getattr(module, "READS", False) and _commands.tally_item(ident, module.NAME) in present:
+        if module.READS and _commands.tally_item(ident, module.NAME) in present:
             out.append(Signal("reads", (module.NAME,), "thermite_device_read_ok",
                               (("device", ident), ("integration", module.NAME)), 0, control))
         if file and f"{ident}_online" in file.items:
@@ -630,7 +630,7 @@ def exporter_map(inventory: dict, conf=None) -> dict:
     house = oh_conf.House(inventory)
     # A ping Thing is ONLINE while nothing answers its address: as a
     # device's Thing it made a dead device read online.
-    mute = {module.FILE for module in oh_integrations.REGISTRY if not getattr(module, "THING_FOLLOWS_DEVICE", True)}
+    mute = {module.FILE for module in oh_integrations.REGISTRY if not module.THING_FOLLOWS_DEVICE}
     things: dict[str, list[str]] = {}
     for path, file in conf.yaml.items():
         for uid in ([] if path in mute else file.things):

@@ -9,7 +9,7 @@ time-out, reads `power_status ?`, `input ?` and, while the projector is on,
 `picture_mode ?` on it and posts them to the Items, changed or not, so a
 reading stays fresh for the room policy. A device that also lists
 sony_adcp under control has its power, input and key Items turned into ADCP
-lines (LINES) on that connection. A projector that does not answer, or
+lines on that connection. A projector that does not answer, or
 closes the connection while answering, gets UNDEF and is reconnected after
 15 and 30 seconds, then every minute; a connection it closed or lost while
 idle (its time-out, a standby, a power cycle) is replaced at once, and a
@@ -103,12 +103,6 @@ KEYS = {
     "picture": "picmode",
     "aspect": "aspect",
     "lens": "lens_position",
-}
-#: The lines a command sends: the power Switch, an input, a key.
-LINES = {
-    "power": {"ON": 'power "on"', "OFF": 'power "off"'},
-    "input": {value: f'input "{value}"' for value, _ in INPUTS},
-    "key": {button: f'key "{code}"' for button, code in KEYS.items()},
 }
 
 

@@ -31,8 +31,7 @@ SETTLE_MAX_MS = 300000
 def _provider(device):
     """The integration whose fields() the executor drives for a device: one
     the device lists under control."""
-    return next((module for module in integrations.REGISTRY
-                 if hasattr(module, "fields") and uses(device, "control", module.NAME)), None)
+    return next((module for module in integrations.defining("fields") if uses(device, "control", module.NAME)), None)
 
 
 def _settle(module, item: str, settle: dict, allowed: list) -> dict:
@@ -135,7 +134,7 @@ def configure(house: House, conf, descriptor: dict) -> dict:
                 "require('thermite-routing-io').httpActor(CONFIG, {readonly: !SEND, "
                 "record: thermiteDevice.recorder(CONFIG.key)});\n", provider.NAME)
         else:
-            path = provider.rule_path(device) if "http" not in kinds and hasattr(provider, "rule_path") else key
+            path = provider.rule_path(device) if "http" not in kinds and provider.rule_path else key
             text = conf.files.get(path, "")
             if text.splitlines().count(CUSTOM_MARK) != 1:
                 raise ValueError("routing executor adapter is absent: " + path)

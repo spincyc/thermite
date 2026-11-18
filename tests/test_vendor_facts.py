@@ -1,5 +1,5 @@
 """Vendor facts live in their integration modules; generic code reads them
-through the registries (the contract in lib/oh_integrations/__init__.py)."""
+through the registries (the contract in lib/oh_integrations/_hooks.py)."""
 
 import copy
 import json
@@ -53,10 +53,10 @@ class Generic(unittest.TestCase):
 class Discovery(unittest.TestCase):
     def test_every_declared_port_and_service_is_probed_and_marks_av_gear(self):
         for module in integrations.REGISTRY:
-            for port in getattr(module, "DISCOVER_PORTS", ()):
+            for port in module.DISCOVER_PORTS:
                 self.assertIn(port, oh_discover.PORTS)
                 self.assertTrue(oh_discover.is_av({"ports": [port]}), (module.NAME, port))
-            for service in getattr(module, "DISCOVER_MDNS", ()):
+            for service in module.DISCOVER_MDNS:
                 self.assertTrue(oh_discover.is_av({"mdns": {"services": [service]}}), (module.NAME, service))
         self.assertEqual(list(oh_discover.PORTS), sorted(set(oh_discover.PORTS)))
         self.assertFalse(oh_discover.is_av({"ports": [22, 80, 443]}))
@@ -71,8 +71,8 @@ class Keys(unittest.TestCase):
     def test_device_and_house_keys_come_from_their_owners(self):
         top, device = oh_inventory.keys()
         for module in (*integrations.REGISTRY, oh_control4):
-            self.assertLessEqual(set(getattr(module, "DEVICE_KEYS", ())), device)
-            self.assertLessEqual(set(getattr(module, "HOUSE_KEYS", ())), top)
+            self.assertLessEqual(set(integrations.declared("DEVICE_KEYS", (module,))), device)
+            self.assertLessEqual(set(integrations.declared("HOUSE_KEYS", (module,))), top)
         self.assertLessEqual({"notes", "control4"}, device)
         # A key nobody declares is refused, with a hint from the declared ones.
         self.assertIn("example_tv: unknown key 'sonos_ud'; did you mean sonos_udn?",
@@ -104,7 +104,7 @@ class Keys(unittest.TestCase):
         self.assertEqual(self.problems(lambda d: d.update(control4_rooms=["x"])), ["control4_rooms must be a mapping"])
 
     def test_a_module_needing_a_mac_says_so(self):
-        needing = {module.NAME for module in integrations.REGISTRY if getattr(module, "NEEDS_MAC", False)}
+        needing = {module.NAME for module in integrations.REGISTRY if module.NEEDS_MAC}
         self.assertEqual(needing, {"sonos"})
 
 

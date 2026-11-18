@@ -35,8 +35,8 @@ ITEM_ONLY_RULES = (RULE,)
 
 def needs(house: House) -> list:
     """The integrations with HANDLER_POOL that a device of the house lists."""
-    return [module for module in integrations.REGISTRY if hasattr(module, "HANDLER_POOL")
-            and any(uses(device, module.PHASE, module.NAME) for device in house.devices)]
+    return [module for module in integrations.defining("HANDLER_POOL")
+            if any(uses(device, module.PHASE, module.NAME) for device in house.devices)]
 
 
 def enabled(house: House) -> bool:

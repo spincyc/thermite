@@ -88,10 +88,10 @@ class Seam(unittest.TestCase):
         self.assertIn('"tally":"ukm404_http_commands"', generic["automation/js/thermite_routing_io_example_usb.js"])
 
     def test_an_integration_has_a_problem_hook_exactly_when_its_script_takes_commands(self):
-        ruled = {module.NAME for module in integrations.REGISTRY if getattr(module, "SOURCE", None)
+        ruled = {module.NAME for module in integrations.REGISTRY if "SOURCE" in vars(module)
                  and "thermiteDevice.commandRule(" in Path(module.SOURCE).read_text(encoding="utf-8")}
         self.assertEqual(len(ruled), len(COMMAND_RULES))
-        self.assertEqual({module.NAME for module in integrations.REGISTRY if hasattr(module, "problem")}, ruled)
+        self.assertEqual({module.NAME for module in integrations.defining("problem")}, ruled)
 
 
 class Vocabulary(unittest.TestCase):
@@ -266,10 +266,10 @@ class Tally(unittest.TestCase):
         they answer, and one that said so without polling a check that is
         unknown for good."""
         concludes = re.compile(r"thermiteDevice\.(?:health\(|problem\.read\()")
-        polling = {module.NAME for module in integrations.REGISTRY if getattr(module, "SOURCE", None)
+        polling = {module.NAME for module in integrations.REGISTRY if "SOURCE" in vars(module)
                    and concludes.search(Path(module.SOURCE).read_text(encoding="utf-8"))}
         self.assertEqual(polling, {"avpro_telnet", "pyatv_http", "sony_adcp", "sony_ip_control", "vrroom_telnet"})
-        self.assertEqual({module.NAME for module in integrations.REGISTRY if getattr(module, "READS", False)}, polling)
+        self.assertEqual({module.NAME for module in integrations.REGISTRY if module.READS}, polling)
         for device, check in ((check["device"], check) for check in oh_metrics.exporter_map(EXAMPLE)["health_checks"]):
             if check["check"] == "reads":
                 self.assertEqual(check["metric"], "thermite_device_read_ok")

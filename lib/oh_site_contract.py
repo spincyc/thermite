@@ -33,8 +33,8 @@ def capabilities(device: dict):
 
 
 def keys(module, device):
-    provider = getattr(module, "command_keys", None) or getattr(module, "keys", None)
-    values = provider(device) if callable(provider) else getattr(module, "KEYS", {})
+    provider = module.command_keys or module.keys
+    values = provider(device) if provider else module.KEYS
     return sorted(key for key in values if isinstance(key, str)) if isinstance(values, (dict, tuple, list, set)) else []
 
 
@@ -100,15 +100,14 @@ def music(house: House, guards: dict, host: dict) -> dict:
     """The music the gateway serves (oh_identity.music): Music Assistant's
     loopback API port, the host's library names (oh_music.settings) and the
     house's speakers. A speaker is every device an integration says Music
-    Assistant plays on (oh_integrations music(), the first in REGISTRY
+    Assistant plays on (oh_integrations music(), the first in its
     order): its label, its room, its Music Assistant provider and what
     matches it to its player, its address, which Music Assistant's discovery
     is also given, and the routed rooms that command it, with its role in
     each (routing.guard_rooms), which lock it as they lock its audio page."""
     speakers = {}
     for device in house.devices:
-        player = next((spec for module in integrations.REGISTRY if hasattr(module, "music")
-                       if (spec := module.music(device))), None)
+        player = next((spec for module in integrations.defining("music") if (spec := module.music(device))), None)
         if player is None:
             continue
         speakers[device["id"]] = {"label": house.label(device), "room": device["room"],
@@ -227,7 +226,7 @@ def compile(house: House, conf: Conf, *, asset_root: Path | None = None, metrics
                          if stage in entry and entry[stage].get("device") == ident), None)
             if zone is not None:
                 # A zone stage supplies exact power/input; main-zone remote controls do not.
-                staged = module.stage(device, zone) if hasattr(module, "stage") else None
+                staged = module.stage(device, zone) if module.stage else None
                 control = {point: staged[point] for point in ("power", "input") if staged and staged.get(point)}
                 if staged:
                     control["input"] = {"item": staged["input"], "options": [[value, value] for value in staged["inputs"]]}

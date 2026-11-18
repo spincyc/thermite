@@ -19,10 +19,9 @@ def providers(house: House) -> dict:
     """The integration-owned, read-only diagnostics schema per device."""
     out = {}
     for device in house.devices:
-        for module in integrations.REGISTRY:
-            describe = getattr(module, "diagnostics", None)
-            enabled = uses(device, module.PHASE, module.NAME) or (getattr(module, "CONTROL", False) and uses(device, "control", module.NAME))
-            if describe and enabled and (description := describe(device)):
+        for module in integrations.defining("diagnostics"):
+            enabled = uses(device, module.PHASE, module.NAME) or (module.CONTROL and uses(device, "control", module.NAME))
+            if enabled and (description := module.diagnostics(device)):
                 out[device["id"]] = copy.deepcopy(description)
                 break
     return out

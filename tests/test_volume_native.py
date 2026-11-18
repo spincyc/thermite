@@ -333,7 +333,7 @@ class NativeVolume(unittest.TestCase):
     def test_neither_the_house_file_nor_an_integration_can_cap_a_volume(self):
         self.assertFalse([key for key in oh_inventory.keys()[1] if "volume" in key])
         for module in oh_integrations.REGISTRY:
-            self.assertFalse(hasattr(module, "volume_max") or hasattr(module, "DEFAULT_VOLUME_MAX"), module.NAME)
+            self.assertFalse({"volume_max", "DEFAULT_VOLUME_MAX"} & set(vars(module)), module.NAME)
         for ident in NATIVE:
             with self.subTest(device=ident):
                 data = fixture()

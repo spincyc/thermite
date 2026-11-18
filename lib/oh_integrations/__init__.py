@@ -1,308 +1,35 @@
 """Integrations: one module per way openHAB talks to a kind of device.
 
-Each module owns everything about its integration and provides:
-
-    NAME      the name devices.yaml lists under controls.<PHASE>
-    PHASE     the controls phase it implements ("observe" or "control")
-    FILE      its output file, relative to conf/
-    HEADER    the comment lines that open that file
-    ADDONS    the add-ons it needs (oh_conf.Addon)
-    ASSETS    {path under conf/: file beside the module} to copy, often {}
-    validate(device) -> list[str]
-              problems with this integration's fields in one device; called
-              for every device, so a field is checked wherever it appears
-    render(device, house, out)
-              adds one device's Things and Items to out (an oh_conf.YamlFile),
-              and, once, any Thing its devices share, such as a bridge
-
-Optional provider hooks preserve dormant integrations and validate gateways:
-
-    NEEDS_IP = False
-              its endpoint is an explicit transport rather than the target
-              device; all ordinary providers still require the device IP
-    addons(devices) -> Addon sequence
-              conditional add-ons; otherwise static ADDONS is unchanged
-    validate_house(data) -> list[str]
-              cross-device wiring/dependency validation before rendering;
-              it runs last, on a house whose every device and section
-              (routing, say) has passed its own validation
-    transport_addresses(device) -> {exactThingUID: [IPv4, ...]}
-              validated endpoint authority for that provider's own Things
-              only; unrelated Things retain their inventory address checks
-    powered_by(device) -> {Item: power Item}
-              the power Item each of its readings needs on, for a device
-              with more than one (a receiver's zones); a device with one
-              power Item has every reading follow it without this (see
-              powered()). Metrics tell a reading with no value while that
-              power reads OFF as the device being off
-              (thermite_item_device_off), not unknown, and the activity feed
-              leaves it to the power's own line
-
-A module that switches a matrix also provides
-
-    ports(device) -> (inputs, outputs)
-    switch_item(device, output) -> str
-              the Number Item holding the input routed to that output; it
-              is commanded with an input number
-    COMHEADS  all it ever sends, named as its stand-in from
-              lib/oh_matrix_sim.SIMS[NAME] records it
-    SETUP_COMHEADS
-              optional: those of COMHEADS that set up a connection and
-              move no port (bin/thermite test routing counts every other
-              comhead but a get as a write)
-    thing_uid(device), url(address)
-              the Thing's UID and the URL of a matrix at HOST[:PORT]
-              (bin/thermite test routing points the Thing at the stand-in),
-              or, for a matrix that a rule of its own talks to,
-    aim(files, device, address) -> files
-              the rendered files with the rule talking to the matrix at
-              HOST:PORT instead
-
-and an HDMI matrix that can present a chosen EDID on each input
-
-    EDID      {name: code}
-    edid_item(device, input) -> str
-              the Number Item holding the input's EDID code; it is
-              commanded with a code
-    copy_edid(output) -> str
-              the EDID name that copies the display on that output
-
-so house-wide features (oh_features.routing) can drive any matrix without
-knowing its protocol. A module that switches an HDMI switch in front of one
-display (a room's hdmi_switch in the routing) provides, instead of ports()
-and switch_item(),
-
-    INPUTS    the input numbers the display can be shown, in the switch's own
-              numbering
-    input_item(device) -> str
-              the Number Item holding the input shown; it is commanded with
-              an input number
-
-and COMHEADS with thing_uid() and url(), or aim(), as a matrix does; a
-room's hdmi_switch may also be one output of a matrix. A module that
-powers a room's receiver or display and sets its input (routing.rooms.<room>
-receiver and display) provides
-
-    stage(device, zone) -> {"power": Item, "input": Item, "inputs": [...]}
-              the Switch Item commanded ON and OFF, and read back, of one
-              zone (None: the device's only or main one), the Item
-              commanded with an input and read back, and the inputs it
-              takes; None for a zone the device lacks. routing.js sends
-              these only to a device that lists the module under control.
-              A zone that can play whatever the main zone plays adds
-              "follows": the input that does so
-
-A module whose fields the routing lifecycle's ordered executor drives
-(oh_features.routing.lifecycle_io) provides
-
-    fields(device) -> {Item: declaration}
-              each field of a device that lists the module under control,
-              declared as a dict of
-        kind      "http": the generic HTTP actor writes and reads it
-                  through its Thing's channel; any other kind: the
-                  module's own rule drives it (rule_path() below)
-        values    the values it can be commanded with
-        thing, channel
-                  its Thing's UID and channel id (http)
-        ack       what acknowledges a write (http): "result", an answer of
-                  {"result": 1}; "readback", only a read showing the value
-        settle    optional {value: ms}: how long an accepted write of the
-                  value may take to show in a read, and a transition toward
-                  it may last (at most 300000)
-        independent
-                  optional, True when a command to it can change no other
-                  field of the device (a matrix output a command names
-                  alone): its unknown outcome quarantines it alone, until
-                  a read of it answers; otherwise the whole device waits
-        manual    optional: how many Items the device's actor takes manual
-                  commands on, when more than its fields
-              and any other key its own rule reads (zone, point); every
-              key but manual reaches the actor, values as `allowed`
-    rule_path(device) -> str
-              for any kind but http: its rule's path under conf/, which
-              its files() renders with the line
-              `const ROUTING_EXECUTOR = null;` once; the lifecycle fills it
-              in with the actor's configuration
-
-A module whose
-device has fixed settings also provides
-
-    STATUS    the status comheads whose answers report them
-    plan(device, status) -> [(what changes, request body), ...]
-              for bin/thermite matrix-settings, which reads STATUS, prints the
-              plan and sends the bodies only when asked to
-
-An observe module may also provide
-
-    CONTROL = True
-              it implements the control phase too: a device that lists NAME
-              under both observe and control gets Items that send commands;
-              one that lists it under observe only stays display-only
-
-and a module with a rule of its own, which talks to its devices itself or
-does what their binding cannot, provides
-
-    files(devices, house) -> {path under conf/: text}
-              files rendered from all the devices it renders at once, such
-              as its rule under automation/js/
-
-A module whose rule takes its devices' commands (_device.js commandRule)
-keeps the record of each one (_commands): its render() adds the record's
-Items (_commands.render), its script embeds the shared device part under
-its NAME (_io.embed, _io.shared), and it provides
-
-    problem(device) -> the device's problem Item (_commands.problem_item)
-              when its rule commands the device, else None: the remote
-              page and the metrics show the code it holds
-
-A control module that can restart its devices without cutting their power
-provides, for nightly reboots (oh_features.reboots),
-
-    reboot(device) -> {"item": the Item that restarts the device when
-              commanded "reboot", "answers": Items with a value while it
-              answers, "things": Things ONLINE while it answers (optional),
-              "signs": more Things that go offline while it restarts
-              (optional), "idle": the readings that all hold while nothing
-              uses it, each {"item", "is"}, or {"item", "field", "is",
-              "maxAge"} for a field of a diagnostics snapshot, with
-              "unreadIsIdle": True where a missing snapshot is a hang
-              that the restart cures; oh_features.reboots adds, for a USB
-              matrix, that each room whose ports it switches is Off}
-
-A module whose Items tell what its devices play provides, for what is
-playing (oh_features.playing),
-
-    playing(device) -> {"power": the Item whose OFF means nothing plays
-              (optional), "apps": Items naming the app, each {"item",
-              "names": {value: app name} (optional), "idle": values that
-              mean nothing plays (optional), "package": True where any
-              other value is an Android package (optional), "when"
-              (optional, as a title's)}, "titles": Items of the title,
-              each {"title", "artist", "series", "season", "episode" (each
-              but title optional), "when": {"item", "is": [values]} while
-              it holds (optional)}}
-
-A control module whose devices Music Assistant plays on (oh_music) provides
-
-    music(device) -> {"provider": the Music Assistant player provider that
-              drives it, and what matches the device to that provider's
-              player: "udn" (the player's ID), or "mac" and "ip" (the MAC
-              it reports, else its address)}, or None for a device it does
-              not control; the contract adds the device's address for
-              Music Assistant's discovery (oh_site_contract.music)
-
-A control module gives the remote page what it drives, and may give an
-audio device controls of its own (Listen on the remote; the gateway's
-device route, oh_identity.runtime, commands what both declare):
-
-    remote(device) -> {"power", "mute": Switch Items, "volume": {"item",
-              "min", "max", "step"} on the device's own scale, "input":
-              {"item", "options": [[value, label], ...]}, "key": the
-              String Item a remote button id (KEYS, or keys(device)) is
-              sent to; each optional} or None; REMOTE_LAYOUT or
-              remote_of(device) names its buttons' layout (remotes.js)
-    audio(device) -> what its page adds to remote(), or None (each key
-              optional):
-        transport  button ids of its keys the page shows as transport
-                   (previous, play_pause, next, tv)
-        state      {"item", "playing": [values while it plays], "silent"
-                   (optional): {"item", "is": [values]} while which it
-                   plays nothing unless it names a track: a soundbar's TV
-                   input, which reads as playing with the TV silent}
-        track      {"title", "artist", "album", "service" (Item names,
-                   free text), "duration" (seconds), "sample_rate" (Hz),
-                   "bit_depth" (bits): plain Number Items}
-        settings   [{"item", "label", "section": "playback", "sound" or
-                   "device", "kind": "switch", "enum" with "options":
-                   [[value, label], ...] it is sent and "reads" (optional)
-                   it may only show, or "number" with "min", "max", "step"
-                   and "unit" (optional), "when" (optional, display only):
-                   {"item", "is": [values]} while it applies}], each
-                   commanded and read back
-        facts      [{"item", "label", "unit" (optional), "quiet" (optional):
-                   true for a reading that drifts with every poll, such as
-                   a temperature, which the activity feed leaves out}],
-                   read only
-              A page shows a setting or fact only while its Item has a
-              value: what a model lacks reads as nothing. The feed leaves
-              out a track's details beyond its title and artist.
-
-Facts about a vendor's devices live in its module, never in a generic one:
-the generic code reads these optional attributes through REGISTRY
-(declared() for the tuples), so no table outside this package names an
-integration.
-
-    DEVICE_KEYS   device fields it reads (validate() checks them); the house
-                  file refuses any device key no module or the inventory
-                  core (oh_inventory) declares
-    HOUSE_KEYS    top-level house-file keys it reads, likewise
-    NEEDS_MAC = True
-                  it derives a device's identity from its mac, so a device
-                  listing it needs one
-    HOUSE_ITEMS   Items it renders that belong to the house, not a device
-    ITEM_ONLY_RULES
-                  rules under automation/js/ it renders that open no
-                  connection, so hold no RULE_SENDS (oh_render.read_only)
-    REMOTE_LAYOUT the remote page's layout for its devices, unless it
-                  provides remote_of(device)
-    READBACK_INPUTS
-                  every input value its routed input Items read back; the
-                  remote's route diagnosis may report these
-    PORT, PROBE_PORTS
-                  the device's TCP ports metrics probes besides its Things'
-                  (PROBE_PORTS for an integration with several, or whose
-                  Things name none)
-    PROBED = False
-                  metrics never probes its devices: it has no fixed port,
-                  or a connection costs the device a session or a TLS
-                  handshake
-    transport(device) -> Thing UID or None
-                  the Thing its rule sends the device's commands through,
-                  where that Thing is named after another device (a
-                  source's CEC goes through the matrix): its status is the
-                  device's own signal (oh_metrics.signals()), and a check
-    THING_FOLLOWS_DEVICE = False
-                  its Things' status says nothing of the device (a ping
-                  Thing is ONLINE while nothing answers): metrics leave
-                  them out of thermite_thing_online, and no check reads
-                  them
-    READS = True
-                  its rule reads its devices itself and says what each read
-                  met (_device.js health and problem.read): metrics keep
-                  that as thermite_device_read_ok, the reading that says
-                  whether such a device answers, and a health check. A rule
-                  that asks a device nothing for a while says so
-                  (problem.unread), and the reading is unknown meanwhile
-    SESSIONS = True
-                  it keeps a session or subscription open with each device:
-                  the sandbox, which still reads the other devices, addresses
-                  its Things nowhere (oh_render.unaddressed) and leaves the
-                  sessions to the runtime
-    ROUTE_OPTIONAL = True
-                  its Things and ports never gate a routed source's health
-    DISCOVER_PORTS, DISCOVER_MDNS
-                  TCP ports and mDNS service names or labels that mark a
-                  host on the LAN as AV gear (bin/thermite discover)
-    HANDLER_POOL, HANDLER_POOL_WHY
-                  the openHAB thingHandler threads its binding needs while
-                  it blocks them, and why; oh_features.threadpools raises
-                  the pool when any device lists such a module
+Each module owns everything about its integration, and tells the generic
+code about it through hooks: the names oh_integrations._hooks.HOOKS
+declares, each with what it is for. Every module defines the required ones
+(NAME, PHASE, FILE, HEADER, ADDONS, ASSETS, validate(), render()) and any of
+the others it has something to say for. The generic code reads a hook as an
+attribute of a module of REGISTRY, which answers one it does not define with
+the hook's default, and finds the modules that define one with defining();
+it imports no integration by name (tests/test_hooks.py holds both the
+table and its readers to this).
 
 A module renders exactly the devices that list NAME under controls.<PHASE>.
-Adding an integration is one module, one line in REGISTRY, and its test.
-Modules whose names start with an underscore are helpers shared by
-integrations, not integrations.
+Adding an integration is one module, one line in REGISTRY, its name in the
+`order` of each hook it defines that only one integration answers for a
+device, and its test. Modules whose names start with an underscore are
+helpers shared by integrations, not integrations.
 """
 
 from __future__ import annotations
 
+from . import _hooks
 from . import (androidtv_googletv, avpro_telnet, bk808_cec, bk808_http, cast, denonmarantz_http, drhdmi_http, globalcache_ir, heos, network_ping, pyatv_http, sonos,
                sony_adcp, sony_ip_control, sony_rest, ukm404_http, unifi_protect, vrroom_http, vrroom_telnet, wiim_http)
 
 #: Implemented integrations, in render order; a room page lists each device's
-#: points in this order.
+#: points in this order. Which of two a device lists is asked first for a
+#: hook only one answers is that hook's `order` (_hooks.HOOKS), not this.
 REGISTRY = (network_ping, sony_rest, sony_ip_control, cast, androidtv_googletv, pyatv_http, sonos, denonmarantz_http, heos,
             wiim_http, sony_adcp, bk808_http, ukm404_http, vrroom_http, vrroom_telnet, avpro_telnet, unifi_protect, drhdmi_http, globalcache_ir, bk808_cec)
+for _module in REGISTRY:
+    _module.__getattr__ = _hooks.absent
 
 PHASES = ("observe", "control")
 
@@ -326,9 +53,20 @@ def allowed() -> dict[str, set[str]]:
     names = {phase: set(PLANNED[phase]) for phase in PHASES}
     for module in REGISTRY:
         names[module.PHASE].add(module.NAME)
-        if getattr(module, "CONTROL", False):
+        if module.CONTROL:
             names["control"].add(module.NAME)
     return names
+
+
+def defining(hook: str) -> tuple:
+    """The integrations that define `hook`: in the hook's `order` where one
+    answers for a device, so the first that does is the one; in render
+    order where each has its say."""
+    order = _hooks.HOOKS[hook].order
+    modules = [module for module in REGISTRY if hook in vars(module)]
+    if order is not None:
+        modules.sort(key=lambda module: order.index(module.NAME) if module.NAME in order else len(order))
+    return tuple(modules)
 
 
 def powered(device: dict, items: dict[str, dict]) -> dict[str, str]:
@@ -340,8 +78,8 @@ def powered(device: dict, items: dict[str, dict]) -> dict[str, str]:
         return "Power" in (item.get("tags") or [])
     switches = [name for name, item in items.items() if power(item) and str(item.get("type")).split(":")[0] == "Switch"]
     declared = {}
-    for module in REGISTRY:
-        if hasattr(module, "powered_by") and module.NAME in ((device.get("controls") or {}).get(module.PHASE) or []):
+    for module in defining("powered_by"):
+        if module.NAME in ((device.get("controls") or {}).get(module.PHASE) or []):
             declared.update(module.powered_by(device))
     needs = {}
     for name, item in items.items():
@@ -351,7 +89,10 @@ def powered(device: dict, items: dict[str, dict]) -> dict[str, str]:
     return needs
 
 
-def declared(attribute: str, modules=REGISTRY) -> tuple:
-    """Every value of the optional tuple `attribute` across `modules`, in
-    their order, without repeats."""
-    return tuple(dict.fromkeys(value for module in modules for value in getattr(module, attribute, ())))
+def declared(hook: str, modules=REGISTRY) -> tuple:
+    """Every value of the tuple `hook` across `modules`, in their order,
+    without repeats. The modules may be more than the integrations: a
+    feature declares its house keys and Items under the same names, and
+    answers nothing for a name it lacks."""
+    default = _hooks.HOOKS[hook].default
+    return tuple(dict.fromkeys(value for module in modules for value in getattr(module, hook, default)))

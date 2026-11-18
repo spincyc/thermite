@@ -88,31 +88,30 @@ def literal(text: str) -> dict:
 
 
 def provider(device: dict) -> tuple[object | None, dict | None]:
-    """The first integration (REGISTRY order) that gives the device a remote,
-    and its control Items; (None, None) without one."""
-    for module in integrations.REGISTRY:
-        control = module.remote(device) if hasattr(module, "remote") else None
+    """The first integration (in remote()'s order) that gives the device a
+    remote, and its control Items; (None, None) without one."""
+    for module in integrations.defining("remote"):
+        control = module.remote(device)
         if control:
             return module, control
     return None, None
 
 
 def audio_page(device: dict) -> dict | None:
-    """The first integration's (REGISTRY order) audio page for the device
-    (oh_integrations audio()), beside its remote; None without one."""
-    return next((page for module in integrations.REGISTRY if hasattr(module, "audio")
-                 if (page := module.audio(device))), None)
+    """The first integration's (in audio()'s order) audio page for the
+    device (oh_integrations audio()), beside its remote; None without one."""
+    return next((page for module in integrations.defining("audio") if (page := module.audio(device))), None)
 
 
 def capabilities(device: dict) -> tuple[dict | None, str | None, str | None]:
     module, control = provider(device)
     if module is not None:
-        layout = module.remote_of(device) if hasattr(module, "remote_of") else getattr(module, "REMOTE_LAYOUT", None)
+        layout = module.remote_of(device) if module.remote_of else module.REMOTE_LAYOUT
         # Whichever script commands it keeps its problem Item, which need not
         # be the integration that gives it its remote (a receiver's HEOS rule).
         return control, layout, _commands.problem(device)
-    for module in integrations.REGISTRY:
-        if hasattr(module, "remote_availability") and module.remote_availability(device) is not None:
+    for module in integrations.defining("remote_availability"):
+        if module.remote_availability(device) is not None:
             return None, module.remote_of(device), None
     return None, "pc" if device["kind"] == "computer" else None, None
 
@@ -144,7 +143,7 @@ def build(house: House) -> dict:
         if (page := audio_page(device)) and control:
             row["audio"] = {**page, "place": house.room_label(device["room"]),
                             "rooms": routing.guard_rooms(data, ident)}
-        availability = next((entry for module in integrations.REGISTRY if hasattr(module, "remote_availability")
+        availability = next((entry for module in integrations.defining("remote_availability")
                              if (entry := module.remote_availability(device)) is not None), None)
         if availability is not None:
             row["availability"] = availability

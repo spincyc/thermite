@@ -75,8 +75,7 @@ HEADER = (
 
 def provider(device: dict):
     """The integration under control that can restart the device, or None."""
-    return next((module for module in integrations.REGISTRY
-                 if callable(getattr(module, "reboot", None)) and uses(device, "control", module.NAME)), None)
+    return next((module for module in integrations.defining("reboot") if uses(device, "control", module.NAME)), None)
 
 
 def time_of(data: dict) -> str:
@@ -91,7 +90,7 @@ def validate(data: dict) -> list[str]:
             problems.append("reboots: takes only time, such as {time: \"03:00\"}")
         elif "time" in setting and not (isinstance(setting["time"], str) and TIME.fullmatch(setting["time"])):
             problems.append(f"reboots.time: {setting['time']!r} is not a 24-hour HH:MM time, such as \"03:00\"")
-    able = sorted(module.NAME for module in integrations.REGISTRY if callable(getattr(module, "reboot", None)))
+    able = sorted(module.NAME for module in integrations.defining("reboot"))
     for device in data.get("devices") or []:
         if not isinstance(device, dict) or "reboot" not in device:
             continue

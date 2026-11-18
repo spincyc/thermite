@@ -296,7 +296,7 @@ def validate(data: object) -> list[str]:
     problems = validate_rooms(data.get("rooms") or {})
     rooms = data.get("rooms") if isinstance(data.get("rooms"), dict) else {}
     allowed = oh_integrations.allowed()
-    needs_mac = {module.NAME for module in oh_integrations.REGISTRY if getattr(module, "NEEDS_MAC", False)}
+    needs_mac = {module.NAME for module in oh_integrations.REGISTRY if module.NEEDS_MAC}
     seen: dict[str, dict[str, str]] = {"id": {}, "ip": {}, "mac": {}}
 
     def unique(kind: str, value: str, where: str) -> None:
@@ -466,7 +466,7 @@ def cross_check(data: dict, things: dict, items: dict) -> list[str]:
     """Problems where conf/ disagrees with the inventory."""
     # Runtime-only: providers import inventory through oh_conf.
     import oh_features
-    from oh_integrations import REGISTRY, declared
+    from oh_integrations import REGISTRY, declared, defining
 
     devices = {d["id"]: d for d in data.get("devices") or [] if d.get("id")}
     house_items = HOUSE_ITEMS | frozenset(declared("HOUSE_ITEMS", (*REGISTRY, *oh_features.REGISTRY)))
@@ -488,9 +488,7 @@ def cross_check(data: dict, things: dict, items: dict) -> list[str]:
         home = device.get("ip") or devices.get(device.get("via"), {}).get("ip")
         allowed = {home}
         owners = 0
-        for module in REGISTRY:
-            if not hasattr(module, "transport_addresses"):
-                continue
+        for module in defining("transport_addresses"):
             try:
                 declared = module.transport_addresses(device)
                 if uid not in declared:

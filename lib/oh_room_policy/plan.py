@@ -66,9 +66,8 @@ def native_power_observations(devices) -> dict[str, str]:
     (oh_access.worker)."""
     out = {}
     for device in devices:
-        for module in integrations.REGISTRY:
-            hook = getattr(module, "native_power_observation", None)
-            descriptor = hook(device) if hook else None
+        for module in integrations.defining("native_power_observation"):
+            descriptor = module.native_power_observation(device)
             if descriptor:
                 out[descriptor["item"]] = descriptor["reported_at"]
     return out

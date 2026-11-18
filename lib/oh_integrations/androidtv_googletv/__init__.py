@@ -152,8 +152,6 @@ KEYCODES = {
         "fast_forward": 90,
     },
 }
-VOLUME_UP = 24
-VOLUME_DOWN = 25
 #: Remote button id -> the app link the device opens (no Android key code
 #: opens an app), sent as a RemoteAppLinkLaunchRequest, per remote.
 APP_LINKS = {

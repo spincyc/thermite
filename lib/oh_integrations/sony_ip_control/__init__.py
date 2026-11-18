@@ -123,8 +123,6 @@ READBACK_INPUTS = (OWN[0], *(value for value, _ in INPUTS))
 #: (Sony BRAVIA REST API, audio service v1.0, getVolumeInformation and
 #: setAudioVolume; pro-bravia.sony.net/develop/integrate/rest-api/spec/).
 VOLUME = {"min": 0, "max": 100, "step": 1}
-#: The remote layout (web/remote/remotes.js) these TVs are drawn with.
-REMOTE = "sony_tv"
 #: Remote button id -> the IRCC command it sends, by the name the TV's
 #: system getRemoteControllerInfo gives it. power is an Item of its own,
 #: never a key; volume and mute are Items too.

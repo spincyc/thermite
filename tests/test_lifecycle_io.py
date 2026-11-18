@@ -156,6 +156,8 @@ def fictional(kind='http'):
     """An integration no generic file knows: a relay whose one field is
     driven by the generic HTTP actor, or (any other kind) by its own rule."""
     module = types.ModuleType('example_relay_http')
+    # As the registry does for its own: a hook it lacks reads as its default.
+    module.__getattr__ = integrations._hooks.absent
     module.NAME, module.PHASE, module.FILE = 'example_relay_http', 'control', 'yaml/example_relay.yaml'
     uid = lambda device: f"http:url:{device['id']}"
     def render(device, house, out):

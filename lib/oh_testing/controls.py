@@ -388,10 +388,10 @@ class Check:
         #: device id -> (its controlling module, its remote and routing controls)
         self.controls: dict[str, tuple] = {}
         for device in data["devices"]:
-            for module in integrations.REGISTRY:
-                offered = module.remote(device) if hasattr(module, "remote") else None
+            for module in integrations.defining("remote"):
+                offered = module.remote(device)
                 if offered:
-                    if not offered.get("input") and hasattr(module, "stage"):
+                    if not offered.get("input") and module.stage:
                         stage = module.stage(device, None)
                         if stage and stage.get("input"):
                             offered = {**offered, "input": {"item": stage["input"],
@@ -409,7 +409,7 @@ class Check:
         self.signal_since = time.time() * 1000
         self.signal_items = set()
         for ident, (module, _) in self.controls.items():
-            if hasattr(module, "diagnostics"):
+            if module.diagnostics:
                 self.signal_items.update((module.diagnostics(self.devices[ident]) or {}).get("items", []))
         self.failures: list[str] = []
         self.http: lib.Http | None = None
@@ -426,8 +426,8 @@ class Check:
         keep = {"services/addons.cfg", "yaml/model.yaml", all_off.ITEMS, all_off.RULE, threadpools.FILE}
         for module in modules.values():
             keep.add(module.FILE)
-            keep |= set(getattr(module, "ASSETS", {}))
-            if hasattr(module, "files"):
+            keep |= set(module.ASSETS)
+            if module.files:
                 selected = [self.devices[i] for i, (owner, _) in self.controls.items() if owner is module]
                 keep |= set(module.files(selected, house))
         out = {path: files[path] for path in sorted(keep) if path in files}
@@ -442,14 +442,14 @@ class Check:
                 module.render(device, house, part)
             out[module.FILE] = part.text()
             selected_conf.yaml[module.FILE] = part
-            if hasattr(module, "files"):
+            if module.files:
                 generated = module.files(selected, house)
                 out.update(generated)
                 selected_conf.files.update(generated)
         # A module that needs another's Things and Items (sony_ip_control,
         # sony_rest's power) gets them for its own devices only.
         for module in modules.values():
-            for needed in getattr(module, "NEEDS", ()):
+            for needed in module.NEEDS:
                 part = YamlFile(tuple(needed.HEADER))
                 for ident, (owner, _) in self.controls.items():
                     if owner is module and uses(self.devices[ident], needed.PHASE, needed.NAME):
@@ -538,7 +538,7 @@ class Check:
 
     def step_online(self) -> None:
         """Every controlled device's Thing (a rule-driven one has none), and any other kept Thing."""
-        expected = {m.thing_uid(self.devices[i]) for i, (m, _) in self.controls.items() if hasattr(m, "thing_uid")}
+        expected = {m.thing_uid(self.devices[i]) for i, (m, _) in self.controls.items() if m.thing_uid}
 
         def wrong():
             seen = self.things()
@@ -620,7 +620,7 @@ class Check:
         if control.get("volume"):
             self._reject_volume_past_max(ident)
         if control.get("key"):
-            buttons = module.keys(self.devices[ident]) if hasattr(module, "keys") else getattr(module, "KEYS", {})
+            buttons = module.keys(self.devices[ident]) if module.keys else module.KEYS or {}
             for button in buttons:
                 before = len(self.stand_ins[ident].writes())
                 self.command(control["key"], button)
@@ -797,7 +797,7 @@ class Check:
             for ident, (module, control) in self.controls.items():
                 if module.NAME not in ("ir", "bk808_cec"):
                     continue
-                button = next(iter(module.keys(self.devices[ident]) if hasattr(module, "keys") else module.KEYS))
+                button = next(iter(module.keys(self.devices[ident]) if module.keys else module.KEYS))
                 before = len(self.stand_ins[ident].writes())
                 self.command(control["key"], button, anonymous)
                 self.wait_for(f"{ident} anonymous key transport", lambda: {} if

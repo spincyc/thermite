@@ -47,8 +47,8 @@ def commands(data: dict) -> list[list[str]]:
         if staged:
             out.append([staged["power"], "OFF"])
             continue
-        for module in integrations.REGISTRY:
-            control = module.remote(device) if hasattr(module, "remote") else None
+        for module in integrations.defining("remote"):
+            control = module.remote(device)
             if control and control.get("power"):
                 out.append([control["power"], "OFF"])
     return out

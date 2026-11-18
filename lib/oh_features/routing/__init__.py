@@ -227,56 +227,50 @@ def _known(table: dict, name: object) -> dict | None:
 
 def switcher(device: dict) -> ModuleType | None:
     """The integration that switches this matrix, if it lists one."""
-    return next((m for m in integrations.REGISTRY
-                 if hasattr(m, "switch_item") and uses(device, m.PHASE, m.NAME)), None)
+    return next((m for m in integrations.defining("switch_item") if uses(device, m.PHASE, m.NAME)), None)
 
 
 def switchers() -> list[str]:
-    return [m.NAME for m in integrations.REGISTRY if hasattr(m, "switch_item")]
+    return [m.NAME for m in integrations.defining("switch_item")]
 
 
 def hdmi_switcher(device: dict) -> ModuleType | None:
     """The integration that switches this HDMI switch, if it lists one."""
-    return next((m for m in integrations.REGISTRY
-                 if hasattr(m, "input_item") and uses(device, m.PHASE, m.NAME)), None)
+    return next((m for m in integrations.defining("input_item") if uses(device, m.PHASE, m.NAME)), None)
 
 
 def hdmi_switchers() -> list[str]:
-    return [m.NAME for m in integrations.REGISTRY if hasattr(m, "input_item")]
+    return [m.NAME for m in integrations.defining("input_item")]
 
 
 def stager(device: dict) -> ModuleType | None:
     """The integration that powers and switches this receiver or display,
     if the device lists it under control."""
-    return next((m for m in integrations.REGISTRY if hasattr(m, "stage") and uses(device, "control", m.NAME)), None)
+    return next((m for m in integrations.defining("stage") if uses(device, "control", m.NAME)), None)
 
 
 def stagers() -> list[str]:
-    return [m.NAME for m in integrations.REGISTRY if hasattr(m, "stage")]
+    return [m.NAME for m in integrations.defining("stage")]
 
 
 def waker(device: dict) -> ModuleType | None:
     """The integration that wakes this source (wake_item()), if the device
     lists it under control."""
-    return next((m for m in integrations.REGISTRY if hasattr(m, "wake_item") and uses(device, "control", m.NAME)),
-                None)
+    return next((m for m in integrations.defining("wake_item") if uses(device, "control", m.NAME)), None)
 
 
 def action_item(devices: dict, device_id: str) -> str:
-    """The String Item an action is sent to: its integration's
-    action_item(), or, while the device has none, <id>_action, the name that
-    integration is to give it (routing.js skips an Item that is not there)."""
-    device = devices[device_id]
-    module = next((m for m in integrations.REGISTRY if hasattr(m, "action_item") and uses(device, "control", m.NAME)),
-                  None)
-    return module.action_item(device) if module else f"{device_id}_action"
+    """The String Item an action is sent to: <id>_action, the name the
+    device's integration is to give it. No integration renders one yet, and
+    routing.js skips an Item that is not there."""
+    return f"{device_id}_action"
 
 
 def readback_inputs(devices) -> list[str]:
     """Every input value the devices' integrations read back
     (READBACK_INPUTS): what a room's route diagnosis may report."""
     return list(dict.fromkeys(value for device in devices for module in integrations.REGISTRY
-                              if uses(device, module.PHASE, module.NAME) for value in getattr(module, "READBACK_INPUTS", ())))
+                              if uses(device, module.PHASE, module.NAME) for value in module.READBACK_INPUTS))
 
 
 def usb_host(source: dict, matrix_id: str, off_host: int) -> int:
@@ -942,7 +936,7 @@ def _edid_names(routing: dict, devices: dict, hdmi_ok: bool, problems: list[str]
         return None
     module = switcher(devices[routing["hdmi_matrix"]]) if hdmi_ok else None
     names = None
-    if module is not None and not all(hasattr(module, name) for name in ("EDID", "edid_item", "copy_edid")):
+    if module is not None and module.EDID is None:
         problems.append(f"routing.edid: {module.NAME} cannot set an input's EDID")
     elif module is not None:
         names = module.EDID

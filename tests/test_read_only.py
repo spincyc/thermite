@@ -51,7 +51,7 @@ DEVICE = {
 
 def phases(module) -> list[str]:
     """The phases devices.yaml may list the integration under."""
-    return [module.PHASE] + (["control"] if getattr(module, "CONTROL", False) and module.PHASE != "control" else [])
+    return [module.PHASE] + (["control"] if module.CONTROL and module.PHASE != "control" else [])
 
 
 HOUSES = {(module.NAME, phase) for module in integrations.REGISTRY for phase in phases(module)}

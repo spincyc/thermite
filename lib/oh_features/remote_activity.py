@@ -25,7 +25,7 @@ def manifest(house: House, conf: Conf) -> dict:
     active = []
     volumes = {}
     for device in house.devices:
-        controls = [module.remote(device) for module in integrations.REGISTRY if hasattr(module, "remote")]
+        controls = [module.remote(device) for module in integrations.defining("remote")]
         if device.get("kind") in CONTROLLERS or routing.stager(device) or any(controls):
             active.append(device)
         control = next((entry for entry in controls if entry), {})
