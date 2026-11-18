@@ -155,9 +155,3 @@ def pinned(data: dict, current: str | None) -> None:
                     + (f" Its prepared launcher is {launcher}." if launcher else "")
                     + " To finish an interrupted application update, rerun its printed Resume command, usually "
                     f"`thermite upgrade --config {shlex.quote(str(SITE))}` (or the matching thermite install).")
-
-
-def command(*args: str) -> tuple[str, ...]:
-    """A subprocess uses the same program and site, including inside sudo plans."""
-    import sys
-    return (sys.executable, str(PROGRAM / "bin/thermite"), "--site", str(SITE), *args)

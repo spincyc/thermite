@@ -340,7 +340,7 @@ class Transacted(unittest.TestCase):
     def test_the_site_pinning_the_new_release_would_have_re_executed_it(self):
         # What the health command found before the site went back inside
         # the transaction.
-        self.assertEqual(self.launch(("--site", str(self.site), "health")), [str(self.cached / "bin/thermite")])
+        self.assertEqual(self.launch(("--config", str(self.site), "health")), [str(self.cached / "bin/thermite")])
 
     def test_a_revert_that_rolls_back_puts_the_pin_commit_back(self):
         self.assertEqual(self.revert(healthy=1), changeover.ROLLED_BACK)

@@ -447,7 +447,7 @@ class Health(unittest.TestCase):
         launcher.chmod(0o755)
         with patch.object(Path, "home", return_value=self.home):
             self.assertTrue(_health(self.system, self.transaction))
-        self.assertEqual(self.ran, [(str(launcher), "--site", str(self.site), "health", "--production",
+        self.assertEqual(self.ran, [(str(launcher), "--config", str(self.site), "health", "--production",
                                      "--installation", "--settle", "120", "--revision", BEFORE)])
 
     def test_no_owner_command_is_not_healthy(self):

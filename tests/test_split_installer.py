@@ -187,7 +187,7 @@ class SplitInstaller(unittest.TestCase):
     def test_boot_readiness_units_deploy_and_verification_share_the_frozen_build(self):
         root = self.context.configuration
         cached_program = self.site / "var/application-releases" / self.application["digest"] / "bin/thermite"
-        prefix = (sys.executable, str(cached_program), "--site", str(self.site))
+        prefix = (sys.executable, str(cached_program), "--config", str(self.site))
         self.assertEqual(steps.BootTest(self.context).actions(self.system)[0].argv,
                          (*prefix, "test", "boot", "--conf", str(root / "conf"), "--versions", str(root / "versions.json")))
         self.assertEqual(steps.NativeReady(self.context).required, {"binding-http", "binding-network", "misc-metrics"})

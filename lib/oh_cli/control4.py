@@ -34,7 +34,7 @@ VENV = AREA / "build/control4-venv"
 REQUIREMENTS = PROGRAM_ROOT / "lib/requirements-control4.txt"
 EXPORTS = AREA / "var/control4"
 #: How to run this verb again, in the venv or in a child.
-COMMAND = [str(PROGRAM_ROOT / "bin/thermite"), "--site", str(AREA), "control4"]
+COMMAND = [str(PROGRAM_ROOT / "bin/thermite"), "--config", str(AREA), "control4"]
 
 EXAMPLES = (
     ("thermite control4", "set up and fetch as needed, then the summary"),

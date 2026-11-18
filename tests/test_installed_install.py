@@ -32,7 +32,7 @@ class InstalledInstall(unittest.TestCase):
         self.host.process_groups.return_value = {9001}
 
     def command(self, *args):
-        return (sys.executable, str(self.program / "bin/thermite"), "--site", str(self.site), *args)
+        return (sys.executable, str(self.program / "bin/thermite"), "--config", str(self.site), *args)
 
     def test_runtime_access_credentials_belong_to_the_private_site(self):
         self.host.read_bytes.return_value = None

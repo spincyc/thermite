@@ -44,9 +44,8 @@ class CommittedSnapshots(unittest.TestCase):
     def release(self, marker):
         script = '''import json, os, sys
 from pathlib import Path
-assert sys.argv[1] == '--site' and sys.argv[3:] == ['generate']
-site = Path(sys.argv[2])
-assert os.environ['THERMITE_SITE'] == str(site)
+assert sys.argv[1:] == ['generate']
+site = Path(os.environ['THERMITE_SITE'])
 assert 'PYTHONPATH' not in os.environ and 'PYTHONHOME' not in os.environ
 assert 'OPENHAB_SECRETS' not in os.environ and not (site / 'lib').exists()
 data = json.loads((site / 'instance/devices.yaml').read_text())

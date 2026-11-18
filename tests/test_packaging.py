@@ -242,7 +242,7 @@ class Packaging(unittest.TestCase):
                 patch.object(apple_tv.os, "execv", side_effect=Reentered) as execute:
             with self.assertRaises(Reentered): apple_tv.serve(args)
         self.assertEqual(execute.call_args.args, (str(environment / "bin/python"),
-            [str(environment / "bin/python"), str(oh_paths.PROGRAM / "bin/thermite"), "--site", str(selected),
+            [str(environment / "bin/python"), str(oh_paths.PROGRAM / "bin/thermite"), "--config", str(selected),
              "apple-tv", "serve", "--listen", args.listen, "--secrets", str(args.secrets)]))
 
     def test_init_upgrade_keeps_configuration_state_and_old_immutable_release(self):

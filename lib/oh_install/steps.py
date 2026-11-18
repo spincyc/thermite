@@ -404,7 +404,7 @@ def application(context: Context, *args: str) -> tuple[str, ...]:
     """
     from oh_paths import SITE_FILE
     if (context.area / SITE_FILE).is_file():
-        return (sys.executable, str(context.program / "bin/thermite"), "--site", str(context.area), *args)
+        return (sys.executable, str(context.program / "bin/thermite"), "--config", str(context.area), *args)
     return ("bin/thermite", *args)
 
 
@@ -2175,7 +2175,7 @@ class Verify(Step):
             # Health can derive its add-on requirements from the committed inputs.
             program = oh_release.resolve(self.context.var / "application-releases",
                                          self.context.application["digest"], self.context.application["version"])
-            prefix = (sys.executable, str(program / "bin/thermite"), "--site", str(self.context.area))
+            prefix = (sys.executable, str(program / "bin/thermite"), "--config", str(self.context.area))
         return [Command((*prefix, "health", "--production", "--installation", "--settle", str(self.settle), *addons, *revision),
                         show_output=True),
                 operator_command(self.context, system, (*prefix, "status", *revision))]

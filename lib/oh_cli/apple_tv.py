@@ -124,7 +124,7 @@ def serve(arguments: argparse.Namespace) -> int:
         # The pyatv-only environment has no thermite_app distribution. Re-enter
         # the selected program's stdlib launcher with canonical parsed options,
         # even when called through an installed entry point or a legacy alias.
-        argv = [str(python), str(PROGRAM_ROOT / "bin/thermite"), "--site", str(AREA),
+        argv = [str(python), str(PROGRAM_ROOT / "bin/thermite"), "--config", str(AREA),
                 "apple-tv", "serve", "--listen", arguments.listen, "--secrets", str(arguments.secrets)]
         if arguments.allow_remote:
             argv.append("--allow-remote")

@@ -215,7 +215,7 @@ def revert(system: System, dry_run: bool) -> int:
     work = changeover.Work(
         "revert", "revert", [steps.Account(context)], [PutBack(kept), SitePin(AREA, before, after)],
         [steps.StartTarget(context), changeover.Authorize(),
-         Healthy((str(command), "--site", str(AREA), "health", "--production", "--installation", "--settle",
+         Healthy((str(command), "--config", str(AREA), "health", "--production", "--installation", "--settle",
                   str(changeover.SETTLE), "--revision", before))],
         None, items=lambda system: [], pull=False, reinstate=True,
         confirm=changeover.Confirm(

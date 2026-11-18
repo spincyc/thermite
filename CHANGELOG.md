@@ -7,6 +7,9 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Thermite's own commands for a site (a health check after a rollback,
+  a revert, the Apple TV and Control4 helpers) say `--config`, the
+  documented switch, where they still said `--site`.
 - Two tests no longer fail by chance: one took a pairing code's digits
   in a log line's clock reading for a leak, and one gave a loaded host
   0.07 seconds to answer.

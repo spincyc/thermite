@@ -319,7 +319,7 @@ def _application(record: dict, *args: str) -> tuple[str, ...]:
     """This application's own command for the site."""
     import sys
     from oh_paths import PROGRAM
-    return (sys.executable, str(PROGRAM / "bin/thermite"), "--site", record["site"], *args)
+    return (sys.executable, str(PROGRAM / "bin/thermite"), "--config", record["site"], *args)
 
 
 # Steps of the transaction ---------------------------------------------------
@@ -1016,7 +1016,7 @@ def health(system: System, transaction: Transaction) -> bool:
         system.say(f"   Cannot check the reinstated version's health: {launcher} is not its owner command.")
         return False
     before = transaction.record.get("head_before")
-    argv = (str(launcher), "--site", str(transaction.site), "health", "--production", "--installation",
+    argv = (str(launcher), "--config", str(transaction.site), "health", "--production", "--installation",
             "--settle", str(SETTLE), *(("--revision", before) if before else ()))
     return runner.staged(system, "Health of the version that runs", Command(argv, show_output=True),
                          transaction.site) == 0

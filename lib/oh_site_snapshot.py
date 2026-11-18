@@ -51,8 +51,8 @@ def render(inputs: dict[str, bytes], release: Path, work: Path, expected: str) -
                        "HOME": str(home), "TMPDIR": str(temp), "THERMITE_SITE": str(site),
                        "PYTHONDONTWRITEBYTECODE": "1"}
         try:
-            result = subprocess.run([sys.executable, "-I", "-B", str(release / "bin/thermite"),
-                                     "--site", str(site), "generate"],
+            # THERMITE_SITE, above, selects the temporary site.
+            result = subprocess.run([sys.executable, "-I", "-B", str(release / "bin/thermite"), "generate"],
                                     cwd=release, env=environment, stdin=subprocess.DEVNULL,
                                     capture_output=True, timeout=120)
         except (OSError, subprocess.TimeoutExpired) as exc:
