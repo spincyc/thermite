@@ -643,6 +643,35 @@ that entry first. `thermite status` reports each share's mount, and
 `systemctl status mnt-nas-music.mount` and
 `journalctl -u 'thermite-share-gate@*'` tell why one failed.
 
+## Look at one device
+
+`thermite device den_tv` gathers what thermite knows about one device, by
+its id in the house file, so that nothing has to be found first:
+
+- **What it is**: its label, room, kind and address, the interfaces that
+  observe and command it, the Things and Items generated for it, and which
+  rooms' sources pass through it and as what.
+- **What watches it**: each reading that says whether it answers (a Thing's
+  status, a control port, the reads of its own rule, a ping), each health
+  check built on one and when a room needs that check. A device nothing
+  watches is told so plainly, as `thermite validate` notes it.
+- **What holds now**: each reading's value and its age, each check's state
+  and whether a room needs it now, the alerts about it, the problem its
+  rules last met and when it last read clear, the commands its rules took
+  by outcome, and what routing failed at it by reason.
+- **Where to look next**: the `journalctl` and `grep` lines below with this
+  device filled in, its room on the Devices board and its Things on the
+  runtime's own pages.
+
+The first two parts are read from the house file alone and work anywhere.
+The third is read from Prometheus on the server (loopback, read-only, no
+password), so run it there; elsewhere it says that this part needs the
+installation. It decides nothing itself: a check's state is the one the
+alerts follow, and a reading that is missing is shown as unknown, never as
+fine. While Prometheus does not answer it says so and exits with status 2;
+it exits 1 while a check a room needs now is failing or an alert about the
+device fires. `--json` prints the same facts as data.
+
 ## Trace a command
 
 Every command gets an 8-character ID, such as `1a2b3c4d`. The gateway

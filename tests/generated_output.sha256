@@ -186,7 +186,7 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  androidtv_goog
 
 9463b9a18852cfa9b565b3f6db0a6d270976123a59d95e80c9ddc31d255e7569  androidtv_googletv.control/conf/yaml/threadpools.yaml
 
-6175d81b861cd58d06798695b7425291e725d8f30a6cdee254601fd425be7cc5  androidtv_googletv.control/metrics/exporter/map.json
+1aca5ef10ec27f9eaab04e2a3e76ac7ddb5ac0dc15b0c2d1ab94427452efdbad  androidtv_googletv.control/metrics/exporter/map.json
 
 c33dce5ad6dc2739a6fb92249c429452fdd74272f84502c7a50e1f357f94b787  androidtv_googletv.control/metrics/grafana/dashboards/devices.json
 
@@ -244,7 +244,7 @@ dcf227f73376f726e4246ad6626fd1f14fb119795e7e858ffb362ae310e21f04  avpro_telnet.c
 
 a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  avpro_telnet.control/conf/yaml/pages.yaml
 
-43bdd5a50f0fa830f14f2a20fd597c4c32c3d62e94d62a55127dbbcfe17a5cbe  avpro_telnet.control/metrics/exporter/map.json
+2038f38013f62c4438d7c60d7b844a06461dbb71b7b39dd2a940ba74f48a1954  avpro_telnet.control/metrics/exporter/map.json
 
 9cd4df5adb074ff660cbe5151d81d1d81ded17b718817cafb45f0563b2ca57f6  avpro_telnet.control/metrics/grafana/dashboards/devices.json
 
@@ -316,7 +316,7 @@ d8e18bd7740fc23a9c1aeb0223492c7698365dd24c23c451853ee1ec6adc1c25  bk808_cec.cont
 
 c23894c44f5b3a8837eaa43f5d92031ecdcfd569625cf2b36d5eeaa475a96eb7  bk808_cec.control/conf/yaml/routing.yaml
 
-3d7e28f075ed7a2771cbc91dbd8d0943d1ecd062e74327cd0bea39a10922620a  bk808_cec.control/metrics/exporter/map.json
+6fe6dcb36f745d5f3923bf65d451bfeb0dc4546c83768df036f77aa5fb27fd11  bk808_cec.control/metrics/exporter/map.json
 
 7dbfdb449c874c80669e284153acf9f6543c95fd2f97c2ea668fca69e12184fe  bk808_cec.control/metrics/grafana/dashboards/devices.json
 
@@ -692,7 +692,7 @@ b51cb026522010fc2e49cb976e8325d8da0d9711b42cbe921b0d9d534b55a222  example/conf/y
 
 f1b01e6239dd3d99a50cce6c6d719d84ec1cdbd54b1e09804689e4be76922f85  example/conf/yaml/sony_ip_control.yaml
 
-c14f0f5f8f9170fdf179761f927532bf1b16eea615afb3f1716fcc3fdbffa846  example/metrics/exporter/map.json
+288cd5608b2200a88633f771b6a02943e18d73ba4bf452b58c4ae2e3d9e891b1  example/metrics/exporter/map.json
 
 256a273dfd3d2e3a6759e8ef72b9df6a17b02a681835d9849016068e39a88535  example/metrics/grafana/dashboards/devices.json
 
@@ -762,7 +762,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  heos.control/c
 
 3351f3b125d75eebebe0d973475d8525575da2770d421d24512ef2696a614353  heos.control/conf/yaml/reboots.yaml
 
-02e81e02ee5164b19e74e95319d1d6b8c0ec4609dfa0c62e8ea779f4eb26ce45  heos.control/metrics/exporter/map.json
+fb594757dfbb3304fcd1454c7764ee61460b23183ea9c1b3eb7f8867568a46b7  heos.control/metrics/exporter/map.json
 
 17b093fec19cf3cfb597eb891675d74d9463b22fad7935ecb53cda88f51cde48  heos.control/metrics/grafana/dashboards/devices.json
 
@@ -936,7 +936,7 @@ f933f79a610c19f4501c52c0ed8ada9bbe144f1e5bbca8eaae89d9b8337901a4  pyatv_http.con
 
 a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  pyatv_http.control/conf/yaml/pages.yaml
 
-17cf088d82b89e46b93624fdcb669d1bd820d1988e716bdf88955119ee9757fb  pyatv_http.control/metrics/exporter/map.json
+ef25d4b8d53dd3ef5add009e4bfc7d356d0c31925811b2cab2f523b36ff38d2e  pyatv_http.control/metrics/exporter/map.json
 
 64b5e341e13534cd63ce1158ecfa48bfc15a95bf7ccded79ceab4fd65360ac0e  pyatv_http.control/metrics/grafana/dashboards/devices.json
 
@@ -1060,7 +1060,7 @@ d287996f91b026c89229d2c67a89ed3154ba1e1be97a95e38c741ce0da6b9199  routed/conf/ya
 
 6a2c76b0f50883d13307084b930ab611ef3c8187dba7e464cef0c08122b467dd  routed/conf/yaml/wiim.yaml
 
-f9321e85c33f00e499154f39b476c66a05f3de03b2bb962a8e1b101d6817ea86  routed/metrics/exporter/map.json
+231b00d23ca9ff9ca1b1d3f6d60b73042c0a8c6fe3e08899d4ab58757ecab55b  routed/metrics/exporter/map.json
 
 864533a29e4b22838809bc4e1c07d7d822065aafa4364c6c3ade3d7d6d835c9b  routed/metrics/grafana/dashboards/devices.json
 
@@ -1124,7 +1124,7 @@ ffd5905554cb81f7f487d10892991251658774afc0929adc8e62f830ce404391  sonos.control/
 
 ba70a14cf5f2d4637c75d688ca919cd7f5fdce636c47b7343bc57d5ad0fe7ce2  sonos.control/conf/yaml/sonos.yaml
 
-ddb16216a1c08303cde22bc60da158c00eed52ca685e2273983a6b72d884b747  sonos.control/metrics/exporter/map.json
+bbff57d16a1bb276c1294ea06a48c0bc8a7347f1b8d2a509f8a4ee7258f32a1b  sonos.control/metrics/exporter/map.json
 
 349c09a23a6fae365f7e5b5b8768c85e8a0c2eff90896438c326eafc76aac6b0  sonos.control/metrics/grafana/dashboards/devices.json
 
@@ -1248,7 +1248,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sony_adcp.cont
 
 f82b06e16d3c0a0f33ded7c48d89cb57ac40a10f764219b770e86b940b52c809  sony_adcp.control/conf/yaml/projector.yaml
 
-8be56dd217dbbec5876f20ec5b6138d26bd4ae4f8f1247354b07b93111e38fe4  sony_adcp.control/metrics/exporter/map.json
+602e6fa267c3ef7a631bc41115836aea928a67525af9269c1a964b4e7fc73638  sony_adcp.control/metrics/exporter/map.json
 
 950eb6933ed6d1d38776bf9d2907c240d20ca142584a6a3b30fb48a448d71c1d  sony_adcp.control/metrics/grafana/dashboards/devices.json
 
@@ -1370,7 +1370,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  sony_ip_contro
 
 00e30c9218e498a1468d3cbd804d9c25d8a1c02e3fea8b0f0ba508698749756b  sony_ip_control.control/conf/yaml/sony_ip_control.yaml
 
-41d9e71aa6b08b1a8599e1ece4c0ec7905b53a7198efcb4aabaf5d4d8afb0382  sony_ip_control.control/metrics/exporter/map.json
+05abf68f05de09196efe4f52ba3d0ee6d18fbd610d6f0e0ed219611353bb0da2  sony_ip_control.control/metrics/exporter/map.json
 
 dd1732ce784d742be9daa2e8291bd089fbb1698cf9801aa69646c80df62be0bd  sony_ip_control.control/metrics/grafana/dashboards/devices.json
 
@@ -1666,7 +1666,7 @@ a93b9935ef820cef3b3869b530302979bd2f0c98c17e28d9440fe06b3a8002fa  vrroom_telnet.
 
 08c5aa36e27891a9b6031ee26acdf8211ecdf4d65720f0660af87f3152b541b3  vrroom_telnet.control/conf/yaml/vrroom_telnet.yaml
 
-79afe4580badb7aeeb5c6a182105baab56a88076cc93946b28dedc44f13e984d  vrroom_telnet.control/metrics/exporter/map.json
+d24248c12d886c7301372df169b7215be8c55166b43a8c4265fa2ce2a83a214f  vrroom_telnet.control/metrics/exporter/map.json
 
 cdaf49eeddefbfa39b5f5a683022dc3663899701dd377678ebd2d58254ca557c  vrroom_telnet.control/metrics/grafana/dashboards/devices.json
 

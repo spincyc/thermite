@@ -357,6 +357,20 @@ def thing_ports(thing: dict) -> list[int]:
     return found
 
 
+def thing_device(uid: str) -> str:
+    """The device a generated Thing is named after: the last segment of its
+    UID (oh_inventory.cross_check() holds conf/ to that)."""
+    return uid.split(":")[-1]
+
+
+def device_things(conf, ident: str) -> list[tuple[str, str]]:
+    """(Thing UID, its conf/ file) of every Thing generated for a device, a
+    ping Thing included: whether a Thing's status says anything of the
+    device is signals()'s to say."""
+    return [(uid, path) for path, file in sorted(conf.yaml.items()) for uid in file.things
+            if thing_device(uid) == ident]
+
+
 def _build(inventory: dict):
     # Imported here: oh_render needs PyYAML and the integrations, which the
     # exporter (this package, in the helper's image) must not.
@@ -386,7 +400,7 @@ def probes(inventory: dict, conf=None) -> tuple[list[Probe], list[tuple[str, tup
                 numbers.append(module.PORT)
             file = conf.yaml.get(module.FILE)
             for uid, thing in sorted((file.things if file else {}).items()):
-                if uid.split(":")[-1] == ident:
+                if thing_device(uid) == ident:
                     numbers += thing_ports(thing)
             numbers += getattr(module, "PROBE_PORTS", ())
             for number in numbers:
@@ -456,7 +470,7 @@ def signals(device: dict, conf, found: list[Probe]) -> list[Signal]:
         if module.NAME not in listed:
             continue
         file = conf.yaml.get(module.FILE)
-        things = [uid for uid in (file.things if file else {}) if uid.split(":")[-1] == ident]
+        things = [uid for uid in (file.things if file else {}) if thing_device(uid) == ident]
         through = module.transport(device) if hasattr(module, "transport") else None
         if through and file and through in file.things and through not in things:
             things.append(through)
@@ -475,6 +489,24 @@ def signals(device: dict, conf, found: list[Probe]) -> list[Signal]:
                    bool(needed.intersection(probe.integrations)))
             for probe in found if probe.device == ident]
     return out
+
+
+#: Each kind of signal as a person reads it: what it is a reading of (with
+#: the signal's own labels), and its words while the device answers and
+#: while it does not. A kind signals() gives has its words here.
+SIGNAL_WORDS = {
+    "thing": ("Thing {thing}", "ONLINE", "not ONLINE"),
+    "port": ("TCP port {port}", "accepts connections", "closed, or nothing answers there"),
+    "reads": ("{integration}'s own reads of it", "it answers", "it cannot be read"),
+    "online": ("Ping, or its controller's word", "it answers", "no response"),
+}
+
+
+def signal_words(signal: Signal) -> tuple[str, str, str]:
+    """(what `signal` reads, its words while the device answers, its words
+    while it does not), for a person."""
+    subject, well, bad = SIGNAL_WORDS[signal.kind]
+    return subject.format(**dict(signal.labels)), well, bad
 
 
 def unobserved(inventory: dict, conf=None) -> list[tuple[str, str]]:
@@ -582,7 +614,7 @@ def exporter_map(inventory: dict, conf=None) -> dict:
     things: dict[str, list[str]] = {}
     for path, file in conf.yaml.items():
         for uid in ([] if path in mute else file.things):
-            things.setdefault(uid.split(":")[-1], []).append(uid)
+            things.setdefault(thing_device(uid), []).append(uid)
     devices: dict[str, dict] = {}
     items: dict[str, dict] = {}
     for device in house.devices:
@@ -602,6 +634,9 @@ def exporter_map(inventory: dict, conf=None) -> dict:
             # telemetry remains unknown. Missing/NULL is not clear.
             if point == "problem" and name == _commands.problem_item(ident):
                 entry["clear_state"] = _commands.CLEAR
+                # Its codes, so that the one it holds can be a bounded label
+                # (thermite_device_problem_info).
+                entry["options"] = _options(item)
             if convert == "enum":
                 entry["options"] = _options(item)
             items[name] = kept[name] = entry

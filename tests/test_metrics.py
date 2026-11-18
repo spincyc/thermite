@@ -74,9 +74,12 @@ def items(**states):
 #: matters, and the gateway is to stop exporting both (handoff).
 #: What became of each device's commands is counted for a query when one
 #: fails, and for a board that has yet to be drawn.
+#: The code a device's problem Item holds is what `thermite device` puts
+#: into words; the Devices board shows only that it holds one.
 UNREAD = {"thermite_zone_info", "thermite_item_device_off",
           "thermite_gateway_upstream_connects_total", "thermite_gateway_upstream_resyncs_total",
-          "thermite_device_commands_total", "thermite_device_command_seconds_total"}
+          "thermite_device_commands_total", "thermite_device_command_seconds_total",
+          "thermite_device_problem_info"}
 
 
 def read_families():
@@ -130,6 +133,31 @@ class Selections(unittest.TestCase):
         samples = exporter._items(mapping, items(example_tv_power="ON", example_tv_volume="loud",
                                                  example_tv_problem="", example_display_problem="UNDEF"))
         self.assertNotIn("thermite_item_unknown", [name for name, _, _ in samples])
+
+    def test_the_code_a_problem_item_holds_is_a_label_of_its_own_series_and_never_the_items_text(self):
+        from oh_integrations import _commands
+        spec = MAP["items"]["example_tv_problem"]
+        self.assertEqual((spec["options"], spec["clear_state"]), (list(_commands.CODES), _commands.CLEAR))
+        mapping = {"items": {"example_tv_problem": spec}}
+        labels = {"device": "example_tv", "room": "example_west", "kind": "tv"}
+
+        def named(state):
+            samples = exporter._items(mapping, items(example_tv_problem=state))
+            return [(sample[1], sample[2]) for sample in samples if sample[0] == "thermite_device_problem_info"], \
+                next(value for name, _, value in samples if name == "thermite_device_problem")
+
+        self.assertEqual(named("no_answer"), ([({**labels, "code": "no_answer"}, 1.0)], 1.0))
+        # Text no rule should write there is `other`, which is a code too.
+        self.assertEqual(named("<b>anything</b>"), ([({**labels, "code": "other"}, 1.0)], 1.0))
+        self.assertIn("other", _commands.CODES)
+        # Clear, it holds no code: the series is absent, not a third state.
+        self.assertEqual(named(_commands.CLEAR), ([], 0.0))
+        self.assertEqual([name for name, _, _ in exporter._items(mapping, items(example_tv_problem="NULL"))
+                          if name.startswith("thermite_device_problem")], [])
+        # A problem Item with no list of codes names none but `other`.
+        bare = {"items": {"example_tv_problem": {key: value for key, value in spec.items() if key != "options"}}}
+        self.assertEqual([labels["code"] for name, labels, _ in exporter._items(bare, items(example_tv_problem="refused"))
+                          if name == "thermite_device_problem_info"], ["other"])
 
     def test_a_reading_with_no_value_while_its_power_reads_off_is_the_device_off(self):
         """A TV in standby has no input or volume, and a receiver's zone 2
@@ -941,6 +969,20 @@ class Signals(unittest.TestCase):
         self.assertEqual(oh_metrics.unobserved(copy.deepcopy(inventory)), [])
         self.assertNotIn("No reading says", rendered(inventory)[oh_metrics.PROMETHEUS_YML])
         self.assertIn("nothing reads whether it answers bk808_cec", oh_metrics.unobserved_text("den_device", "bk808_cec"))
+
+    def test_every_kind_of_signal_has_its_words_for_a_person(self):
+        self.assertEqual(set(oh_metrics.SIGNAL_WORDS), {"thing", "port", "reads", "online"})
+        signal = oh_metrics.Signal("port", ("sony_rest",), "probe_success",
+                                   (("job", "device_tcp"), ("device", "example_tv"), ("port", "80")), 0, True)
+        self.assertEqual(oh_metrics.signal_words(signal),
+                         ("TCP port 80", "accepts connections", "closed, or nothing answers there"))
+        # A Thing generated for a device is one named after it, a ping Thing included.
+        from tests import test_read_only
+        pinged = test_read_only.house("network_ping", "observe")
+        conf = oh_metrics._build(copy.deepcopy(pinged))
+        (uid, path), = oh_metrics.device_things(conf, "den_device")
+        self.assertEqual((oh_metrics.thing_device(uid), path), ("den_device", "yaml/network.yaml"))
+        self.assertEqual(oh_metrics.device_things(conf, "den"), [])
         self.assertIn("list network_ping under", oh_metrics.unobserved_text("example_computer", ""))
 
 

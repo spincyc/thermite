@@ -7,6 +7,24 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `thermite device ID` shows everything about one device in one place.
+  What it is: its label, room, kind and address, the interfaces that
+  observe and command it, the Things and Items generated for it, and the
+  rooms' sources that pass through it. What watches it: each reading
+  that says whether it answers, each health check and when a room needs
+  it, or plainly that nothing does. What holds now: each reading's value
+  and age, each check's state, the alerts about it, its problem in words
+  with when it last read clear, its commands by outcome and what routing
+  failed at it. Where to look next: its log lines, board and Things,
+  filled in. See
+  [look at one device](docs/installation.md#look-at-one-device).
+  - The first two parts need only the house file. What holds now is read
+    from Prometheus on the server; elsewhere the verb says that part
+    needs the installation. It decides nothing itself: a missing reading
+    is unknown, and while Prometheus does not answer the verb says so
+    and exits 2. `--json` prints the same facts as data.
+  - New series `thermite_device_problem_info{device,room,kind,code}`: the
+    code a device's problem Item holds, one of its own codes or `other`.
 - `gateway: {listen: [...]}` in `instance/host.yaml` chooses the
   addresses the HTTPS application binds, so a host with an address on
   a guest network need not serve sign-in there. Loopback is always

@@ -104,6 +104,7 @@ an alarm integration.
 
 - `thermite upgrade --config DIR` updates the application and all managed services.
 - `thermite health --production` reports device health.
+- `thermite device ID` shows everything about one device: what it is, what watches it and what holds now.
 - `thermite history` lists deployments; `thermite rollback` restores the previous one.
 - `thermite version` shows application and runtime versions.
 - [Application releases and private sites](packaging.html) explains application upgrades and cached releases for rollback.

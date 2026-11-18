@@ -15,7 +15,9 @@ volume, input...) and conversion:
     enum     an info series with the value as a label: one of the Item's
              options, `other` for any value outside them; without options,
              the value itself when it is short and plain, else `other`
-    problem  1 while the problem Item holds a problem, 0 while it is clear
+    problem  1 while the problem Item holds a problem, 0 while it is clear;
+             while it holds one, thermite_device_problem_info names its code
+             as a label: one of the Item's options, else `other`
 
 each tally of the commands a script took for a device (map `commands`,
 oh_integrations._commands): its JSON becomes thermite_device_commands_total
@@ -124,6 +126,9 @@ FAMILIES = {
     "thermite_device_problem": ("gauge", "1 while the device's problem Item holds a problem code: what its reads "
                                 "meet now, else what its last command met, which stays until it takes a "
                                 "command. What the remotes show; no check reads it."),
+    "thermite_device_problem_info": ("gauge", "The problem code the device's problem Item holds, as a label; always "
+                                     "1, and absent while it holds none. What it means and how long it can stay "
+                                     "are thermite_device_problem's."),
     "thermite_device_read_ok": ("gauge", "1 while the device answers the reads its integration's script makes of "
                                 "it, 0 while they meet no connection, no answer, no pairing or an answer the "
                                 "script cannot use. Absent while nothing reads the device: a script that only "
@@ -623,6 +628,10 @@ def _items(mapping: dict, answer: list, things: list | None = None) -> list[Samp
         if convert == "problem":
             value = to_number(state, convert, spec.get("clear_state"))
             sample = ("thermite_device_problem", labels, value)
+            if value == 1.0:
+                # A code of the map's list, or `other`: never the Item's text.
+                code = to_label(state.strip(), spec.get("options") or [OTHER]) or OTHER
+                samples.append(("thermite_device_problem_info", {**labels, "code": code}, 1.0))
         elif convert in ("switch", "number"):
             value = to_number(state, convert)
             sample = ("thermite_item_value", item, value)
