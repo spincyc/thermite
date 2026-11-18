@@ -23,6 +23,7 @@ urlpatterns = [
     path("api/v1/users", views.users), path("api/v1/users/<int:ident>", views.users),
     path("api/v1/locks", views.locks),
     path("api/v1/history/rooms", views.room_history),
+    path("api/v1/alerts", views.alerts),
     path("api/v1/rooms/<room:room>/policy", views.room_policy),
     path("api/v1/rooms/<room:room>/lock", views.room_lock),
     path("api/v1/rooms/<room:room>/commands", views.command),

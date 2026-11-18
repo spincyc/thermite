@@ -324,6 +324,26 @@ class Scenarios(unittest.TestCase):
             ("30m", 'count(thermite:check{scope="monitoring"} == 1)', [("{}", 3)]),
         ])
 
+    def test_the_alerts_the_gateway_names_carry_the_labels_it_reads(self):
+        # alerts.ABOUT, beside the two per-check alerts above: a Thing that
+        # never started has its device and room, as the exporter labels a
+        # Thing's series, and a lock that cannot be held its zone, as the
+        # policy worker labels a zone's state.
+        thing = {"device": TV, "room": WEST, "kind": "tv", "thing": f"sony:tv:{TV}", "status": "UNKNOWN"}
+        lock = {"zone": WEST, "state": "unavailable"}
+        self.assertEqual(set(alerts.ABOUT), {"ThermiteCheckFailing", "ThermiteControlUnknown", "ThermiteThingStuck",
+                                             "ThermitePolicyUnenforced"})
+        for name, labels in (("ThermiteThingStuck", thing), ("ThermitePolicyUnenforced", lock),
+                             ("ThermiteCheckFailing", check(WEST, "port", TV, WEST))):
+            self.assertLessEqual(set(alerts.ABOUT[name]), set(labels))
+        inputs = {series("thermite_thing_status_info", **thing): "1x20",
+                  series("thermite_policy_room_state", **lock): "1x20"}
+        self.run_rules(inputs, firing=[
+            ("14m", "ThermiteThingStuck", []),
+            ("15m", "ThermiteThingStuck", [thing]),
+            ("10m", "ThermitePolicyUnenforced", [lock]),
+        ])
+
     def test_a_running_service_that_stops_rewriting_its_metrics_alerts(self):
         # mtime as node_exporter gives it: a file rewritten keeps up with
         # the clock. The gateway's stops at 5 minutes while the gateway

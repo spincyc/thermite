@@ -123,7 +123,7 @@ site session or CSRF cookie or an `Authorization` header is refused with 403
 `secure_connection_required`; only the routes in `ROUTES` (Home, Remotes and
 their files, `me`, `security`, item state, the `remote` and `home` event
 streams (not `pair`), room policy status,
-`locks`, room commands, All Off, and music with its event stream but not
+`locks`, `alerts`, room commands, All Off, and music with its event stream but not
 TIDAL's sign-in) are found; and a POST needs one of the
 listener's own origins and a JSON body in place of the CSRF cookie. Other
 cookies are dropped unread and no response sets one. Commands keep every room
@@ -318,6 +318,47 @@ Guests, Members and Admins read the same answer, as they read the same rooms'
 sources from the event streams. The plain-HTTP Guest listener does not serve
 it. When Prometheus does not answer, or the contract has no history, the
 answer is 503 `history_unavailable`.
+
+GET `/api/v1/alerts` returns the house's firing alerts and whether anything
+is watching the house: `{"version":1,"monitoring","evaluated","firing",
+"alerts":[{name,severity,title,text,since,room,zone,device,service,check,
+check_text}]}`. It is always 200 for whoever may read the site, since an
+unanswered question is part of the answer. `monitoring` is `ok` (Prometheus
+answered and evaluated every rule group in the last 120 s), `stalled`
+(Prometheus answered, but its rules are not being evaluated: none is loaded,
+a group's last evaluation is older than that, or a rule fails; the alerts
+are then those its last evaluation left) or `unreachable` (Prometheus did
+not answer; `firing` and `evaluated` are null and `alerts` empty). An empty
+list means a healthy house only beside `ok`. `evaluated` is when every rule
+group had last been evaluated, in Unix seconds. `firing` counts every alert
+firing, whoever asks; `alerts` lists at most 50 of those the client may be
+given, critical ones first, then the longest active.
+Each alert has its `name`, its `severity` (`critical` or `warning`), its
+`title` and `text` from `oh_metrics.alerts.CATALOG` and `since`, when it
+became active (Unix seconds, or null). Where its rule carries them
+(`oh_metrics.alerts.ABOUT`) it also names what it is about, as ids the
+page's house model has: `room` (a room of the house file), `zone` (a routed
+room, `REMOTE_HOUSE.rooms[].id`), `device` (`REMOTE_HOUSE.devices`) and
+`check` with `check_text`, its words from `CHECK_WORDS`. A house-wide check
+has `service` instead: the job or service that failed it. A field is absent
+when the alert does not carry it.
+The gateway reads the rules API of the house's Prometheus on loopback (GET
+`/api/v1/rules`, on the port the contract's `history` names), waits 5 s,
+reads at most 8 MiB and shares one read between clients for 15 s, an
+unanswered one included. It applies `INHIBITS` and `ROOM_INHIBITS` itself
+and shows only firing alerts, never pending ones. No label value or
+annotation Prometheus returns reaches a client or the journal: a value that
+is not an id of the compiled house is left out, an alert the catalogue does
+not name is only counted in `firing`, and the journal names each such alert
+and label once. The reading of `stalled` is the rule groups' own evaluation
+times: Prometheus keeps listing an alert its last evaluation raised, so no
+alert's presence shows that rules are still evaluated.
+A Guest, a Member and an Admin are all given the alerts that name a room,
+zone or device of the house, as they are given the rooms' sources. An alert
+about the house as a whole (a service, the host, monitoring) is given only
+to whoever may read the System page: an Admin, while authentication is on.
+Everyone else sees them only in `firing`. The plain-HTTP Guest listener
+serves a Guest's answer. Gateway request metrics count it as route `alerts`.
 
 POST `/api/v1/rooms/<id>/commands` takes `{action,value}`. The immutable server
 contract resolves the action to a known Item and validates enum/range/step.

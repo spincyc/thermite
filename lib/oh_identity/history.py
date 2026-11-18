@@ -23,7 +23,8 @@ from .services import Problem
 #: readback at its start, as the board samples it.
 RANGE_SECONDS = 24 * 3600
 STEP_SECONDS = 60
-#: Seconds the gateway waits for Prometheus, and the bytes it reads of an answer.
+#: Seconds the gateway waits for Prometheus, and the bytes it reads of an answer
+#: (this history, and oh_identity.alerts).
 TIMEOUT_SECONDS = 5.0
 MAX_BYTES = 8 * 1024 * 1024
 PATH = "/api/v1/query_range"
@@ -34,22 +35,31 @@ _cache = {}
 clock = time.time
 
 
-def query(port, expr, start, end, step):
-    """Prometheus' range answer for expr on loopback: its result list."""
+def ask(port, method, path, data=None):
+    """The `data` of Prometheus' answer to one request on loopback, read
+    whole: at most MAX_BYTES, within TIMEOUT_SECONDS, with no proxy and no
+    redirect."""
     with httpx.Client(timeout=TIMEOUT_SECONDS, trust_env=False, follow_redirects=False) as client:
-        with client.stream("POST", f"http://127.0.0.1:{port}{PATH}",
-                           data={"query": expr, "start": str(start), "end": str(end), "step": str(step)}) as response:
+        with client.stream(method, f"http://127.0.0.1:{port}{path}", data=data) as response:
             if response.status_code != 200:
-                raise ValueError("Prometheus refused the query")
+                raise ValueError("Prometheus refused the request")
             body = bytearray()
             for chunk in response.iter_bytes():
                 body += chunk
                 if len(body) > MAX_BYTES:
                     raise ValueError("Prometheus answer too large")
     answer = json.loads(bytes(body))
-    if answer.get("status") != "success" or answer["data"]["resultType"] != "matrix":
+    if answer.get("status") != "success":
+        raise ValueError("Prometheus did not answer the request")
+    return answer["data"]
+
+
+def query(port, expr, start, end, step):
+    """Prometheus' range answer for expr on loopback: its result list."""
+    data = ask(port, "POST", PATH, {"query": expr, "start": str(start), "end": str(end), "step": str(step)})
+    if data["resultType"] != "matrix":
         raise ValueError("Prometheus answer is not a range")
-    return answer["data"]["result"]
+    return data["result"]
 
 
 def _value(number, values):

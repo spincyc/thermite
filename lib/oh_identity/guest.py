@@ -39,6 +39,8 @@ ROUTES = {
     "api/v1/me": GET, "api/v1/security": GET,
     "api/v1/events/remote": GET, "api/v1/events/home": GET, "rest/items/<slug:item>/state": GET,
     "api/v1/locks": GET, "api/v1/rooms/<room:room>/policy": GET,
+    # What Home shows of the house's alerts: a Guest's part of them (oh_identity.alerts).
+    "api/v1/alerts": GET,
     # Controls, with every room check (locks included) of the HTTPS site.
     "api/v1/rooms/<room:room>/commands": POST, "api/v1/devices/<slug:device>/commands": POST,
     "api/v1/all-off": POST,

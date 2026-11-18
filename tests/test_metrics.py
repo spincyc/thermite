@@ -1466,6 +1466,8 @@ class Textfiles(unittest.TestCase):
         self.assertEqual(route("/rest/items/loc_example_west_source/state"), "items")
         self.assertEqual(route("/api/v1/history/rooms"), "history")
         self.assertEqual(route("/api/v1/history/rooms/example_west"), "other")
+        self.assertEqual(route("/api/v1/alerts"), "alerts")
+        self.assertEqual(route("/api/v1/alerts/example_west"), "other")
         self.assertEqual(route("/static/remote/remote.js"), "asset")
         self.assertEqual(route("/api/v1/events/remote"), "events")
         self.assertEqual(route("/api/v1/events/music"), "events")

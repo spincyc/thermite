@@ -152,6 +152,15 @@ CRITICAL = frozenset({"ThermiteCheckFailing", "ThermiteRuntimeUnavailable", "The
                       "ThermiteRemoteStarved", "ThermiteServiceDown", "ThermiteRoutingQuarantined",
                       "ThermitePolicyWorkerStalled", "ThermitePolicyUnenforced", "ThermiteHandlerPoolSaturated",
                       "ThermiteThingStuck"})
+#: The labels by which an alert names what it is about, for the alerts whose
+#: series carry them; every other alert is about the house as a whole. The
+#: gateway's feed (oh_identity.alerts) reads these labels and no others.
+ABOUT = {
+    "ThermiteCheckFailing": ("room", "zone", "device", "check"),
+    "ThermiteControlUnknown": ("room", "zone", "device", "check"),
+    "ThermiteThingStuck": ("room", "device"),
+    "ThermitePolicyUnenforced": ("zone",),
+}
 #: (source, targets): while the source fires, the targets would only repeat it.
 INHIBITS = (
     ("ThermiteRuntimeUnavailable", ("ThermiteCheckFailing", "ThermiteControlUnknown", "ThermiteHandlerPoolSaturated",
@@ -167,6 +176,11 @@ INHIBITS = (
 ROOM_INHIBITS = (
     ("ThermiteCheckFailing", ("ThermiteControlUnknown",)),
 )
+
+
+def severity(name: str) -> str:
+    """An alert's severity label, and what the gateway's feed says of it."""
+    return "heartbeat" if name == "ThermiteWatchdog" else "critical" if name in CRITICAL else "warning"
 
 
 def _q(value: str) -> str:
@@ -329,8 +343,7 @@ def rules(mapping):
     def alert(name, expr, duration, *, labels=None):
         title, detail = CATALOG[name]
         return {"alert": name, "expr": expr, "for": duration,
-                "labels": {"severity": "heartbeat" if name == "ThermiteWatchdog" else
-                           "critical" if name in CRITICAL else "warning", **(labels or {})},
+                "labels": {"severity": severity(name), **(labels or {})},
                 "annotations": {"summary": title, "description": detail}}
     recorded, required_series = checks(mapping)
     held = [{"record": ZONE_SOURCE, "expr": zone_source()}] if mapping.get("paths") else []

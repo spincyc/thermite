@@ -321,6 +321,22 @@ def room_history(request):
     return JsonResponse(history.rooms(get_adapter().contract))
 
 
+@api()
+def alerts(request):
+    """The house's firing alerts and whether monitoring is watching
+    (oh_identity.alerts). Anyone who reads the site sees those of its rooms
+    and devices; those about the house as a whole go to whoever may read
+    the System page (system.json, ADMIN_ASSETS): an Admin, while
+    authentication is on."""
+    from . import alerts as feed
+    try:
+        require_admin(request, request.identity_user)
+        house = True
+    except Problem:
+        house = False
+    return JsonResponse(feed.answer(get_adapter().contract, house=house))
+
+
 @api(methods=("PUT",), admin=True)
 def room_lock(request, room):
     # ATOMIC_REQUESTS is off (tests assert it): no request-wide transaction
