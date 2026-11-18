@@ -7,6 +7,13 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- The recovery printed for a missing or damaged
+  `/etc/thermite/installed.json` now works. Its last step, `thermite
+  install`, had refused for ever while `/srv/thermite` held state, and
+  the steps before it did not name the boot links in
+  `multi-user.target.wants`, the AppArmor licence file or
+  `/etc/thermite/units.json`. The install now takes up the state that
+  stayed, and the printed text names every path to move aside.
 - Only one command at a time runs an install transaction for a site. A
   second `install`, `upgrade`, `uninstall`, `rollback` or `revert`
   started while one ran had found its transaction open and rolled it

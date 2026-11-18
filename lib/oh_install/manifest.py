@@ -129,7 +129,11 @@ def thermite_present(context: Context, system: System) -> list[Path]:
 
     The install engine's own transactions are no installation. A first
     install that rolled back leaves only them under the installation root
-    (what it had written, until a commit prunes it), and runs again."""
+    (what it had written, until a commit prunes it), and runs again.
+
+    The installation root stands for the state under it. Alone it refuses
+    an upgrade, rollback or uninstall, which need the manifest, but not an
+    install (oh_cli.install): that is how missing_recovery ends."""
     from oh_install import ingress, ownership, steps
     paths = [*deploy.INSTALLED.values(), ingress.UNIT_FILE, ingress.RULE_FILE, oh_apparmor.CONFIG,
              oh_apparmor.POLICY, *(UNITS / name for name in oh_units.ACCESS_UNITS), ownership.MANIFEST]
@@ -141,19 +145,23 @@ def thermite_present(context: Context, system: System) -> list[Path]:
 
 
 def missing_recovery(context: Context) -> str:
-    """What to do when Thermite's files are here but its manifest is not."""
-    from oh_install import ingress
+    """What to do when Thermite's files are here but its manifest is not.
+    It names every path outside the installation root that an install
+    writes: the install engine refuses to plan over one left in place, and
+    what is left of either manifest would be read again."""
+    from oh_install import ingress, ownership
     root = context.installation.root
     site = shlex.quote(str(context.area))
     return (f"Thermite's files are installed here, but {INSTALLED} is missing or damaged, so nothing can "
             "prove which of them this installation owns. Nothing was changed. To recover, as root: "
             f"stop Thermite (systemctl stop {oh_units.TARGET} {oh_units.SLICE}); move its units "
-            f"({UNITS}/thermite*, /etc/containers/systemd/thermite*, {WANTS}, and the network shares' "
-            f"{UNITS}/*.mount whose Description starts Thermite share, with /etc/thermite/share-*.credentials), "
-            f"{ingress.RULE_FILE}, "
-            f"{oh_apparmor.CONFIG} and {oh_apparmor.POLICY} aside, out of those directories; run "
-            f"systemctl daemon-reload; then run thermite install --config {site}. The state under {root} "
-            "stays where it is; see docs/installation.md#a-missing-manifest.")
+            f"({UNITS}/thermite*, /etc/containers/systemd/thermite*, {UNITS}/multi-user.target.wants/thermite*, "
+            f"and the network shares' {UNITS}/*.mount whose Description starts Thermite share, with "
+            f"/etc/thermite/share-*.credentials), {ingress.RULE_FILE}, {oh_apparmor.CONFIG}, {oh_apparmor.POLICY}, "
+            f"{oh_apparmor.LICENSE} and what is left of the manifests ({INSTALLED}, {ownership.MANIFEST}) aside, "
+            f"out of those directories; run systemctl daemon-reload; then run thermite install --config {site}. "
+            f"The state under {root} stays where it is, and that install takes it up; see "
+            "docs/installation.md#a-missing-manifest.")
 
 
 def tools(system: System) -> dict:

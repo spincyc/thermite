@@ -1103,10 +1103,18 @@ print these steps. To recover, as root: stop Thermite
 their links in `/etc/systemd/system/multi-user.target.wants`), its shares'
 mount units (`/etc/systemd/system/*.mount` whose `Description` starts
 `Thermite share`) and logins (`/etc/thermite/share-*.credentials`), the native-port
-rule file `/etc/thermite-native.nft` and the node exporter's AppArmor files
-aside, out of those directories; run `systemctl daemon-reload`; then run
-`thermite install --config DIR`. The state under `/srv/thermite` stays where
-it is.
+rule file `/etc/thermite-native.nft`, the node exporter's AppArmor files
+with their licence
+(`/usr/share/doc/thermite/licenses/node-exporter-apparmor.LICENSE`) and
+what is left of the two manifests (`/etc/thermite/installed.json`,
+`/etc/thermite/units.json`) aside, out of those directories; run
+`systemctl daemon-reload`; then run `thermite install --config DIR`. The
+command prints each path. The state under `/srv/thermite` stays where it
+is: that install checks that it is Thermite's, sets it aside like any other
+transaction and installs on it. A file of Thermite's left in place refuses
+that install by name before anything changes. Until it commits, `upgrade`,
+`uninstall`, `rollback` and `revert` keep refusing, because the state is
+there without a manifest.
 
 ### Remove
 

@@ -14,8 +14,10 @@ service-account receipt as lib/oh_service.py records it.
 from __future__ import annotations
 
 from contextlib import ExitStack
+import fnmatch
 import json
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -28,7 +30,7 @@ import oh_apparmor  # noqa: E402
 import oh_deploy as deploy  # noqa: E402
 import oh_service  # noqa: E402
 from oh_cli import install as install_cli  # noqa: E402
-from oh_install import bridge, changeover, engine, manifest, steps  # noqa: E402
+from oh_install import bridge, changeover, engine, manifest, ownership, steps  # noqa: E402
 from oh_install.model import Check, Step, Task  # noqa: E402
 from oh_install.system import Stat, System, UnitFile, UnitOrigin  # noqa: E402
 from tests import txn_fakes  # noqa: E402
@@ -176,6 +178,9 @@ class Fixture(unittest.TestCase):
             return self.host.run(argv[1:])
         elif argv[:2] == ("sudo", "mkdir"):
             self.disk.put(argv[-1], "dir", mode=0o755)
+        elif argv[:5] == ("sudo", "rm", "-rf", "--one-file-system", "--"):
+            for path in argv[5:]:
+                self.disk.drop(path)
         elif argv[:3] == ("sudo", "install", "-d") and argv[3:9:2] == ("-o", "-g", "-m"):
             owner, group, mode = argv[4:9:2]
             for path in argv[9:]:
@@ -284,6 +289,86 @@ class FirstInstallWithMusic(FirstInstall):
     the install makes too."""
 
     HOST = MUSIC_HOST
+
+
+class MissingManifest(Fixture):
+    """docs/installation.md, "A missing manifest": the recovery a refused
+    install prints, done to the letter, ends in an install that commits on
+    the state that stayed."""
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(self.install(health=0), changeover.COMMITTED, self.log)
+        # Something Thermite wrote since, in a state tree the install declares.
+        tree = next(item["path"] for item in manifest.installed(self.system, ROOT)["items"]
+                    if item["class"] == "tree" and engine.below(item["path"], self.context.layout.root))
+        self.note = f"{tree}/written-since"
+        self.disk.put(self.note, data=b"state\n", uid=self.context.host["uid"], gid=self.context.host["gid"])
+        self.state = self.kept()
+
+    def kept(self):
+        """Everything under the installation root but the gateway's releases
+        (each install writes its own) and the engine's transactions."""
+        return {name: node for name, node in self.disk.walk(str(ROOT)).items()
+                if not any(txn_fakes.inside(name, str(ROOT / skipped))
+                           for skipped in (steps.TRANSACTIONS, f"{deploy.ACCESS}/releases"))}
+
+    def said(self):
+        return str(self.system.say.call_args.args[0])
+
+    def recover(self, printed):
+        """As root, what `printed` says: stop Thermite, move each path it
+        names aside, reload systemd."""
+        self.assertIn(f"systemctl stop {engine.TARGET} thermite.slice", printed)
+        self.assertEqual(self.host.run(("systemctl", "stop", engine.TARGET, "thermite.slice")), 0)
+        named = re.findall(r"/[^\s,()]+", printed.split("move its units", 1)[1].split(" aside", 1)[0])
+        self.assertGreater(len(named), 8)
+        for pattern in named:
+            if pattern.endswith("*.mount"):
+                continue  # Only those of Thermite's shares, and this house has none.
+            for name in [name for name in self.disk.nodes if fnmatch.fnmatchcase(name, pattern)]:
+                if name in self.disk.nodes:
+                    self.disk.drop(name)
+        self.assertIn("systemctl daemon-reload", printed)
+        self.assertEqual(self.host.run(("systemctl", "daemon-reload")), 0)
+
+    def recovered(self):
+        self.assertEqual(self.install(health=0), 2)
+        self.assertEqual(self.log, [], "refused before anything ran")
+        printed = self.said()
+        self.assertIn(manifest.missing_recovery(self.context), printed)
+        self.recover(printed)
+        # What steps.Preconditions asks of the root: its state proves itself.
+        self.assertTrue(steps.installation_owned(self.context, self.system))
+        self.assertTrue(steps.state_owned(self.context, self.system))
+        self.assertEqual(self.install(health=0), changeover.COMMITTED, (self.log, self.said()))
+        self.assertEqual(self.log[-1], "commit")
+        self.assertEqual(self.kept(), self.state, "the state stayed where it was, as it was")
+        self.assertEqual(self.disk.nodes[self.note].data, b"state\n")
+        self.assertIn(str(self.receipt), self.recorded())
+        self.assertTrue(self.host.enabled())
+
+    def test_with_neither_manifest_the_printed_recovery_ends_in_an_install_on_the_state_that_stayed(self):
+        self.disk.drop(manifest.INSTALLED)
+        self.disk.drop(ownership.MANIFEST)
+        self.recovered()
+
+    def test_with_a_damaged_manifest_it_does_too(self):
+        self.disk.put(manifest.INSTALLED, data=b"{damaged")
+        self.recovered()
+
+    def test_a_file_of_thermite_s_left_in_place_refuses_that_install_by_name(self):
+        self.disk.drop(manifest.INSTALLED)
+        self.disk.drop(ownership.MANIFEST)
+        self.assertEqual(self.install(health=0), 2)
+        printed = self.said()
+        licence = self.disk.nodes[str(oh_apparmor.LICENSE)]
+        self.recover(printed)
+        self.disk.put(oh_apparmor.LICENSE, data=licence.data)
+        self.assertEqual(self.install(health=0), changeover.REFUSED)
+        self.assertEqual(self.log, ["plan", f"refused: {oh_apparmor.LICENSE} exists but the installed manifest does "
+                                            "not list it; move it aside by hand if it is not wanted, then rerun"])
+        self.assertEqual(self.kept(), self.state)
 
 
 class Upgrade(Fixture):

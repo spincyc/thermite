@@ -219,7 +219,12 @@ def install(system: System, dry_run: bool, *, clean: bool = False, runtime_token
         system.say(f"{exc}. {manifest.missing_recovery(context)}")
         return 2
     bridged = installed is None and bridge.needed(system)
-    if installed is None and not bridged and manifest.thermite_present(context, system):
+    present = [] if installed is not None or bridged else manifest.thermite_present(context, system)
+    # The state under the installation root alone does not refuse an install:
+    # the recovery it prints ends with this command, on the state that
+    # stayed. The preconditions prove the root Thermite's, and the install
+    # engine sets its state aside as found.
+    if any(path != context.installation.root for path in present):
         system.say(manifest.missing_recovery(context))
         return 2
     kind = "clean" if clean else "install"
