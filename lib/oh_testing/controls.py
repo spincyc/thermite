@@ -22,7 +22,6 @@ import oh_cec_sim as cec_sim
 import oh_googletv_sim as googletv_sim
 import oh_integrations as integrations
 import oh_ir_sim as ir_sim
-import oh_inventory as inventory
 import oh_cli
 import oh_render as render
 import oh_sandbox as lib
@@ -860,11 +859,7 @@ class Check:
 
 
 def run_check(args, rt: lib.Runtime, log) -> int:
-    data = inventory.load(args.house)
-    problems = render.validate(data)
-    if problems:
-        raise lib.SandboxError("; ".join(problems))
-    check = Check(data, log=log)
+    check = Check(House.load(args.house).data, log=log)
     conf = STATE / "conf"
     inst = lib.boot_check_instance(conf)
     started = time.monotonic()

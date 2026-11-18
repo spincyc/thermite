@@ -7,10 +7,9 @@ import time
 from types import ModuleType
 
 import oh_integrations as integrations
-import oh_inventory as inventory
 import oh_cli
 import oh_render as render
-from oh_conf import uses
+from oh_conf import House, uses
 from oh_integrations import _instr as instr
 
 DESCRIPTION = """\
@@ -119,13 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.address and not args.device:
         parser.error("--address needs --device")
-    data = inventory.load(args.house)
-    problems = render.validate(data)
-    if problems:
-        for problem in problems:
-            print(f"thermite matrix-settings: {problem}", file=sys.stderr)
-        return 2
-    chosen = targets(data, args.device)
+    chosen = targets(House.load(args.house).data, args.device)
     if not chosen:
         print(f"thermite matrix-settings: no device{' ' + args.device if args.device else ''} has settings "
               "to apply", file=sys.stderr)

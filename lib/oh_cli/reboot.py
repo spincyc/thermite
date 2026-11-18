@@ -14,7 +14,6 @@ import sys
 import time
 
 import oh_cli
-import oh_inventory as inventory
 import oh_render as render
 from oh_cli import pair
 from oh_conf import House
@@ -119,13 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     oh_cli.add_timeout(parser, TIMEOUT, "the device to answer again")
     args = parser.parse_args(argv)
 
-    data = inventory.load(args.house)
-    problems = render.validate(data)
-    if problems:
-        for problem in problems:
-            print(f"thermite reboot: {problem}", file=sys.stderr)
-        return 2
-    house = House(data)
+    house = House.load(args.house)
     able = [entry["id"] for entry in reboots.table(house)["devices"]]
     if args.device is not None and args.device not in able:
         return error(f"not a device thermite can restart: {args.device} (those are: {', '.join(able) or 'none'})")

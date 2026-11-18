@@ -7,6 +7,17 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A house file of the wrong shape is now always a message and exit
+  status 2, never a traceback. `devices:` with nothing under it is
+  refused ("devices must be a list of devices; write `devices: []` for
+  a house with none"), and a list or a mapping where `routing` names a
+  device or a source is reported as not being one. `thermite remote`,
+  `thermite control4` and `thermite cameras` now validate the house
+  file like every other verb and refuse one with problems; `reboot`,
+  `pair` and `matrix-settings` print those problems as `generate` does,
+  each after the file's name. One loader reads the house file for all
+  of them, and a test changes every value of the example house in turn
+  to hold that.
 - Commands: every command a device's rule takes is recorded when it
   ends. openHAB's journal has one line for it, `command device=<id>
   item=<Item> command=<value> outcome=<outcome> code=<code> ms=<n>`, a

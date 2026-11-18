@@ -13,7 +13,6 @@ import urllib.request
 from pathlib import Path
 
 import oh_conf
-import oh_inventory as inventory
 import oh_matrix_sim as sim
 import oh_cli
 import oh_render as render
@@ -895,10 +894,9 @@ class Check:
 
 
 def run_check(args, rt: lib.Runtime, log) -> int:
-    data = inventory.load(args.house)
-    problems = render.validate(data)
-    if problems or data.get("routing") is None:
-        raise lib.SandboxError("; ".join(problems) or "instance/devices.yaml has no routing")
+    data = oh_conf.House.load(args.house).data
+    if data.get("routing") is None:
+        raise lib.SandboxError("instance/devices.yaml has no routing")
     check = Check(data, log=log)
     conf = STATE / "conf"
     inst = lib.boot_check_instance(conf)

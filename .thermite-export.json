@@ -468,6 +468,7 @@
     "tests/test_heos_patch.py",
     "tests/test_host_layout.py",
     "tests/test_house_config.py",
+    "tests/test_house_loader.py",
     "tests/test_http_polling.py",
     "tests/test_install_manifest.py",
     "tests/test_install_output.py",

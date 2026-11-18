@@ -194,13 +194,16 @@ def compile_contract(house_file, asset_root, destination, *, metrics_port=None, 
     import oh_inventory
     import oh_render
     import oh_site_contract
-    data = oh_inventory.load(Path(house_file))
-    if oh_render.validate(data):
-        raise AccessError("House configuration is invalid")
+    try:
+        house = House.load(Path(house_file))
+    except oh_inventory.ConfigError as error:
+        if not error.problems:
+            raise
+        raise AccessError("House configuration is invalid") from None
     root = Path(asset_root).absolute()
     if not root.is_dir() or root.is_symlink():
         raise AccessError("Private asset root must be an existing directory")
-    contract = oh_site_contract.compile(House(data), oh_render.build(data), asset_root=root, metrics_port=metrics_port,
+    contract = oh_site_contract.compile(house, oh_render.build(house.data), asset_root=root, metrics_port=metrics_port,
                                         music_host=music_host)
     json_private(destination, contract)
     return contract

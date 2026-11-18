@@ -218,16 +218,39 @@ def retarget(text: str, path: str, uid: str, change) -> str:
 # ---------------------------------------------------------------- the house
 
 class House:
-    """The validated inventory, with the names every renderer shares."""
+    """The validated inventory, with the names and lookups every renderer
+    shares. It holds the one mapping the house file parsed to (`data`, for
+    code that reads a section itself); `devices`, `by_id` and `rooms` are
+    that mapping's own entries, never copies.
+
+    House.load(file) is how a house file becomes one. House(data) is for a
+    mapping that has passed oh_render.validate already: it checks nothing.
+    """
 
     def __init__(self, data: dict) -> None:
         self.data = data
         self.rooms: dict[str, dict] = data.get("rooms") or {}
         self.devices: list[dict] = list(data.get("devices") or [])
+        #: Device id -> device.
+        self.by_id: dict[str, dict] = {device["id"]: device for device in self.devices}
         self._counts: dict[str, int] = {}
         for device in self.devices:
             text = self._base_label(device)
             self._counts[text] = self._counts.get(text, 0) + 1
+
+    @classmethod
+    def load(cls, path: Path) -> House:
+        """The house file at `path`, validated: the one reader of a house
+        file. ConfigError when it cannot be read or parsed, or naming every
+        problem oh_render.validate finds in it."""
+        # Imported here: oh_render imports this module.
+        import oh_render
+        data = inventory.load(path)
+        problems = oh_render.validate(data)
+        if problems:
+            raise inventory.ConfigError(path, f"{len(problems)} problem{'s' if len(problems) != 1 else ''}; nothing done",
+                                        problems=problems)
+        return cls(data)
 
     @staticmethod
     def _base_label(device: dict) -> str:

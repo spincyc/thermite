@@ -26,10 +26,10 @@ from pathlib import Path
 
 import oh_cli
 import oh_deploy as deploy
-import oh_inventory as inventory
 import oh_metrics as metrics
 import oh_render as render
 from oh_cli import AREA
+from oh_conf import House
 
 DESCRIPTION = """\
 Generate conf/ from the house file (instance/devices.yaml), metrics/ (the
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     # deploy/'s and metrics/'s parent, so that the tests can write them somewhere else.
     parser.add_argument("--root", type=Path, default=AREA, help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
-    data = inventory.checked(arguments.house)
+    data = House.load(arguments.house).data
     devices = len(data.get("devices") or [])
     try:
         versions, host = deploy.load(AREA)

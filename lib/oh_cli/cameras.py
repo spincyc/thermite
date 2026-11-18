@@ -14,7 +14,6 @@ import urllib.parse
 from pathlib import Path
 
 import oh_cli
-import oh_inventory
 import oh_sandbox
 from oh_cli import pair
 from oh_conf import House, uses
@@ -233,12 +232,9 @@ def main(argv: list[str] | None = None) -> int:
             selection.add_argument("--camera", action="append", default=[], metavar="ID", help="enable only this camera; repeat for several")
             oh_cli.add_dry_run(command)
     arguments = parser.parse_args(argv)
+    data = House.load(arguments.house).data
     try:
-        data = oh_inventory.load(arguments.house)
-        problems = oh_inventory.validate(data)
-        if problems:
-            raise CameraError("; ".join(problems))
-        problems += remote_cameras.validate(data)
+        problems = remote_cameras.validate(data)
         devices = [d for d in data.get("devices", []) if uses(d, protect.PHASE, protect.NAME)]
         for device in devices:
             problems += protect.validate(device)

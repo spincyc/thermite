@@ -68,7 +68,9 @@ class ConfigError(ValueError):
 
 
 def load(path: Path) -> object:
-    """A YAML file's content; ConfigError when it cannot be read or parsed."""
+    """A YAML file's content; ConfigError when it cannot be read or parsed.
+    Nothing in it is checked: oh_conf.House.load is the reader of a house
+    file (tests/test_house_loader.py)."""
     try:
         text = Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
@@ -81,19 +83,6 @@ def load(path: Path) -> object:
                           mark.line + 1 if mark else None, mark.column + 1 if mark else None) from None
     except yaml.YAMLError as error:
         raise ConfigError(path, f"is not YAML: {error}") from None
-
-
-def checked(path: Path, problems=None) -> dict:
-    """A house file loaded and validated (by `problems`, default
-    oh_render.validate); ConfigError naming every problem otherwise."""
-    if problems is None:
-        import oh_render
-        problems = oh_render.validate
-    data = load(path)
-    found = problems(data)
-    if found:
-        raise ConfigError(path, f"{len(found)} problem{'s' if len(found) != 1 else ''}; nothing done", problems=found)
-    return data
 
 
 def hint(word: object, choices) -> str:
@@ -177,6 +166,11 @@ def validate(data: object) -> list[str]:
                             ("services", list, "a list of service ids")):
         if data.get(key) is not None and not isinstance(data[key], kind):
             problems.append(f"{key} must be {what}")
+    # A section left empty (`later:` above entries that are all commented
+    # out) is the same as none. Not devices: code reads it as
+    # data.get("devices", []) and data["devices"], which a null breaks.
+    if "devices" in data and data["devices"] is None:
+        problems.append("devices must be a list of devices; write `devices: []` for a house with none")
     if problems:
         return problems
     problems = validate_rooms(data.get("rooms") or {}) + oh_access_mode.validate(data)

@@ -18,6 +18,7 @@ import oh_av_sim as av_sim  # noqa: E402
 import oh_control4 as control4  # noqa: E402
 import oh_matrix_sim as matrix_sim  # noqa: E402
 import oh_sony_sim as sony_sim  # noqa: E402
+from oh_conf import House  # noqa: E402
 from oh_testing import controls, routing  # noqa: E402
 
 
@@ -180,8 +181,7 @@ class ConfUnderLockTest(unittest.TestCase):
             with self.subTest(module=module.__name__):
                 check, entry = mock.MagicMock(), mock.MagicMock()
                 setattr(check, attr, {"fixture": entry})
-                with mock.patch.object(module.inventory, "load", return_value={"routing": {}}), \
-                        mock.patch.object(module.render, "validate", return_value=[]), \
+                with mock.patch.object(House, "load", return_value=House({"routing": {}})), \
                         mock.patch.object(module, "Check", return_value=check), \
                         mock.patch.object(module.lib, "InstanceLock", return_value=held), \
                         mock.patch.object(module.lib, "wipe_dir") as wipe, \

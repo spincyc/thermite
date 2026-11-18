@@ -144,9 +144,9 @@ def native_mode(arguments: argparse.Namespace) -> bool:
     if client.deployment(AREA) is not None:
         return False
     import oh_access_mode
-    import oh_inventory
+    from oh_conf import House
 
-    return oh_access_mode.mode(oh_inventory.load(oh_cli.HOUSE) or {}) == "native"
+    return oh_access_mode.mode(House.load(oh_cli.HOUSE).data) == "native"
 
 
 def gateway_port(area: Path | None = None) -> int:
@@ -219,10 +219,10 @@ def palette(spec: str | None, house: Path = oh_cli.HOUSE):
 
     if spec:
         return brand.load(spec)
-    import oh_inventory as inventory
+    from oh_conf import House
     from oh_features import remote as page
 
-    return page.palette(inventory.load(house) or {})
+    return page.palette(House.load(house).data)
 
 
 def look(chosen) -> str:
@@ -411,7 +411,12 @@ def main(argv: list[str] | None = None) -> int:
             return node_argv(arguments, node), launch_environment(arguments, chosen)
         except RemoteModelError as exc:
             raise LaunchError(str(exc)) from None
-        except ValueError:
+        except ValueError as exc:
+            import oh_inventory
+
+            if isinstance(exc, oh_inventory.ConfigError):
+                # The house file's own problems, which the dispatcher prints.
+                raise
             raise LaunchError("log in with thermite access login, or explicitly choose --native "
                               "for owner/testing access") from None
 

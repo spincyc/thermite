@@ -20,10 +20,9 @@ import urllib.parse
 
 import oh_cli
 import oh_deploy as deploy
-import oh_inventory as inventory
 import oh_render as render
 import oh_sandbox as sandbox
-from oh_conf import uses
+from oh_conf import House, uses
 from oh_integrations import _pairing
 from oh_integrations import androidtv_googletv as googletv
 from oh_integrations import pyatv_http
@@ -364,13 +363,8 @@ def main(argv: list[str] | None = None) -> int:
     oh_cli.add_timeout(parser, ONLINE_TIMEOUT, "an Android TV to come ONLINE after its code")
     args = parser.parse_args(argv)
 
-    data = inventory.load(args.house)
-    problems = render.validate(data)
-    if problems:
-        for problem in problems:
-            print(f"thermite pair: {problem}", file=sys.stderr)
-        return 2
-    known = tvs(data)
+    house = House.load(args.house)
+    known = tvs(house.data)
     if args.check:
         if args.code is not None:
             parser.error("--check takes one DEVICE at most")
@@ -385,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
             return error(str(exc))
     if args.device is None:
         parser.error("name the DEVICE to pair, or --check")
-    devices = {d["id"]: d for d in data["devices"]}
+    devices = house.by_id
     device = devices.get(args.device)
     how = kinds(device) if device else set()
     if not how:

@@ -60,12 +60,12 @@ def in_venv() -> bool:
 
 
 def fetch(arguments: argparse.Namespace) -> int:
+    if arguments.controller_ip is None:
+        from oh_conf import House
+        data = House.load(oh_cli.HOUSE).data
+    else:
+        data = {}
     try:
-        if arguments.controller_ip is None:
-            import oh_inventory
-            data = oh_inventory.load(oh_cli.HOUSE)
-        else:
-            data = {}
         arguments.controller_ip = control4.director_ip(data, arguments.controller_ip)
     except ValueError as error:
         print(f"thermite control4: {error}", file=sys.stderr)
@@ -129,7 +129,7 @@ def missing_steps(arguments: argparse.Namespace) -> int:
 
 
 def summarize(arguments: argparse.Namespace) -> int:
-    import oh_inventory as inventory
+    from oh_conf import House
 
     path = arguments.file or control4.newest_export(EXPORTS)
     if path is None:
@@ -137,7 +137,7 @@ def summarize(arguments: argparse.Namespace) -> int:
               "run `thermite control4` to set up and fetch one", file=sys.stderr)
         return 2
     items, bindings, details = control4.load_export(path)
-    data = inventory.load(arguments.house)
+    data = House.load(arguments.house).data
     text = control4.markdown(Path(path), control4.devices(items, bindings, data, details), data)
     control4.private_dir(EXPORTS)
     out = EXPORTS / "summary.md"

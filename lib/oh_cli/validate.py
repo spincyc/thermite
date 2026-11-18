@@ -16,7 +16,7 @@ import sys
 
 import oh_cli
 import oh_inventory as inventory
-import oh_render as render
+from oh_conf import House
 
 EXAMPLES = (
     ("thermite validate", "check the house file and conf/ against it"),
@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     oh_cli.add_json(parser)
     arguments = parser.parse_args(argv)
     try:
-        data = inventory.checked(arguments.house, render.validate)
+        data = House.load(arguments.house).data
     except inventory.ConfigError as error:
         if not arguments.json:
             raise

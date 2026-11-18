@@ -15,6 +15,7 @@ import sys
 
 import oh_cli
 import oh_inventory as inventory
+from oh_conf import House
 
 EXAMPLES = (
     ("thermite dhcp-reservations", "one line per reservation: alias, MAC and IP"),
@@ -35,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--csv", action="store_true", help="print CSV: alias, mac, ip")
     oh_cli.add_house(parser)
     arguments = parser.parse_args(argv)
-    data = inventory.checked(arguments.house)
+    data = House.load(arguments.house).data
     rows = inventory.reservations(data)
     lacking = inventory.without_mac(data)
     for device_id in lacking:

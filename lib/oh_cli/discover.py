@@ -19,8 +19,8 @@ from pathlib import Path
 
 import oh_discover as discover
 import oh_cli
-import oh_inventory as inventory
 from oh_cli import AREA
+from oh_conf import House
 
 EXAMPLES = (
     ("thermite discover", "ping the LAN, listen for device announcements, and compare"),
@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     oh_cli.add_house(parser)
     oh_cli.add_json(parser)
     arguments = parser.parse_args(argv)
-    data = inventory.checked(arguments.house)
+    data = House.load(arguments.house).data
     try:
         local, network = discover.local_interface()
     except (OSError, subprocess.CalledProcessError, RuntimeError, AttributeError) as exc:

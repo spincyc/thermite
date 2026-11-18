@@ -154,8 +154,9 @@ def covered_rooms(data: dict, room: str) -> set:
     entry = data["routing"]["rooms"][room]
     covered = {home(data, room)}
     display = entry.get("display") if isinstance(entry.get("display"), dict) else {}
-    if display.get("device") in devices:
-        covered.add(devices[display["device"]].get("room"))
+    shown = _known(devices, display.get("device"))
+    if shown is not None:
+        covered.add(shown.get("room"))
     if (rooms.get(home(data, room)) or {}).get("tag") == "Building":
         while additions := {ident for ident, spec in rooms.items()
                             if isinstance(spec, dict) and spec.get("in") in covered} - covered:
@@ -215,6 +216,13 @@ def room_label(data: dict, room: str) -> str:
 
 def _number(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _known(table: dict, name: object) -> dict | None:
+    """table[name] for a name straight from the house file, None when it is
+    not one of the table's: a list or a mapping written where an id belongs
+    names nothing, and would make table.get(name) raise."""
+    return table.get(name) if isinstance(name, str) else None
 
 
 def switcher(device: dict) -> ModuleType | None:
@@ -289,7 +297,7 @@ def validate(data: object) -> list[str]:
     problems: list[str] = []
 
     def matrix(where: str, device_id: object, kind: str) -> tuple[int, int] | None:
-        device = devices.get(device_id)
+        device = _known(devices, device_id)
         if device is None:
             problems.append(f"{where}: '{device_id}' is not a device id")
             return None
@@ -485,7 +493,7 @@ def validate(data: object) -> list[str]:
         problems += [f"{where}.{at}: {source} is cabled to this room's {_local(entry, first=True)[source]} already"
                      for source, at in _local_twice(entry)]
         for source in offered:
-            if source not in sources:
+            if not isinstance(source, str) or source not in sources:
                 problems.append(f"{where}.sources: '{source}' is not in routing.sources")
             elif not isinstance(sources[source], dict) or source in local:
                 continue
@@ -548,7 +556,8 @@ def _audio_problems(where: str, data: dict, room: str, devices: dict) -> list[st
     if "volume" not in (remote_model.provider(device)[1] or {}):
         return [f"{where}.audio: {ident} offers no volume thermite controls (an integration under controls.control "
                 "that drives one)"]
-    stages = {spec.get("device"): spec for key in STAGES if isinstance(spec := entry.get(key), dict)}
+    stages = {spec["device"]: spec for key in STAGES
+              if isinstance(spec := entry.get(key), dict) and isinstance(spec.get("device"), str)}
     if ident in stages and stages[ident].get("zone") is not None:
         return [f"{where}.audio: {ident} is this room's receiver on zone {stages[ident]['zone']}, and its volume is "
                 "the main zone's"]
@@ -604,7 +613,7 @@ def _stage_problems(where: str, spec: object, offered: list, sources: dict, devi
         return [f"{where}: must be a mapping"]
     problems: list[str] = []
     device_id = spec.get("device")
-    device = devices.get(device_id)
+    device = _known(devices, device_id)
     if "passive" in spec:
         if spec["passive"] is not True:
             problems.append(f"{where}.passive: must be true; omit it for a controlled stage")
@@ -640,7 +649,7 @@ def _stage_problems(where: str, spec: object, offered: list, sources: dict, devi
         found = module.stage(device, zone)
         if found is None:
             problems.append(f"{where}.zone: {device_id} has no zone {zone}")
-    if device is not None:
+    if device is not None and (zone is None or _number(zone)):
         key = (device_id, zone)
         if key in used:
             problems.append(f"{where}.device: {device_id}{f' zone {zone}' if zone else ''} already used by {used[key]}")
@@ -704,9 +713,9 @@ def _wiring_problems(rooms: dict) -> list[str]:
     for room, entry in rooms.items():
         for key in STAGES:
             spec = entry.get(key) if isinstance(entry, dict) else None
-            if not isinstance(spec, dict):
-                continue
-            where, device = f"routing.rooms.{room}.{key}", spec.get("device")
+            if not isinstance(spec, dict) or not isinstance(spec.get("device"), str):
+                continue  # _stage_problems() says what is wrong with it
+            where, device = f"routing.rooms.{room}.{key}", spec["device"]
             overrides, cabled = (spec.get(name) if isinstance(spec.get(name), dict) else {}
                                  for name in ("input_by_source", "sources"))
             wiring = [(f"{where}.input", spec.get("input"), None)]
@@ -774,7 +783,7 @@ def _sync_problems(rooms: dict, sources: dict, devices: dict) -> list[str]:
                 or lead.get("zone") == spec.get("zone")):
             found.append(f"{leader} needs a receiver on another zone of {spec.get('device')}")
         problems += [f"{where}: {text}" for text in found]
-        device = devices.get(spec.get("device"))
+        device = _known(devices, spec.get("device"))
         module = stager(device) if device is not None and not found else None
         stage = module.stage(device, spec.get("zone")) if module is not None else None
         if stage is None:
@@ -782,10 +791,10 @@ def _sync_problems(rooms: dict, sources: dict, devices: dict) -> list[str]:
         shared = _synced(entry, other, sources)
         if not shared:
             problems.append(f"{where}: {room} and {leader} share no source from the HDMI matrix")
-        own = {spec.get("input")}
+        own = [spec.get("input")]
         for key in ("input_by_source", "sources"):
             if isinstance(spec.get(key), dict):
-                own.update(spec[key].values())
+                own.extend(spec[key].values())
         zone = f"{spec['device']} zone {spec['zone']}" if spec.get("zone") else f"{spec['device']}'s main zone"
         for source, value in shared.items():
             if value not in stage["inputs"]:
@@ -821,7 +830,7 @@ def _switch_problems(where: str, switch: object, offered: list, sources: dict, d
         return [f"{where}: must be a mapping"]
     problems: list[str] = []
     device_id = switch.get("device")
-    device = devices.get(device_id)
+    device = _known(devices, device_id)
     output = switch.get("output")
     numbers = None
     if device is None:
