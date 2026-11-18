@@ -29,6 +29,9 @@ PROTOCOL_IPS = {"0.0.0.0", "127.0.0.1", "224.0.0.251", "239.255.255.250", "255.2
 # first digit so that re skips straight to digits: the same matches, faster.
 IP = re.compile(r"\d(?<![\d.]\d)\d{0,2}\.(?:\d{1,3}\.){2}\d{1,3}(?![\d.])")
 MAC = re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![\w:])")
+#: Words the application's own files say. guard() lets them through even
+#: where a site lists them as private, so a word added here is permitted in
+#: the public tree; the list keeps nothing out.
 CODE_WORDS = {"control4", "sddp", "bk-808", "wattbox", "shield", "fire tv", "alarm.com", "qolsys", "myq",
               "ratgdo", "lutron", "grafik", "subvolume", "btrfs", "adr 0", "homelab", "factory/",
               "automation/openhab", "make openhab-", "office"}

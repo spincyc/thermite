@@ -7,6 +7,8 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- A refused deploy names the site by its own path instead of one site's
+  private directory.
 - Command line: `--config DIR` (or `--site DIR`) now means the private site
   in every verb and action. The `access` service actions (`serve`, `worker`,
   `callbacks`, `verify`, `migrate`, `setup`, `bootstrap`, `prune`, `audit`,

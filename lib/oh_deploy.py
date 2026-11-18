@@ -1810,7 +1810,7 @@ def _deploy(area: Path, layout: State, var: Path, commit: str, *, force: bool, d
         dirt = uncommitted(area)
         if dirt:
             listed = "".join(f"\n  {line}" for line in dirt[:10]) + ("\n  ..." if len(dirt) > 10 else "")
-            raise DeployError("automation/openhab has changes that are not committed; a deploy installs a commit, "
+            raise DeployError(f"{area} has changes that are not committed; a deploy installs a commit, "
                               f"and make check has tested the working tree. Commit them first:{listed}")
     files, application = deployment_files(area, commit, var)
     if application is not None:
@@ -1965,7 +1965,7 @@ def install(files: dict[str, Blob], commit: str, title: str, layout: State, var:
     conf = {path[len("conf/"):]: blob for path, blob in files.items() if path.startswith("conf/")}
     app = {path: files[path] for path in ATV_APP if path in files}
     if not conf:
-        raise DeployError(f"{commit[:12]} has no automation/openhab/conf/")
+        raise DeployError(f"{commit[:12]} has no conf/")
     digest = tree_digest(conf)
     if not force and not boot_checked(var, digest):
         raise DeployError(f"`thermite test boot` has not passed on {commit[:12]}'s conf/ (digest {digest[:12]}) on "
