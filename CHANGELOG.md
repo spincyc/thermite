@@ -7,6 +7,9 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- Alertmanager is removed; the gateway's alert feed was its only
+  reader. Port 13612 stays unused. `metrics: alertmanager_port` in
+  `instance/host.yaml` is no longer accepted.
 - Alerts are no longer sent anywhere: they are for the thermite app's
   Home to show, from the gateway's feed. ntfy and the notification
   adapter are removed (units, images, ports 13613 and 13614, which stay

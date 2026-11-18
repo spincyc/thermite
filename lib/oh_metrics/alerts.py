@@ -49,8 +49,8 @@ the series that always exist are incomplete), else 0.
 Severity says how much an alert matters: a critical one means a room cannot
 be controlled as asked, or soon will not be; a warning can wait. Nothing is
 sent anywhere. The gateway reads the firing alerts from Prometheus and the
-thermite app's Home shows them, critical ones first (oh_identity.alerts);
-Alertmanager only lists them on this host.
+thermite app's Home shows them, critical ones first (oh_identity.alerts),
+holding back what INHIBITS and ROOM_INHIBITS say another alert explains.
 """
 from __future__ import annotations
 
@@ -65,8 +65,6 @@ CORE_JOBS = ("openhab", "thermite", "node", "prometheus", "blackbox")
 SERVICES = ("openhab", "apple_tv_helper", "grafana")
 #: The services that only watch the house: control works without them.
 MONITORING_SERVICES = ("grafana",)
-#: Alertmanager's job: ThermiteScrapeFailed watches it too.
-ALERTING_JOBS = ("alertmanager",)
 #: A check's scope (the module docstring).
 CONTROL, MONITORING = "control", "monitoring"
 GATEWAY_JOB = "gateway_https"
@@ -143,7 +141,7 @@ CATALOG = {
     "ThermitePolicyUnenforced": ("A room's lock is not being enforced", "For ten minutes a locked room's lock could not be held: its policy cannot be read, it conflicts with another room over shared hardware, openHAB does not answer the worker's reads, or a change on the room's devices has not been put back. A reading that is merely old, from a device that reports only when it changes, does not count. Switching & remotes shows locked rooms by state; check the room's devices and thermite-access-worker.service's journal."),
     "ThermiteHandlerPoolSaturated": ("Device dispatch is saturated", "Device dispatch has no idle workers and a ready probe is overdue. Inspect blocked binding connections."),
     "ThermiteHandlerTelemetryUnavailable": ("Device dispatch telemetry is unavailable", "The native scheduler observation is missing, incomplete or stale. Check the runtime telemetry rule."),
-    "ThermiteMonitoringBroken": ("Monitoring is not working fully", "Prometheus failed to evaluate a rule or to hand alerts over, Alertmanager failed a delivery, node_exporter could not read a metrics textfile or systemd's unit states, or Grafana does not answer. Rooms can still be controlled. Check their journals."),
+    "ThermiteMonitoringBroken": ("Monitoring is not working fully", "Prometheus failed to evaluate a rule, node_exporter could not read a metrics textfile or systemd's unit states, or Grafana does not answer. Rooms can still be controlled. Check their journals."),
     "ThermiteServiceMetricsStale": ("A service's metrics have stopped", "The gateway, the policy worker or the callback relay is running but has not rewritten its metrics file for five minutes, so the dashboards and the alerts that read it show its last values. Its journal says why; restarting the service starts a new writer. Host shows each file's age under Metrics textfiles age."),
 }
 #: The alerts of severity critical; every other is a warning.
@@ -359,7 +357,7 @@ def rules(mapping):
             alert("ThermiteCheckFailing", f"{required} == 1", "5m"),
             alert("ThermiteControlUnknown", f"{required} == -1", "10m"),
             # Every job with a scrape check, so each failed one has this alert.
-            alert("ThermiteScrapeFailed", f'up{{job=~"{"|".join((*CORE_JOBS, *ALERTING_JOBS))}"}} == 0', "3m"),
+            alert("ThermiteScrapeFailed", f'up{{job=~"{"|".join(CORE_JOBS)}"}} == 0', "3m"),
             alert("ThermiteRuntimeUnavailable", "thermite_openhab_up == 0", "3m"),
             alert("ThermiteHostDiskLow", '(node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes < 0.10) and (node_filesystem_readonly == 0)', "10m"),
             alert("ThermiteBtrfsTrouble", f'(sum by (uuid) (increase(node_btrfs_device_errors_total{{job="node"}}[1h])) > 0) or (sum by (uuid) (node_btrfs_device_unused_bytes{{job="node"}}) < {BTRFS_UNALLOCATED})', "5m"),
@@ -385,20 +383,8 @@ def rules(mapping):
                alert("ThermiteHandlerTelemetryUnavailable", 'thermite_handler_pool_up == 0', "5m")]
               if mapping.get("handler_pool") else []),
             # A failed scrape is ThermiteScrapeFailed's.
-            alert("ThermiteMonitoringBroken", '(increase(prometheus_rule_evaluation_failures_total[10m]) > 0) or (increase(prometheus_notifications_dropped_total[10m]) > 0) or (increase(alertmanager_notifications_failed_total[10m]) > 0) or (node_textfile_scrape_error == 1)'
+            alert("ThermiteMonitoringBroken", '(increase(prometheus_rule_evaluation_failures_total[10m]) > 0) or (node_textfile_scrape_error == 1)'
                   f' or ({CHECK}{{scope="{MONITORING}",check!="scrape"}} == 1)', "5m"),
             alert("ThermiteServiceMetricsStale", stale_textfiles(), "5m"),
         ]},
     ]}
-
-
-def alertmanager():
-    """Alertmanager's configuration: it holds back what the tables say and
-    sends nothing, since its one receiver has nowhere to send."""
-    inhibit = [{"source_matchers": [f'alertname="{source}"'],
-                "target_matchers": [f'alertname=~"{"|".join(targets)}"'], **equal}
-               for pairs, equal in ((INHIBITS, {}), (ROOM_INHIBITS, {"equal": ["room"]})) for source, targets in pairs]
-    return {"global": {"resolve_timeout": "5m"},
-            "route": {"receiver": "none"},
-            "inhibit_rules": inhibit,
-            "receivers": [{"name": "none"}]}

@@ -98,19 +98,7 @@
     "node_exporter.image.platforms": "Per-platform manifest digests listed in that manifest list",
     "blackbox_exporter.image.platforms": "Per-platform manifest digests listed in that manifest list",
     "grafana.image.platforms": "Per-platform manifest digests listed in that manifest list",
-    "java.sha256": "Adoptium API api.adoptium.net/v3/assets/latest/21/hotspot (jre, linux, x64) and the published https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jre_x64_linux_hotspot_21.0.13_9.tar.gz.sha256.txt",
-    "alertmanager.image": "Official quay.io/prometheus/alertmanager:v0.34.2 registry manifest, read 2026-11-01"
-  },
-  "alertmanager": {
-    "version": "0.34.2",
-    "image": {
-      "ref": "quay.io/prometheus/alertmanager:v0.34.2",
-      "digest": "sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b",
-      "platforms": {
-        "linux/amd64": "sha256:7619e9399e623c9f99a40cb199c2bceb972cbf725598a51dcbde69d51dcaaedf",
-        "linux/arm64": "sha256:6d6e6783829a3bce34d010e71e752426bc9cf345726a7c48fa00dfb5e3292a68"
-      }
-    }
+    "java.sha256": "Adoptium API api.adoptium.net/v3/assets/latest/21/hotspot (jre, linux, x64) and the published https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13%2B9/OpenJDK21U-jre_x64_linux_hotspot_21.0.13_9.tar.gz.sha256.txt"
   },
   "music_assistant": {
     "version": "2.10.12",

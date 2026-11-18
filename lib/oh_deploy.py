@@ -421,7 +421,7 @@ class State:
         return [
             (MONITORING_MODE, [self.monitoring, self.exporter]),
             (DIR_MODE, [self.metrics, self.exporter_app, self.textfile]),
-            (MONITORING_MODE, [self.prometheus_data, self.grafana_data, self.root / metrics.STATE_ALERTMANAGER]),
+            (MONITORING_MODE, [self.prometheus_data, self.grafana_data]),
             (SECRETS_MODE, [self.monitoring_secrets]),
         ]
 
@@ -986,7 +986,7 @@ def render_metrics_restart_path(host: dict) -> str:
     lines = [
         "# Restarts the metrics applications when a deploy changes their",
         "# programs or Grafana settings (deploy writes the watched file).",
-        "# Prometheus, Alertmanager and blackbox reload over HTTP.",
+        "# Prometheus and blackbox reload over HTTP.",
         *HEADER,
         "[Unit]",
         "Description=Restart the metrics applications after a deploy changes them",
@@ -2071,8 +2071,7 @@ def apply_metrics(layout: State, host: dict, metrics_changes: Changes, exporter_
     port = metrics.ports(host)
     touched = _touched(metrics_changes)
     for name, prefix, unit, key in (("Prometheus", "prometheus/", oh_units.PROMETHEUS, "prometheus"),
-                                    ("blackbox_exporter", "blackbox/", oh_units.BLACKBOX, "blackbox"),
-                                    ("Alertmanager", "alertmanager/", oh_units.ALERTMANAGER, "alertmanager")):
+                                    ("blackbox_exporter", "blackbox/", oh_units.BLACKBOX, "blackbox")):
         if not any(path.startswith(prefix) for path in touched):
             continue
         status = post(f"http://{metrics.LOOPBACK}:{port[key]}/-/reload")

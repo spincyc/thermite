@@ -83,7 +83,7 @@ class Inventory(unittest.TestCase):
         self.assertEqual(classes, {
             **{runtime / name: "tree" for name in ("conf", "userdata", "addons", "metrics", "exporter/app", "atv/app",
                                                    "atv/venv", "atv/secrets", "secrets", "monitoring/grafana",
-                                                   "monitoring/alertmanager", "monitoring/secrets")},
+                                                   "monitoring/secrets")},
             **{runtime / "deploy" / name: "file" for name in ("deployed.json", "deployed.pending.json", "atv-restart",
                                                                "metrics-restart", "service-account.json")},
             **{runtime / name: "shared" for name in ("logs", "backups", "deploy/history", "textfile")},

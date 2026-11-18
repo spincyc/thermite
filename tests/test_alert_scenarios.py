@@ -40,13 +40,12 @@ TEXTFILES = "/host/srv/thermite/runtime/textfile"
 
 
 @functools.lru_cache(maxsize=None)
-def house() -> tuple[str, dict, dict]:
-    """The example house's alerts.yml, exporter map and alertmanager.yml."""
+def house() -> tuple[str, dict]:
+    """The example house's alerts.yml and exporter map."""
     inventory = oh_inventory.load(AREA / "instance/devices.yaml")
     host = yaml.safe_load((AREA / "instance/host.yaml").read_text())
     files = oh_metrics.render(copy.deepcopy(inventory), host)
-    return (files["prometheus/alerts.yml"], json.loads(files[oh_metrics.EXPORTER_MAP]),
-            yaml.safe_load(files["alertmanager/alertmanager.yml"]))
+    return files["prometheus/alerts.yml"], json.loads(files[oh_metrics.EXPORTER_MAP])
 
 
 def image() -> str:
@@ -106,7 +105,7 @@ def healthy(samples: int) -> dict[str, str]:
     """Every series the house-wide and device checks read, all well."""
     out = {series("thermite_openhab_up", job="thermite"): f"1x{samples}",
            series("node_scrape_collector_success", job="node", collector="systemd"): f"1x{samples}"}
-    for job in (*alerts.CORE_JOBS, *alerts.ALERTING_JOBS):
+    for job in alerts.CORE_JOBS:
         out[series("up", job=job)] = f"1x{samples}"
     for service in alerts.SERVICES:
         out[series("probe_success", job="service_http", service=service)] = f"1x{samples}"
@@ -347,11 +346,15 @@ class Scenarios(unittest.TestCase):
     def test_a_healthy_house_fires_nothing_and_no_alert_watches_a_delivery(self):
         # No watchdog fires for somebody to receive, and what the removed
         # delivery chain reported raises nothing: the gateway's feed reads
-        # whether the rules are evaluated (oh_identity.alerts).
+        # whether the rules are evaluated (oh_identity.alerts). Nor does
+        # an Alertmanager that is gone, or alerts Prometheus hands nobody.
         inputs = {**healthy(30), **readback(WEST, (31, PLAYER)), **readback(EAST, (31, routing.OFF)),
                   series("probe_success", job="alerting_http", service="ntfy"): "0x30",
                   series("up", job="ntfy"): "0x30", series("up", job="notifications"): "0x30",
-                  "thermite_notification_heartbeat_age_seconds": "3600x30"}
+                  "thermite_notification_heartbeat_age_seconds": "3600x30",
+                  series("up", job="alertmanager"): "0x30",
+                  series("prometheus_notifications_dropped_total", job="prometheus"): "0+5x30",
+                  series("alertmanager_notifications_failed_total", job="alertmanager"): "0+5x30"}
         names = [rule["alert"] for group in yaml.safe_load(house()[0])["groups"] for rule in group["rules"]
                  if "alert" in rule]
         self.assertGreater(len(names), 15)
@@ -394,7 +397,7 @@ class Rules(unittest.TestCase):
     """What the scenarios take for granted, with or without promtool."""
 
     def setUp(self):
-        text, self.map, self.alertmanager = house()
+        text, self.map = house()
         self.groups = yaml.safe_load(text)["groups"]
         self.recorded = [rule for rule in self.groups[0]["rules"] if rule.get("record") == alerts.CHECK]
         self.alerts = {rule["alert"]: rule for rule in self.groups[1]["rules"] if "alert" in rule}
@@ -444,12 +447,12 @@ class Rules(unittest.TestCase):
         self.assertIn(required, self.groups[0]["rules"][-1]["expr"])
 
     def test_a_failing_check_holds_back_the_unknown_ones_of_its_own_room_only(self):
-        rule = next(rule for rule in self.alertmanager["inhibit_rules"]
-                    if rule["source_matchers"] == ['alertname="ThermiteCheckFailing"'])
-        self.assertEqual((rule["target_matchers"], rule["equal"]), (['alertname=~"ThermiteControlUnknown"'], ["room"]))
-        for rule in self.alertmanager["inhibit_rules"]:
-            if rule["source_matchers"] != ['alertname="ThermiteCheckFailing"']:
-                self.assertNotIn("equal", rule)
+        # The gateway's feed applies both tables (oh_identity.tests.test_alerts
+        # walks them): this pair only between alerts of one room.
+        self.assertEqual(alerts.ROOM_INHIBITS, (("ThermiteCheckFailing", ("ThermiteControlUnknown",)),))
+        self.assertNotIn("ThermiteCheckFailing", [source for source, _ in alerts.INHIBITS])
+        # Both alerts carry the room the pair is matched on.
+        self.assertLessEqual({"room"}, set(alerts.ABOUT["ThermiteCheckFailing"]) & set(alerts.ABOUT["ThermiteControlUnknown"]))
         silenced = {source for source, targets in alerts.INHIBITS if "ThermiteControlUnknown" in targets}
         self.assertEqual(silenced, {"ThermiteRuntimeUnavailable"})
 

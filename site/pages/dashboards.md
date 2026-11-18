@@ -13,7 +13,6 @@ See device availability, room history and host health in Grafana, from a phone o
 | blackbox_exporter | 13609, this machine only | whether each device answers on the port thermite controls it through (except where a connection would cost the device a session or a TLS handshake: Android TV, Cast, WiiM, AVPro and Sony projector ports, which their Things' status covers), and whether the remote gateway answers over HTTPS |
 | thermite's exporter | 13610, this machine only | each device's status, power, input and volume, by room |
 | Grafana | 13611, your network | the dashboards |
-| Alertmanager | 13612, this machine only | lists the alerts Prometheus sends it; delivers them nowhere |
 
 Prometheus also reads runtime memory, threads, events and rule runs through the Metrics add-on. `thermite test boot` checks that it answers. See [storage requirements](requirements.html#storage-and-metrics) for the retention budget.
 

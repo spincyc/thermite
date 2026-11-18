@@ -64,7 +64,7 @@ NATIVE_ROOTS = ("conf", "userdata", LOGS, "addons", "atv", "deploy", "secrets", 
 #: helper and monitoring write their own stores.
 RUNTIME_STORES = ("conf", "userdata", LOGS, "addons", "secrets")
 RUNTIME_ROOTS = ("", "addons", "atv", "atv/venv", "monitoring", "monitoring/prometheus", "monitoring/grafana",
-                 "monitoring/alertmanager", "exporter")
+                 "exporter")
 DEPLOY_RECORDS = ("deploy/history", "deploy/deployed.json", "deploy/atv-restart", "deploy/metrics-restart", RECEIPT)
 
 

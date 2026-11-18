@@ -7,7 +7,6 @@ NODE_EXPORTER = "thermite-node-exporter.service"
 BLACKBOX = "thermite-blackbox.service"
 EXPORTER = "thermite-metrics-exporter.service"
 GRAFANA = "thermite-grafana.service"
-ALERTMANAGER = "thermite-alertmanager.service"
 #: Music Assistant, on a host whose instance/host.yaml has music: (oh_music).
 MUSIC = "thermite-music.service"
 
@@ -26,8 +25,7 @@ ACCESS = "thermite-access.service"
 ACCESS_WORKER = "thermite-access-worker.service"
 ACCESS_CALLBACKS = "thermite-access-callbacks.service"
 
-METRICS = (PROMETHEUS, NODE_EXPORTER, BLACKBOX, EXPORTER, GRAFANA,
-           ALERTMANAGER)
+METRICS = (PROMETHEUS, NODE_EXPORTER, BLACKBOX, EXPORTER, GRAFANA)
 ACCESS_UNITS = (ACCESS, ACCESS_WORKER, ACCESS_CALLBACKS)
 #: The units that run in containers (Quadlet).
 CONTAINED = (RUNTIME, ATV, *METRICS, MUSIC)

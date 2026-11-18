@@ -13,7 +13,6 @@ _TOOLS = (
     ("openhab", "openHAB", "Advanced runtime settings and add-ons.", "http", "/settings/", False),
     ("grafana", "Grafana", "Dashboards and history.", "grafana", "/", False),
     ("prometheus", "Prometheus", "Metrics queries.", "prometheus", "/query", True),
-    ("alertmanager", "Alertmanager", "Alerts firing, as Prometheus sends them.", "alertmanager", "/", True),
 )
 
 

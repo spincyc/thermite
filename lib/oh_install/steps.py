@@ -783,8 +783,7 @@ class MetricsDirectories(StateDirectories):
         layout = self.context.layout
         return [manifest.Item(layout.prometheus_data, "shared-pinned", image="prometheus",
                               value=self.context.versions["prometheus"]["image"]["digest"]),
-                *(manifest.Item(path, "tree") for path in (layout.grafana_data, layout.root / metrics.STATE_ALERTMANAGER,
-                                                           layout.monitoring_secrets)),
+                *(manifest.Item(path, "tree") for path in (layout.grafana_data, layout.monitoring_secrets)),
                 manifest.Item(layout.textfile, "shared")]
 
 

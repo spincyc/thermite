@@ -30,15 +30,6 @@
       "port": 13607,
       "path": "/query",
       "localOnly": true
-    },
-    {
-      "id": "alertmanager",
-      "label": "Alertmanager",
-      "description": "Alerts firing, as Prometheus sends them.",
-      "scheme": "http",
-      "port": 13612,
-      "path": "/",
-      "localOnly": true
     }
   ]
 }

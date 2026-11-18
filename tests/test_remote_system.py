@@ -23,10 +23,10 @@ class SystemMetadata(unittest.TestCase):
         self.assertEqual(result["version"], 1)
         self.assertEqual(result["runtime"], {"version": "5.2.3"})
         self.assertEqual([tool["id"] for tool in result["tools"]],
-                         ["openhab", "grafana", "prometheus", "alertmanager"])
-        self.assertEqual([tool["port"] for tool in result["tools"]], [13602, 13611, 13607, 13612])
-        self.assertEqual([tool["path"] for tool in result["tools"]], ["/settings/", "/", "/query", "/"])
-        self.assertEqual([tool["localOnly"] for tool in result["tools"]], [True, False, True, True])
+                         ["openhab", "grafana", "prometheus"])
+        self.assertEqual([tool["port"] for tool in result["tools"]], [13602, 13611, 13607])
+        self.assertEqual([tool["path"] for tool in result["tools"]], ["/settings/", "/", "/query"])
+        self.assertEqual([tool["localOnly"] for tool in result["tools"]], [True, False, True])
         for tool in result["tools"]:
             self.assertEqual(set(tool), {"id", "label", "description", "scheme", "port", "path", "localOnly"})
             self.assertEqual(tool["scheme"], "http")
@@ -45,11 +45,11 @@ class SystemMetadata(unittest.TestCase):
 
     def test_actual_host_overrides_replace_defaults_without_serializing_private_facts(self):
         sentinel = "-".join(("private", "credential", "sentinel"))
-        host = {"http_port": 14001, "metrics": {"grafana_port": 14002, "prometheus_port": 14003,
-                "alertmanager_port": 14004}, "hostname": "private-host.invalid",
+        host = {"http_port": 14001, "metrics": {"grafana_port": 14002, "prometheus_port": 14003},
+                "hostname": "private-host.invalid",
                 "root": "/private/site/path", "password": sentinel}
         result = remote_system.manifest(host, "5.3.0-SNAPSHOT")
-        self.assertEqual([tool["port"] for tool in result["tools"]], list(range(14001, 14005)))
+        self.assertEqual([tool["port"] for tool in result["tools"]], list(range(14001, 14004)))
         encoded = json.dumps(result)
         for private in (host["hostname"], host["root"], host["password"]):
             self.assertNotIn(private, encoded)

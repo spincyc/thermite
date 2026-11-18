@@ -812,13 +812,18 @@ class Alerting(unittest.TestCase):
         self.assertEqual([service.unit for service in oh_metrics.services(HOST)
                           if "ntfy" in service.unit or "notification" in service.unit], [])
 
-    def test_alertmanager_sends_nothing_and_inhibits_repeats(self):
-        config = yaml.safe_load(FILES["alertmanager/alertmanager.yml"])
-        self.assertEqual((config["route"], config["receivers"]), ({"receiver": "none"}, [{"name": "none"}]))
+    def test_prometheus_hands_its_alerts_to_nobody_and_the_tables_name_catalogued_alerts(self):
+        self.assertNotIn("alertmanager/alertmanager.yml", FILES)
+        prometheus = yaml.safe_load(FILES[oh_metrics.PROMETHEUS_YML])
+        self.assertNotIn("alerting", prometheus)
+        self.assertEqual(prometheus["rule_files"], ["/etc/prometheus/alerts.yml"])
+        for text in (FILES["prometheus/alerts.yml"], FILES[oh_metrics.PROMETHEUS_YML]):
+            self.assertNotIn("alertmanager", text)
+            self.assertNotIn("prometheus_notifications", text)
         for source, targets in (*alerts.INHIBITS, *alerts.ROOM_INHIBITS):
             self.assertIn(source, alerts.CATALOG)
             self.assertLessEqual(set(targets), set(alerts.CATALOG))
-        self.assertEqual(len(config["inhibit_rules"]), len(alerts.INHIBITS) + len(alerts.ROOM_INHIBITS))
+            self.assertNotIn(source, targets)
 
     def test_a_gateway_cut_off_from_the_runtimes_events_alerts_and_shows_on_the_remotes_tile(self):
         rule = next(rule for rule in RULES["groups"][1]["rules"] if rule.get("alert") == "ThermiteGatewayFeedDown")
@@ -870,9 +875,8 @@ class Alerting(unittest.TestCase):
         self.assertTrue(module["fail_if_not_ssl"])
         self.assertEqual(module["tls_config"]["ca_file"], "/etc/blackbox/gateway-ca.pem")
         self.assertFalse(module["tls_config"]["insecure_skip_verify"])
-        for name in ("prometheus", "alertmanager"):
-            job = next(job for job in prometheus["scrape_configs"] if job["job_name"] == name)
-            self.assertEqual(job["metric_relabel_configs"][0]["action"], "drop")
+        job = next(job for job in prometheus["scrape_configs"] if job["job_name"] == "prometheus")
+        self.assertEqual(job["metric_relabel_configs"][0]["action"], "drop")
 
     def test_the_gateway_is_judged_only_where_it_is_installed(self):
         """Every house probes the gateway; one without it must not read

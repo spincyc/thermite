@@ -20,9 +20,8 @@ addresses appear only in the output.
 Everything a unit needs that is not a file (listen addresses, retention,
 mounts, arguments) is data here (services()), for the unit renderer in
 lib/oh_deploy.py. Alert rules reuse exact active-path health semantics.
-Alertmanager listens only on loopback and sends nothing: the gateway reads
-the firing alerts from Prometheus for the thermite app's Home
-(oh_identity.alerts).
+Prometheus sends its alerts nowhere: the gateway reads the firing ones from
+it for the thermite app's Home (oh_identity.alerts).
 """
 
 from __future__ import annotations
@@ -72,7 +71,6 @@ STATE_CONFIG = "metrics"
 STATE_DATA = "monitoring"
 STATE_PROMETHEUS = f"{STATE_DATA}/prometheus"
 STATE_GRAFANA = f"{STATE_DATA}/grafana"
-STATE_ALERTMANAGER = f"{STATE_DATA}/alertmanager"
 STATE_SECRETS = f"{STATE_DATA}/secrets"
 #: The access services' metrics (oh_access.metrics), which node_exporter's
 #: textfile collector serves; the services write it as the state's owner.
@@ -213,11 +211,6 @@ def services(host: dict) -> list[Service]:
     keep, size = retention(host)
     secrets = Volume(STATE_SECRETS, SECRETS_MOUNT, "ro")
     return [
-        Service(
-            oh_units.ALERTMANAGER, oh_units.CONTAINERS[oh_units.ALERTMANAGER], "alertmanager", "Local alert list",
-            f"{LOOPBACK}:{port['alertmanager']}",
-            ("--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager", f"--web.listen-address={LOOPBACK}:{port['alertmanager']}", "--cluster.listen-address="),
-            (Volume(f"{STATE_CONFIG}/alertmanager", "/etc/alertmanager", "ro"), Volume(STATE_ALERTMANAGER, "/alertmanager", "rw"))),
         Service(
             oh_units.PROMETHEUS, oh_units.CONTAINERS[oh_units.PROMETHEUS], "prometheus", "Prometheus for openHAB",
             f"{LOOPBACK}:{port['prometheus']}",
@@ -667,8 +660,8 @@ def _yaml(header: list[str], document: dict) -> str:
     return "".join(f"# {line}\n" if line else "#\n" for line in header) + body
 
 
-#: Prometheus' and Alertmanager's own latency histograms are about 40% of
-#: the samples a scrape takes and no dashboard or alert reads them.
+#: Prometheus' own latency histograms are a large part of the samples its
+#: scrape takes and no dashboard or alert reads them.
 SELF_BUCKETS = [{"source_labels": ["__name__"], "regex": ".+_bucket", "action": "drop"}]
 
 
@@ -707,10 +700,7 @@ def prometheus_yml(inventory: dict, host: dict, conf=None) -> str:
         "global": {"scrape_interval": SCRAPE_INTERVAL, "scrape_timeout": SCRAPE_TIMEOUT,
                    "evaluation_interval": SCRAPE_INTERVAL},
         "rule_files": ["/etc/prometheus/alerts.yml"],
-        "alerting": {"alertmanagers": [{"static_configs": [{"targets": [f"{LOOPBACK}:{port['alertmanager']}"]}]}]},
         "scrape_configs": [
-            {"job_name": "alertmanager", "static_configs": [{"targets": [f"{LOOPBACK}:{port['alertmanager']}"]}],
-             "metric_relabel_configs": SELF_BUCKETS},
             {"job_name": "prometheus", "static_configs": [{"targets": [f"{LOOPBACK}:{port['prometheus']}"]}],
              "metric_relabel_configs": SELF_BUCKETS},
             {"job_name": "node", "static_configs": [{"targets": [f"{LOOPBACK}:{port['node_exporter']}"]}]},
@@ -855,7 +845,6 @@ def render(inventory: dict, host: dict, versions: dict | None = None, *, conf=No
         PROMETHEUS_YML: prometheus,
         BLACKBOX_YML: blackbox_yml(),
         "prometheus/alerts.yml": _yaml([RENDERED], alerts.rules(mapping)),
-        "alertmanager/alertmanager.yml": _yaml([RENDERED], alerts.alertmanager()),
         GRAFANA_INI: grafana_ini(host),
         GRAFANA_DATASOURCE: grafana_datasource(host, versions),
         GRAFANA_PROVIDER: grafana_provider(),
