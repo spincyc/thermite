@@ -185,6 +185,10 @@ a heading that would only say it again is left to screen readers: `shell.js`
 marks an `h1` equal to the bar's title with `data-thermite-titled`, and a page
 whose heading says it in other words ("Site topology") marks its own.
 
+`make check-browser` holds the pages to this in a real browser: each of the
+example house's pages at a phone's and a desktop's size, behind the gateway's
+Content-Security-Policy header (`tests/browser_smoke.py`).
+
 Added to an iPhone home screen, every page draws under the translucent status
 bar: the bar (or sidebar) pads itself by the safe-area inset and the remote
 keeps clear of the home indicator.

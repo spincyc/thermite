@@ -393,6 +393,8 @@
     "tests/androidtv_patch/LifecycleTest.java",
     "tests/audio_page_harness.js",
     "tests/backend_stream_harness.js",
+    "tests/browser_smoke.cjs",
+    "tests/browser_smoke.py",
     "tests/build_identity_harness.js",
     "tests/client_liveness_harness.js",
     "tests/client_telemetry_harness.js",

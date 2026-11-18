@@ -7,6 +7,14 @@ file manifest identify an exact release. Private sites pin that release;
 `init`, explicit upgrades and retained releases preserve configuration and
 rollback. The unified deployment workflow uses a separate committed private site.
 
+- `make check-browser` opens every page of the example house in the
+  system's Chromium, as a phone (390x844) and as a desktop
+  (1440x900), behind the gateway's Content-Security-Policy header,
+  and fails on a policy violation, an error, a page that scrolls
+  sideways, a control under 44 px on the phone, or anything painted
+  under the bar. It installs nothing and is not part of `make
+  check`; it skips, saying why, without Chromium or with Node.js
+  older than 22. The nightly Boot workflow runs it.
 - The web remote on a phone: a room that is off says so and what to
   tap, where it showed an empty space; every control is at least
   44 px for a thumb (the bar's Watch/Listen switch and menu, source

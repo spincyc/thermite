@@ -4,6 +4,8 @@ name: Boot
 # request, this generates the fictional example house and boots its conf/ on
 # the pinned openHAB distribution (thermite test boot): the add-ons install,
 # every Thing gets a handler, and the rules and YAML load without a problem.
+# A second job opens the example house's pages in the runner's Chrome
+# (make check-browser), which Check leaves out as well.
 on:
   schedule:
     # Off the hour, when scheduled runs start late.
@@ -43,3 +45,22 @@ jobs:
             var/boot-check/console.log
             var/boot-check/userdata/logs/
           if-no-files-found: ignore
+
+  browser:
+    name: Open the example house's pages in a browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # The driver uses the runner image's Chrome and its Node.js (22 or
+      # later, for its WebSocket) and installs nothing.
+      - run: node --version && google-chrome --version
+      - run: python -m pip install -r requirements.txt
+      - run: make check-browser PYTHON=python
+        env:
+          # Without a browser the check skips itself; here that would be a
+          # night in which nothing was checked.
+          THERMITE_BROWSER_REQUIRED: "1"
